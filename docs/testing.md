@@ -36,6 +36,8 @@ P5 keeps the same two host cases and one desktop scenario. Focused additions exe
 
 D53 adapts that same desktop scenario to decisions directly on inbox rows. It exercises operation and worker decisions while a different session was selected, then verifies the intended run changed and the unrelated conversation did not. Result links open the exact saved version inside its session. Inline feedback, correction, acceptance from the list and history after reload retain their existing evidence. No new unit tests or host test cases are added for this interface refinement.
 
+D55 extends these existing checks for intent-driven delegation. Creation omits the role field; a valid proposal promotes a new Codex root without changing its permissions. A supervised parent can run a read-only worker, while a writable-worker proposal is rejected before creating a child. Existing native threads retain their identity and recorded capabilities. The desktop scenario uses the English interface, checks the absence of the role picker, accesses diagnostics on demand and keeps the existing cross-session decision and review assertions. Visual spacing and copy receive a focused visual check, not new unit tests.
+
 ## Before reporting completion
 
 Run bun run check and bun run build for foundation changes.
