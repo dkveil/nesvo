@@ -84,11 +84,11 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'claude-status' ||
-          method === 'codex-status' ||
-          method === 'discover-skills'
-          ? 30000
-          : 15000,
+        method === 'discover-skills'
+          ? 45000
+          : method === 'claude-status' || method === 'codex-status'
+            ? 30000
+            : 15000,
       );
       pending.set(id, { resolve, reject, timer });
       try {
