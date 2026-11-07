@@ -89,6 +89,15 @@ export class ReviewStore {
     };
   }
 
+  inherited(sessionId: string): Review[] {
+    return (this.latest(sessionId)?.dependencies ?? [])
+      .map(dependency => this.latest(dependency.sessionId))
+      .filter(
+        (review): review is Review =>
+          !!review && review.status !== 'superseded',
+      );
+  }
+
   result(session: Session, diff: ReviewDiff): Review {
     const now = new Date().toISOString();
     const dependencies: Review['dependencies'] = [];
@@ -101,6 +110,14 @@ export class ReviewStore {
           sessionId: child.sessionId,
           reviewId: child.id,
           version: child.version,
+        });
+    }
+    if (dependencies.length === 0 && session.role === 'orchestrator') {
+      for (const current of this.inherited(session.id))
+        dependencies.push({
+          sessionId: current.sessionId,
+          reviewId: current.id,
+          version: current.version,
         });
     }
     return reviewSchema.parse({

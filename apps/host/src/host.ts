@@ -12,6 +12,7 @@ import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
+import { ReviewStore } from './review/store';
 
 type HostTransport = {
   directory: string;
@@ -29,7 +30,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
-          () => new SessionService(new SessionStore(database), directory, emit),
+          () =>
+            new SessionService(
+              new SessionStore(database),
+              directory,
+              emit,
+              new ReviewStore(database),
+            ),
         ),
         service =>
           Effect.promise(async () => {
@@ -113,8 +120,35 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void inspection.finally(() => probes.pending.delete(inspection));
           continue;
         }
+        if (request.method === 'decide-review') {
+          const decision = sessions
+            .decideReview(request.input)
+            .then(review => send({ type: 'review', id: request.id, review }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Nie udało się zapisać decyzji. Odśwież wyniki i spróbuj ponownie.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(decision);
+          void decision.finally(() => probes.pending.delete(decision));
+          continue;
+        }
         const response = yield* Effect.sync((): HostResponse => {
           try {
+            if (request.method === 'list-reviews')
+              return {
+                type: 'reviews',
+                id: request.id,
+                reviews: sessions.listReviews(),
+              };
             if (request.method === 'list-sessions')
               return {
                 type: 'sessions',
