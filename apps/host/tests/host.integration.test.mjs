@@ -342,6 +342,21 @@ test(
           'hooks: {}\n',
         ),
       ],
+      [
+        join(
+          directory,
+          'skills-home',
+          '.agents',
+          'skills',
+          'fixture-shared-context',
+          'SKILL.md',
+        ),
+        skillDocument(
+          'Fixture Shared context',
+          'Unsupported shared execution metadata.',
+          'context: fork\n',
+        ),
+      ],
       ...['alpha', 'beta'].map(name => [
         join(codexConfig, 'skills', `fixture-twin-${name}`, 'SKILL.md'),
         skillDocument('Fixture twin', `Distinct ${name} source.`),
@@ -524,6 +539,11 @@ test(
       );
       assert.equal(blockedAlias.invocation, 'blocked');
       assert.deepEqual(blockedAlias.origins, ['Claude Code', 'Shared']);
+      const blockedShared = discovered.catalog.skills.find(
+        skill => skill.name === 'Fixture Shared context',
+      );
+      assert.equal(blockedShared.invocation, 'blocked');
+      assert.deepEqual(blockedShared.origins, ['Shared']);
       if (expected === 'ready' || expected === 'partial') {
         assert.equal(
           discovered.catalog.skills.find(
@@ -1432,6 +1452,15 @@ test(
         ).contentHash,
       ],
       ['codex', userSkill.id, userSkill.contentHash],
+      [
+        'codex',
+        claudeInventory.catalog.skills.find(
+          skill => skill.name === 'Fixture Shared context',
+        ).id,
+        claudeInventory.catalog.skills.find(
+          skill => skill.name === 'Fixture Shared context',
+        ).contentHash,
+      ],
       ['unsupported', selectedSkill.id],
       ['malformed', selectedSkill.id],
       [
