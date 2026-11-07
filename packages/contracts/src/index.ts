@@ -8,6 +8,7 @@ import {
   sessionSchema,
   stopRunSchema,
   respondApprovalSchema,
+  decideDelegationSchema,
   type ClaudeStatus,
   type CodexStatus,
   type CreateSessionInput,
@@ -16,6 +17,7 @@ import {
   type Session,
   type StopRunInput,
   type RespondApprovalInput,
+  type DecideDelegationInput,
 } from './sessions';
 
 export * from './sessions';
@@ -45,6 +47,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('respond-approval'),
     input: respondApprovalSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-delegation'),
+    input: decideDelegationSchema,
   }),
 ]);
 
@@ -112,5 +119,6 @@ export type DesktopApi = {
   sendMessage: (input: SendMessageInput) => Promise<Session>;
   stopRun: (input: StopRunInput) => Promise<Session>;
   respondApproval: (input: RespondApprovalInput) => Promise<Session>;
+  decideDelegation: (input: DecideDelegationInput) => Promise<Session>;
   subscribe: (listener: (event: DesktopEvent) => void) => () => void;
 };
