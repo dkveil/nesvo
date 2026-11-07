@@ -1,5 +1,16 @@
 # Platform verification
 
+## P1 workspace preview
+
+P0 was accepted when Damian authorized P1. The interactive P1 preview is ready for his separate acceptance.
+
+Implementation 4b9475c passed [native desktop and package checks on Windows, macOS and Linux](https://github.com/dkveil/nesvo/actions/runs/42383138729), as well as [foundation checks](https://github.com/dkveil/nesvo/actions/runs/42383139075).
+The single desktop scenario covers navigation, session creation, drafts, the sample inbox and compact panels. Local Windows also passed the unpacked package scenario.
+Windows screenshots were visually inspected and attached to REV-267. The final sidebar header spacing adjustment was checked locally.
+All provider and review content in P1 remains demonstration data; these checks do not certify real agent execution.
+
+## P0 foundation evidence
+
 P0 separates automated native evidence from the owner's acceptance of the completed product.
 
 | Platform    | P0 evidence                                                                                                                        | Remaining acceptance               |

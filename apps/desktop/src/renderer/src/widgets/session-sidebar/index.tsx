@@ -47,7 +47,6 @@ export function SessionSidebar({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between px-5">
         <span className="text-lg font-semibold tracking-tight">Nesvo</span>
-        <Badge variant="outline">Prototyp</Badge>
       </div>
       <div className="space-y-3 px-3 pb-4">
         <Button className="w-full justify-start" onClick={onCreate}>

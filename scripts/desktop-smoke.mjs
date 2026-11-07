@@ -169,6 +169,7 @@ try {
   );
   await page.getByRole('button', { name: 'Otwórz listę sesji' }).click();
   const sidebar = page.getByRole('dialog', { name: 'Nawigacja', exact: true });
+  await screenshot('-navigation');
   await sidebar.getByRole('button', { name: /^Formularz zgłoszeń/ }).click();
   await sidebar.waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Pokaż szczegóły sesji' }).click();
