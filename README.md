@@ -13,7 +13,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The desktop opens a sample orchestration session. The top bar shows the real connection to the local host; its refresh button checks the host and database. Closing the application stops its host. On macOS, use Quit to exit the application; closing the last window keeps it available in the dock.
+The desktop opens a sample orchestration session in a neutral dark workspace. The bottom bar shows the real connection to the local host; its refresh button checks the host and database. Closing the application stops its host. On macOS, use Quit to exit the application; closing the last window keeps it available in the dock.
 
 The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host.
 
@@ -46,7 +46,7 @@ No provider account or API key is required for P1. Session creation and messages
 2. Open Do odbioru, inspect the sample result and return to its session.
 3. Use Nowa sesja to choose a provider, sample model and role, with or without a working directory.
 4. Add a local preview message; switch sessions and check that each composer keeps its own draft.
-5. Resize the window. Session navigation and details become slide-out panels on smaller widths.
+5. Open session details from the header. Resize the window to use slide-out session navigation on smaller widths.
 
 Damian's P1 acceptance is required before real provider integration in P2.
 

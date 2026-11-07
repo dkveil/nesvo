@@ -22,7 +22,8 @@ Discuss changes in Polish. Write code, repository documentation and commit messa
 
 ## Product and design
 
-Use base shadcn components with neutral defaults. Minimal Geist alignment may be accepted by Damian.
+Use base shadcn components with neutral dark defaults. Black is the primary appearance, including native window chrome.
+Keep the workspace minimal: flat session rows, few badges, conversation-first space and session details on demand. Minimal Geist alignment may be accepted by Damian.
 Do not restore the previous logo, palette or theme. Present UI changes for acceptance before expanding them.
 Keep technical runtime details out of product flows unless they help the operator make a decision.
 P1 preview sessions, models, messages and results are explicitly illustrative and stored only in renderer memory. Keep the preview label until real host data replaces them. Do not enable provider execution or review decisions before their approved stages.

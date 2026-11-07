@@ -8,7 +8,6 @@ import {
   CornerDownRight,
 } from 'lucide-react';
 import { statusLabels, type PreviewSession } from '@/entities/session';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -45,11 +44,15 @@ export function SessionSidebar({
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-16 shrink-0 items-center justify-between px-5">
-        <span className="text-lg font-semibold tracking-tight">Nesvo</span>
+      <div className="flex h-16 shrink-0 items-center px-5">
+        <span className="text-sm font-semibold">Nesvo</span>
       </div>
-      <div className="space-y-3 px-3 pb-4">
-        <Button className="w-full justify-start" onClick={onCreate}>
+      <div className="space-y-1 px-3 pb-5">
+        <Button
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={onCreate}
+        >
           <Plus />
           Nowa sesja
         </Button>
@@ -61,11 +64,11 @@ export function SessionSidebar({
         >
           <Inbox />
           Do odbioru
-          <Badge variant="outline" className="ml-auto">
+          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
             1
-          </Badge>
+          </span>
         </Button>
-        <div className="relative">
+        <div className="relative mt-3">
           <Search
             className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground"
             aria-hidden="true"
@@ -73,7 +76,7 @@ export function SessionSidebar({
           <Input
             aria-label="Szukaj sesji"
             placeholder="Szukaj sesji…"
-            className="pl-9"
+            className="border-transparent pl-9 shadow-none dark:bg-transparent"
             value={search}
             onChange={event => setSearch(event.target.value)}
           />
@@ -85,21 +88,21 @@ export function SessionSidebar({
             Sesje
           </p>
           {roots.map(root => (
-            <div key={root.id} className="mb-3">
+            <div key={root.id} className="mb-2">
               <Button
                 variant={
                   !inbox && selectedId === root.id ? 'secondary' : 'ghost'
                 }
-                className="h-auto w-full justify-start px-2 py-2.5 text-left"
+                className="h-auto w-full justify-start px-2 py-2 text-left font-normal"
                 onClick={() => onSelect(root.id)}
                 aria-current={
                   !inbox && selectedId === root.id ? 'page' : undefined
                 }
               >
                 {root.role === 'orchestrator' ? (
-                  <GitBranch />
+                  <GitBranch className="text-muted-foreground" />
                 ) : (
-                  <MessageSquare />
+                  <MessageSquare className="text-muted-foreground" />
                 )}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{root.title}</span>
@@ -120,7 +123,7 @@ export function SessionSidebar({
                     variant={
                       !inbox && selectedId === child.id ? 'secondary' : 'ghost'
                     }
-                    className="mt-1 h-auto w-full justify-start py-2 pr-2 pl-4 text-left"
+                    className="mt-0.5 h-auto w-full justify-start py-2 pr-2 pl-4 text-left font-normal"
                     onClick={() => onSelect(child.id)}
                     aria-current={
                       !inbox && selectedId === child.id ? 'page' : undefined
@@ -131,7 +134,7 @@ export function SessionSidebar({
                       <span className="block truncate text-xs">
                         {child.title}
                       </span>
-                      <span className="block pt-1 text-xs font-normal text-muted-foreground">
+                      <span className="block pt-0.5 text-xs text-muted-foreground">
                         {statusLabels[child.status]}
                       </span>
                     </span>
@@ -146,10 +149,8 @@ export function SessionSidebar({
           )}
         </nav>
       </ScrollArea>
-      <p className="border-t px-5 py-4 text-xs leading-relaxed text-muted-foreground">
+      <p className="px-5 py-4 text-xs text-muted-foreground">
         Przestrzeń lokalna
-        <br />
-        Dane przykładowe, bez uruchamiania agentów.
       </p>
     </div>
   );

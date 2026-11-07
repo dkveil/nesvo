@@ -7,7 +7,6 @@ import {
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -88,20 +87,11 @@ export function Workspace() {
   );
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-      <aside className="hidden w-60 shrink-0 border-r bg-muted/20 md:block">
+      <aside className="hidden w-56 shrink-0 md:block">
         <SessionSidebar {...sidebarProps} />
       </aside>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b bg-muted/20 px-4 py-2">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline">Podgląd P1</Badge>
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              Dane demonstracyjne. Agenci nie są uruchomieni.
-            </span>
-          </div>
-          <HostStatus />
-        </div>
-        <header className="flex min-h-20 shrink-0 items-center gap-3 border-b px-4 py-3 lg:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card/40 md:my-2 md:mr-2 md:rounded-lg md:border">
+        <header className="flex min-h-16 shrink-0 items-center gap-3 border-b px-4 py-3 lg:px-6">
           <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
             <SheetTrigger asChild>
               <Button
@@ -122,7 +112,7 @@ export function Workspace() {
             </SheetContent>
           </Sheet>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold">
+            <h1 className="truncate text-sm font-medium">
               {inbox ? 'Do odbioru' : selected.title}
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -143,12 +133,12 @@ export function Workspace() {
             </div>
           </div>
           {!inbox && (
-            <Badge variant="secondary" className="hidden sm:inline-flex">
+            <span className="hidden text-xs text-muted-foreground sm:inline">
               {statusLabels[selected.status]}
-            </Badge>
+            </span>
           )}
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon-sm"
             className="md:hidden"
             aria-label="Nowa sesja"
@@ -162,8 +152,8 @@ export function Workspace() {
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="xl:hidden"
                   aria-label="Pokaż szczegóły sesji"
+                  title="Pokaż szczegóły sesji"
                 >
                   <PanelRight />
                 </Button>
@@ -184,25 +174,21 @@ export function Workspace() {
           {inbox ? (
             <ReviewInbox review={demoReview} onSession={select} />
           ) : (
-            <>
-              <Conversation
-                session={selected}
-                draft={drafts[selected.id] ?? ''}
-                onDraft={value =>
-                  setDrafts(previous => ({ ...previous, [selected.id]: value }))
-                }
-                onSend={send}
-                onInbox={openInbox}
-              />
-              <aside
-                aria-label="Panel szczegółów"
-                className="hidden w-72 shrink-0 border-l xl:block"
-              >
-                <ScrollArea className="h-full">{details}</ScrollArea>
-              </aside>
-            </>
+            <Conversation
+              session={selected}
+              draft={drafts[selected.id] ?? ''}
+              onDraft={value =>
+                setDrafts(previous => ({ ...previous, [selected.id]: value }))
+              }
+              onSend={send}
+              onInbox={openInbox}
+            />
           )}
         </main>
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-xs text-muted-foreground lg:px-6">
+          <span>Podgląd · dane demonstracyjne, bez uruchamiania agentów</span>
+          <HostStatus />
+        </footer>
       </div>
       {creating && (
         <CreateSession

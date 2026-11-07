@@ -4,7 +4,6 @@ import {
   statusLabels,
   type PreviewSession,
 } from '@/entities/session';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 
@@ -39,7 +38,7 @@ export function SessionDetails({ session, sessions, onSelect }: Props) {
             <dd>{statusLabels[session.status]}</dd>
           </div>
         </dl>
-        <div className="flex items-start gap-2 rounded-md border p-3 text-xs">
+        <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 break-all leading-relaxed">
             {session.directory || 'Bez katalogu pracy'}
@@ -51,9 +50,9 @@ export function SessionDetails({ session, sessions, onSelect }: Props) {
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <GitBranch className="size-4" />
           Delegacja
-          <Badge variant="outline" className="ml-auto">
+          <span className="ml-auto text-xs font-normal text-muted-foreground">
             {children.length}/2
-          </Badge>
+          </span>
         </h2>
         <Button
           variant={root.id === session.id ? 'secondary' : 'ghost'}
@@ -99,7 +98,6 @@ export function SessionDetails({ session, sessions, onSelect }: Props) {
           Miejsce na zgody dotyczące pracy tej sesji i uruchamiania workerów.
           Wyniki trafiają do wspólnej skrzynki do odbioru.
         </p>
-        <Badge variant="outline">Podgląd zasad</Badge>
       </section>
     </div>
   );

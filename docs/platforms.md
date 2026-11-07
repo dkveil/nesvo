@@ -7,6 +7,7 @@ P0 was accepted when Damian authorized P1. The interactive P1 preview is ready f
 Implementation 4b9475c passed [native desktop and package checks on Windows, macOS and Linux](https://github.com/dkveil/nesvo/actions/runs/42383138729), as well as [foundation checks](https://github.com/dkveil/nesvo/actions/runs/42383139075).
 The single desktop scenario covers navigation, session creation, drafts, the sample inbox and compact panels. Local Windows also passed the unpacked package scenario.
 Windows screenshots were visually inspected and attached to REV-267. The final sidebar header spacing adjustment was checked locally.
+The subsequent dark appearance refinement passed local Windows type, lint, desktop build and the same desktop scenario. Five Windows views were visually inspected: conversation, review, creation, compact navigation and worker approval. This refinement uses dark native chrome, flat navigation and session details on demand; the native evidence above applies to the earlier implementation.
 All provider and review content in P1 remains demonstration data; these checks do not certify real agent execution.
 
 ## P0 foundation evidence

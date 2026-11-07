@@ -8,7 +8,6 @@ import {
   Inbox,
   RotateCcw,
 } from 'lucide-react';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Separator } from '@/shared/ui/separator';
@@ -35,23 +34,22 @@ export function ReviewInbox({ review, onSession }: Props) {
           <>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium">Oczekujące na odbiór</h2>
-              <Badge variant="secondary">1 wynik</Badge>
+              <span className="text-xs text-muted-foreground">1 wynik</span>
             </div>
             <button
               type="button"
               onClick={() => setOpened(true)}
-              className="flex w-full items-start gap-4 rounded-lg border p-5 text-left transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="flex w-full items-start gap-4 border-y px-2 py-5 text-left transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              <div className="rounded-md border p-2">
-                <FileCode2 className="size-4" />
-              </div>
+              <FileCode2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-medium">{review.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {review.summary}
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline">Worker · Codex</Badge>
+                  <span>Worker · Codex</span>
+                  <span>·</span>
                   <span>Wersja 1</span>
                   <span>·</span>
                   <span>2 pliki</span>
@@ -74,7 +72,9 @@ export function ReviewInbox({ review, onSession }: Props) {
               Wróć do listy
             </Button>
             <div className="space-y-3">
-              <Badge variant="outline">Przykładowy wynik · wersja 1</Badge>
+              <p className="text-xs text-muted-foreground">
+                Przykładowy wynik · wersja 1
+              </p>
               <h2 className="text-xl font-semibold">{review.title}</h2>
               <p className="text-sm leading-relaxed text-muted-foreground">
                 {review.summary}

@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
 
 app.setName('Nesvo');
+nativeTheme.themeSource = 'dark';
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -26,6 +27,7 @@ void app.whenReady().then(() => {
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
+      backgroundColor: '#0a0a0a',
       show: !smokeTest,
       autoHideMenuBar: true,
       webPreferences: {

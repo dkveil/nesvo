@@ -11,8 +11,8 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The initial screen is the P1 workspace preview, built from neutral shadcn components.
-The real host connection appears in the top bar. All sessions, results, model choices and permissions are labeled demonstration data. Created sessions, messages and drafts remain in renderer memory and reset on reload.
+The initial screen is the P1 workspace preview, built from neutral dark shadcn components. The window uses dark appearance from startup. Session details open on demand, leaving the main area for the conversation.
+The real host connection appears in the bottom bar. All sessions, results, model choices and permissions are labeled demonstration data. Created sessions, messages and drafts remain in renderer memory and reset on reload.
 
 ## Build and check
 
