@@ -1,5 +1,13 @@
 # Platform verification
 
+## P5 read-only file explorer
+
+D58 implementation 975b61e adds a session-scoped directory tree, bounded filename search and current text preview alongside exact saved result diffs. Windows passed strict types, ESLint, Prettier, build, the existing host cases and the principal desktop scenario. After a real repository check exposed search starvation, breadth-first traversal and filtering unrelated files before metadata access reduced the sample query from 3005 to 1644 ms and included the sibling package. Partial scans remain explicit. The focused principal host case passed again with the sibling-under-cap assertion.
+
+A separate built-Electron visual check read actual repository source files on Windows, including nested navigation, filename search, syntax/line numbers, compact layout and Escape/focus return. It used provider availability fixtures and launched no model task. Screenshots and evidence are attached to REV-270. The principal scenario additionally verifies current content after an outside edit and an unchanged historical saved result when switching panels.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42412678718) passed at 975b61e. The [native workflow](https://github.com/dkveil/nesvo/actions/runs/42412678233) ran the host checks, built application and unpacked package separately on Windows, macOS and Linux; all runtime checks passed. These are real filesystem and Electron checks with provider fixtures, not new real-provider or skill evidence. The earlier workflow at 853af7f was superseded after the search correction. P5 is In Review; P6 skill discovery, selection and verified invocation remain unimplemented.
+
 ## P5 durable activity and saved diff panel
 
 D57 delivers both refinements at implementation checkpoint 6399a3d. Windows passed strict types, ESLint, Prettier, build, the existing host integrations and the principal desktop scenario. The scenario covers actual provider event frames, Stop/reload timing, exact historical result versions, numbered changes, selected files, keyboard focus and compact layout. A targeted retention check covers the latest 100 items per run, global 300-item retention, explicit omitted-history markers and late updates for evicted items.
