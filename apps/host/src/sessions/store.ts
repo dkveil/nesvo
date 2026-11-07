@@ -4,6 +4,7 @@ import {
   sessionSchema,
   type CreateSessionInput,
   type Session,
+  type Delegation,
 } from '@nesvo/contracts';
 
 export class SessionStore {
@@ -43,38 +44,99 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       messages: [],
+      parentId: null,
+      parentRunId: null,
+      scope: null,
+      delegationEnabled:
+        input.provider === 'Codex' &&
+        input.role === 'orchestrator' &&
+        input.mode === 'read-only',
+      delegations: [],
     };
     this.save(session);
     return session;
   }
 
   save(session: Session): void {
-    const next = sessionSchema.parse({
-      ...session,
-      revision: session.revision + 1,
-      updatedAt: new Date().toISOString(),
-    });
-    this.database
-      .prepare(
+    this.saveMany([session]);
+  }
+
+  saveMany(sessions: Session[]): void {
+    const next = sessions.map(session =>
+      sessionSchema.parse({
+        ...session,
+        revision: session.revision + 1,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const statement = this.database.prepare(
         'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at',
-      )
-      .run(next.id, JSON.stringify(next), next.updatedAt);
-    Object.assign(session, next);
+      );
+      for (const session of next)
+        statement.run(session.id, JSON.stringify(session), session.updatedAt);
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+    sessions.forEach((session, index) => Object.assign(session, next[index]));
+  }
+
+  worker(parent: Session, proposal: Delegation, directory: string): Session {
+    const now = new Date().toISOString();
+    return {
+      id: randomUUID(),
+      title: proposal.title,
+      provider: proposal.provider,
+      model: proposal.model,
+      mode: proposal.mode,
+      role: 'worker',
+      parentId: parent.id,
+      parentRunId: proposal.runId,
+      scope: proposal.scope,
+      delegationEnabled: false,
+      delegations: [],
+      providerSessionId:
+        proposal.provider === 'Claude Code' ? randomUUID() : null,
+      providerInitialized: false,
+      pendingApprovals: [],
+      actualModel: null,
+      directory,
+      status: 'ready',
+      error: null,
+      activity: null,
+      runId: null,
+      revision: 0,
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    };
   }
 
   recover(): void {
     for (const session of this.list()) {
-      if (session.status !== 'running' && session.status !== 'stopping')
-        continue;
-      session.status = 'interrupted';
-      session.error =
-        'Sesja została przerwana przez zamknięcie hosta. Możesz kontynuować rozmowę.';
-      session.activity = null;
-      session.pendingApprovals = [];
-      for (const message of session.messages) {
-        if (message.state === 'running') message.state = 'interrupted';
+      let changed = false;
+      if (session.status === 'running' || session.status === 'stopping') {
+        session.status = 'interrupted';
+        session.error =
+          'Sesja została przerwana przez zamknięcie hosta. Możesz kontynuować rozmowę.';
+        session.activity = null;
+        session.pendingApprovals = [];
+        for (const message of session.messages) {
+          if (message.state === 'running') message.state = 'interrupted';
+        }
+        changed = true;
       }
-      this.save(session);
+      for (const proposal of session.delegations) {
+        if (proposal.status !== 'pending' && proposal.status !== 'running')
+          continue;
+        proposal.status = 'interrupted';
+        proposal.error = 'Delegacja została przerwana przez zamknięcie hosta.';
+        changed = true;
+      }
+      if (changed) this.save(session);
     }
   }
 }

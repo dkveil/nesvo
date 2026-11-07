@@ -145,6 +145,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 session: sessions.respondApproval(request.input),
               };
+            if (request.method === 'decide-delegation')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.decideDelegation(request.input),
+              };
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
               .get('instance_id');

@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
-import type {
-  CreateSessionInput,
-  DesktopEvent,
-  SendMessageInput,
-  Session,
-  StopRunInput,
-  RespondApprovalInput,
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { z } from 'zod';
+import {
+  delegationPlanSchema,
+  type CreateSessionInput,
+  type DecideDelegationInput,
+  type Delegation,
+  type DesktopEvent,
+  type SendMessageInput,
+  type Session,
+  type StopRunInput,
+  type RespondApprovalInput,
 } from '@nesvo/contracts';
 import { startClaude, type ClaudeEvent } from '../providers/claude';
 import { startCodex, type CodexEvent } from '../providers/codex';
@@ -32,10 +36,19 @@ type ActiveRun = {
   finalizing?: boolean;
 };
 
+type WorkerResult = {
+  delegationId: string;
+  childSessionId: string | null;
+  status: Delegation['status'];
+  text: string;
+  error: string | null;
+};
+
 export class SessionService {
-  private active?: ActiveRun;
+  private readonly active = new Map<string, ActiveRun>();
+  private readonly waiters = new Map<string, (result: WorkerResult) => void>();
+  private readonly unsaved = new Map<string, Session>();
   private closing = false;
-  private unsaved?: Session;
 
   constructor(
     private readonly store: SessionStore,
@@ -46,19 +59,18 @@ export class SessionService {
   }
 
   list(): Session[] {
-    if (this.unsaved) {
-      const unsaved = this.unsaved;
+    for (const [id, session] of this.unsaved) {
       try {
-        this.publish(unsaved);
-        this.unsaved = undefined;
+        this.publish(session);
+        this.unsaved.delete(id);
       } catch {
-        return [
-          structuredClone(unsaved),
-          ...this.store.list().filter(session => session.id !== unsaved.id),
-        ];
+        continue;
       }
     }
-    return this.store.list();
+    return [
+      ...[...this.unsaved.values()].map(session => structuredClone(session)),
+      ...this.store.list().filter(session => !this.unsaved.has(session.id)),
+    ];
   }
 
   create(input: CreateSessionInput): Session {
@@ -69,20 +81,22 @@ export class SessionService {
     }
     directory = this.resolveDirectory(directory);
     const session = this.store.create(input, directory);
-    this.emit({ type: 'session-changed', session: structuredClone(session) });
+    this.emitSession(session);
     return session;
   }
 
   send(input: SendMessageInput): Session {
-    if (this.unsaved) {
+    if (this.unsaved.size) {
       this.list();
-      if (this.unsaved)
+      if (this.unsaved.size)
         throw new SessionError(
           'busy',
           'Ostatnia odpowiedź nie została zapisana. Odśwież historię po przywróceniu dostępu do bazy.',
         );
     }
-    const session = this.store.get(input.sessionId);
+    const session =
+      this.active.get(input.sessionId)?.session ??
+      this.store.get(input.sessionId);
     if (!session)
       throw new SessionError(
         'not-found',
@@ -97,12 +111,12 @@ export class SessionService {
           'invalid-request',
           'Identyfikator wiadomości jest już używany.',
         );
-      return session;
+      return structuredClone(session);
     }
-    if (this.closing || this.active)
+    if (this.closing || this.active.size)
       throw new SessionError(
         'busy',
-        'Poczekaj na zakończenie aktywnej odpowiedzi lub użyj Stop.',
+        'Poczekaj na zakończenie aktywnej grupy lub użyj Stop.',
       );
     this.resolveDirectory(session.directory);
     if (JSON.stringify(session).length > 4_000_000)
@@ -110,114 +124,81 @@ export class SessionService {
         'invalid-request',
         'Ta rozmowa osiągnęła limit prototypu. Utwórz nową sesję.',
       );
-    const runId = randomUUID();
-    if (!session.providerInitialized && session.runId)
-      session.providerSessionId =
-        session.provider === 'Claude Code' ? randomUUID() : null;
-    const createdAt = new Date().toISOString();
-    session.runId = runId;
-    session.status = 'running';
-    session.error = null;
-    session.pendingApprovals = [];
-    session.activity = `Uruchamianie ${session.provider}…`;
-    session.messages.push(
-      {
-        id: input.messageId,
-        runId,
-        author: 'operator',
-        body: input.text,
-        state: 'completed',
-        createdAt,
-      },
-      {
-        id: randomUUID(),
-        runId,
-        author: 'agent',
-        body: '',
-        state: 'running',
-        createdAt,
-      },
-    );
+    this.prepareRun(session, input.messageId, input.text);
     this.publish(session);
-    const options = {
-      directory: session.directory,
-      resume: session.providerInitialized,
-      model: session.model,
-      prompt: input.text,
-      onEvent: (event: ClaudeEvent | CodexEvent) => this.update(session, event),
-    };
-    const handle =
-      session.provider === 'Codex'
-        ? startCodex({
-            ...options,
-            sessionId: session.providerSessionId,
-            mode: session.mode,
-          })
-        : startClaude({ ...options, sessionId: session.providerSessionId! });
-    const active: ActiveRun = { session, handle, finished: Promise.resolve() };
-    this.active = active;
-    active.finished = handle.done
-      .then(async result => {
-        active.finalizing = true;
-        if (active.timer) clearTimeout(active.timer);
-        session.status = active.persistenceError ? 'failed' : result.status;
-        session.error = active.persistenceError
-          ? 'Zapis rozmowy nie powiódł się. Odpowiedź została zatrzymana.'
-          : result.error;
-        session.activity = null;
-        session.pendingApprovals = [];
-        const message = session.messages.at(-1)!;
-        message.state = session.status;
-        for (let attempt = 0; ; attempt++) {
-          try {
-            this.publish(session);
-            break;
-          } catch (error) {
-            if (attempt === 2) throw error;
-            await new Promise(resolve =>
-              setTimeout(resolve, 150 * (attempt + 1)),
-            );
-          }
-        }
-      })
-      .catch(() => {
-        session.status = 'failed';
-        session.error =
-          'Nie udało się zapisać lub zakończyć odpowiedzi. Odśwież sesję przed kontynuowaniem.';
-        session.activity = null;
-        session.pendingApprovals = [];
-        session.messages.at(-1)!.state = 'failed';
-        session.revision += 1;
-        this.unsaved = session;
-        this.emit({
-          type: 'session-changed',
-          session: structuredClone(session),
-        });
-      })
-      .finally(() => {
-        if (active.timer) clearTimeout(active.timer);
-        if (this.active === active) this.active = undefined;
-      });
+    this.launch(session, input.text);
     return structuredClone(session);
   }
 
-  stop(input: StopRunInput): Session {
-    const active = this.active;
+  decideDelegation(input: DecideDelegationInput): Session {
+    const active = this.active.get(input.sessionId);
+    const parent = active?.session;
+    const proposal = parent?.delegations.find(
+      item => item.id === input.delegationId,
+    );
     if (
       !active ||
-      active.session.id !== input.sessionId ||
-      active.session.runId !== input.runId
-    ) {
-      const session = this.store.get(input.sessionId);
+      !parent ||
+      active.finalizing ||
+      parent.runId !== input.runId ||
+      parent.status !== 'running' ||
+      proposal?.runId !== input.runId ||
+      proposal.status !== 'pending' ||
+      !this.waiters.has(proposal.id)
+    )
+      throw new SessionError(
+        'invalid-request',
+        'Ta propozycja delegacji nie jest już aktywna.',
+      );
+    if (input.decision === 'decline') {
+      proposal.status = 'declined';
+      try {
+        this.publish(parent);
+      } catch (error) {
+        proposal.status = 'pending';
+        throw error;
+      }
+      this.settle(proposal);
+      return structuredClone(parent);
+    }
+    const directory = this.workerDirectory(parent, proposal.directory);
+    this.validateWorkerDirectories(
+      parent,
+      parent.delegations.filter(item => item.runId === input.runId),
+    );
+    const child = this.store.worker(parent, proposal, directory);
+    const prompt = `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
+    this.prepareRun(child, randomUUID(), proposal.task);
+    proposal.childSessionId = child.id;
+    proposal.status = 'running';
+    try {
+      this.store.saveMany([parent, child]);
+    } catch (error) {
+      proposal.childSessionId = null;
+      proposal.status = 'pending';
+      throw error;
+    }
+    this.emitSession(parent);
+    this.emitSession(child);
+    this.launch(child, prompt);
+    return structuredClone(parent);
+  }
+
+  stop(input: StopRunInput): Session {
+    const active = this.active.get(input.sessionId);
+    if (!active || active.session.runId !== input.runId) {
+      const session =
+        this.unsaved.get(input.sessionId) ?? this.store.get(input.sessionId);
       if (!session)
         throw new SessionError('not-found', 'Nie znaleziono sesji.');
-      return session;
+      return structuredClone(session);
     }
     if (active.finalizing) return structuredClone(active.session);
     active.session.status = 'stopping';
     active.session.activity = 'Zatrzymywanie…';
     active.session.pendingApprovals = [];
     try {
+      this.cancelDelegations(active.session);
       this.publish(active.session);
     } finally {
       void active.handle.stop().catch(() => undefined);
@@ -226,10 +207,10 @@ export class SessionService {
   }
 
   respondApproval(input: RespondApprovalInput): Session {
-    const active = this.active;
+    const active = this.active.get(input.sessionId);
     if (
       !active ||
-      active.session.id !== input.sessionId ||
+      active.finalizing ||
       active.session.runId !== input.runId ||
       active.session.status !== 'running' ||
       active.session.mode !== 'supervised' ||
@@ -266,19 +247,358 @@ export class SessionService {
 
   async close(): Promise<void> {
     this.closing = true;
-    const active = this.active;
-    if (!active) return;
-    if (active.finalizing) {
-      await active.finished;
-      return;
+    const runs = [...this.active.values()];
+    for (const active of runs) {
+      if (active.finalizing) continue;
+      try {
+        this.stop({
+          sessionId: active.session.id,
+          runId: active.session.runId!,
+        });
+      } catch {
+        void active.handle.stop().catch(() => undefined);
+      }
     }
-    active.session.status = 'stopping';
-    active.session.pendingApprovals = [];
-    await active.handle.stop();
-    await active.finished;
+    await Promise.all(runs.map(active => active.finished));
+    this.list();
+  }
+
+  private prepareRun(session: Session, messageId: string, text: string): void {
+    const runId = randomUUID();
+    if (!session.providerInitialized && session.runId)
+      session.providerSessionId =
+        session.provider === 'Claude Code' ? randomUUID() : null;
+    const createdAt = new Date().toISOString();
+    session.runId = runId;
+    session.status = 'running';
+    session.error = null;
+    session.pendingApprovals = [];
+    session.activity = `Uruchamianie ${session.provider}…`;
+    session.messages.push(
+      {
+        id: messageId,
+        runId,
+        author: 'operator',
+        body: text,
+        state: 'completed',
+        createdAt,
+      },
+      {
+        id: randomUUID(),
+        runId,
+        author: 'agent',
+        body: '',
+        state: 'running',
+        createdAt,
+      },
+    );
+  }
+
+  private launch(session: Session, prompt: string): void {
+    const options = {
+      directory: session.directory,
+      resume: session.providerInitialized,
+      model: session.model,
+      prompt,
+      onEvent: (event: ClaudeEvent | CodexEvent) => this.update(session, event),
+    };
+    const canDelegate =
+      session.delegationEnabled &&
+      session.role === 'orchestrator' &&
+      session.provider === 'Codex' &&
+      session.mode === 'read-only';
+    const handle =
+      session.provider === 'Codex'
+        ? startCodex({
+            ...options,
+            sessionId: session.providerSessionId,
+            mode: session.mode,
+            ...(canDelegate
+              ? {
+                  delegationSchema: z.toJSONSchema(delegationPlanSchema),
+                  onDelegate: (input: unknown, signal: AbortSignal) =>
+                    this.delegate(session, input, signal),
+                }
+              : {}),
+          })
+        : startClaude({ ...options, sessionId: session.providerSessionId! });
+    const active: ActiveRun = { session, handle, finished: Promise.resolve() };
+    this.active.set(session.id, active);
+    active.finished = handle.done
+      .then(async result => {
+        active.finalizing = true;
+        if (active.timer) clearTimeout(active.timer);
+        this.cancelDelegations(session);
+        const children = [...this.active.values()].filter(
+          child =>
+            child.session.parentId === session.id &&
+            child.session.parentRunId === session.runId,
+        );
+        await Promise.all(children.map(child => child.finished));
+        session.status = active.persistenceError ? 'failed' : result.status;
+        session.error = active.persistenceError
+          ? 'Zapis rozmowy nie powiódł się. Odpowiedź została zatrzymana.'
+          : result.error;
+        session.activity = null;
+        session.pendingApprovals = [];
+        session.messages.at(-1)!.state = session.status;
+        await this.saveTerminal(session);
+      })
+      .catch(async () => {
+        active.finalizing = true;
+        this.cancelDelegations(session);
+        const children = [...this.active.values()].filter(
+          child =>
+            child.session.parentId === session.id &&
+            child.session.parentRunId === session.runId,
+        );
+        await Promise.all(children.map(child => child.finished));
+        session.status = 'failed';
+        session.error =
+          'Nie udało się zapisać lub zakończyć odpowiedzi. Odśwież sesję przed kontynuowaniem.';
+        session.activity = null;
+        session.pendingApprovals = [];
+        session.messages.at(-1)!.state = 'failed';
+        session.revision += 1;
+        this.unsaved.set(session.id, session);
+        this.emitSession(session);
+      })
+      .finally(() => {
+        if (active.timer) clearTimeout(active.timer);
+        if (this.active.get(session.id) === active)
+          this.active.delete(session.id);
+        this.finishWorker(session);
+      });
+  }
+
+  private async saveTerminal(session: Session): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        this.publish(session);
+        return;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
+  }
+
+  private async delegate(
+    parent: Session,
+    input: unknown,
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (signal.aborted) throw new Error('Delegation stopped.');
+    const active = this.active.get(parent.id);
+    if (!active || active.finalizing || parent.status !== 'running')
+      throw new Error('The orchestrator run is no longer active.');
+    const parsed = delegationPlanSchema.safeParse(input);
+    if (!parsed.success)
+      return JSON.stringify({
+        error:
+          'Invalid worker proposal. Provide one or two supported workers with explicit tasks and scopes.',
+      });
+    const previous = parent.delegations.filter(
+      item => item.runId === parent.runId,
+    );
+    if (previous.length + parsed.data.workers.length > 2)
+      return JSON.stringify({
+        error:
+          'A root run can propose at most two workers across all tool calls.',
+      });
+    if (parent.delegations.length + parsed.data.workers.length > 100)
+      return JSON.stringify({
+        error:
+          'This conversation reached the delegation history limit. Create a new orchestrator.',
+      });
+    const proposals: Delegation[] = parsed.data.workers.map(worker => ({
+      ...worker,
+      id: randomUUID(),
+      runId: parent.runId!,
+      status: 'pending',
+      childSessionId: null,
+      error: null,
+    }));
+    try {
+      this.validateWorkerDirectories(parent, [...previous, ...proposals]);
+    } catch (error) {
+      return JSON.stringify({
+        error:
+          error instanceof Error ? error.message : 'Invalid worker directory.',
+      });
+    }
+    const results = proposals.map(
+      proposal =>
+        new Promise<WorkerResult>(resolve =>
+          this.waiters.set(proposal.id, resolve),
+        ),
+    );
+    parent.delegations.push(...proposals);
+    parent.activity = 'Oczekiwanie na decyzję o delegacji…';
+    try {
+      this.publish(parent);
+    } catch (error) {
+      parent.delegations.splice(parent.delegations.length - proposals.length);
+      for (const proposal of proposals) this.waiters.delete(proposal.id);
+      throw error;
+    }
+    const abort = () => this.cancelDelegations(parent);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      const completed = await Promise.all(results);
+      if (signal.aborted) throw new Error('Delegation stopped.');
+      return JSON.stringify({ results: completed });
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+
+  private cancelDelegations(parent: Session): void {
+    let changed = false;
+    const cancelled: Delegation[] = [];
+    for (const proposal of parent.delegations) {
+      if (proposal.runId !== parent.runId) continue;
+      if (proposal.status === 'pending') {
+        proposal.status = 'stopped';
+        cancelled.push(proposal);
+        changed = true;
+      } else if (proposal.status === 'running' && proposal.childSessionId) {
+        const child = this.active.get(proposal.childSessionId);
+        if (child && !child.finalizing) {
+          try {
+            this.stop({
+              sessionId: child.session.id,
+              runId: child.session.runId!,
+            });
+          } catch {
+            void child.handle.stop().catch(() => undefined);
+          }
+        }
+      }
+    }
+    if (changed) {
+      try {
+        this.publish(parent);
+      } catch {
+        this.unsaved.set(parent.id, parent);
+      }
+      for (const proposal of cancelled) this.settle(proposal);
+    }
+  }
+
+  private finishWorker(child: Session): void {
+    if (!child.parentId || !child.parentRunId) return;
+    const parent = this.active.get(child.parentId)?.session;
+    const proposal = parent?.delegations.find(
+      item =>
+        item.childSessionId === child.id && item.runId === child.parentRunId,
+    );
+    if (!parent || !proposal || proposal.status !== 'running') return;
+    proposal.status =
+      child.status === 'completed' ||
+      child.status === 'stopped' ||
+      child.status === 'interrupted'
+        ? child.status
+        : 'failed';
+    proposal.error = child.error;
+    try {
+      this.publish(parent);
+    } catch {
+      this.unsaved.set(parent.id, parent);
+      const active = this.active.get(parent.id);
+      if (active) {
+        active.persistenceError = true;
+        void active.handle.stop().catch(() => undefined);
+      }
+    }
+    this.settle(proposal, child);
+  }
+
+  private settle(proposal: Delegation, child?: Session): void {
+    const text =
+      child?.messages
+        .filter(
+          message =>
+            message.runId === child.runId && message.author === 'agent',
+        )
+        .map(message => message.body)
+        .join('\n') ?? '';
+    this.waiters.get(proposal.id)?.({
+      delegationId: proposal.id,
+      childSessionId: proposal.childSessionId,
+      status: proposal.status,
+      text:
+        text.length > 12_000
+          ? `${text.slice(0, 12_000)}\n[Worker result truncated at 12000 characters.]`
+          : text,
+      error: proposal.error?.slice(0, 2000) ?? null,
+    });
+    this.waiters.delete(proposal.id);
+  }
+
+  private validateWorkerDirectories(
+    parent: Session,
+    proposals: Delegation[],
+  ): void {
+    const directories = proposals.map(proposal => {
+      const proposed = this.workerDirectory(parent, proposal.directory);
+      if (!proposal.childSessionId) return proposed;
+      const child =
+        this.active.get(proposal.childSessionId)?.session ??
+        this.store.get(proposal.childSessionId);
+      return child ? this.resolveDirectory(child.directory) : proposed;
+    });
+    for (let left = 0; left < proposals.length; left++) {
+      for (let right = left + 1; right < proposals.length; right++) {
+        if (
+          proposals[left]!.mode !== 'supervised' &&
+          proposals[right]!.mode !== 'supervised'
+        )
+          continue;
+        if (
+          this.within(directories[left]!, directories[right]!) ||
+          this.within(directories[right]!, directories[left]!)
+        )
+          throw new SessionError(
+            'invalid-directory',
+            'Katalogi workerów nie mogą się nakładać, gdy którykolwiek worker może zapisywać pliki.',
+          );
+      }
+    }
+  }
+
+  private workerDirectory(parent: Session, directory: string): string {
+    if (
+      isAbsolute(directory) ||
+      /^[A-Za-z]:/.test(directory) ||
+      directory.split(/[\\/]/).includes('..')
+    )
+      throw new SessionError(
+        'invalid-directory',
+        'Worker wymaga istniejącego katalogu względnego wewnątrz katalogu sesji.',
+      );
+    const root = this.resolveDirectory(parent.directory);
+    const target = this.resolveDirectory(resolve(root, directory));
+    if (!this.within(root, target))
+      throw new SessionError(
+        'invalid-directory',
+        'Katalog workera wychodzi poza katalog sesji.',
+      );
+    return target;
+  }
+
+  private within(parent: string, child: string): boolean {
+    const path = relative(parent, child);
+    return (
+      path === '' ||
+      (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+    );
   }
 
   private update(session: Session, event: ClaudeEvent | CodexEvent): void {
+    const active = this.active.get(session.id);
+    if (active?.finalizing) return;
     if (event.type === 'init') {
       if (
         (session.providerInitialized || session.provider === 'Claude Code') &&
@@ -319,7 +639,6 @@ export class SessionService {
     }
     if (session.pendingApprovals.length)
       session.activity = 'Oczekiwanie na Twoją decyzję…';
-    const active = this.active;
     if (active && !active.timer) {
       active.timer = setTimeout(() => {
         active.timer = undefined;
@@ -327,15 +646,20 @@ export class SessionService {
           this.publish(session);
         } catch {
           active.persistenceError = true;
+          this.cancelDelegations(session);
           void active.handle.stop().catch(() => undefined);
         }
       }, 75);
     }
   }
 
+  private emitSession(session: Session): void {
+    this.emit({ type: 'session-changed', session: structuredClone(session) });
+  }
+
   private publish(session: Session): void {
     this.store.save(session);
-    this.emit({ type: 'session-changed', session: structuredClone(session) });
+    this.emitSession(session);
   }
 
   private resolveDirectory(directory: string): string {
