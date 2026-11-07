@@ -144,6 +144,11 @@ function managedDirectory(): string {
 export async function inspectClaudeSkills(
   directory: string,
   signal?: AbortSignal,
+  budget?: {
+    deadline: number;
+    onVisit: () => boolean;
+    canonicalPaths?: boolean;
+  },
 ): Promise<SkillDiscovery> {
   const result: SkillDiscovery = {
     provider: 'Claude Code',
@@ -155,7 +160,10 @@ export async function inspectClaudeSkills(
     invocationSupported: false,
     checkedAt: new Date().toISOString(),
   };
-  const deadline = Date.now() + scanMilliseconds;
+  const deadline = Math.min(
+    Date.now() + scanMilliseconds,
+    budget?.deadline ?? Infinity,
+  );
   let visited = 0;
   const candidates: Candidate[] = [];
   const inheritedIsolation =
@@ -288,6 +296,10 @@ export async function inspectClaudeSkills(
         const item = await bounded(dir.read());
         if (!item) break;
         visited++;
+        if (budget && !budget.onVisit())
+          throw new DiscoveryLimit(
+            'Skill discovery reached its filesystem entry limit.',
+          );
         await each(item.name);
       }
     } finally {
@@ -407,7 +419,7 @@ export async function inspectClaudeSkills(
             .digest('hex'),
           name: name.slice(0, skillLimits.name),
           description: description.slice(0, skillLimits.description),
-          path,
+          path: budget?.canonicalPaths ? canonical : path,
           source: root.source,
           kind,
           enabled,
@@ -594,10 +606,22 @@ export async function inspectClaudeSkills(
     aliases.set(candidate.canonical, keys);
   }
   const canonicalSeen = new Set<string>();
+  const disabledAliases = new Map(
+    budget?.canonicalPaths
+      ? ranked
+          .filter(item => item.entry.enabled === false)
+          .map(item => [item.canonical, item.entry.detail] as const)
+      : [],
+  );
   const names = new Map<string, Candidate>();
   for (const candidate of ranked) {
     if (canonicalSeen.has(candidate.canonical)) continue;
     canonicalSeen.add(candidate.canonical);
+    if (disabledAliases.has(candidate.canonical)) {
+      candidate.entry.enabled = false;
+      candidate.entry.detail =
+        disabledAliases.get(candidate.canonical) ?? candidate.entry.detail;
+    }
     const keys = [...aliases.get(candidate.canonical)!];
     const winner = keys
       .map(key => names.get(key))
