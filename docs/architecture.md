@@ -21,6 +21,7 @@ Node host (Effect scope and services)
 SQLite (identity and versioned conversation snapshots)
 
 Node host -> owned Claude Code CLI -> normalized text/activity/result
+Node host -> owned Codex app-server over stdio -> text/activity/approval/result
 
 Standalone Node entry -> JSONL transport -> the same host service
 ```
@@ -31,7 +32,8 @@ The host imports no Electron code; its desktop transport adapter belongs to the 
 
 Effect owns the database, session service, capability probes and request stream lifetime. Finalizers cancel owned provider work before closing SQLite. They run on normal shutdown and transport completion.
 SQLite uses a versioned bootstrap and transaction, WAL, foreign keys and a busy timeout. An unsupported newer schema is rejected before migration.
-Schema v2 preserves the v1 host identity and adds validated JSON conversation snapshots in a sessions table. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and an unsaved snapshot prevent a new message from overwriting the result. Restart marks unfinished runs interrupted.
+Schema v3 preserves host identity and conversation snapshots, adds provider modes and pending approvals, and migrates existing Claude sessions to read-only mode. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and an unsaved snapshot prevent a new message from overwriting the result. Restart marks unfinished runs interrupted and invalidates their pending approvals.
+SQLite remains on Node's built-in driver. Drizzle integration waits for stable support for this driver; no release candidate is installed. Database types would not replace public Zod request validation.
 
 ## Ownership
 
@@ -67,8 +69,17 @@ P2 removes demonstration sessions from the product. The page owns selection, dra
 ## Claude adapter and P2 limits
 
 The adapter uses the documented print/stream-json interface, existing login and explicit session-id/resume arguments. It validates required CLI capabilities, streams main-session text, ignores subagent output, reconciles final text and treats is_error as authoritative even when result subtype says success. Model aliases are not a promise of account entitlement.
-P2 enables only Read, Glob and Grep in plan mode, denies unanswered permission requests, disables hooks and supplies an empty strict MCP configuration. It never enables permission bypass. Interactive tool approval and edits belong to P3; provider-aware skill support belongs to P6.
+Claude enables only Read, Glob and Grep in plan mode, denies unanswered permission requests, disables hooks and supplies an empty strict MCP configuration. It never enables permission bypass. Interactive approval in P3 is provider-specific; Claude retains its P2 capabilities. Provider-aware skill support belongs to P6.
 Only one turn runs at a time. Stop targets the owned Windows process tree or POSIX process group and waits for close; the host's shutdown watchdog allows cleanup to finish. On Windows, descendants already orphaned before the parent exits are not guaranteed to be contained by PID-tree cleanup. Abrupt OS termination is not equivalent to graceful shutdown; stronger containment needs a separate native job mechanism.
 The host is local and lives with the desktop. There is no network listener, remote authentication or background daemon.
 A closed host is not silently restarted. UI reports failure and lets the operator retry or reopen the app.
 Worker lifetimes and review revision rules remain separate approved stages.
+
+## Codex adapter and approval boundaries
+
+Codex uses its installed app-server over a private stdio connection, with existing CLI authentication. Model choices come from its model catalog rather than a hard-coded list. Each turn owns a process and resumes the persisted provider thread ID when continuing a conversation. The application never attaches to another running Codex process.
+The native local tool executor remains enabled. Before starting a thread, the adapter disables inherited MCP servers and unrelated plugin, hook and delegation features in its own process, then verifies the effective configuration. No global configuration is rewritten. Unsupported MCP server names fail explicitly instead of constructing ambiguous configuration overrides.
+
+Read-only mode uses the provider's read-only sandbox and never grants elevated operations. It can run commands that read data; it is not the same tool allowlist as Claude. Supervised mode uses workspace-write with the provider's untrusted approval policy and user reviewer. Workspace edits may proceed without a prompt. Commands and file changes that the provider asks to approve become visible requests, with one-time accept or decline actions. This mode does not promise a prompt for every edit.
+
+Decisions carry the Nesvo session ID, current run ID and provider request ID. The host accepts them only while that exact request is pending on the active run. Stop, completion and recovery invalidate requests. Persistence precedes forwarding an approval, and unsupported provider requests fail closed. Provider approval is separate from the later review inbox and does not accept a completed task.

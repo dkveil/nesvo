@@ -1,5 +1,17 @@
 # Platform verification
 
+## P3 Codex integration
+
+Damian authorized Codex before Claude quota recovery (D50). This exception does not accept either P2 or P3.
+
+On Windows, installed Codex 0.156.0 with the existing ChatGPT login and model gpt-6-sol passed real Electron execution: read a temporary file and correctly counted five tasks, retained the same provider thread after reload and answered the follow-up with two remaining tasks, and stopped an initialized real run. A separate supervised conversation produced native command approvals. Declining left the named temporary file absent; accepting a new one-time request created that exact file with the expected content. Both outcomes were checked on disk, not inferred from the model's response.
+
+The actual native tool executor remains enabled; MCP servers, plugins, hooks and hidden delegation are disabled for this stage. Native approvals identify the local environment as `local`; unknown remote environments are rejected. These native observations are covered by the adapter and the focused integration fixture.
+
+Local type checks, ESLint, Prettier, build, both host integrations and the main desktop scenario passed. The final P3 [native application and unpacked package run](https://github.com/dkveil/nesvo/actions/runs/42392369277), at 7003660, passed Windows, macOS and Linux with explicit fixtures, including the local-environment approval adjustment. [Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42392369244) also passed at the same implementation revision.
+
+Real account execution was verified on Windows only. Native runner fixtures do not certify real provider setup or account access on macOS/Linux. Claude successful-task evidence remains pending its account reset; neither stage is Done before Damian's acceptance.
+
 ## P2 Claude integration
 
 P1 was accepted on November 7 when Damian authorized P2. The P2 implementation is available for inspection; a successful real model task and owner acceptance remain pending.

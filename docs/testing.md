@@ -26,6 +26,8 @@ P2 extends the same two host cases and the same desktop scenario. A local CLI fi
 The desktop scenario covers model selection, default and invalid directories, session-specific drafts, real IPC streaming, history after reload, continuation, Stop, visible provider failures, empty inbox, search and compact panels. It runs against both build output and unpacked packages. No unit-test suite or visual snapshot baseline was added.
 Real CLI evidence is recorded separately. The fixture is not proof of subscription availability, successful model output or provider resume behavior. A provider account limit leaves real task acceptance pending even when all automated checks pass.
 
+P3 extends these same checks with an explicit Codex app-server fixture: dynamic models, streaming and resume, provider-specific sandbox policies, session/run/request-bound approval and denial, stale decision rejection, and cleanup while waiting for approval. Denial must leave the fixture's operation marker absent; acceptance must create it only for the intended request. A version-two Claude snapshot must retain its history after migration. The desktop scenario exercises provider selection and real approval UI through the same preload/host boundary.
+
 ## Before reporting completion
 
 Run bun run check and bun run build for foundation changes.
