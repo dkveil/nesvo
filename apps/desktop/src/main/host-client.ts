@@ -5,6 +5,7 @@ import {
   hostMessageSchema,
   hostRequestSchema,
   type CreateSessionInput,
+  type DecideDelegationInput,
   type DesktopEvent,
   type SendMessageInput,
   type RespondApprovalInput,
@@ -118,6 +119,12 @@ export function startHost(directory: string) {
       if (response.type !== 'codex-status')
         throw new Error('Unexpected host response');
       return response.status;
+    },
+    decideDelegation: async (input: DecideDelegationInput) => {
+      const response = await request('decide-delegation', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
     },
     respondApproval: async (input: RespondApprovalInput) => {
       const response = await request('respond-approval', input);

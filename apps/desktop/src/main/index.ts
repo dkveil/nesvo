@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
 import {
   createSessionSchema,
+  decideDelegationSchema,
   respondApprovalSchema,
   sendMessageSchema,
   stopRunSchema,
@@ -83,6 +84,10 @@ void app.whenReady().then(() => {
   ipcMain.handle('nesvo:codex-status', async event => {
     authorize(event);
     return host.codexStatus();
+  });
+  ipcMain.handle('nesvo:decide-delegation', async (event, input: unknown) => {
+    authorize(event);
+    return host.decideDelegation(decideDelegationSchema.parse(input));
   });
   ipcMain.handle('nesvo:respond-approval', async (event, input: unknown) => {
     authorize(event);

@@ -4,6 +4,7 @@ import {
   codexStatusSchema,
   respondApprovalSchema,
   createSessionSchema,
+  decideDelegationSchema,
   desktopEventSchema,
   hostHealthSchema,
   sendMessageSchema,
@@ -19,6 +20,13 @@ const api: DesktopApi = {
     claudeStatusSchema.parse(await ipcRenderer.invoke('nesvo:claude-status')),
   codexStatus: async () =>
     codexStatusSchema.parse(await ipcRenderer.invoke('nesvo:codex-status')),
+  decideDelegation: async input =>
+    sessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-delegation',
+        decideDelegationSchema.parse(input),
+      ),
+    ),
   respondApproval: async input =>
     sessionSchema.parse(
       await ipcRenderer.invoke(
