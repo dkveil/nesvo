@@ -3,6 +3,8 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
+P0 was accepted when Damian authorized P1. P1 implements an interactive preview for owner review; starting P2 still requires a separate acceptance.
+
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
 

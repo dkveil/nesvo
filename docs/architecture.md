@@ -58,7 +58,9 @@ app -> pages/widgets -> features -> entities -> shared
 
 Create only the layers needed by actual features. Imports move downward; cross-slice imports use public entry points.
 Sibling features do not reach into each other's implementation. Shared contains generic UI and utilities, not session state or orchestration rules.
-P0 contains one App and shared UI; empty feature directories would add no value yet.
+P1 composes a workspace page from session navigation, conversation, details and review widgets. Creation and live host status are features; session presentation types live in entities/session. Public slice entry points define the imports.
+
+Demonstration fixtures belong to pages/workspace/demo-data.ts. The page owns temporary preview sessions, selection and per-session drafts. These are explicitly non-authoritative UI examples, not a replacement for the host's future session state. P2 will introduce the real session contract and provider adapter. No mock response is presented as an actual agent operation.
 
 ## Deliberate P0 limits
 

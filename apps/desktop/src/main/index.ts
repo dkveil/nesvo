@@ -21,8 +21,8 @@ void app.whenReady().then(() => {
   let window: BrowserWindow | null = null;
   const createWindow = () => {
     const next = new BrowserWindow({
-      width: 1000,
-      height: 720,
+      width: 1320,
+      height: 860,
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
@@ -33,6 +33,7 @@ void app.whenReady().then(() => {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        backgroundThrottling: !smokeTest,
       },
     });
     window = next;

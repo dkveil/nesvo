@@ -11,7 +11,7 @@ Damian explicitly chose limited testing for prototype delivery. Protect meaningf
 - Review visual and low-risk copy changes manually. Do not add unit tests solely for JSX, styles, wrappers or getters.
 - No coverage percentage, mandatory unit-test count, one-test-per-function policy or large component snapshots.
 
-Current P0 checks:
+Current checks:
 
 | Check                            | Evidence                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -21,6 +21,8 @@ Current P0 checks:
 
 Tests use dedicated temporary directories and no provider accounts. They must not operate real project data or existing agent processes.
 The desktop smoke scenario can run against either build output or an unpacked package.
+
+P1 extends that same desktop scenario with session navigation, per-session drafts, provider/model changes, optional working directories, a local preview message, cancellation, search and compact panels. It verifies that sample permission and review actions stay inactive. No unit-test suite or visual snapshot baseline was added.
 
 ## Before reporting completion
 
