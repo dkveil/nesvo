@@ -87,20 +87,21 @@ export function CreateSession({
       }}
     >
       <DialogContent
-        className="max-h-[90dvh] overflow-y-auto"
+        className="max-h-[90dvh] gap-0 overflow-y-auto border-input/70 bg-[#080808] p-0 sm:max-w-[34rem]"
         onCloseAutoFocus={event => {
           event.preventDefault();
           onReturnFocus();
         }}
       >
-        <DialogHeader>
-          <DialogTitle>Nowa sesja</DialogTitle>
-          <DialogDescription>
-            Rozmowa zostanie zapisana lokalnie. Agent uruchomi się po wysłaniu
-            pierwszej wiadomości.
+        <DialogHeader className="border-b px-5 py-4 text-left">
+          <DialogTitle className="text-xl tracking-tight">
+            Nowa sesja
+          </DialogTitle>
+          <DialogDescription className="mt-1 max-w-sm text-xs leading-5">
+            Agent uruchomi się po pierwszej wiadomości.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={event => void submit(event)} className="space-y-5">
+        <form onSubmit={event => void submit(event)} className="space-y-4 p-5">
           <div className="space-y-2">
             <Label htmlFor="session-title">Nazwa sesji</Label>
             <Input
@@ -112,138 +113,147 @@ export function CreateSession({
               disabled={pending}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="session-provider">Provider</Label>
-              <Select
-                value={provider}
-                disabled={pending}
-                onValueChange={value => {
-                  if (value === 'Claude Code' || value === 'Codex') {
-                    setProvider(value);
-                    setModel('default');
-                    setMode('read-only');
-                  }
-                }}
-              >
-                <SelectTrigger id="session-provider" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Claude Code">Claude Code</SelectItem>
-                  <SelectItem value="Codex">Codex</SelectItem>
-                </SelectContent>
-              </Select>
+          <section className="space-y-3 rounded-xl border bg-background/50 p-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="session-provider">Provider</Label>
+                <Select
+                  value={provider}
+                  disabled={pending}
+                  onValueChange={value => {
+                    if (value === 'Claude Code' || value === 'Codex') {
+                      setProvider(value);
+                      setModel('default');
+                      setMode('read-only');
+                    }
+                  }}
+                >
+                  <SelectTrigger id="session-provider" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Claude Code">Claude Code</SelectItem>
+                    <SelectItem value="Codex">Codex</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="session-model">Model</Label>
+                <Select
+                  value={selectedModel}
+                  disabled={pending || models.length === 0}
+                  onValueChange={setModel}
+                >
+                  <SelectTrigger id="session-model" className="w-full">
+                    <SelectValue placeholder="Domyślny" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map(option => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="session-model">Model</Label>
-              <Select
-                value={selectedModel}
-                disabled={pending || models.length === 0}
-                onValueChange={setModel}
-              >
-                <SelectTrigger id="session-model" className="w-full">
-                  <SelectValue placeholder="Domyślny" />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map(option => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.label}
+            <div className="space-y-2 text-[11px]">
+              <div className="flex items-center justify-between gap-2">
+                <span role="status" className="text-muted-foreground">
+                  {providerStatusLabel(provider, providerState)}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1 text-[11px] font-normal"
+                  disabled={pending || providerState.loading}
+                  onClick={() => onRefreshProvider(provider)}
+                >
+                  Odśwież status
+                </Button>
+              </div>
+              {providerState.error && (
+                <p
+                  role="alert"
+                  className="text-destructive [overflow-wrap:anywhere]"
+                >
+                  {providerState.error}
+                </p>
+              )}
+              {providerState.status?.detail && (
+                <p className="text-muted-foreground leading-5 [overflow-wrap:anywhere]">
+                  {providerState.status.detail}
+                </p>
+              )}
+            </div>
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              Model zostanie sprawdzony przy uruchomieniu.
+            </p>
+          </section>
+          <section className="space-y-3 rounded-xl border bg-background/50 p-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="session-role">Rola sesji</Label>
+                <Select
+                  value={role}
+                  disabled={pending}
+                  onValueChange={value => {
+                    if (value === 'orchestrator' || value === 'standalone') {
+                      setRole(value);
+                      if (value === 'orchestrator') setMode('read-only');
+                    }
+                  }}
+                >
+                  <SelectTrigger id="session-role" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="orchestrator">Orkiestrator</SelectItem>
+                    <SelectItem value="standalone">
+                      Samodzielna sesja
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="session-mode">Tryb pracy</Label>
+                <Select
+                  value={selectedMode}
+                  disabled={
+                    pending || provider === 'Claude Code' || orchestrating
+                  }
+                  onValueChange={value => {
+                    if (value === 'read-only' || value === 'supervised')
+                      setMode(value);
+                  }}
+                >
+                  <SelectTrigger id="session-mode" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="read-only">
+                      {modeLabels['read-only']}
+                    </SelectItem>
+                    {provider === 'Codex' && (
+                      <SelectItem value="supervised">
+                        {modeLabels.supervised}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <span role="status" className="text-muted-foreground">
-                {providerStatusLabel(provider, providerState)}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={pending || providerState.loading}
-                onClick={() => onRefreshProvider(provider)}
-              >
-                Odśwież status
-              </Button>
-            </div>
-            {providerState.error && (
-              <p
-                role="alert"
-                className="text-destructive [overflow-wrap:anywhere]"
-              >
-                {providerState.error}
-              </p>
-            )}
-            {providerState.status?.detail && (
-              <p className="text-muted-foreground [overflow-wrap:anywhere]">
-                {providerState.status.detail}
-              </p>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {provider === 'Claude Code'
-              ? 'Obsługiwane aliasy Claude Code. Dostępność modelu na koncie zostanie sprawdzona przy uruchomieniu.'
-              : 'Modele udostępnione przez lokalny Codex. Dostępność na koncie zostanie sprawdzona przy uruchomieniu.'}
-          </p>
-          <div className="space-y-2">
-            <Label htmlFor="session-mode">Tryb pracy</Label>
-            <Select
-              value={selectedMode}
-              disabled={pending || provider === 'Claude Code' || orchestrating}
-              onValueChange={value => {
-                if (value === 'read-only' || value === 'supervised')
-                  setMode(value);
-              }}
-            >
-              <SelectTrigger id="session-mode" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="read-only">
-                  {modeLabels['read-only']}
-                </SelectItem>
-                {provider === 'Codex' && (
-                  <SelectItem value="supervised">
-                    {modeLabels.supervised}
-                  </SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-            <p className="text-xs leading-relaxed text-muted-foreground">
+            <p className="text-[11px] leading-5 text-muted-foreground">
               {orchestrating
-                ? 'Orkiestrator czyta i proponuje do dwóch workerów. Każdego zatwierdzasz osobno, widząc zakres i uprawnienia. Zmiany mogą wykonywać zatwierdzeni workerzy.'
+                ? 'Orkiestrator tylko czyta. Proponuje do dwóch workerów; przed uruchomieniem zatwierdzasz każdego i jego uprawnienia.'
                 : selectedMode === 'read-only'
                   ? provider === 'Claude Code'
-                    ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
-                    : 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
-                  : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody.'}
+                    ? 'Odczyt i wyszukiwanie plików. Bez edycji i poleceń terminala.'
+                    : 'Odczyt plików i polecenia do odczytu. Zapis i podwyższanie uprawnień są wyłączone.'
+                  : 'Zmiany w katalogu pracy. Codex prosi o zgodę przy wymagających jej operacjach; nie przy każdej zmianie.'}
             </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="session-role">Rola sesji</Label>
-            <Select
-              value={role}
-              disabled={pending}
-              onValueChange={value => {
-                if (value === 'orchestrator' || value === 'standalone') {
-                  setRole(value);
-                  if (value === 'orchestrator') setMode('read-only');
-                }
-              }}
-            >
-              <SelectTrigger id="session-role" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="orchestrator">Orkiestrator</SelectItem>
-                <SelectItem value="standalone">Samodzielna sesja</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          </section>
           <div className="space-y-2">
             <Label htmlFor="session-directory">
               Katalog pracy{' '}
@@ -262,10 +272,9 @@ export function CreateSession({
             />
             <p
               id="directory-help"
-              className="text-xs leading-relaxed text-muted-foreground"
+              className="text-[11px] leading-5 text-muted-foreground"
             >
-              Puste pole tworzy osobny lokalny folder. Wybrany katalog nie musi
-              być repozytorium Git.
+              Bez ścieżki utworzymy osobny folder. Git nie jest wymagany.
             </p>
           </div>
           {error && (
@@ -276,7 +285,7 @@ export function CreateSession({
               {error}
             </p>
           )}
-          <DialogFooter>
+          <DialogFooter className="border-t pt-4">
             <Button
               type="button"
               variant="outline"

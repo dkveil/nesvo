@@ -45,11 +45,11 @@ function ReviewVersion({
       id={`review-${review.id}`}
       role="region"
       aria-label={`Wynik sesji: wersja ${review.version}`}
-      className="group/review border-b last:border-b-0"
+      className="group/review border-b border-border/70 last:border-b-0"
     >
       <summary
         aria-label={`Otwórz wersję ${review.version}`}
-        className="cursor-pointer list-none py-4 focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+        className="cursor-pointer list-none py-4 text-muted-foreground transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
       >
         <span className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-medium">Wersja {review.version}</span>
@@ -145,7 +145,7 @@ function ReviewVersion({
               {review.diff.patch && (
                 <pre
                   aria-label="Zapisany diff"
-                  className="max-h-[32rem] overflow-auto rounded-md border bg-muted/20 p-3 text-xs leading-6"
+                  className="max-h-[32rem] overflow-auto rounded-lg border bg-card p-3 text-xs leading-6"
                 >
                   <code>{review.diff.patch}</code>
                 </pre>

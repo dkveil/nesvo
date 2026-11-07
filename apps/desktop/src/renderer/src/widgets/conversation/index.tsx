@@ -1,14 +1,9 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import {
-  ArrowUp,
-  Bot,
-  CircleUserRound,
-  MessageSquare,
-  Square,
-} from 'lucide-react';
+import { ArrowUp, Bot, CircleUserRound, Square } from 'lucide-react';
 import type { RespondApprovalInput } from '@nesvo/contracts';
 import {
   modeLabels,
+  modelLabel,
   roleLabels,
   statusLabels,
   type Session,
@@ -70,6 +65,98 @@ export function Conversation({
     ) ||
       workers.some(worker => worker.parentRunId === session.runId));
   const stopLabel = groupRun ? 'Stop grupy' : 'Stop';
+  const empty =
+    session.messages.length === 0 &&
+    !running &&
+    !session.error &&
+    !error &&
+    session.pendingApprovals.length === 0 &&
+    session.delegations.length === 0;
+  const composer = (
+    <form
+      className="mx-auto w-full max-w-3xl"
+      onSubmit={event => {
+        event.preventDefault();
+        if (draft.trim() && canSend) onSend();
+      }}
+    >
+      <label htmlFor="message-input" className="sr-only">
+        Wiadomość
+      </label>
+      <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
+        <Textarea
+          id="message-input"
+          placeholder="Napisz, czym chcesz się zająć…"
+          value={draft}
+          onChange={event => onDraft(event.target.value)}
+          maxLength={32000}
+          className="max-h-48 min-h-20 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+        />
+        <div className="flex items-end justify-between gap-3 px-1 pt-3">
+          <span className="min-w-0 text-[11px] leading-5 text-muted-foreground">
+            {otherRun
+              ? 'Trwa praca w innej sesji'
+              : sending
+                ? 'Wysyłanie…'
+                : session.delegations.some(
+                      delegation =>
+                        delegation.runId === session.runId &&
+                        delegation.status === 'pending',
+                    )
+                  ? 'Oczekuje na decyzję o workerach'
+                  : session.pendingApprovals.length > 0
+                    ? 'Oczekuje na decyzję operatora'
+                    : modeLabels[session.mode]}
+          </span>
+          <div className="flex shrink-0 items-center gap-3">
+            <span
+              className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
+              title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
+            >
+              {session.provider} ·{' '}
+              {session.actualModel ?? modelLabel(session.model)}
+            </span>
+            {running ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={session.status === 'stopping'}
+                onClick={onStop}
+                aria-label={stopLabel}
+                title={
+                  groupRun
+                    ? 'Zatrzymaj orkiestratora i jego workerów'
+                    : 'Zatrzymaj tę sesję'
+                }
+              >
+                <Square />
+                {session.status === 'stopping'
+                  ? groupRun
+                    ? 'Zatrzymywanie grupy…'
+                    : 'Zatrzymywanie…'
+                  : stopLabel}
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                size="icon-sm"
+                className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
+                disabled={!draft.trim() || !canSend}
+                aria-label="Wyślij wiadomość"
+                title="Wyślij wiadomość"
+              >
+                <ArrowUp />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      <p className="mt-2 truncate px-1 text-[11px] text-muted-foreground sm:hidden">
+        {session.provider} · {session.actualModel ?? modelLabel(session.model)}
+      </p>
+    </form>
+  );
   useEffect(() => {
     const viewport = bottom.current?.closest<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -102,21 +189,15 @@ export function Conversation({
       aria-label="Rozmowa"
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto max-w-3xl space-y-8 px-5 py-8 lg:px-8">
-          {session.messages.length === 0 && (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-center">
-              <MessageSquare className="size-7 text-muted-foreground" />
-              <h2 className="text-lg font-medium">Od czego zaczynamy?</h2>
-              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-                Opisz cel i zakres analizy. Agent odpowie w wybranym trybie
-                pracy.
-              </p>
-            </div>
-          )}
+      <ScrollArea
+        className={
+          empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
+        }
+      >
+        <div className="mx-auto max-w-3xl space-y-9 px-5 py-10 lg:px-6">
           {session.messages.map(message => (
-            <article key={message.id} className="flex gap-3">
-              <div className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
+            <article key={message.id} className="flex gap-3.5">
+              <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
                 {message.author === 'operator' ? (
                   <CircleUserRound className="size-4" />
                 ) : (
@@ -124,17 +205,17 @@ export function Conversation({
                 )}
               </div>
               <div className="min-w-0 space-y-2 pt-0.5">
-                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
                   {message.author === 'operator'
                     ? 'Ty'
                     : roleLabels[session.role]}
                   {message.author === 'agent' && (
-                    <span className="text-xs font-normal text-muted-foreground">
+                    <span className="text-[11px] font-normal text-muted-foreground">
                       {session.provider} · {statusLabels[message.state]}
                     </span>
                   )}
                 </div>
-                <p className="text-sm leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
                   {message.body ||
                     (message.state === 'running'
                       ? 'Oczekiwanie na odpowiedź…'
@@ -159,7 +240,7 @@ export function Conversation({
                 key={`${session.runId}/${approval.id}`}
                 id={`approval-${approval.id}`}
                 aria-label="Zgoda operatora"
-                className="space-y-3 rounded-lg border p-4"
+                className="space-y-3 rounded-xl border bg-card/70 p-4"
               >
                 <p className="text-xs text-muted-foreground">
                   {approval.kind === 'command'
@@ -238,77 +319,20 @@ export function Conversation({
           <div ref={bottom} />
         </div>
       </ScrollArea>
-      <div className="shrink-0 px-5 pt-3 pb-2 lg:px-8">
-        <form
-          className="mx-auto max-w-3xl"
-          onSubmit={event => {
-            event.preventDefault();
-            if (draft.trim() && canSend) onSend();
-          }}
-        >
-          <label htmlFor="message-input" className="sr-only">
-            Wiadomość
-          </label>
-          <div className="rounded-xl border bg-background p-2 focus-within:ring-2 focus-within:ring-ring/30">
-            <Textarea
-              id="message-input"
-              placeholder="Napisz, czym chcesz się zająć…"
-              value={draft}
-              onChange={event => onDraft(event.target.value)}
-              maxLength={32000}
-              className="max-h-40 min-h-14 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-            />
-            <div className="flex items-center justify-between gap-3 px-1 pt-1">
-              <span className="text-xs text-muted-foreground">
-                {otherRun
-                  ? 'Trwa praca w innej sesji'
-                  : sending
-                    ? 'Wysyłanie…'
-                    : session.delegations.some(
-                          delegation =>
-                            delegation.runId === session.runId &&
-                            delegation.status === 'pending',
-                        )
-                      ? 'Oczekuje na decyzję o workerach'
-                      : session.pendingApprovals.length > 0
-                        ? 'Oczekuje na decyzję operatora'
-                        : modeLabels[session.mode]}
-              </span>
-              {running ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={session.status === 'stopping'}
-                  onClick={onStop}
-                  aria-label={stopLabel}
-                  title={
-                    groupRun
-                      ? 'Zatrzymaj orkiestratora i jego workerów'
-                      : 'Zatrzymaj tę sesję'
-                  }
-                >
-                  <Square />
-                  {session.status === 'stopping'
-                    ? groupRun
-                      ? 'Zatrzymywanie grupy…'
-                      : 'Zatrzymywanie…'
-                    : stopLabel}
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  size="icon-sm"
-                  disabled={!draft.trim() || !canSend}
-                  aria-label="Wyślij wiadomość"
-                  title="Wyślij wiadomość"
-                >
-                  <ArrowUp />
-                </Button>
-              )}
-            </div>
-          </div>
-        </form>
+      {empty && (
+        <div className="mx-auto mt-auto w-full max-w-3xl px-5 pt-10 pb-7 text-center lg:px-6">
+          <h2 className="text-2xl font-medium tracking-tight sm:text-[1.875rem]">
+            Od czego zaczynamy?
+          </h2>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Opisz zadanie dla {session.provider}.
+          </p>
+        </div>
+      )}
+      <div
+        className={`shrink-0 px-5 lg:px-6 ${empty ? 'mb-auto pb-12' : 'pt-3 pb-4'}`}
+      >
+        {composer}
       </div>
     </section>
   );

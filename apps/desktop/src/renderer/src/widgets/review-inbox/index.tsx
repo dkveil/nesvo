@@ -190,11 +190,15 @@ export function ReviewInbox({
     <ScrollArea className="min-h-0 min-w-0 flex-1">
       <section
         aria-label="Skrzynka odbioru"
-        className="mx-auto max-w-4xl space-y-5 px-5 py-6 lg:px-8"
+        className="mx-auto max-w-3xl space-y-6 px-5 py-8 lg:px-6"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-medium">
-            {filter === 'history' ? 'Historia decyzji' : 'Do decyzji'}
+            {filter === 'history'
+              ? 'Historia decyzji'
+              : filter === 'all'
+                ? 'Wszystkie sprawy'
+                : `Oczekujące · ${rows.length}`}
           </h2>
           <div className="flex items-center gap-2">
             <Label
@@ -255,7 +259,7 @@ export function ReviewInbox({
                   <article
                     key={`review/${row.id}`}
                     aria-label={`Odbiór wyniku: ${review.title}, wersja ${review.version}`}
-                    className="space-y-3 px-1 py-5"
+                    className="space-y-2.5 px-1 py-5"
                   >
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <CheckCheck className="size-3.5" />
@@ -337,7 +341,7 @@ export function ReviewInbox({
                     key={`approval/${row.id}`}
                     aria-label={`Zgoda na operację: ${session.title}`}
                     data-approval-id={approval.id}
-                    className="space-y-3 px-1 py-5"
+                    className="space-y-2.5 px-1 py-5"
                   >
                     <p className="flex items-center gap-2 text-xs text-muted-foreground">
                       <ShieldCheck className="size-3.5" />
@@ -421,7 +425,7 @@ export function ReviewInbox({
                 <article
                   key={`delegation/${row.id}`}
                   aria-label={`Uruchomienie workera: ${delegation.title}`}
-                  className="space-y-3 px-1 py-5"
+                  className="space-y-2.5 px-1 py-5"
                 >
                   <p className="flex items-center gap-2 text-xs text-muted-foreground">
                     <GitBranch className="size-3.5" />

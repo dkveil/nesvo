@@ -12,9 +12,9 @@ type Props = { session: Session };
 
 export function SessionDetails({ session }: Props) {
   return (
-    <div className="space-y-6 p-5">
+    <div className="space-y-7 p-5">
       <section aria-label="Informacje o sesji" className="space-y-4">
-        <h2 className="text-sm font-semibold">Szczegóły sesji</h2>
+        <h2 className="text-xs font-medium">Szczegóły sesji</h2>
         <dl className="space-y-3 text-xs">
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Rola</dt>
@@ -48,7 +48,7 @@ export function SessionDetails({ session }: Props) {
       </section>
       {session.scope && (
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold">Zakres workera</h2>
+          <h2 className="text-xs font-medium">Zakres workera</h2>
           <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
             {session.scope}
           </p>
@@ -70,7 +70,7 @@ export function SessionDetails({ session }: Props) {
       </section>
       <Separator />
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Delegacja</h2>
+        <h2 className="text-xs font-medium">Delegacja</h2>
         <p className="text-xs leading-relaxed text-muted-foreground">
           {session.parentId
             ? 'Ta sesja wykonuje zadanie orkiestratora i przekazuje mu wynik. Worker nie tworzy kolejnych workerów. Stop zatrzymuje tylko tę sesję.'

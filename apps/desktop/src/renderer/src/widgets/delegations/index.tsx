@@ -71,7 +71,7 @@ export function Delegations({
             key={delegation.id}
             id={`delegation-${delegation.id}`}
             aria-label="Propozycja workera"
-            className="space-y-3 rounded-lg border p-4"
+            className="space-y-3 rounded-xl border bg-card/60 p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
