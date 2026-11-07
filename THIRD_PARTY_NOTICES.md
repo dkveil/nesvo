@@ -5,7 +5,7 @@ Electron distributions retain their included license files.
 
 ## shadcn UI components
 
-The Button, Card and Badge source files in apps/desktop/src/renderer/src/shared/ui are distributed under the following license.
+The UI component source files in apps/desktop/src/renderer/src/shared/ui are distributed under the following license.
 
 MIT License
 
