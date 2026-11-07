@@ -13,16 +13,18 @@ Damian explicitly chose limited testing for prototype delivery. Protect meaningf
 
 Current checks:
 
-| Check                            | Evidence                                                                                  |
-| -------------------------------- | ----------------------------------------------------------------------------------------- |
-| Host lifecycle integration       | Invalid input rejected, health correlated, identity survives restart, clean shutdown      |
-| Schema compatibility integration | Newer database refused and version preserved                                              |
-| Desktop scenario                 | Actual Electron/preload/host/database path, refresh, isolated renderer and child shutdown |
+| Check                            | Evidence                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------- |
+| Host lifecycle integration       | Migration, identity, session persistence, streaming, idempotency, resume, Stop and cleanup  |
+| Schema compatibility integration | Newer database refused and version preserved                                                |
+| Desktop scenario                 | Electron/preload/host/database path, session UI, streaming, reload, Stop and child shutdown |
 
 Tests use dedicated temporary directories and no provider accounts. They must not operate real project data or existing agent processes.
 The desktop smoke scenario can run against either build output or an unpacked package.
 
-P1 extends that same desktop scenario with session navigation, per-session drafts, provider/model changes, optional working directories, a local preview message, cancellation, search and compact panels. It verifies that sample permission and review actions stay inactive. No unit-test suite or visual snapshot baseline was added.
+P2 extends the same two host cases and the same desktop scenario. A local CLI fixture checks analysis flags and stdin, streams text, retains a resume marker, emits provider errors and spawns an owned child for cancellation checks. The host scenario verifies that partial text precedes completion, repeated message IDs do not start another turn, Stop stays responsive, failed results never become completed, restart restores history, unfinished runs recover as interrupted, and shutdown cleans the process tree.
+The desktop scenario covers model selection, default and invalid directories, session-specific drafts, real IPC streaming, history after reload, continuation, Stop, visible provider failures, empty inbox, search and compact panels. It runs against both build output and unpacked packages. No unit-test suite or visual snapshot baseline was added.
+Real CLI evidence is recorded separately. The fixture is not proof of subscription availability, successful model output or provider resume behavior. A provider account limit leaves real task acceptance pending even when all automated checks pass.
 
 ## Before reporting completion
 

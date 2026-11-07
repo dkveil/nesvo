@@ -2,7 +2,7 @@
 
 A desktop workspace for technical sessions, visible delegation and operator review.
 
-The approved prototype targets Windows, macOS and Linux. P0 provides a separate local host, validated contracts and persistent host identity. P1 adds an interactive layout for sessions, conversations, delegation and the review inbox, with clearly labeled demonstration data.
+The approved prototype targets Windows, macOS and Linux. P2 connects the desktop to installed Claude Code for read-only technical conversations, streaming, Stop and persistent history. P0 and the initial P1 layout are accepted; P2 awaits a successful real task and Damian's acceptance.
 
 ## Start
 
@@ -13,7 +13,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The desktop opens a sample orchestration session in a neutral dark workspace. The bottom bar shows the real connection to the local host; its refresh button checks the host and database. Closing the application stops its host. On macOS, use Quit to exit the application; closing the last window keeps it available in the dock.
+The desktop opens your saved sessions in a neutral dark workspace. Use Nowa sesja to choose a model and an optional directory, then send a message. A directory does not need Git; leaving it empty creates a separate local working folder. The bottom bar shows the real host connection and lets you refresh Claude Code availability. Closing the application stops its active turn and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
 
 The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host.
 
@@ -38,17 +38,19 @@ scripts          One desktop integration scenario
 | bun run package:dir   | Produce an unpacked native desktop package             |
 | bun run format        | Format current workspace files                         |
 
-No provider account or API key is required for P1. Session creation and messages are local UI previews that reset on reload. The sample model list does not represent installed provider capabilities. Approval and review actions are visibly inactive; no agents or project commands run.
+Install the native Claude Code CLI and sign in using `claude auth login`. Nesvo uses that existing login and requires no new model API key. It checks the installed CLI's required flags and authentication before execution. Model choices are documented CLI aliases; actual account access is confirmed by the provider, and the running model is shown in session details.
 
-## P1 acceptance walkthrough
+P2 runs in analysis mode with Read, Glob and Grep. It does not enable edits, terminal commands, workers or review decisions. One turn runs at a time. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion.
 
-1. Switch between the orchestrator and its two workers in the session list or delegation panel.
-2. Open Do odbioru, inspect the sample result and return to its session.
-3. Use Nowa sesja to choose a provider, sample model and role, with or without a working directory.
-4. Add a local preview message; switch sessions and check that each composer keeps its own draft.
-5. Open session details from the header. Resize the window to use slide-out session navigation on smaller widths.
+## P2 acceptance walkthrough
 
-Damian's P1 acceptance is required before real provider integration in P2.
+1. Confirm that Claude Code is detected and logged in, then create a session in a small known directory.
+2. Ask it to summarize a file and observe the streamed response. Confirm the actual model in session details.
+3. Reload or restart the application and continue the same conversation.
+4. Start another response and press Stop. Confirm the stopped state and preserved partial output.
+5. Switch sessions, check separate drafts, and open navigation/details in a smaller window.
+
+Damian's P2 acceptance is required before P3. On November 7, the local account reported its weekly limit until November 8 at 20:00 Europe/Warsaw. Actual CLI startup, limit handling, reload and Stop were verified; successful model output still requires account availability. See [platform evidence](docs/platforms.md).
 
 ## Working agreement
 

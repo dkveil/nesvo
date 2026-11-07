@@ -11,8 +11,8 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The initial screen is the P1 workspace preview, built from neutral dark shadcn components. The window uses dark appearance from startup. Session details open on demand, leaving the main area for the conversation.
-The real host connection appears in the bottom bar. All sessions, results, model choices and permissions are labeled demonstration data. Created sessions, messages and drafts remain in renderer memory and reset on reload.
+The P2 workspace uses neutral dark shadcn components. Session details open on demand, leaving the main area for the conversation. SQLite owns session history; only selection and unsent drafts remain in renderer memory.
+The bottom bar shows the host connection and Claude Code status. Install the native CLI and use `claude auth login` in a terminal. The desktop never reads or displays credentials. Missing installation, incompatible CLI flags, missing login and provider failures are distinct states.
 
 ## Build and check
 
@@ -35,13 +35,13 @@ Remove-Item Env:NESVO_PACKAGED_EXECUTABLE
 ```
 
 Optional NESVO_SCREENSHOT saves the smoke scenario's visible state to an explicit path.
-The scenario starts a hidden window and uses an isolated temporary directory.
+The scenario starts a hidden window, uses an isolated temporary directory and explicitly selects the CLI fixture. It never uses a provider account. Fixture text is test evidence, not proof of model availability.
 
 ## Standalone host
 
 Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run host.
-Each stdin line is a JSON object with a UUID id and method health or shutdown.
-Responses are JSONL on stdout; diagnostics go to stderr. Closing stdin also closes the host.
+Each stdin line is a JSON object validated by packages/contracts: health, claude-status, list-sessions, create-session, send-message, stop-run or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId.
+Responses and session-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active turn.
 
 ## Local data
 
@@ -49,6 +49,9 @@ The desktop stores its host database under Electron's userData directory, in hos
 On Windows this normally means %APPDATA%/Nesvo/host.
 NESVO_DATA_DIR overrides the desktop userData directory, or the standalone host data directory.
 Use different directories for standalone and desktop development. Never point test runs at your real data.
+Empty working-directory input creates a dedicated folder under the host's workspaces directory. Existing directories are resolved and validated without requiring Git. Claude retains its own resume transcript in its configured location; Nesvo stores a separate provider session identifier and conversation snapshot.
+
+NESVO_CLAUDE_EXECUTABLE optionally selects an absolute native executable path. A JavaScript CLI entry is launched using the existing Node runtime. The test suite uses this override for its local fixture. Production discovery checks PATH and common native installation locations; shell wrappers are not executed.
 
 P0 has no migration from historical application data. Existing private directories and worktrees remain untouched.
 Do not run git clean or delete ignored files as part of setup.
@@ -57,5 +60,6 @@ Do not run git clean or delete ignored files as part of setup.
 
 If the initial screen reports no connection, retry once and inspect the terminal used to start development.
 An incompatible database fails closed; do not delete it to hide the error.
+If Claude reports an account limit, wait for the reset reported by Claude and retry. Nesvo does not substitute a simulated response, change billing, or automatically retry. A turn is bounded to ten minutes. Stop terminates only the owned process tree; failed cleanup is reported as failure.
 Quit the desktop to stop its utility host. On macOS, closing the last window alone does not quit the app.
 Development IPC and the host expose no network port. The renderer development server uses an available Vite port.
