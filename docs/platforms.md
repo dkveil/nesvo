@@ -1,5 +1,15 @@
 # Platform verification
 
+## P5 English interface and intent-driven delegation
+
+D55 removes the role picker for new root Codex sessions, preserves access permissions and derives the orchestrator role from a valid worker proposal. The interface and current host-generated messages default to English. Compact inbox rows keep the requesting session, a concrete action summary and decisions together; connection diagnostics are available on demand.
+
+Local Windows passed strict types, ESLint, Prettier, build, the existing two host cases and the expanded principal desktop scenario. The first desktop attempt found a stale exact-text selector after the history label was compacted; the corrected scenario passed with the persisted-decision assertions intact. Final visual checks covered a standard window, a compact dialog, retained drafts, inline feedback and exact result navigation. These screenshots use explicit provider fixtures.
+
+A separate Windows test used the standalone Node host, installed Codex 0.156.0, gpt-6-sol and the existing login. Creation omitted the role field. The supervised parent proposed one read-only worker and became an orchestrator without changing permissions; no child existed before approval. The approved worker correctly read a random marker and counted five tasks. The parent returned that result and continued the same native thread in a follow-up. The input file remained unchanged, host shutdown returned zero and the isolated directory was removed. This proves the host/native-provider boundary, not a real-provider Electron run. Writable parents can currently delegate only read-only workers until workspace isolation exists.
+
+Implementation checkpoint 611fb93 passed [foundation checks](https://github.com/dkveil/nesvo/actions/runs/42407313200). Separate [native application and unpacked-package checks](https://github.com/dkveil/nesvo/actions/runs/42407312931) passed on Windows, macOS and Linux. Each OS ran the host checks and the principal desktop scenario in both the built application and the unpacked package, using explicit provider fixtures. Real Codex account evidence remains Windows-only. D56 activity-history and diff-viewer work is a researched follow-up requirement, not part of the implemented D55 feature set. P5 still requires Damian's acceptance; P6 has not started.
+
 ## P5 visual refinement
 
 D54 updates the existing workspace without changing providers, host execution or permissions. The black shell, compact navigation, centered empty-session composer and quieter decision panels are in commits 0fe1f19 and a9c6b2d.
