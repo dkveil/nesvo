@@ -40,6 +40,8 @@ D55 extends these existing checks for intent-driven delegation. Creation omits t
 
 ## Before reporting completion
 
+D57 extends the same host cases and desktop scenario. Provider fixtures emit actual tool start/output/end frames; checks cover persisted timestamps, Stop/restart, late updates, bounded retention and run-specific omission markers. The desktop scenario checks visible activity IDs and statuses, unchanged terminal duration after reload, exact saved review IDs/versions, selected files, numbered additions/deletions, raw patch preservation, older v1 versus corrected v2, compact overflow and Escape/focus return. Real Codex evidence separately exercises file reads and edits through the built Electron app, followed by reload and result acceptance. The diff package's notices are included in native distributions. No additional test suite was introduced.
+
 Run bun run check and bun run build for foundation changes.
 Run bun run smoke:desktop when a desktop or host transport/lifecycle change affects that path.
 After packaging, run the same scenario with NESVO_PACKAGED_EXECUTABLE set to the executable.

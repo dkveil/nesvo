@@ -35,6 +35,10 @@ SQLite uses a versioned bootstrap and transaction, WAL, foreign keys and a busy 
 Schema v4 preserves host identity, provider threads and conversation snapshots. Earlier migrations retain provider modes and pending approvals; v4 adds parent/run relationships, worker scopes, delegation capability and proposals. Existing conversations default to delegation disabled. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Accepting a worker commits both parent and child snapshots in one transaction before launch. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and unsaved snapshots prevent new messages from overwriting results. Restart marks unfinished runs and proposals interrupted and invalidates pending operation approvals.
 SQLite remains on Node's built-in driver. Drizzle integration waits for stable support for this driver; no release candidate is installed. Database types would not replace public Zod request validation.
 
+Schema v6 adds durable tool activity to session snapshots. Each item is identified by its run and native provider item ID, with normalized kind, title, paths, status and timestamps. Output and details are bounded; private reasoning and raw provider payloads are not persisted as activity. Text and activity updates share the existing batched persistence path. Terminal updates cannot regress to running. Stop and restart finalize unfinished items without inventing successful completion, and older sessions default to empty activity and unknown completion timestamps.
+
+Activity retains the latest 100 entries per run and 300 per session. Run-specific markers identify omitted history, including wholly evicted runs; late updates cannot reinsert evicted entries during an active run. Output is limited to its last 4,000 characters, details to 2,000, and paths to ten. Known credential patterns and terminal control sequences are filtered; this is not a guarantee that arbitrary tool output contains no sensitive data.
+
 ## Ownership
 
 | Area                 | Owns                                                 | Must not own                                           |
@@ -59,6 +63,8 @@ The renderer grows with a light feature-sliced structure:
 ```text
 app -> pages/widgets -> features -> entities -> shared
 ```
+
+The workspace composes the activity and result widgets through conversation slots. A lazy-loaded saved-diff widget renders the selected review ID with @pierre/diffs. Its virtualized viewer receives only the saved patch, never current filesystem content. File selection, line wrapping, raw-patch fallback and metadata-only changes stay within that exact version. On wide windows it docks beside the conversation; compact windows hide the covered conversation from keyboard navigation until the panel closes. Accept/correct commands remain in the result and inbox, bound to their existing review revisions. No live working-tree diff or merge is introduced.
 
 Create only the layers needed by actual features. Imports move downward; cross-slice imports use public entry points.
 Sibling features do not reach into each other's implementation. Shared contains generic UI and utilities, not session state or orchestration rules.
