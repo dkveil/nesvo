@@ -33,6 +33,8 @@ Preserve required third-party license notices.
 ## Delivery
 
 During this prototype, work directly on master with small conventional commits. Do not create pull requests.
+Commit frequently at coherent scope boundaries instead of collecting a whole stage in one commit. Each commit should capture one understandable, checked change that can be reverted independently; keep tightly coupled changes together. Do not split work by arbitrary line counts or target a commit quota.
+Push completed checkpoints regularly so recovery does not depend only on the local checkout. Repeat the edit, check and commit cycle within a stage; owner acceptance still happens at the stage boundary.
 Damian is the commit author. Never add AI signatures, Co-Authored-By trailers, generated-by footers or session links.
 Before committing, inspect the staged diff, run applicable checks, and verify no private files are staged.
 Do not edit another worktree, restore a stash, clean ignored directories or operate existing runtime processes.
