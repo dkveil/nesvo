@@ -797,7 +797,9 @@ try {
   await page.getByRole('combobox', { name: 'View', exact: true }).click();
   await page.getByRole('option', { name: 'History', exact: true }).click();
   await reviewRow(correctedReview)
-    .getByText('Accepted', { exact: true })
+    .getByText(`Result · v${correctedReview.version} · Accepted`, {
+      exact: true,
+    })
     .waitFor();
   const persistedReview = (
     await page.evaluate(() => window.nesvo.listReviews())
