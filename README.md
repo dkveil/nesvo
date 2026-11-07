@@ -2,7 +2,7 @@
 
 A desktop workspace for technical sessions, visible delegation and operator review.
 
-The approved prototype targets Windows, macOS and Linux. The desktop connects installed Claude Code and Codex for technical conversations, streaming, Stop and persistent history. Codex adds provider-specific modes, one-time operation approvals and visible delegation. P0, the initial P1 layout, the delivered Codex scope of P3 and P4 are accepted. P5's inbox for human review of saved result versions is ready for owner acceptance; successful Claude task evidence remains open in P2.
+The approved prototype targets Windows, macOS and Linux. The desktop connects installed Claude Code and Codex for technical conversations, streaming, Stop and persistent history. Codex adds provider-specific modes, one-time operation approvals and visible delegation. P0, the initial P1 layout, the delivered Codex scope of P3 and P4 are accepted. P5 provides direct decisions on session-linked inbox rows; successful Claude task evidence remains open in P2.
 
 ## Start
 
@@ -40,7 +40,7 @@ scripts          One desktop integration scenario
 
 Install the native Claude Code or Codex CLI and sign in using `claude auth login` or `codex login`. Nesvo uses that existing login and requires no new model API key. It checks the installed CLI and authentication before execution. Claude choices are CLI aliases; Codex choices come from its local model catalog. Actual account access is confirmed by the provider, and the running model is shown in session details.
 
-Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs at a time: an orchestrator with up to two approved workers, or a single independent session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. Successful turns create results in Do odbioru. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
+Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs at a time: an orchestrator with up to two approved workers, or a single independent session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. Do decyzji brings operation approvals, worker proposals and successful results into one list with distinct action labels. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
 
 ## P2 acceptance walkthrough
 
@@ -74,11 +74,11 @@ P4's real demonstration uses Codex. Claude can be a read-only worker, with succe
 
 ## P5 acceptance walkthrough
 
-1. Create a supervised Codex session in a small disposable directory. Ask it to edit a text file, then open Do odbioru when the group finishes.
-2. Inspect the task, author, result version, response and saved diff. Existing dirty contents are the baseline; the diff compares the start and end of that turn, without changing the workspace or Git index.
-3. Enter Uwagi do poprawy and use Odeślij do poprawy. This explicitly starts another turn in the same session, provider thread, directory and permissions. The app opens that conversation.
-4. Open the new result version. The previous decision remains in its history; its acceptance is not inherited. Each version shows its own turn's delta, with earlier versions available below.
-5. Use Zaakceptuj wynik and reload the application. Confirm the accepted version and correction history. An old card cannot accept a replaced result, and external changes to captured files block stale acceptance.
+1. Create a supervised Codex session in a small disposable directory and ask it to edit a text file. Open Do decyzji. Pending operations show the requesting session and their own approve/deny buttons; completed results show result acceptance actions.
+2. Read the short description and version in the row. Its session-name link opens the conversation at that exact request or saved result. Full task, answer, diff and decision history live there, without a separate inbox detail screen. Existing dirty contents are the baseline; the diff compares the start and end of that turn without changing the workspace or Git index.
+3. On the result row, use Odeślij do poprawy, enter Uwagi do poprawy and select Wyślij uwagi. This explicitly starts another turn in the same session, provider thread, directory and permissions. The app opens that conversation. Unsaved feedback survives navigation between the list and session.
+4. Return to the inbox for the new result version. The previous decision remains in history; its acceptance is not inherited. Each version shows its own turn's delta inside the conversation.
+5. Use Zaakceptuj wynik directly on the new row and reload the application. Select Historia to confirm the accepted version and correction history. Session links still open the exact historical version. An old result cannot accept a replaced version, and external changes to captured files block stale acceptance.
 
 The inbox receives successful turns completed after P5 was installed; it does not fabricate results for older conversations or stopped/failed runs. Read-only results are reviewed as saved responses. Parent summaries link to exact worker results; accepting a summary does not accept those workers automatically. Continuing a child invalidates dependent parent summaries. When continuing a parent without another delegation, it receives the latest saved child summaries and retains their result references.
 
