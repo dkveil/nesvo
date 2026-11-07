@@ -660,9 +660,7 @@ function codexSkillListing(
   return { skills: entry.skills, errors: entry.errors };
 }
 
-function codexSkillMetadata(
-  value: unknown,
-): {
+function codexSkillMetadata(value: unknown): {
   reference: SkillReference;
   scope: string;
   description: string;
