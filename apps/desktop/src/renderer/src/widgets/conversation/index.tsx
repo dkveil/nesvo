@@ -232,6 +232,7 @@ export function Conversation({
               firstAgents.get(message.runId) === message.id &&
               (live ||
                 !!message.completedAt ||
+                session.activityTruncatedRunIds.includes(message.runId) ||
                 session.activities.some(item => item.runId === message.runId));
             return (
               <article key={message.id} className="space-y-3">
