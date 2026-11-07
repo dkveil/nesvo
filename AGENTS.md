@@ -3,7 +3,7 @@
 ## Current scope and owner gates
 
 This repository contains the approved desktop prototype, planned for November 16, 2026.
-P0 and P1 are accepted. Damian authorized Codex in P3 while the real Claude success evidence for P2 waits for quota recovery (D50). Read docs/roadmap.md and the linked Linear issue before starting a package. This exception does not accept P2 or P3.
+P0, P1 and the delivered Codex scope of P3 are accepted. D51 authorizes P4, visible delegation with operator approval. Real Claude success evidence remains open in P2 after the D50 exception. Read docs/roadmap.md and the linked Linear issue before starting a package.
 Finish a small stage, provide a working demonstration and evidence, then wait for Damian's acceptance before starting the next stage.
 In Review means ready for the owner; Done requires his explicit acceptance. Keep Linear status and STATUS comments current.
 Discuss changes in Polish. Write code, repository documentation and commit messages in English.
@@ -27,7 +27,8 @@ Use base shadcn components with neutral dark defaults. Black is the primary appe
 Keep the workspace minimal: flat session rows, few badges, conversation-first space and session details on demand. Minimal Geist alignment may be accepted by Damian.
 Do not restore the previous logo, palette or theme. Present UI changes for acceptance before expanding them.
 Keep technical runtime details out of product flows unless they help the operator make a decision.
-Claude Code retains read-only analysis (Read, Glob, Grep), without shell, edits or implicit permission bypass. P3 adds installed Codex with existing login, provider-specific modes and one-time approval responses. Never promise that every workspace edit requires approval when the provider permits it within its sandbox. Never present fixture output or account-limit errors as successful model execution; review and delegation remain future stages.
+Claude Code retains read-only analysis (Read, Glob, Grep), without shell, edits or implicit permission bypass. Codex uses existing login, provider-specific modes and one-time approval responses. Never promise that every workspace edit requires approval when the provider permits it within its sandbox. Never present fixture output or account-limit errors as successful model execution; task review remains a future stage.
+P4 starts delegation only in new read-only Codex orchestrator sessions. Each visible worker requires an explicit operator decision. Limit a group to its parent and two workers, with no recursive delegation. Validate worker directories within the parent directory and reject overlapping write scopes. Parent Stop cancels the group; worker Stop affects only that worker. Existing provider threads are not silently replaced to add new tools.
 Repository content describes Nesvo and its implementation. Keep external product comparisons and research elsewhere.
 Preserve required third-party license notices.
 

@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0 and P1 are accepted. Damian authorized P2 on November 7. D50 then authorized starting Codex in P3 because the Claude account quota prevents real successful-task evidence. P2 remains pending that evidence and owner acceptance; this exception does not accept either stage.
+P0 and P1 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. Damian then accepted the delivered P3 scope and authorized P4 in D51. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -25,6 +25,8 @@ and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji
 Dates are delivery targets, not permission to skip acceptance or silently reduce scope.
 Every stage waits for Damian's acceptance of the previous stage unless he explicitly authorizes an exception, as recorded for P3 in D50. Corrections stay within the current stage.
 Provider modes are based on real capabilities; never simulate unsupported features.
+
+P4 uses new read-only Codex orchestrators with a native delegation tool and at most two visible workers per run. The operator decides on each proposal before launch. Workers can use Codex or Claude capabilities already implemented; real P4 demonstration uses Codex while Claude remains quota-limited. Worker scopes stay within the parent directory, and overlapping writable directories are rejected. Stop on the parent cancels its group; Stop on a worker leaves its sibling running. Existing conversations keep their provider threads and do not acquire delegation silently.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.
