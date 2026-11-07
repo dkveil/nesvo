@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   delegationPlanSchema,
@@ -26,6 +26,12 @@ import {
 import { SessionStore } from './store';
 import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
+import { resolveSessionSkill } from '../skills/service';
+import {
+  readSkillSnapshot,
+  sharedSkillPrompt,
+  skillCompatibility,
+} from '../skills/portable';
 import {
   captureWorkspace,
   compareWorkspace,
@@ -275,7 +281,8 @@ export class SessionService {
       if (
         existing.author !== 'operator' ||
         existing.body !== input.text ||
-        existing.skillId !== input.skillId
+        existing.skillId !== input.skillId ||
+        existing.skillHash !== input.skillHash
       )
         throw new SessionError(
           'invalid-request',
@@ -288,19 +295,25 @@ export class SessionService {
         'busy',
         'Wait for the active group to finish or use Stop.',
       );
-    if (input.skillId && session.provider !== 'Codex')
+    if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
-        'Skill invocation is not enabled for this Claude connection.',
+        'A skill snapshot requires a selected skill.',
       );
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
-    this.prepareRun(session, input.messageId, input.text, input.skillId);
+    this.prepareRun(
+      session,
+      input.messageId,
+      input.text,
+      input.skillId,
+      input.skillHash,
+    );
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, input.text, input.skillId);
+    this.launch(session, input.text, input.skillId, input.skillHash);
     return structuredClone(session);
   }
 
@@ -442,6 +455,7 @@ export class SessionService {
     messageId: string,
     text: string,
     skillId?: string,
+    skillHash?: string,
   ): void {
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
@@ -463,6 +477,7 @@ export class SessionService {
         createdAt,
         completedAt: createdAt,
         ...(skillId ? { skillId } : {}),
+        ...(skillHash ? { skillHash } : {}),
       },
       {
         id: randomUUID(),
@@ -476,7 +491,12 @@ export class SessionService {
     );
   }
 
-  private launch(session: Session, prompt: string, skillId?: string): void {
+  private launch(
+    session: Session,
+    prompt: string,
+    skillId?: string,
+    skillHash?: string,
+  ): void {
     const inherited =
       session.role === 'orchestrator' ? this.reviews.inherited(session.id) : [];
     const context = inherited.map(review => ({
@@ -507,8 +527,57 @@ export class SessionService {
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
     let provider: ActiveRun['handle'] | undefined;
+    const recordSkill = (skill: SkillReference) => {
+      const active = this.active.get(session.id);
+      if (
+        controller.signal.aborted ||
+        active?.session !== session ||
+        active.finalizing ||
+        session.status !== 'running'
+      )
+        throw new Error('Skill invocation stopped.');
+      const message = session.messages.find(
+        item => item.runId === session.runId && item.author === 'operator',
+      );
+      if (
+        !message ||
+        message.skillId !== skill.id ||
+        message.skillHash !== skillHash
+      )
+        throw new Error('Skill selection no longer matches this message.');
+      message.skill = skill;
+      this.publish(session);
+    };
     const handle: ReturnType<typeof startCodex> = {
       done: Promise.resolve().then(async (): Promise<CodexResult> => {
+        let selected:
+          Awaited<ReturnType<typeof resolveSessionSkill>> | undefined;
+        if (skillId) {
+          try {
+            this.update(session, {
+              type: 'activity',
+              text: 'Checking selected skill…',
+            });
+            selected = await resolveSessionSkill(
+              session,
+              skillId,
+              skillHash,
+              controller.signal,
+            );
+            if (selected.reference.delivery === 'instructions')
+              recordSkill(selected.reference);
+          } catch (error) {
+            return controller.signal.aborted
+              ? { status: 'stopped', error: null }
+              : {
+                  status: 'failed',
+                  error:
+                    error instanceof Error
+                      ? error.message.slice(0, 800)
+                      : 'The selected skill could not be verified.',
+                };
+          }
+        }
         if (session.mode === 'supervised')
           baseline = await captureWorkspace(
             session.directory,
@@ -522,29 +591,42 @@ export class SessionService {
                 ...options,
                 sessionId: session.providerSessionId,
                 mode: session.mode,
-                ...(skillId
+                ...(selected
                   ? {
-                      skillId,
-                      onSkillResolved: (skill: SkillReference) => {
-                        const active = this.active.get(session.id);
-                        if (
-                          controller.signal.aborted ||
-                          active?.session !== session ||
-                          active.finalizing ||
-                          session.status !== 'running'
-                        )
-                          throw new Error('Skill invocation stopped.');
-                        const message = session.messages.find(
-                          item =>
-                            item.runId === session.runId &&
-                            item.author === 'operator',
-                        );
-                        if (!message || message.skillId !== skill.id)
+                      skillId: selected.native!.id,
+                      ...(selected.rootsSupported
+                        ? { skillRoots: [dirname(selected.native!.path!)] }
+                        : {}),
+                      onSkillResolved: async (skill: SkillReference) => {
+                        if (skill.id !== selected!.native!.id)
                           throw new Error(
-                            'Skill selection no longer matches this message.',
+                            'The native skill no longer matches the selection.',
                           );
-                        message.skill = skill;
-                        this.publish(session);
+                        if (selected!.reference.contentHash) {
+                          const snapshot = await readSkillSnapshot(
+                            skill.path,
+                            controller.signal,
+                          );
+                          if (
+                            (process.platform === 'win32'
+                              ? snapshot.path.toLowerCase() !==
+                                selected!.reference.path.toLowerCase()
+                              : snapshot.path !== selected!.reference.path) ||
+                            snapshot.contentHash !==
+                              selected!.reference.contentHash
+                          )
+                            throw new Error(
+                              'The selected skill changed before the provider turn.',
+                            );
+                          const foreign = selected!.reference.origins?.some(
+                            origin => origin !== 'Codex',
+                          );
+                          if (foreign && skillCompatibility(snapshot, 'Codex'))
+                            throw new Error(
+                              'The selected skill is no longer compatible with Codex.',
+                            );
+                        }
+                        recordSkill(selected!.reference);
                       },
                     }
                   : {}),
@@ -558,6 +640,14 @@ export class SessionService {
               })
             : startClaude({
                 ...options,
+                ...(selected?.snapshot
+                  ? {
+                      prompt: sharedSkillPrompt(
+                        selected.snapshot,
+                        options.prompt,
+                      ),
+                    }
+                  : {}),
                 sessionId: session.providerSessionId!,
               });
         return provider.done;

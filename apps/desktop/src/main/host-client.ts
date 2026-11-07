@@ -85,7 +85,7 @@ export function startHost(directory: string) {
           reject(new Error('Host timed out'));
         },
         method === 'discover-skills'
-          ? 45000
+          ? 60000
           : method === 'claude-status' || method === 'codex-status'
             ? 30000
             : 15000,
