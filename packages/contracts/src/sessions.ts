@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { activityLimits, sessionActivitySchema } from './activities';
+import { skillReferenceSchema } from './skills';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -84,6 +85,7 @@ export const sendMessageSchema = z.strictObject({
   sessionId: z.uuid(),
   messageId: z.uuid(),
   text: z.string().trim().min(1).max(32000),
+  skillId: z.string().min(1).max(8192).optional(),
 });
 export const stopRunSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -109,6 +111,8 @@ export const sessionMessageSchema = z.strictObject({
   state: sessionStateSchema,
   createdAt: z.iso.datetime(),
   completedAt: z.iso.datetime().nullable().default(null),
+  skillId: z.string().min(1).max(8192).optional(),
+  skill: skillReferenceSchema.optional(),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),

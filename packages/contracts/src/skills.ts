@@ -24,6 +24,10 @@ export const skillEntrySchema = z.strictObject({
   detail: z.string().max(skillLimits.detail).nullable(),
 });
 
+export const skillReferenceSchema = skillEntrySchema
+  .pick({ id: true, name: true, path: true, source: true })
+  .extend({ path: z.string().min(1).max(skillLimits.path) });
+
 export const skillDiscoverySchema = z.strictObject({
   provider: z.enum(['Claude Code', 'Codex']),
   method: z.enum(['native', 'filesystem']),
@@ -38,7 +42,7 @@ export const skillDiscoverySchema = z.strictObject({
     )
     .max(skillLimits.issues),
   truncated: z.boolean(),
-  invocationSupported: z.literal(false),
+  invocationSupported: z.boolean(),
   checkedAt: z.iso.datetime(),
 });
 
@@ -48,5 +52,6 @@ export const skillCatalogSchema = skillDiscoverySchema.extend({
 
 export type DiscoverSkillsInput = z.infer<typeof discoverSkillsSchema>;
 export type SkillEntry = z.infer<typeof skillEntrySchema>;
+export type SkillReference = z.infer<typeof skillReferenceSchema>;
 export type SkillDiscovery = z.infer<typeof skillDiscoverySchema>;
 export type SkillCatalog = z.infer<typeof skillCatalogSchema>;
