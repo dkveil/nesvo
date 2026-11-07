@@ -759,10 +759,17 @@ try {
   );
   const reviewDirectory = join(directory, 'review-workspace');
   await mkdir(reviewDirectory);
+  await mkdir(join(reviewDirectory, 'notes', 'nested'), { recursive: true });
+  const nestedFileText =
+    'Nested workspace explorer fixture.\nCurrent file preview.\n';
   await Promise.all([
     writeFile(join(reviewDirectory, 'tracked.txt'), 'user dirty baseline\n'),
     writeFile(join(reviewDirectory, 'deleted.txt'), 'delete this baseline\n'),
     writeFile(join(reviewDirectory, 'dirty.txt'), 'unrelated operator edits\n'),
+    writeFile(
+      join(reviewDirectory, 'notes', 'nested', 'context.txt'),
+      nestedFileText,
+    ),
   ]);
   await page
     .getByRole('button', { name: 'New session', exact: true })
@@ -816,12 +823,7 @@ try {
     name: 'Saved result diff',
     exact: true,
   });
-  const openSavedDiff = async (review, before, after) => {
-    const opener = reviewPanel(review).getByRole('button', {
-      name: `View diff for version ${review.version}`,
-      exact: true,
-    });
-    await opener.click();
+  const checkSavedDiff = async (review, before, after) => {
     await diffPanel.waitFor();
     assert.equal(await diffPanel.getAttribute('data-review-id'), review.id);
     assert.equal(
@@ -863,11 +865,17 @@ try {
     assert.ok(patch.includes('tracked.txt'));
     assert.ok(patch.split('\n').includes(`-${before}`));
     assert.ok(patch.split('\n').includes(`+${after}`));
-    return { opener, patch };
+    return patch;
   };
-  const closeSavedDiff = async opener => {
-    await page.keyboard.press('Escape');
-    await diffPanel.waitFor({ state: 'hidden' });
+  const openSavedDiff = async (review, before, after) => {
+    const opener = reviewPanel(review).getByRole('button', {
+      name: `View diff for version ${review.version}`,
+      exact: true,
+    });
+    await opener.click();
+    return { opener, patch: await checkSavedDiff(review, before, after) };
+  };
+  const waitForFocus = async opener => {
     const deadline = Date.now() + 2000;
     while (
       !(await opener.evaluate(node => node === document.activeElement)) &&
@@ -878,6 +886,44 @@ try {
       await opener.evaluate(node => node === document.activeElement),
       true,
     );
+  };
+  const closeSavedDiff = async opener => {
+    await page.keyboard.press('Escape');
+    await diffPanel.waitFor({ state: 'hidden' });
+    await waitForFocus(opener);
+  };
+  const filesOpener = page.getByRole('button', {
+    name: 'Open files',
+    exact: true,
+  });
+  const filesPanel = page.getByRole('region', {
+    name: 'Workspace files',
+    exact: true,
+  });
+  const currentPreview = filesPanel.getByRole('region', {
+    name: 'File preview',
+    exact: true,
+  });
+  const checkWorkspaceFiles = async () => {
+    await filesPanel.waitFor();
+    assert.equal(
+      await filesPanel.getAttribute('data-session-id'),
+      writingSession.id,
+    );
+    await filesPanel.getByText(/^Current workspace/).waitFor();
+    await filesPanel.getByText('review-workspace', { exact: true }).waitFor();
+  };
+  const openWorkspaceFile = async (path, text) => {
+    await filesPanel
+      .getByRole('button', { name: `Open file ${path}`, exact: true })
+      .click();
+    await currentPreview.getByText(text, { exact: false }).waitFor();
+    assert.equal(await currentPreview.getAttribute('data-file-path'), path);
+  };
+  const closeWorkspaceFiles = async () => {
+    await page.keyboard.press('Escape');
+    await filesPanel.waitFor({ state: 'hidden' });
+    await waitForFocus(filesOpener);
   };
   const openReviewSession = async review => {
     await reviewRow(review)
@@ -1017,6 +1063,77 @@ try {
   await reviewPanel(correctedReview)
     .getByText('Accepted', { exact: true })
     .waitFor();
+  const currentTrackedText = 'Live workspace edit after the saved result.';
+  await writeFile(
+    join(reviewDirectory, 'tracked.txt'),
+    currentTrackedText + '\n',
+  );
+  await filesOpener.click();
+  await checkWorkspaceFiles();
+  await filesPanel
+    .getByRole('button', { name: 'Expand notes', exact: true })
+    .click();
+  await filesPanel
+    .getByRole('button', { name: 'Expand notes/nested', exact: true })
+    .click();
+  await openWorkspaceFile(
+    'notes/nested/context.txt',
+    'Nested workspace explorer fixture.',
+  );
+  await currentPreview
+    .getByText('Current file preview.', { exact: false })
+    .waitFor();
+  await filesPanel
+    .getByLabel('Search files', { exact: true })
+    .fill('tracked.txt');
+  await openWorkspaceFile('tracked.txt', currentTrackedText);
+  await filesPanel
+    .getByRole('button', {
+      name: `Open saved result version ${correctedReview.version}`,
+      exact: true,
+    })
+    .waitFor();
+  await screenshot('-files');
+  await closeWorkspaceFiles();
+  if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
+    await reviewPanel(initialReview)
+      .getByLabel(`Open version ${initialReview.version}`, { exact: true })
+      .click();
+  }
+  await openSavedDiff(
+    initialReview,
+    'user dirty baseline',
+    'initial agent text',
+  );
+  await diffPanel
+    .getByRole('button', { name: 'Browse workspace files', exact: true })
+    .click();
+  await diffPanel.waitFor({ state: 'hidden' });
+  await checkWorkspaceFiles();
+  await filesPanel
+    .getByLabel('Search files', { exact: true })
+    .fill('tracked.txt');
+  await openWorkspaceFile('tracked.txt', currentTrackedText);
+  await filesPanel
+    .getByRole('button', {
+      name: `Open saved result version ${initialReview.version}`,
+      exact: true,
+    })
+    .click();
+  await filesPanel.waitFor({ state: 'hidden' });
+  const returnedHistoricalPatch = await checkSavedDiff(
+    initialReview,
+    'user dirty baseline',
+    'initial agent text',
+  );
+  assert.doesNotMatch(
+    returnedHistoricalPatch,
+    /Live workspace edit|corrected agent text/,
+  );
+  await diffPanel
+    .getByRole('button', { name: 'Close diff', exact: true })
+    .click();
+  await diffPanel.waitFor({ state: 'hidden' });
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
     .getByRole('button', { name: 'New session', exact: true })
@@ -1081,6 +1198,27 @@ try {
   );
   await screenshot('-compact');
   await closeSavedDiff(compactDiff.opener);
+  await filesOpener.click();
+  await checkWorkspaceFiles();
+  await filesPanel
+    .getByLabel('Search files', { exact: true })
+    .fill('context.txt');
+  await openWorkspaceFile(
+    'notes/nested/context.txt',
+    'Nested workspace explorer fixture.',
+  );
+  const filesBounds = await filesPanel.boundingBox();
+  assert.ok(
+    filesBounds.x >= 0 &&
+      filesBounds.x + filesBounds.width <= viewportWidth + 1,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+    true,
+  );
+  await closeWorkspaceFiles();
   await page.getByRole('button', { name: 'Open sessions' }).click();
   await sidebar
     .getByRole('button', { name: /^Prototype orchestration/ })
