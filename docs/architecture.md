@@ -73,7 +73,7 @@ Claude enables only Read, Glob and Grep in plan mode, denies unanswered permissi
 Only one group runs at a time, with at most two children beside its parent. Stop targets the owned Windows process tree or POSIX process group and waits for close; the host's shutdown watchdog allows cleanup to finish. Windows cleanup skips a parent whose exit is already known, avoiding another tree-kill request against its retired PID. Descendants already orphaned before the parent exits are not guaranteed to be contained by PID-tree cleanup. Abrupt OS termination is not equivalent to graceful shutdown; stronger containment needs a separate native job mechanism.
 The host is local and lives with the desktop. There is no network listener, remote authentication or background daemon.
 A closed host is not silently restarted. UI reports failure and lets the operator retry or reopen the app.
-Review revision rules remain a separate approved stage.
+Review results and decisions are described below.
 
 ## Codex adapter and approval boundaries
 
@@ -107,3 +107,15 @@ The parent is read-only. Workers use the existing Codex modes or Claude's read-o
 Stopping a child leaves its sibling and parent active. Stopping the parent cancels pending proposals and active children. Parent termination waits for child cleanup; shutdown cancels the whole group. Restart retains relationships and marks unfinished work interrupted without launching it. Only one group may be active globally. A ten-minute native parent deadline includes operator waiting and child work; each conversation retains at most 100 proposals. Worker summaries passed back to the parent are capped at 12,000 characters with explicit truncation, while complete conversations stay available in the UI.
 
 The workspace page composes conversation and delegation widgets through a React slot. Sidebar rows expose the parent/child tree, child views link back to their parent, and session details explain the actual delegation capability. No Effect or process API enters the renderer.
+
+## Result review
+
+Schema v5 adds a separate reviews table; full historical diffs are not copied with every session streaming update. A result records its session, run, independent content version, task, answer, captured diff and optional human decision. Review.revision orders status events; Review.version identifies the immutable content. Session.revision is never an acceptance token. The terminal session and result are committed in one SQLite transaction before either event is published. Recovery does not synthesize missing results from unfinished runs.
+
+The narrow list-reviews and decide-review commands are available to the operator through validated IPC. Provider tools cannot call them. Decisions carry result ID, content version and an idempotent decision ID. A correction commits the decision, prepared session run and invalidation of older results together, then starts the same provider thread. Repeating its ID cannot spawn a second correction. A new result version starts pending; earlier decisions remain in history. The host rejects decisions on replaced versions or while a group is active.
+
+Writable runs reserve their active slot before asynchronously capturing a baseline. Stop cancels this phase and cannot be followed by a late provider launch. After provider termination, the service captures the result state and saves a bounded unified diff. Filesystem reads never modify project files, Git objects or the index, and work without Git. Limits and excluded generated directories are explicit. Exact-byte hashes include paths, types and file modes; capture rejects symlinks, special files, concurrent mutations and incomplete reads. Binary changes and truncated patches remain unavailable rather than appearing clean. Accepting a writable result recaptures its directory and compares the recorded fingerprint. This checks the eligible files at decision time; it does not lock files against later outside edits.
+
+Each version's diff describes its own turn, including a correction's incremental changes. Older diffs remain accessible. Read-only parent results link to the specific child results used for the summary instead of attributing child writes to the parent. Parent acceptance also checks writable dependency fingerprints. Accepting a parent does not accept its children. A child continuation supersedes dependent parent results; continuing a parent without new delegation supplies current child summaries and carries those references forward. A fresh delegation group establishes its own child references.
+
+All successful new turns enter the prototype inbox. This stage does not add per-project review policy switches, automatic result submission tools, merge, background resumption or provider-specific skills. The optional policy/module settings remain a later product decision.

@@ -32,6 +32,8 @@ P4 extends the same two host cases and one desktop scenario. The fixture validat
 
 Real P4 evidence separately uses installed Codex through Electron, including two concurrent workers and parent continuation after one worker is stopped. Fixture success is not real-provider evidence. Native tool execution on Windows does not certify real account access on macOS or Linux.
 
+P5 keeps the same two host cases and one desktop scenario. Focused additions exercise immutable result versions, human-only decision commands, idempotent correction, stale acceptance, parent dependency invalidation and history after restart. A supervised fixture actually changes text files in an isolated non-Git directory; its before/after diff must include the intended added/modified/deleted files while preserving unrelated dirty contents. External edits and unavailable binary diffs block acceptance. The desktop flow performs correction and acceptance through the inbox and checks the historical decision. Real Codex execution is a separate deliberate run, not a routine formatting check.
+
 ## Before reporting completion
 
 Run bun run check and bun run build for foundation changes.

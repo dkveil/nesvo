@@ -40,8 +40,8 @@ The scenario starts a hidden window, uses an isolated temporary directory and ex
 ## Standalone host
 
 Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run host.
-Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, create-session, send-message, stop-run, respond-approval, decide-delegation or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings.
-Responses and session-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
+Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, list-reviews, create-session, send-message, stop-run, respond-approval, decide-delegation, decide-review or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings. Review decisions carry reviewId, version, decisionId, accept or request-changes, and required feedback for corrections.
+Responses, session-changed and review-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
 
 ## Local data
 
