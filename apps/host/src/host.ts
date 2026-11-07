@@ -2,12 +2,14 @@ import {
   hostHealthSchema,
   hostRequestSchema,
   claudeStatusSchema,
+  codexStatusSchema,
   type HostMessage,
   type HostResponse,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { openDatabase } from './database';
 import { inspectClaude } from './providers/claude';
+import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 
@@ -74,22 +76,36 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           );
           return;
         }
-        if (request.method === 'claude-status') {
-          const inspection = inspectClaude(probes.controller.signal)
+        if (
+          request.method === 'claude-status' ||
+          request.method === 'codex-status'
+        ) {
+          const inspection = (
+            request.method === 'claude-status'
+              ? inspectClaude(probes.controller.signal)
+              : inspectCodex(probes.controller.signal)
+          )
             .then(status =>
-              send({
-                type: 'claude-status',
-                id: request.id,
-                status: claudeStatusSchema.parse(status),
-              }),
+              send(
+                request.method === 'claude-status'
+                  ? {
+                      type: 'claude-status',
+                      id: request.id,
+                      status: claudeStatusSchema.parse(status),
+                    }
+                  : {
+                      type: 'codex-status',
+                      id: request.id,
+                      status: codexStatusSchema.parse(status),
+                    },
+              ),
             )
             .catch(() =>
               send({
                 type: 'error',
                 id: request.id,
                 code: 'unavailable',
-                message:
-                  'Nie udało się sprawdzić Claude Code. Spróbuj ponownie.',
+                message: 'Nie udało się sprawdzić dostawcy. Spróbuj ponownie.',
               }),
             )
             .catch(() => undefined);
@@ -122,6 +138,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.stop(request.input),
+              };
+            if (request.method === 'respond-approval')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.respondApproval(request.input),
               };
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
