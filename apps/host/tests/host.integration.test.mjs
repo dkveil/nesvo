@@ -53,12 +53,15 @@ function launch(directory, pidFile) {
       NESVO_DATA_DIR: directory,
       NESVO_CLAUDE_EXECUTABLE: fixturePath,
       NESVO_FIXTURE_PID_FILE: pidFile,
+      NESVO_FIXTURE_SKILL_LOG: pidFile + '.shared',
       NESVO_CODEX_EXECUTABLE: codexFixturePath,
       NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
       NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
       NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
       NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
       CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
+      CODEX_HOME: join(directory, 'codex-config'),
+      NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -289,8 +292,60 @@ test(
       directory,
     });
     const claudeConfig = join(directory, 'claude-config');
+    const codexConfig = join(directory, 'codex-config');
+    const skillDocument = (name, marker, fields = '') =>
+      `---\nname: ${name}\ndescription: Shared fixture instructions.\n${fields}---\n${marker}\n`;
+    const seedNativeSkill = async workspace => {
+      const path = join(
+        workspace,
+        '.agents',
+        'skills',
+        'fixture-project-skill',
+        'SKILL.md',
+      );
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(
+        path,
+        skillDocument('Fixture project skill', 'FIXTURE_PROJECT_MARKER'),
+      );
+      await mkdir(join(workspace, '.git'), { recursive: true });
+    };
     const skillsProject = join(directory, 'skills-claude');
     const metadata = [
+      [
+        join(claudeConfig, 'skills', 'fixture-claude-instructions', 'SKILL.md'),
+        skillDocument(
+          'Fixture Claude instructions',
+          'FIXTURE_CLAUDE_SHARED_MARKER',
+        ),
+      ],
+      [
+        join(codexConfig, 'skills', 'fixture-codex-instructions', 'SKILL.md'),
+        skillDocument(
+          'Fixture Codex instructions',
+          'FIXTURE_CODEX_SHARED_MARKER',
+        ),
+      ],
+      [
+        join(codexConfig, 'skills', 'fixture-native-disabled', 'SKILL.md'),
+        skillDocument(
+          'Fixture user skill',
+          'Disabled source.',
+          'enabled: false\n',
+        ),
+      ],
+      [
+        join(claudeConfig, 'skills', 'fixture-hooks', 'SKILL.md'),
+        skillDocument(
+          'Fixture blocked hooks',
+          'Unsupported execution metadata.',
+          'hooks: {}\n',
+        ),
+      ],
+      ...['alpha', 'beta'].map(name => [
+        join(codexConfig, 'skills', `fixture-twin-${name}`, 'SKILL.md'),
+        skillDocument('Fixture twin', `Distinct ${name} source.`),
+      ]),
       [
         join(
           skillsProject,
@@ -328,6 +383,25 @@ test(
       await mkdir(join(path, '..'), { recursive: true });
       await writeFile(path, body);
     }
+    await seedNativeSkill(skillsProject);
+    const sharedAlias = join(
+      directory,
+      'skills-home',
+      '.agents',
+      'skills',
+      'claude-alias',
+    );
+    await mkdir(join(sharedAlias, '..'), { recursive: true });
+    await symlink(
+      join(metadata[0][0], '..'),
+      sharedAlias,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await symlink(
+      join(claudeConfig, 'skills', 'fixture-hooks'),
+      join(sharedAlias, '..', 'hooks-alias'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     const inventorySession = (
       await host.request('create-session', create(skillsProject))
     ).session;
@@ -339,22 +413,43 @@ test(
       'skills',
       JSON.stringify(claudeInventory),
     );
-    assert.equal(claudeInventory.catalog.method, 'filesystem');
+    assert.equal(claudeInventory.catalog.method, 'library');
     assert.equal(claudeInventory.catalog.provider, 'Claude Code');
     assert.equal(claudeInventory.catalog.status, 'partial');
-    assert.equal(claudeInventory.catalog.invocationSupported, false);
+    assert.equal(claudeInventory.catalog.invocationSupported, true);
     assert.equal(claudeInventory.catalog.sessionId, inventorySession.id);
     const projectSkill = claudeInventory.catalog.skills.find(
       skill => skill.name === 'fixture-project-skill',
     );
     assert.equal(projectSkill.source, 'project');
-    assert.equal(projectSkill.enabled, null);
+    assert.equal(projectSkill.enabled, true);
+    assert.equal(projectSkill.invocation, 'instructions');
+    assert.ok(projectSkill.origins.includes('Claude Code'));
     const userSkill = claudeInventory.catalog.skills.find(
       skill => skill.name === 'fixture-user-skill',
     );
     assert.equal(userSkill.source, 'user');
     assert.equal(userSkill.userInvocable, false);
     assert.equal(userSkill.modelInvocable, false);
+    assert.equal(userSkill.invocation, 'blocked');
+    const sharedClaude = claudeInventory.catalog.skills.filter(
+      skill => skill.name === 'Fixture Claude instructions',
+    );
+    assert.equal(sharedClaude.length, 1);
+    assert.deepEqual(sharedClaude[0].origins, ['Claude Code', 'Shared']);
+    const twins = claudeInventory.catalog.skills.filter(
+      skill => skill.name === 'Fixture twin',
+    );
+    assert.equal(twins.length, 2);
+    assert.notEqual(twins[0].id, twins[1].id);
+    assert.notEqual(twins[0].path, twins[1].path);
+    for (const skill of twins) assert.equal(skill.invocation, 'instructions');
+    assert.equal(
+      claudeInventory.catalog.skills.find(
+        skill => skill.name === 'Fixture blocked hooks',
+      ).invocation,
+      'blocked',
+    );
     assert.ok(
       claudeInventory.catalog.skills.some(
         skill =>
@@ -403,6 +498,7 @@ test(
     ]) {
       const workspace = join(directory, `skills-${variant}`);
       await mkdir(workspace);
+      await seedNativeSkill(workspace);
       const target = (
         await host.request('create-session', {
           ...create(workspace),
@@ -416,13 +512,18 @@ test(
         sessionId: target.id,
       });
       assert.equal(discovered.type, 'skills', JSON.stringify(discovered));
-      assert.equal(discovered.catalog.method, 'native');
-      assert.equal(discovered.catalog.status, expected);
+      assert.equal(discovered.catalog.method, 'library');
+      assert.equal(discovered.catalog.status, 'partial');
       assert.equal(
         discovered.catalog.invocationSupported,
         expected === 'ready' || expected === 'partial',
       );
       nativeSkillCatalogs.set(variant, discovered.catalog);
+      const blockedAlias = discovered.catalog.skills.find(
+        skill => skill.name === 'Fixture blocked hooks',
+      );
+      assert.equal(blockedAlias.invocation, 'blocked');
+      assert.deepEqual(blockedAlias.origins, ['Claude Code', 'Shared']);
       if (expected === 'ready' || expected === 'partial') {
         assert.equal(
           discovered.catalog.skills.find(
@@ -1018,34 +1119,40 @@ test(
       assert.deepEqual(response.session.pendingApprovals, []);
       return response.session;
     };
-    const sendCodex = async (currentHost, target, text, skillId) => {
+    const sendCodex = async (currentHost, target, text, skillId, skillHash) => {
       const response = await currentHost.request('send-message', {
         sessionId: target.id,
         messageId: randomUUID(),
         text,
         ...(skillId ? { skillId } : {}),
+        ...(skillHash ? { skillHash } : {}),
       });
       assert.equal(response.type, 'session', JSON.stringify(response));
       return response.session;
     };
     const readOnly = await createCodex('read-only');
+    await seedNativeSkill(readOnly.directory);
     const selectedCatalog = await finalHost.request('discover-skills', {
       sessionId: readOnly.id,
     });
     const selectedSkill = selectedCatalog.catalog.skills.find(
-      skill => skill.name === 'Fixture project skill',
+      skill => skill.name === 'Fixture Claude instructions',
     );
     const selectedReference = {
       id: selectedSkill.id,
       name: selectedSkill.name,
       path: selectedSkill.path,
       source: selectedSkill.source,
+      origins: selectedSkill.origins,
+      delivery: 'native',
+      contentHash: selectedSkill.contentHash,
     };
     const selectedInput = {
       sessionId: readOnly.id,
       messageId: randomUUID(),
       text: 'fixture:stream',
       skillId: selectedSkill.id,
+      skillHash: selectedSkill.contentHash,
     };
     const selectedResponse = await finalHost.request(
       'send-message',
@@ -1065,6 +1172,15 @@ test(
       const input = { ...selectedInput };
       if (skillId === undefined) delete input.skillId;
       else input.skillId = skillId;
+      assert.equal(
+        (await finalHost.request('send-message', input)).code,
+        'invalid-request',
+      );
+    }
+    for (const skillHash of [undefined, '0'.repeat(64)]) {
+      const input = { ...selectedInput };
+      if (skillHash === undefined) delete input.skillHash;
+      else input.skillHash = skillHash;
       assert.equal(
         (await finalHost.request('send-message', input)).code,
         'invalid-request',
@@ -1128,6 +1244,13 @@ test(
       { type: 'text', text: selectedInput.text, text_elements: [] },
       { type: 'skill', name: selectedSkill.name, path: selectedSkill.path },
     ]);
+    assert.ok(
+      invocationTrace.some(
+        trace =>
+          trace.pid === selectedTurn.pid &&
+          trace.extraRoots?.includes(join(selectedSkill.path, '..')),
+      ),
+    );
     assert.equal(
       invocationTrace.filter(
         trace =>
@@ -1194,13 +1317,53 @@ test(
       ).code,
       'invalid-request',
     );
+    const portableSkill = claudeInventory.catalog.skills.find(
+      skill => skill.name === 'Fixture Codex instructions',
+    );
+    assert.equal(portableSkill.invocation, 'instructions');
+    const portableInput = {
+      sessionId: inventorySession.id,
+      messageId: randomUUID(),
+      text: 'fixture:shared',
+      skillId: portableSkill.id,
+      skillHash: portableSkill.contentHash,
+    };
+    const portableRun = await finalHost.request('send-message', portableInput);
+    assert.equal(portableRun.type, 'session', JSON.stringify(portableRun));
+    const portableCompleted = await finalHost.event(
+      value =>
+        value.runId === portableRun.session.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(agent(portableCompleted).body, 'Fixture initial reply.');
+    assert.equal(
+      portableCompleted.messages.at(-2).skill.delivery,
+      'instructions',
+    );
+    assert.deepEqual(portableCompleted.messages.at(-2).skill.origins, [
+      'Codex',
+    ]);
+    assert.equal(
+      portableCompleted.messages.at(-2).skill.contentHash,
+      portableSkill.contentHash,
+    );
+    const portableTrace = JSON.parse(
+      (await readFile(pidFile + '.shared', 'utf8')).trim(),
+    );
+    assert.equal(portableTrace.path, portableSkill.path);
+    assert.equal(portableTrace.hash, portableSkill.contentHash);
+    assert.match(portableTrace.instructions, /FIXTURE_CODEX_SHARED_MARKER/);
+    assert.equal(
+      (await finalHost.request('send-message', portableInput)).session.runId,
+      portableCompleted.runId,
+    );
     assert.equal(
       (
         await finalHost.request('send-message', {
           sessionId: inventorySession.id,
           messageId: randomUUID(),
-          text: 'fixture:stream',
-          skillId: selectedSkill.id,
+          text: 'fixture:shared',
+          skillHash: portableSkill.contentHash,
         })
       ).code,
       'invalid-request',
@@ -1210,6 +1373,7 @@ test(
       messageId: randomUUID(),
       text: 'fixture:stream',
       skillId: selectedSkill.id,
+      skillHash: selectedSkill.contentHash,
       skill: {
         ...selectedReference,
         path: join(directory, 'forged', 'SKILL.md'),
@@ -1225,11 +1389,30 @@ test(
       ),
       { type: 'error', id: null, code: 'invalid-request' },
     );
+    assert.deepEqual(
+      await finalHost.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'send-message',
+          input: {
+            ...selectedInput,
+            messageId: randomUUID(),
+            skillBody: 'Injected instructions',
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
     await writeFile(
       join(pidFile + '.state', 'skills-stale.disabled'),
       'disabled',
     );
-    for (const [variant, skillId] of [
+    const originalSharedSource = await readFile(selectedSkill.path, 'utf8');
+    await writeFile(
+      selectedSkill.path,
+      originalSharedSource + '\nChanged source after selection.\n',
+    );
+    for (const [variant, skillId, skillHash] of [
       [
         'codex',
         nativeSkillCatalogs
@@ -1237,17 +1420,39 @@ test(
           .skills.find(skill => skill.enabled === false).id,
       ],
       ['codex', 'unknown-skill-id'],
+      ['codex', selectedSkill.id, '0'.repeat(64)],
+      ['codex', selectedSkill.id, selectedSkill.contentHash],
+      [
+        'codex',
+        claudeInventory.catalog.skills.find(
+          skill => skill.name === 'Fixture blocked hooks',
+        ).id,
+        claudeInventory.catalog.skills.find(
+          skill => skill.name === 'Fixture blocked hooks',
+        ).contentHash,
+      ],
+      ['codex', userSkill.id, userSkill.contentHash],
       ['unsupported', selectedSkill.id],
       ['malformed', selectedSkill.id],
       [
         'stale',
         nativeSkillCatalogs
           .get('stale')
-          .skills.find(skill => skill.enabled === true).id,
+          .skills.find(skill => skill.name === 'Fixture project skill').id,
+        nativeSkillCatalogs
+          .get('stale')
+          .skills.find(skill => skill.name === 'Fixture project skill')
+          .contentHash,
       ],
     ]) {
       const target = nativeSkillSessions.get(variant);
-      const run = await sendCodex(finalHost, target, 'fixture:stream', skillId);
+      const run = await sendCodex(
+        finalHost,
+        target,
+        'fixture:stream',
+        skillId,
+        skillHash,
+      );
       const failed = await finalHost.event(
         value => value.runId === run.runId && value.status === 'failed',
       );
@@ -1271,6 +1476,7 @@ test(
         false,
       );
     }
+    await writeFile(selectedSkill.path, originalSharedSource);
     assert.equal(
       (
         await finalHost.request('decide-review', {
@@ -1495,7 +1701,8 @@ test(
     await processesGone(approvalStopped.pids, ownedPids);
     const slowCatalog = await slowDiscovery;
     assert.equal(slowCatalog.type, 'skills', JSON.stringify(slowCatalog));
-    assert.equal(slowCatalog.catalog.status, 'ready');
+    assert.equal(slowCatalog.catalog.method, 'library');
+    assert.equal(slowCatalog.catalog.status, 'partial');
     assert.equal(
       (await finalHost.request('list-sessions')).sessions.find(
         value => value.id === supervised.id,
@@ -1587,11 +1794,41 @@ test(
       ).skill,
       selectedReference,
     );
+    const restoredPortable = (
+      await codexReopened.request('list-sessions')
+    ).sessions.find(value => value.id === inventorySession.id);
+    assert.deepEqual(
+      restoredPortable.messages.at(-2).skill,
+      portableCompleted.messages.at(-2).skill,
+    );
+    const portableResume = await codexReopened.request('send-message', {
+      ...portableInput,
+      messageId: randomUUID(),
+      text: 'fixture:shared-resume',
+    });
+    const portableResumed = await codexReopened.event(
+      value =>
+        value.runId === portableResume.session.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(agent(portableResumed).body, 'Fixture resumed reply.');
+    assert.equal(
+      portableResumed.providerSessionId,
+      portableCompleted.providerSessionId,
+    );
+    const resumedTrace = (await readFile(pidFile + '.shared', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+      .at(-1);
+    assert.equal(resumedTrace.resumed, true);
+    assert.equal(resumedTrace.hash, portableSkill.contentHash);
     const nativeContinuation = await sendCodex(
       codexReopened,
       readOnly,
       'fixture:continue',
       selectedSkill.id,
+      selectedSkill.contentHash,
     );
     const nativeResumed = await codexReopened.event(
       value =>

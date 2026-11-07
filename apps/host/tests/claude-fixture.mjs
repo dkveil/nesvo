@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
@@ -65,6 +66,49 @@ if (args.length === 1 && args[0] === '--version') {
   let prompt = '';
   for await (const chunk of process.stdin) prompt += chunk;
   assert.ok(prompt.trim(), 'Prompt must arrive through stdin');
+  if (
+    prompt.startsWith(
+      'The user explicitly selected the following file as shared instructions',
+    )
+  ) {
+    const path = JSON.parse(/^Source file: (.+)$/m.exec(prompt)[1]);
+    const hash = /^Source file SHA-256: ([a-f0-9]{64})$/m.exec(prompt)[1];
+    const instructions =
+      /<shared-skill-instructions>\n([\s\S]*?)\n<\/shared-skill-instructions>/.exec(
+        prompt,
+      )[1];
+    assert.match(instructions, /FIXTURE_CODEX_SHARED_MARKER/);
+    assert.equal(
+      hash,
+      createHash('sha256').update(readFileSync(path)).digest('hex'),
+    );
+    assert.match(prompt, /not a native skill invocation/);
+    assert.match(
+      prompt,
+      /Existing provider tools and permissions remain unchanged/,
+    );
+    assert.ok(
+      prompt.includes(
+        `Base directory for relative resource references: ${JSON.stringify(join(path, '..'))}`,
+      ),
+    );
+    if (process.env.NESVO_FIXTURE_SKILL_LOG)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_SKILL_LOG,
+        JSON.stringify({
+          sessionId,
+          resumed,
+          path,
+          hash,
+          instructions,
+          prompt,
+        }) + '\n',
+        { flag: 'a' },
+      );
+    prompt = prompt.slice(
+      prompt.lastIndexOf('\nUser request:\n') + '\nUser request:\n'.length,
+    );
+  }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);
   assert.equal(existsSync(statePath), resumed, 'Resume must retain CLI state');
   const turn = resumed

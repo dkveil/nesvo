@@ -5,6 +5,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -42,7 +44,8 @@ if (args.length === 1 && args[0] === '--version') {
   let thread;
   let current;
   let skillsDirectory;
-  let selectedSkill;
+  let selectedSkills;
+  let extraRoots = [];
   const methods = [];
   const forbiddenSkillMethods = new Set([
     'account/read',
@@ -366,6 +369,17 @@ if (args.length === 1 && args[0] === '--version') {
         skillsTrace(skillsDirectory, method);
       }
       response(id, { config: isolatedConfig, origins: {}, layers: null });
+    } else if (method === 'skills/extraRoots/set') {
+      assert.ok(Array.isArray(params.extraRoots));
+      assert.ok(params.extraRoots.length > 0);
+      extraRoots = params.extraRoots;
+      assert.equal(new Set(extraRoots).size, extraRoots.length);
+      for (const root of extraRoots) {
+        assert.ok(isAbsolute(root));
+        assert.equal(realpathSync(root), root);
+        assert.ok(statSync(root).isDirectory());
+      }
+      response(id, {});
     } else if (method === 'skills/list') {
       assert.equal(params.forceReload, true);
       assert.equal(params.cwds.length, 1);
@@ -412,15 +426,36 @@ if (args.length === 1 && args[0] === '--version') {
           name: 'Fixture user skill',
           description: 'Disabled user metadata supplied by the native fixture.',
           path: join(
-            process.env.CLAUDE_CONFIG_DIR ?? dirname(directory),
+            process.env.CODEX_HOME ?? dirname(directory),
             'skills',
-            'fixture-user-skill',
+            'fixture-native-disabled',
             'SKILL.md',
           ),
           scope: 'user',
           enabled: false,
         },
       ];
+      for (const root of extraRoots) {
+        const path = join(root, 'SKILL.md');
+        if (!existsSync(path) || skills.some(skill => skill.path === path))
+          continue;
+        const body = readFileSync(path, 'utf8');
+        const name = /^name:\s*(.+)$/m.exec(body)?.[1]?.trim();
+        if (!name) continue;
+        skills.push({
+          name,
+          description:
+            /^description:\s*(.+)$/m.exec(body)?.[1]?.trim() ??
+            'Registered fixture source.',
+          path,
+          scope:
+            root.startsWith(process.env.CLAUDE_CONFIG_DIR ?? '\0') ||
+            root.startsWith(process.env.CODEX_HOME ?? '\0')
+              ? 'user'
+              : 'repo',
+          enabled: !/^enabled:\s*false\s*$/m.test(body),
+        });
+      }
       const staleMarker = join(
         process.env.NESVO_CODEX_FIXTURE_STATE_DIR ?? directory,
         'skills-stale.disabled',
@@ -435,8 +470,8 @@ if (args.length === 1 && args[0] === '--version') {
           enabled: true,
         });
       response(id, { data: [{ cwd: directory, skills, errors: [] }] });
-      selectedSkill = skills[0];
-      skillsTrace(directory, 'skills/list:completed');
+      selectedSkills = skills;
+      skillsTrace(directory, 'skills/list:completed', { extraRoots });
     } else if (method === 'model/list') {
       assert.equal(params.includeHidden, false);
       response(id, {
@@ -511,10 +546,19 @@ if (args.length === 1 && args[0] === '--version') {
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.deepEqual(params.sandboxPolicy, policy());
-      assert.equal(params.input.length, selectedSkill ? 2 : 1);
+      assert.equal(params.input.length, selectedSkills ? 2 : 1);
       assert.equal(params.input[0].type, 'text');
       assert.ok(params.input[0].text.trim());
-      if (selectedSkill) {
+      if (selectedSkills) {
+        const selectedSkill = selectedSkills.find(
+          skill =>
+            skill.path === params.input[1].path &&
+            skill.name === params.input[1].name,
+        );
+        assert.ok(
+          selectedSkill,
+          'Selected native input must match the current registered catalog',
+        );
         assert.equal(selectedSkill.enabled, true);
         assert.deepEqual(params.input[1], {
           type: 'skill',
