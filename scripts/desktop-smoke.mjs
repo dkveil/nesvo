@@ -20,6 +20,8 @@ const pidFile = join(directory, 'processes.json');
 const providerPidFile = join(directory, 'provider.json');
 const codexPidFile = join(directory, 'codex-provider.json');
 const workerPidDirectory = join(directory, 'worker-processes');
+const claudeConfigDirectory = join(directory, 'claude-config');
+const skillsLog = join(directory, 'skills-probes.jsonl');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
 const executablePath =
   process.env.NESVO_PACKAGED_EXECUTABLE || requireDesktop('electron');
@@ -34,6 +36,8 @@ const env = {
   NESVO_CODEX_FIXTURE_PID_FILE: codexPidFile,
   NESVO_CODEX_FIXTURE_PID_DIR: workerPidDirectory,
   NESVO_CODEX_FIXTURE_STATE_DIR: join(directory, 'codex-state'),
+  NESVO_CODEX_FIXTURE_SKILLS_LOG: skillsLog,
+  CLAUDE_CONFIG_DIR: claudeConfigDirectory,
 };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
@@ -53,6 +57,16 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 try {
+  const userSkillPath = join(
+    claudeConfigDirectory,
+    'skills',
+    'fixture-user-skill',
+    'SKILL.md',
+  );
+  const userSkillText =
+    '---\nname: fixture-user-skill\ndescription: User inventory fixture.\nuser-invocable: false\ndisable-model-invocation: true\n---\nMetadata only.\n';
+  await mkdir(join(userSkillPath, '..'), { recursive: true });
+  await writeFile(userSkillPath, userSkillText);
   application = await electron.launch({
     executablePath,
     args: process.env.NESVO_PACKAGED_EXECUTABLE
@@ -111,6 +125,51 @@ try {
   const openInbox = async () => {
     await page.getByRole('button', { name: /^Inbox/ }).click();
     await page.getByRole('region', { name: 'Inbox', exact: true }).waitFor();
+  };
+  const skillsOpener = page.getByRole('button', {
+    name: 'Open skills',
+    exact: true,
+  });
+  const skillsPanel = page.getByRole('region', {
+    name: 'Session skills',
+    exact: true,
+  });
+  const readSkillsTrace = async () => {
+    try {
+      return (await readFile(skillsLog, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  };
+  const waitSkillsTrace = async (path, method) => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const trace = (await readSkillsTrace()).find(
+        trace => trace.directory === path && trace.method === method,
+      );
+      if (trace) return trace;
+      await delay(50);
+    }
+    assert.fail(`Skills trace missing for ${path}: ${method}`);
+  };
+  const closeSkills = async () => {
+    await page.keyboard.press('Escape');
+    await skillsPanel.waitFor({ state: 'hidden' });
+    const deadline = Date.now() + 2000;
+    while (
+      !(await skillsOpener.evaluate(node => node === document.activeElement)) &&
+      Date.now() < deadline
+    )
+      await delay(25);
+    assert.equal(
+      await skillsOpener.evaluate(node => node === document.activeElement),
+      true,
+    );
   };
   const screenshot = async suffix => {
     if (!process.env.NESVO_SCREENSHOT) return;
@@ -259,6 +318,49 @@ try {
   const first = (await page.evaluate(() => window.nesvo.listSessions()))[0];
   assert.equal(first.model, 'sonnet');
   assert.equal(first.messages.length, 0);
+  const projectSkillPath = join(
+    first.directory,
+    '.claude',
+    'skills',
+    'fixture-project-skill',
+    'SKILL.md',
+  );
+  await mkdir(join(first.directory, '.git'), { recursive: true });
+  await mkdir(join(projectSkillPath, '..'), { recursive: true });
+  await writeFile(
+    projectSkillPath,
+    '---\nname: fixture-project-skill\ndescription: Project inventory fixture.\n---\nMetadata only.\n',
+  );
+  await skillsOpener.click();
+  await skillsPanel
+    .getByText('fixture-project-skill', { exact: true })
+    .waitFor();
+  assert.equal(await skillsPanel.getAttribute('data-session-id'), first.id);
+  await skillsPanel.getByText('Local skill files', { exact: true }).waitFor();
+  await skillsPanel
+    .getByLabel('Search skills', { exact: true })
+    .fill('fixture-user-skill');
+  await skillsPanel.getByText('fixture-user-skill', { exact: true }).waitFor();
+  assert.equal(
+    await skillsPanel
+      .getByLabel('Details for fixture-project-skill', { exact: true })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await skillsPanel
+      .getByRole('button', { name: /^(?:Invoke|Run|Use)(?: skill)?$/i })
+      .count(),
+    0,
+  );
+  await skillsPanel.getByLabel('Search skills', { exact: true }).fill('');
+  await skillsPanel
+    .getByRole('button', { name: 'Refresh skills', exact: true })
+    .click();
+  await skillsPanel
+    .getByText('fixture-project-skill', { exact: true })
+    .waitFor();
+  await closeSkills();
   await screenshot('-empty-session');
   await send('fixture:stream');
   await message('Fixture streamed reply.').waitFor();
@@ -363,6 +465,96 @@ try {
   assert.equal(codex.mode, 'supervised');
   assert.equal(codex.role, 'standalone');
   assert.equal(codex.delegationEnabled, true);
+  assert.deepEqual(await readSkillsTrace(), []);
+  await skillsOpener.click();
+  await skillsPanel
+    .getByText('Fixture project skill', { exact: true })
+    .waitFor();
+  await skillsPanel.getByText('Fixture user skill', { exact: true }).waitFor();
+  await skillsPanel
+    .getByLabel('Details for Fixture user skill', { exact: true })
+    .getByText('Disabled', { exact: true })
+    .waitFor();
+  assert.equal(await skillsPanel.getAttribute('data-session-id'), codex.id);
+  await skillsPanel.getByText('Provider catalog', { exact: true }).waitFor();
+  assert.deepEqual(
+    (await page.evaluate(() => window.nesvo.listSessions())).find(
+      session => session.id === codex.id,
+    ),
+    codex,
+  );
+  const nativeSkillIds = await skillsPanel
+    .locator('[data-skill-id]')
+    .evaluateAll(rows =>
+      rows.map(row => row.getAttribute('data-skill-id')).sort(),
+    );
+  await skillsPanel
+    .getByRole('button', { name: 'Refresh skills', exact: true })
+    .click();
+  await skillsPanel
+    .getByText('Fixture project skill', { exact: true })
+    .waitFor();
+  assert.deepEqual(
+    await skillsPanel
+      .locator('[data-skill-id]')
+      .evaluateAll(rows =>
+        rows.map(row => row.getAttribute('data-skill-id')).sort(),
+      ),
+    nativeSkillIds,
+  );
+  await closeSkills();
+  const slowSkillsDirectory = join(directory, 'skills-hold');
+  await mkdir(slowSkillsDirectory);
+  const slowSkillsSession = await page.evaluate(
+    input => window.nesvo.createSession(input),
+    {
+      title: 'Slow skill inventory',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'read-only',
+      directory: slowSkillsDirectory,
+    },
+  );
+  await navigation
+    .getByRole('button', { name: /^Slow skill inventory/ })
+    .click();
+  await skillsOpener.click();
+  await waitSkillsTrace(slowSkillsDirectory, 'skills/list');
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
+  await skillsOpener.click();
+  await skillsPanel
+    .getByText('fixture-project-skill', { exact: true })
+    .waitFor();
+  const slowProbe = await waitSkillsTrace(
+    slowSkillsDirectory,
+    'skills/list:completed',
+  );
+  await waitDead(slowProbe.pid);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal(await skillsPanel.getAttribute('data-session-id'), first.id);
+    assert.equal(
+      await skillsPanel
+        .getByLabel('Details for fixture-project-skill', { exact: true })
+        .isVisible(),
+      true,
+    );
+    assert.equal(
+      await skillsPanel
+        .getByText('Fixture project skill', { exact: true })
+        .count(),
+      0,
+    );
+    await delay(100);
+  }
+  assert.equal(
+    (await page.evaluate(() => window.nesvo.listSessions())).find(
+      session => session.id === slowSkillsSession.id,
+    ).messages.length,
+    0,
+  );
+  assert.equal(await readFile(userSkillPath, 'utf8'), userSkillText);
+  await closeSkills();
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
   await send('fixture:stream');
   await message('Codex fixture streamed reply.').waitFor();
   const codexCompleted = await waitState(codex.id, 'completed');

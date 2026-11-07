@@ -57,6 +57,8 @@ function launch(directory, pidFile) {
       NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
       NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
       NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
+      NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
+      CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -286,6 +288,178 @@ test(
       model: 'sonnet',
       directory,
     });
+    const claudeConfig = join(directory, 'claude-config');
+    const skillsProject = join(directory, 'skills-claude');
+    const metadata = [
+      [
+        join(
+          skillsProject,
+          '.claude',
+          'skills',
+          'fixture-project-skill',
+          'SKILL.md',
+        ),
+        '---\nname: fixture-project-skill\ndescription: Project inventory fixture.\n---\nMetadata only.\n',
+      ],
+      [
+        join(claudeConfig, 'skills', 'fixture-user-skill', 'SKILL.md'),
+        '---\nname: fixture-user-skill\ndescription: User inventory fixture.\nuser-invocable: false\ndisable-model-invocation: true\n---\nMetadata only.\n',
+      ],
+      [
+        join(
+          skillsProject,
+          '.claude',
+          'commands',
+          'fixture-project-command.md',
+        ),
+        '---\ndescription: Project command inventory fixture.\n---\nMetadata only.\n',
+      ],
+      [
+        join(skillsProject, '.claude', 'skills', 'broken', 'SKILL.md'),
+        '---\nname: [unterminated\n---\nMetadata only.\n',
+      ],
+      [
+        join(claudeConfig, 'settings.json'),
+        '{"permissions":{"defaultMode":"plan"}}\n',
+      ],
+    ];
+    await mkdir(join(skillsProject, '.git'), { recursive: true });
+    for (const [path, body] of metadata) {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, body);
+    }
+    const inventorySession = (
+      await host.request('create-session', create(skillsProject))
+    ).session;
+    const claudeInventory = await host.request('discover-skills', {
+      sessionId: inventorySession.id,
+    });
+    assert.equal(
+      claudeInventory.type,
+      'skills',
+      JSON.stringify(claudeInventory),
+    );
+    assert.equal(claudeInventory.catalog.method, 'filesystem');
+    assert.equal(claudeInventory.catalog.provider, 'Claude Code');
+    assert.equal(claudeInventory.catalog.status, 'partial');
+    assert.equal(claudeInventory.catalog.invocationSupported, false);
+    assert.equal(claudeInventory.catalog.sessionId, inventorySession.id);
+    const projectSkill = claudeInventory.catalog.skills.find(
+      skill => skill.name === 'fixture-project-skill',
+    );
+    assert.equal(projectSkill.source, 'project');
+    assert.equal(projectSkill.enabled, null);
+    const userSkill = claudeInventory.catalog.skills.find(
+      skill => skill.name === 'fixture-user-skill',
+    );
+    assert.equal(userSkill.source, 'user');
+    assert.equal(userSkill.userInvocable, false);
+    assert.equal(userSkill.modelInvocable, false);
+    assert.ok(
+      claudeInventory.catalog.skills.some(
+        skill =>
+          skill.kind === 'command' && skill.name === 'fixture-project-command',
+      ),
+    );
+    assert.ok(claudeInventory.catalog.issues.length > 0);
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions.find(
+        value => value.id === inventorySession.id,
+      ),
+      inventorySession,
+    );
+    for (const [path, body] of metadata)
+      assert.equal(await readFile(path, 'utf8'), body);
+    assert.equal(
+      (await host.request('discover-skills', { sessionId: randomUUID() })).code,
+      'not-found',
+    );
+    for (const extra of [{ provider: 'Codex' }, { directory: skillsProject }]) {
+      assert.deepEqual(
+        await host.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'discover-skills',
+            input: { sessionId: inventorySession.id, ...extra },
+          }),
+        ),
+        { type: 'error', id: null, code: 'invalid-request' },
+      );
+    }
+    const nativeSkillSessions = new Map();
+    for (const [variant, expected] of [
+      ['codex', 'ready'],
+      ['unsupported', 'unsupported'],
+      ['malformed', 'unsupported'],
+      ['partial', 'partial'],
+      ['hold', null],
+    ]) {
+      const workspace = join(directory, `skills-${variant}`);
+      await mkdir(workspace);
+      const target = (
+        await host.request('create-session', {
+          ...create(workspace),
+          provider: 'Codex',
+          model: 'fixture-codex',
+        })
+      ).session;
+      nativeSkillSessions.set(variant, target);
+      if (!expected) continue;
+      const discovered = await host.request('discover-skills', {
+        sessionId: target.id,
+      });
+      assert.equal(discovered.type, 'skills', JSON.stringify(discovered));
+      assert.equal(discovered.catalog.method, 'native');
+      assert.equal(discovered.catalog.status, expected);
+      assert.equal(discovered.catalog.invocationSupported, false);
+      if (expected === 'ready' || expected === 'partial') {
+        assert.equal(
+          discovered.catalog.skills.find(
+            skill => skill.name === 'Fixture project skill',
+          ).enabled,
+          true,
+        );
+        assert.equal(
+          discovered.catalog.skills.find(
+            skill => skill.name === 'Fixture project skill',
+          ).source,
+          'project',
+        );
+        assert.equal(
+          discovered.catalog.skills.find(
+            skill => skill.name === 'Fixture user skill',
+          ).enabled,
+          false,
+        );
+        assert.equal(
+          discovered.catalog.skills.find(
+            skill => skill.name === 'Fixture user skill',
+          ).source,
+          'user',
+        );
+      }
+      assert.deepEqual(
+        (await host.request('list-sessions')).sessions.find(
+          value => value.id === target.id,
+        ),
+        target,
+      );
+    }
+    const traces = (await readFile(pidFile + '.skills', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.ok(traces.some(trace => trace.method === 'skills/list'));
+    assert.ok(
+      traces.every(
+        trace =>
+          !trace.methods.some(method =>
+            /^(?:account|model|thread|turn)\//.test(method),
+          ),
+      ),
+    );
+    for (const [path, body] of metadata)
+      assert.equal(await readFile(path, 'utf8'), body);
     assert.equal(
       (await host.request('create-session', create('relative-folder'))).code,
       'invalid-directory',
@@ -1125,6 +1299,17 @@ test(
       return { ...pending, pids: [pids.pid, pids.childPid] };
     };
     const approvalStopped = await codexHold(finalHost);
+    let discoveryFinished = false;
+    const slowDiscovery = finalHost
+      .request('discover-skills', {
+        sessionId: nativeSkillSessions.get('hold').id,
+      })
+      .then(response => {
+        discoveryFinished = true;
+        return response;
+      });
+    assert.equal((await finalHost.request('health')).health.status, 'ready');
+    assert.equal(discoveryFinished, false);
     await finalHost.request('stop-run', {
       sessionId: supervised.id,
       runId: approvalStopped.run.runId,
@@ -1141,6 +1326,15 @@ test(
       'stopped',
     );
     await processesGone(approvalStopped.pids, ownedPids);
+    const slowCatalog = await slowDiscovery;
+    assert.equal(slowCatalog.type, 'skills', JSON.stringify(slowCatalog));
+    assert.equal(slowCatalog.catalog.status, 'ready');
+    assert.equal(
+      (await finalHost.request('list-sessions')).sessions.find(
+        value => value.id === supervised.id,
+      ).status,
+      'stopped',
+    );
     assert.equal(
       (
         await finalHost.request(

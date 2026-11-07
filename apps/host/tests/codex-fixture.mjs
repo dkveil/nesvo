@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -41,6 +41,23 @@ if (args.length === 1 && args[0] === '--version') {
   let experimentalApi = false;
   let thread;
   let current;
+  let skillsDirectory;
+  const methods = [];
+  const forbiddenSkillMethods = new Set([
+    'account/read',
+    'model/list',
+    'thread/start',
+    'thread/resume',
+    'turn/start',
+  ]);
+  const skillsTrace = (directory, method) => {
+    if (process.env.NESVO_CODEX_FIXTURE_SKILLS_LOG)
+      writeFileSync(
+        process.env.NESVO_CODEX_FIXTURE_SKILLS_LOG,
+        JSON.stringify({ directory, method, methods, pid: process.pid }) + '\n',
+        { flag: 'a' },
+      );
+  };
   const approvals = new Map();
   const delegations = new Map();
   const response = (id, result) => emit({ id, result });
@@ -290,6 +307,13 @@ if (args.length === 1 && args[0] === '--version') {
       return;
     }
     const { id, method, params } = message;
+    methods.push(method);
+    if (skillsDirectory)
+      assert.equal(
+        forbiddenSkillMethods.has(method),
+        false,
+        'Skills discovery must not run account, model or session operations',
+      );
     if (method === 'initialize') {
       assert.equal(initialized, false);
       assert.equal(params.clientInfo.name, 'nesvo');
@@ -321,7 +345,83 @@ if (args.length === 1 && args[0] === '--version') {
       });
     } else if (method === 'config/read') {
       assert.equal(params.includeLayers, false);
+      if (
+        typeof params.cwd === 'string' &&
+        basename(params.cwd).startsWith('skills-')
+      ) {
+        skillsDirectory = params.cwd;
+        assert.equal(
+          methods.some(method => forbiddenSkillMethods.has(method)),
+          false,
+        );
+        skillsTrace(skillsDirectory, method);
+      }
       response(id, { config: isolatedConfig, origins: {}, layers: null });
+    } else if (method === 'skills/list') {
+      assert.equal(params.forceReload, true);
+      assert.equal(params.cwds.length, 1);
+      const directory = params.cwds[0];
+      assert.ok(isAbsolute(directory));
+      assert.equal(
+        methods.some(method => forbiddenSkillMethods.has(method)),
+        false,
+      );
+      assert.equal(experimentalApi, false);
+      skillsDirectory = directory;
+      skillsTrace(directory, method);
+      if (basename(directory) === 'skills-unsupported') {
+        emit({
+          id,
+          error: {
+            code: -32601,
+            message:
+              'Skills inventory is not supported by this fixture version.',
+          },
+        });
+        return;
+      }
+      if (basename(directory) === 'skills-malformed') {
+        response(id, { data: 'malformed catalog' });
+        return;
+      }
+      if (basename(directory) === 'skills-hold')
+        await new Promise(resolve => setTimeout(resolve, 4000));
+      const skills = [
+        {
+          name: 'Fixture project skill',
+          description: 'Project metadata supplied by the native fixture.',
+          path: join(
+            directory,
+            '.agents',
+            'skills',
+            'fixture-project-skill',
+            'SKILL.md',
+          ),
+          scope: 'repo',
+          enabled: true,
+        },
+        {
+          name: 'Fixture user skill',
+          description: 'Disabled user metadata supplied by the native fixture.',
+          path: join(
+            process.env.CLAUDE_CONFIG_DIR ?? dirname(directory),
+            'skills',
+            'fixture-user-skill',
+            'SKILL.md',
+          ),
+          scope: 'user',
+          enabled: false,
+        },
+      ];
+      if (basename(directory) === 'skills-partial')
+        skills.push({
+          name: 123,
+          path: 'invalid',
+          scope: 'repo',
+          enabled: true,
+        });
+      response(id, { data: [{ cwd: directory, skills, errors: [] }] });
+      skillsTrace(directory, 'skills/list:completed');
     } else if (method === 'model/list') {
       assert.equal(params.includeHidden, false);
       response(id, {
