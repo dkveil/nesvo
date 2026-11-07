@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ArrowUp, FolderOpen, Square } from 'lucide-react';
-import type { RespondApprovalInput } from '@nesvo/contracts';
+import { ArrowUp, FolderOpen, Square, X } from 'lucide-react';
+import type { DesktopApi, RespondApprovalInput } from '@nesvo/contracts';
 import {
   modeLabels,
   modelLabel,
@@ -11,6 +11,7 @@ import {
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
+import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 
 type Props = {
   session: Session;
@@ -26,6 +27,9 @@ type Props = {
     live: boolean,
   ) => ReactNode;
   draft: string;
+  selectedSkill: SelectedSkill | null;
+  skillApi: Pick<DesktopApi, 'discoverSkills'>;
+  onSkillChange: (skill: SelectedSkill | null) => void;
   sending: boolean;
   canSend: boolean;
   otherRun: boolean;
@@ -49,6 +53,9 @@ export function Conversation({
   results,
   activity,
   draft,
+  selectedSkill,
+  skillApi,
+  onSkillChange,
   sending,
   canSend,
   otherRun,
@@ -61,6 +68,7 @@ export function Conversation({
   onStop,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
   const followOutput = useRef(true);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
@@ -90,100 +98,149 @@ export function Conversation({
     if (message.author === 'agent' && !firstAgents.has(message.runId))
       firstAgents.set(message.runId, message.id);
   const composer = (
-    <form
-      className="mx-auto w-full max-w-3xl"
-      onSubmit={event => {
-        event.preventDefault();
-        if (draft.trim() && canSend) onSend();
+    <SelectSkill
+      key={session.id}
+      session={session}
+      api={skillApi}
+      draft={draft}
+      onSelect={skill => {
+        onSkillChange(skill);
+        if (draft.startsWith('/')) onDraft(draft.replace(/^\/[^\s]*\s?/, ''));
       }}
+      onFocusMessage={() => messageInput.current?.focus()}
     >
-      <label htmlFor="message-input" className="sr-only">
-        Message
-      </label>
-      <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
-        <Textarea
-          id="message-input"
-          placeholder="Ask anything about your task…"
-          value={draft}
-          onChange={event => onDraft(event.target.value)}
-          maxLength={32000}
-          className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
-        />
-        <div className="flex items-end justify-between gap-3 px-1 pt-3">
-          <span className="min-w-0 text-[11px] leading-5 text-muted-foreground">
-            {otherRun
-              ? 'Another session is working'
-              : sending
-                ? 'Sending…'
-                : session.delegations.some(
-                      delegation =>
-                        delegation.runId === session.runId &&
-                        delegation.status === 'pending',
-                    )
-                  ? 'Worker approval needed'
-                  : session.pendingApprovals.length > 0
-                    ? 'Approval needed'
-                    : modeLabels[session.mode]}
-          </span>
-          <div className="flex shrink-0 items-center gap-3">
+      {({ trigger, onKeyDown, onInput, inputAria }) => (
+        <form
+          className="mx-auto w-full max-w-3xl"
+          onSubmit={event => {
+            event.preventDefault();
+            if (draft.trim() && canSend) onSend();
+          }}
+        >
+          <label htmlFor="message-input" className="sr-only">
+            Message
+          </label>
+          <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
+            {selectedSkill && (
+              <div className="mb-2 flex items-center gap-1">
+                <span
+                  aria-label={`Selected skill: ${selectedSkill.name}`}
+                  title={[
+                    selectedSkill.description,
+                    `${selectedSkill.source} · ${selectedSkill.path}`,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
+                  className="max-w-[calc(100%-2rem)] truncate rounded-md border bg-secondary/60 px-2 py-1 text-xs"
+                >
+                  {selectedSkill.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 text-muted-foreground"
+                  aria-label="Remove skill"
+                  onClick={() => onSkillChange(null)}
+                >
+                  <X className="size-3" />
+                </Button>
+              </div>
+            )}
+            <Textarea
+              ref={messageInput}
+              id="message-input"
+              {...inputAria}
+              onKeyDown={onKeyDown}
+              onInput={onInput}
+              placeholder="Ask anything about your task…"
+              value={draft}
+              onChange={event => onDraft(event.target.value)}
+              maxLength={32000}
+              className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+            />
+            <div className="flex items-end justify-between gap-3 px-1 pt-3">
+              <div className="flex min-w-0 items-center gap-2">
+                {trigger}
+                <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
+                  {otherRun
+                    ? 'Another session is working'
+                    : sending
+                      ? 'Sending…'
+                      : session.delegations.some(
+                            delegation =>
+                              delegation.runId === session.runId &&
+                              delegation.status === 'pending',
+                          )
+                        ? 'Worker approval needed'
+                        : session.pendingApprovals.length > 0
+                          ? 'Approval needed'
+                          : modeLabels[session.mode]}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <span
+                  className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
+                  title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
+                >
+                  {session.provider} ·{' '}
+                  {session.actualModel ?? modelLabel(session.model)}
+                </span>
+                {running ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={session.status === 'stopping'}
+                    onClick={onStop}
+                    aria-label={stopLabel}
+                    title={
+                      groupRun
+                        ? 'Stop this session and its workers'
+                        : 'Stop this session'
+                    }
+                  >
+                    <Square />
+                    {session.status === 'stopping'
+                      ? groupRun
+                        ? 'Stopping group…'
+                        : 'Stopping…'
+                      : stopLabel}
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    size="icon-sm"
+                    className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
+                    disabled={!draft.trim() || !canSend}
+                    aria-label="Send message"
+                    title="Send message"
+                  >
+                    <ArrowUp />
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 text-[11px] text-muted-foreground">
             <span
-              className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
-              title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
+              className="flex min-w-0 items-center gap-1.5"
+              title={session.directory}
+              aria-label={`Working directory: ${session.directory}`}
             >
+              <FolderOpen className="size-3 shrink-0" />
+              <span className="truncate">
+                {directoryLabel(session.directory)}
+              </span>
+            </span>
+            <span className="truncate sm:hidden">
               {session.provider} ·{' '}
               {session.actualModel ?? modelLabel(session.model)}
             </span>
-            {running ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={session.status === 'stopping'}
-                onClick={onStop}
-                aria-label={stopLabel}
-                title={
-                  groupRun
-                    ? 'Stop this session and its workers'
-                    : 'Stop this session'
-                }
-              >
-                <Square />
-                {session.status === 'stopping'
-                  ? groupRun
-                    ? 'Stopping group…'
-                    : 'Stopping…'
-                  : stopLabel}
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                size="icon-sm"
-                className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
-                disabled={!draft.trim() || !canSend}
-                aria-label="Send message"
-                title="Send message"
-              >
-                <ArrowUp />
-              </Button>
-            )}
           </div>
-        </div>
-      </div>
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 text-[11px] text-muted-foreground">
-        <span
-          className="flex min-w-0 items-center gap-1.5"
-          title={session.directory}
-          aria-label={`Working directory: ${session.directory}`}
-        >
-          <FolderOpen className="size-3 shrink-0" />
-          <span className="truncate">{directoryLabel(session.directory)}</span>
-        </span>
-        <span className="truncate sm:hidden">
-          {session.provider} ·{' '}
-          {session.actualModel ?? modelLabel(session.model)}
-        </span>
-      </div>
-    </form>
+        </form>
+      )}
+    </SelectSkill>
   );
   useEffect(() => {
     const viewport = bottom.current?.closest<HTMLElement>(
@@ -240,6 +297,24 @@ export function Conversation({
                   <span>
                     {message.author === 'operator' ? 'You' : session.provider}
                   </span>
+                  {message.author === 'operator' &&
+                    (message.skill || message.skillId) && (
+                      <span
+                        aria-label={
+                          message.skill
+                            ? `Requested skill: ${message.skill.name}`
+                            : 'Unresolved skill request'
+                        }
+                        title={
+                          message.skill
+                            ? `${message.skill.source} · ${message.skill.path}`
+                            : 'A skill was requested, but its source was not resolved.'
+                        }
+                        className="max-w-[70%] truncate rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                      >
+                        {message.skill?.name ?? 'Requested skill'}
+                      </span>
+                    )}
                   {message.author === 'agent' &&
                     message.state !== 'completed' &&
                     !showActivity && (

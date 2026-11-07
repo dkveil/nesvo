@@ -287,7 +287,11 @@ function Catalog({
         {catalog?.method === 'filesystem'
           ? 'File metadata only. Provider availability is not verified. '
           : ''}
-        Discovery only. Skill invocation is not connected yet.
+        {session.provider === 'Claude Code'
+          ? 'Skill invocation is not enabled for this Claude connection.'
+          : catalog?.invocationSupported
+            ? 'Type / in your message or choose Skills in the composer to select one skill.'
+            : 'Skill invocation is unavailable for this connection.'}
       </footer>
     </>
   );

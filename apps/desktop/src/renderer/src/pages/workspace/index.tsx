@@ -24,6 +24,7 @@ import {
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
+import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -71,6 +72,9 @@ export function Workspace() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [selectedSkills, setSelectedSkills] = useState<
+    Record<string, SelectedSkill | null>
+  >({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -84,7 +88,7 @@ export function Workspace() {
   const delegationRequests = useRef(new Set<string>());
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
-    Record<string, { text: string; messageId: string }>
+    Record<string, { text: string; skillId?: string; messageId: string }>
   >({});
   const stopping = useRef(new Set<string>());
   const createTrigger = useRef<HTMLElement | null>(null);
@@ -173,6 +177,10 @@ export function Workspace() {
     draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
     setDrafts(previous => ({ ...previous, [id]: value }));
   };
+  const changeSkill = (id: string, skill: SelectedSkill | null) => {
+    draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
+    setSelectedSkills(previous => ({ ...previous, [id]: skill }));
+  };
   const send = async () => {
     if (
       !selected ||
@@ -188,23 +196,29 @@ export function Workspace() {
     const text = drafts[sessionId]?.trim();
     if (!text || text.length > 32000) return;
     const version = draftVersions.current[sessionId] ?? 0;
+    const skillId = selectedSkills[sessionId]?.id;
     const prior = sendAttempts.current[sessionId];
     const attempt =
-      prior?.text === text ? prior : { text, messageId: crypto.randomUUID() };
+      prior?.text === text && prior.skillId === skillId
+        ? prior
+        : { text, skillId, messageId: crypto.randomUUID() };
     sendAttempts.current[sessionId] = attempt;
     sendingRef.current = true;
     setSending(true);
     setErrors(previous => ({ ...previous, [sessionId]: '' }));
     const acknowledge = () => {
       delete sendAttempts.current[sessionId];
-      if ((draftVersions.current[sessionId] ?? 0) === version)
+      if ((draftVersions.current[sessionId] ?? 0) === version) {
         setDrafts(previous => ({ ...previous, [sessionId]: '' }));
+        setSelectedSkills(previous => ({ ...previous, [sessionId]: null }));
+      }
     };
     try {
       const session = await desktopApi().sendMessage({
         sessionId,
         messageId: attempt.messageId,
         text,
+        ...(skillId ? { skillId } : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -768,6 +782,9 @@ export function Workspace() {
                   />
                 }
                 draft={drafts[selected.id] ?? ''}
+                selectedSkill={selectedSkills[selected.id] ?? null}
+                skillApi={desktopApi()}
+                onSkillChange={skill => changeSkill(selected.id, skill)}
                 sending={sending}
                 canSend={
                   !sending &&
