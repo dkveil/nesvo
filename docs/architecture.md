@@ -32,7 +32,7 @@ The host imports no Electron code; its desktop transport adapter belongs to the 
 
 Effect owns the database, session service, capability probes and request stream lifetime. Finalizers cancel owned provider work before closing SQLite. They run on normal shutdown and transport completion.
 SQLite uses a versioned bootstrap and transaction, WAL, foreign keys and a busy timeout. An unsupported newer schema is rejected before migration.
-Schema v3 preserves host identity and conversation snapshots, adds provider modes and pending approvals, and migrates existing Claude sessions to read-only mode. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and an unsaved snapshot prevent a new message from overwriting the result. Restart marks unfinished runs interrupted and invalidates their pending approvals.
+Schema v4 preserves host identity, provider threads and conversation snapshots. Earlier migrations retain provider modes and pending approvals; v4 adds parent/run relationships, worker scopes, delegation capability and proposals. Existing conversations default to delegation disabled. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Accepting a worker commits both parent and child snapshots in one transaction before launch. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and unsaved snapshots prevent new messages from overwriting results. Restart marks unfinished runs and proposals interrupted and invalidates pending operation approvals.
 SQLite remains on Node's built-in driver. Drizzle integration waits for stable support for this driver; no release candidate is installed. Database types would not replace public Zod request validation.
 
 ## Ownership
@@ -70,10 +70,10 @@ P2 removes demonstration sessions from the product. The page owns selection, dra
 
 The adapter uses the documented print/stream-json interface, existing login and explicit session-id/resume arguments. It validates required CLI capabilities, streams main-session text, ignores subagent output, reconciles final text and treats is_error as authoritative even when result subtype says success. Model aliases are not a promise of account entitlement.
 Claude enables only Read, Glob and Grep in plan mode, denies unanswered permission requests, disables hooks and supplies an empty strict MCP configuration. It never enables permission bypass. Interactive approval in P3 is provider-specific; Claude retains its P2 capabilities. Provider-aware skill support belongs to P6.
-Only one turn runs at a time. Stop targets the owned Windows process tree or POSIX process group and waits for close; the host's shutdown watchdog allows cleanup to finish. On Windows, descendants already orphaned before the parent exits are not guaranteed to be contained by PID-tree cleanup. Abrupt OS termination is not equivalent to graceful shutdown; stronger containment needs a separate native job mechanism.
+Only one group runs at a time, with at most two children beside its parent. Stop targets the owned Windows process tree or POSIX process group and waits for close; the host's shutdown watchdog allows cleanup to finish. Windows cleanup skips a parent whose exit is already known, avoiding another tree-kill request against its retired PID. Descendants already orphaned before the parent exits are not guaranteed to be contained by PID-tree cleanup. Abrupt OS termination is not equivalent to graceful shutdown; stronger containment needs a separate native job mechanism.
 The host is local and lives with the desktop. There is no network listener, remote authentication or background daemon.
 A closed host is not silently restarted. UI reports failure and lets the operator retry or reopen the app.
-Worker lifetimes and review revision rules remain separate approved stages.
+Review revision rules remain a separate approved stage.
 
 ## Codex adapter and approval boundaries
 
@@ -83,3 +83,27 @@ The native local tool executor remains enabled. Before starting a thread, the ad
 Read-only mode uses the provider's read-only sandbox and never grants elevated operations. It can run commands that read data; it is not the same tool allowlist as Claude. Supervised mode uses workspace-write with the provider's untrusted approval policy and user reviewer. Workspace edits may proceed without a prompt. Commands and file changes that the provider asks to approve become visible requests, with one-time accept or decline actions. This mode does not promise a prompt for every edit.
 
 Decisions carry the Nesvo session ID, current run ID and provider request ID. The host accepts them only while that exact request is pending on the active run. Stop, completion and recovery invalidate requests. Persistence precedes forwarding an approval, and unsupported provider requests fail closed. Provider approval is separate from the later review inbox and does not accept a completed task.
+
+## Visible delegation
+
+New read-only Codex orchestrators register the native `nesvo_delegate` dynamic tool at thread creation. Its input schema is generated from the shared Zod contract. This native interface requires the installed app-server's experimental API capability; it is enabled only for a delegation-capable orchestrator connection. Resume uses the provider's stored tool metadata. Existing threads are never replaced or silently upgraded. Workers and standalone sessions receive no delegation tool.
+
+```text
+Codex parent -> native tool call -> validated worker proposals
+                                    |
+React decisions -> typed preload -> host decide-delegation
+                                    |
+                             persist parent + child
+                                    |
+                             launch owned worker
+                                    |
+                         child status/text/error -> parent tool result
+```
+
+The adapter validates the tool, namespace, call ID, thread and turn. The service limits all calls within one parent run to two proposals. Each proposal shows task, scope, relative directory, provider, model and mode. Only a matching session/run/proposal decision can accept or decline it. Acceptance creates and launches the visible child; stale decisions fail. Child results remain associated with their proposal and session IDs, including declined, stopped and failed outcomes.
+
+The parent is read-only. Workers use the existing Codex modes or Claude's read-only capabilities and cannot create children. Directories are canonicalized, checked inside the parent's root and revalidated at acceptance. If either worker can write, its directory must not overlap another worker's directory. Assignment text is not a security boundary; provider sandboxes still define actual permissions. Read-only workers can share a directory.
+
+Stopping a child leaves its sibling and parent active. Stopping the parent cancels pending proposals and active children. Parent termination waits for child cleanup; shutdown cancels the whole group. Restart retains relationships and marks unfinished work interrupted without launching it. Only one group may be active globally. A ten-minute native parent deadline includes operator waiting and child work; each conversation retains at most 100 proposals. Worker summaries passed back to the parent are capped at 12,000 characters with explicit truncation, while complete conversations stay available in the UI.
+
+The workspace page composes conversation and delegation widgets through a React slot. Sidebar rows expose the parent/child tree, child views link back to their parent, and session details explain the actual delegation capability. No Effect or process API enters the renderer.

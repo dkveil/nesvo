@@ -13,11 +13,11 @@ Damian explicitly chose limited testing for prototype delivery. Protect meaningf
 
 Current checks:
 
-| Check                            | Evidence                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------- |
-| Host lifecycle integration       | Migration, identity, session persistence, streaming, idempotency, resume, Stop and cleanup  |
-| Schema compatibility integration | Newer database refused and version preserved                                                |
-| Desktop scenario                 | Electron/preload/host/database path, session UI, streaming, reload, Stop and child shutdown |
+| Check                            | Evidence                                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------------------------- |
+| Host lifecycle integration       | Migration, identity, persistence, streaming, resume, approvals, delegation, Stop and cleanup |
+| Schema compatibility integration | Newer database refused and version preserved                                                 |
+| Desktop scenario                 | Electron/preload/host/database path, decisions, worker tree, reload and group shutdown       |
 
 Tests use dedicated temporary directories and no provider accounts. They must not operate real project data or existing agent processes.
 The desktop smoke scenario can run against either build output or an unpacked package.
@@ -27,6 +27,10 @@ The desktop scenario covers model selection, default and invalid directories, se
 Real CLI evidence is recorded separately. The fixture is not proof of subscription availability, successful model output or provider resume behavior. A provider account limit leaves real task acceptance pending even when all automated checks pass.
 
 P3 extends these same checks with an explicit Codex app-server fixture: dynamic models, streaming and resume, provider-specific sandbox policies, session/run/request-bound approval and denial, stale decision rejection, and cleanup while waiting for approval. Denial must leave the fixture's operation marker absent; acceptance must create it only for the intended request. A version-two Claude snapshot must retain its history after migration. The desktop scenario exercises provider selection and real approval UI through the same preload/host boundary.
+
+P4 extends the same two host cases and one desktop scenario. The fixture validates native dynamic-tool metadata and resume, returns actual child results to the parent, and runs two independently tracked worker processes with streaming output. Checks cover absence of children before approval, accept/decline, stale decisions, proposal limits, directory and symlink escape, overlapping writes, recursive tool rejection, correct success/failure attribution, child Stop with a live sibling, parent/pending cancellation, group shutdown and persisted relationships. Migration keeps existing Claude and Codex conversations without silently enabling delegation. The desktop flow exercises proposal buttons, child navigation, two live workers, Stop and compact layouts. Once an owned process is confirmed gone, its PID is retired from later cleanup checks to avoid confusing Windows PID reuse with a leak.
+
+Real P4 evidence separately uses installed Codex through Electron, including two concurrent workers and parent continuation after one worker is stopped. Fixture success is not real-provider evidence. Native tool execution on Windows does not certify real account access on macOS or Linux.
 
 ## Before reporting completion
 

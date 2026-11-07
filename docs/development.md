@@ -40,8 +40,8 @@ The scenario starts a hidden window, uses an isolated temporary directory and ex
 ## Standalone host
 
 Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run host.
-Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, create-session, send-message, stop-run, respond-approval or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline.
-Responses and session-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active turn.
+Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, create-session, send-message, stop-run, respond-approval, decide-delegation or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings.
+Responses and session-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
 
 ## Local data
 
@@ -60,6 +60,7 @@ Do not run git clean or delete ignored files as part of setup.
 
 If the initial screen reports no connection, retry once and inspect the terminal used to start development.
 An incompatible database fails closed; do not delete it to hide the error.
-If Claude reports an account limit, wait for the reset reported by Claude and retry. Nesvo does not substitute a simulated response, change billing, or automatically retry. A turn is bounded to ten minutes. Stop terminates only the owned process tree; failed cleanup is reported as failure.
+If Claude reports an account limit, wait for the reset reported by Claude and retry. Nesvo does not substitute a simulated response, change billing, or automatically retry. A turn is bounded to ten minutes, including a parent's wait for worker approval and results. Stop terminates only the owned process tree; failed cleanup is reported as failure.
+Use a new read-only Codex orchestrator for P4 delegation. Older sessions preserve their existing provider thread and cannot acquire the native tool silently. Choose Samodzielna sesja for a directly supervised Codex conversation. Worker directories must already exist inside the parent directory; use separate non-overlapping directories when allowing writes. One group runs at a time, and workers never launch before an individual operator decision.
 Quit the desktop to stop its utility host. On macOS, closing the last window alone does not quit the app.
 Development IPC and the host expose no network port. The renderer development server uses an available Vite port.
