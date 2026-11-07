@@ -150,7 +150,8 @@ if (args.length === 1 && args[0] === '--version') {
                         : 'fixture write approved marker',
                   }),
               cwd: thread.cwd,
-              environmentId: null,
+              environmentId:
+                variant === 'remote-environment' ? 'remote-fixture' : 'local',
               commandActions: [],
             }
           : { grantRoot: null }),
@@ -306,6 +307,8 @@ if (args.length === 1 && args[0] === '--version') {
         requestApproval('file', 'missing-changes');
       } else if (prompt === 'fixture:oversize-approval') {
         requestApproval('command', 'oversize');
+      } else if (prompt === 'fixture:remote-environment') {
+        requestApproval('command', 'remote-environment');
       } else if (prompt === 'fixture:approval-hold') {
         await hold();
         requestApproval('command');

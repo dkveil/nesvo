@@ -698,7 +698,9 @@ export function startCodex(options: {
         params.turnId !== turnId ||
         typeof params.itemId !== 'string' ||
         !params.itemId ||
-        (command && params.environmentId != null) ||
+        (command &&
+          params.environmentId != null &&
+          params.environmentId !== 'local') ||
         (command && params.networkApprovalContext != null) ||
         (command && params.kind !== undefined && params.kind !== 'command') ||
         (file && params.grantRoot != null)
@@ -763,7 +765,7 @@ export function startCodex(options: {
         approval: {
           id,
           kind: command ? 'command' : 'file-change',
-          title: command ? 'Run command' : 'Apply file changes',
+          title: command ? 'Wykonanie polecenia' : 'Zmiana plików',
           detail,
           directory,
         },

@@ -541,6 +541,7 @@ test(
       'fixture:missing-command',
       'fixture:missing-changes',
       'fixture:oversize-approval',
+      'fixture:remote-environment',
     ]) {
       const malformed = await sendCodex(finalHost, supervised, prompt);
       const refused = await finalHost.event(
