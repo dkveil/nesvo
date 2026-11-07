@@ -18,6 +18,13 @@ type Props = {
   workers: Session[];
   delegations: ReactNode;
   results: ReactNode;
+  activity: (
+    runId: string,
+    startedAt: string | null,
+    completedAt: string | null,
+    status: Session['status'],
+    live: boolean,
+  ) => ReactNode;
   draft: string;
   sending: boolean;
   canSend: boolean;
@@ -40,6 +47,7 @@ export function Conversation({
   workers,
   delegations,
   results,
+  activity,
   draft,
   sending,
   canSend,
@@ -72,6 +80,15 @@ export function Conversation({
     !error &&
     session.pendingApprovals.length === 0 &&
     session.delegations.length === 0;
+  const runStarts = new Map(
+    session.messages
+      .filter(message => message.author === 'operator')
+      .map(message => [message.runId, message.createdAt]),
+  );
+  const firstAgents = new Map<string, string>();
+  for (const message of session.messages)
+    if (message.author === 'agent' && !firstAgents.has(message.runId))
+      firstAgents.set(message.runId, message.id);
   const composer = (
     <form
       className="mx-auto w-full max-w-3xl"
@@ -206,27 +223,46 @@ export function Conversation({
         }
       >
         <div className="mx-auto max-w-3xl space-y-10 px-5 py-10 lg:px-6">
-          {session.messages.map(message => (
-            <article key={message.id} className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-medium">
-                <span>
-                  {message.author === 'operator' ? 'You' : session.provider}
-                </span>
-                {message.author === 'agent' &&
-                  message.state !== 'completed' && (
-                    <span className="text-[11px] font-normal text-muted-foreground">
-                      {statusLabels[message.state]}
-                    </span>
+          {session.messages.map(message => {
+            const live =
+              message.author === 'agent' &&
+              message.runId === session.runId &&
+              running;
+            const showActivity =
+              firstAgents.get(message.runId) === message.id &&
+              (live ||
+                !!message.completedAt ||
+                session.activities.some(item => item.runId === message.runId));
+            return (
+              <article key={message.id} className="space-y-3">
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <span>
+                    {message.author === 'operator' ? 'You' : session.provider}
+                  </span>
+                  {message.author === 'agent' &&
+                    message.state !== 'completed' &&
+                    !showActivity && (
+                      <span className="text-[11px] font-normal text-muted-foreground">
+                        {statusLabels[message.state]}
+                      </span>
+                    )}
+                </div>
+                {showActivity &&
+                  activity(
+                    message.runId,
+                    runStarts.get(message.runId) ?? null,
+                    message.completedAt,
+                    live ? session.status : message.state,
+                    live,
                   )}
-              </div>
-              <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                {message.body ||
-                  (message.state === 'running'
-                    ? 'Waiting for a response…'
-                    : 'No response text.')}
-              </p>
-            </article>
-          ))}
+                {(message.body || !live) && (
+                  <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {message.body || 'No response text.'}
+                  </p>
+                )}
+              </article>
+            );
+          })}
           {delegations}
           {session.pendingApprovals.map(approval => {
             const pending =
@@ -289,14 +325,6 @@ export function Conversation({
             );
           })}
           {results}
-          {session.activity && running && (
-            <p
-              role="status"
-              className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
-            >
-              {session.activity}
-            </p>
-          )}
           {session.error && (
             <p
               role="alert"
