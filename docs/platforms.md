@@ -1,5 +1,13 @@
 # Platform verification
 
+## P6.1 skill discovery
+
+Implementation 653ad2d delivers native Codex skill discovery and a bounded Claude filesystem inventory through the session Skills panel. Windows passed strict types, ESLint, Prettier, build, the same two host integration cases and the principal desktop scenario. Checks cover provider metadata, disabled entries, unsupported/malformed replies, isolated configuration, no model-turn requests, independent Stop, refresh and late responses after switching sessions. Final cosmetic metadata changes received a focused visual check.
+
+A separate built-Electron check on Windows read installed Codex and actual Claude skill files for the repository session. Codex returned 154 enabled entries (153 personal, one system); Claude returned 109 local entries with unverified availability and explicit incomplete-source issues. Counts describe this session context, not a fixed global catalog. The check covered search, source paths, compact layout and Escape focus. No session messages or model tasks were created; sampled Codex and Claude configuration files stayed byte-identical. Claude availability probing used a fixture, while its skill inventory read real files. This is discovery evidence, not skill-execution or successful Claude model-task evidence.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42415396734) passed at 653ad2d. The [native workflow](https://github.com/dkveil/nesvo/actions/runs/42415396668) separately passed host checks, built-application execution and unpacked-package execution on Windows, macOS and Linux. Native checks use provider fixtures and isolated skill metadata. Screenshots and the real discovery record are attached to REV-261. P6.1 is In Review for Damian; P6.2 invocation remains unimplemented.
+
 ## P5 read-only file explorer
 
 D58 implementation 975b61e adds a session-scoped directory tree, bounded filename search and current text preview alongside exact saved result diffs. Windows passed strict types, ESLint, Prettier, build, the existing host cases and the principal desktop scenario. After a real repository check exposed search starvation, breadth-first traversal and filtering unrelated files before metadata access reduced the sample query from 3005 to 1644 ms and included the sibling package. Partial scans remain explicit. The focused principal host case passed again with the sibling-under-cap assertion.

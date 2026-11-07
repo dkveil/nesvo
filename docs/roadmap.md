@@ -50,5 +50,7 @@ D58 extends P5 with a read-only session file explorer: on-demand directories, bo
 
 D59 explicitly authorizes P6.1 discovery after the file explorer delivery. The session Skills panel lists names, descriptions, sources and reported or declared availability, with filtering and refresh. Codex uses its native skill catalog under the session isolation profile. Claude uses bounded local metadata inventory without launching its CLI, with unverified provider availability and incomplete sources stated explicitly. Discovery does not execute skills or modify configuration. P6.2 invocation and its real-task acceptance remain separate, unimplemented work.
 
+P6.1 is delivered at 653ad2d and In Review in REV-261. Actual Windows discovery and separate native application/package checks on Windows, macOS and Linux passed; see docs/platforms.md. P6 remains In Progress because invocation and its owner acceptance are still pending.
+
 Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
