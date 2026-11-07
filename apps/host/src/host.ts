@@ -14,6 +14,7 @@ import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
+import { discoverSessionSkills } from './skills/service';
 
 type HostTransport = {
   directory: string;
@@ -59,6 +60,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           }),
       );
       let workspaceRequests = 0;
+      let skillRequests = 0;
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
         iterator =>
@@ -143,6 +145,44 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(decision);
           void decision.finally(() => probes.pending.delete(decision));
+          continue;
+        }
+        if (request.method === 'discover-skills') {
+          const session = store.get(request.input.sessionId);
+          if (!session || skillRequests >= 2) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: session ? 'busy' : 'not-found',
+                message: session
+                  ? 'Skill discovery is busy. Try again shortly.'
+                  : 'Session not found.',
+              }),
+            );
+            continue;
+          }
+          skillRequests++;
+          const inspection = discoverSessionSkills(
+            session,
+            probes.controller.signal,
+          )
+            .then(catalog => send({ type: 'skills', id: request.id, catalog }))
+            .catch(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message:
+                  'Skills could not be checked. Verify the session directory and refresh.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(inspection);
+          void inspection.finally(() => {
+            skillRequests--;
+            probes.pending.delete(inspection);
+          });
           continue;
         }
         if (
