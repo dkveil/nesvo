@@ -21,6 +21,7 @@ const providerPidFile = join(directory, 'provider.json');
 const codexPidFile = join(directory, 'codex-provider.json');
 const workerPidDirectory = join(directory, 'worker-processes');
 const claudeConfigDirectory = join(directory, 'claude-config');
+const codexConfigDirectory = join(directory, 'codex-config');
 const skillsLog = join(directory, 'skills-probes.jsonl');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
 const executablePath =
@@ -32,12 +33,15 @@ const env = {
   NESVO_TEST_PID_FILE: pidFile,
   NESVO_CLAUDE_EXECUTABLE: resolve('apps/host/tests/claude-fixture.mjs'),
   NESVO_FIXTURE_PID_FILE: providerPidFile,
+  NESVO_FIXTURE_SKILL_LOG: join(directory, 'shared-instructions.jsonl'),
   NESVO_CODEX_EXECUTABLE: resolve('apps/host/tests/codex-fixture.mjs'),
   NESVO_CODEX_FIXTURE_PID_FILE: codexPidFile,
   NESVO_CODEX_FIXTURE_PID_DIR: workerPidDirectory,
   NESVO_CODEX_FIXTURE_STATE_DIR: join(directory, 'codex-state'),
   NESVO_CODEX_FIXTURE_SKILLS_LOG: skillsLog,
   CLAUDE_CONFIG_DIR: claudeConfigDirectory,
+  CODEX_HOME: codexConfigDirectory,
+  NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
@@ -57,6 +61,44 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 try {
+  const skillDocument = (name, marker, fields = '') =>
+    `---\nname: ${name}\ndescription: Shared fixture instructions.\n${fields}---\n${marker}\n`;
+  const writeSkill = async (path, body) => {
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, body);
+  };
+  const seedNativeSkill = async workspace => {
+    await writeSkill(
+      join(workspace, '.agents', 'skills', 'fixture-project-skill', 'SKILL.md'),
+      skillDocument('Fixture project skill', 'FIXTURE_PROJECT_MARKER'),
+    );
+    await mkdir(join(workspace, '.git'), { recursive: true });
+  };
+  await writeSkill(
+    join(
+      claudeConfigDirectory,
+      'skills',
+      'fixture-claude-instructions',
+      'SKILL.md',
+    ),
+    skillDocument(
+      'Fixture Claude instructions',
+      'FIXTURE_CLAUDE_SHARED_MARKER',
+    ),
+  );
+  await writeSkill(
+    join(
+      codexConfigDirectory,
+      'skills',
+      'fixture-codex-instructions',
+      'SKILL.md',
+    ),
+    skillDocument('Fixture Codex instructions', 'FIXTURE_CODEX_SHARED_MARKER'),
+  );
+  await writeSkill(
+    join(codexConfigDirectory, 'skills', 'fixture-native-disabled', 'SKILL.md'),
+    skillDocument('Fixture user skill', 'Disabled source.', 'enabled: false\n'),
+  );
   const userSkillPath = join(
     claudeConfigDirectory,
     'skills',
@@ -216,6 +258,14 @@ try {
       .getByRole('button', { name: 'Send message', exact: true })
       .click();
   };
+  const messageEditor = page.getByRole('textbox', {
+    name: 'Message',
+    exact: true,
+  });
+  const skillPicker = page.getByRole('listbox', {
+    name: 'Skills',
+    exact: true,
+  });
   const waitReview = async (sessionId, afterVersion = 0) => {
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
@@ -331,12 +381,16 @@ try {
     projectSkillPath,
     '---\nname: fixture-project-skill\ndescription: Project inventory fixture.\n---\nMetadata only.\n',
   );
+  await seedNativeSkill(first.directory);
+  assert.deepEqual(await readSkillsTrace(), []);
   await skillsOpener.click();
   await skillsPanel
     .getByText('fixture-project-skill', { exact: true })
     .waitFor();
   assert.equal(await skillsPanel.getAttribute('data-session-id'), first.id);
-  await skillsPanel.getByText('Local skill files', { exact: true }).waitFor();
+  await skillsPanel
+    .getByRole('heading', { name: 'Shared library', exact: true })
+    .waitFor();
   await skillsPanel
     .getByLabel('Search skills', { exact: true })
     .fill('fixture-user-skill');
@@ -362,12 +416,36 @@ try {
     .waitFor();
   await closeSkills();
   await screenshot('-empty-session');
+  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await skillPicker
+    .getByRole('option', { name: 'Fixture Codex instructions', exact: true })
+    .click();
+  await page
+    .getByLabel('Selected skill: Fixture Codex instructions', { exact: true })
+    .waitFor();
   await send('fixture:stream');
   await message('Fixture streamed reply.').waitFor();
   const firstCompleted = await waitState(first.id, 'completed');
   assert.equal(firstCompleted.actualModel, 'fixture-sonnet');
   assert.equal(firstCompleted.messages.at(-1).body, 'Fixture streamed reply.');
   assert.equal(firstCompleted.messages.at(-1).state, 'completed');
+  const sharedInstructionsMessage = firstCompleted.messages.at(-2);
+  assert.equal(sharedInstructionsMessage.skill.delivery, 'instructions');
+  assert.deepEqual(sharedInstructionsMessage.skill.origins, ['Codex']);
+  assert.equal(
+    sharedInstructionsMessage.skillHash,
+    sharedInstructionsMessage.skill.contentHash,
+  );
+  const sharedInstructionsBadge = conversation.getByLabel(
+    'Requested skill: Fixture Codex instructions',
+    { exact: true },
+  );
+  await sharedInstructionsBadge.waitFor();
+  assert.ok(
+    (await sharedInstructionsBadge.getAttribute('title')).includes(
+      sharedInstructionsMessage.skill.path,
+    ),
+  );
   await page
     .getByRole('textbox', { name: 'Message', exact: true })
     .fill('First session draft');
@@ -405,9 +483,26 @@ try {
   await page.reload();
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await message('Fixture streamed reply.').waitFor();
+  await sharedInstructionsBadge.waitFor();
+  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await skillPicker
+    .getByRole('option', { name: 'Fixture Codex instructions', exact: true })
+    .click();
   await send('fixture:continue');
   await message('Fixture resumed reply.').waitFor();
-  await waitState(first.id, 'completed');
+  const sharedInstructionsResumed = await waitState(first.id, 'completed');
+  assert.deepEqual(
+    sharedInstructionsResumed.messages.at(-2).skill,
+    sharedInstructionsMessage.skill,
+  );
+  const wrapperTrace = (await readFile(env.NESVO_FIXTURE_SKILL_LOG, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  assert.equal(wrapperTrace.length, 2);
+  assert.equal(wrapperTrace[1].resumed, true);
+  assert.equal(wrapperTrace[1].hash, sharedInstructionsMessage.skillHash);
+  assert.match(wrapperTrace[1].instructions, /FIXTURE_CODEX_SHARED_MARKER/);
   await screenshot('');
   await send('fixture:hold');
   const stopped = await waitOwned();
@@ -465,18 +560,25 @@ try {
   assert.equal(codex.mode, 'supervised');
   assert.equal(codex.role, 'standalone');
   assert.equal(codex.delegationEnabled, true);
-  assert.deepEqual(await readSkillsTrace(), []);
+  await seedNativeSkill(codex.directory);
   await skillsOpener.click();
   await skillsPanel
     .getByText('Fixture project skill', { exact: true })
     .waitFor();
   await skillsPanel.getByText('Fixture user skill', { exact: true }).waitFor();
-  await skillsPanel
-    .getByLabel('Details for Fixture user skill', { exact: true })
-    .getByText('Disabled', { exact: true })
+  const disabledSkill = skillsPanel.getByLabel(
+    'Details for Fixture user skill',
+    { exact: true },
+  );
+  await disabledSkill.click();
+  await disabledSkill
+    .locator('..')
+    .getByText('Disabled at source', { exact: true })
     .waitFor();
   assert.equal(await skillsPanel.getAttribute('data-session-id'), codex.id);
-  await skillsPanel.getByText('Provider catalog', { exact: true }).waitFor();
+  await skillsPanel
+    .getByRole('heading', { name: 'Shared library', exact: true })
+    .waitFor();
   assert.deepEqual(
     (await page.evaluate(() => window.nesvo.listSessions())).find(
       session => session.id === codex.id,
@@ -538,12 +640,6 @@ try {
         .isVisible(),
       true,
     );
-    assert.equal(
-      await skillsPanel
-        .getByText('Fixture project skill', { exact: true })
-        .count(),
-      0,
-    );
     await delay(100);
   }
   assert.equal(
@@ -563,27 +659,19 @@ try {
     ),
   );
   await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
-  const messageEditor = page.getByRole('textbox', {
-    name: 'Message',
-    exact: true,
-  });
-  const skillPicker = page.getByRole('listbox', {
-    name: 'Skills',
-    exact: true,
-  });
   const projectSkillOption = skillPicker.getByRole('option', {
-    name: 'Fixture project skill',
+    name: 'Fixture Claude instructions',
     exact: true,
   });
   const selectedSkillChip = page.getByLabel(
-    'Selected skill: Fixture project skill',
+    'Selected skill: Fixture Claude instructions',
     { exact: true },
   );
-  await messageEditor.fill('/Fixture project');
+  await messageEditor.fill('/Fixture Claude');
   await projectSkillOption.waitFor();
   await messageEditor.press('Escape');
   await skillPicker.waitFor({ state: 'hidden' });
-  assert.equal(await messageEditor.inputValue(), '/Fixture project');
+  assert.equal(await messageEditor.inputValue(), '/Fixture Claude');
   await messageEditor.fill('');
   await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
   await projectSkillOption.waitFor();
@@ -593,16 +681,19 @@ try {
       .getAttribute('aria-disabled'),
     'true',
   );
+  await page
+    .getByRole('textbox', { name: 'Filter skills', exact: true })
+    .fill('Fixture Claude');
   await messageEditor.press('ArrowDown');
   await messageEditor.press('Enter');
   await selectedSkillChip.waitFor();
   assert.match(
     await selectedSkillChip.getAttribute('title'),
-    /fixture-project-skill/,
+    /fixture-claude-instructions/,
   );
   await page.getByRole('button', { name: 'Remove skill', exact: true }).click();
   await selectedSkillChip.waitFor({ state: 'hidden' });
-  await messageEditor.fill('/Fixture project');
+  await messageEditor.fill('/Fixture Claude');
   await projectSkillOption.waitFor();
   await messageEditor.press('Tab');
   await selectedSkillChip.waitFor();
@@ -622,10 +713,16 @@ try {
   assert.equal(codexCompleted.messages.at(-1).state, 'completed');
   const requestedSkillMessage = codexCompleted.messages.at(-2);
   assert.equal(requestedSkillMessage.skillId, requestedSkillMessage.skill.id);
-  assert.equal(requestedSkillMessage.skill.name, 'Fixture project skill');
-  assert.equal(requestedSkillMessage.skill.source, 'project');
+  assert.equal(requestedSkillMessage.skill.name, 'Fixture Claude instructions');
+  assert.equal(requestedSkillMessage.skill.source, 'user');
+  assert.equal(requestedSkillMessage.skill.delivery, 'native');
+  assert.ok(requestedSkillMessage.skill.origins.includes('Claude Code'));
+  assert.equal(
+    requestedSkillMessage.skillHash,
+    requestedSkillMessage.skill.contentHash,
+  );
   const requestedSkillBadge = conversation.getByLabel(
-    'Requested skill: Fixture project skill',
+    'Requested skill: Fixture Claude instructions',
     { exact: true },
   );
   await requestedSkillBadge.waitFor();
