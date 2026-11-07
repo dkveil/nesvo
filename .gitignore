@@ -26,6 +26,7 @@
 !/apps/host/src/*.ts
 !/apps/host/src/providers/
 !/apps/host/src/sessions/
+!/apps/host/src/review/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs

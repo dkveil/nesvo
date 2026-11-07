@@ -19,6 +19,8 @@
 !apps/host/src/providers/**
 !apps/host/src/sessions/
 !apps/host/src/sessions/**
+!apps/host/src/review/
+!apps/host/src/review/**
 !apps/host/tests/
 !apps/host/tests/host.integration.test.mjs
 !apps/host/tests/claude-fixture.mjs

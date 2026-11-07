@@ -13,7 +13,7 @@ export const openDatabase = (directory: string) =>
         const version = database
           .prepare('PRAGMA user_version')
           .get()?.user_version;
-        if (typeof version !== 'number' || version > 4) {
+        if (typeof version !== 'number' || version > 5) {
           throw new Error('Unsupported database version');
         }
         database.exec(
@@ -40,7 +40,10 @@ export const openDatabase = (directory: string) =>
             database.exec(
               "UPDATE sessions SET document = json_set(document, '$.parentId', NULL, '$.parentRunId', NULL, '$.scope', NULL, '$.delegationEnabled', json('false'), '$.delegations', json('[]'))",
             );
-          database.exec('PRAGMA user_version = 4; COMMIT');
+          database.exec(
+            'CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), run_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL, UNIQUE(session_id, version))',
+          );
+          database.exec('PRAGMA user_version = 5; COMMIT');
         } catch (error) {
           database.exec('ROLLBACK');
           throw error;

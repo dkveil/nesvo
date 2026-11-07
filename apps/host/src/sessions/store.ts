@@ -61,7 +61,7 @@ export class SessionStore {
     this.saveMany([session]);
   }
 
-  saveMany(sessions: Session[]): void {
+  saveMany(sessions: Session[], writeRelated?: () => void): void {
     const next = sessions.map(session =>
       sessionSchema.parse({
         ...session,
@@ -76,6 +76,7 @@ export class SessionStore {
       );
       for (const session of next)
         statement.run(session.id, JSON.stringify(session), session.updatedAt);
+      writeRelated?.();
       this.database.exec('COMMIT');
     } catch (error) {
       this.database.exec('ROLLBACK');
