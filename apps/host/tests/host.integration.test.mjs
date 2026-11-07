@@ -156,7 +156,9 @@ test(
   'host migrates and persists sessions, streams, resumes and owns cancellation',
   { timeout: 90_000 },
   async t => {
-    const directory = await mkdtemp(join(tmpdir(), 'nesvo-host-'));
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-host-')),
+    );
     const workspace = join(directory, 'non-git-workspace');
     const pidFile = join(directory, 'fixture-pids.json');
     const children = [];

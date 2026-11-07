@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from 'playwright';
 
-const directory = await mkdtemp(join(tmpdir(), 'nesvo-desktop-'));
+const directory = await realpath(
+  await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
+);
 const pidFile = join(directory, 'processes.json');
 const providerPidFile = join(directory, 'provider.json');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
