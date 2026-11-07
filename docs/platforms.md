@@ -1,5 +1,13 @@
 # Platform verification
 
+## P5 durable activity and saved diff panel
+
+D57 delivers both refinements at implementation checkpoint 6399a3d. Windows passed strict types, ESLint, Prettier, build, the existing host integrations and the principal desktop scenario. The scenario covers actual provider event frames, Stop/reload timing, exact historical result versions, numbered changes, selected files, keyboard focus and compact layout. A targeted retention check covers the latest 100 items per run, global 300-item retention, explicit omitted-history markers and late updates for evicted items.
+
+A separate Windows run used the built Electron app, installed native Codex, gpt-6-sol and existing login. It read two files, edited their status and task counts, then verified them. Five native activities were persisted. Activity IDs and timestamps, the provider thread and the exact saved diff survived renderer reload. An unrelated file stayed unchanged, the correct result was accepted, and owned processes and temporary data were cleaned up. Screenshots show this real run; scenario screenshots and CI use explicit fixtures. No real Claude success is claimed while the existing account limit remains unresolved.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42409855720) passed. The [native workflow](https://github.com/dkveil/nesvo/actions/runs/42410069676) separately passed checks, built-app execution and unpacked-package execution on Windows, macOS and Linux at 6399a3d. Desktop distributions include the saved-diff viewer's dependency license notices. Subsequent commits update documentation only. P5 is In Review for Damian; P6 has not started.
+
 ## P5 English interface and intent-driven delegation
 
 D55 removes the role picker for new root Codex sessions, preserves access permissions and derives the orchestrator role from a valid worker proposal. The interface and current host-generated messages default to English. Compact inbox rows keep the requesting session, a concrete action summary and decisions together; connection diagnostics are available on demand.
