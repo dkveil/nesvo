@@ -45,7 +45,7 @@ function parseReview(review: Review) {
         const display = (value: string) =>
           value.replace(
             / (\d+)$/,
-            (_, mode: string) => ` · 0${Number(mode).toString(8)}`,
+            (_, mode: string) => ` · ${mode.padStart(4, '0')}`,
           );
         if (before && after && before !== after)
           metadata.set(file.name, `${display(before)} → ${display(after)}`);
