@@ -855,8 +855,8 @@ export async function inspectCodexSkills(
   directory: string,
   signal?: AbortSignal,
   extraRoots: string[] = [],
-): Promise<SkillDiscovery> {
-  const discovery: SkillDiscovery = {
+): Promise<SkillDiscovery & { extraRootsSupported: boolean }> {
+  const discovery: SkillDiscovery & { extraRootsSupported: boolean } = {
     provider: 'Codex',
     method: 'native',
     status: 'unavailable',
@@ -864,6 +864,7 @@ export async function inspectCodexSkills(
     issues: [],
     truncated: false,
     invocationSupported: false,
+    extraRootsSupported: false,
     checkedAt: new Date().toISOString(),
   };
   let peer: RpcPeer | null = null;
@@ -937,6 +938,7 @@ export async function inspectCodexSkills(
     if (!Array.isArray(extraRoots) || extraRoots.length > 0) {
       try {
         await registerCodexSkillRoots(peer, extraRoots, checkCancelled);
+        discovery.extraRootsSupported = true;
       } catch (error) {
         checkCancelled();
         if (!(error instanceof CodexRpcError) || error.code !== -32601)
@@ -1042,6 +1044,7 @@ export async function inspectCodexSkills(
         : 'ready';
     discovery.invocationSupported = true;
   } catch (error) {
+    discovery.extraRootsSupported = false;
     discovery.status =
       error instanceof CodexSkillProtocolError ||
       (error instanceof CodexRpcError && error.code === -32601)
@@ -1064,6 +1067,7 @@ export async function inspectCodexSkills(
     const exit = await peer?.close();
     if (exit && !exit.confirmed) {
       discovery.status = 'unavailable';
+      discovery.extraRootsSupported = false;
       discovery.invocationSupported = false;
       discovery.skills = [];
       issue(
