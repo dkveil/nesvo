@@ -162,9 +162,11 @@ function Directory({
         </li>
       )}
       {state.data?.truncated && (
-        <li className="px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-          {state.data.detail ??
-            'Some entries were omitted. Search for a file to narrow the list.'}
+        <li
+          title={state.data.detail ?? undefined}
+          className="px-3 py-2 text-[11px] leading-5 text-muted-foreground"
+        >
+          Some entries could not be listed.
         </li>
       )}
     </ul>
@@ -241,13 +243,17 @@ function SearchResults({
       ))}
       {state.data.matches.length === 0 && (
         <li className="px-3 py-2 text-[11px] text-muted-foreground">
-          No matching files
+          {state.data.truncated
+            ? 'No matches in scanned files'
+            : 'No matching files'}
         </li>
       )}
       {state.data.truncated && (
-        <li className="px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-          {state.data.detail ??
-            'Search stopped at its limit. Refine the file name.'}
+        <li
+          title={state.data.detail ?? undefined}
+          className="px-3 py-2 text-[11px] leading-5 text-muted-foreground"
+        >
+          Partial results. Browse folders for more.
         </li>
       )}
     </ul>
