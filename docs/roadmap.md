@@ -48,5 +48,7 @@ Detailed checklists and evidence criteria are stored in each stage issue. P6 ski
 
 D58 extends P5 with a read-only session file explorer: on-demand directories, bounded filename search, current text preview, refresh and navigation back to an exact saved result diff. It does not add file editing or a live working-tree diff. P6 remains Backlog: provider-aware discovery, selection and a verified skill invocation are not yet implemented. The installed Codex protocol exposes skills/list and skill turn input, which is a foundation to investigate in P6 rather than evidence of a working Nesvo skill flow.
 
+D59 explicitly authorizes P6.1 discovery after the file explorer delivery. The session Skills panel lists names, descriptions, sources and reported or declared availability, with filtering and refresh. Codex uses its native skill catalog under the session isolation profile. Claude uses bounded local metadata inventory without launching its CLI, with unverified provider availability and incomplete sources stated explicitly. Discovery does not execute skills or modify configuration. P6.2 invocation and its real-task acceptance remain separate, unimplemented work.
+
 Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
