@@ -15,6 +15,7 @@ import {
   type Session,
   type StopRunInput,
   type RespondApprovalInput,
+  type SkillReference,
 } from '@nesvo/contracts';
 import { startClaude, type ClaudeEvent } from '../providers/claude';
 import {
@@ -271,7 +272,11 @@ export class SessionService {
       message => message.id === input.messageId,
     );
     if (existing) {
-      if (existing.author !== 'operator' || existing.body !== input.text)
+      if (
+        existing.author !== 'operator' ||
+        existing.body !== input.text ||
+        existing.skillId !== input.skillId
+      )
         throw new SessionError(
           'invalid-request',
           'This message ID is already in use.',
@@ -283,14 +288,19 @@ export class SessionService {
         'busy',
         'Wait for the active group to finish or use Stop.',
       );
+    if (input.skillId && session.provider !== 'Codex')
+      throw new SessionError(
+        'invalid-request',
+        'Skill invocation is not enabled for this Claude connection.',
+      );
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
-    this.prepareRun(session, input.messageId, input.text);
+    this.prepareRun(session, input.messageId, input.text, input.skillId);
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, input.text);
+    this.launch(session, input.text, input.skillId);
     return structuredClone(session);
   }
 
@@ -427,7 +437,12 @@ export class SessionService {
     this.list();
   }
 
-  private prepareRun(session: Session, messageId: string, text: string): void {
+  private prepareRun(
+    session: Session,
+    messageId: string,
+    text: string,
+    skillId?: string,
+  ): void {
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
       session.providerSessionId =
@@ -447,6 +462,7 @@ export class SessionService {
         state: 'completed',
         createdAt,
         completedAt: createdAt,
+        ...(skillId ? { skillId } : {}),
       },
       {
         id: randomUUID(),
@@ -460,7 +476,7 @@ export class SessionService {
     );
   }
 
-  private launch(session: Session, prompt: string): void {
+  private launch(session: Session, prompt: string, skillId?: string): void {
     const inherited =
       session.role === 'orchestrator' ? this.reviews.inherited(session.id) : [];
     const context = inherited.map(review => ({
@@ -506,6 +522,32 @@ export class SessionService {
                 ...options,
                 sessionId: session.providerSessionId,
                 mode: session.mode,
+                ...(skillId
+                  ? {
+                      skillId,
+                      onSkillResolved: (skill: SkillReference) => {
+                        const active = this.active.get(session.id);
+                        if (
+                          controller.signal.aborted ||
+                          active?.session !== session ||
+                          active.finalizing ||
+                          session.status !== 'running'
+                        )
+                          throw new Error('Skill invocation stopped.');
+                        const message = session.messages.find(
+                          item =>
+                            item.runId === session.runId &&
+                            item.author === 'operator',
+                        );
+                        if (!message || message.skillId !== skill.id)
+                          throw new Error(
+                            'Skill selection no longer matches this message.',
+                          );
+                        message.skill = skill;
+                        this.publish(session);
+                      },
+                    }
+                  : {}),
                 ...(canDelegate
                   ? {
                       delegationSchema: z.toJSONSchema(delegationPlanSchema),

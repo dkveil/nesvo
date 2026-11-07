@@ -9,6 +9,7 @@ import {
   activityLimits,
   skillLimits,
   type SkillDiscovery,
+  type SkillReference,
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 
@@ -626,6 +627,140 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
   }
 }
 
+class CodexSkillProtocolError extends Error {}
+
+function comparablePath(path: string): string {
+  return process.platform === 'win32'
+    ? normalize(path).toLowerCase()
+    : normalize(path);
+}
+
+function codexSkillId(name: string, path: string): string {
+  return `codex:${createHash('sha256').update(path).update('\0').update(name).digest('hex')}`;
+}
+
+function codexSkillListing(
+  result: RecordValue,
+  cwd: string,
+): { skills: unknown[]; errors: unknown[] } {
+  const entry =
+    Array.isArray(result.data) && result.data.length === 1
+      ? object(result.data[0])
+      : null;
+  if (
+    !entry ||
+    typeof entry.cwd !== 'string' ||
+    comparablePath(entry.cwd) !== comparablePath(cwd) ||
+    !Array.isArray(entry.skills) ||
+    !Array.isArray(entry.errors)
+  )
+    throw new CodexSkillProtocolError(
+      'Codex returned an unsupported skill listing for the requested directory.',
+    );
+  return { skills: entry.skills, errors: entry.errors };
+}
+
+function codexSkillMetadata(
+  value: unknown,
+): {
+  reference: SkillReference;
+  scope: string;
+  description: string;
+  enabled: boolean;
+  pluginId: string | null;
+} | null {
+  const skill = object(value);
+  if (
+    !skill ||
+    typeof skill.name !== 'string' ||
+    !skill.name.trim() ||
+    skill.name.length > skillLimits.name ||
+    typeof skill.description !== 'string' ||
+    typeof skill.path !== 'string' ||
+    !skill.path ||
+    skill.path.length > skillLimits.path ||
+    !isAbsolute(skill.path) ||
+    typeof skill.enabled !== 'boolean' ||
+    !['user', 'repo', 'system', 'admin'].includes(String(skill.scope)) ||
+    (skill.pluginId != null && typeof skill.pluginId !== 'string')
+  )
+    return null;
+  const presentation = object(skill.interface);
+  const description =
+    typeof presentation?.shortDescription === 'string'
+      ? presentation.shortDescription
+      : typeof skill.shortDescription === 'string'
+        ? skill.shortDescription
+        : skill.description;
+  const source =
+    skill.scope === 'repo'
+      ? 'project'
+      : skill.scope === 'admin'
+        ? 'managed'
+        : skill.scope === 'system'
+          ? 'system'
+          : 'user';
+  return {
+    reference: {
+      id: codexSkillId(skill.name, skill.path),
+      name: skill.name,
+      path: skill.path,
+      source,
+    },
+    scope: String(skill.scope),
+    description,
+    enabled: skill.enabled,
+    pluginId: typeof skill.pluginId === 'string' ? skill.pluginId : null,
+  };
+}
+
+async function resolveCodexSkill(
+  peer: RpcPeer,
+  directory: string,
+  skillId: string,
+): Promise<SkillReference> {
+  const cwd = await realpath(directory);
+  if (
+    comparablePath(cwd) !== comparablePath(directory) ||
+    !(await stat(cwd)).isDirectory()
+  )
+    throw new Error(
+      'The session directory changed. Refresh skills before sending this message.',
+    );
+  let result: RecordValue;
+  try {
+    result = await peer.request('skills/list', {
+      cwds: [cwd],
+      forceReload: true,
+    });
+  } catch (error) {
+    if (error instanceof CodexRpcError && error.code === -32601)
+      throw new Error(
+        'This Codex CLI cannot verify the selected skill. Update Codex or send without a skill.',
+      );
+    throw error;
+  }
+  const listing = codexSkillListing(result, cwd);
+  const matches = listing.skills.filter(value => {
+    const skill = object(value);
+    return (
+      typeof skill?.name === 'string' &&
+      typeof skill.path === 'string' &&
+      codexSkillId(skill.name, skill.path) === skillId
+    );
+  });
+  if (matches.length !== 1)
+    throw new Error(
+      'The selected skill is missing or ambiguous in the current Codex catalog. Refresh skills and select it again.',
+    );
+  const skill = codexSkillMetadata(matches[0]);
+  if (!skill || !skill.enabled || skill.pluginId !== null)
+    throw new Error(
+      'The selected skill is disabled or unavailable in this session profile. Refresh skills or send without a skill.',
+    );
+  return skill.reference;
+}
+
 export async function inspectCodexSkills(
   directory: string,
   signal?: AbortSignal,
@@ -642,7 +777,6 @@ export async function inspectCodexSkills(
   };
   let peer: RpcPeer | null = null;
   let timedOut = false;
-  let protocolUnsupported = false;
   const cancel = () => {
     void peer?.close();
   };
@@ -737,48 +871,19 @@ export async function inspectCodexSkills(
       forceReload: true,
     });
     checkCancelled();
-    const entry =
-      Array.isArray(result.data) && result.data.length === 1
-        ? object(result.data[0])
-        : null;
-    const comparable = (path: string) =>
-      process.platform === 'win32'
-        ? normalize(path).toLowerCase()
-        : normalize(path);
-    if (
-      !entry ||
-      typeof entry.cwd !== 'string' ||
-      comparable(entry.cwd) !== comparable(cwd) ||
-      !Array.isArray(entry.skills) ||
-      !Array.isArray(entry.errors)
-    ) {
-      protocolUnsupported = true;
-      throw new Error(
-        'Codex returned an unsupported skill listing for the requested directory.',
-      );
-    }
+    const entry = codexSkillListing(result, cwd);
     const ids = new Set<string>();
     let suppressedPlugins = 0;
     let invalidSkills = 0;
     let shortenedDescriptions = 0;
     for (const value of entry.skills) {
-      const skill = object(value);
+      const raw = object(value);
+      const skill = codexSkillMetadata(value);
       const path =
-        typeof skill?.path === 'string' && skill.path.length <= skillLimits.path
-          ? skill.path
+        typeof raw?.path === 'string' && raw.path.length <= skillLimits.path
+          ? raw.path
           : null;
-      if (
-        !skill ||
-        typeof skill.name !== 'string' ||
-        !skill.name.trim() ||
-        skill.name.length > skillLimits.name ||
-        typeof skill.description !== 'string' ||
-        !path ||
-        !isAbsolute(path) ||
-        typeof skill.enabled !== 'boolean' ||
-        !['user', 'repo', 'system', 'admin'].includes(String(skill.scope)) ||
-        (skill.pluginId != null && typeof skill.pluginId !== 'string')
-      ) {
+      if (!skill) {
         invalidSkills++;
         issue(
           path,
@@ -794,7 +899,7 @@ export async function inspectCodexSkills(
         discovery.truncated = true;
         continue;
       }
-      const id = `codex:${createHash('sha256').update(path).update('\0').update(skill.name).digest('hex')}`;
+      const { id } = skill.reference;
       if (ids.has(id)) {
         invalidSkills++;
         issue(
@@ -804,31 +909,14 @@ export async function inspectCodexSkills(
         continue;
       }
       ids.add(id);
-      const presentation = object(skill.interface);
-      const description =
-        typeof presentation?.shortDescription === 'string'
-          ? presentation.shortDescription
-          : typeof skill.shortDescription === 'string'
-            ? skill.shortDescription
-            : skill.description;
+      const { description } = skill;
       if (description.length > skillLimits.description) {
         shortenedDescriptions++;
         discovery.truncated = true;
       }
-      const source =
-        skill.scope === 'repo'
-          ? 'project'
-          : skill.scope === 'admin'
-            ? 'managed'
-            : skill.scope === 'system'
-              ? 'system'
-              : 'user';
       discovery.skills.push({
-        id,
-        name: skill.name,
+        ...skill.reference,
         description: description.slice(0, skillLimits.description),
-        path,
-        source,
         kind: 'skill',
         enabled: skill.enabled,
         userInvocable: null,
@@ -870,9 +958,10 @@ export async function inspectCodexSkills(
       invalidSkills
         ? 'partial'
         : 'ready';
+    discovery.invocationSupported = true;
   } catch (error) {
     discovery.status =
-      protocolUnsupported ||
+      error instanceof CodexSkillProtocolError ||
       (error instanceof CodexRpcError && error.code === -32601)
         ? 'unsupported'
         : 'unavailable';
@@ -893,6 +982,7 @@ export async function inspectCodexSkills(
     const exit = await peer?.close();
     if (exit && !exit.confirmed) {
       discovery.status = 'unavailable';
+      discovery.invocationSupported = false;
       discovery.skills = [];
       issue(
         null,
@@ -911,6 +1001,8 @@ export function startCodex(options: {
   model: string;
   mode: 'read-only' | 'supervised';
   prompt: string;
+  skillId?: string;
+  onSkillResolved?: (skill: SkillReference) => void;
   onEvent: (event: CodexEvent) => void;
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
@@ -1459,6 +1551,15 @@ export function startCodex(options: {
     try {
       if (!isAbsolute(options.directory))
         throw new Error('Codex working directory must be an absolute path.');
+      if (
+        options.skillId !== undefined &&
+        (typeof options.skillId !== 'string' ||
+          !options.skillId ||
+          options.skillId.length > 8192)
+      )
+        throw new Error(
+          'The selected skill identifier is invalid. Refresh skills and select it again.',
+        );
       if (!['read-only', 'supervised'].includes(options.mode))
         throw new Error('Unsupported Codex permission mode.');
       if (options.onDelegate && !object(options.delegationSchema))
@@ -1538,6 +1639,21 @@ export function startCodex(options: {
         )
       )
         throw new Error('Codex could not isolate inherited tools and hooks.');
+      const skill =
+        options.skillId === undefined
+          ? null
+          : await resolveCodexSkill(peer, options.directory, options.skillId);
+      if (stopped || failure) throw new Error(failure ?? 'Stopped.');
+      if (skill) {
+        try {
+          options.onSkillResolved?.(skill);
+        } catch {
+          throw new Error(
+            'The selected skill could not be saved. No provider turn was started.',
+          );
+        }
+      }
+      if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       const approvalPolicy =
         options.mode === 'read-only' ? 'never' : 'untrusted';
       const sandboxPolicy =
@@ -1614,7 +1730,12 @@ export function startCodex(options: {
       startingTurn = true;
       const started = await peer.request('turn/start', {
         threadId,
-        input: [{ type: 'text', text: options.prompt, text_elements: [] }],
+        input: [
+          { type: 'text', text: options.prompt, text_elements: [] },
+          ...(skill
+            ? [{ type: 'skill', name: skill.name, path: skill.path }]
+            : []),
+        ],
         cwd: options.directory,
         approvalPolicy,
         approvalsReviewer: 'user',
