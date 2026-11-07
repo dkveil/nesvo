@@ -13,6 +13,7 @@ import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
+import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 
 type HostTransport = {
   directory: string;
@@ -24,6 +25,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
   Effect.scoped(
     Effect.gen(function* () {
       const database = yield* openDatabase(directory);
+      const store = new SessionStore(database);
+      const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
       const emit = (message: HostMessage) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
@@ -32,7 +35,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         Effect.sync(
           () =>
             new SessionService(
-              new SessionStore(database),
+              store,
               directory,
               emit,
               new ReviewStore(database),
@@ -55,6 +58,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             await Promise.all(state.pending);
           }),
       );
+      let workspaceRequests = 0;
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
         iterator =>
@@ -139,6 +143,73 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(decision);
           void decision.finally(() => probes.pending.delete(decision));
+          continue;
+        }
+        if (
+          request.method === 'list-workspace-directory' ||
+          request.method === 'search-workspace-files' ||
+          request.method === 'read-workspace-file'
+        ) {
+          if (workspaceRequests >= 8) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: 'Too many workspace requests. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          workspaceRequests++;
+          const operation = async (): Promise<HostResponse> => {
+            if (request.method === 'list-workspace-directory')
+              return {
+                type: 'workspace-directory',
+                id: request.id,
+                directory: await workspace.list(
+                  request.input,
+                  probes.controller.signal,
+                ),
+              };
+            if (request.method === 'search-workspace-files')
+              return {
+                type: 'workspace-search',
+                id: request.id,
+                search: await workspace.search(
+                  request.input,
+                  probes.controller.signal,
+                ),
+              };
+            return {
+              type: 'workspace-file',
+              id: request.id,
+              file: await workspace.read(
+                request.input,
+                probes.controller.signal,
+              ),
+            };
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof WorkspaceError ? error.code : 'unavailable',
+                message:
+                  error instanceof WorkspaceError
+                    ? error.message
+                    : 'The workspace could not be read. Refresh and try again.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              workspaceRequests--;
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
           continue;
         }
         const response = yield* Effect.sync((): HostResponse => {

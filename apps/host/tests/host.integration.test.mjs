@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -297,6 +298,205 @@ test(
       .session;
     assert.equal(external.directory, await realpath(workspace));
     assert.equal(external.role, 'standalone');
+    const explorerRoot = join(directory, 'explorer-workspace');
+    const explorerOutside = join(directory, 'explorer-outside');
+    await mkdir(join(explorerRoot, 'notes', 'nested'), { recursive: true });
+    await mkdir(join(explorerRoot, 'node_modules'));
+    await mkdir(join(explorerRoot, 'many'));
+    await mkdir(explorerOutside);
+    const previewPath = join(explorerRoot, 'notes', 'nested', 'context.txt');
+    const previewText = 'Current workspace preview\nUnicode: zażółć\n';
+    await Promise.all([
+      writeFile(previewPath, previewText),
+      writeFile(join(explorerRoot, 'binary.dat'), Buffer.from([0, 1, 2, 255])),
+      writeFile(join(explorerRoot, 'large.txt'), Buffer.alloc(262145, 97)),
+      writeFile(join(explorerRoot, '.env.private'), 'private fixture'),
+      writeFile(
+        join(explorerRoot, 'node_modules', 'hidden.txt'),
+        'generated fixture',
+      ),
+      writeFile(join(explorerOutside, 'outside.txt'), 'outside fixture'),
+      ...Array.from({ length: 505 }, (_, index) =>
+        writeFile(
+          join(explorerRoot, 'many', `match-${index}.txt`),
+          'bounded fixture',
+        ),
+      ),
+    ]);
+    await symlink(
+      explorerOutside,
+      join(explorerRoot, 'outside-link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await symlink(
+      join(explorerRoot, 'notes'),
+      join(explorerRoot, 'inside-link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const explorer = (
+      await host.request('create-session', create(explorerRoot))
+    ).session;
+    const workspaceRequest = (method, path = '', rest = {}) =>
+      host.request(method, {
+        sessionId: explorer.id,
+        path,
+        ...rest,
+      });
+    const rootListing = await workspaceRequest('list-workspace-directory');
+    assert.equal(rootListing.type, 'workspace-directory');
+    assert.equal(rootListing.directory.path, '');
+    assert.equal(rootListing.directory.truncated, false);
+    assert.deepEqual(
+      rootListing.directory.entries.map(entry => entry.path),
+      ['many', 'notes', 'binary.dat', 'large.txt'],
+    );
+    const nestedListing = await workspaceRequest(
+      'list-workspace-directory',
+      'notes/nested',
+    );
+    assert.deepEqual(nestedListing.directory.entries, [
+      {
+        name: 'context.txt',
+        path: 'notes/nested/context.txt',
+        kind: 'file',
+        size: Buffer.byteLength(previewText),
+      },
+    ]);
+    const searched = await workspaceRequest('search-workspace-files', '', {
+      query: 'CONTEXT',
+    });
+    assert.equal(searched.type, 'workspace-search');
+    assert.deepEqual(
+      searched.search.matches.map(entry => entry.path),
+      ['notes/nested/context.txt'],
+    );
+    assert.equal(searched.search.truncated, false);
+    const directoriesAreNotFiles = await workspaceRequest(
+      'search-workspace-files',
+      '',
+      { query: 'many' },
+    );
+    assert.equal(
+      directoriesAreNotFiles.search.matches.every(
+        entry => entry.kind === 'file',
+      ),
+      true,
+    );
+    const preview = await workspaceRequest(
+      'read-workspace-file',
+      'notes/nested/context.txt',
+    );
+    assert.equal(preview.type, 'workspace-file');
+    assert.equal(preview.file.status, 'text');
+    assert.equal(preview.file.text, previewText);
+    assert.equal(preview.file.truncated, false);
+    assert.equal(
+      (await workspaceRequest('read-workspace-file', 'binary.dat')).file.status,
+      'binary',
+    );
+    const oversize = (
+      await workspaceRequest('read-workspace-file', 'large.txt')
+    ).file;
+    assert.equal(oversize.status, 'too-large');
+    assert.equal(oversize.text, null);
+    assert.equal(oversize.truncated, true);
+    const limitedList = (
+      await workspaceRequest('list-workspace-directory', 'many')
+    ).directory;
+    assert.equal(limitedList.entries.length, 500);
+    assert.equal(limitedList.truncated, true);
+    const limitedSearch = (
+      await workspaceRequest('search-workspace-files', 'many', {
+        query: 'match',
+      })
+    ).search;
+    assert.equal(limitedSearch.matches.length, 200);
+    assert.equal(limitedSearch.truncated, true);
+    for (const unsafe of [
+      '../explorer-outside/outside.txt',
+      'notes/../../outside.txt',
+      'notes\\nested\\context.txt',
+      '/outside.txt',
+      'C:/outside.txt',
+      'NUL.txt',
+      'context.txt:stream',
+      '.env.private',
+      'node_modules/hidden.txt',
+      'outside-link/outside.txt',
+      'inside-link/nested/context.txt',
+    ]) {
+      const rejected = await workspaceRequest('read-workspace-file', unsafe);
+      assert.equal(rejected.type, 'error', unsafe);
+      assert.equal(rejected.code, 'invalid-request', unsafe);
+    }
+    for (const method of [
+      'list-workspace-directory',
+      'search-workspace-files',
+    ]) {
+      assert.equal(
+        (
+          await workspaceRequest(method, 'outside-link', {
+            ...(method === 'search-workspace-files'
+              ? { query: 'outside' }
+              : {}),
+          })
+        ).code,
+        'invalid-request',
+      );
+    }
+    assert.equal(
+      (await workspaceRequest('read-workspace-file', 'missing.txt')).code,
+      'not-found',
+    );
+    assert.equal(
+      (
+        await workspaceRequest('list-workspace-directory', '', {
+          sessionId: randomUUID(),
+        })
+      ).code,
+      'not-found',
+    );
+    assert.equal(
+      (
+        await host.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'read-workspace-file',
+            input: {
+              sessionId: explorer.id,
+              path: 'context.txt',
+              directory: explorerOutside,
+            },
+          }),
+        )
+      ).code,
+      'invalid-request',
+    );
+    assert.equal(await readFile(previewPath, 'utf8'), previewText);
+    assert.equal(
+      await readFile(join(explorerOutside, 'outside.txt'), 'utf8'),
+      'outside fixture',
+    );
+    const redirectedRoot = join(directory, 'explorer-redirect');
+    await mkdir(redirectedRoot);
+    const redirected = (
+      await host.request('create-session', create(redirectedRoot))
+    ).session;
+    await rename(redirectedRoot, `${redirectedRoot}-original`);
+    await symlink(
+      explorerOutside,
+      redirectedRoot,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    assert.equal(
+      (
+        await host.request('read-workspace-file', {
+          sessionId: redirected.id,
+          path: 'outside.txt',
+        })
+      ).code,
+      'invalid-request',
+    );
     const input = {
       sessionId: session.id,
       messageId: randomUUID(),
@@ -377,6 +577,9 @@ test(
       return { started, pids: [pids.pid, pids.childPid] };
     };
     const held = await hold(host);
+    const concurrentSearch = workspaceRequest('search-workspace-files', '', {
+      query: 'not-present',
+    });
     assert.equal(
       (
         await host.request('stop-run', {
@@ -388,13 +591,18 @@ test(
     );
     assert.equal(
       (
-        await host.request('stop-run', {
-          sessionId: session.id,
-          runId: held.started.runId,
-        })
+        await bounded(
+          host.request('stop-run', {
+            sessionId: session.id,
+            runId: held.started.runId,
+          }),
+          'Workspace search blocked Stop',
+          2000,
+        )
       ).session.status,
       'stopping',
     );
+    assert.equal((await concurrentSearch).type, 'workspace-search');
     const stopped = await host.event(
       value => value.runId === held.started.runId && value.status === 'stopped',
     );
