@@ -667,11 +667,31 @@ try {
     'Selected skill: Fixture Claude instructions',
     { exact: true },
   );
-  await messageEditor.fill('/Fixture Claude');
+  const waitForUniqueSkillChoice = async () => {
+    await page.waitForFunction(() => {
+      const picker = document.querySelector(
+        '[role="listbox"][aria-label="Skills"]',
+      );
+      const choices = [
+        ...(picker?.querySelectorAll('[role="option"]') ?? []),
+      ].filter(option => option.getAttribute('aria-disabled') !== 'true');
+      return (
+        choices.length === 1 &&
+        choices[0].getAttribute('aria-label') ===
+          'Fixture Claude instructions' &&
+        choices[0].getAttribute('aria-selected') === 'true'
+      );
+    });
+  };
+  await messageEditor.fill('/fixture-claude-instructions');
   await projectSkillOption.waitFor();
+  await waitForUniqueSkillChoice();
   await messageEditor.press('Escape');
   await skillPicker.waitFor({ state: 'hidden' });
-  assert.equal(await messageEditor.inputValue(), '/Fixture Claude');
+  assert.equal(
+    await messageEditor.inputValue(),
+    '/fixture-claude-instructions',
+  );
   await messageEditor.fill('');
   await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
   await projectSkillOption.waitFor();
@@ -683,7 +703,8 @@ try {
   );
   await page
     .getByRole('textbox', { name: 'Filter skills', exact: true })
-    .fill('Fixture Claude');
+    .fill('fixture-claude-instructions');
+  await waitForUniqueSkillChoice();
   await messageEditor.press('ArrowDown');
   await messageEditor.press('Enter');
   await selectedSkillChip.waitFor();
@@ -693,8 +714,9 @@ try {
   );
   await page.getByRole('button', { name: 'Remove skill', exact: true }).click();
   await selectedSkillChip.waitFor({ state: 'hidden' });
-  await messageEditor.fill('/Fixture Claude');
+  await messageEditor.fill('/fixture-claude-instructions');
   await projectSkillOption.waitFor();
+  await waitForUniqueSkillChoice();
   await messageEditor.press('Tab');
   await selectedSkillChip.waitFor();
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
