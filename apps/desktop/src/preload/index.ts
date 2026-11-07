@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   claudeStatusSchema,
+  codexStatusSchema,
+  respondApprovalSchema,
   createSessionSchema,
   desktopEventSchema,
   hostHealthSchema,
@@ -15,6 +17,15 @@ const api: DesktopApi = {
     hostHealthSchema.parse(await ipcRenderer.invoke('nesvo:health')),
   claudeStatus: async () =>
     claudeStatusSchema.parse(await ipcRenderer.invoke('nesvo:claude-status')),
+  codexStatus: async () =>
+    codexStatusSchema.parse(await ipcRenderer.invoke('nesvo:codex-status')),
+  respondApproval: async input =>
+    sessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:respond-approval',
+        respondApprovalSchema.parse(input),
+      ),
+    ),
   listSessions: async () =>
     sessionSchema
       .array()

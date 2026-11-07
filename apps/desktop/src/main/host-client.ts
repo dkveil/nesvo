@@ -7,6 +7,7 @@ import {
   type CreateSessionInput,
   type DesktopEvent,
   type SendMessageInput,
+  type RespondApprovalInput,
   type StopRunInput,
   type HostRequest,
   type HostResponse,
@@ -76,7 +77,7 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'claude-status' ? 30000 : 15000,
+        method === 'claude-status' || method === 'codex-status' ? 30000 : 15000,
       );
       pending.set(id, { resolve, reject, timer });
       try {
@@ -111,6 +112,18 @@ export function startHost(directory: string) {
       if (response.type !== 'claude-status')
         throw new Error('Unexpected host response');
       return response.status;
+    },
+    codexStatus: async () => {
+      const response = await request('codex-status');
+      if (response.type !== 'codex-status')
+        throw new Error('Unexpected host response');
+      return response.status;
+    },
+    respondApproval: async (input: RespondApprovalInput) => {
+      const response = await request('respond-approval', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
     },
     listSessions: async () => {
       const response = await request('list-sessions');
