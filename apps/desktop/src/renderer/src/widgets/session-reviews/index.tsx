@@ -19,6 +19,7 @@ type Props = ReviewDecisionProps & {
   allReviews: Review[];
   focusedId: string;
   onSession: (sessionId: string, targetId?: string) => void;
+  onOpenDiff: (reviewId: string, path?: string) => void;
 };
 
 type VersionProps = ReviewDecisionProps & {
@@ -26,6 +27,7 @@ type VersionProps = ReviewDecisionProps & {
   allReviews: Review[];
   focused: boolean;
   onSession: (sessionId: string, targetId?: string) => void;
+  onOpenDiff: (reviewId: string, path?: string) => void;
 };
 
 function ReviewVersion({
@@ -33,6 +35,7 @@ function ReviewVersion({
   allReviews,
   focused,
   onSession,
+  onOpenDiff,
   ...decisionProps
 }: VersionProps) {
   const disclosure = useRef<HTMLDetailsElement>(null);
@@ -127,16 +130,19 @@ function ReviewVersion({
               {review.diff.files.length > 0 ? (
                 <ul className="max-h-48 divide-y overflow-auto border-y">
                   {review.diff.files.map(file => (
-                    <li
-                      key={file.path}
-                      className="flex items-start justify-between gap-3 py-2 text-xs"
-                    >
-                      <span className="min-w-0 [overflow-wrap:anywhere]">
-                        {file.path}
-                      </span>
-                      <span className="shrink-0 text-muted-foreground">
-                        {fileKindLabels[file.kind]}
-                      </span>
+                    <li key={file.path} className="text-xs">
+                      <button
+                        type="button"
+                        className="flex w-full items-start justify-between gap-3 py-2 text-left hover:text-foreground focus-visible:outline-ring"
+                        onClick={() => onOpenDiff(review.id, file.path)}
+                      >
+                        <span className="min-w-0 [overflow-wrap:anywhere]">
+                          {file.path}
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">
+                          {fileKindLabels[file.kind]}
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -146,12 +152,16 @@ function ReviewVersion({
                 </p>
               )}
               {review.diff.patch && (
-                <pre
-                  aria-label="Saved diff"
-                  className="max-h-[32rem] overflow-auto rounded-lg border bg-card p-3 text-xs leading-6"
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={`View diff for version ${review.version}`}
+                  onClick={() => onOpenDiff(review.id)}
                 >
-                  <code>{review.diff.patch}</code>
-                </pre>
+                  View diff
+                  <ArrowUpRight className="size-3.5" />
+                </Button>
               )}
             </>
           )}
@@ -226,6 +236,7 @@ export function SessionReviews({
   allReviews,
   focusedId,
   onSession,
+  onOpenDiff,
   ...decisionProps
 }: Props) {
   if (reviews.length === 0) return null;
@@ -245,6 +256,7 @@ export function SessionReviews({
             allReviews={allReviews}
             focused={review.id === focusedId}
             onSession={onSession}
+            onOpenDiff={onOpenDiff}
             {...decisionProps}
           />
         ))}

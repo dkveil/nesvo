@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import type {
   CreateSessionInput,
   DecideDelegationInput,
@@ -30,15 +30,23 @@ import { Conversation } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
+import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { desktopApi, useSessions } from './use-sessions';
+
+const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 
 export function Workspace() {
   const store = useSessions();
   const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
   const [sessionTarget, setSessionTarget] = useState('');
+  const [diffTarget, setDiffTarget] = useState<{
+    reviewId: string;
+    path?: string;
+  } | null>(null);
+  const diffTrigger = useRef<HTMLElement | null>(null);
   const [reviewFeedbacks, setReviewFeedbacks] = useState<
     Record<string, string>
   >({});
@@ -84,7 +92,27 @@ export function Workspace() {
   const activeRun = store.sessions.find(
     session => session.status === 'running' || session.status === 'stopping',
   );
+  const diffReview =
+    !inbox && diffTarget
+      ? store.reviews.find(
+          review =>
+            review.id === diffTarget.reviewId &&
+            review.sessionId === selected?.id,
+        )
+      : undefined;
+  const openDiff = (reviewId: string, path?: string) => {
+    diffTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setDiffTarget({ reviewId, path });
+  };
+  const closeDiff = () => {
+    setDiffTarget(null);
+    if (diffTrigger.current?.isConnected) diffTrigger.current.focus();
+  };
   const select = (id: string, targetId = '') => {
+    setDiffTarget(null);
     setSelectedId(id);
     setSessionTarget(targetId);
     setInbox(false);
@@ -92,6 +120,7 @@ export function Workspace() {
     setDetailsOpen(false);
   };
   const openInbox = () => {
+    setDiffTarget(null);
     setInbox(true);
     setNavigationOpen(false);
   };
@@ -601,7 +630,7 @@ export function Workspace() {
             </Button>
           </div>
         )}
-        <main className="flex min-h-0 min-w-0 flex-1">
+        <main className="relative flex min-h-0 min-w-0 flex-1">
           {inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
@@ -621,6 +650,22 @@ export function Workspace() {
           ) : selected ? (
             <Conversation
               session={selected}
+              activity={(runId, startedAt, completedAt, status, live) => (
+                <SessionActivity
+                  runId={runId}
+                  items={selected.activities.filter(
+                    item => item.runId === runId,
+                  )}
+                  startedAt={startedAt}
+                  completedAt={completedAt}
+                  status={status}
+                  live={live}
+                  truncated={
+                    selected.activitiesTruncated &&
+                    selected.activities[0]?.runId === runId
+                  }
+                />
+              )}
               focusTarget={sessionTarget}
               workers={workers}
               results={
@@ -636,6 +681,7 @@ export function Workspace() {
                       : ''
                   }
                   onSession={select}
+                  onOpenDiff={openDiff}
                 />
               }
               delegations={
@@ -714,6 +760,25 @@ export function Workspace() {
                 </Button>
               )}
             </section>
+          )}
+          {diffReview && diffTarget && (
+            <Suspense
+              fallback={
+                <aside
+                  role="status"
+                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
+                >
+                  Loading saved diff…
+                </aside>
+              }
+            >
+              <ReviewDiff
+                key={`${diffReview.id}:${diffTarget.path ?? ''}`}
+                review={diffReview}
+                initialPath={diffTarget.path}
+                onClose={closeDiff}
+              />
+            </Suspense>
           )}
         </main>
       </div>
