@@ -67,16 +67,14 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const conversation = page.getByRole('region', {
-    name: 'Rozmowa',
+    name: 'Conversation',
     exact: true,
   });
   const message = text =>
     conversation.getByRole('article').getByText(text, { exact: true });
   const openInbox = async () => {
-    await page.getByRole('button', { name: /^Do decyzji/ }).click();
-    await page
-      .getByRole('region', { name: 'Skrzynka odbioru', exact: true })
-      .waitFor();
+    await page.getByRole('button', { name: /^Inbox/ }).click();
+    await page.getByRole('region', { name: 'Inbox', exact: true }).waitFor();
   };
   const screenshot = async suffix => {
     if (!process.env.NESVO_SCREENSHOT) return;
@@ -117,10 +115,10 @@ try {
   };
   const send = async text => {
     await page
-      .getByRole('textbox', { name: 'Wiadomość', exact: true })
+      .getByRole('textbox', { name: 'Message', exact: true })
       .fill(text);
     await page
-      .getByRole('button', { name: 'Wyślij wiadomość', exact: true })
+      .getByRole('button', { name: 'Send message', exact: true })
       .click();
   };
   const waitReview = async (sessionId, afterVersion = 0) => {
@@ -161,15 +159,31 @@ try {
     providerPids.add(pids.childPid);
     return pids;
   };
-  await page
+  await page.getByRole('button', { name: 'Open context', exact: true }).click();
+  const initialContext = page.getByRole('dialog', {
+    name: 'Context',
+    exact: true,
+  });
+  await initialContext
     .getByRole('status')
-    .filter({ hasText: 'Połączono z lokalnym hostem' })
+    .filter({ hasText: 'Connected to local host' })
     .waitFor();
-  await page.getByRole('button', { name: 'Odśwież połączenie' }).click();
-  await page
+  await initialContext
+    .getByRole('button', { name: 'Refresh connection', exact: true })
+    .click();
+  await initialContext
     .getByRole('status')
-    .filter({ hasText: 'Połączono z lokalnym hostem' })
+    .filter({ hasText: 'Connected to local host' })
     .waitFor();
+  await page.keyboard.press('Escape');
+  await initialContext.waitFor({ state: 'hidden' });
+  assert.equal(
+    await page
+      .getByRole('status')
+      .filter({ hasText: 'Connected to local host' })
+      .count(),
+    0,
+  );
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(
     await application.evaluate(
@@ -181,13 +195,13 @@ try {
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   assert.equal(typeof hostPid, 'number');
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
-  const dialog = page.getByRole('dialog', { name: 'Nowa sesja', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'New session', exact: true });
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Analiza prototypu');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Prototype analysis');
   await page.waitForFunction(
     async () => (await window.nesvo.claudeStatus()).status === 'ready',
   );
@@ -201,10 +215,10 @@ try {
   );
   await screenshot('-new-session');
   await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   const first = (await page.evaluate(() => window.nesvo.listSessions()))[0];
   assert.equal(first.model, 'sonnet');
@@ -217,39 +231,41 @@ try {
   assert.equal(firstCompleted.messages.at(-1).body, 'Fixture streamed reply.');
   assert.equal(firstCompleted.messages.at(-1).state, 'completed');
   await page
-    .getByRole('textbox', { name: 'Wiadomość', exact: true })
-    .fill('Szkic pierwszej sesji');
+    .getByRole('textbox', { name: 'Message', exact: true })
+    .fill('First session draft');
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Analiza w katalogu');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Workspace analysis');
   await dialog
-    .getByRole('textbox', { name: /Katalog pracy/ })
+    .getByRole('textbox', { name: /Working directory/ })
     .fill(join(directory, 'missing'));
   await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await dialog.getByRole('alert').waitFor();
-  await dialog.getByRole('textbox', { name: /Katalog pracy/ }).fill(directory);
   await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .getByRole('textbox', { name: /Working directory/ })
+    .fill(directory);
+  await dialog
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Analiza w katalogu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Workspace analysis', exact: true, level: 1 })
     .waitFor();
-  const navigation = page.getByRole('navigation', { name: 'Sesje' });
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  const navigation = page.getByRole('navigation', { name: 'Sessions' });
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   assert.equal(
     await page
-      .getByRole('textbox', { name: 'Wiadomość', exact: true })
+      .getByRole('textbox', { name: 'Message', exact: true })
       .inputValue(),
-    'Szkic pierwszej sesji',
+    'First session draft',
   );
   await page.reload();
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await message('Fixture streamed reply.').waitFor();
   await send('fixture:continue');
   await message('Fixture resumed reply.').waitFor();
@@ -268,12 +284,12 @@ try {
   await waitState(first.id, 'failed');
   await screenshot('-failure');
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Codex nadzorowany');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Supervised Codex');
   await dialog.getByRole('combobox', { name: 'Provider', exact: true }).click();
   await page.getByRole('option', { name: 'Codex', exact: true }).click();
   await page.waitForFunction(
@@ -283,30 +299,34 @@ try {
   await page
     .getByRole('option', { name: 'Codex fixture', exact: true })
     .click();
+  assert.equal(
+    await dialog.getByRole('combobox', { name: /role/i }).count(),
+    0,
+  );
+  assert.equal(
+    await dialog
+      .getByRole('combobox', { name: 'Access', exact: true })
+      .isDisabled(),
+    false,
+  );
+  await dialog.getByRole('combobox', { name: 'Access', exact: true }).click();
+  await page
+    .getByRole('option', { name: 'Workspace edits', exact: true })
+    .click();
   await dialog
-    .getByRole('combobox', { name: 'Rola sesji', exact: true })
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await page
-    .getByRole('option', { name: 'Samodzielna sesja', exact: true })
-    .click();
-  await dialog
-    .getByRole('combobox', { name: 'Tryb pracy', exact: true })
-    .click();
-  await page
-    .getByRole('option', { name: 'Praca nadzorowana', exact: true })
-    .click();
-  await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
-    .click();
-  await page
-    .getByRole('heading', { name: 'Codex nadzorowany', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Supervised Codex', exact: true, level: 1 })
     .waitFor();
   const codex = (await page.evaluate(() => window.nesvo.listSessions())).find(
-    session => session.title === 'Codex nadzorowany',
+    session => session.title === 'Supervised Codex',
   );
   assert.equal(codex.provider, 'Codex');
   assert.equal(codex.model, 'fixture-codex');
   assert.equal(codex.mode, 'supervised');
+  assert.equal(codex.role, 'standalone');
+  assert.equal(codex.delegationEnabled, true);
   await send('fixture:stream');
   await message('Codex fixture streamed reply.').waitFor();
   const codexCompleted = await waitState(codex.id, 'completed');
@@ -317,7 +337,7 @@ try {
   );
   assert.equal(codexCompleted.messages.at(-1).state, 'completed');
   const approval = page.getByRole('region', {
-    name: 'Zgoda operatora',
+    name: 'Operation approval',
     exact: true,
   });
   await send('fixture:approve');
@@ -326,23 +346,21 @@ try {
   const approvalTarget = (
     await page.evaluate(() => window.nesvo.listSessions())
   ).find(session => session.id === codex.id);
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   const unrelatedBeforeApproval = (
     await page.evaluate(() => window.nesvo.listSessions())
   ).find(session => session.id === first.id);
   await openInbox();
   const operationRow = page.getByRole('article', {
-    name: `Zgoda na operację: ${codex.title}`,
+    name: `Operation approval: ${codex.title}`,
     exact: true,
   });
   await operationRow.getByText(/fixture write approved marker/).waitFor();
   await screenshot('-approval');
-  await operationRow
-    .getByRole('button', { name: 'Odmów', exact: true })
-    .click();
+  await operationRow.getByRole('button', { name: 'Deny', exact: true }).click();
   const declinedOperation = await waitState(codex.id, 'completed');
   assert.equal(declinedOperation.runId, approvalTarget.runId);
   assert.equal(
@@ -356,17 +374,17 @@ try {
     unrelatedBeforeApproval,
   );
   await operationRow.waitFor({ state: 'hidden' });
-  await navigation.getByRole('button', { name: /^Codex nadzorowany/ }).click();
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
   await message('Codex fixture command declined.').waitFor();
   await send('fixture:file');
   await approval.waitFor();
   await approval
-    .getByRole('button', { name: 'Zezwól jednorazowo', exact: true })
+    .getByRole('button', { name: 'Allow once', exact: true })
     .click();
   await message('Codex fixture file accepted.').waitFor();
   await waitState(codex.id, 'completed');
   await page.reload();
-  await navigation.getByRole('button', { name: /^Codex nadzorowany/ }).click();
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
   await message('Codex fixture file accepted.').waitFor();
   await send('fixture:continue');
   await message('Codex fixture resumed reply.').waitFor();
@@ -401,45 +419,43 @@ try {
     [],
   );
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Orkiestracja prototypu');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Prototype orchestration');
   await dialog.getByRole('combobox', { name: 'Provider', exact: true }).click();
   await page.getByRole('option', { name: 'Codex', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Model', exact: true }).click();
   await page
     .getByRole('option', { name: 'Codex fixture', exact: true })
     .click();
-  await dialog
-    .getByRole('combobox', { name: 'Rola sesji', exact: true })
-    .click();
-  await page.getByRole('option', { name: 'Orkiestrator', exact: true }).click();
   assert.equal(
     await dialog
-      .getByRole('combobox', { name: 'Tryb pracy', exact: true })
+      .getByRole('combobox', { name: 'Access', exact: true })
       .isDisabled(),
-    true,
+    false,
   );
+  await dialog.getByRole('combobox', { name: 'Access', exact: true }).click();
+  await page.getByRole('option', { name: 'Read-only', exact: true }).click();
   await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await page
     .getByRole('heading', {
-      name: 'Orkiestracja prototypu',
+      name: 'Prototype orchestration',
       exact: true,
       level: 1,
     })
     .waitFor();
   const orchestrator = (
     await page.evaluate(() => window.nesvo.listSessions())
-  ).find(session => session.title === 'Orkiestracja prototypu');
+  ).find(session => session.title === 'Prototype orchestration');
   assert.equal(orchestrator.delegationEnabled, true);
   const proposal = title =>
     page
-      .getByRole('region', { name: 'Propozycja workera', exact: true })
+      .getByRole('region', { name: 'Worker proposal', exact: true })
       .filter({ has: page.getByRole('heading', { name: title, exact: true }) });
   await send('fixture:delegate');
   await proposal('Fixture worker A').waitFor();
@@ -454,9 +470,9 @@ try {
   const delegationTarget = (
     await page.evaluate(() => window.nesvo.listSessions())
   ).find(session => session.id === orchestrator.id);
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   const unrelatedBeforeDelegation = (
     await page.evaluate(() => window.nesvo.listSessions())
@@ -464,16 +480,17 @@ try {
   await openInbox();
   const workerRow = title =>
     page.getByRole('article', {
-      name: `Uruchomienie workera: ${title}`,
+      name: `Start worker: ${title}`,
       exact: true,
     });
   await workerRow('Fixture worker A')
-    .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+    .getByRole('button', { name: 'Approve worker', exact: true })
     .click();
   await workerRow('Fixture worker B')
-    .getByRole('button', { name: 'Odrzuć propozycję', exact: true })
+    .getByRole('button', { name: 'Decline', exact: true })
     .click();
   const firstDelegation = await waitState(orchestrator.id, 'completed');
+  assert.equal(firstDelegation.role, 'orchestrator');
   assert.equal(firstDelegation.runId, delegationTarget.runId);
   assert.deepEqual(
     (await page.evaluate(() => window.nesvo.listSessions())).find(
@@ -492,21 +509,21 @@ try {
   );
   assert.match(delegationResult.results[0].text, /worker a completed/);
   await navigation
-    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .getByRole('button', { name: /^Prototype orchestration/ })
     .click();
   await proposal('Fixture worker A')
-    .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
+    .getByRole('button', { name: 'Open worker session', exact: true })
     .click();
   await page
     .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
     .waitFor();
   await message('Codex worker a completed its scoped task.').waitFor();
   await page
-    .getByRole('button', { name: 'Wróć do orkiestratora', exact: true })
+    .getByRole('button', { name: 'Back to parent session', exact: true })
     .click();
   await page
     .getByRole('heading', {
-      name: 'Orkiestracja prototypu',
+      name: 'Prototype orchestration',
       exact: true,
       level: 1,
     })
@@ -554,16 +571,16 @@ try {
   const launchWorkers = async () => {
     await send('fixture:delegate-two-hold');
     await proposal('Fixture worker A')
-      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .getByRole('button', { name: 'Approve worker', exact: true })
       .waitFor();
     const current = (
       await page.evaluate(() => window.nesvo.listSessions())
     ).find(session => session.id === orchestrator.id);
     await proposal('Fixture worker A')
-      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .getByRole('button', { name: 'Approve worker', exact: true })
       .click();
     await proposal('Fixture worker B')
-      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .getByRole('button', { name: 'Approve worker', exact: true })
       .click();
     return { parent: current, children: await waitWorkers(current.runId) };
   };
@@ -576,7 +593,7 @@ try {
   );
   await screenshot('-workers');
   await proposal('Fixture worker A')
-    .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
+    .getByRole('button', { name: 'Open worker session', exact: true })
     .click();
   await page
     .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
@@ -590,15 +607,15 @@ try {
   assert.equal(sibling.status, 'running');
   for (const pid of childB.fixturePids) assert.ok(alive(pid));
   await page
-    .getByRole('button', { name: 'Wróć do orkiestratora', exact: true })
+    .getByRole('button', { name: 'Back to parent session', exact: true })
     .click();
-  await page.getByRole('button', { name: 'Stop grupy', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop group', exact: true }).click();
   await waitState(orchestrator.id, 'stopped');
   await waitState(childB.id, 'stopped');
   await Promise.all(childB.fixturePids.map(waitDead));
   await page.reload();
   await navigation
-    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .getByRole('button', { name: /^Prototype orchestration/ })
     .click();
   const reloadedGroup = (
     await page.evaluate(() => window.nesvo.listSessions())
@@ -617,42 +634,34 @@ try {
     writeFile(join(reviewDirectory, 'dirty.txt'), 'unrelated operator edits\n'),
   ]);
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Odbiór zmian');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Review changes');
   await dialog.getByRole('combobox', { name: 'Provider', exact: true }).click();
   await page.getByRole('option', { name: 'Codex', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Model', exact: true }).click();
   await page
     .getByRole('option', { name: 'Codex fixture', exact: true })
     .click();
-  await dialog
-    .getByRole('combobox', { name: 'Rola sesji', exact: true })
-    .click();
+  await dialog.getByRole('combobox', { name: 'Access', exact: true }).click();
   await page
-    .getByRole('option', { name: 'Samodzielna sesja', exact: true })
+    .getByRole('option', { name: 'Workspace edits', exact: true })
     .click();
   await dialog
-    .getByRole('combobox', { name: 'Tryb pracy', exact: true })
-    .click();
-  await page
-    .getByRole('option', { name: 'Praca nadzorowana', exact: true })
-    .click();
-  await dialog
-    .getByRole('textbox', { name: /Katalog pracy/ })
+    .getByRole('textbox', { name: /Working directory/ })
     .fill(reviewDirectory);
   await dialog
-    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .getByRole('button', { name: 'Create session', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Review changes', exact: true, level: 1 })
     .waitFor();
   const writingSession = (
     await page.evaluate(() => window.nesvo.listSessions())
-  ).find(session => session.title === 'Odbiór zmian');
+  ).find(session => session.title === 'Review changes');
   await send('fixture:review-write');
   const initialFiles = await waitState(writingSession.id, 'completed');
   assert.equal(
@@ -668,35 +677,38 @@ try {
   assert.equal(initialReview.diff.files.length, 3);
   const reviewRow = review =>
     page.getByRole('article', {
-      name: `Odbiór wyniku: Odbiór zmian, wersja ${review.version}`,
+      name: `Review result: Review changes, version ${review.version}`,
       exact: true,
     });
   const reviewPanel = review => conversation.locator(`#review-${review.id}`);
   const openReviewSession = async review => {
     await reviewRow(review)
-      .getByRole('button', { name: 'Otwórz sesję: Odbiór zmian', exact: true })
+      .getByRole('button', {
+        name: 'Open session: Review changes',
+        exact: true,
+      })
       .click();
     await page
-      .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
+      .getByRole('heading', { name: 'Review changes', exact: true, level: 1 })
       .waitFor();
     await conversation.locator(`#review-${review.id}[open]`).waitFor();
     assert.notEqual(await reviewPanel(review).getAttribute('open'), null);
     assert.equal(
       await navigation
-        .getByRole('button', { name: /^Odbiór zmian/ })
+        .getByRole('button', { name: /^Review changes/ })
         .getAttribute('aria-current'),
       'page',
     );
   };
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   await openInbox();
   await reviewRow(initialReview).waitFor();
   await screenshot('-inbox');
   await openReviewSession(initialReview);
-  const savedDiff = reviewPanel(initialReview).getByLabel('Zapisany diff', {
+  const savedDiff = reviewPanel(initialReview).getByLabel('Saved diff', {
     exact: true,
   });
   assert.match(await savedDiff.innerText(), /-user dirty baseline/);
@@ -706,30 +718,30 @@ try {
     /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
   );
   await screenshot('-review');
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   await openInbox();
   await reviewRow(initialReview)
-    .getByRole('button', { name: 'Odeślij do poprawy', exact: true })
+    .getByRole('button', { name: 'Request changes', exact: true })
     .click();
   assert.equal(
     await reviewRow(initialReview)
-      .getByRole('button', { name: 'Wyślij uwagi', exact: true })
+      .getByRole('button', { name: 'Send feedback', exact: true })
       .isDisabled(),
     true,
   );
   const feedback = 'fixture:review-correct Please correct the result.';
   await reviewRow(initialReview)
-    .getByRole('textbox', { name: 'Uwagi do poprawy', exact: true })
+    .getByRole('textbox', { name: 'Feedback', exact: true })
     .fill(feedback);
   await screenshot('-inline-feedback');
   await reviewRow(initialReview)
-    .getByRole('button', { name: 'Wyślij uwagi', exact: true })
+    .getByRole('button', { name: 'Send feedback', exact: true })
     .click();
   await page
-    .getByRole('heading', { name: 'Odbiór zmian', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Review changes', exact: true, level: 1 })
     .waitFor();
   await message('Codex fixture corrected files.').waitFor();
   const correctedFiles = await waitState(writingSession.id, 'completed');
@@ -746,12 +758,12 @@ try {
   await openReviewSession(correctedReview);
   if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
     await reviewPanel(initialReview)
-      .getByLabel(`Otwórz wersję ${initialReview.version}`, { exact: true })
+      .getByLabel(`Open version ${initialReview.version}`, { exact: true })
       .click();
     await conversation.locator(`#review-${initialReview.id}[open]`).waitFor();
   }
   const staleAccept = reviewPanel(initialReview).getByRole('button', {
-    name: 'Zaakceptuj wynik',
+    name: 'Accept result',
     exact: true,
   });
   if (await staleAccept.count())
@@ -762,18 +774,18 @@ try {
     .waitFor();
   assert.match(
     await reviewPanel(correctedReview)
-      .getByLabel('Zapisany diff', { exact: true })
+      .getByLabel('Saved diff', { exact: true })
       .innerText(),
     /\+corrected agent text/,
   );
   await screenshot('-correction');
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('heading', { name: 'Analiza prototypu', exact: true, level: 1 })
+    .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
   await openInbox();
   await reviewRow(correctedReview)
-    .getByRole('button', { name: 'Zaakceptuj wynik', exact: true })
+    .getByRole('button', { name: 'Accept result', exact: true })
     .click();
   await reviewRow(correctedReview).waitFor({ state: 'hidden' });
   assert.equal(
@@ -782,10 +794,10 @@ try {
   );
   await page.reload();
   await openInbox();
-  await page.getByRole('combobox', { name: 'Widok', exact: true }).click();
-  await page.getByRole('option', { name: 'Historia', exact: true }).click();
+  await page.getByRole('combobox', { name: 'View', exact: true }).click();
+  await page.getByRole('option', { name: 'History', exact: true }).click();
   await reviewRow(correctedReview)
-    .getByText('Zaakceptowano', { exact: true })
+    .getByText('Accepted', { exact: true })
     .waitFor();
   const persistedReview = (
     await page.evaluate(() => window.nesvo.listReviews())
@@ -795,38 +807,38 @@ try {
   await screenshot('-accepted');
   await openReviewSession(correctedReview);
   await reviewPanel(correctedReview)
-    .getByText('Zaakceptowano', { exact: true })
+    .getByText('Accepted', { exact: true })
     .waitFor();
-  await navigation.getByRole('button', { name: /^Analiza prototypu/ }).click();
+  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
-    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .getByRole('button', { name: 'New session', exact: true })
     .first()
     .click();
   await dialog
-    .getByRole('textbox', { name: 'Nazwa sesji' })
-    .fill('Anulowana sesja');
+    .getByRole('textbox', { name: 'Session name' })
+    .fill('Cancelled session');
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
   assert.equal(
-    await navigation.getByRole('button', { name: /Anulowana sesja/ }).count(),
+    await navigation.getByRole('button', { name: /Cancelled session/ }).count(),
     0,
   );
   await page
-    .getByRole('textbox', { name: 'Szukaj sesji' })
-    .fill('nieistniejąca sesja');
-  await page.getByText('Brak pasujących sesji.').waitFor();
-  await page.getByRole('textbox', { name: 'Szukaj sesji' }).fill('');
+    .getByRole('textbox', { name: 'Search sessions' })
+    .fill('nonexistent session');
+  await page.getByText('No matching sessions.').waitFor();
+  await page.getByRole('textbox', { name: 'Search sessions' }).fill('');
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(720, 700),
   );
-  await page.getByRole('button', { name: 'Otwórz listę sesji' }).click();
-  const sidebar = page.getByRole('dialog', { name: 'Nawigacja', exact: true });
+  await page.getByRole('button', { name: 'Open sessions' }).click();
+  const sidebar = page.getByRole('dialog', { name: 'Navigation', exact: true });
   await screenshot('-navigation');
-  await sidebar.getByRole('button', { name: /^Analiza w katalogu/ }).click();
+  await sidebar.getByRole('button', { name: /^Workspace analysis/ }).click();
   await sidebar.waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Pokaż szczegóły sesji' }).click();
+  await page.getByRole('button', { name: 'Open context' }).click();
   const details = page.getByRole('dialog', {
-    name: 'Kontekst sesji',
+    name: 'Context',
     exact: true,
   });
   await details.getByText(directory, { exact: true }).waitFor();
@@ -838,9 +850,9 @@ try {
     true,
   );
   await screenshot('-compact');
-  await page.getByRole('button', { name: 'Otwórz listę sesji' }).click();
+  await page.getByRole('button', { name: 'Open sessions' }).click();
   await sidebar
-    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .getByRole('button', { name: /^Prototype orchestration/ })
     .click();
   await sidebar.waitFor({ state: 'hidden' });
   await launchWorkers();
