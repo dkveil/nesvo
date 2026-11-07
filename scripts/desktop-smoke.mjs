@@ -387,6 +387,9 @@ try {
       Date.parse(activity.completedAt) >= Date.parse(activity.startedAt),
     );
   }
+  await activityFor(codexCompleted.runId)
+    .getByText(/^Worked for/)
+    .waitFor();
   assert.match(
     await activityFor(codexCompleted.runId)
       .getByLabel('Toggle activity', { exact: true })
@@ -505,12 +508,13 @@ try {
     Date.parse(codexStoppedSession.messages.at(-1).completedAt) >=
       Date.parse(codexStoppedSession.messages.at(-1).createdAt),
   );
-  assert.match(
-    await activityFor(beforeActivityStop.runId)
-      .getByLabel('Toggle activity', { exact: true })
-      .innerText(),
-    /Stopped after/,
-  );
+  await activityFor(beforeActivityStop.runId)
+    .getByText(/^Stopped after/)
+    .waitFor();
+  const stoppedActivitySummary = await activityFor(beforeActivityStop.runId)
+    .getByLabel('Toggle activity', { exact: true })
+    .innerText();
+  assert.match(stoppedActivitySummary, /Stopped after/);
   await approval.waitFor({ state: 'hidden' });
   await Promise.all([
     waitDead(codexStopped.pid),
@@ -539,6 +543,12 @@ try {
     codexStoppedSession.messages.at(-1).completedAt,
   );
   await checkActivityRows(beforeActivityStop.runId, stoppedActivities);
+  assert.equal(
+    await activityFor(beforeActivityStop.runId)
+      .getByLabel('Toggle activity', { exact: true })
+      .innerText(),
+    stoppedActivitySummary,
+  );
   await page
     .getByRole('button', { name: 'New session', exact: true })
     .first()
