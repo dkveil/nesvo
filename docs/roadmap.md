@@ -1,0 +1,31 @@
+# Approved prototype roadmap
+
+Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
+The product enables technical orchestration with visible workers and operator-controlled review.
+
+[Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
+and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
+
+| Stage | Target | Deliverable                                                       | Owner acceptance                           | Issue                                              |
+| ----- | ------ | ----------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------- |
+| P0    | Nov 8  | Workspace, desktop/host foundation, contracts, tooling and rules  | Start project and approve structure        | [REV-259](https://linear.app/reveil/issue/REV-259) |
+| P1    | Nov 8  | Session list, chat, delegation space and inbox layout             | Approve navigation and base UI             | [REV-267](https://linear.app/reveil/issue/REV-267) |
+| P2    | Nov 9  | Real Claude session, streaming, Stop and conversation persistence | Complete a real small task                 | [REV-268](https://linear.app/reveil/issue/REV-268) |
+| P3    | Nov 10 | Codex, model choice and actual provider permissions               | Use both providers, approve and deny       | [REV-269](https://linear.app/reveil/issue/REV-269) |
+| P4    | Nov 11 | Visible delegation to up to two workers                           | Approve, observe and stop a worker         | [REV-272](https://linear.app/reveil/issue/REV-272) |
+| P5    | Nov 12 | Review inbox, summary, diff and revision-bound acceptance         | Request correction and accept its revision | [REV-270](https://linear.app/reveil/issue/REV-270) |
+| P6    | Nov 13 | Provider-aware skill discovery and use                            | Use a known skill in real work             | [REV-275](https://linear.app/reveil/issue/REV-275) |
+| P7    | Nov 14 | Durable history, relations and review recovery                    | Reopen and continue review safely          | [REV-273](https://linear.app/reveil/issue/REV-273) |
+| P8    | Nov 14 | Native packages for three operating systems                       | Receive separate runtime evidence          | [REV-264](https://linear.app/reveil/issue/REV-264) |
+| P9    | Nov 15 | Full demonstration rehearsal and fixes                            | Complete the flow independently            | [REV-274](https://linear.app/reveil/issue/REV-274) |
+| P10   | Nov 16 | Pinned demonstration version and instructions                     | Accept version for demonstration           | [REV-277](https://linear.app/reveil/issue/REV-277) |
+
+Dates are delivery targets, not permission to skip acceptance or silently reduce scope.
+Every stage waits for Damian's acceptance of the previous stage. Corrections stay within the current stage.
+Provider modes are based on real capabilities; never simulate unsupported features.
+
+P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
+Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.
+
+Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
+The prototype prioritizes operator satisfaction, visible control and a coherent working flow.

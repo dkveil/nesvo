@@ -1,0 +1,58 @@
+name: Native foundation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.20.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run build
+      - name: Check desktop
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a bun run smoke:desktop
+          else
+            bun run smoke:desktop
+          fi
+      - run: bun run package:dir
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check native package
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            export NESVO_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/release/win-unpacked/Nesvo.exe"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            export NESVO_PACKAGED_EXECUTABLE="$(find "$GITHUB_WORKSPACE/apps/desktop/release" -path '*/Contents/MacOS/Nesvo' -type f -print -quit)"
+          else
+            export NESVO_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/release/linux-unpacked/nesvo"
+          fi
+          test -f "$NESVO_PACKAGED_EXECUTABLE"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a bun run smoke:desktop
+          else
+            bun run smoke:desktop
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nesvo-p0-${{ runner.os }}-${{ runner.arch }}
+          path: apps/desktop/release/
+          retention-days: 3

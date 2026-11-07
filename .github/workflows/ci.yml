@@ -1,130 +1,27 @@
-name: Checks
-on: [push, pull_request]
+name: Foundation checks
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: foundation-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  app:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24
-          cache: npm
-      - name: Enforce the comment and attribution gates
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node scripts/contract-gates.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
-      - run: npm ci
-      - run: npm run terminal:build
-      - run: npm run dependencies:check
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run test:client
-      - run: npm run test:architecture
-      - run: npm run test:packaging
-      - run: npm run test:brand
-      - run: npm run export
-  rust-format:
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-  host:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+          node-version: 24.20.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          toolchain: stable
-          components: clippy
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
-        with:
-          tool: cargo-nextest@0.9
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Record console hosts before tests
-        id: console-hosts-before-tests
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/console-orphans.ps1 -Snapshot "$env:RUNNER_TEMP/console-hosts-before-tests.json"
-      - run: cargo nextest run --workspace --locked --profile ci
-      - name: Fail on console hosts left by tests
-        if: ${{ always() && steps.console-hosts-before-tests.outcome == 'success' }}
-        shell: pwsh
-        run: ./scripts/console-orphans.ps1 -Check "$env:RUNNER_TEMP/console-hosts-before-tests.json"
-      - run: cargo build --workspace --locked
-      - name: Verify Windows development host probes and immutable runtime
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          & ./tests/dev-host-probe.test.ps1
-          & ./tests/dev-host-runtime.test.ps1
-      - run: npm run test:host
-      - run: npm run test:sync
-      - run: cargo run --package nesvo --locked -- --help
-      - run: npm run test:tui
-  browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: stable
-      - run: cargo build --package nesvo-host --locked
-      - run: npx playwright install --with-deps chromium
-      - run: npm run terminal:build
-      - name: Verify mobile UI and two-client live synchronization
-        env:
-          CI: '1'
-          APP_URL: http://localhost:8081
-        run: |
-          npm run web --workspace @nesvo/mobile -- --port 8081 --max-workers 2 > /tmp/nesvo-metro.log 2>&1 &
-          metro_pid=$!
-          trap 'kill "$metro_pid" || true' EXIT
-          for attempt in $(seq 1 60); do
-            if curl --silent --fail http://localhost:8081/status; then break; fi
-            sleep 1
-          done
-          curl --silent --fail http://localhost:8081/status
-          npm run test:web
-          npm run test:create-session
-          npm run test:brand:web
-          npm run test:live
-          npm run test:terminal
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run build

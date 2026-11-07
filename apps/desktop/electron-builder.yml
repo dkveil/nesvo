@@ -1,0 +1,23 @@
+appId: app.nesvo.desktop
+productName: Nesvo
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+  - '!node_modules/**/*'
+asar: true
+npmRebuild: false
+extraFiles:
+  - from: ../../LICENSE
+    to: LICENSE.nesvo
+  - from: ../../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+win:
+  target: zip
+mac:
+  target: zip
+  identity: null
+linux:
+  target: tar.gz
+  executableName: nesvo

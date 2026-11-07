@@ -1,15 +1,15 @@
 # Third-party notices
 
-## herdr-reviewr
+Nesvo uses open-source dependencies recorded in bun.lock. Their licenses remain applicable.
+Electron distributions retain their included license files.
 
-The aligned side-by-side diff rows in `apps/tui/src/review_session.rs` (pairing unique identical
-lines inside a change block and filling the gaps by position) are adapted from `src/split.rs` of
-[herdr-reviewr](https://github.com/persiyanov/herdr-reviewr), used under the MIT License.
+## shadcn UI components
 
-```text
+The Button, Card and Badge source files in apps/desktop/src/renderer/src/shared/ui are distributed under the following license.
+
 MIT License
 
-Copyright (c) 2026 Dmitry Persiyanov
+Copyright (c) 2023 shadcn
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -28,4 +28,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```

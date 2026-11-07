@@ -1,53 +1,59 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
-node_modules/
-
-# Expo
-.expo/
-dist/
-web-build/
-expo-env.d.ts
-
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-# generated native folders
-/ios
-/android
-/apps/mobile/ios
-/apps/mobile/android
-
-# Host pairing secrets, build output and local verification artifacts
-.local/
-target/
-artifacts/
-*.log
-.env
-.env.*
-!.env.example
-.claude/
+/*
+!/.gitignore
+!/.gitattributes
+!/.editorconfig
+!/.node-version
+!/package.json
+!/bun.lock
+!/tsconfig.base.json
+!/eslint.config.mjs
+!/prettier.config.mjs
+!/.prettierignore
+!/README.md
+!/AGENTS.md
+!/CONTRIBUTING.md
+!/LICENSE
+!/THIRD_PARTY_NOTICES.md
+!/apps/
+/apps/*
+!/apps/desktop/
+!/apps/host/
+/apps/host/*
+!/apps/host/package.json
+!/apps/host/tsconfig.json
+!/apps/host/src/
+/apps/host/src/*
+!/apps/host/src/*.ts
+!/apps/host/tests/
+/apps/host/tests/*
+!/apps/host/tests/host.integration.test.mjs
+!/packages/
+/packages/*
+!/packages/contracts/
+!/scripts/
+/scripts/*
+!/scripts/desktop-smoke.mjs
+!/docs/
+/docs/*
+!/docs/architecture.md
+!/docs/testing.md
+!/docs/development.md
+!/docs/platforms.md
+!/docs/roadmap.md
+!/docs/baseline.md
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/ci.yml
+!/.github/workflows/platforms.yml
+**/node_modules/
+**/dist/
+**/out/
+**/release/
+**/coverage/
+**/test-results/
+**/.env*
+**/*.db*
+**/*.sqlite*
+**/*.log
