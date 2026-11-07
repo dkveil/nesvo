@@ -13,7 +13,7 @@ import {
   type CodeViewItem,
   type CodeViewReactOptions,
 } from '@pierre/diffs/react';
-import { FileCode2, WrapText, X } from 'lucide-react';
+import { FileCode2, FolderOpen, WrapText, X } from 'lucide-react';
 import {
   fileKindLabels,
   reviewStatusLabels,
@@ -25,6 +25,7 @@ type Props = {
   review: Review;
   initialPath?: string;
   onClose: () => void;
+  onFiles: () => void;
 };
 
 function parseReview(review: Review) {
@@ -140,7 +141,12 @@ function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
   );
 }
 
-export default function ReviewDiff({ review, initialPath, onClose }: Props) {
+export default function ReviewDiff({
+  review,
+  initialPath,
+  onClose,
+  onFiles,
+}: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
   const [path, setPath] = useState(
@@ -161,7 +167,14 @@ export default function ReviewDiff({ review, initialPath, onClose }: Props) {
   useEffect(() => {
     closeButton.current?.focus();
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest('[role="dialog"]')
+        )
+      ) {
         event.preventDefault();
         close();
       }
@@ -193,10 +206,21 @@ export default function ReviewDiff({ review, initialPath, onClose }: Props) {
           type="button"
           variant="ghost"
           size="icon"
+          aria-label="Browse workspace files"
+          title="Current workspace files"
+          onClick={onFiles}
+          className="ml-auto size-7"
+        >
+          <FolderOpen className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
           aria-label="Wrap diff lines"
           aria-pressed={wrap}
           onClick={() => setWrap(value => !value)}
-          className="ml-auto size-7"
+          className="size-7"
         >
           <WrapText className="size-3.5" />
         </Button>

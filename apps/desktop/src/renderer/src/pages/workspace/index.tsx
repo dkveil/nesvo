@@ -6,7 +6,14 @@ import type {
   Review,
   RespondApprovalInput,
 } from '@nesvo/contracts';
-import { ArrowLeft, Menu, PanelRight, Plus, RefreshCw } from 'lucide-react';
+import {
+  ArrowLeft,
+  FolderOpen,
+  Menu,
+  PanelRight,
+  Plus,
+  RefreshCw,
+} from 'lucide-react';
 import {
   errorDetail,
   providers,
@@ -36,12 +43,14 @@ import { SessionSidebar } from '@/widgets/session-sidebar';
 import { desktopApi, useSessions } from './use-sessions';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
+const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 export function Workspace() {
   const store = useSessions();
   const [selectedId, setSelectedId] = useState('');
   const [inbox, setInbox] = useState(false);
   const [sessionTarget, setSessionTarget] = useState('');
+  const [panel, setPanel] = useState<'diff' | 'files' | null>(null);
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
     path?: string;
@@ -106,8 +115,23 @@ export function Workspace() {
         ? document.activeElement
         : null;
     setDiffTarget({ reviewId, path });
+    setPanel('diff');
+  };
+  const openFiles = () => {
+    diffTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    if (!diffReview) {
+      const latest = store.reviews
+        .filter(review => review.sessionId === selected?.id)
+        .sort((a, b) => b.version - a.version)[0];
+      setDiffTarget(latest ? { reviewId: latest.id } : null);
+    }
+    setPanel('files');
   };
   const closeDiff = () => {
+    setPanel(null);
     setDiffTarget(null);
     const trigger = diffTrigger.current;
     requestAnimationFrame(() => {
@@ -115,6 +139,7 @@ export function Workspace() {
     });
   };
   const select = (id: string, targetId = '') => {
+    setPanel(null);
     setDiffTarget(null);
     setSelectedId(id);
     setSessionTarget(targetId);
@@ -123,6 +148,7 @@ export function Workspace() {
     setDetailsOpen(false);
   };
   const openInbox = () => {
+    setPanel(null);
     setDiffTarget(null);
     setInbox(true);
     setNavigationOpen(false);
@@ -510,6 +536,20 @@ export function Workspace() {
           >
             <Plus />
           </Button>
+          {!inbox && selected && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Open files"
+              title="Workspace files"
+              aria-pressed={panel === 'files'}
+              onClick={openFiles}
+              className="text-muted-foreground"
+            >
+              <FolderOpen className="size-4" />
+            </Button>
+          )}
           <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
             <SheetTrigger asChild>
               <Button
@@ -652,7 +692,7 @@ export function Workspace() {
             />
           ) : selected ? (
             <div
-              className={`flex min-h-0 min-w-0 flex-1 ${diffReview ? 'max-[1200px]:hidden' : ''}`}
+              className={`flex min-h-0 min-w-0 flex-1 ${panel ? 'max-[1200px]:hidden' : ''}`}
             >
               <Conversation
                 session={selected}
@@ -765,7 +805,7 @@ export function Workspace() {
               )}
             </section>
           )}
-          {diffReview && diffTarget && (
+          {panel === 'diff' && diffReview && diffTarget && (
             <Suspense
               fallback={
                 <aside
@@ -780,6 +820,28 @@ export function Workspace() {
                 key={`${diffReview.id}:${diffTarget.path ?? ''}`}
                 review={diffReview}
                 initialPath={diffTarget.path}
+                onClose={closeDiff}
+                onFiles={() => setPanel('files')}
+              />
+            </Suspense>
+          )}
+          {panel === 'files' && !inbox && selected && (
+            <Suspense
+              fallback={
+                <aside
+                  role="status"
+                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+                >
+                  Loading files…
+                </aside>
+              }
+            >
+              <WorkspaceFiles
+                key={selected.id}
+                session={selected}
+                api={desktopApi()}
+                savedVersion={diffReview?.version}
+                onSavedDiff={() => setPanel('diff')}
                 onClose={closeDiff}
               />
             </Suspense>
