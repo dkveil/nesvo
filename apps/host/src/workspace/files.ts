@@ -301,10 +301,9 @@ export class WorkspaceFiles {
     let visited = 0;
     try {
       await withBudget(async check => {
-        const visit = async (
-          relativePath: string,
-          depth: number,
-        ): Promise<void> => {
+        const queue = [{ relativePath: path, depth: 0 }];
+        for (let index = 0; index < queue.length; index++) {
+          const { relativePath, depth } = queue[index]!;
           check();
           if (
             depth > workspaceLimits.depth ||
@@ -312,7 +311,8 @@ export class WorkspaceFiles {
             matches.length >= workspaceLimits.matches
           ) {
             truncated = true;
-            return;
+            if (depth > workspaceLimits.depth) continue;
+            break;
           }
           const directory = await target(root, relativePath, check);
           if (!directory.stat.isDirectory())
@@ -338,6 +338,8 @@ export class WorkspaceFiles {
               const childPath = relativePath
                 ? `${relativePath}/${entry.name}`
                 : entry.name;
+              if (entry.isFile() && !childPath.toLowerCase().includes(query))
+                continue;
               let child;
               try {
                 child = await target(root, childPath, check);
@@ -359,13 +361,15 @@ export class WorkspaceFiles {
                     : Number(child.stat.size),
                 });
               if (child.stat.isDirectory())
-                await visit(child.relativePath, depth + 1);
+                queue.push({
+                  relativePath: child.relativePath,
+                  depth: depth + 1,
+                });
             }
           } finally {
             await handle.close();
           }
-        };
-        await visit(path, 0);
+        }
       }, signal);
     } catch (error) {
       if (!(error instanceof WorkspaceBudgetError)) throw mapError(error);

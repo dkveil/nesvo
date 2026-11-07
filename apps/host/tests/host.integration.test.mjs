@@ -412,6 +412,32 @@ test(
     ).search;
     assert.equal(limitedSearch.matches.length, 200);
     assert.equal(limitedSearch.truncated, true);
+    const breadthRoot = join(explorerRoot, 'breadth');
+    await mkdir(join(breadthRoot, 'a-deep', 'level'), { recursive: true });
+    await mkdir(join(breadthRoot, 'z-source'));
+    await Promise.all([
+      writeFile(
+        join(breadthRoot, 'z-source', 'expected.needle'),
+        'source sibling',
+      ),
+      ...Array.from({ length: 205 }, (_, index) =>
+        writeFile(
+          join(breadthRoot, 'a-deep', 'level', `${index}.needle`),
+          'deep fixture',
+        ),
+      ),
+    ]);
+    const breadthSearch = (
+      await workspaceRequest('search-workspace-files', 'breadth', {
+        query: '.needle',
+      })
+    ).search;
+    assert.equal(breadthSearch.truncated, true);
+    assert.ok(
+      breadthSearch.matches.some(
+        entry => entry.path === 'breadth/z-source/expected.needle',
+      ),
+    );
     for (const unsafe of [
       '../explorer-outside/outside.txt',
       'notes/../../outside.txt',
