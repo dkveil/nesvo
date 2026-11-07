@@ -54,3 +54,5 @@ P6.1 is delivered at 653ad2d and In Review in REV-261. Actual Windows discovery 
 
 Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
+
+D60 authorizes P6.2: slash selection, one skill per message, native Codex invocation and persisted source attribution. The selected skill is verified again in the isolated execution process; unavailable selections fail without silently running an ordinary prompt. The supported Claude picker remains discovery-only until exact invocation is verified. The stage requires a real Codex task and owner review; it does not authorize P7 through P10.

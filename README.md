@@ -84,6 +84,15 @@ The inbox receives successful turns completed after P5 was installed; it does no
 
 Writable review uses a bounded local snapshot: 500 files, 512 KiB per file, 8 MiB total and five seconds per capture. Generated directories are excluded and listed in the result. Symlinks, special files, read failures, excessive size or changed binary contents make the diff unavailable and block acceptance. Use a small work directory for this prototype. Changes made outside Nesvo during a turn can also appear in the comparison. Review decisions wait until the active group finishes.
 
+## P6 skill walkthrough
+
+1. Open a Codex session. Type `/` at the start of a draft or use Choose skill. Search the native catalog; disabled entries cannot be selected.
+2. Choose one skill with the mouse or arrow keys and Enter/Tab. Escape closes the menu. The selected skill appears above the message and can be removed before sending.
+3. Write the task and send it. Nesvo verifies the selection again in the execution process, then submits the native skill input with your message. The existing session permissions still apply. An unavailable selection produces a clear failure without silently sending a plain prompt.
+4. Inspect the response and the selected skill in message history. Its source tooltip records the resolved name and path, not a frozen copy of its contents or a guarantee that every instruction was followed. Reopen the app to inspect the saved reference.
+
+Claude's Skills panel remains a partial file inventory. Explicit selection and invocation through this connection are not enabled yet. This is an integration limit, not a claim that Claude Code lacks skills.
+
 ## Working agreement
 
 Small conventional commits go directly to master during the prototype. Each stage ends with Damian's acceptance. See [roadmap](docs/roadmap.md), [contributing](CONTRIBUTING.md), [testing](docs/testing.md) and [platform evidence](docs/platforms.md).
