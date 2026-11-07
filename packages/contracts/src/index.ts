@@ -1,17 +1,21 @@
 import { z } from 'zod';
 import {
   claudeStatusSchema,
+  codexStatusSchema,
   createSessionSchema,
   desktopEventSchema,
   sendMessageSchema,
   sessionSchema,
   stopRunSchema,
+  respondApprovalSchema,
   type ClaudeStatus,
+  type CodexStatus,
   type CreateSessionInput,
   type DesktopEvent,
   type SendMessageInput,
   type Session,
   type StopRunInput,
+  type RespondApprovalInput,
 } from './sessions';
 
 export * from './sessions';
@@ -20,6 +24,7 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ id: z.uuid(), method: z.literal('health') }),
   z.strictObject({ id: z.uuid(), method: z.literal('shutdown') }),
   z.strictObject({ id: z.uuid(), method: z.literal('claude-status') }),
+  z.strictObject({ id: z.uuid(), method: z.literal('codex-status') }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
   z.strictObject({
     id: z.uuid(),
@@ -35,6 +40,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('stop-run'),
     input: stopRunSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('respond-approval'),
+    input: respondApprovalSchema,
   }),
 ]);
 
@@ -55,6 +65,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('claude-status'),
     id: z.uuid(),
     status: claudeStatusSchema,
+  }),
+  z.strictObject({
+    type: z.literal('codex-status'),
+    id: z.uuid(),
+    status: codexStatusSchema,
   }),
   z.strictObject({
     type: z.literal('sessions'),
@@ -91,9 +106,11 @@ export type HostMessage = z.infer<typeof hostMessageSchema>;
 export type DesktopApi = {
   health: () => Promise<HostHealth>;
   claudeStatus: () => Promise<ClaudeStatus>;
+  codexStatus: () => Promise<CodexStatus>;
   listSessions: () => Promise<Session[]>;
   createSession: (input: CreateSessionInput) => Promise<Session>;
   sendMessage: (input: SendMessageInput) => Promise<Session>;
   stopRun: (input: StopRunInput) => Promise<Session>;
+  respondApproval: (input: RespondApprovalInput) => Promise<Session>;
   subscribe: (listener: (event: DesktopEvent) => void) => () => void;
 };
