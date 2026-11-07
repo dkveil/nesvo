@@ -28,7 +28,9 @@ Provider modes are based on real capabilities; never simulate unsupported featur
 
 P4 uses new read-only Codex orchestrators with a native delegation tool and at most two visible workers per run. The operator decides on each proposal before launch. Workers can use Codex or Claude capabilities already implemented; real P4 demonstration uses Codex while Claude remains quota-limited. Worker scopes stay within the parent directory, and overlapping writable directories are rejected. Stop on the parent cancels its group; Stop on a worker leaves its sibling running. Existing conversations keep their provider threads and do not acquire delegation silently.
 
-P4 implementation is ready for Damian's review. Real Windows Codex execution demonstrated two concurrent workers, correct result attribution, independent child Stop and preserved history. See docs/platforms.md for separate automated native evidence. P4 is not accepted and P5 has not started.
+Damian accepted P4 and authorized P5 in D52. Real Windows Codex execution demonstrated two concurrent workers, correct result attribution, independent child Stop and preserved history. See docs/platforms.md for separate automated native evidence.
+
+P5 adds saved results with independent content versions and human decisions. The inbox shows the response, author, scope and a before/after workspace diff for writable runs. Corrections return to the same session and require a new acceptance. Prior dirty files are the baseline, not attributed to the new run. Read-only results are reviewed as responses; parent summaries reference exact child result versions. The host rejects stale decisions and never merges files. P5 ends with a separate owner review.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.
