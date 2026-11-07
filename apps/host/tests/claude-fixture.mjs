@@ -1,0 +1,176 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+
+const args = process.argv.slice(2);
+const flags = [
+  '--print',
+  '--input-format',
+  '--output-format',
+  '--verbose',
+  '--include-partial-messages',
+  '--permission-mode',
+  '--permission-prompts',
+  '--tools',
+  '--allowedTools',
+  '--strict-mcp-config',
+  '--mcp-config',
+  '--settings',
+  '--session-id',
+  '--resume',
+  '--model',
+];
+const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+
+if (args.length === 1 && args[0] === '--version') {
+  console.log('2.1.0 (Claude Code fixture)');
+} else if (args.length === 1 && args[0] === '--help') {
+  console.log(flags.join('\n'));
+} else if (args.join(' ') === 'auth status --json') {
+  emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
+} else {
+  const switches = new Set([
+    '--print',
+    '--verbose',
+    '--include-partial-messages',
+    '--strict-mcp-config',
+  ]);
+  const values = new Map();
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    assert.ok(flags.includes(flag), `Unexpected argument: ${flag}`);
+    assert.equal(values.has(flag), false, `Repeated flag: ${flag}`);
+    values.set(flag, switches.has(flag) ? true : args[++index]);
+  }
+  for (const flag of switches) assert.equal(values.get(flag), true, flag);
+  for (const [flag, expected] of [
+    ['--input-format', 'text'],
+    ['--output-format', 'stream-json'],
+    ['--permission-mode', 'plan'],
+    ['--permission-prompts', 'none'],
+    ['--tools', 'Read,Glob,Grep'],
+    ['--allowedTools', 'Read,Glob,Grep'],
+    ['--mcp-config', '{"mcpServers":{}}'],
+    ['--settings', '{"disableAllHooks":true}'],
+  ])
+    assert.equal(values.get(flag), expected, flag);
+  assert.notEqual(values.has('--session-id'), values.has('--resume'));
+  const resumed = values.has('--resume');
+  const sessionId = values.get(resumed ? '--resume' : '--session-id');
+  assert.match(sessionId, /^[0-9a-f-]{36}$/);
+  if (values.has('--model'))
+    assert.ok(['opus', 'sonnet', 'haiku'].includes(values.get('--model')));
+  let prompt = '';
+  for await (const chunk of process.stdin) prompt += chunk;
+  assert.ok(prompt.trim(), 'Prompt must arrive through stdin');
+  const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);
+  assert.equal(existsSync(statePath), resumed, 'Resume must retain CLI state');
+  const turn = resumed
+    ? JSON.parse(readFileSync(statePath, 'utf8')).turn + 1
+    : 1;
+  writeFileSync(statePath, JSON.stringify({ turn }));
+  emit({
+    type: 'system',
+    subtype: 'init',
+    session_id: sessionId,
+    model: `fixture-${values.get('--model') ?? 'default'}`,
+    tools: ['Read', 'Glob', 'Grep'],
+  });
+  emit({ type: 'assistant', parent_tool_use_id: 'fixture-subagent' });
+  const messageId = `fixture-message-${turn}`;
+  const stream = event => emit({ type: 'stream_event', event });
+  const start = text => {
+    stream({ type: 'message_start', message: { id: messageId } });
+    stream({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    });
+    stream({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text },
+    });
+  };
+  const finish = (text, isError = false) => {
+    stream({ type: 'content_block_stop', index: 0 });
+    stream({ type: 'message_stop' });
+    emit({
+      type: 'assistant',
+      message: {
+        id: messageId,
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+      },
+    });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: isError,
+      result: text,
+      session_id: sessionId,
+    });
+  };
+  if (prompt === 'fixture:hold') {
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    assert.ok(process.env.NESVO_FIXTURE_PID_FILE);
+    writeFileSync(
+      process.env.NESVO_FIXTURE_PID_FILE,
+      JSON.stringify({ pid: process.pid, childPid: child.pid, sessionId }),
+    );
+    start('Fixture is waiting.');
+    setInterval(() => {}, 1000);
+  } else if (prompt === 'fixture:fail') {
+    emit({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'allowed_warning',
+        rateLimitType: 'five_hour',
+      },
+    });
+    emit({
+      type: 'assistant',
+      error: 'rate_limit',
+      message: {
+        id: messageId,
+        content: [{ type: 'text', text: 'Fixture account limit reached.' }],
+      },
+    });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Fixture account limit reached.',
+    });
+  } else if (prompt === 'fixture:result-fail') {
+    start('Fixture unsuccessful result.');
+    finish('Fixture unsuccessful result.', true);
+  } else if (prompt === 'fixture:stream') {
+    start('Fixture streamed ');
+    await setTimeout(300);
+    stream({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text: 'reply.' },
+    });
+    finish('Fixture streamed reply.');
+  } else {
+    const text = `Fixture ${resumed ? 'resumed' : 'initial'} reply.`;
+    start(text);
+    finish(text);
+  }
+}
