@@ -30,9 +30,9 @@ export class SessionStore {
     const session: Session = {
       ...input,
       id: randomUUID(),
-      provider: 'Claude Code',
-      providerSessionId: randomUUID(),
+      providerSessionId: input.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,
+      pendingApprovals: [],
       actualModel: null,
       directory,
       status: 'ready',
@@ -70,6 +70,7 @@ export class SessionStore {
       session.error =
         'Sesja została przerwana przez zamknięcie hosta. Możesz kontynuować rozmowę.';
       session.activity = null;
+      session.pendingApprovals = [];
       for (const message of session.messages) {
         if (message.state === 'running') message.state = 'interrupted';
       }
