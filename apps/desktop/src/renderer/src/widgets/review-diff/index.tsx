@@ -33,12 +33,33 @@ function parseReview(review: Review) {
       patch => patch.files,
     );
     const indexed = new Map(files.map(file => [file.name, file]));
+    const blocks = review.diff.patch
+      .split(/(?=^diff --git )/m)
+      .filter(block => block.startsWith('diff --git '));
+    const metadata = new Map<string, string>();
+    if (blocks.length === files.length) {
+      files.forEach((file, index) => {
+        const before = blocks[index]?.match(/^old type\/mode (.+)$/m)?.[1];
+        const after = blocks[index]?.match(/^new type\/mode (.+)$/m)?.[1];
+        const display = (value: string) =>
+          value.replace(
+            / (\d+)$/,
+            (_, mode: string) => ` · 0${Number(mode).toString(8)}`,
+          );
+        if (before && after && before !== after)
+          metadata.set(file.name, `${display(before)} → ${display(after)}`);
+      });
+    }
     const complete =
       indexed.size === review.diff.files.length &&
       review.diff.files.every(file => indexed.has(file.path));
-    return { files: indexed, complete };
+    return { files: indexed, metadata, complete };
   } catch {
-    return { files: new Map<string, FileDiffMetadata>(), complete: false };
+    return {
+      files: new Map<string, FileDiffMetadata>(),
+      metadata: new Map<string, string>(),
+      complete: false,
+    };
   }
 }
 
@@ -246,15 +267,28 @@ export default function ReviewDiff({ review, initialPath, onClose }: Props) {
           );
         })}
       </nav>
+      {parsed.metadata.has(path) && (
+        <p
+          className="shrink-0 border-b px-4 py-2 text-[11px] text-muted-foreground"
+          aria-label="File metadata"
+        >
+          {parsed.metadata.get(path)}
+        </p>
+      )}
       <div
         data-testid="saved-diff-content"
         data-file-path={path}
         className="min-h-0 min-w-0 flex-1 overflow-hidden"
       >
-        {selectedFile && selectedFile.hunks.length > 0 ? (
+        {selectedFile && selectedFile.unifiedLineCount > 0 ? (
           <ViewerBoundary key={`${review.id}:${path}`} fallback={fallback}>
             <FileViewer file={selectedFile} wrap={wrap} />
           </ViewerBoundary>
+        ) : fileInfo && parsed.metadata.has(path) ? (
+          <p className="p-4 text-xs leading-6 text-muted-foreground">
+            File metadata changed. No text lines changed. The raw patch
+            preserves the exact details.
+          </p>
         ) : fileInfo ? (
           fallback
         ) : (

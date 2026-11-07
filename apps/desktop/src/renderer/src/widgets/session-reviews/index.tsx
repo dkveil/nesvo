@@ -151,19 +151,19 @@ function ReviewVersion({
                   No file changes were recorded.
                 </p>
               )}
-              {review.diff.patch && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  aria-label={`View diff for version ${review.version}`}
-                  onClick={() => onOpenDiff(review.id)}
-                >
-                  View diff
-                  <ArrowUpRight className="size-3.5" />
-                </Button>
-              )}
             </>
+          )}
+          {review.diff.patch && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label={`View diff for version ${review.version}`}
+              onClick={() => onOpenDiff(review.id)}
+            >
+              View diff
+              <ArrowUpRight className="size-3.5" />
+            </Button>
           )}
         </section>
         {review.dependencies.length > 0 && (

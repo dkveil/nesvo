@@ -109,7 +109,10 @@ export function Workspace() {
   };
   const closeDiff = () => {
     setDiffTarget(null);
-    if (diffTrigger.current?.isConnected) diffTrigger.current.focus();
+    const trigger = diffTrigger.current;
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus();
+    });
   };
   const select = (id: string, targetId = '') => {
     setDiffTarget(null);
@@ -648,92 +651,93 @@ export function Workspace() {
               onRefresh={store.refresh}
             />
           ) : selected ? (
-            <Conversation
-              session={selected}
-              activity={(runId, startedAt, completedAt, status, live) => (
-                <SessionActivity
-                  runId={runId}
-                  items={selected.activities.filter(
-                    item => item.runId === runId,
-                  )}
-                  startedAt={startedAt}
-                  completedAt={completedAt}
-                  status={status}
-                  live={live}
-                  truncated={
-                    selected.activitiesTruncated &&
-                    selected.activities[0]?.runId === runId
-                  }
-                />
-              )}
-              focusTarget={sessionTarget}
-              workers={workers}
-              results={
-                <SessionReviews
-                  {...reviewDecisionProps}
-                  reviews={store.reviews.filter(
-                    review => review.sessionId === selected.id,
-                  )}
-                  allReviews={store.reviews}
-                  focusedId={
-                    sessionTarget.startsWith('review-')
-                      ? sessionTarget.slice(7)
-                      : ''
-                  }
-                  onSession={select}
-                  onOpenDiff={openDiff}
-                />
-              }
-              delegations={
-                <Delegations
-                  session={selected}
-                  children={workers}
-                  enabled={operationEnabled}
-                  pending={delegationPending}
-                  onDecision={(delegationId, decision) =>
-                    selected.runId &&
-                    void decideDelegation({
-                      sessionId: selected.id,
-                      runId: selected.runId,
-                      delegationId,
-                      decision,
-                    })
-                  }
-                  onSelect={select}
-                />
-              }
-              draft={drafts[selected.id] ?? ''}
-              sending={sending}
-              canSend={
-                !sending &&
-                !activeRun &&
-                store.connection === 'ready' &&
-                selectedProviderState?.status?.status === 'ready' &&
-                !selectedProviderState.loading &&
-                !selectedProviderState.error
-              }
-              approvalsEnabled={operationEnabled}
-              approvalPending={approvalPending}
-              onApproval={(requestId, decision) =>
-                selected.runId &&
-                void respondApproval({
-                  sessionId: selected.id,
-                  runId: selected.runId,
-                  requestId,
-                  decision,
-                })
-              }
-              otherRun={
-                !!activeRun &&
-                activeRun.id !== selected.id &&
-                selected.status !== 'running' &&
-                selected.status !== 'stopping'
-              }
-              error={errors[selected.id] ?? ''}
-              onDraft={value => changeDraft(selected.id, value)}
-              onSend={() => void send()}
-              onStop={() => void stop()}
-            />
+            <div
+              className={`flex min-h-0 min-w-0 flex-1 ${diffReview ? 'max-[1200px]:hidden' : ''}`}
+            >
+              <Conversation
+                session={selected}
+                activity={(runId, startedAt, completedAt, status, live) => (
+                  <SessionActivity
+                    runId={runId}
+                    items={selected.activities.filter(
+                      item => item.runId === runId,
+                    )}
+                    startedAt={startedAt}
+                    completedAt={completedAt}
+                    status={status}
+                    live={live}
+                    truncated={selected.activityTruncatedRunIds.includes(runId)}
+                  />
+                )}
+                focusTarget={sessionTarget}
+                workers={workers}
+                results={
+                  <SessionReviews
+                    {...reviewDecisionProps}
+                    reviews={store.reviews.filter(
+                      review => review.sessionId === selected.id,
+                    )}
+                    allReviews={store.reviews}
+                    focusedId={
+                      sessionTarget.startsWith('review-')
+                        ? sessionTarget.slice(7)
+                        : ''
+                    }
+                    onSession={select}
+                    onOpenDiff={openDiff}
+                  />
+                }
+                delegations={
+                  <Delegations
+                    session={selected}
+                    children={workers}
+                    enabled={operationEnabled}
+                    pending={delegationPending}
+                    onDecision={(delegationId, decision) =>
+                      selected.runId &&
+                      void decideDelegation({
+                        sessionId: selected.id,
+                        runId: selected.runId,
+                        delegationId,
+                        decision,
+                      })
+                    }
+                    onSelect={select}
+                  />
+                }
+                draft={drafts[selected.id] ?? ''}
+                sending={sending}
+                canSend={
+                  !sending &&
+                  !activeRun &&
+                  store.connection === 'ready' &&
+                  selectedProviderState?.status?.status === 'ready' &&
+                  !selectedProviderState.loading &&
+                  !selectedProviderState.error
+                }
+                approvalsEnabled={operationEnabled}
+                approvalPending={approvalPending}
+                onApproval={(requestId, decision) =>
+                  selected.runId &&
+                  void respondApproval({
+                    sessionId: selected.id,
+                    runId: selected.runId,
+                    requestId,
+                    decision,
+                  })
+                }
+                otherRun={
+                  !!activeRun &&
+                  activeRun.id !== selected.id &&
+                  selected.status !== 'running' &&
+                  selected.status !== 'stopping'
+                }
+                error={errors[selected.id] ?? ''}
+                onDraft={value => changeDraft(selected.id, value)}
+                onSend={() => void send()}
+                onStop={() => void stop()}
+              />
+            </div>
           ) : (
             <section
               className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center"
