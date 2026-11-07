@@ -387,11 +387,18 @@ test(
       );
     }
     const nativeSkillSessions = new Map();
+    const nativeSkillCatalogs = new Map();
+    const readSkillTraces = async () =>
+      (await readFile(pidFile + '.skills', 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line));
     for (const [variant, expected] of [
       ['codex', 'ready'],
       ['unsupported', 'unsupported'],
       ['malformed', 'unsupported'],
       ['partial', 'partial'],
+      ['stale', 'ready'],
       ['hold', null],
     ]) {
       const workspace = join(directory, `skills-${variant}`);
@@ -411,7 +418,11 @@ test(
       assert.equal(discovered.type, 'skills', JSON.stringify(discovered));
       assert.equal(discovered.catalog.method, 'native');
       assert.equal(discovered.catalog.status, expected);
-      assert.equal(discovered.catalog.invocationSupported, false);
+      assert.equal(
+        discovered.catalog.invocationSupported,
+        expected === 'ready' || expected === 'partial',
+      );
+      nativeSkillCatalogs.set(variant, discovered.catalog);
       if (expected === 'ready' || expected === 'partial') {
         assert.equal(
           discovered.catalog.skills.find(
@@ -1007,17 +1018,58 @@ test(
       assert.deepEqual(response.session.pendingApprovals, []);
       return response.session;
     };
-    const sendCodex = async (currentHost, target, text) => {
+    const sendCodex = async (currentHost, target, text, skillId) => {
       const response = await currentHost.request('send-message', {
         sessionId: target.id,
         messageId: randomUUID(),
         text,
+        ...(skillId ? { skillId } : {}),
       });
       assert.equal(response.type, 'session', JSON.stringify(response));
       return response.session;
     };
     const readOnly = await createCodex('read-only');
-    const codexRun = await sendCodex(finalHost, readOnly, 'fixture:stream');
+    const selectedCatalog = await finalHost.request('discover-skills', {
+      sessionId: readOnly.id,
+    });
+    const selectedSkill = selectedCatalog.catalog.skills.find(
+      skill => skill.name === 'Fixture project skill',
+    );
+    const selectedReference = {
+      id: selectedSkill.id,
+      name: selectedSkill.name,
+      path: selectedSkill.path,
+      source: selectedSkill.source,
+    };
+    const selectedInput = {
+      sessionId: readOnly.id,
+      messageId: randomUUID(),
+      text: 'fixture:stream',
+      skillId: selectedSkill.id,
+    };
+    const selectedResponse = await finalHost.request(
+      'send-message',
+      selectedInput,
+    );
+    assert.equal(
+      selectedResponse.type,
+      'session',
+      JSON.stringify(selectedResponse),
+    );
+    const codexRun = selectedResponse.session;
+    assert.equal(
+      (await finalHost.request('send-message', selectedInput)).session.runId,
+      codexRun.runId,
+    );
+    for (const skillId of [undefined, 'unknown-skill-id']) {
+      const input = { ...selectedInput };
+      if (skillId === undefined) delete input.skillId;
+      else input.skillId = skillId;
+      assert.equal(
+        (await finalHost.request('send-message', input)).code,
+        'invalid-request',
+      );
+    }
     const codexPartial = await finalHost.event(
       value =>
         value.runId === codexRun.runId &&
@@ -1046,6 +1098,44 @@ test(
     assert.equal(agent(codexCompleted).body, 'Codex fixture streamed reply.');
     assert.equal(codexCompleted.actualModel, 'fixture-codex');
     assert.ok(codexCompleted.providerSessionId);
+    assert.deepEqual(
+      codexCompleted.messages.find(
+        message => message.id === selectedInput.messageId,
+      ).skill,
+      selectedReference,
+    );
+    assert.ok(
+      finalHost.observed.some(
+        value =>
+          value.runId === codexRun.runId &&
+          value.status === 'running' &&
+          value.messages.some(
+            message =>
+              message.id === selectedInput.messageId &&
+              message.skill?.id === selectedSkill.id,
+          ),
+      ),
+    );
+    const invocationTrace = (await readFile(pidFile + '.skills', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    const selectedTurn = invocationTrace.find(
+      trace =>
+        trace.directory === readOnly.directory && trace.method === 'turn/start',
+    );
+    assert.deepEqual(selectedTurn.input, [
+      { type: 'text', text: selectedInput.text, text_elements: [] },
+      { type: 'skill', name: selectedSkill.name, path: selectedSkill.path },
+    ]);
+    assert.equal(
+      invocationTrace.filter(
+        trace =>
+          trace.directory === readOnly.directory &&
+          trace.method === 'turn/start',
+      ).length,
+      1,
+    );
     assert.deepEqual(
       codexCompleted.activities.map(item => item.status),
       ['completed', 'completed'],
@@ -1104,6 +1194,83 @@ test(
       ).code,
       'invalid-request',
     );
+    assert.equal(
+      (
+        await finalHost.request('send-message', {
+          sessionId: inventorySession.id,
+          messageId: randomUUID(),
+          text: 'fixture:stream',
+          skillId: selectedSkill.id,
+        })
+      ).code,
+      'invalid-request',
+    );
+    const forgedInput = {
+      sessionId: readOnly.id,
+      messageId: randomUUID(),
+      text: 'fixture:stream',
+      skillId: selectedSkill.id,
+      skill: {
+        ...selectedReference,
+        path: join(directory, 'forged', 'SKILL.md'),
+      },
+    };
+    assert.deepEqual(
+      await finalHost.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'send-message',
+          input: forgedInput,
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
+    await writeFile(
+      join(pidFile + '.state', 'skills-stale.disabled'),
+      'disabled',
+    );
+    for (const [variant, skillId] of [
+      [
+        'codex',
+        nativeSkillCatalogs
+          .get('codex')
+          .skills.find(skill => skill.enabled === false).id,
+      ],
+      ['codex', 'unknown-skill-id'],
+      ['unsupported', selectedSkill.id],
+      ['malformed', selectedSkill.id],
+      [
+        'stale',
+        nativeSkillCatalogs
+          .get('stale')
+          .skills.find(skill => skill.enabled === true).id,
+      ],
+    ]) {
+      const target = nativeSkillSessions.get(variant);
+      const run = await sendCodex(finalHost, target, 'fixture:stream', skillId);
+      const failed = await finalHost.event(
+        value => value.runId === run.runId && value.status === 'failed',
+      );
+      assert.equal(failed.providerSessionId, null);
+      assert.equal(failed.providerInitialized, false);
+      assert.equal(failed.messages.at(-2).skillId, skillId);
+      assert.equal(failed.messages.at(-2).skill, undefined);
+      assert.equal(agent(failed).body, '');
+      assert.equal(
+        finalHost.observedReviews.some(review => review.runId === run.runId),
+        false,
+      );
+      const rejectedTraces = (await readFile(pidFile + '.skills', 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+        .filter(trace => trace.directory === target.directory);
+      assert.ok(rejectedTraces.some(trace => trace.method === 'skills/list'));
+      assert.equal(
+        rejectedTraces.some(trace => /^(?:thread|turn)\//.test(trace.method)),
+        false,
+      );
+    }
     assert.equal(
       (
         await finalHost.request('decide-review', {
@@ -1335,6 +1502,49 @@ test(
       ).status,
       'stopped',
     );
+    const beforeSkillStop = (await readSkillTraces()).length;
+    const skillStopTarget = nativeSkillSessions.get('hold');
+    const stoppedSelection = await sendCodex(
+      finalHost,
+      skillStopTarget,
+      'fixture:stream',
+      'pending-skill-id',
+    );
+    let resolvingSkill;
+    const skillDeadline = Date.now() + 5000;
+    while (!resolvingSkill && Date.now() < skillDeadline) {
+      resolvingSkill = (await readSkillTraces())
+        .slice(beforeSkillStop)
+        .find(trace => trace.method === 'skills/list');
+      if (!resolvingSkill) await delay(30);
+    }
+    assert.ok(resolvingSkill, 'Selected skill must reach native revalidation');
+    ownedPids.add(resolvingSkill.pid);
+    assert.equal((await finalHost.request('health')).health.status, 'ready');
+    await finalHost.request('stop-run', {
+      sessionId: skillStopTarget.id,
+      runId: stoppedSelection.runId,
+    });
+    const cancelledSkill = await finalHost.event(
+      value =>
+        value.runId === stoppedSelection.runId && value.status === 'stopped',
+    );
+    await processesGone([resolvingSkill.pid], ownedPids);
+    assert.equal(cancelledSkill.providerSessionId, null);
+    assert.equal(cancelledSkill.messages.at(-2).skill, undefined);
+    assert.equal(
+      (await readSkillTraces())
+        .filter(trace => trace.pid === resolvingSkill.pid)
+        .some(trace => /^(?:thread|turn)\//.test(trace.method)),
+      false,
+    );
+    await delay(100);
+    assert.equal(
+      (await finalHost.request('list-sessions')).sessions.find(
+        value => value.id === skillStopTarget.id,
+      ).status,
+      'stopped',
+    );
     assert.equal(
       (
         await finalHost.request(
@@ -1371,10 +1581,17 @@ test(
       codexCompleted.activities[1].id,
     );
     assert.ok(recoveredActivities.activities[1].completedAt);
+    assert.deepEqual(
+      recoveredActivities.messages.find(
+        message => message.id === selectedInput.messageId,
+      ).skill,
+      selectedReference,
+    );
     const nativeContinuation = await sendCodex(
       codexReopened,
       readOnly,
       'fixture:continue',
+      selectedSkill.id,
     );
     const nativeResumed = await codexReopened.event(
       value =>
@@ -1382,6 +1599,7 @@ test(
         value.status === 'completed',
     );
     assert.equal(agent(nativeResumed).body, 'Codex fixture resumed reply.');
+    assert.deepEqual(nativeResumed.messages.at(-2).skill, selectedReference);
     assert.equal(
       nativeResumed.providerSessionId,
       codexCompleted.providerSessionId,

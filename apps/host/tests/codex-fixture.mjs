@@ -42,6 +42,7 @@ if (args.length === 1 && args[0] === '--version') {
   let thread;
   let current;
   let skillsDirectory;
+  let selectedSkill;
   const methods = [];
   const forbiddenSkillMethods = new Set([
     'account/read',
@@ -50,11 +51,17 @@ if (args.length === 1 && args[0] === '--version') {
     'thread/resume',
     'turn/start',
   ]);
-  const skillsTrace = (directory, method) => {
+  const skillsTrace = (directory, method, extra = {}) => {
     if (process.env.NESVO_CODEX_FIXTURE_SKILLS_LOG)
       writeFileSync(
         process.env.NESVO_CODEX_FIXTURE_SKILLS_LOG,
-        JSON.stringify({ directory, method, methods, pid: process.pid }) + '\n',
+        JSON.stringify({
+          directory,
+          method,
+          methods,
+          pid: process.pid,
+          ...extra,
+        }) + '\n',
         { flag: 'a' },
       );
   };
@@ -308,12 +315,18 @@ if (args.length === 1 && args[0] === '--version') {
     }
     const { id, method, params } = message;
     methods.push(method);
-    if (skillsDirectory)
+    if (skillsDirectory) {
       assert.equal(
-        forbiddenSkillMethods.has(method),
+        /^(?:account|model)\//.test(method),
         false,
-        'Skills discovery must not run account, model or session operations',
+        'Skill inspection must keep the isolated execution peer',
       );
+      skillsTrace(
+        skillsDirectory,
+        method,
+        method === 'turn/start' ? { input: params.input } : {},
+      );
+    }
     if (method === 'initialize') {
       assert.equal(initialized, false);
       assert.equal(params.clientInfo.name, 'nesvo');
@@ -350,10 +363,6 @@ if (args.length === 1 && args[0] === '--version') {
         basename(params.cwd).startsWith('skills-')
       ) {
         skillsDirectory = params.cwd;
-        assert.equal(
-          methods.some(method => forbiddenSkillMethods.has(method)),
-          false,
-        );
         skillsTrace(skillsDirectory, method);
       }
       response(id, { config: isolatedConfig, origins: {}, layers: null });
@@ -366,7 +375,6 @@ if (args.length === 1 && args[0] === '--version') {
         methods.some(method => forbiddenSkillMethods.has(method)),
         false,
       );
-      assert.equal(experimentalApi, false);
       skillsDirectory = directory;
       skillsTrace(directory, method);
       if (basename(directory) === 'skills-unsupported') {
@@ -413,6 +421,12 @@ if (args.length === 1 && args[0] === '--version') {
           enabled: false,
         },
       ];
+      const staleMarker = join(
+        process.env.NESVO_CODEX_FIXTURE_STATE_DIR ?? directory,
+        'skills-stale.disabled',
+      );
+      if (basename(directory) === 'skills-stale' && existsSync(staleMarker))
+        skills[0].enabled = false;
       if (basename(directory) === 'skills-partial')
         skills.push({
           name: 123,
@@ -421,6 +435,7 @@ if (args.length === 1 && args[0] === '--version') {
           enabled: true,
         });
       response(id, { data: [{ cwd: directory, skills, errors: [] }] });
+      selectedSkill = skills[0];
       skillsTrace(directory, 'skills/list:completed');
     } else if (method === 'model/list') {
       assert.equal(params.includeHidden, false);
@@ -496,9 +511,17 @@ if (args.length === 1 && args[0] === '--version') {
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.deepEqual(params.sandboxPolicy, policy());
-      assert.equal(params.input.length, 1);
+      assert.equal(params.input.length, selectedSkill ? 2 : 1);
       assert.equal(params.input[0].type, 'text');
       assert.ok(params.input[0].text.trim());
+      if (selectedSkill) {
+        assert.equal(selectedSkill.enabled, true);
+        assert.deepEqual(params.input[1], {
+          type: 'skill',
+          name: selectedSkill.name,
+          path: selectedSkill.path,
+        });
+      }
       const state = JSON.parse(readFileSync(statePath(thread.id), 'utf8'));
       state.turns += 1;
       writeFileSync(statePath(thread.id), JSON.stringify(state));
