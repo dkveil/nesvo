@@ -5,6 +5,7 @@ import { startHost } from './host-client';
 import {
   createSessionSchema,
   decideDelegationSchema,
+  decideReviewSchema,
   respondApprovalSchema,
   sendMessageSchema,
   stopRunSchema,
@@ -96,6 +97,14 @@ void app.whenReady().then(() => {
   ipcMain.handle('nesvo:list-sessions', async event => {
     authorize(event);
     return host.listSessions();
+  });
+  ipcMain.handle('nesvo:list-reviews', async event => {
+    authorize(event);
+    return host.listReviews();
+  });
+  ipcMain.handle('nesvo:decide-review', async (event, input: unknown) => {
+    authorize(event);
+    return host.decideReview(decideReviewSchema.parse(input));
   });
   ipcMain.handle('nesvo:create-session', async (event, input: unknown) => {
     authorize(event);

@@ -5,6 +5,8 @@ import {
   respondApprovalSchema,
   createSessionSchema,
   decideDelegationSchema,
+  decideReviewSchema,
+  reviewSchema,
   desktopEventSchema,
   hostHealthSchema,
   sendMessageSchema,
@@ -38,6 +40,15 @@ const api: DesktopApi = {
     sessionSchema
       .array()
       .parse(await ipcRenderer.invoke('nesvo:list-sessions')),
+  listReviews: async () =>
+    reviewSchema.array().parse(await ipcRenderer.invoke('nesvo:list-reviews')),
+  decideReview: async input =>
+    reviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-review',
+        decideReviewSchema.parse(input),
+      ),
+    ),
   createSession: async input =>
     sessionSchema.parse(
       await ipcRenderer.invoke(

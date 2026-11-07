@@ -6,6 +6,7 @@ import {
   hostRequestSchema,
   type CreateSessionInput,
   type DecideDelegationInput,
+  type DecideReviewInput,
   type DesktopEvent,
   type SendMessageInput,
   type RespondApprovalInput,
@@ -52,6 +53,7 @@ export function startHost(directory: string) {
     if (!parsed.success) return;
     if (
       parsed.data.type === 'session-changed' ||
+      parsed.data.type === 'review-changed' ||
       parsed.data.type === 'host-disconnected'
     ) {
       for (const listener of listeners) listener(parsed.data);
@@ -137,6 +139,18 @@ export function startHost(directory: string) {
       if (response.type !== 'sessions')
         throw new Error('Unexpected host response');
       return response.sessions;
+    },
+    listReviews: async () => {
+      const response = await request('list-reviews');
+      if (response.type !== 'reviews')
+        throw new Error('Unexpected host response');
+      return response.reviews;
+    },
+    decideReview: async (input: DecideReviewInput) => {
+      const response = await request('decide-review', input);
+      if (response.type !== 'review')
+        throw new Error('Unexpected host response');
+      return response.review;
     },
     createSession: async (input: CreateSessionInput) => {
       const response = await request('create-session', input);
