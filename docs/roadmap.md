@@ -46,5 +46,7 @@ D55 is a P5 correction, not a new stage. The application defaults to English, pr
 D56 records the owner's need for visible agent activity and a clearer diff viewer. D57 authorizes both a persisted per-turn activity timeline and a saved-result diff side panel together as a P5 refinement, with one final owner review. The timeline uses actual provider events with terminal timestamps and bounded history. The side panel identifies the exact saved result version, with file navigation and numbered changes. Both are delivered at 6399a3d, with real Windows Codex evidence and separate native application/package checks on all three operating systems. Live working-tree diffs remain outside this package. P5 is In Review; P6 has not started.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.
 
+D58 extends P5 with a read-only session file explorer: on-demand directories, bounded filename search, current text preview, refresh and navigation back to an exact saved result diff. It does not add file editing or a live working-tree diff. P6 remains Backlog: provider-aware discovery, selection and a verified skill invocation are not yet implemented. The installed Codex protocol exposes skills/list and skill turn input, which is a foundation to investigate in P6 rather than evidence of a working Nesvo skill flow.
+
 Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
