@@ -1,10 +1,15 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, readdir, realpath } from 'node:fs/promises';
+import { access, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
-import { activityLimits } from '@nesvo/contracts';
+import { delimiter, isAbsolute, join, normalize } from 'node:path';
+import {
+  activityLimits,
+  skillLimits,
+  type SkillDiscovery,
+} from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 
 export type CodexStatus = {
@@ -309,6 +314,15 @@ type RpcPeer = {
   close: () => Promise<ProcessExit>;
 };
 
+class CodexRpcError extends Error {
+  readonly code: number | null;
+
+  constructor(message: string, code: unknown) {
+    super(message);
+    this.code = typeof code === 'number' ? code : null;
+  }
+}
+
 function rpcPeer(
   executable: Executable,
   cwd: string | undefined,
@@ -394,10 +408,11 @@ function rpcPeer(
       const error = object(message.error);
       if (error)
         entry.reject(
-          new Error(
+          new CodexRpcError(
             typeof error.message === 'string'
               ? safeMessage(error.message)
               : 'Codex request failed.',
+            error.code,
           ),
         );
       else {
@@ -609,6 +624,284 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
     signal?.removeEventListener('abort', cancel);
     await peer?.close();
   }
+}
+
+export async function inspectCodexSkills(
+  directory: string,
+  signal?: AbortSignal,
+): Promise<SkillDiscovery> {
+  const discovery: SkillDiscovery = {
+    provider: 'Codex',
+    method: 'native',
+    status: 'unavailable',
+    skills: [],
+    issues: [],
+    truncated: false,
+    invocationSupported: false,
+    checkedAt: new Date().toISOString(),
+  };
+  let peer: RpcPeer | null = null;
+  let timedOut = false;
+  let protocolUnsupported = false;
+  const cancel = () => {
+    void peer?.close();
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    cancel();
+  }, probeTimeoutMs * 3);
+  const checkCancelled = () => {
+    if (timedOut) throw new Error('Codex skill discovery timed out.');
+    if (signal?.aborted) throw new Error('Codex skill discovery stopped.');
+  };
+  const issue = (path: string | null, message: string) => {
+    if (discovery.issues.length >= skillLimits.issues) {
+      discovery.truncated = true;
+      return;
+    }
+    discovery.issues.push({
+      path: path && path.length <= skillLimits.path ? path : null,
+      message: safeMessage(message).slice(0, skillLimits.detail),
+    });
+  };
+  try {
+    signal?.addEventListener('abort', cancel, { once: true });
+    checkCancelled();
+    if (!isAbsolute(directory) || directory.length > skillLimits.path)
+      throw new Error(
+        'Codex skill discovery requires an absolute working directory within the supported path size.',
+      );
+    const cwd = await realpath(directory);
+    if (!(await stat(cwd)).isDirectory())
+      throw new Error('Codex skill discovery requires a working directory.');
+    checkCancelled();
+    const executable = await executablePath();
+    if (!executable)
+      throw new Error('Install the native Codex CLI to discover its skills.');
+    checkCancelled();
+    peer = rpcPeer(executable, cwd, message => rejectRequest(peer!, message));
+    await initialize(peer);
+    const loaded = await peer.request('config/read', {
+      includeLayers: false,
+      cwd,
+    });
+    const config = object(loaded.config);
+    const mcp = object(config?.mcp_servers);
+    if (!config || (config.mcp_servers != null && !mcp))
+      throw new Error('Codex tool configuration could not be verified.');
+    const disabledServers = Object.keys(mcp ?? {});
+    if (disabledServers.some(name => !/^[\w-]+$/.test(name)))
+      throw new Error(
+        'Codex has an MCP server name that cannot be safely isolated.',
+      );
+    const bootstrapExit = await peer.close();
+    if (!bootstrapExit.confirmed)
+      throw new Error(
+        'Codex inspection process closure could not be confirmed.',
+      );
+    checkCancelled();
+    peer = rpcPeer(
+      executable,
+      cwd,
+      message => rejectRequest(peer!, message),
+      disabledServers,
+    );
+    await initialize(peer);
+    const isolated = await peer.request('config/read', {
+      includeLayers: false,
+      cwd,
+    });
+    const effective = object(isolated.config);
+    const effectiveMcp = object(effective?.mcp_servers);
+    const features = object(effective?.features);
+    if (
+      !effective ||
+      (effective.mcp_servers != null && !effectiveMcp) ||
+      Object.values(effectiveMcp ?? {}).some(
+        value => object(value)?.enabled !== false,
+      ) ||
+      !features ||
+      isolatedFeatures.some(
+        name =>
+          features[name] !== undefined &&
+          features[name] !== false &&
+          features[name] !== null,
+      )
+    )
+      throw new Error(
+        'Codex could not isolate inherited tools and hooks for skill discovery.',
+      );
+    checkCancelled();
+    const result = await peer.request('skills/list', {
+      cwds: [cwd],
+      forceReload: true,
+    });
+    checkCancelled();
+    const entry =
+      Array.isArray(result.data) && result.data.length === 1
+        ? object(result.data[0])
+        : null;
+    const comparable = (path: string) =>
+      process.platform === 'win32'
+        ? normalize(path).toLowerCase()
+        : normalize(path);
+    if (
+      !entry ||
+      typeof entry.cwd !== 'string' ||
+      comparable(entry.cwd) !== comparable(cwd) ||
+      !Array.isArray(entry.skills) ||
+      !Array.isArray(entry.errors)
+    ) {
+      protocolUnsupported = true;
+      throw new Error(
+        'Codex returned an unsupported skill listing for the requested directory.',
+      );
+    }
+    const ids = new Set<string>();
+    let suppressedPlugins = 0;
+    let invalidSkills = 0;
+    let shortenedDescriptions = 0;
+    for (const value of entry.skills) {
+      const skill = object(value);
+      const path =
+        typeof skill?.path === 'string' && skill.path.length <= skillLimits.path
+          ? skill.path
+          : null;
+      if (
+        !skill ||
+        typeof skill.name !== 'string' ||
+        !skill.name.trim() ||
+        skill.name.length > skillLimits.name ||
+        typeof skill.description !== 'string' ||
+        !path ||
+        !isAbsolute(path) ||
+        typeof skill.enabled !== 'boolean' ||
+        !['user', 'repo', 'system', 'admin'].includes(String(skill.scope)) ||
+        (skill.pluginId != null && typeof skill.pluginId !== 'string')
+      ) {
+        invalidSkills++;
+        issue(
+          path,
+          'Codex returned invalid skill metadata; this entry was omitted.',
+        );
+        continue;
+      }
+      if (skill.pluginId != null) {
+        suppressedPlugins++;
+        continue;
+      }
+      if (discovery.skills.length >= skillLimits.entries) {
+        discovery.truncated = true;
+        continue;
+      }
+      const id = `codex:${createHash('sha256').update(path).update('\0').update(skill.name).digest('hex')}`;
+      if (ids.has(id)) {
+        invalidSkills++;
+        issue(
+          path,
+          'Codex returned duplicate skill metadata; the duplicate was omitted.',
+        );
+        continue;
+      }
+      ids.add(id);
+      const presentation = object(skill.interface);
+      const description =
+        typeof presentation?.shortDescription === 'string'
+          ? presentation.shortDescription
+          : typeof skill.shortDescription === 'string'
+            ? skill.shortDescription
+            : skill.description;
+      if (description.length > skillLimits.description) {
+        shortenedDescriptions++;
+        discovery.truncated = true;
+      }
+      const source =
+        skill.scope === 'repo'
+          ? 'project'
+          : skill.scope === 'admin'
+            ? 'managed'
+            : skill.scope === 'system'
+              ? 'system'
+              : 'user';
+      discovery.skills.push({
+        id,
+        name: skill.name,
+        description: description.slice(0, skillLimits.description),
+        path,
+        source,
+        kind: 'skill',
+        enabled: skill.enabled,
+        userInvocable: null,
+        modelInvocable: null,
+        detail: `Native Codex ${String(skill.scope)} skill metadata.`,
+      });
+    }
+    for (const value of entry.errors) {
+      const error = object(value);
+      issue(
+        typeof error?.path === 'string' ? error.path : null,
+        typeof error?.message === 'string'
+          ? error.message
+          : 'Codex reported an invalid skill discovery issue.',
+      );
+    }
+    if (suppressedPlugins)
+      issue(
+        null,
+        `${suppressedPlugins} plugin skill entries were omitted because plugins are disabled in the session profile.`,
+      );
+    if (shortenedDescriptions)
+      issue(
+        null,
+        `${shortenedDescriptions} skill descriptions exceeded the supported display size and were shortened.`,
+      );
+    if (
+      entry.skills.length >
+      discovery.skills.length + suppressedPlugins + invalidSkills
+    )
+      issue(
+        null,
+        `The skill catalog exceeded the limit of ${skillLimits.entries} entries.`,
+      );
+    discovery.status =
+      discovery.issues.length ||
+      discovery.truncated ||
+      suppressedPlugins ||
+      invalidSkills
+        ? 'partial'
+        : 'ready';
+  } catch (error) {
+    discovery.status =
+      protocolUnsupported ||
+      (error instanceof CodexRpcError && error.code === -32601)
+        ? 'unsupported'
+        : 'unavailable';
+    discovery.skills = [];
+    issue(
+      null,
+      timedOut
+        ? 'Codex skill discovery timed out.'
+        : signal?.aborted
+          ? 'Codex skill discovery stopped.'
+          : error instanceof Error
+            ? error.message
+            : 'Codex skill discovery failed.',
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+    const exit = await peer?.close();
+    if (exit && !exit.confirmed) {
+      discovery.status = 'unavailable';
+      discovery.skills = [];
+      issue(
+        null,
+        'Codex process closure could not be confirmed after skill discovery.',
+      );
+    }
+    discovery.checkedAt = new Date().toISOString();
+  }
+  return discovery;
 }
 
 export function startCodex(options: {
