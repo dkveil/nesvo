@@ -12,7 +12,7 @@ bun run dev
 ```
 
 The workspace uses neutral dark shadcn components. Session details open on demand, leaving the main area for the conversation. SQLite owns session history; only selection and unsent drafts remain in renderer memory.
-The bottom bar shows the host connection and separate Claude Code and Codex availability. Install the native CLI and use `claude auth login` or `codex login` in a terminal. The desktop never reads or displays credentials. Missing installation, incompatible CLI behavior, missing login and provider failures are distinct states. One provider being unavailable does not block the other.
+Connection details show the host connection and separate Claude Code and Codex availability on demand. Install the native CLI and use `claude auth login` or `codex login` in a terminal. The desktop never reads or displays credentials. Missing installation, incompatible CLI behavior, missing login and provider failures are distinct states. One provider being unavailable does not block the other.
 
 ## Build and check
 
@@ -61,6 +61,6 @@ Do not run git clean or delete ignored files as part of setup.
 If the initial screen reports no connection, retry once and inspect the terminal used to start development.
 An incompatible database fails closed; do not delete it to hide the error.
 If Claude reports an account limit, wait for the reset reported by Claude and retry. Nesvo does not substitute a simulated response, change billing, or automatically retry. A turn is bounded to ten minutes, including a parent's wait for worker approval and results. Stop terminates only the owned process tree; failed cleanup is reported as failure.
-Use a new read-only Codex orchestrator for P4 delegation. Older sessions preserve their existing provider thread and cannot acquire the native tool silently. Choose Samodzielna sesja for a directly supervised Codex conversation. Worker directories must already exist inside the parent directory; use separate non-overlapping directories when allowing writes. One group runs at a time, and workers never launch before an individual operator decision.
+New Codex sessions can delegate without selecting a role. Access permissions remain independent and unchanged by delegation. Older sessions preserve their existing provider thread and recorded tool capability. Worker directories must already exist inside the parent directory; use separate non-overlapping directories when allowing writes. A supervised parent can delegate only read-only workers until isolated workspaces exist. One group runs at a time, and workers never launch before an individual operator decision.
 Quit the desktop to stop its utility host. On macOS, closing the last window alone does not quit the app.
 Development IPC and the host expose no network port. The renderer development server uses an available Vite port.

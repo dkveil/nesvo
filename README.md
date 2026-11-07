@@ -13,7 +13,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The desktop opens your saved sessions in a neutral dark workspace. Use Nowa sesja to choose a provider, model, mode and optional directory, then send a message. A directory does not need Git; leaving it empty creates a separate local working folder. The bottom bar shows the host connection and lets you refresh each provider's availability. Quitting the application stops its active group and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
+The desktop opens your saved sessions in a black workspace with an English interface. Use New session to choose a provider, model, access permissions and optional directory, then send a message. There is no role picker: new Codex sessions can propose workers when the task calls for delegation, without changing their permissions. A directory does not need Git; leaving it empty creates a separate local working folder. Connection and provider status are available on demand. Quitting the application stops its active group and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
 
 The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host.
 
@@ -40,7 +40,7 @@ scripts          One desktop integration scenario
 
 Install the native Claude Code or Codex CLI and sign in using `claude auth login` or `codex login`. Nesvo uses that existing login and requires no new model API key. It checks the installed CLI and authentication before execution. Claude choices are CLI aliases; Codex choices come from its local model catalog. Actual account access is confirmed by the provider, and the running model is shown in session details.
 
-Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs at a time: an orchestrator with up to two approved workers, or a single independent session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. Do decyzji brings operation approvals, worker proposals and successful results into one list with distinct action labels. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
+Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs at a time: a parent with up to two approved workers, or a single session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. The inbox brings operation approvals, worker proposals and successful results into compact rows with distinct inline actions. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
 
 ## P2 acceptance walkthrough
 
@@ -63,22 +63,22 @@ On November 7, the local Claude account reported its weekly limit until November
 
 ## P4 acceptance walkthrough
 
-1. Create a new Codex session with role Orkiestrator in a small known directory. It stays read-only and receives the delegation tool. Existing conversations retain their original provider threads without acquiring this tool silently.
+1. Create a new Codex session in a small known directory. Choose access permissions independently of delegation; no role choice is required. New Codex sessions receive the delegation tool and become orchestrators when they make a valid proposal. Existing conversations retain their original provider threads and recorded capabilities.
 2. Ask for two workers with explicit tasks and scopes. For example: "Propose two read-only Codex workers in this directory: one summarizes README.md, the other inspects package.json. After my approval, summarize their results. Use your delegation tool."
 3. Inspect each proposal's task, scope, directory, provider, model and mode. Approve or decline each separately. No worker session or process exists before approval.
-4. Open each child from the session tree and watch its conversation. Stop one while the other continues; return to the parent and inspect the distinct results. Stop grupy on the parent cancels both children and pending proposals.
+4. Open each child from the session tree and watch its conversation. Stop one while the other continues; return to the parent and inspect the distinct results. Stop group on the parent cancels both children and pending proposals.
 5. Reload or reopen the application and confirm that conversations and relationships remain. Interrupted work never starts automatically.
 
-Worker directories must exist inside the parent directory. Read-only workers may share a folder; writable workers require non-overlapping directories. The textual scope describes the assignment, not an additional filesystem sandbox. A proposal is accepted as shown; reject it and request another plan to change its settings. Workers cannot delegate recursively.
+Worker directories must exist inside the parent directory. Read-only workers may share a folder; writable workers require non-overlapping directories and a read-only parent. Until isolated workspaces exist, a supervised parent can delegate only read-only workers so its review snapshot cannot mix in worker edits. Unsupported proposals are rejected explicitly, without downgrading permissions or starting a child. The textual scope describes the assignment, not an additional filesystem sandbox. A proposal is accepted as shown; reject it and request another plan to change its settings. Workers cannot delegate recursively.
 P4's real demonstration uses Codex. Claude can be a read-only worker, with successful execution still dependent on account availability. Each parent turn has a ten-minute deadline including time spent awaiting operator decisions and worker results. The conversation retains at most 100 proposals before a new orchestrator is required.
 
 ## P5 acceptance walkthrough
 
-1. Create a supervised Codex session in a small disposable directory and ask it to edit a text file. Open Do decyzji. Pending operations show the requesting session and their own approve/deny buttons; completed results show result acceptance actions.
+1. Create a supervised Codex session in a small disposable directory and ask it to edit a text file. Open the inbox. Pending operations show the requesting session and their own approve/deny buttons; completed results show result acceptance actions.
 2. Read the short description and version in the row. Its session-name link opens the conversation at that exact request or saved result. Full task, answer, diff and decision history live there, without a separate inbox detail screen. Existing dirty contents are the baseline; the diff compares the start and end of that turn without changing the workspace or Git index.
-3. On the result row, use Odeślij do poprawy, enter Uwagi do poprawy and select Wyślij uwagi. This explicitly starts another turn in the same session, provider thread, directory and permissions. The app opens that conversation. Unsaved feedback survives navigation between the list and session.
+3. Request changes on the result row, enter feedback and submit it. This explicitly starts another turn in the same session, provider thread, directory and permissions. The app opens that conversation. Unsaved feedback survives navigation between the list and session.
 4. Return to the inbox for the new result version. The previous decision remains in history; its acceptance is not inherited. Each version shows its own turn's delta inside the conversation.
-5. Use Zaakceptuj wynik directly on the new row and reload the application. Select Historia to confirm the accepted version and correction history. Session links still open the exact historical version. An old result cannot accept a replaced version, and external changes to captured files block stale acceptance.
+5. Accept the result directly on the new row and reload the application. Select History to confirm the accepted version and correction history. Session links still open the exact historical version. An old result cannot accept a replaced version, and external changes to captured files block stale acceptance.
 
 The inbox receives successful turns completed after P5 was installed; it does not fabricate results for older conversations or stopped/failed runs. Read-only results are reviewed as saved responses. Parent summaries link to exact worker results; accepting a summary does not accept those workers automatically. Continuing a child invalidates dependent parent summaries. When continuing a parent without another delegation, it receives the latest saved child summaries and retains their result references.
 
