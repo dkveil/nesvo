@@ -21,7 +21,10 @@ const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
 
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) app.quit();
 void app.whenReady().then(() => {
+  if (!ownsInstance) return;
   const host = startHost(join(app.getPath('userData'), 'host'));
   if (smokeTest && process.env.NESVO_TEST_PID_FILE) {
     host.child.once('spawn', () => {
@@ -147,6 +150,14 @@ void app.whenReady().then(() => {
     return host.stopRun(stopRunSchema.parse(input));
   });
   createWindow();
+  app.on('second-instance', () => {
+    if (!window) createWindow();
+    if (window && !smokeTest) {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    }
+  });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
