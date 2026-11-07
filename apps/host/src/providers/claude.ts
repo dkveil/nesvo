@@ -122,6 +122,7 @@ function ownProcess(
   let processError: Error | null = null;
   let cleanup: Promise<void> | null = null;
   let hasClosed = false;
+  let hasExited = false;
   let closeResolve: (value: ProcessExit) => void;
   const closed = new Promise<ProcessExit>(resolve => {
     closeResolve = resolve;
@@ -157,7 +158,13 @@ function ownProcess(
     cleanup ??= (async () => {
       if (child.pid) {
         if (process.platform === 'win32') {
-          await taskkill(child.pid);
+          if (
+            !hasExited &&
+            !hasClosed &&
+            child.exitCode === null &&
+            child.signalCode === null
+          )
+            await taskkill(child.pid);
         } else {
           signalGroup('SIGTERM');
           await Promise.race([closed, wait(300)]);
@@ -180,6 +187,7 @@ function ownProcess(
     return cleanup;
   }
   child.once('exit', () => {
+    hasExited = true;
     void stop();
   });
   child.once('close', code => {
