@@ -303,9 +303,17 @@ export async function inspectLocalSkillLibrary(
     if (!isAbsolute(directory)) throw new Error('directory');
     const cwd = await bounded(realpath(directory));
     if (!(await bounded(stat(cwd))).isDirectory()) throw new Error('directory');
+    const testHome = process.env.NESVO_TEST_SKILLS_HOME;
+    const home =
+      testHome && isAbsolute(testHome) ? resolve(testHome) : homedir();
+    if (testHome && !isAbsolute(testHome))
+      issue(
+        null,
+        'NESVO_TEST_SKILLS_HOME was ignored because it is not an absolute path.',
+      );
     const roots: Root[] = [
       {
-        path: join(homedir(), '.agents', 'skills'),
+        path: join(home, '.agents', 'skills'),
         source: 'user',
         origin: 'Shared',
         depth: 0,
@@ -314,7 +322,7 @@ export async function inspectLocalSkillLibrary(
         path: join(
           process.env.CODEX_HOME
             ? resolve(directory, process.env.CODEX_HOME)
-            : join(homedir(), '.codex'),
+            : join(home, '.codex'),
           'skills',
         ),
         source: 'user',
