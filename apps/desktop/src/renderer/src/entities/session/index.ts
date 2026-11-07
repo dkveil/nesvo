@@ -5,6 +5,7 @@ export type { Session } from '@nesvo/contracts';
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orkiestrator',
   standalone: 'Samodzielna',
+  worker: 'Worker',
 };
 
 const modelLabels: Record<string, string> = {
@@ -55,4 +56,30 @@ export function providerStatusLabel(provider: Provider, state: ProviderState) {
     unsupported: `Ta wersja ${provider} nie jest obsługiwana`,
     error: `${provider} jest niedostępny`,
   }[state.status?.status ?? 'error'];
+}
+
+export const delegationStatusLabels: Record<
+  Session['delegations'][number]['status'],
+  string
+> = {
+  pending: 'Czeka na decyzję',
+  declined: 'Odrzucona',
+  running: 'Pracuje',
+  completed: 'Ukończona',
+  stopped: 'Zatrzymana',
+  failed: 'Błąd',
+  interrupted: 'Przerwana',
+};
+
+export function sessionStatusLabel(session: Session) {
+  if (
+    session.status === 'running' &&
+    (session.pendingApprovals.length > 0 ||
+      session.delegations.some(
+        delegation =>
+          delegation.runId === session.runId && delegation.status === 'pending',
+      ))
+  )
+    return 'Czeka na zgodę';
+  return statusLabels[session.status];
 }

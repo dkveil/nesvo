@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   ArrowUp,
   Bot,
@@ -19,6 +19,8 @@ import { Textarea } from '@/shared/ui/textarea';
 
 type Props = {
   session: Session;
+  workers: Session[];
+  delegations: ReactNode;
   draft: string;
   sending: boolean;
   canSend: boolean;
@@ -37,6 +39,8 @@ type Props = {
 
 export function Conversation({
   session,
+  workers,
+  delegations,
   draft,
   sending,
   canSend,
@@ -53,6 +57,15 @@ export function Conversation({
   const followOutput = useRef(true);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
+  const groupRun =
+    !session.parentId &&
+    (session.delegations.some(
+      delegation =>
+        delegation.runId === session.runId &&
+        (delegation.status === 'pending' || delegation.childSessionId),
+    ) ||
+      workers.some(worker => worker.parentRunId === session.runId));
+  const stopLabel = groupRun ? 'Stop grupy' : 'Stop';
   useEffect(() => {
     const viewport = bottom.current?.closest<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -118,6 +131,7 @@ export function Conversation({
               </div>
             </article>
           ))}
+          {delegations}
           {session.pendingApprovals.map(approval => {
             const pending =
               !!approvalPending[
@@ -236,9 +250,15 @@ export function Conversation({
                   ? 'Trwa praca w innej sesji'
                   : sending
                     ? 'Wysyłanie…'
-                    : session.pendingApprovals.length > 0
-                      ? 'Oczekuje na decyzję operatora'
-                      : modeLabels[session.mode]}
+                    : session.delegations.some(
+                          delegation =>
+                            delegation.runId === session.runId &&
+                            delegation.status === 'pending',
+                        )
+                      ? 'Oczekuje na decyzję o workerach'
+                      : session.pendingApprovals.length > 0
+                        ? 'Oczekuje na decyzję operatora'
+                        : modeLabels[session.mode]}
               </span>
               {running ? (
                 <Button
@@ -247,10 +267,19 @@ export function Conversation({
                   size="sm"
                   disabled={session.status === 'stopping'}
                   onClick={onStop}
-                  aria-label="Stop"
+                  aria-label={stopLabel}
+                  title={
+                    groupRun
+                      ? 'Zatrzymaj orkiestratora i jego workerów'
+                      : 'Zatrzymaj tę sesję'
+                  }
                 >
                   <Square />
-                  {session.status === 'stopping' ? 'Zatrzymywanie…' : 'Stop'}
+                  {session.status === 'stopping'
+                    ? groupRun
+                      ? 'Zatrzymywanie grupy…'
+                      : 'Zatrzymywanie…'
+                    : stopLabel}
                 </Button>
               ) : (
                 <Button

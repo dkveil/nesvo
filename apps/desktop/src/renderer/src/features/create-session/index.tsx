@@ -53,6 +53,8 @@ export function CreateSession({
     ? model
     : (models[0]?.id ?? 'default');
   const [role, setRole] = useState<CreateSessionInput['role']>('orchestrator');
+  const orchestrating = provider === 'Codex' && role === 'orchestrator';
+  const selectedMode = orchestrating ? 'read-only' : mode;
   const [directory, setDirectory] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -66,7 +68,7 @@ export function CreateSession({
         title: title.trim() || 'Nowa sesja',
         provider,
         model: selectedModel,
-        mode,
+        mode: selectedMode,
         role,
         directory: directory.trim(),
       });
@@ -190,8 +192,8 @@ export function CreateSession({
           <div className="space-y-2">
             <Label htmlFor="session-mode">Tryb pracy</Label>
             <Select
-              value={mode}
-              disabled={pending || provider === 'Claude Code'}
+              value={selectedMode}
+              disabled={pending || provider === 'Claude Code' || orchestrating}
               onValueChange={value => {
                 if (value === 'read-only' || value === 'supervised')
                   setMode(value);
@@ -212,11 +214,13 @@ export function CreateSession({
               </SelectContent>
             </Select>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              {mode === 'read-only'
-                ? provider === 'Claude Code'
-                  ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
-                  : 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
-                : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody.'}
+              {orchestrating
+                ? 'Orkiestrator czyta i proponuje do dwóch workerów. Każdego zatwierdzasz osobno, widząc zakres i uprawnienia. Zmiany mogą wykonywać zatwierdzeni workerzy.'
+                : selectedMode === 'read-only'
+                  ? provider === 'Claude Code'
+                    ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
+                    : 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
+                  : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody.'}
             </p>
           </div>
           <div className="space-y-2">
@@ -225,8 +229,10 @@ export function CreateSession({
               value={role}
               disabled={pending}
               onValueChange={value => {
-                if (value === 'orchestrator' || value === 'standalone')
+                if (value === 'orchestrator' || value === 'standalone') {
                   setRole(value);
+                  if (value === 'orchestrator') setMode('read-only');
+                }
               }}
             >
               <SelectTrigger id="session-role" className="w-full">

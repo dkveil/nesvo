@@ -46,6 +46,14 @@ export function SessionDetails({ session }: Props) {
           </span>
         </div>
       </section>
+      {session.scope && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">Zakres workera</h2>
+          <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+            {session.scope}
+          </p>
+        </section>
+      )}
       <Separator />
       <section className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -58,6 +66,19 @@ export function SessionDetails({ session }: Props) {
             : session.mode === 'read-only'
               ? 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
               : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody. Decyzja dotyczy jednej operacji.'}
+        </p>
+      </section>
+      <Separator />
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">Delegacja</h2>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {session.parentId
+            ? 'Ta sesja wykonuje zadanie orkiestratora i przekazuje mu wynik. Worker nie tworzy kolejnych workerów. Stop zatrzymuje tylko tę sesję.'
+            : session.delegationEnabled
+              ? 'Orkiestrator proponuje do dwóch workerów. Przed uruchomieniem zatwierdzasz każdego osobno. Stop grupy zatrzymuje orkiestratora i jego workerów.'
+              : session.provider === 'Claude Code'
+                ? 'Ta sesja Claude Code działa bez delegacji.'
+                : 'Ta sesja działa bez delegacji. Utwórz nową sesję Codex z rolą Orkiestrator, aby zatwierdzać propozycje workerów.'}
         </p>
       </section>
     </div>

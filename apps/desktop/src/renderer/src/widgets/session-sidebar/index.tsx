@@ -1,6 +1,13 @@
 import { useState } from 'react';
-import { GitBranch, Inbox, MessageSquare, Plus, Search } from 'lucide-react';
-import { statusLabels, type Session } from '@/entities/session';
+import {
+  CornerDownRight,
+  GitBranch,
+  Inbox,
+  MessageSquare,
+  Plus,
+  Search,
+} from 'lucide-react';
+import { sessionStatusLabel, type Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -23,10 +30,42 @@ export function SessionSidebar({
   onCreate,
 }: Props) {
   const [search, setSearch] = useState('');
-  const filtered = sessions.filter(session =>
+  const matches = (session: Session) =>
     session.title
       .toLocaleLowerCase()
-      .includes(search.trim().toLocaleLowerCase()),
+      .includes(search.trim().toLocaleLowerCase());
+  const roots = sessions.filter(
+    session =>
+      !session.parentId ||
+      !sessions.some(parent => parent.id === session.parentId),
+  );
+  const filtered = roots.filter(
+    root =>
+      matches(root) ||
+      sessions.some(child => child.parentId === root.id && matches(child)),
+  );
+  const row = (session: Session, child = false) => (
+    <Button
+      key={session.id}
+      variant={!inbox && selectedId === session.id ? 'secondary' : 'ghost'}
+      className={`h-auto w-full justify-start py-2 text-left font-normal ${child ? 'pr-2 pl-5' : 'px-2'}`}
+      onClick={() => onSelect(session.id)}
+      aria-current={!inbox && selectedId === session.id ? 'page' : undefined}
+    >
+      {child ? (
+        <CornerDownRight className="text-muted-foreground" />
+      ) : session.role === 'orchestrator' ? (
+        <GitBranch className="text-muted-foreground" />
+      ) : (
+        <MessageSquare className="text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{session.title}</span>
+        <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
+          {session.provider} · {sessionStatusLabel(session)}
+        </span>
+      </span>
+    </Button>
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -70,34 +109,22 @@ export function SessionSidebar({
           <p className="px-2 pb-2 text-xs font-medium text-muted-foreground">
             Sesje
           </p>
-          {filtered.map(session => (
-            <Button
-              key={session.id}
-              variant={
-                !inbox && selectedId === session.id ? 'secondary' : 'ghost'
-              }
-              className="h-auto w-full justify-start px-2 py-2 text-left font-normal"
-              onClick={() => onSelect(session.id)}
-              aria-current={
-                !inbox && selectedId === session.id ? 'page' : undefined
-              }
-            >
-              {session.role === 'orchestrator' ? (
-                <GitBranch className="text-muted-foreground" />
-              ) : (
-                <MessageSquare className="text-muted-foreground" />
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{session.title}</span>
-                <span className="block pt-0.5 text-xs font-normal text-muted-foreground">
-                  {session.provider} ·{' '}
-                  {session.pendingApprovals.length > 0 &&
-                  session.status === 'running'
-                    ? 'Czeka na zgodę'
-                    : statusLabels[session.status]}
-                </span>
-              </span>
-            </Button>
+          {filtered.map(root => (
+            <div key={root.id} className="space-y-0.5">
+              {row(root)}
+              {sessions
+                .filter(
+                  child =>
+                    child.parentId === root.id &&
+                    (matches(root) || matches(child)),
+                )
+                .sort(
+                  (a, b) =>
+                    a.createdAt.localeCompare(b.createdAt) ||
+                    a.id.localeCompare(b.id),
+                )
+                .map(child => row(child, true))}
+            </div>
           ))}
           {filtered.length === 0 && (
             <p className="px-2 py-6 text-sm text-muted-foreground">

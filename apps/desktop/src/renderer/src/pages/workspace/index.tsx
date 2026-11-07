@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react';
 import type {
   CreateSessionInput,
+  DecideDelegationInput,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import {
+  ArrowLeft,
   Inbox,
   Menu,
   MessageSquare,
@@ -18,7 +20,7 @@ import {
   providers,
   providerStatusLabel,
   roleLabels,
-  statusLabels,
+  sessionStatusLabel,
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
@@ -33,6 +35,7 @@ import {
   SheetTrigger,
 } from '@/shared/ui/sheet';
 import { Conversation } from '@/widgets/conversation';
+import { Delegations } from '@/widgets/delegations';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionSidebar } from '@/widgets/session-sidebar';
@@ -53,6 +56,10 @@ export function Workspace() {
     Record<string, boolean>
   >({});
   const approvalRequests = useRef(new Set<string>());
+  const [delegationPending, setDelegationPending] = useState<
+    Record<string, boolean>
+  >({});
+  const delegationRequests = useRef(new Set<string>());
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
     Record<string, { text: string; messageId: string }>
@@ -62,6 +69,12 @@ export function Workspace() {
   const selected =
     store.sessions.find(session => session.id === selectedId) ??
     store.sessions[0];
+  const parentSession = store.sessions.find(
+    session => session.id === selected?.parentId,
+  );
+  const workers = store.sessions.filter(
+    session => session.parentId === selected?.id,
+  );
   const selectedProviderState = selected
     ? store.providerStates[selected.provider]
     : undefined;
@@ -232,6 +245,59 @@ export function Workspace() {
       });
     }
   };
+  const decideDelegation = async (
+    delegationId: string,
+    decision: DecideDelegationInput['decision'],
+  ) => {
+    if (
+      !selected?.runId ||
+      selected.status !== 'running' ||
+      store.connection !== 'ready' ||
+      !selected.delegations.some(
+        delegation =>
+          delegation.id === delegationId &&
+          delegation.runId === selected.runId &&
+          delegation.status === 'pending',
+      )
+    )
+      return;
+    const { id: sessionId, runId } = selected;
+    const key = `${sessionId}/${runId}/${delegationId}`;
+    if (delegationRequests.current.has(key)) return;
+    delegationRequests.current.add(key);
+    setDelegationPending(previous => ({ ...previous, [key]: true }));
+    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    try {
+      store.merge([
+        await desktopApi().decideDelegation({
+          sessionId,
+          runId,
+          delegationId,
+          decision,
+        }),
+      ]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [sessionId]: `Nie udało się przekazać decyzji o workerze. ${errorDetail(failure)}`,
+      }));
+      try {
+        await store.recover();
+      } catch (recoveryFailure) {
+        setErrors(previous => ({
+          ...previous,
+          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+        }));
+      }
+    } finally {
+      delegationRequests.current.delete(key);
+      setDelegationPending(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
+  };
   const sidebarProps = {
     sessions: store.sessions,
     selectedId: selected?.id ?? '',
@@ -272,6 +338,17 @@ export function Workspace() {
               <SessionSidebar {...sidebarProps} />
             </SheetContent>
           </Sheet>
+          {parentSession && !inbox && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Wróć do orkiestratora"
+              title={`Wróć do: ${parentSession.title}`}
+              onClick={() => select(parentSession.id)}
+            >
+              <ArrowLeft />
+            </Button>
+          )}
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-medium">
               {inbox ? 'Do odbioru' : (selected?.title ?? 'Sesje')}
@@ -299,7 +376,7 @@ export function Workspace() {
           </div>
           {!inbox && selected && (
             <span className="hidden text-xs text-muted-foreground sm:inline">
-              {statusLabels[selected.status]}
+              {sessionStatusLabel(selected)}
             </span>
           )}
           <Button
@@ -395,6 +472,19 @@ export function Workspace() {
           ) : selected ? (
             <Conversation
               session={selected}
+              workers={workers}
+              delegations={
+                <Delegations
+                  session={selected}
+                  children={workers}
+                  enabled={store.connection === 'ready'}
+                  pending={delegationPending}
+                  onDecision={(delegationId, decision) =>
+                    void decideDelegation(delegationId, decision)
+                  }
+                  onSelect={select}
+                />
+              }
               draft={drafts[selected.id] ?? ''}
               sending={sending}
               canSend={
@@ -410,7 +500,12 @@ export function Workspace() {
               onApproval={(requestId, decision) =>
                 void respondApproval(requestId, decision)
               }
-              otherRun={!!activeRun && activeRun.id !== selected.id}
+              otherRun={
+                !!activeRun &&
+                activeRun.id !== selected.id &&
+                selected.status !== 'running' &&
+                selected.status !== 'stopping'
+              }
               error={errors[selected.id] ?? ''}
               onDraft={value => changeDraft(selected.id, value)}
               onSend={() => void send()}
