@@ -635,8 +635,100 @@ function comparablePath(path: string): string {
     : normalize(path);
 }
 
-function codexSkillId(name: string, path: string): string {
+export function codexSkillId(name: string, path: string): string {
   return `codex:${createHash('sha256').update(path).update('\0').update(name).digest('hex')}`;
+}
+
+async function registerCodexSkillRoots(
+  peer: RpcPeer,
+  extraRoots: string[],
+  checkCancelled: () => void,
+): Promise<void> {
+  checkCancelled();
+  if (!Array.isArray(extraRoots) || extraRoots.length > skillLimits.entries)
+    throw new Error(
+      `Shared skills require at most ${skillLimits.entries} directories.`,
+    );
+  const roots = new Map<string, string>();
+  for (const root of extraRoots) {
+    checkCancelled();
+    if (
+      typeof root !== 'string' ||
+      !root ||
+      root.length > skillLimits.path ||
+      !isAbsolute(root)
+    )
+      throw new Error(
+        'Shared skill directories must be absolute paths within the supported path size.',
+      );
+    let canonical: string;
+    try {
+      canonical = await realpath(root);
+    } catch {
+      throw new Error(
+        'A shared skill directory is missing or inaccessible. Refresh the skill library.',
+      );
+    }
+    checkCancelled();
+    const directory = await stat(canonical);
+    checkCancelled();
+    if (
+      !directory.isDirectory() ||
+      comparablePath(canonical) !== comparablePath(root) ||
+      canonical.length > skillLimits.path
+    )
+      throw new Error(
+        'A shared skill directory changed or is not canonical. Refresh the skill library.',
+      );
+    roots.set(comparablePath(canonical), canonical);
+  }
+  if (roots.size === 0) return;
+  const params = { extraRoots: [...roots.values()] };
+  if (
+    Buffer.byteLength(
+      JSON.stringify({
+        id: Number.MAX_SAFE_INTEGER,
+        method: 'skills/extraRoots/set',
+        params,
+      }),
+    ) > maxLineBytes
+  )
+    throw new Error(
+      'Shared skill directories exceeded the supported request size.',
+    );
+  checkCancelled();
+  await peer.request('skills/extraRoots/set', params);
+  checkCancelled();
+}
+
+async function verifyCodexSkillIsolation(
+  peer: RpcPeer,
+  cwd: string,
+): Promise<void> {
+  const isolated = await peer.request('config/read', {
+    includeLayers: false,
+    cwd,
+  });
+  const effective = object(isolated.config);
+  const effectiveMcp = object(effective?.mcp_servers);
+  const features = object(effective?.features);
+  if (
+    !effective ||
+    (effective.mcp_servers != null && !effectiveMcp) ||
+    Object.values(effectiveMcp ?? {}).some(
+      value => object(value)?.enabled !== false,
+    ) ||
+    !features ||
+    isolatedFeatures.some(
+      name =>
+        features[name] !== undefined &&
+        features[name] !== false &&
+        features[name] !== null,
+    )
+  )
+    throw new Error(
+      'Codex could not isolate inherited tools and hooks for skill discovery.',
+    );
 }
 
 function codexSkillListing(
@@ -762,6 +854,7 @@ async function resolveCodexSkill(
 export async function inspectCodexSkills(
   directory: string,
   signal?: AbortSignal,
+  extraRoots: string[] = [],
 ): Promise<SkillDiscovery> {
   const discovery: SkillDiscovery = {
     provider: 'Codex',
@@ -839,30 +932,21 @@ export async function inspectCodexSkills(
       disabledServers,
     );
     await initialize(peer);
-    const isolated = await peer.request('config/read', {
-      includeLayers: false,
-      cwd,
-    });
-    const effective = object(isolated.config);
-    const effectiveMcp = object(effective?.mcp_servers);
-    const features = object(effective?.features);
-    if (
-      !effective ||
-      (effective.mcp_servers != null && !effectiveMcp) ||
-      Object.values(effectiveMcp ?? {}).some(
-        value => object(value)?.enabled !== false,
-      ) ||
-      !features ||
-      isolatedFeatures.some(
-        name =>
-          features[name] !== undefined &&
-          features[name] !== false &&
-          features[name] !== null,
-      )
-    )
-      throw new Error(
-        'Codex could not isolate inherited tools and hooks for skill discovery.',
-      );
+    await verifyCodexSkillIsolation(peer, cwd);
+    checkCancelled();
+    if (!Array.isArray(extraRoots) || extraRoots.length > 0) {
+      try {
+        await registerCodexSkillRoots(peer, extraRoots, checkCancelled);
+      } catch (error) {
+        checkCancelled();
+        if (!(error instanceof CodexRpcError) || error.code !== -32601)
+          throw error;
+        issue(
+          null,
+          `Shared skill directories could not be registered; only the native catalog is available. ${error instanceof Error ? error.message : 'Registration failed.'}`,
+        );
+      }
+    }
     checkCancelled();
     const result = await peer.request('skills/list', {
       cwds: [cwd],
@@ -1000,6 +1084,7 @@ export function startCodex(options: {
   mode: 'read-only' | 'supervised';
   prompt: string;
   skillId?: string;
+  skillRoots?: string[];
   onSkillResolved?: (skill: SkillReference) => void;
   onEvent: (event: CodexEvent) => void;
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
@@ -1637,6 +1722,14 @@ export function startCodex(options: {
         )
       )
         throw new Error('Codex could not isolate inherited tools and hooks.');
+      if (
+        options.skillRoots !== undefined &&
+        (!Array.isArray(options.skillRoots) || options.skillRoots.length > 0)
+      )
+        await registerCodexSkillRoots(peer, options.skillRoots, () => {
+          if (stopped || failure) throw new Error(failure ?? 'Stopped.');
+        });
+      if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       const skill =
         options.skillId === undefined
           ? null
