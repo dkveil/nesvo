@@ -43,17 +43,11 @@ export function Delegations({
   )
     return null;
   return (
-    <section aria-label="Delegacja" className="space-y-4 border-t pt-5">
+    <section aria-label="Delegation" className="space-y-4 border-t pt-5">
       <h2 className="flex items-center gap-2 text-sm font-medium">
         <GitBranch className="size-4" />
-        Workerzy
+        Workers
       </h2>
-      {current.length === 0 && children.length === 0 && (
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Orkiestrator może zaproponować do dwóch workerów. Każdy rozpocznie
-          pracę dopiero po Twojej zgodzie.
-        </p>
-      )}
       {current.map(delegation => {
         const child = children.find(
           item => item.id === delegation.childSessionId,
@@ -70,7 +64,7 @@ export function Delegations({
           <section
             key={delegation.id}
             id={`delegation-${delegation.id}`}
-            aria-label="Propozycja workera"
+            aria-label="Worker proposal"
             className="space-y-3 rounded-xl border bg-card/60 p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -88,21 +82,19 @@ export function Delegations({
             </p>
             <dl className="space-y-2 text-xs">
               <div>
-                <dt className="text-muted-foreground">Zakres</dt>
+                <dt className="text-muted-foreground">Scope</dt>
                 <dd className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
                   {delegation.scope}
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">
-                  Katalog względem sesji
-                </dt>
+                <dt className="text-muted-foreground">Relative directory</dt>
                 <dd className="mt-1 [overflow-wrap:anywhere]">
                   {delegation.directory}
                 </dd>
               </div>
               <div>
-                <dt className="sr-only">Provider, model i tryb</dt>
+                <dt className="sr-only">Provider, model and access</dt>
                 <dd className="text-muted-foreground [overflow-wrap:anywhere]">
                   {delegation.provider} · {modelLabel(delegation.model)} ·{' '}
                   {modeLabels[delegation.mode]}
@@ -118,7 +110,7 @@ export function Delegations({
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'accept')}
                   >
-                    Zatwierdź workera
+                    Approve worker
                   </Button>
                   <Button
                     type="button"
@@ -127,15 +119,15 @@ export function Delegations({
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'decline')}
                   >
-                    Odrzuć propozycję
+                    Decline
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {deciding
-                    ? 'Przekazywanie decyzji…'
+                    ? 'Sending decision…'
                     : canDecide
-                      ? 'Zgoda uruchamia tego workera w pokazanym zakresie i trybie.'
-                      : 'Propozycja jest nieaktywna. Sprawdź aktualny stan połączenia i sesji.'}
+                      ? 'Starts this worker with the scope and access shown above.'
+                      : 'This proposal is inactive. Check the connection and session status.'}
                 </p>
               </>
             )}
@@ -146,7 +138,7 @@ export function Delegations({
                 size="sm"
                 onClick={() => onSelect(child.id)}
               >
-                Otwórz sesję workera
+                Open worker session
                 <ArrowUpRight />
               </Button>
             )}
@@ -163,9 +155,7 @@ export function Delegations({
       })}
       {previousChildren.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
-            Zapisane sesje workerów
-          </p>
+          <p className="text-xs text-muted-foreground">Previous workers</p>
           {previousChildren.map(child => (
             <Button
               key={child.id}

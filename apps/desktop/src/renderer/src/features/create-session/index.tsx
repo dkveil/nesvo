@@ -47,17 +47,14 @@ export function CreateSession({
   const [provider, setProvider] = useState<Provider>('Claude Code');
   const [model, setModel] = useState('default');
   const [mode, setMode] = useState<CreateSessionInput['mode']>('read-only');
+  const [directory, setDirectory] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
   const providerState = statuses[provider];
   const models = providerState.status?.models ?? [];
   const selectedModel = models.some(option => option.id === model)
     ? model
     : (models[0]?.id ?? 'default');
-  const [role, setRole] = useState<CreateSessionInput['role']>('orchestrator');
-  const orchestrating = provider === 'Codex' && role === 'orchestrator';
-  const selectedMode = orchestrating ? 'read-only' : mode;
-  const [directory, setDirectory] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (pending) return;
@@ -65,16 +62,15 @@ export function CreateSession({
     setError('');
     try {
       await onCreate({
-        title: title.trim() || 'Nowa sesja',
+        title: title.trim() || 'New session',
         provider,
         model: selectedModel,
-        mode: selectedMode,
-        role,
+        mode,
         directory: directory.trim(),
       });
       onOpenChange(false);
     } catch (failure) {
-      setError(`Nie udało się utworzyć sesji. ${errorDetail(failure)}`);
+      setError(`Could not create the session. ${errorDetail(failure)}`);
     } finally {
       setPending(false);
     }
@@ -87,33 +83,36 @@ export function CreateSession({
       }}
     >
       <DialogContent
-        className="max-h-[90dvh] gap-0 overflow-y-auto border-input/70 bg-[#080808] p-0 sm:max-w-[34rem]"
+        className="max-h-[90dvh] gap-0 overflow-y-auto border-input/70 bg-[#090909] p-0 sm:max-w-[32rem]"
         onCloseAutoFocus={event => {
           event.preventDefault();
           onReturnFocus();
         }}
       >
-        <DialogHeader className="border-b px-5 py-4 text-left">
-          <DialogTitle className="text-xl tracking-tight">
-            Nowa sesja
+        <DialogHeader className="px-5 pt-5 pb-4 text-left">
+          <DialogTitle className="text-lg font-medium tracking-tight">
+            New session
           </DialogTitle>
-          <DialogDescription className="mt-1 max-w-sm text-xs leading-5">
-            Agent uruchomi się po pierwszej wiadomości.
+          <DialogDescription className="text-xs leading-5">
+            Choose an agent and describe what you want to do.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={event => void submit(event)} className="space-y-4 p-5">
+        <form
+          onSubmit={event => void submit(event)}
+          className="space-y-5 px-5 pb-5"
+        >
           <div className="space-y-2">
-            <Label htmlFor="session-title">Nazwa sesji</Label>
+            <Label htmlFor="session-title">Session name</Label>
             <Input
               id="session-title"
-              placeholder="Np. plan nowej funkcji"
+              placeholder="What are you working on?"
               value={title}
               onChange={event => setTitle(event.target.value)}
               maxLength={100}
               disabled={pending}
             />
           </div>
-          <section className="space-y-3 rounded-xl border bg-background/50 p-3">
+          <section className="space-y-3 border-y py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="session-provider">Provider</Label>
@@ -145,7 +144,7 @@ export function CreateSession({
                   onValueChange={setModel}
                 >
                   <SelectTrigger id="session-model" className="w-full">
-                    <SelectValue placeholder="Domyślny" />
+                    <SelectValue placeholder="Default" />
                   </SelectTrigger>
                   <SelectContent>
                     {models.map(option => (
@@ -157,113 +156,82 @@ export function CreateSession({
                 </Select>
               </div>
             </div>
-            <div className="space-y-2 text-[11px]">
-              <div className="flex items-center justify-between gap-2">
-                <span role="status" className="text-muted-foreground">
-                  {providerStatusLabel(provider, providerState)}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-1 text-[11px] font-normal"
-                  disabled={pending || providerState.loading}
-                  onClick={() => onRefreshProvider(provider)}
-                >
-                  Odśwież status
-                </Button>
-              </div>
-              {providerState.error && (
-                <p
-                  role="alert"
-                  className="text-destructive [overflow-wrap:anywhere]"
-                >
-                  {providerState.error}
-                </p>
-              )}
-              {providerState.status?.detail && (
-                <p className="text-muted-foreground leading-5 [overflow-wrap:anywhere]">
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span role="status" className="text-muted-foreground">
+                {providerStatusLabel(provider, providerState)}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-[11px] font-normal text-muted-foreground"
+                disabled={pending || providerState.loading}
+                onClick={() => onRefreshProvider(provider)}
+              >
+                Refresh status
+              </Button>
+            </div>
+            {providerState.error && (
+              <p
+                role="alert"
+                className="text-xs text-destructive [overflow-wrap:anywhere]"
+              >
+                {providerState.error}
+              </p>
+            )}
+            {providerState.status?.status !== 'ready' &&
+              providerState.status?.detail && (
+                <p className="text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                   {providerState.status.detail}
                 </p>
               )}
-            </div>
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              Model zostanie sprawdzony przy uruchomieniu.
-            </p>
-          </section>
-          <section className="space-y-3 rounded-xl border bg-background/50 p-3">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="session-role">Rola sesji</Label>
-                <Select
-                  value={role}
-                  disabled={pending}
-                  onValueChange={value => {
-                    if (value === 'orchestrator' || value === 'standalone') {
-                      setRole(value);
-                      if (value === 'orchestrator') setMode('read-only');
-                    }
-                  }}
-                >
-                  <SelectTrigger id="session-role" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="orchestrator">Orkiestrator</SelectItem>
-                    <SelectItem value="standalone">
-                      Samodzielna sesja
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="session-mode">Tryb pracy</Label>
-                <Select
-                  value={selectedMode}
-                  disabled={
-                    pending || provider === 'Claude Code' || orchestrating
-                  }
-                  onValueChange={value => {
-                    if (value === 'read-only' || value === 'supervised')
-                      setMode(value);
-                  }}
-                >
-                  <SelectTrigger id="session-mode" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="read-only">
-                      {modeLabels['read-only']}
-                    </SelectItem>
-                    {provider === 'Codex' && (
-                      <SelectItem value="supervised">
-                        {modeLabels.supervised}
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              {orchestrating
-                ? 'Orkiestrator tylko czyta. Proponuje do dwóch workerów; przed uruchomieniem zatwierdzasz każdego i jego uprawnienia.'
-                : selectedMode === 'read-only'
-                  ? provider === 'Claude Code'
-                    ? 'Odczyt i wyszukiwanie plików. Bez edycji i poleceń terminala.'
-                    : 'Odczyt plików i polecenia do odczytu. Zapis i podwyższanie uprawnień są wyłączone.'
-                  : 'Zmiany w katalogu pracy. Codex prosi o zgodę przy wymagających jej operacjach; nie przy każdej zmianie.'}
+            <p className="text-[11px] text-muted-foreground">
+              Model availability is confirmed when the agent starts.
             </p>
           </section>
           <div className="space-y-2">
+            <Label htmlFor="session-mode">Access</Label>
+            <Select
+              value={mode}
+              disabled={pending || provider === 'Claude Code'}
+              onValueChange={value => {
+                if (value === 'read-only' || value === 'supervised')
+                  setMode(value);
+              }}
+            >
+              <SelectTrigger id="session-mode" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="read-only">
+                  {modeLabels['read-only']}
+                </SelectItem>
+                {provider === 'Codex' && (
+                  <SelectItem value="supervised">
+                    {modeLabels.supervised}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              {provider === 'Claude Code'
+                ? 'Claude Code supports file reading and search here. Editing and shell commands are disabled.'
+                : mode === 'read-only'
+                  ? 'Read files and run read commands. File writes and elevated access are disabled.'
+                  : 'Edit files in the working directory. Codex asks for approval when required, rather than for every change.'}
+            </p>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="session-directory">
-              Katalog pracy{' '}
+              Working directory{' '}
               <span className="font-normal text-muted-foreground">
-                (opcjonalnie)
+                (optional)
               </span>
             </Label>
             <Input
               id="session-directory"
-              placeholder="Wpisz ścieżkę lub zostaw puste"
+              aria-label="Working directory"
+              placeholder="Leave blank for an isolated folder"
               value={directory}
               onChange={event => setDirectory(event.target.value)}
               maxLength={4096}
@@ -272,9 +240,9 @@ export function CreateSession({
             />
             <p
               id="directory-help"
-              className="text-[11px] leading-5 text-muted-foreground"
+              className="text-[11px] text-muted-foreground"
             >
-              Bez ścieżki utworzymy osobny folder. Git nie jest wymagany.
+              Any local folder. A Git repository is not required.
             </p>
           </div>
           {error && (
@@ -285,17 +253,17 @@ export function CreateSession({
               {error}
             </p>
           )}
-          <DialogFooter className="border-t pt-4">
+          <DialogFooter className="pt-1">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               disabled={pending}
               onClick={() => onOpenChange(false)}
             >
-              Anuluj
+              Cancel
             </Button>
             <Button type="submit" disabled={pending}>
-              {pending ? 'Tworzenie…' : 'Utwórz sesję'}
+              {pending ? 'Creating…' : 'Create session'}
             </Button>
           </DialogFooter>
         </form>

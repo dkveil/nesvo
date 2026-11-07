@@ -3,30 +3,30 @@ import type { ClaudeStatus, CodexStatus, Session } from '@nesvo/contracts';
 export type { Session } from '@nesvo/contracts';
 
 export const roleLabels: Record<Session['role'], string> = {
-  orchestrator: 'Orkiestrator',
-  standalone: 'Samodzielna',
+  orchestrator: 'Orchestrator',
+  standalone: 'Session',
   worker: 'Worker',
 };
 
 const modelLabels: Record<string, string> = {
-  default: 'Domyślny',
+  default: 'Default',
   opus: 'Opus',
   sonnet: 'Sonnet',
   haiku: 'Haiku',
 };
 
 export const statusLabels: Record<Session['status'], string> = {
-  ready: 'Gotowa',
-  running: 'Pracuje',
-  stopping: 'Zatrzymywanie…',
-  completed: 'Ukończona',
-  stopped: 'Zatrzymana',
-  failed: 'Błąd',
-  interrupted: 'Przerwana',
+  ready: 'Ready',
+  running: 'Working',
+  stopping: 'Stopping…',
+  completed: 'Done',
+  stopped: 'Stopped',
+  failed: 'Failed',
+  interrupted: 'Interrupted',
 };
 
 export function errorDetail(error: unknown) {
-  return error instanceof Error ? error.message : 'Nieznany błąd.';
+  return error instanceof Error ? error.message : 'Unknown error.';
 }
 
 export type Provider = Session['provider'];
@@ -39,8 +39,8 @@ export type ProviderStates = Record<Provider, ProviderState>;
 
 export const providers: Provider[] = ['Claude Code', 'Codex'];
 export const modeLabels: Record<Session['mode'], string> = {
-  'read-only': 'Analiza · tylko odczyt',
-  supervised: 'Praca nadzorowana',
+  'read-only': 'Read-only',
+  supervised: 'Workspace edits',
 };
 
 export function modelLabel(model: string) {
@@ -48,13 +48,13 @@ export function modelLabel(model: string) {
 }
 
 export function providerStatusLabel(provider: Provider, state: ProviderState) {
-  if (state.loading) return `Sprawdzanie ${provider}…`;
+  if (state.loading) return `Checking ${provider}…`;
   return {
-    ready: `${provider} jest gotowy`,
-    missing: `Nie znaleziono ${provider}`,
-    unauthenticated: `${provider} wymaga logowania`,
-    unsupported: `Ta wersja ${provider} nie jest obsługiwana`,
-    error: `${provider} jest niedostępny`,
+    ready: `${provider} is ready`,
+    missing: `${provider} was not found`,
+    unauthenticated: `${provider} needs sign-in`,
+    unsupported: `This ${provider} version is not supported`,
+    error: `${provider} is unavailable`,
   }[state.status?.status ?? 'error'];
 }
 
@@ -62,13 +62,13 @@ export const delegationStatusLabels: Record<
   Session['delegations'][number]['status'],
   string
 > = {
-  pending: 'Czeka na decyzję',
-  declined: 'Odrzucona',
-  running: 'Pracuje',
-  completed: 'Ukończona',
-  stopped: 'Zatrzymana',
-  failed: 'Błąd',
-  interrupted: 'Przerwana',
+  pending: 'Awaiting decision',
+  declined: 'Declined',
+  running: 'Working',
+  completed: 'Done',
+  stopped: 'Stopped',
+  failed: 'Failed',
+  interrupted: 'Interrupted',
 };
 
 export function sessionStatusLabel(session: Session) {
@@ -80,6 +80,25 @@ export function sessionStatusLabel(session: Session) {
           delegation.runId === session.runId && delegation.status === 'pending',
       ))
   )
-    return 'Czeka na zgodę';
+    return 'Needs approval';
   return statusLabels[session.status];
+}
+
+export function sessionRoleLabel(session: Session) {
+  if (session.parentId) return 'Worker';
+  if (session.delegations.length > 0) return 'Orchestrator';
+  return '';
+}
+
+export function directoryLabel(directory: string) {
+  const name =
+    directory
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .at(-1) || directory;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    name,
+  )
+    ? 'Working directory'
+    : name;
 }

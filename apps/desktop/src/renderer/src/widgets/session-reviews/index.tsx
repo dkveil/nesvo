@@ -7,7 +7,7 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { modelLabel, roleLabels } from '@/entities/session';
+import { modelLabel } from '@/entities/session';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -44,15 +44,15 @@ function ReviewVersion({
       ref={disclosure}
       id={`review-${review.id}`}
       role="region"
-      aria-label={`Wynik sesji: wersja ${review.version}`}
+      aria-label={`Session result: version ${review.version}`}
       className="group/review border-b border-border/70 last:border-b-0"
     >
       <summary
-        aria-label={`Otwórz wersję ${review.version}`}
+        aria-label={`Open version ${review.version}`}
         className="cursor-pointer list-none py-4 text-muted-foreground transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
       >
         <span className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium">Wersja {review.version}</span>
+          <span className="text-sm font-medium">Version {review.version}</span>
           <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
             <span>{reviewStatusLabels[review.status]}</span>
             <ChevronDown className="size-3.5 transition-transform group-open/review:rotate-180" />
@@ -68,51 +68,54 @@ function ReviewVersion({
             {review.title}
           </h3>
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {roleLabels[review.role]} · {review.provider} ·{' '}
-            {modelLabel(review.model)} ·{' '}
+            {review.role === 'worker'
+              ? 'Worker · '
+              : review.dependencies.length > 0
+                ? 'Orchestrator · '
+                : ''}{' '}
+            {review.provider} · {modelLabel(review.model)} ·{' '}
             <time dateTime={review.createdAt}>
               {reviewDate(review.createdAt)}
             </time>
           </p>
         </header>
         <section className="space-y-2">
-          <h4 className="text-xs font-medium">Zadanie</h4>
+          <h4 className="text-xs font-medium">Task</h4>
           <p className="text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
             {review.task}
           </p>
           {review.scope && (
             <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-              Zakres: {review.scope}
+              Scope: {review.scope}
             </p>
           )}
           <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            Katalog pracy: {review.directory}
+            Working directory: {review.directory}
           </p>
         </section>
-        <section aria-label="Podsumowanie wyniku" className="space-y-2">
-          <h4 className="text-xs font-medium">Podsumowanie</h4>
+        <section aria-label="Result summary" className="space-y-2">
+          <h4 className="text-xs font-medium">Summary</h4>
           <p className="text-sm leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {review.summary || 'Brak podsumowania.'}
+            {review.summary || 'No summary.'}
           </p>
         </section>
-        <section aria-label="Zmiany w plikach" className="space-y-3">
-          <h4 className="text-xs font-medium">Zmiany w plikach</h4>
+        <section aria-label="File changes" className="space-y-3">
+          <h4 className="text-xs font-medium">File changes</h4>
           {review.diff.status !== 'not-applicable' && (
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Porównanie początku i końca tej tury. Wcześniejsze zmiany
-              znajdziesz w poprzednich wersjach wyniku. Edycje wykonane
-              równolegle poza sesją również mogą pojawić się w porównaniu.
+              Changes between the start and end of this turn. Concurrent edits
+              outside the session may also appear.
             </p>
           )}
           {review.diff.status === 'not-applicable' ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {review.diff.detail ??
-                'Wynik analizy nie obejmuje zmian w plikach. Możesz odebrać podsumowanie.'}
+                'This read-only result has no file changes. You can accept the summary.'}
             </p>
           ) : review.diff.status === 'unavailable' ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {review.diff.detail ??
-                'Nie można odtworzyć pełnego porównania zmian. Ten wynik wymaga poprawy przed akceptacją.'}
+                'A complete diff is unavailable. Request changes before accepting this result.'}
             </p>
           ) : (
             <>
@@ -139,12 +142,12 @@ function ReviewVersion({
                 </ul>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Nie zapisano zmian w plikach.
+                  No file changes were recorded.
                 </p>
               )}
               {review.diff.patch && (
                 <pre
-                  aria-label="Zapisany diff"
+                  aria-label="Saved diff"
                   className="max-h-[32rem] overflow-auto rounded-lg border bg-card p-3 text-xs leading-6"
                 >
                   <code>{review.diff.patch}</code>
@@ -155,7 +158,7 @@ function ReviewVersion({
         </section>
         {review.dependencies.length > 0 && (
           <section className="space-y-2">
-            <h4 className="text-xs font-medium">Wyniki workerów</h4>
+            <h4 className="text-xs font-medium">Worker results</h4>
             <div className="flex flex-wrap gap-2">
               {review.dependencies.map(dependency => {
                 const source = allReviews.find(
@@ -175,7 +178,7 @@ function ReviewVersion({
                       )
                     }
                   >
-                    {source?.title ?? 'Wynik workera'} · wersja{' '}
+                    {source?.title ?? 'Worker result'} · version{' '}
                     {dependency.version}
                     <ArrowUpRight className="size-3 shrink-0" />
                   </Button>
@@ -186,14 +189,14 @@ function ReviewVersion({
         )}
         {review.decision && (
           <section
-            aria-label="Zapisana decyzja"
+            aria-label="Saved decision"
             className="space-y-2 border-t pt-4"
           >
-            <h4 className="text-xs font-medium">Decyzja operatora</h4>
+            <h4 className="text-xs font-medium">Your decision</h4>
             <p className="text-sm">
               {review.decision.decision === 'accept'
-                ? 'Zaakceptowano tę wersję.'
-                : 'Odesłano tę wersję do poprawy.'}
+                ? 'This version was accepted.'
+                : 'Changes were requested for this version.'}
             </p>
             <time
               className="text-xs text-muted-foreground"
@@ -232,8 +235,8 @@ export function SessionReviews({
       right.createdAt.localeCompare(left.createdAt),
   );
   return (
-    <section aria-label="Wyniki sesji" className="space-y-2 border-t pt-5">
-      <h2 className="text-sm font-medium">Wyniki sesji</h2>
+    <section aria-label="Session results" className="space-y-2 border-t pt-5">
+      <h2 className="text-sm font-medium">Session results</h2>
       <div>
         {versions.map(review => (
           <ReviewVersion

@@ -1,10 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ArrowUp, Bot, CircleUserRound, Square } from 'lucide-react';
+import { ArrowUp, FolderOpen, Square } from 'lucide-react';
 import type { RespondApprovalInput } from '@nesvo/contracts';
 import {
   modeLabels,
   modelLabel,
-  roleLabels,
+  directoryLabel,
   statusLabels,
   type Session,
 } from '@/entities/session';
@@ -64,7 +64,7 @@ export function Conversation({
         (delegation.status === 'pending' || delegation.childSessionId),
     ) ||
       workers.some(worker => worker.parentRunId === session.runId));
-  const stopLabel = groupRun ? 'Stop grupy' : 'Stop';
+  const stopLabel = groupRun ? 'Stop group' : 'Stop';
   const empty =
     session.messages.length === 0 &&
     !running &&
@@ -81,31 +81,31 @@ export function Conversation({
       }}
     >
       <label htmlFor="message-input" className="sr-only">
-        Wiadomość
+        Message
       </label>
       <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
         <Textarea
           id="message-input"
-          placeholder="Napisz, czym chcesz się zająć…"
+          placeholder="Ask anything about your task…"
           value={draft}
           onChange={event => onDraft(event.target.value)}
           maxLength={32000}
-          className="max-h-48 min-h-20 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+          className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
         />
         <div className="flex items-end justify-between gap-3 px-1 pt-3">
           <span className="min-w-0 text-[11px] leading-5 text-muted-foreground">
             {otherRun
-              ? 'Trwa praca w innej sesji'
+              ? 'Another session is working'
               : sending
-                ? 'Wysyłanie…'
+                ? 'Sending…'
                 : session.delegations.some(
                       delegation =>
                         delegation.runId === session.runId &&
                         delegation.status === 'pending',
                     )
-                  ? 'Oczekuje na decyzję o workerach'
+                  ? 'Worker approval needed'
                   : session.pendingApprovals.length > 0
-                    ? 'Oczekuje na decyzję operatora'
+                    ? 'Approval needed'
                     : modeLabels[session.mode]}
           </span>
           <div className="flex shrink-0 items-center gap-3">
@@ -126,15 +126,15 @@ export function Conversation({
                 aria-label={stopLabel}
                 title={
                   groupRun
-                    ? 'Zatrzymaj orkiestratora i jego workerów'
-                    : 'Zatrzymaj tę sesję'
+                    ? 'Stop this session and its workers'
+                    : 'Stop this session'
                 }
               >
                 <Square />
                 {session.status === 'stopping'
                   ? groupRun
-                    ? 'Zatrzymywanie grupy…'
-                    : 'Zatrzymywanie…'
+                    ? 'Stopping group…'
+                    : 'Stopping…'
                   : stopLabel}
               </Button>
             ) : (
@@ -143,8 +143,8 @@ export function Conversation({
                 size="icon-sm"
                 className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
                 disabled={!draft.trim() || !canSend}
-                aria-label="Wyślij wiadomość"
-                title="Wyślij wiadomość"
+                aria-label="Send message"
+                title="Send message"
               >
                 <ArrowUp />
               </Button>
@@ -152,9 +152,20 @@ export function Conversation({
           </div>
         </div>
       </div>
-      <p className="mt-2 truncate px-1 text-[11px] text-muted-foreground sm:hidden">
-        {session.provider} · {session.actualModel ?? modelLabel(session.model)}
-      </p>
+      <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 text-[11px] text-muted-foreground">
+        <span
+          className="flex min-w-0 items-center gap-1.5"
+          title={session.directory}
+          aria-label={`Working directory: ${session.directory}`}
+        >
+          <FolderOpen className="size-3 shrink-0" />
+          <span className="truncate">{directoryLabel(session.directory)}</span>
+        </span>
+        <span className="truncate sm:hidden">
+          {session.provider} ·{' '}
+          {session.actualModel ?? modelLabel(session.model)}
+        </span>
+      </div>
     </form>
   );
   useEffect(() => {
@@ -186,7 +197,7 @@ export function Conversation({
   }, [session.id, focusTarget]);
   return (
     <section
-      aria-label="Rozmowa"
+      aria-label="Conversation"
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ScrollArea
@@ -194,34 +205,26 @@ export function Conversation({
           empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
         }
       >
-        <div className="mx-auto max-w-3xl space-y-9 px-5 py-10 lg:px-6">
+        <div className="mx-auto max-w-3xl space-y-10 px-5 py-10 lg:px-6">
           {session.messages.map(message => (
-            <article key={message.id} className="flex gap-3.5">
-              <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-                {message.author === 'operator' ? (
-                  <CircleUserRound className="size-4" />
-                ) : (
-                  <Bot className="size-4" />
-                )}
-              </div>
-              <div className="min-w-0 space-y-2 pt-0.5">
-                <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
-                  {message.author === 'operator'
-                    ? 'Ty'
-                    : roleLabels[session.role]}
-                  {message.author === 'agent' && (
+            <article key={message.id} className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-medium">
+                <span>
+                  {message.author === 'operator' ? 'You' : session.provider}
+                </span>
+                {message.author === 'agent' &&
+                  message.state !== 'completed' && (
                     <span className="text-[11px] font-normal text-muted-foreground">
-                      {session.provider} · {statusLabels[message.state]}
+                      {statusLabels[message.state]}
                     </span>
                   )}
-                </div>
-                <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {message.body ||
-                    (message.state === 'running'
-                      ? 'Oczekiwanie na odpowiedź…'
-                      : 'Brak treści odpowiedzi.')}
-                </p>
               </div>
+              <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {message.body ||
+                  (message.state === 'running'
+                    ? 'Waiting for a response…'
+                    : 'No response text.')}
+              </p>
             </article>
           ))}
           {delegations}
@@ -239,13 +242,13 @@ export function Conversation({
               <section
                 key={`${session.runId}/${approval.id}`}
                 id={`approval-${approval.id}`}
-                aria-label="Zgoda operatora"
+                aria-label="Operation approval"
                 className="space-y-3 rounded-xl border bg-card/70 p-4"
               >
                 <p className="text-xs text-muted-foreground">
                   {approval.kind === 'command'
-                    ? 'Polecenie wymaga zgody'
-                    : 'Zmiana plików wymaga zgody'}
+                    ? 'Command approval'
+                    : 'File approval'}
                 </p>
                 <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
                   {approval.title}
@@ -254,7 +257,7 @@ export function Conversation({
                   {approval.detail}
                 </pre>
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                  Katalog pracy: {approval.directory ?? session.directory}
+                  Working directory: {approval.directory ?? session.directory}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -263,7 +266,7 @@ export function Conversation({
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'accept')}
                   >
-                    Zezwól jednorazowo
+                    Allow once
                   </Button>
                   <Button
                     type="button"
@@ -272,15 +275,15 @@ export function Conversation({
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'decline')}
                   >
-                    Odmów
+                    Deny
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {pending
-                    ? 'Przekazywanie decyzji…'
+                    ? 'Sending decision…'
                     : enabled
-                      ? 'Decyzja dotyczy tylko tej operacji.'
-                      : 'Zgoda jest nieaktywna. Odśwież połączenie, aby sprawdzić aktualny stan.'}
+                      ? 'Applies to this operation only.'
+                      : 'This request is inactive. Refresh the connection to check its status.'}
                 </p>
               </section>
             );
@@ -304,8 +307,8 @@ export function Conversation({
           )}
           {session.status === 'interrupted' && (
             <p className="text-sm text-muted-foreground">
-              Uruchomienie zostało przerwane. Historia jest zachowana; możesz
-              wysłać kolejną wiadomość.
+              The run was interrupted. Your history is saved; send a message to
+              continue.
             </p>
           )}
           {error && (
@@ -322,11 +325,8 @@ export function Conversation({
       {empty && (
         <div className="mx-auto mt-auto w-full max-w-3xl px-5 pt-10 pb-7 text-center lg:px-6">
           <h2 className="text-2xl font-medium tracking-tight sm:text-[1.875rem]">
-            Od czego zaczynamy?
+            What would you like to work on?
           </h2>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Opisz zadanie dla {session.provider}.
-          </p>
         </div>
       )}
       <div

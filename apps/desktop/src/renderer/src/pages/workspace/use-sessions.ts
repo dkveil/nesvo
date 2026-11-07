@@ -10,7 +10,7 @@ import {
 export function desktopApi(): DesktopApi {
   if (!window.nesvo)
     throw new Error(
-      'Brak połączenia z aplikacją. Odśwież okno lub ponownie otwórz Nesvo.',
+      'The app connection is unavailable. Reload the window or reopen Nesvo.',
     );
   return window.nesvo;
 }
@@ -92,7 +92,7 @@ export function useSessions() {
           [provider]: {
             ...previous[provider],
             loading: false,
-            error: `Nie udało się sprawdzić ${provider}. ${errorDetail(failure)}`,
+            error: `Could not check ${provider}. ${errorDetail(failure)}`,
           },
         }));
     }
@@ -112,7 +112,7 @@ export function useSessions() {
           disconnected = true;
           setConnection('unavailable');
           setError(
-            'Połączenie z hostem zostało przerwane. Odśwież połączenie lub ponownie otwórz Nesvo, aby odzyskać historię.',
+            'The host disconnected. Refresh the connection or reopen Nesvo to restore your history.',
           );
         }
       });
@@ -125,9 +125,9 @@ export function useSessions() {
             );
             setError(
               health.status === 'rejected'
-                ? `Nie udało się połączyć z hostem. ${errorDetail(health.reason)}`
+                ? `Could not connect to the host. ${errorDetail(health.reason)}`
                 : history.status === 'rejected'
-                  ? `Nie udało się odczytać historii. ${errorDetail(history.reason)}`
+                  ? `Could not load the conversation history. ${errorDetail(history.reason)}`
                   : '',
             );
           }
@@ -145,7 +145,7 @@ export function useSessions() {
         failure => {
           if (!active) return;
           setReviewsError(
-            `Nie udało się odczytać wyników. ${errorDetail(failure)}`,
+            `Could not load the results. ${errorDetail(failure)}`,
           );
           setReviewsLoading(false);
         },

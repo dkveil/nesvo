@@ -8,9 +8,9 @@ type Props = {
 
 export function HostStatus({ connection, onRefresh }: Props) {
   const label = {
-    connecting: 'Łączenie z hostem…',
-    ready: 'Połączono z lokalnym hostem',
-    unavailable: 'Brak połączenia z hostem',
+    connecting: 'Connecting to host…',
+    ready: 'Connected to local host',
+    unavailable: 'Host disconnected',
   }[connection];
   return (
     <div className="flex items-center gap-2">
@@ -28,8 +28,8 @@ export function HostStatus({ connection, onRefresh }: Props) {
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Odśwież połączenie"
-        title="Odśwież połączenie"
+        aria-label="Refresh connection"
+        title="Refresh connection"
         disabled={connection === 'connecting'}
         onClick={onRefresh}
       >

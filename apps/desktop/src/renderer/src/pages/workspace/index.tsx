@@ -6,22 +6,12 @@ import type {
   Review,
   RespondApprovalInput,
 } from '@nesvo/contracts';
-import {
-  ArrowLeft,
-  Inbox,
-  Menu,
-  MessageSquare,
-  PanelRight,
-  Plus,
-  RefreshCw,
-} from 'lucide-react';
+import { ArrowLeft, Menu, PanelRight, Plus, RefreshCw } from 'lucide-react';
 import {
   errorDetail,
-  modelLabel,
-  modeLabels,
   providers,
   providerStatusLabel,
-  roleLabels,
+  sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
@@ -161,7 +151,7 @@ export function Workspace() {
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Nie udało się potwierdzić wysłania wiadomości. ${errorDetail(failure)}`,
+        [sessionId]: `Could not confirm that the message was sent. ${errorDetail(failure)}`,
       }));
       try {
         const history = await store.recover();
@@ -174,7 +164,7 @@ export function Workspace() {
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)} Możesz ponowić wysyłanie tej samej wiadomości.`,
+          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)} You can retry the same message.`,
         }));
       }
     } finally {
@@ -197,14 +187,14 @@ export function Workspace() {
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Nie udało się zatrzymać uruchomienia. ${errorDetail(failure)}`,
+        [sessionId]: `Could not stop the run. ${errorDetail(failure)}`,
       }));
       try {
         await store.recover();
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
@@ -236,14 +226,14 @@ export function Workspace() {
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Nie udało się przekazać decyzji. ${errorDetail(failure)}`,
+        [sessionId]: `Could not send the decision. ${errorDetail(failure)}`,
       }));
       try {
         await store.recover();
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
@@ -283,14 +273,14 @@ export function Workspace() {
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Nie udało się przekazać decyzji o workerze. ${errorDetail(failure)}`,
+        [sessionId]: `Could not send the worker decision. ${errorDetail(failure)}`,
       }));
       try {
         await store.recover();
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Nie udało się odświeżyć historii. ${errorDetail(recoveryFailure)}`,
+          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
@@ -304,11 +294,11 @@ export function Workspace() {
   };
   const reviewBlockedReason =
     store.connection !== 'ready'
-      ? 'Połącz ponownie z hostem, aby podjąć decyzję.'
+      ? 'Reconnect before making a decision.'
       : store.loading || store.error
-        ? 'Najpierw odśwież stan sesji, aby podjąć decyzję.'
+        ? 'Refresh the session state before making a decision.'
         : activeRun || sending
-          ? 'Poczekaj na zakończenie pracy wszystkich sesji i workerów.'
+          ? 'Result review is available once all sessions and workers finish.'
           : '';
   const decideReview = async (
     review: Review,
@@ -348,7 +338,7 @@ export function Workspace() {
         void store.recover().catch(failure =>
           setErrors(previous => ({
             ...previous,
-            [result.sessionId]: `Poprawa została zlecona, ale nie udało się odświeżyć rozmowy. ${errorDetail(failure)}`,
+            [result.sessionId]: `The correction was requested, but the conversation could not be refreshed. ${errorDetail(failure)}`,
           })),
         );
       }
@@ -358,7 +348,7 @@ export function Workspace() {
     } catch (failure) {
       setReviewErrors(previous => ({
         ...previous,
-        [review.id]: `Nie udało się zapisać decyzji. ${errorDetail(failure)}`,
+        [review.id]: `Could not save the decision. ${errorDetail(failure)}`,
       }));
       try {
         const history = await store.recoverReviews();
@@ -371,7 +361,7 @@ export function Workspace() {
       } catch (recoveryFailure) {
         setReviewErrors(previous => ({
           ...previous,
-          [review.id]: `${previous[review.id] ?? ''} Nie udało się odświeżyć wyników. ${errorDetail(recoveryFailure)} Ponowienie tej samej decyzji nie utworzy drugiego zlecenia.`,
+          [review.id]: `${previous[review.id] ?? ''} Could not refresh the results. ${errorDetail(recoveryFailure)} Retrying the same decision will not create a duplicate request.`,
         }));
       }
     } finally {
@@ -420,12 +410,13 @@ export function Workspace() {
     onInbox: openInbox,
     onCreate: openCreate,
   };
-  const noticeProviders = (selected ? [selected.provider] : providers).filter(
-    provider => {
-      const state = store.providerStates[provider];
-      return state.error || state.status?.status !== 'ready';
-    },
-  );
+  const providerIssue =
+    !inbox &&
+    selectedProviderState &&
+    (selectedProviderState.error ||
+      selectedProviderState.status?.status !== 'ready')
+      ? selectedProviderState
+      : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <aside className="hidden w-60 shrink-0 border-r bg-[#080808] md:block">
@@ -439,15 +430,15 @@ export function Workspace() {
                 variant="ghost"
                 size="icon"
                 className="md:hidden"
-                aria-label="Otwórz listę sesji"
+                aria-label="Open sessions"
               >
                 <Menu />
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-72 gap-0 p-0">
               <SheetHeader className="sr-only">
-                <SheetTitle>Nawigacja</SheetTitle>
-                <SheetDescription>Sesje i skrzynka odbioru.</SheetDescription>
+                <SheetTitle>Navigation</SheetTitle>
+                <SheetDescription>Sessions and inbox.</SheetDescription>
               </SheetHeader>
               <SessionSidebar {...sidebarProps} />
             </SheetContent>
@@ -456,39 +447,24 @@ export function Workspace() {
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Wróć do orkiestratora"
-              title={`Wróć do: ${parentSession.title}`}
+              aria-label="Back to parent session"
+              title={`Back to: ${parentSession.title}`}
               onClick={() => select(parentSession.id)}
             >
               <ArrowLeft />
             </Button>
           )}
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <h1 className="min-w-0 truncate text-[13px] font-medium">
-              {inbox ? 'Do decyzji' : (selected?.title ?? 'Sesje')}
+            <h1 className="truncate text-[13px] font-medium">
+              {inbox ? 'Inbox' : (selected?.title ?? 'New session')}
             </h1>
-            <div className="hidden min-w-0 items-center gap-2 truncate text-[11px] text-muted-foreground lg:flex">
-              {inbox ? (
-                <>
-                  <Inbox className="size-3" />
-                  <span>Sprawy wymagające Twojej decyzji</span>
-                </>
-              ) : selected ? (
-                <>
-                  <span>{roleLabels[selected.role]}</span>
-                  <span>·</span>
-                  <span>{selected.provider}</span>
-                  <span>·</span>
-                  <span>
-                    {selected.actualModel ?? modelLabel(selected.model)}
-                  </span>
-                </>
-              ) : (
-                <span>Twoja lokalna przestrzeń pracy</span>
-              )}
-            </div>
+            {!inbox && selected && sessionRoleLabel(selected) && (
+              <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                {sessionRoleLabel(selected)}
+              </span>
+            )}
           </div>
-          {!inbox && selected && (
+          {!inbox && selected && selected.status !== 'ready' && (
             <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
               {sessionStatusLabel(selected)}
             </span>
@@ -497,87 +473,132 @@ export function Workspace() {
             variant="ghost"
             size="icon-sm"
             className="md:hidden"
-            aria-label="Nowa sesja"
+            aria-label="New session"
             onClick={openCreate}
           >
             <Plus />
           </Button>
-          {!inbox && selected && (
-            <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Pokaż szczegóły sesji"
-                  title="Pokaż szczegóły sesji"
+          <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <SheetTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label="Open context"
+                title="Context and connection"
+              >
+                <PanelRight className="size-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent className="gap-0 bg-card">
+              <SheetHeader className="border-b px-5 py-4">
+                <SheetTitle className="text-sm">Context</SheetTitle>
+                <SheetDescription className="text-xs">
+                  Session details and local connection.
+                </SheetDescription>
+              </SheetHeader>
+              <ScrollArea className="min-h-0 flex-1">
+                {!inbox && selected && <SessionDetails session={selected} />}
+                <section
+                  aria-label="Connection"
+                  className="space-y-5 border-t p-5"
                 >
-                  <PanelRight />
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="gap-0 bg-card">
-                <SheetHeader className="border-b px-5 py-4">
-                  <SheetTitle className="text-sm">Kontekst sesji</SheetTitle>
-                  <SheetDescription>
-                    Informacje o sesji i zakresie analizy.
-                  </SheetDescription>
-                </SheetHeader>
-                <ScrollArea className="min-h-0 flex-1">
-                  <SessionDetails session={selected} />
-                </ScrollArea>
-              </SheetContent>
-            </Sheet>
-          )}
+                  <h2 className="text-xs font-medium">Connection</h2>
+                  <HostStatus
+                    connection={store.connection}
+                    onRefresh={store.refresh}
+                  />
+                  {providers.map(provider => {
+                    const state = store.providerStates[provider];
+                    return (
+                      <div key={provider} className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium">
+                            {provider}
+                          </span>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Refresh ${provider} status`}
+                            title={`Refresh ${provider} status`}
+                            disabled={state.loading}
+                            onClick={() => void store.refreshProvider(provider)}
+                          >
+                            <RefreshCw />
+                          </Button>
+                        </div>
+                        <p
+                          role="status"
+                          className="text-xs text-muted-foreground"
+                        >
+                          {providerStatusLabel(provider, state)}
+                        </p>
+                        {state.error && (
+                          <p
+                            role="alert"
+                            className="text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+                          >
+                            {state.error}
+                          </p>
+                        )}
+                        {state.status?.detail && (
+                          <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                            {state.status.detail}
+                          </p>
+                        )}
+                        {state.status?.status === 'unauthenticated' && (
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            Sign in from your terminal with{' '}
+                            <code>
+                              {provider === 'Claude Code'
+                                ? 'claude auth login'
+                                : 'codex login'}
+                            </code>
+                            , then refresh status.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </section>
+              </ScrollArea>
+            </SheetContent>
+          </Sheet>
         </header>
-        {(store.error || noticeProviders.length > 0) && (
-          <div className="max-h-40 shrink-0 space-y-2 overflow-y-auto border-b bg-card/50 px-5 py-3 text-xs lg:px-8">
-            {store.error && (
-              <div role="alert" className="space-y-2">
-                <p className="leading-relaxed text-destructive [overflow-wrap:anywhere]">
-                  {store.error}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => window.location.reload()}
-                >
-                  Odśwież okno
-                </Button>
-              </div>
-            )}
-            {noticeProviders.map(provider => {
-              const state = store.providerStates[provider];
-              return (
-                <div key={provider} className="space-y-2">
-                  {state.error && (
-                    <p
-                      role="alert"
-                      className="text-destructive [overflow-wrap:anywhere]"
-                    >
-                      {state.error}
-                    </p>
-                  )}
-                  <span role="status">
-                    {providerStatusLabel(provider, state)}
-                  </span>
-                  {state.status?.detail && (
-                    <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
-                      {state.status.detail}
-                    </p>
-                  )}
-                  {state.status?.status === 'unauthenticated' && (
-                    <p className="text-muted-foreground">
-                      Zaloguj się w terminalu poleceniem{' '}
-                      <code>
-                        {provider === 'Claude Code'
-                          ? 'claude auth login'
-                          : 'codex login'}
-                      </code>
-                      , a następnie odśwież status.
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+        {store.error && (
+          <div className="flex max-h-32 shrink-0 flex-wrap items-center gap-3 overflow-y-auto border-b px-5 py-2.5">
+            <p
+              role="alert"
+              className="min-w-0 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+            >
+              {store.error}
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => window.location.reload()}
+            >
+              Reload window
+            </Button>
+          </div>
+        )}
+        {providerIssue && selected && (
+          <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-2">
+            <p
+              role={providerIssue.error ? 'alert' : 'status'}
+              className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
+            >
+              {providerIssue.error ||
+                providerStatusLabel(selected.provider, providerIssue)}
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 text-xs text-muted-foreground"
+              onClick={() => setDetailsOpen(true)}
+            >
+              View status
+            </Button>
           </div>
         )}
         <main className="flex min-h-0 min-w-0 flex-1">
@@ -670,63 +691,31 @@ export function Workspace() {
           ) : (
             <section
               className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center"
-              aria-label="Lista sesji"
+              aria-label="Sessions"
             >
-              <MessageSquare className="mb-1 size-5 text-muted-foreground" />
               <h2 className="text-2xl font-medium tracking-tight">
                 {store.loading
-                  ? 'Wczytywanie sesji…'
+                  ? 'Loading sessions…'
                   : store.error
-                    ? 'Historia jest niedostępna'
-                    : 'Zacznij nową rozmowę'}
+                    ? 'History is unavailable'
+                    : 'What would you like to work on?'}
               </h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
                 {store.loading
-                  ? 'Odczytujemy lokalną historię.'
+                  ? 'Loading your local history.'
                   : store.error
-                    ? 'Odśwież połączenie, aby ponowić odczyt zapisanych sesji.'
-                    : 'Wybierz providera, utwórz sesję i opisz zadanie.'}
+                    ? 'Reconnect to load your saved sessions.'
+                    : 'Create a session with your preferred agent.'}
               </p>
               {!store.loading && !store.error && (
                 <Button onClick={openCreate}>
                   <Plus />
-                  Nowa sesja
+                  New session
                 </Button>
               )}
             </section>
           )}
         </main>
-        <footer className="flex min-h-7 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border/60 px-4 py-0.5 text-[10px] text-muted-foreground lg:px-5">
-          <span>
-            {selected && !inbox
-              ? modeLabels[selected.mode]
-              : 'Przestrzeń lokalna'}
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            {providers.map(provider => (
-              <Button
-                key={provider}
-                size="sm"
-                variant="ghost"
-                className="h-5 gap-1 px-1 text-[10px] text-muted-foreground [&_svg]:size-3"
-                aria-label={`Odśwież status ${provider}`}
-                title={providerStatusLabel(
-                  provider,
-                  store.providerStates[provider],
-                )}
-                disabled={store.providerStates[provider].loading}
-                onClick={() => void store.refreshProvider(provider)}
-              >
-                <RefreshCw />
-                {provider}
-              </Button>
-            ))}
-            <HostStatus
-              connection={store.connection}
-              onRefresh={store.refresh}
-            />
-          </div>
-        </footer>
       </div>
       {creating && (
         <CreateSession

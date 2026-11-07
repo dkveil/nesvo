@@ -8,7 +8,7 @@ import {
   Search,
 } from 'lucide-react';
 import {
-  roleLabels,
+  sessionRoleLabel,
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
@@ -54,23 +54,21 @@ export function SessionSidebar({
     <Button
       key={session.id}
       variant={!inbox && selectedId === session.id ? 'secondary' : 'ghost'}
-      title={`${session.provider} · ${roleLabels[session.role]}`}
-      className={`h-auto min-h-10 w-full justify-start gap-2 py-1.5 text-left text-[13px] font-normal ${child ? 'pr-2 pl-5' : 'px-2'}`}
+      title={`${session.provider} · ${sessionRoleLabel(session) || 'Session'} · ${sessionStatusLabel(session)}`}
+      className={`grid h-8 w-full grid-cols-[0.875rem_minmax(0,1fr)_auto] items-center gap-x-2.5 overflow-hidden py-1 text-left text-[13px] font-normal ${child ? 'pr-3 pl-5' : 'pr-3 pl-2'}`}
       onClick={() => onSelect(session.id)}
       aria-current={!inbox && selectedId === session.id ? 'page' : undefined}
     >
       {child ? (
-        <CornerDownRight className="size-3.5 text-muted-foreground" />
-      ) : session.role === 'orchestrator' ? (
-        <GitBranch className="size-3.5 text-muted-foreground" />
+        <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : sessionRoleLabel(session) === 'Orchestrator' ? (
+        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
       ) : (
-        <MessageSquare className="size-3.5 text-muted-foreground" />
+        <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
       )}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">{session.title}</span>
-        <span className="block truncate pt-0.5 text-[11px] font-normal text-muted-foreground">
-          {roleLabels[session.role]} · {sessionStatusLabel(session)}
-        </span>
+      <span className="min-w-0 flex-1 truncate">{session.title}</span>
+      <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
+        {session.status === 'ready' ? '' : sessionStatusLabel(session)}
       </span>
     </Button>
   );
@@ -82,8 +80,8 @@ export function SessionSidebar({
           variant="ghost"
           size="icon-sm"
           className="size-7 text-muted-foreground"
-          aria-label="Nowa sesja"
-          title="Nowa sesja"
+          aria-label="New session"
+          title="New session"
           onClick={onCreate}
         >
           <Plus className="size-4" />
@@ -97,10 +95,10 @@ export function SessionSidebar({
           aria-current={inbox ? 'page' : undefined}
         >
           <Inbox className="size-3.5 text-muted-foreground" />
-          Do decyzji
+          Inbox
           {pendingActions > 0 && (
             <span
-              aria-label={`${pendingActions} spraw do decyzji`}
+              aria-label={`${pendingActions} pending items`}
               className="ml-auto text-xs tabular-nums text-muted-foreground"
             >
               {pendingActions}
@@ -113,8 +111,8 @@ export function SessionSidebar({
             aria-hidden="true"
           />
           <Input
-            aria-label="Szukaj sesji"
-            placeholder="Szukaj sesji…"
+            aria-label="Search sessions"
+            placeholder="Search sessions…"
             className="h-8 border-transparent bg-transparent pl-7 text-xs shadow-none placeholder:text-muted-foreground/80 focus-visible:border-input focus-visible:ring-1 dark:bg-transparent"
             value={search}
             onChange={event => setSearch(event.target.value)}
@@ -122,9 +120,9 @@ export function SessionSidebar({
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <nav aria-label="Sesje" className="space-y-1 px-2.5 pb-4">
+        <nav aria-label="Sessions" className="space-y-1 px-2.5 pb-4">
           <p className="px-2 pb-2 text-[11px] font-medium text-muted-foreground">
-            Sesje
+            Sessions
           </p>
           {filtered.map(root => (
             <div key={root.id} className="space-y-0.5">
@@ -145,14 +143,11 @@ export function SessionSidebar({
           ))}
           {filtered.length === 0 && (
             <p className="px-2 py-6 text-sm text-muted-foreground">
-              {search ? 'Brak pasujących sesji.' : 'Brak zapisanych sesji.'}
+              {search ? 'No matching sessions.' : 'No sessions yet.'}
             </p>
           )}
         </nav>
       </ScrollArea>
-      <p className="border-t px-4 py-3 text-[11px] text-muted-foreground">
-        Przestrzeń lokalna
-      </p>
     </div>
   );
 }

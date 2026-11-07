@@ -1,84 +1,76 @@
-import { Folder, ShieldCheck } from 'lucide-react';
 import {
   modelLabel,
   modeLabels,
-  roleLabels,
+  sessionRoleLabel,
   statusLabels,
   type Session,
 } from '@/entities/session';
-import { Separator } from '@/shared/ui/separator';
 
 type Props = { session: Session };
 
 export function SessionDetails({ session }: Props) {
+  const role = sessionRoleLabel(session);
   return (
-    <div className="space-y-7 p-5">
-      <section aria-label="Informacje o sesji" className="space-y-4">
-        <h2 className="text-xs font-medium">Szczegóły sesji</h2>
+    <div className="space-y-6 p-5">
+      <section aria-label="Session details" className="space-y-4">
+        <h2 className="text-xs font-medium">Session</h2>
         <dl className="space-y-3 text-xs">
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Rola</dt>
-            <dd>{roleLabels[session.role]}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
+          {role && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Role</dt>
+              <dd>{role}</dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-3">
             <dt className="text-muted-foreground">Provider</dt>
             <dd>{session.provider}</dd>
           </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Wybrany model</dt>
-            <dd>{modelLabel(session.model)}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Model uruchomienia</dt>
-            <dd className="break-all text-right">
-              {session.actualModel ?? 'Po wysłaniu wiadomości'}
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Model</dt>
+            <dd className="min-w-0 break-all text-right">
+              {session.actualModel ?? modelLabel(session.model)}
             </dd>
           </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">Stan</dt>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Status</dt>
             <dd>{statusLabels[session.status]}</dd>
           </div>
+          <div className="space-y-1">
+            <dt className="text-muted-foreground">Working directory</dt>
+            <dd className="break-all leading-5">{session.directory}</dd>
+          </div>
         </dl>
-        <div className="flex items-start gap-2 text-xs text-muted-foreground">
-          <Folder className="mt-0.5 size-4 shrink-0" />
-          <span className="min-w-0 break-all leading-relaxed">
-            {session.directory}
-          </span>
-        </div>
       </section>
       {session.scope && (
         <section className="space-y-2">
-          <h2 className="text-xs font-medium">Zakres workera</h2>
-          <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+          <h2 className="text-xs font-medium">Worker scope</h2>
+          <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
             {session.scope}
           </p>
         </section>
       )}
-      <Separator />
-      <section className="space-y-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <ShieldCheck className="size-4" />
-          {modeLabels[session.mode]}
-        </h2>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+      <section className="space-y-2 border-t pt-5">
+        <h2 className="text-xs font-medium">{modeLabels[session.mode]}</h2>
+        <p className="text-xs leading-5 text-muted-foreground">
           {session.provider === 'Claude Code'
-            ? 'Claude Code może czytać i wyszukiwać pliki. Edycja i polecenia terminala są wyłączone.'
+            ? 'File reading and search. Editing and shell commands are disabled.'
             : session.mode === 'read-only'
-              ? 'Codex może czytać pliki i uruchamiać polecenia służące do odczytu. Zapis plików i podwyższanie uprawnień są wyłączone.'
-              : 'Codex może zmieniać pliki w katalogu pracy. O zgodę zapyta przy operacjach wymagających potwierdzenia; nie każda zmiana wymaga zgody. Decyzja dotyczy jednej operacji.'}
+              ? 'File reading and read commands. Writes and elevated access are disabled.'
+              : 'Files can be edited in this directory. Codex asks for approval when required; not every change needs confirmation.'}
         </p>
       </section>
-      <Separator />
-      <section className="space-y-3">
-        <h2 className="text-xs font-medium">Delegacja</h2>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+      <section className="space-y-2 border-t pt-5">
+        <h2 className="text-xs font-medium">Workers</h2>
+        <p className="text-xs leading-5 text-muted-foreground">
           {session.parentId
-            ? 'Ta sesja wykonuje zadanie orkiestratora i przekazuje mu wynik. Worker nie tworzy kolejnych workerów. Stop zatrzymuje tylko tę sesję.'
+            ? 'This worker returns its result to the parent session. Stop affects this worker only. Workers cannot delegate.'
             : session.delegationEnabled
-              ? 'Orkiestrator proponuje do dwóch workerów. Przed uruchomieniem zatwierdzasz każdego osobno. Stop grupy zatrzymuje orkiestratora i jego workerów.'
+              ? session.mode === 'supervised'
+                ? 'Describe a task that needs parallel work to receive worker proposals. Each worker needs your approval. Workspace-editing sessions can delegate read-only work.'
+                : 'Describe a task that needs parallel work to receive worker proposals. Approve each worker and its access before it starts. Stop group stops the parent and its workers.'
               : session.provider === 'Claude Code'
-                ? 'Ta sesja Claude Code działa bez delegacji.'
-                : 'Ta sesja działa bez delegacji. Utwórz nową sesję Codex z rolą Orkiestrator, aby zatwierdzać propozycje workerów.'}
+                ? 'Worker delegation is not available for Claude Code here.'
+                : 'Start a new session to delegate workers. This existing provider thread keeps its original capabilities.'}
         </p>
       </section>
     </div>
