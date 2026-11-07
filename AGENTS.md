@@ -4,6 +4,7 @@
 
 This repository contains the approved desktop prototype, planned for November 16, 2026.
 P0, P1, the delivered Codex scope of P3 and P4 are accepted. D52 authorizes P5, a durable review inbox with revision-bound acceptance and corrections. Real Claude success evidence remains open in P2 after the D50 exception. Read docs/roadmap.md and the linked Linear issue before starting a package.
+D57 authorizes both persisted agent activity and the saved-result diff side panel as one P5 refinement, with no intermediate approval pause. Live workspace diffs remain outside this package.
 Finish a small stage, provide a working demonstration and evidence, then wait for Damian's acceptance before starting the next stage.
 In Review means ready for the owner; Done requires his explicit acceptance. Keep Linear status and STATUS comments current.
 Discuss changes in Polish. Write code, repository documentation and commit messages in English. English is the default application language, including labels, validation, accessibility text and host-generated messages. Preserve user and provider content in its original language.
