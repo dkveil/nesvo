@@ -12,6 +12,7 @@ const directory = await realpath(
 const pidFile = join(directory, 'processes.json');
 const providerPidFile = join(directory, 'provider.json');
 const codexPidFile = join(directory, 'codex-provider.json');
+const workerPidDirectory = join(directory, 'worker-processes');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
 const executablePath =
   process.env.NESVO_PACKAGED_EXECUTABLE || requireDesktop('electron');
@@ -24,6 +25,7 @@ const env = {
   NESVO_FIXTURE_PID_FILE: providerPidFile,
   NESVO_CODEX_EXECUTABLE: resolve('apps/host/tests/codex-fixture.mjs'),
   NESVO_CODEX_FIXTURE_PID_FILE: codexPidFile,
+  NESVO_CODEX_FIXTURE_PID_DIR: workerPidDirectory,
 };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
@@ -40,6 +42,7 @@ const alive = pid => {
 const waitDead = async pid => {
   for (let attempt = 0; attempt < 60 && alive(pid); attempt++) await delay(100);
   assert.equal(alive(pid), false, `Owned process ${pid} must exit`);
+  providerPids.delete(pid);
 };
 try {
   application = await electron.launch({
@@ -242,6 +245,12 @@ try {
     .getByRole('option', { name: 'Codex fixture', exact: true })
     .click();
   await dialog
+    .getByRole('combobox', { name: 'Rola sesji', exact: true })
+    .click();
+  await page
+    .getByRole('option', { name: 'Samodzielna sesja', exact: true })
+    .click();
+  await dialog
     .getByRole('combobox', { name: 'Tryb pracy', exact: true })
     .click();
   await page
@@ -332,6 +341,183 @@ try {
     ),
     [],
   );
+  await page
+    .getByRole('button', { name: 'Nowa sesja', exact: true })
+    .first()
+    .click();
+  await dialog
+    .getByRole('textbox', { name: 'Nazwa sesji' })
+    .fill('Orkiestracja prototypu');
+  await dialog.getByRole('combobox', { name: 'Provider', exact: true }).click();
+  await page.getByRole('option', { name: 'Codex', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Model', exact: true }).click();
+  await page
+    .getByRole('option', { name: 'Codex fixture', exact: true })
+    .click();
+  await dialog
+    .getByRole('combobox', { name: 'Rola sesji', exact: true })
+    .click();
+  await page.getByRole('option', { name: 'Orkiestrator', exact: true }).click();
+  assert.equal(
+    await dialog
+      .getByRole('combobox', { name: 'Tryb pracy', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await dialog
+    .getByRole('button', { name: 'Utwórz sesję', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Orkiestracja prototypu', exact: true })
+    .waitFor();
+  const orchestrator = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.title === 'Orkiestracja prototypu');
+  assert.equal(orchestrator.delegationEnabled, true);
+  const proposal = title =>
+    page
+      .getByRole('region', { name: 'Propozycja workera', exact: true })
+      .filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+  await send('fixture:delegate');
+  await proposal('Fixture worker A').waitFor();
+  await proposal('Fixture worker B').waitFor();
+  assert.equal(
+    (await page.evaluate(() => window.nesvo.listSessions())).filter(
+      session => session.parentId === orchestrator.id,
+    ).length,
+    0,
+  );
+  await screenshot('-delegation');
+  await proposal('Fixture worker A')
+    .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+    .click();
+  await proposal('Fixture worker B')
+    .getByRole('button', { name: 'Odrzuć propozycję', exact: true })
+    .click();
+  const firstDelegation = await waitState(orchestrator.id, 'completed');
+  const delegationResult = JSON.parse(
+    firstDelegation.messages
+      .at(-1)
+      .body.slice('Codex delegation results: '.length),
+  );
+  assert.deepEqual(
+    delegationResult.results.map(result => result.status),
+    ['completed', 'declined'],
+  );
+  assert.match(delegationResult.results[0].text, /worker a completed/);
+  await proposal('Fixture worker A')
+    .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Fixture worker A', exact: true })
+    .waitFor();
+  await page
+    .getByText('Codex worker a completed its scoped task.', { exact: true })
+    .waitFor();
+  await page
+    .getByRole('button', { name: 'Wróć do orkiestratora', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Orkiestracja prototypu', exact: true })
+    .waitFor();
+  const waitWorkers = async runId => {
+    const deadline = Date.now() + 20_000;
+    let children = [];
+    while (Date.now() < deadline) {
+      children = await page.evaluate(
+        async ({ id, runId }) =>
+          (await window.nesvo.listSessions()).filter(
+            session => session.parentId === id && session.parentRunId === runId,
+          ),
+        { id: orchestrator.id, runId },
+      );
+      if (
+        children.length === 2 &&
+        children.every(
+          child =>
+            child.status === 'running' &&
+            child.messages.at(-1).body.includes('is waiting.'),
+        )
+      )
+        break;
+      await delay(100);
+    }
+    assert.equal(children.length, 2);
+    for (const child of children) {
+      assert.equal(child.status, 'running');
+      assert.equal(child.delegationEnabled, false);
+      const pids = JSON.parse(
+        await readFile(
+          join(workerPidDirectory, `${child.providerSessionId}.json`),
+          'utf8',
+        ),
+      );
+      assert.ok(alive(pids.pid));
+      assert.ok(alive(pids.childPid));
+      providerPids.add(pids.pid);
+      providerPids.add(pids.childPid);
+      child.fixturePids = [pids.pid, pids.childPid];
+    }
+    return children;
+  };
+  const launchWorkers = async () => {
+    await send('fixture:delegate-two-hold');
+    await proposal('Fixture worker A')
+      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .waitFor();
+    const current = (
+      await page.evaluate(() => window.nesvo.listSessions())
+    ).find(session => session.id === orchestrator.id);
+    await proposal('Fixture worker A')
+      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .click();
+    await proposal('Fixture worker B')
+      .getByRole('button', { name: 'Zatwierdź workera', exact: true })
+      .click();
+    return { parent: current, children: await waitWorkers(current.runId) };
+  };
+  const concurrent = await launchWorkers();
+  const childA = concurrent.children.find(
+    child => child.title === 'Fixture worker A',
+  );
+  const childB = concurrent.children.find(
+    child => child.title === 'Fixture worker B',
+  );
+  await screenshot('-workers');
+  await proposal('Fixture worker A')
+    .getByRole('button', { name: 'Otwórz sesję workera', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Fixture worker A', exact: true })
+    .waitFor();
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await waitState(childA.id, 'stopped');
+  await Promise.all(childA.fixturePids.map(waitDead));
+  const sibling = (await page.evaluate(() => window.nesvo.listSessions())).find(
+    session => session.id === childB.id,
+  );
+  assert.equal(sibling.status, 'running');
+  for (const pid of childB.fixturePids) assert.ok(alive(pid));
+  await page
+    .getByRole('button', { name: 'Wróć do orkiestratora', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Stop grupy', exact: true }).click();
+  await waitState(orchestrator.id, 'stopped');
+  await waitState(childB.id, 'stopped');
+  await Promise.all(childB.fixturePids.map(waitDead));
+  await page.reload();
+  await navigation
+    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .click();
+  const reloadedGroup = (
+    await page.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === orchestrator.id);
+  assert.equal(reloadedGroup.status, 'stopped');
+  assert.ok(
+    reloadedGroup.delegations
+      .filter(item => item.runId === concurrent.parent.runId)
+      .every(item => item.status === 'stopped'),
+  );
   await page.getByRole('button', { name: 'Do odbioru', exact: true }).click();
   assert.equal(
     await page.getByRole('button', { name: 'Zaakceptuj wynik' }).count(),
@@ -379,23 +565,25 @@ try {
   );
   await screenshot('-compact');
   await page.getByRole('button', { name: 'Otwórz listę sesji' }).click();
-  await sidebar.getByRole('button', { name: /^Codex nadzorowany/ }).click();
+  await sidebar
+    .getByRole('button', { name: /^Orkiestracja prototypu/ })
+    .click();
   await sidebar.waitFor({ state: 'hidden' });
-  await send('fixture:approval-hold');
-  await approval.waitFor();
-  await waitOwned('Codex');
+  await launchWorkers();
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
+  const closedHostPid = hostPid;
   await Promise.all([...providerPids, hostPid].map(waitDead));
+  hostPid = undefined;
   console.log(
     JSON.stringify({
       result: 'passed',
-      provider: 'Claude Code and Codex fixtures',
+      provider: 'Claude Code and Codex delegation fixtures',
       platform: process.platform,
       electron: versions.electron,
       node: versions.node,
-      hostPid,
+      hostPid: closedHostPid,
     }),
   );
 } finally {

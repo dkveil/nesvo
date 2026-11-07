@@ -6,8 +6,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
+  symlink,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,6 +53,7 @@ function launch(directory, pidFile) {
       NESVO_FIXTURE_PID_FILE: pidFile,
       NESVO_CODEX_EXECUTABLE: codexFixturePath,
       NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
+      NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -158,18 +161,20 @@ function alive(pid) {
   }
 }
 
-async function processesGone(pids) {
+async function processesGone(pids, tracked) {
   const deadline = Date.now() + 5000;
   while (pids.some(alive) && Date.now() < deadline) await delay(30);
-  for (const pid of pids)
+  for (const pid of pids) {
     assert.equal(alive(pid), false, `Owned PID ${pid} leaked`);
+    tracked.delete(pid);
+  }
 }
 
 const agent = session => session.messages.at(-1);
 
 test(
   'host migrates and persists sessions, streams, resumes and owns cancellation',
-  { timeout: 90_000 },
+  { timeout: 120_000 },
   async t => {
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-host-')),
@@ -177,7 +182,7 @@ test(
     const workspace = join(directory, 'non-git-workspace');
     const pidFile = join(directory, 'fixture-pids.json');
     const children = [];
-    const ownedPids = [];
+    const ownedPids = new Set();
     t.after(async () => {
       for (const host of children) {
         if (host.child.exitCode === null && host.child.signalCode === null) {
@@ -328,7 +333,7 @@ test(
       assert.equal(pids.sessionId, session.providerSessionId);
       assert.ok(alive(pids.pid));
       assert.ok(alive(pids.childPid));
-      ownedPids.push(pids.pid, pids.childPid);
+      ownedPids.add(pids.pid).add(pids.childPid);
       return { started, pids: [pids.pid, pids.childPid] };
     };
     const held = await hold(host);
@@ -355,7 +360,7 @@ test(
     );
     assert.equal(agent(stopped).state, 'stopped');
     assert.equal(agent(stopped).body, 'Fixture is waiting.');
-    await processesGone(held.pids);
+    await processesGone(held.pids, ownedPids);
     for (const text of ['fixture:fail', 'fixture:result-fail']) {
       const failedRun = (
         await host.request('send-message', {
@@ -398,7 +403,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 4);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -431,9 +436,36 @@ test(
     agent(interrupted).state = 'running';
     delete interrupted.mode;
     delete interrupted.pendingApprovals;
+    delete interrupted.parentId;
+    delete interrupted.parentRunId;
+    delete interrupted.scope;
+    delete interrupted.delegationEnabled;
+    delete interrupted.delegations;
     recovery
       .prepare('UPDATE sessions SET document = ? WHERE id = ?')
       .run(JSON.stringify(interrupted), session.id);
+    const legacyCodexId = randomUUID();
+    const legacyCodex = {
+      ...interrupted,
+      id: legacyCodexId,
+      provider: 'Codex',
+      providerSessionId: null,
+      providerInitialized: false,
+      model: 'default',
+      actualModel: null,
+      role: 'orchestrator',
+      title: 'Legacy Codex orchestrator',
+      status: 'ready',
+      runId: null,
+      messages: [],
+      activity: null,
+      error: null,
+    };
+    recovery
+      .prepare(
+        'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?)',
+      )
+      .run(legacyCodexId, JSON.stringify(legacyCodex), legacyCodex.updatedAt);
     recovery.exec('PRAGMA user_version = 2');
     recovery.close();
     const recovered = open();
@@ -452,9 +484,17 @@ test(
     assert.equal(recoveredSession.mode, 'read-only');
     assert.deepEqual(recoveredSession.pendingApprovals, []);
     assert.equal(recoveredSession.provider, 'Claude Code');
+    assert.equal(recoveredSession.delegationEnabled, false);
+    assert.deepEqual(recoveredSession.delegations, []);
+    const legacySession = (
+      await recovered.request('list-sessions')
+    ).sessions.find(value => value.id === legacyCodexId);
+    assert.equal(legacySession.role, 'orchestrator');
+    assert.equal(legacySession.delegationEnabled, false);
+    assert.deepEqual(legacySession.delegations, []);
     const shutdownRun = await hold(recovered);
     await recovered.stop();
-    await processesGone(shutdownRun.pids);
+    await processesGone(shutdownRun.pids, ownedPids);
     assert.equal(
       recovered.observed.some(
         value =>
@@ -692,7 +732,7 @@ test(
       assert.equal(pids.sessionId, pending.pending.providerSessionId);
       assert.ok(alive(pids.pid));
       assert.ok(alive(pids.childPid));
-      ownedPids.push(pids.pid, pids.childPid);
+      ownedPids.add(pids.pid).add(pids.childPid);
       return { ...pending, pids: [pids.pid, pids.childPid] };
     };
     const approvalStopped = await codexHold(finalHost);
@@ -705,7 +745,7 @@ test(
         value.runId === approvalStopped.run.runId && value.status === 'stopped',
     );
     assert.deepEqual(stoppedApproval.pendingApprovals, []);
-    await processesGone(approvalStopped.pids);
+    await processesGone(approvalStopped.pids, ownedPids);
     assert.equal(
       (
         await finalHost.request(
@@ -734,14 +774,348 @@ test(
     );
     const awaitingShutdown = await codexHold(codexReopened);
     await codexReopened.stop();
-    await processesGone(awaitingShutdown.pids);
+    await processesGone(awaitingShutdown.pids, ownedPids);
     const checked = open();
     const shutdownSession = (
       await checked.request('list-sessions')
     ).sessions.find(value => value.id === supervised.id);
     assert.equal(shutdownSession.status, 'stopped');
     assert.deepEqual(shutdownSession.pendingApprovals, []);
+    const legacyRun = await sendCodex(
+      checked,
+      legacySession,
+      'fixture:continue',
+    );
+    const legacyCompleted = await checked.event(
+      value =>
+        value.id === legacySession.id &&
+        value.runId === legacyRun.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(legacyCompleted.delegationEnabled, false);
+    const rootResponse = await checked.request('create-session', {
+      ...create(''),
+      provider: 'Codex',
+      model: 'fixture-codex',
+      role: 'orchestrator',
+      mode: 'read-only',
+    });
+    assert.equal(rootResponse.type, 'session', JSON.stringify(rootResponse));
+    const root = rootResponse.session;
+    assert.equal(root.delegationEnabled, true);
+    assert.equal(root.parentId, null);
+    const outside = join(directory, 'outside-delegation');
+    await mkdir(outside);
+    await symlink(
+      outside,
+      join(root.directory, 'outside-link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const plan = async (currentHost, prompt = 'fixture:delegate') => {
+      const run = await sendCodex(currentHost, root, prompt);
+      const pending = await currentHost.event(
+        value =>
+          value.id === root.id &&
+          value.runId === run.runId &&
+          value.delegations.filter(item => item.runId === run.runId).length > 0,
+      );
+      const proposals = pending.delegations.filter(
+        item => item.runId === run.runId,
+      );
+      assert.ok(
+        proposals.every(
+          item => item.status === 'pending' && item.childSessionId === null,
+        ),
+      );
+      return { run, proposals };
+    };
+    const decide = (currentHost, planned, proposal, decision, overrides = {}) =>
+      currentHost.request('decide-delegation', {
+        sessionId: root.id,
+        runId: planned.run.runId,
+        delegationId: proposal.id,
+        decision,
+        ...overrides,
+      });
+    const parentResult = async (currentHost, planned) => {
+      const completed = await currentHost.event(
+        value =>
+          value.id === root.id &&
+          value.runId === planned.run.runId &&
+          value.status === 'completed',
+      );
+      assert.ok(agent(completed).body.startsWith('Codex delegation results: '));
+      return {
+        parent: completed,
+        result: JSON.parse(
+          agent(completed).body.slice('Codex delegation results: '.length),
+        ),
+      };
+    };
+    const beforeProposalPids = (await readdir(pidFile + '.workers')).sort();
+    const firstPlan = await plan(checked);
+    assert.equal(firstPlan.proposals.length, 2);
+    assert.equal(
+      (await checked.request('list-sessions')).sessions.filter(
+        value => value.parentId === root.id,
+      ).length,
+      0,
+    );
+    assert.deepEqual(
+      (await readdir(pidFile + '.workers')).sort(),
+      beforeProposalPids,
+    );
+    for (const overrides of [
+      { sessionId: supervised.id },
+      { runId: randomUUID() },
+      { delegationId: randomUUID() },
+    ]) {
+      assert.equal(
+        (
+          await decide(
+            checked,
+            firstPlan,
+            firstPlan.proposals[0],
+            'accept',
+            overrides,
+          )
+        ).code,
+        'invalid-request',
+      );
+    }
+    assert.equal(
+      (await decide(checked, firstPlan, firstPlan.proposals[0], 'accept')).type,
+      'session',
+    );
+    const firstChild = await checked.event(
+      value =>
+        value.parentId === root.id &&
+        value.parentRunId === firstPlan.run.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(firstChild.title, 'Fixture worker A');
+    assert.equal(firstChild.role, 'worker');
+    assert.equal(firstChild.delegationEnabled, false);
+    assert.equal(firstChild.scope, firstPlan.proposals[0].scope);
+    assert.equal(firstChild.messages[0].body, firstPlan.proposals[0].task);
+    assert.match(agent(firstChild).body, /worker a completed/);
+    assert.equal(
+      (await decide(checked, firstPlan, firstPlan.proposals[0], 'accept')).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await decide(checked, firstPlan, firstPlan.proposals[1], 'decline'))
+        .type,
+      'session',
+    );
+    const firstResults = await parentResult(checked, firstPlan);
+    assert.deepEqual(
+      firstResults.result.results.map(value => value.status),
+      ['completed', 'declined'],
+    );
+    assert.equal(firstResults.result.results[0].childSessionId, firstChild.id);
+    assert.match(firstResults.result.results[0].text, /worker a completed/);
+    assert.equal(firstResults.result.results[1].childSessionId, null);
+
+    for (const prompt of [
+      'fixture:delegate-too-many',
+      'fixture:delegate-escape',
+      'fixture:delegate-symlink',
+      'fixture:delegate-overlap',
+    ]) {
+      const invalid = await sendCodex(checked, root, prompt);
+      const result = await parentResult(checked, { run: invalid });
+      assert.ok(result.result.error, JSON.stringify(result));
+      assert.equal(
+        result.parent.delegations.filter(item => item.runId === invalid.runId)
+          .length,
+        0,
+      );
+    }
+    const mixed = await plan(checked, 'fixture:delegate-mixed');
+    for (const proposal of mixed.proposals)
+      assert.equal(
+        (await decide(checked, mixed, proposal, 'accept')).type,
+        'session',
+      );
+    const mixedResults = await parentResult(checked, mixed);
+    assert.deepEqual(
+      mixedResults.result.results.map(value => value.status),
+      ['completed', 'failed'],
+    );
+    const mixedChildren = (
+      await checked.request('list-sessions')
+    ).sessions.filter(value => value.parentRunId === mixed.run.runId);
+    for (const item of mixedResults.result.results) {
+      const child = mixedChildren.find(
+        value => value.id === item.childSessionId,
+      );
+      assert.equal(child.parentId, root.id);
+      assert.equal(child.status, item.status);
+      if (item.status === 'failed') assert.match(item.error, /worker b failed/);
+    }
+    const recursive = await plan(checked, 'fixture:delegate-recursive');
+    await decide(checked, recursive, recursive.proposals[0], 'accept');
+    const recursiveResult = await parentResult(checked, recursive);
+    assert.equal(recursiveResult.result.results[0].status, 'failed');
+    const recursiveChildId = recursiveResult.result.results[0].childSessionId;
+    assert.equal(
+      (await checked.request('list-sessions')).sessions.some(
+        value => value.parentId === recursiveChildId,
+      ),
+      false,
+    );
+
+    const runningChildren = async (currentHost, planned) => {
+      for (const proposal of planned.proposals)
+        assert.equal(
+          (await decide(currentHost, planned, proposal, 'accept')).type,
+          'session',
+        );
+      const workers = [];
+      for (const label of ['a', 'b']) {
+        const child = await currentHost.event(
+          value =>
+            value.parentId === root.id &&
+            value.parentRunId === planned.run.runId &&
+            value.status === 'running' &&
+            agent(value)?.body.includes(`Codex worker ${label} is waiting.`),
+        );
+        const pids = JSON.parse(
+          await readFile(
+            join(pidFile + '.workers', `${child.providerSessionId}.json`),
+            'utf8',
+          ),
+        );
+        ownedPids.add(pids.pid).add(pids.childPid);
+        assert.ok(alive(pids.pid));
+        assert.ok(alive(pids.childPid));
+        assert.equal(child.delegationEnabled, false);
+        workers.push({ child, pids: [pids.pid, pids.childPid] });
+      }
+      return workers;
+    };
+    const concurrent = await plan(checked, 'fixture:delegate-two-hold');
+    const workers = await runningChildren(checked, concurrent);
+    for (const label of ['a', 'b'])
+      await checked.event(
+        value =>
+          value.parentRunId === concurrent.run.runId &&
+          agent(value)?.body.includes(`${label}:2`),
+      );
+    assert.equal((await checked.request('health')).health.status, 'ready');
+    assert.equal(
+      (
+        await checked.request('send-message', {
+          sessionId: supervised.id,
+          messageId: randomUUID(),
+          text: 'fixture:stream',
+        })
+      ).code,
+      'busy',
+    );
+    await checked.request('stop-run', {
+      sessionId: workers[0].child.id,
+      runId: workers[0].child.runId,
+    });
+    await checked.event(
+      value => value.id === workers[0].child.id && value.status === 'stopped',
+    );
+    await processesGone(workers[0].pids, ownedPids);
+    const aliveGroup = (await checked.request('list-sessions')).sessions;
+    assert.equal(
+      aliveGroup.find(value => value.id === workers[1].child.id).status,
+      'running',
+    );
+    assert.equal(
+      aliveGroup.find(value => value.id === root.id).status,
+      'running',
+    );
+    for (const pid of workers[1].pids) assert.ok(alive(pid));
+    await checked.request('stop-run', {
+      sessionId: root.id,
+      runId: concurrent.run.runId,
+    });
+    const stoppedGroup = await checked.event(
+      value =>
+        value.id === root.id &&
+        value.runId === concurrent.run.runId &&
+        value.status === 'stopped',
+    );
+    assert.ok(
+      stoppedGroup.delegations
+        .filter(item => item.runId === concurrent.run.runId)
+        .every(item => item.status === 'stopped'),
+    );
+    await processesGone(workers[1].pids, ownedPids);
+    const stoppedRevision = stoppedGroup.revision;
+    await delay(200);
+    const settled = (await checked.request('list-sessions')).sessions.find(
+      value => value.id === root.id,
+    );
+    assert.equal(settled.status, 'stopped');
+    assert.ok(settled.revision >= stoppedRevision);
+    assert.equal(
+      checked.observed.some(
+        value =>
+          value.id === root.id &&
+          value.runId === concurrent.run.runId &&
+          value.status === 'completed',
+      ),
+      false,
+    );
+    const pendingStop = await plan(checked);
+    await checked.request('stop-run', {
+      sessionId: root.id,
+      runId: pendingStop.run.runId,
+    });
+    const pendingStopped = await checked.event(
+      value =>
+        value.id === root.id &&
+        value.runId === pendingStop.run.runId &&
+        value.status === 'stopped',
+    );
+    assert.ok(
+      pendingStopped.delegations
+        .filter(item => item.runId === pendingStop.run.runId)
+        .every(item => item.status === 'stopped'),
+    );
+    assert.equal(
+      (await decide(checked, pendingStop, pendingStop.proposals[0], 'accept'))
+        .code,
+      'invalid-request',
+    );
+    const closingPlan = await plan(checked, 'fixture:delegate-two-hold');
+    const closingWorkers = await runningChildren(checked, closingPlan);
     await checked.stop();
+    await processesGone(
+      closingWorkers.flatMap(worker => worker.pids),
+      ownedPids,
+    );
+    const afterGroup = open();
+    const persistedGroup = (await afterGroup.request('list-sessions')).sessions;
+    const persistedRoot = persistedGroup.find(value => value.id === root.id);
+    assert.equal(persistedRoot.status, 'stopped');
+    assert.equal(persistedRoot.delegationEnabled, true);
+    for (const worker of closingWorkers)
+      assert.equal(
+        persistedGroup.find(value => value.id === worker.child.id).status,
+        'stopped',
+      );
+    const continuedRoot = await sendCodex(afterGroup, root, 'fixture:continue');
+    await afterGroup.event(
+      value =>
+        value.id === root.id &&
+        value.runId === continuedRoot.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      (await afterGroup.request('list-sessions')).sessions.filter(
+        value => value.parentId === root.id,
+      ).length,
+      persistedGroup.filter(value => value.parentId === root.id).length,
+    );
+    await afterGroup.stop();
   },
 );
 

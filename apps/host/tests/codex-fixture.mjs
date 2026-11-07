@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -32,9 +32,11 @@ if (args.length === 1 && args[0] === '--version') {
   const lines = createInterface({ input: process.stdin });
   let initialized = false;
   let acknowledged = false;
+  let experimentalApi = false;
   let thread;
   let current;
   const approvals = new Map();
+  const delegations = new Map();
   const response = (id, result) => emit({ id, result });
   const notify = (method, params) => emit({ method, params });
   const statePath = id => join(thread.cwd, `.nesvo-codex-fixture-${id}.json`);
@@ -80,7 +82,7 @@ if (args.length === 1 && args[0] === '--version') {
       'item/agentMessage/delta',
       scoped({ itemId: current.itemId, delta: text }),
     );
-  const hold = async () => {
+  const hold = async workerLabel => {
     const child = spawn(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],
@@ -95,15 +97,63 @@ if (args.length === 1 && args[0] === '--version') {
       child.once('error', reject);
     });
     assert.ok(process.env.NESVO_CODEX_FIXTURE_PID_FILE);
-    writeFileSync(
-      process.env.NESVO_CODEX_FIXTURE_PID_FILE,
-      JSON.stringify({
-        pid: process.pid,
-        childPid: child.pid,
-        sessionId: thread.id,
-      }),
+    const pids = JSON.stringify({
+      pid: process.pid,
+      childPid: child.pid,
+      sessionId: thread.id,
+    });
+    writeFileSync(process.env.NESVO_CODEX_FIXTURE_PID_FILE, pids);
+    if (process.env.NESVO_CODEX_FIXTURE_PID_DIR) {
+      mkdirSync(process.env.NESVO_CODEX_FIXTURE_PID_DIR, { recursive: true });
+      writeFileSync(
+        join(process.env.NESVO_CODEX_FIXTURE_PID_DIR, `${thread.id}.json`),
+        pids,
+      );
+    }
+    delta(
+      workerLabel
+        ? `Codex worker ${workerLabel} is waiting.`
+        : 'Codex fixture is waiting.',
     );
-    delta('Codex fixture is waiting.');
+    if (workerLabel) {
+      let tick = 0;
+      setInterval(() => delta(` ${workerLabel}:${++tick}`), 120);
+    }
+  };
+  const delegate = variant => {
+    const worker = (label, task) => ({
+      title: `Fixture worker ${label.toUpperCase()}`,
+      task: `fixture:worker-${task}:${label}`,
+      scope: `Inspect area ${label.toUpperCase()} only`,
+      directory: '.',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'read-only',
+    });
+    let workers = [worker('a', 'complete'), worker('b', 'hold')];
+    if (variant === 'two-hold')
+      workers = [worker('a', 'hold'), worker('b', 'hold')];
+    else if (variant === 'mixed')
+      workers = [worker('a', 'complete'), worker('b', 'fail')];
+    else if (variant === 'recursive') workers = [worker('a', 'recursive')];
+    else if (variant === 'too-many') workers.push(worker('c', 'complete'));
+    else if (variant === 'escape')
+      workers = [{ ...worker('a', 'complete'), directory: '../outside' }];
+    else if (variant === 'symlink')
+      workers = [{ ...worker('a', 'complete'), directory: 'outside-link' }];
+    else if (variant === 'overlap') workers[1].mode = 'supervised';
+    const id = `fixture-delegation-${randomUUID()}`;
+    delegations.set(id, true);
+    emit({
+      id,
+      method: 'item/tool/call',
+      params: scoped({
+        callId: randomUUID(),
+        namespace: null,
+        tool: 'nesvo_delegate',
+        arguments: { workers },
+      }),
+    });
   };
   const requestApproval = (kind, variant) => {
     const id = `fixture-approval-${randomUUID()}`;
@@ -160,6 +210,25 @@ if (args.length === 1 && args[0] === '--version') {
   };
   const handle = async message => {
     if (!message.method) {
+      if (delegations.has(message.id)) {
+        delegations.delete(message.id);
+        assert.equal(message.result.contentItems.length, 1);
+        assert.equal(message.result.contentItems[0].type, 'inputText');
+        const text = message.result.contentItems[0].text;
+        let result;
+        try {
+          result = JSON.parse(text);
+        } catch {
+          result = { error: text };
+        }
+        const body = `Codex delegation results: ${JSON.stringify(result)}`;
+        delta('Codex delegation results: ');
+        setTimeout(() => {
+          delta(JSON.stringify(result));
+          complete(body);
+        }, 100);
+        return;
+      }
       const approval = approvals.get(message.id);
       assert.ok(
         approval,
@@ -195,6 +264,8 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(initialized, false);
       assert.equal(params.clientInfo.name, 'nesvo');
       initialized = true;
+      experimentalApi = params.capabilities.experimentalApi;
+      assert.equal(typeof experimentalApi, 'boolean');
       response(id, {
         userAgent: 'codex_cli_rs/0.156.0 (fixture)',
         platformFamily: process.platform,
@@ -255,7 +326,31 @@ if (args.length === 1 && args[0] === '--version') {
         'Resume requires existing native thread state',
       );
       if (resumed) assert.equal(params.excludeTurns, true);
-      else writeFileSync(statePath(thread.id), JSON.stringify({ turns: 0 }));
+      if (resumed) {
+        assert.equal(
+          params.dynamicTools,
+          undefined,
+          'Resume must keep the saved native tool metadata',
+        );
+        assert.equal(
+          experimentalApi,
+          JSON.parse(readFileSync(statePath(thread.id), 'utf8'))
+            .delegationEnabled,
+        );
+      } else {
+        const tools = params.dynamicTools ?? [];
+        assert.equal(tools.length, experimentalApi ? 1 : 0);
+        if (experimentalApi) {
+          assert.equal(tools[0].name, 'nesvo_delegate');
+          assert.equal(tools[0].type, 'function');
+          assert.ok(tools[0].inputSchema.properties.workers);
+          assert.equal(supervised, false);
+        }
+        writeFileSync(
+          statePath(thread.id),
+          JSON.stringify({ turns: 0, delegationEnabled: experimentalApi }),
+        );
+      }
       response(id, {
         thread: { id: thread.id, turns: [] },
         model: 'fixture-codex',
@@ -293,7 +388,30 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = params.input[0].text;
-      if (prompt === 'fixture:stream') {
+      const worker =
+        /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(prompt);
+      if (worker) {
+        assert.equal(
+          experimentalApi,
+          false,
+          'Workers must not receive dynamic delegation tools',
+        );
+        if (worker[1] === 'hold') await hold(worker[2]);
+        else if (worker[1] === 'recursive') delegate('recursive');
+        else if (worker[1] === 'fail') {
+          notify('turn/completed', {
+            threadId: thread.id,
+            turn: {
+              id: current.id,
+              status: 'failed',
+              error: { message: `Codex worker ${worker[2]} failed.` },
+              items: [],
+            },
+          });
+        } else complete(`Codex worker ${worker[2]} completed its scoped task.`);
+      } else if (/^fixture:delegate(?:-|$)/.test(prompt)) {
+        delegate(prompt.slice('fixture:delegate-'.length) || 'default');
+      } else if (prompt === 'fixture:stream') {
         delta('Codex fixture streamed ');
         setTimeout(() => {
           delta('reply.');
