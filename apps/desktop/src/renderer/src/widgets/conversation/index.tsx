@@ -1,6 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { ArrowUp, FolderOpen, Square, X } from 'lucide-react';
-import type { DesktopApi, RespondApprovalInput } from '@nesvo/contracts';
+import type {
+  DesktopApi,
+  RespondApprovalInput,
+  SessionInterruption,
+} from '@nesvo/contracts';
 import {
   modeLabels,
   modelLabel,
@@ -12,6 +16,12 @@ import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
+
+const interruptionLabels: Record<SessionInterruption['reason'], string> = {
+  'host-shutdown': 'Interrupted when Nesvo closed',
+  'host-restart': 'Recovered after the host stopped unexpectedly',
+  'provider-disconnected': 'Agent connection ended unexpectedly',
+};
 
 type Props = {
   session: Session;
@@ -368,6 +378,11 @@ export function Conversation({
                     {message.body || 'No response text.'}
                   </p>
                 )}
+                {message.interruption && message.runId !== session.runId && (
+                  <p className="text-xs text-muted-foreground">
+                    {interruptionLabels[message.interruption.reason]}
+                  </p>
+                )}
               </article>
             );
           })}
@@ -433,7 +448,7 @@ export function Conversation({
             );
           })}
           {results}
-          {session.error && (
+          {session.error && session.status !== 'interrupted' && (
             <p
               role="alert"
               className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
@@ -442,10 +457,29 @@ export function Conversation({
             </p>
           )}
           {session.status === 'interrupted' && (
-            <p className="text-sm text-muted-foreground">
-              The run was interrupted. Your history is saved; send a message to
-              continue.
-            </p>
+            <section
+              aria-label="Interrupted run"
+              className="space-y-2 border-t pt-3"
+            >
+              <p className="text-xs font-medium">
+                {session.interruption
+                  ? interruptionLabels[session.interruption.reason]
+                  : 'This run was interrupted'}
+              </p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {session.error ||
+                  'The last outcome is unconfirmed. Review the current state before continuing.'}
+              </p>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={!canSend || sending}
+                onClick={() => messageInput.current?.focus()}
+              >
+                Continue conversation
+              </Button>
+            </section>
           )}
           {error && (
             <p
