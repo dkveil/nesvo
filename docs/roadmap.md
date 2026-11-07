@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is being refined after owner feedback D53. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
+P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is ready for owner review with the D53 interface refinement. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -35,6 +35,8 @@ P5 adds saved results with independent content versions and human decisions. The
 P5 implementation 32c1861 passed real Codex execution on Windows: a file change, inbox feedback, correction in the same thread, rejection of the old version, acceptance of version 2 and preserved decision after reload. Native application and unpacked-package checks passed independently on all three operating systems using fixtures. See docs/platforms.md and REV-270 for evidence. P6 has not started and waits for Damian's P5 acceptance.
 
 D53 replaces the inbox detail screen with direct actions on compact rows. Each row identifies and links to the requesting session, briefly explains the action and exposes the appropriate decisions. Correction feedback expands inline. Full result versions, diffs and decision history live in the conversation. Existing operation and worker approvals remain distinct from result acceptance. This is a P5 refinement, not acceptance of P5 or authorization for P6.
+
+The D53 refinement at ed8a1f7 passed real Windows Codex execution for inline file approval, result correction and acceptance, exact session links and history after reload. Native application and unpacked-package scenarios passed independently on Windows, macOS and Linux. Updated screenshots and evidence are in REV-270. P5 remains In Review.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.

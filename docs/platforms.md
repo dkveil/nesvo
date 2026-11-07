@@ -1,5 +1,13 @@
 # Platform verification
 
+## P5 inline action refinement
+
+D53 replaces the inbox detail screen with session-linked rows and direct decisions. Local Windows passed type checks, ESLint, Prettier, build and the adapted desktop scenario. The scenario verified operation and worker decisions while another session was selected, exact result links, inline corrections, old-version controls and acceptance history after reload. Existing host checks are unchanged.
+
+A separate Windows run with installed Codex and gpt-6-sol completed native file approvals directly from the list, the initial text change, feedback entered beside its row, correction in the same provider thread, version 2 acceptance and preserved history after renderer reload. Session links opened the correct saved version, including the historical result. An unrelated file was unchanged. Selected real-run screenshots and JSON evidence are attached to REV-270; fixture screenshots remain separate.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42402718927) passed at ed8a1f7. [Native application and unpacked-package checks](https://github.com/dkveil/nesvo/actions/runs/42402720155) passed independently on Windows, macOS and Linux at the same implementation. Each OS checked the full desktop scenario in the built app and unpacked package with explicit provider fixtures. Real account evidence is Windows-only. P5 still requires Damian's acceptance.
+
 ## P5 result review
 
 Damian accepted P4 and authorized P5 in D52. P5 remains subject to his separate acceptance.
