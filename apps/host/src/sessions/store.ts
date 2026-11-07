@@ -40,6 +40,9 @@ export class SessionStore {
       status: 'ready',
       error: null,
       activity: null,
+      activities: [],
+      activitiesTruncated: false,
+      activityTruncatedRunIds: [],
       runId: null,
       revision: 0,
       createdAt: now,
@@ -106,6 +109,9 @@ export class SessionStore {
       status: 'ready',
       error: null,
       activity: null,
+      activities: [],
+      activitiesTruncated: false,
+      activityTruncatedRunIds: [],
       runId: null,
       revision: 0,
       createdAt: now,
@@ -124,8 +130,17 @@ export class SessionStore {
         session.activity = null;
         session.pendingApprovals = [];
         for (const message of session.messages) {
-          if (message.state === 'running') message.state = 'interrupted';
+          if (message.state === 'running') {
+            message.state = 'interrupted';
+            message.completedAt = new Date().toISOString();
+          }
         }
+        changed = true;
+      }
+      for (const activity of session.activities) {
+        if (activity.status !== 'running') continue;
+        activity.status = 'interrupted';
+        activity.completedAt = new Date().toISOString();
         changed = true;
       }
       for (const proposal of session.delegations) {

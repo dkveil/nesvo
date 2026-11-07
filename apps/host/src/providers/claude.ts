@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
+import { makeActivity, type ProviderActivity } from './activity';
 
 export type ClaudeStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -15,7 +16,8 @@ export type ClaudeStatus = {
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
-  | { type: 'activity'; text: string };
+  | { type: 'activity'; text: string }
+  | { type: 'tool-activity'; activity: ProviderActivity };
 
 export type ClaudeResult = {
   status: 'completed' | 'stopped' | 'failed';
@@ -468,6 +470,7 @@ export function startClaude(options: {
         string,
         { text: string; blocks: Map<number, string> }
       >();
+      const toolActivities = new Map<string, ProviderActivity>();
       let currentMessage: string | null = null;
       let sequence = 0;
       let lastText = '';
@@ -509,6 +512,35 @@ export function startClaude(options: {
           ['Read', 'Glob', 'Grep'].includes(block.name)
         ) {
           emit({ type: 'activity', text: block.name });
+          if (typeof block.id !== 'string') return;
+          const previous = toolActivities.get(block.id);
+          const input = object(block.input);
+          const paths = [input?.file_path, input?.path].filter(
+            (value): value is string => typeof value === 'string',
+          );
+          const detail =
+            [typeof input?.pattern === 'string' ? input.pattern : '', ...paths]
+              .filter(Boolean)
+              .join('\n') || null;
+          const next = makeActivity({
+            id: block.id,
+            kind: block.name === 'Read' ? 'read' : 'search',
+            title:
+              block.name === 'Read'
+                ? 'Read file'
+                : block.name === 'Glob'
+                  ? 'Find files'
+                  : 'Search files',
+            status: previous?.status ?? 'running',
+            startedAt: previous?.startedAt,
+            completedAt: previous?.completedAt,
+            detail: detail ?? previous?.detail,
+            output: previous?.output,
+            paths: paths.length ? paths : previous?.paths,
+            truncated: previous?.truncated,
+          });
+          toolActivities.set(next.id, next);
+          emit({ type: 'tool-activity', activity: next });
         }
       };
       const consume = (serialized: string) => {
@@ -613,6 +645,30 @@ export function startClaude(options: {
             existing.text = text;
           }
           if (!providerFailure && !rateLimitFailure) publish();
+        } else if (value.type === 'user') {
+          const message = object(value.message);
+          if (!Array.isArray(message?.content)) return;
+          for (const content of message.content) {
+            const block = object(content);
+            if (
+              block?.type !== 'tool_result' ||
+              typeof block.tool_use_id !== 'string'
+            )
+              continue;
+            const previous = toolActivities.get(block.tool_use_id);
+            if (!previous || previous.status !== 'running') continue;
+            const failed = block.is_error === true;
+            const next = makeActivity({
+              ...previous,
+              status: failed ? 'failed' : 'completed',
+              output:
+                failed && typeof block.content === 'string'
+                  ? block.content
+                  : '',
+            });
+            toolActivities.set(next.id, next);
+            emit({ type: 'tool-activity', activity: next });
+          }
         } else if (value.type === 'result') {
           resultSeen = true;
           successful = value.is_error === false && value.subtype === 'success';

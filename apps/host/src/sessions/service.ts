@@ -23,6 +23,7 @@ import {
   type CodexResult,
 } from '../providers/codex';
 import { SessionStore } from './store';
+import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
 import {
   captureWorkspace,
@@ -44,6 +45,7 @@ type ActiveRun = {
   session: Session;
   handle: ReturnType<typeof startClaude> | ReturnType<typeof startCodex>;
   finished: Promise<void>;
+  evictedActivities: Set<string>;
   timer?: ReturnType<typeof setTimeout>;
   persistenceError?: boolean;
   finalizing?: boolean;
@@ -444,6 +446,7 @@ export class SessionService {
         body: text,
         state: 'completed',
         createdAt,
+        completedAt: createdAt,
       },
       {
         id: randomUUID(),
@@ -452,6 +455,7 @@ export class SessionService {
         body: '',
         state: 'running',
         createdAt,
+        completedAt: null,
       },
     );
   }
@@ -526,7 +530,12 @@ export class SessionService {
         provider.respondApproval(id, decision);
       },
     };
-    const active: ActiveRun = { session, handle, finished: Promise.resolve() };
+    const active: ActiveRun = {
+      session,
+      handle,
+      finished: Promise.resolve(),
+      evictedActivities: new Set(),
+    };
     this.active.set(session.id, active);
     active.finished = handle.done
       .then(async result => {
@@ -546,6 +555,8 @@ export class SessionService {
         session.activity = null;
         session.pendingApprovals = [];
         session.messages.at(-1)!.state = session.status;
+        session.messages.at(-1)!.completedAt = new Date().toISOString();
+        finishActivities(session, session.status);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'
             ? compareWorkspace(
@@ -578,6 +589,8 @@ export class SessionService {
         session.activity = null;
         session.pendingApprovals = [];
         session.messages.at(-1)!.state = 'failed';
+        session.messages.at(-1)!.completedAt ??= new Date().toISOString();
+        finishActivities(session, 'failed');
         session.revision += 1;
         this.unsaved.set(session.id, session);
         this.emitSession(session);
@@ -842,7 +855,15 @@ export class SessionService {
   private update(session: Session, event: ClaudeEvent | CodexEvent): void {
     const active = this.active.get(session.id);
     if (active?.finalizing) return;
-    if (event.type === 'init') {
+    if (event.type === 'tool-activity') {
+      if (
+        !active ||
+        !updateActivity(session, event.activity, active.evictedActivities)
+      )
+        return;
+      session.activity =
+        event.activity.status === 'running' ? event.activity.title : null;
+    } else if (event.type === 'init') {
       if (
         (session.providerInitialized || session.provider === 'Claude Code') &&
         event.sessionId !== session.providerSessionId

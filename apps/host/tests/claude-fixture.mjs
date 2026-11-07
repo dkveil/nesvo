@@ -81,6 +81,36 @@ if (args.length === 1 && args[0] === '--version') {
   emit({ type: 'assistant', parent_tool_use_id: 'fixture-subagent' });
   const messageId = `fixture-message-${turn}`;
   const stream = event => emit({ type: 'stream_event', event });
+  const toolId = `fixture-read-${turn}`;
+  const startRead = () => {
+    const block = {
+      type: 'tool_use',
+      id: toolId,
+      name: 'Read',
+      input: { file_path: 'sample.txt' },
+    };
+    stream({ type: 'content_block_start', index: 1, content_block: block });
+    emit({
+      type: 'assistant',
+      message: { id: `fixture-tool-${turn}`, content: [block] },
+    });
+  };
+  const finishRead = failed =>
+    emit({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolId,
+            is_error: failed,
+            content: failed
+              ? 'ENOENT: sample.txt was not found; API_TOKEN=fixture-secret'
+              : 'private file contents are not activity output',
+          },
+        ],
+      },
+    });
   const start = text => {
     stream({ type: 'message_start', message: { id: messageId } });
     stream({
@@ -133,6 +163,7 @@ if (args.length === 1 && args[0] === '--version') {
       JSON.stringify({ pid: process.pid, childPid: child.pid, sessionId }),
     );
     start('Fixture is waiting.');
+    startRead();
     setInterval(() => {}, 1000);
   } else if (prompt === 'fixture:fail') {
     emit({
@@ -158,15 +189,19 @@ if (args.length === 1 && args[0] === '--version') {
     });
   } else if (prompt === 'fixture:result-fail') {
     start('Fixture unsuccessful result.');
+    startRead();
+    finishRead(true);
     finish('Fixture unsuccessful result.', true);
   } else if (prompt === 'fixture:stream') {
     start('Fixture streamed ');
+    startRead();
     await setTimeout(300);
     stream({
       type: 'content_block_delta',
       index: 0,
       delta: { type: 'text_delta', text: 'reply.' },
     });
+    finishRead(false);
     finish('Fixture streamed reply.');
   } else {
     const text = `Fixture ${resumed ? 'resumed' : 'initial'} reply.`;

@@ -330,6 +330,10 @@ test(
     );
     assert.equal(partial.providerInitialized, true);
     assert.equal(partial.actualModel, 'fixture-sonnet');
+    assert.equal(partial.activities.length, 1);
+    assert.equal(partial.activities[0].kind, 'read');
+    assert.equal(partial.activities[0].status, 'running');
+    assert.equal(partial.activities[0].runId, running.runId);
     assert.equal(
       host.observed.some(
         value => value.runId === running.runId && value.status === 'completed',
@@ -343,6 +347,11 @@ test(
     assert.equal(agent(completed).body, 'Fixture streamed reply.');
     assert.equal(agent(completed).state, 'completed');
     assert.equal(completed.error, null);
+    assert.ok(agent(completed).completedAt);
+    assert.equal(completed.activities[0].status, 'completed');
+    assert.ok(completed.activities[0].completedAt);
+    assert.deepEqual(completed.activities[0].paths, ['sample.txt']);
+    assert.equal(completed.activities[0].output, '');
     assert.equal(
       (await host.request('send-message', input)).session.revision,
       completed.revision,
@@ -391,6 +400,11 @@ test(
     );
     assert.equal(agent(stopped).state, 'stopped');
     assert.equal(agent(stopped).body, 'Fixture is waiting.');
+    assert.ok(agent(stopped).completedAt);
+    assert.equal(
+      stopped.activities.find(item => item.runId === held.started.runId).status,
+      'stopped',
+    );
     await processesGone(held.pids, ownedPids);
     for (const text of ['fixture:fail', 'fixture:result-fail']) {
       const failedRun = (
@@ -414,6 +428,11 @@ test(
         failed.error,
         /Fixture (account limit reached|unsuccessful result)/,
       );
+      if (text === 'fixture:result-fail') {
+        assert.equal(failed.activities[0].status, 'failed');
+        assert.match(failed.activities[0].output, /ENOENT/);
+        assert.doesNotMatch(failed.activities[0].output, /fixture-secret/);
+      }
       assert.equal(
         host.observed.some(
           value =>
@@ -440,7 +459,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 6);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -478,6 +497,10 @@ test(
     delete interrupted.scope;
     delete interrupted.delegationEnabled;
     delete interrupted.delegations;
+    delete interrupted.activities;
+    delete interrupted.activitiesTruncated;
+    delete interrupted.activityTruncatedRunIds;
+    for (const message of interrupted.messages) delete message.completedAt;
     recovery
       .prepare('UPDATE sessions SET document = ? WHERE id = ?')
       .run(JSON.stringify(interrupted), session.id);
@@ -523,6 +546,10 @@ test(
     assert.equal(recoveredSession.provider, 'Claude Code');
     assert.equal(recoveredSession.delegationEnabled, false);
     assert.deepEqual(recoveredSession.delegations, []);
+    assert.deepEqual(recoveredSession.activities, []);
+    assert.equal(recoveredSession.activitiesTruncated, false);
+    assert.deepEqual(recoveredSession.activityTruncatedRunIds, []);
+    assert.equal(recoveredSession.messages[0].completedAt, null);
     const legacySession = (
       await recovered.request('list-sessions')
     ).sessions.find(value => value.id === legacyCodexId);
@@ -583,10 +610,20 @@ test(
     };
     const readOnly = await createCodex('read-only');
     const codexRun = await sendCodex(finalHost, readOnly, 'fixture:stream');
-    await finalHost.event(
+    const codexPartial = await finalHost.event(
       value =>
         value.runId === codexRun.runId &&
         agent(value).body === 'Codex fixture streamed ',
+    );
+    assert.deepEqual(
+      codexPartial.activities.map(item => item.kind),
+      ['read', 'command'],
+    );
+    assert.ok(codexPartial.activities.every(item => item.status === 'running'));
+    assert.match(codexPartial.activities[1].output, /count=5/);
+    assert.doesNotMatch(
+      codexPartial.activities[1].output,
+      /fixture-secret|\u001b/,
     );
     assert.equal(
       finalHost.observed.some(
@@ -601,6 +638,21 @@ test(
     assert.equal(agent(codexCompleted).body, 'Codex fixture streamed reply.');
     assert.equal(codexCompleted.actualModel, 'fixture-codex');
     assert.ok(codexCompleted.providerSessionId);
+    assert.deepEqual(
+      codexCompleted.activities.map(item => item.status),
+      ['completed', 'completed'],
+    );
+    assert.ok(
+      codexCompleted.activities.every(
+        item => item.startedAt && item.completedAt,
+      ),
+    );
+    assert.deepEqual(
+      (await finalHost.request('list-sessions')).sessions.find(
+        item => item.id === readOnly.id,
+      ).activities,
+      codexCompleted.activities,
+    );
     const readOnlyReview = await finalHost.review(
       value => value.runId === codexRun.runId && value.status === 'pending',
     );
@@ -848,6 +900,12 @@ test(
         value.runId === approvalStopped.run.runId && value.status === 'stopped',
     );
     assert.deepEqual(stoppedApproval.pendingApprovals, []);
+    assert.equal(
+      stoppedApproval.activities.find(
+        item => item.runId === approvalStopped.run.runId,
+      ).status,
+      'stopped',
+    );
     await processesGone(approvalStopped.pids, ownedPids);
     assert.equal(
       (
@@ -859,7 +917,32 @@ test(
       'invalid-request',
     );
     await finalHost.stop();
+    const activityRecovery = new DatabaseSync(path);
+    try {
+      const unfinished = structuredClone(codexCompleted);
+      unfinished.status = 'running';
+      agent(unfinished).state = 'running';
+      agent(unfinished).completedAt = null;
+      unfinished.activities[1].status = 'running';
+      unfinished.activities[1].completedAt = null;
+      activityRecovery
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(JSON.stringify(unfinished), readOnly.id);
+    } finally {
+      activityRecovery.close();
+    }
     const codexReopened = open();
+    const recoveredActivities = (
+      await codexReopened.request('list-sessions')
+    ).sessions.find(item => item.id === readOnly.id);
+    assert.equal(recoveredActivities.status, 'interrupted');
+    assert.equal(recoveredActivities.activities[0].status, 'completed');
+    assert.equal(recoveredActivities.activities[1].status, 'interrupted');
+    assert.equal(
+      recoveredActivities.activities[1].id,
+      codexCompleted.activities[1].id,
+    );
+    assert.ok(recoveredActivities.activities[1].completedAt);
     const nativeContinuation = await sendCodex(
       codexReopened,
       readOnly,
@@ -874,6 +957,69 @@ test(
     assert.equal(
       nativeResumed.providerSessionId,
       codexCompleted.providerSessionId,
+    );
+    const boundedActivities = (
+      await codexReopened.request('create-session', {
+        ...create(''),
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'read-only',
+      })
+    ).session;
+    const initialActivityRun = await sendCodex(
+      codexReopened,
+      boundedActivities,
+      'fixture:stream',
+    );
+    await codexReopened.event(
+      value =>
+        value.runId === initialActivityRun.runId &&
+        value.status === 'completed',
+    );
+    let activityResult;
+    for (let index = 0; index < 3; index++) {
+      const activityRun = await sendCodex(
+        codexReopened,
+        boundedActivities,
+        'fixture:activities',
+      );
+      activityResult = await codexReopened.event(
+        value =>
+          value.runId === activityRun.runId && value.status === 'completed',
+      );
+      const currentActivities = activityResult.activities.filter(
+        item => item.runId === activityRun.runId,
+      );
+      assert.equal(currentActivities.length, 100);
+      assert.match(currentActivities[0].id, /fixture-command-5-/);
+      assert.equal(currentActivities.at(-1).status, 'interrupted');
+      assert.ok(
+        activityResult.activityTruncatedRunIds.includes(activityRun.runId),
+      );
+      assert.equal(currentActivities[1].status, 'failed');
+      assert.match(currentActivities[1].detail, /Exit code: 7/);
+      assert.equal(currentActivities[2].truncated, true);
+      assert.ok(
+        currentActivities.every(
+          item => item.output.length <= 4000 && item.detail.length <= 2000,
+        ),
+      );
+      assert.ok(
+        currentActivities.every(
+          item => !item.output.includes('fixture-secret'),
+        ),
+      );
+    }
+    assert.equal(activityResult.activities.length, 300);
+    assert.equal(activityResult.activitiesTruncated, true);
+    assert.ok(
+      activityResult.activityTruncatedRunIds.includes(initialActivityRun.runId),
+    );
+    assert.equal(
+      activityResult.activities.some(
+        item => item.runId === initialActivityRun.runId,
+      ),
+      false,
     );
     const awaitingShutdown = await codexHold(codexReopened);
     await codexReopened.stop();

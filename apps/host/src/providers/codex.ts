@@ -4,6 +4,8 @@ import { constants } from 'node:fs';
 import { access, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
+import { activityLimits } from '@nesvo/contracts';
+import { makeActivity, type ProviderActivity } from './activity';
 
 export type CodexStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -16,6 +18,7 @@ export type CodexEvent =
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
+  | { type: 'tool-activity'; activity: ProviderActivity }
   | {
       type: 'approval';
       approval: {
@@ -645,6 +648,8 @@ export function startCodex(options: {
   const queued: RecordValue[] = [];
   const messages = new Map<string, string>();
   const items = new Map<string, RecordValue>();
+  const toolActivities = new Map<string, ProviderActivity>();
+  const toolOutput = new Map<string, string>();
   const ignoredItems = new Set<string>();
   let lastText = '';
   let resolveTurn: (result: CodexResult) => void;
@@ -682,6 +687,114 @@ export function startCodex(options: {
       lastText = text;
       emit({ type: 'text', text });
     }
+  };
+  const emitTool = (activity: ProviderActivity) => {
+    const previous = toolActivities.get(activity.id);
+    if (
+      previous &&
+      previous.status !== 'running' &&
+      activity.status === 'running'
+    )
+      return;
+    const next = makeActivity({
+      ...activity,
+      startedAt: previous?.startedAt ?? activity.startedAt,
+      completedAt: previous?.completedAt ?? activity.completedAt,
+      truncated: previous?.truncated === true || activity.truncated,
+    });
+    toolActivities.set(next.id, next);
+    emit({ type: 'tool-activity', activity: next });
+  };
+  const recordTool = (item: RecordValue, completed: boolean) => {
+    const id = String(item.id);
+    const previous = toolActivities.get(id);
+    const changes = Array.isArray(item.changes) ? item.changes.map(object) : [];
+    const actions = Array.isArray(item.commandActions)
+      ? item.commandActions.map(object)
+      : [];
+    let kind: ProviderActivity['kind'];
+    let title: string;
+    let detail: string | null = null;
+    let paths: string[] = [];
+    if (item.type === 'commandExecution') {
+      kind =
+        actions.length > 0 && actions.every(action => action?.type === 'read')
+          ? 'read'
+          : 'command';
+      title = kind === 'read' ? 'Read file' : 'Run command';
+      detail = typeof item.command === 'string' ? item.command : null;
+      paths = actions.flatMap(action =>
+        typeof action?.path === 'string' ? [action.path] : [],
+      );
+    } else if (item.type === 'fileChange') {
+      kind = 'file-change';
+      title = 'Change files';
+      paths = changes.flatMap(change => {
+        const changeKind = object(change?.kind);
+        return [change?.path, changeKind?.move_path].filter(
+          (value): value is string => typeof value === 'string',
+        );
+      });
+      detail = paths.join('\n') || null;
+    } else if (item.type === 'webSearch') {
+      kind = 'search';
+      title = 'Search web';
+      const action = object(item.action);
+      detail =
+        typeof item.query === 'string'
+          ? item.query
+          : typeof action?.query === 'string'
+            ? action.query
+            : null;
+    } else if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+      kind = 'tool';
+      title = 'Use tool';
+      detail =
+        [item.server, item.tool]
+          .filter(value => typeof value === 'string')
+          .join(' / ') || null;
+    } else return;
+    const status =
+      item.status === 'failed' ||
+      (typeof item.exitCode === 'number' && item.exitCode !== 0)
+        ? 'failed'
+        : item.status === 'declined'
+          ? 'declined'
+          : completed
+            ? item.status === 'completed' || item.type === 'webSearch'
+              ? 'completed'
+              : 'interrupted'
+            : 'running';
+    const error = object(item.error);
+    const errorDetail = [
+      typeof item.exitCode === 'number' && item.exitCode !== 0
+        ? `Exit code: ${item.exitCode}`
+        : '',
+      typeof error?.code === 'string' || typeof error?.code === 'number'
+        ? `Error code: ${error.code}`
+        : '',
+      typeof error?.message === 'string' ? error.message : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    if (errorDetail) detail = [detail, errorDetail].filter(Boolean).join('\n');
+    const output =
+      item.type === 'commandExecution' &&
+      typeof item.aggregatedOutput === 'string'
+        ? item.aggregatedOutput
+        : (toolOutput.get(id) ?? previous?.output ?? '');
+    emitTool(
+      makeActivity({
+        id,
+        kind,
+        title,
+        status,
+        detail,
+        paths,
+        output,
+        startedAt: previous?.startedAt,
+      }),
+    );
   };
   const approvalId = (id: RpcId) => `codex-${typeof id}-${id}`;
   const consume = (message: RecordValue) => {
@@ -742,6 +855,15 @@ export function startCodex(options: {
         seenCalls.add(callId);
         const pending = { rpcId, threadId, turnId };
         pendingDelegates.set(callId, pending);
+        emitTool(
+          makeActivity({
+            id,
+            kind: 'tool',
+            title: 'Delegate workers',
+            status: 'running',
+            detail: 'Waiting for operator decisions and worker results.',
+          }),
+        );
         const respond = (text: string, success: boolean) => {
           if (
             stopped ||
@@ -771,6 +893,15 @@ export function startCodex(options: {
             success = false;
           }
           pendingDelegates.delete(callId);
+          emitTool(
+            makeActivity({
+              id,
+              kind: 'tool',
+              title: 'Delegate workers',
+              status: success ? 'completed' : 'failed',
+              startedAt: toolActivities.get(id)?.startedAt,
+            }),
+          );
           try {
             peer.send({
               id: rpcId,
@@ -955,6 +1086,7 @@ export function startCodex(options: {
       if (items.size >= 2000 && !items.has(item.id))
         throw new Error('Codex turn exceeded the supported item count.');
       items.set(item.id, item);
+      recordTool(item, message.method === 'item/completed');
       if (item.type === 'agentMessage') {
         if (item.delivery === 'async') {
           ignoredItems.add(item.id);
@@ -983,6 +1115,26 @@ export function startCodex(options: {
                   : 'Using tool',
         });
       }
+    } else if (message.method === 'item/commandExecution/outputDelta') {
+      if (typeof params.itemId !== 'string' || typeof params.delta !== 'string')
+        throw new Error('Codex returned invalid command output.');
+      const activity = toolActivities.get(params.itemId);
+      if (!activity) return;
+      let output = (toolOutput.get(params.itemId) ?? '') + params.delta;
+      let truncated = activity.truncated;
+      if (output.length > activityLimits.output * 2) {
+        const newline = output.indexOf(
+          '\n',
+          output.length - activityLimits.output * 2,
+        );
+        output =
+          newline === -1
+            ? '[Output omitted: a line exceeded the supported size.]\n'
+            : output.slice(newline + 1);
+        truncated = true;
+      }
+      toolOutput.set(params.itemId, output);
+      emitTool(makeActivity({ ...activity, output, truncated }));
     } else if (message.method === 'item/agentMessage/delta') {
       if (typeof params.itemId !== 'string' || typeof params.delta !== 'string')
         throw new Error('Codex returned invalid text streaming data.');

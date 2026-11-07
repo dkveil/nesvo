@@ -92,6 +92,17 @@ if (args.length === 1 && args[0] === '--version') {
       'item/agentMessage/delta',
       scoped({ itemId: current.itemId, delta: text }),
     );
+  const tool = (phase, item) => notify(`item/${phase}`, scoped({ item }));
+  const commandItem = (suffix, extra = {}) => ({
+    id: `fixture-command-${suffix}-${current.id}`,
+    type: 'commandExecution',
+    command: 'printf count=5',
+    commandActions: [],
+    cwd: thread.cwd,
+    status: 'inProgress',
+    aggregatedOutput: '',
+    ...extra,
+  });
   const hold = async workerLabel => {
     const child = spawn(
       process.execPath,
@@ -113,6 +124,7 @@ if (args.length === 1 && args[0] === '--version') {
       sessionId: thread.id,
     });
     writeFileSync(process.env.NESVO_CODEX_FIXTURE_PID_FILE, pids);
+    tool('started', commandItem('hold', { command: 'wait for cancellation' }));
     if (process.env.NESVO_CODEX_FIXTURE_PID_DIR) {
       mkdirSync(process.env.NESVO_CODEX_FIXTURE_PID_DIR, { recursive: true });
       writeFileSync(
@@ -462,11 +474,62 @@ if (args.length === 1 && args[0] === '--version') {
       } else if (/^fixture:delegate(?:-|$)/.test(command)) {
         delegate(command.slice('fixture:delegate-'.length) || 'default');
       } else if (prompt === 'fixture:stream') {
+        const read = commandItem('read', {
+          command: 'read sample.txt',
+          commandActions: [
+            { type: 'read', path: 'sample.txt', name: 'sample.txt' },
+          ],
+        });
+        const command = commandItem('count');
+        tool('started', read);
+        tool('started', command);
+        notify(
+          'item/commandExecution/outputDelta',
+          scoped({
+            itemId: command.id,
+            delta: '\u001b[32mcount=5\u001b[0m\nAPI_TO',
+          }),
+        );
+        notify(
+          'item/commandExecution/outputDelta',
+          scoped({ itemId: command.id, delta: 'KEN=fixture-secret\n' }),
+        );
         delta('Codex fixture streamed ');
         setTimeout(() => {
+          tool('completed', { ...read, status: 'completed', exitCode: 0 });
+          tool('completed', {
+            ...command,
+            status: 'completed',
+            exitCode: 0,
+            aggregatedOutput:
+              '\u001b[32mcount=5\u001b[0m\nAPI_TOKEN=fixture-secret\n',
+          });
+          tool('started', command);
           delta('reply.');
           complete('Codex fixture streamed reply.');
         }, 300);
+      } else if (prompt === 'fixture:activities') {
+        for (let index = 0; index < 105; index++) {
+          const item = commandItem(String(index));
+          tool('started', item);
+          if (index === 104) continue;
+          tool('completed', {
+            ...item,
+            status: 'completed',
+            exitCode: index === 6 ? 7 : 0,
+            aggregatedOutput:
+              index === 7
+                ? 'line\n'.repeat(1500) + 'API_TOKEN=fixture-secret\n'
+                : 'count=5\n',
+          });
+        }
+        tool('completed', {
+          ...commandItem('0'),
+          status: 'completed',
+          exitCode: 0,
+          aggregatedOutput: 'late evicted output',
+        });
+        complete('Codex fixture bounded activities.');
       } else if (prompt === 'fixture:approve' || prompt === 'fixture:file') {
         requestApproval(prompt === 'fixture:file' ? 'file' : 'command');
       } else if (prompt === 'fixture:missing-command') {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { activityLimits, sessionActivitySchema } from './activities';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -107,6 +108,7 @@ export const sessionMessageSchema = z.strictObject({
   body: z.string().max(2_000_000),
   state: sessionStateSchema,
   createdAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -128,6 +130,15 @@ export const sessionSchema = z.strictObject({
   status: sessionStateSchema,
   error: z.string().nullable(),
   activity: z.string().nullable(),
+  activities: z
+    .array(sessionActivitySchema)
+    .max(activityLimits.items)
+    .default([]),
+  activitiesTruncated: z.boolean().default(false),
+  activityTruncatedRunIds: z
+    .array(z.uuid())
+    .max(activityLimits.items)
+    .default([]),
   runId: z.uuid().nullable(),
   revision: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),

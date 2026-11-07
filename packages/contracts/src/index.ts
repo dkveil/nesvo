@@ -25,6 +25,7 @@ import {
 } from './reviews';
 
 export * from './sessions';
+export * from './activities';
 export * from './reviews';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
