@@ -209,6 +209,7 @@ try {
   const first = (await page.evaluate(() => window.nesvo.listSessions()))[0];
   assert.equal(first.model, 'sonnet');
   assert.equal(first.messages.length, 0);
+  await screenshot('-empty-session');
   await send('fixture:stream');
   await message('Fixture streamed reply.').waitFor();
   const firstCompleted = await waitState(first.id, 'completed');
@@ -723,6 +724,7 @@ try {
   await reviewRow(initialReview)
     .getByRole('textbox', { name: 'Uwagi do poprawy', exact: true })
     .fill(feedback);
+  await screenshot('-inline-feedback');
   await reviewRow(initialReview)
     .getByRole('button', { name: 'Wyślij uwagi', exact: true })
     .click();

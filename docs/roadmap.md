@@ -3,7 +3,7 @@
 Accepted by Damian on November 7, 2026. Target demonstration: November 16, 2026.
 The product enables technical orchestration with visible workers and operator-controlled review.
 
-P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is receiving the D54 visual refinement after the D53 inline decision flow. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
+P0, P1, the delivered Codex scope of P3 and P4 are accepted. D50 authorized Codex while the Claude quota blocks successful-task evidence in P2. D51 accepted the delivered P3 scope; D52 accepted P4 and authorized P5. P5 is ready for owner review after the D54 visual refinement and D53 inline decision flow. The missing Claude evidence stays in P2; acceptance is not a claim that this task succeeded.
 
 [Authoritative roadmap](https://linear.app/reveil/document/nesvo-zatwierdzona-roadmapa-prototypu-7-16112026-387e254e033d)
 and [decision register](https://linear.app/reveil/document/nesvo-rejestr-decyzji-wlasciciela-przed-roadmapa-2026-11-07-729784d12add).
@@ -38,7 +38,7 @@ D53 replaces the inbox detail screen with direct actions on compact rows. Each r
 
 The D53 refinement at ed8a1f7 passed real Windows Codex execution for inline file approval, result correction and acceptance, exact session links and history after reload. Native application and unpacked-package scenarios passed independently on Windows, macOS and Linux. Updated screenshots and evidence are in REV-270.
 
-D54 authorizes a further P5 visual refinement: a flat black workspace, compact sidebar and header, a focused empty-session composer and restrained panels. The inline decision flow and saved result details remain intact. P5 is In Progress for this refinement and still requires owner acceptance; no later stage is authorized by these visual references.
+D54 delivers a further P5 visual refinement: a flat black workspace, compact sidebar and header, a focused empty-session composer and restrained panels. The inline decision flow and saved result details remain intact. The desktop scenario passed on Windows during the refinement; the final layout at a9c6b2d passed a focused visual check including normal and compact dialogs, drafts, inline feedback and session links. P5 is In Review and still requires owner acceptance; no later stage is authorized by these visual references.
 
 P0 execution tasks: REV-266 baseline/master; REV-260 workspace/rules; REV-271 desktop/host/contracts; REV-262 launch/platforms.
 Detailed checklists and evidence criteria are stored in each stage issue. P6 skill discovery also uses REV-261.

@@ -1,5 +1,13 @@
 # Platform verification
 
+## P5 visual refinement
+
+D54 updates the existing workspace without changing providers, host execution or permissions. The black shell, compact navigation, centered empty-session composer and quieter decision panels are in commits 0fe1f19 and a9c6b2d.
+
+Windows passed desktop type checks, scoped ESLint, repository formatting and the build. The existing desktop scenario passed during the visual refinement, including operation approvals, worker decisions, correction, exact session links, reload and process cleanup. Final spacing and copy were then checked in the built app at a9c6b2d: the new-session dialog fits a standard window without scrolling, a compact window can reach the submit button, the empty composer retains its draft, and inline feedback and the session link work. Screenshots use explicit provider fixtures, with no model-account invocation. No new unit tests or host cases were added.
+
+This visual revision was inspected on Windows only. The separate macOS/Linux application and package evidence below applies to the earlier D53 implementation; it is not a claim that the latest appearance was checked there. P5 remains subject to Damian's acceptance and P6 has not started.
+
 ## P5 inline action refinement
 
 D53 replaces the inbox detail screen with session-linked rows and direct decisions. Local Windows passed type checks, ESLint, Prettier, build and the adapted desktop scenario. The scenario verified operation and worker decisions while another session was selected, exact result links, inline corrections, old-version controls and acceptance history after reload. Existing host checks are unchanged.
