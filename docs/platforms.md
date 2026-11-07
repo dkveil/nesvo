@@ -1,5 +1,17 @@
 # Platform verification
 
+## P6 shared local skill library
+
+D61 implementation and checks at ed800b4 combine known local Claude, Codex and shared roots into one provider-aware library. Windows passed strict types, ESLint, Prettier, build, the same two host cases and the principal desktop scenario. The scenarios cover both cross-provider directions, source and hash persistence, changed-file rejection, physical deduplication, unsupported metadata behind aliases or shared-only roots, Stop during preparation and existing approval/review/delegation flows.
+
+A separate built-Electron Windows task used installed Codex 0.156.0 with gpt-6-sol and a controlled skill from .claude/skills. The response applied its requested format and included a unique code present only in the skill body. Selected origin, delivery and hash survived a full application restart. Sample files and sampled provider configuration files remained unchanged.
+
+One real Claude Code 2.1.319 / Haiku attempt selected a .codex/skills file through the explicit Shared instructions mode. It stopped at the account's weekly limit, reported by the CLI as resetting at 20:00 Europe/Warsaw. Fixture checks establish the instruction wrapper and selected resume; they do not establish a successful real Claude response. This remains open in P2 and the P6 acceptance evidence.
+
+[Foundation checks](https://github.com/dkveil/nesvo/actions/runs/42425603561) passed. The [native application and unpacked-package workflow](https://github.com/dkveil/nesvo/actions/runs/42425603288) passed independently on Windows, macOS and Linux. Native platform scenarios use provider fixtures; real cross-provider model evidence remains Windows Codex-only. The superseded run at ef2f4ca exposed an ambiguous test query on macOS; ed800b4 makes the selected fixture source unique before keyboard input without changing product behavior.
+
+Screenshots and real-evidence.json are attached to REV-275. Their sample plan is test material, not a report of Nesvo platform readiness. D61 is In Review for Damian; later stages remain separate. The D60 discovery-only limitation for Claude below describes the earlier stage and is superseded by explicit Shared instructions, not native Claude skill execution.
+
 ## P6.2 native skill invocation
 
 Implementation 684558b connects the slash picker to explicit native Codex skill input. Windows passed strict types, ESLint, Prettier, build, the same two host cases and the principal desktop scenario. The checks cover disabled or stale selection rejection before thread creation, source persistence, selected resume, message idempotency, Stop during validation, keyboard selection, per-session drafts and existing approval/review/delegation flows. A focused compact-window check also verified identical slash reopening and preservation of trailing task text.
