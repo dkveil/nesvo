@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -46,6 +48,18 @@ const env = {
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
 let hostPid;
+const byId = values =>
+  values.toSorted((left, right) => left.id.localeCompare(right.id));
+const launchArgs = process.env.NESVO_PACKAGED_EXECUTABLE
+  ? []
+  : [resolve('apps/desktop')];
+const launchApplication = () =>
+  electron.launch({
+    executablePath,
+    args: launchArgs,
+    env,
+    timeout: 30000,
+  });
 const providerPids = new Set();
 const alive = pid => {
   try {
@@ -109,14 +123,7 @@ try {
     '---\nname: fixture-user-skill\ndescription: User inventory fixture.\nuser-invocable: false\ndisable-model-invocation: true\n---\nMetadata only.\n';
   await mkdir(join(userSkillPath, '..'), { recursive: true });
   await writeFile(userSkillPath, userSkillText);
-  application = await electron.launch({
-    executablePath,
-    args: process.env.NESVO_PACKAGED_EXECUTABLE
-      ? []
-      : [resolve('apps/desktop')],
-    env,
-    timeout: 30000,
-  });
+  application = await launchApplication();
   const page = await application.firstWindow();
   page.setDefaultTimeout(20000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -445,6 +452,60 @@ try {
     (await sharedInstructionsBadge.getAttribute('title')).includes(
       sharedInstructionsMessage.skill.path,
     ),
+  );
+  await waitReview(first.id);
+  const beforeDuplicate = await page.evaluate(async () => ({
+    sessions: await window.nesvo.listSessions(),
+    reviews: await window.nesvo.listReviews(),
+  }));
+  const firstStatePath = join(
+    firstCompleted.directory,
+    `.nesvo-fixture-${firstCompleted.providerSessionId}.json`,
+  );
+  const firstTurnState = await readFile(firstStatePath, 'utf8');
+  const originalPidFile = await readFile(pidFile, 'utf8');
+  const duplicateApp = spawn(executablePath, launchArgs, {
+    env,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  const duplicateExit = new Promise((resolve, reject) => {
+    duplicateApp.once('error', reject);
+    duplicateApp.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  let duplicateTimer;
+  try {
+    assert.deepEqual(
+      await Promise.race([
+        duplicateExit,
+        new Promise((_, reject) => {
+          duplicateTimer = setTimeout(
+            () => reject(new Error('Second application instance did not exit')),
+            15000,
+          );
+        }),
+      ]),
+      { code: 0, signal: null },
+    );
+  } finally {
+    clearTimeout(duplicateTimer);
+    if (
+      duplicateApp.pid &&
+      duplicateApp.exitCode === null &&
+      duplicateApp.signalCode === null
+    )
+      duplicateApp.kill();
+    await duplicateExit;
+  }
+  assert.equal(await readFile(pidFile, 'utf8'), originalPidFile);
+  assert.equal(await readFile(firstStatePath, 'utf8'), firstTurnState);
+  assert.deepEqual(
+    byId(await page.evaluate(() => window.nesvo.listSessions())),
+    byId(beforeDuplicate.sessions),
+  );
+  assert.deepEqual(
+    byId(await page.evaluate(() => window.nesvo.listReviews())),
+    byId(beforeDuplicate.reviews),
   );
   await page
     .getByRole('textbox', { name: 'Message', exact: true })
@@ -1632,12 +1693,250 @@ try {
     .getByRole('button', { name: /^Prototype orchestration/ })
     .click();
   await sidebar.waitFor({ state: 'hidden' });
-  await launchWorkers();
+  const shutdownGroup = await launchWorkers();
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setSize(1280, 900),
+  );
+  await navigation.waitFor({ state: 'visible' });
+  await navigation.getByRole('button', { name: /^Review changes/ }).click();
+  if ((await reviewPanel(initialReview).getAttribute('open')) === null)
+    await reviewPanel(initialReview)
+      .getByLabel(`Open version ${initialReview.version}`, { exact: true })
+      .click();
+  await openSavedDiff(
+    initialReview,
+    'user dirty baseline',
+    'initial agent text',
+  );
+  const beforeRestart = await page.evaluate(async () => ({
+    sessions: await window.nesvo.listSessions(),
+    reviews: await window.nesvo.listReviews(),
+  }));
+  const pendingResult = beforeRestart.reviews.find(
+    review => review.status === 'pending',
+  );
+  assert.ok(
+    pendingResult,
+    'Restart must preserve a result awaiting a decision',
+  );
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
   const closedHostPid = hostPid;
   await Promise.all([...providerPids, hostPid].map(waitDead));
+  hostPid = undefined;
+  const fixtureState = async () => {
+    const paths = (await readdir(env.NESVO_CODEX_FIXTURE_STATE_DIR)).map(name =>
+      join(env.NESVO_CODEX_FIXTURE_STATE_DIR, name),
+    );
+    for (const session of beforeRestart.sessions)
+      if (session.provider === 'Claude Code' && session.providerInitialized)
+        paths.push(
+          join(
+            session.directory,
+            `.nesvo-fixture-${session.providerSessionId}.json`,
+          ),
+        );
+    return Promise.all(
+      paths.sort().map(async path => [path, await readFile(path, 'utf8')]),
+    );
+  };
+  const stateAfterClose = await fixtureState();
+  application = await launchApplication();
+  const restartedPage = await application.firstWindow();
+  restartedPage.setDefaultTimeout(20000);
+  restartedPage.on('pageerror', error => errors.push(error.message));
+  await restartedPage.emulateMedia({ reducedMotion: 'reduce' });
+  await restartedPage
+    .getByRole('heading', { name: writingSession.title, exact: true, level: 1 })
+    .waitFor();
+  hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+  assert.equal(typeof hostPid, 'number');
+  const restartedDiff = restartedPage.getByRole('region', {
+    name: 'Saved result diff',
+    exact: true,
+  });
+  await restartedDiff.waitFor();
+  assert.equal(
+    await restartedDiff.getAttribute('data-review-id'),
+    initialReview.id,
+  );
+  assert.equal(
+    await restartedDiff.getAttribute('data-review-version'),
+    String(initialReview.version),
+  );
+  await restartedDiff
+    .locator('[data-testid="saved-diff-content"][data-file-path="tracked.txt"]')
+    .waitFor();
+  await restartedDiff.getByText('Raw patch', { exact: true }).click();
+  const restoredPatch = await restartedDiff
+    .getByLabel('Saved patch', { exact: true })
+    .innerText();
+  assert.equal(restoredPatch, initialDiff.patch);
+  assert.doesNotMatch(
+    restoredPatch,
+    /corrected agent text|Live workspace edit/,
+  );
+  const restored = await restartedPage.evaluate(async () => ({
+    sessions: await window.nesvo.listSessions(),
+    reviews: await window.nesvo.listReviews(),
+  }));
+  assert.deepEqual(byId(restored.reviews), byId(beforeRestart.reviews));
+  for (const session of beforeRestart.sessions.filter(
+    session => !['running', 'stopping'].includes(session.status),
+  ))
+    assert.deepEqual(
+      restored.sessions.find(value => value.id === session.id),
+      session,
+    );
+  const resumedParent = restored.sessions.find(
+    session => session.id === orchestrator.id,
+  );
+  assert.equal(resumedParent.runId, shutdownGroup.parent.runId);
+  for (const session of [
+    resumedParent,
+    ...shutdownGroup.children.map(child =>
+      restored.sessions.find(session => session.id === child.id),
+    ),
+  ]) {
+    assert.equal(session.status, 'interrupted');
+    assert.equal(session.interruption.reason, 'host-shutdown');
+    assert.equal(session.interruption.runId, session.runId);
+    assert.deepEqual(
+      session.messages.at(-1).interruption,
+      session.interruption,
+    );
+    assert.deepEqual(session.pendingApprovals, []);
+  }
+  for (const child of shutdownGroup.children) {
+    const restoredChild = restored.sessions.find(
+      session => session.id === child.id,
+    );
+    for (const key of [
+      'parentId',
+      'parentRunId',
+      'providerSessionId',
+      'runId',
+      'scope',
+      'directory',
+    ])
+      assert.equal(restoredChild[key], child[key]);
+    const proposal = resumedParent.delegations.find(
+      proposal => proposal.childSessionId === child.id,
+    );
+    assert.equal(proposal.runId, shutdownGroup.parent.runId);
+    assert.equal(proposal.status, 'interrupted');
+  }
+  const acceptedRetry = {
+    reviewId: correctedReview.id,
+    version: correctedReview.version,
+    decisionId: persistedReview.decision.id,
+    decision: 'accept',
+    feedback: persistedReview.decision.feedback,
+  };
+  const correctedVersion = beforeRestart.reviews.find(
+    review => review.id === initialReview.id,
+  );
+  const correctionRetry = {
+    reviewId: initialReview.id,
+    version: initialReview.version,
+    decisionId: correctedVersion.decision.id,
+    decision: 'request-changes',
+    feedback,
+  };
+  for (const input of [acceptedRetry, correctionRetry]) {
+    const retried = await restartedPage.evaluate(
+      input => window.nesvo.decideReview(input),
+      input,
+    );
+    assert.deepEqual(
+      retried,
+      beforeRestart.reviews.find(review => review.id === input.reviewId),
+    );
+  }
+  await delay(200);
+  assert.deepEqual(await fixtureState(), stateAfterClose);
+  assert.deepEqual(
+    byId(await restartedPage.evaluate(() => window.nesvo.listSessions())),
+    byId(restored.sessions),
+  );
+  assert.deepEqual(
+    byId(await restartedPage.evaluate(() => window.nesvo.listReviews())),
+    byId(restored.reviews),
+  );
+  await restartedPage.keyboard.press('Escape');
+  await restartedDiff.waitFor({ state: 'hidden' });
+  await restartedPage.getByRole('button', { name: /^Inbox/ }).click();
+  const restartedInbox = restartedPage.getByRole('region', {
+    name: 'Inbox',
+    exact: true,
+  });
+  await restartedInbox.waitFor();
+  await restartedPage
+    .getByRole('combobox', { name: 'View', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('option', { name: 'Pending', exact: true })
+    .click();
+  await restartedInbox
+    .getByRole('article', {
+      name: `Review result: ${pendingResult.title}, version ${pendingResult.version}`,
+      exact: true,
+    })
+    .filter({ hasText: pendingResult.summary })
+    .waitFor();
+  await restartedPage
+    .getByRole('combobox', { name: 'View', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('option', { name: 'History', exact: true })
+    .click();
+  const restartedAccepted = restartedInbox.getByRole('article', {
+    name: `Review result: ${correctedReview.title}, version ${correctedReview.version}`,
+    exact: true,
+  });
+  await restartedAccepted
+    .getByText(`Result · v${correctedReview.version} · Accepted`, {
+      exact: true,
+    })
+    .waitFor();
+  await restartedAccepted
+    .getByRole('button', {
+      name: `Open session: ${writingSession.title}`,
+      exact: true,
+    })
+    .click();
+  await restartedPage.locator(`#review-${correctedReview.id}[open]`).waitFor();
+  await restartedPage
+    .getByRole('navigation', { name: 'Sessions', exact: true })
+    .getByRole('button', { name: /^Prototype orchestration/ })
+    .click();
+  const interruptedNotice = restartedPage.getByRole('region', {
+    name: 'Interrupted run',
+    exact: true,
+  });
+  await interruptedNotice.waitFor();
+  await interruptedNotice
+    .getByText('Interrupted when Nesvo closed', { exact: true })
+    .waitFor();
+  await interruptedNotice
+    .getByRole('button', { name: 'Continue conversation', exact: true })
+    .click();
+  assert.equal(
+    await restartedPage
+      .getByRole('textbox', { name: 'Message', exact: true })
+      .evaluate(node => node === document.activeElement),
+    true,
+  );
+  assert.deepEqual(
+    byId(await restartedPage.evaluate(() => window.nesvo.listSessions())),
+    byId(restored.sessions),
+  );
+  assert.deepEqual(await fixtureState(), stateAfterClose);
+  assert.deepEqual(errors, []);
+  await application.close();
+  application = undefined;
+  await waitDead(hostPid);
   hostPid = undefined;
   console.log(
     JSON.stringify({
