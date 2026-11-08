@@ -30,18 +30,15 @@ const codexFixturePath = fileURLToPath(
 
 function bounded(promise, description, timeout = 10_000) {
   let timer;
+  const timedOut = new Error();
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              typeof description === 'function' ? description() : description,
-            ),
-          ),
-        timeout,
-      );
+      timer = setTimeout(() => {
+        timedOut.message =
+          typeof description === 'function' ? description() : description;
+        reject(timedOut);
+      }, timeout);
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -175,7 +172,7 @@ function launch(directory, pidFile) {
       return bounded(
         promise,
         () =>
-          `Session event timed out: ${stderr}\n${JSON.stringify(observed.slice(-4).map(session => ({ provider: session.provider, status: session.status, error: session.error, body: agent(session)?.body, approvals: session.pendingApprovals?.map(approval => ({ id: approval.id, kind: approval.kind, detail: approval.detail.slice(0, 300) })) })))}`,
+          `Session event timed out: ${stderr}\n${JSON.stringify(observed.slice(-4).map(session => ({ id: session.id, runId: session.runId, provider: session.provider, status: session.status, error: session.error, body: agent(session)?.body, approvals: session.pendingApprovals?.map(approval => ({ id: approval.id, kind: approval.kind, detail: approval.detail.slice(0, 300) })) })))}`,
       ).finally(() => waiters.delete(waiter));
     },
     stop: async () => {
@@ -209,6 +206,16 @@ async function processesGone(pids, tracked) {
 }
 
 const agent = session => session.messages.at(-1);
+const byId = values =>
+  values.toSorted((left, right) => left.id.localeCompare(right.id));
+const assertInterruption = (session, reason) => {
+  assert.equal(session.status, 'interrupted');
+  assert.equal(agent(session).state, 'interrupted');
+  assert.equal(session.interruption.runId, session.runId);
+  assert.equal(session.interruption.reason, reason);
+  assert.ok(Number.isFinite(Date.parse(session.interruption.at)));
+  assert.deepEqual(agent(session).interruption, session.interruption);
+};
 
 test(
   'host migrates and persists sessions, streams, resumes and owns cancellation',
@@ -909,6 +916,29 @@ test(
       return { started, pids: [pids.pid, pids.childPid] };
     };
     const held = await hold(host);
+    const beforeDuplicate = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    const duplicate = launch(directory, pidFile + '.duplicate');
+    children.push(duplicate);
+    assert.deepEqual(
+      await bounded(
+        duplicate.exited,
+        'Duplicate profile host did not refuse startup',
+      ),
+      { code: 1, signal: null },
+    );
+    assert.match(
+      duplicate.error(),
+      /Another Nesvo host already owns this data directory\./,
+    );
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions.find(
+        value => value.id === session.id,
+      ),
+      beforeDuplicate,
+    );
+    assert.equal((await host.request('health')).health.instanceId, instanceId);
     const concurrentSearch = workspaceRequest('search-workspace-files', '', {
       query: 'not-present',
     });
@@ -939,6 +969,8 @@ test(
       value => value.runId === held.started.runId && value.status === 'stopped',
     );
     assert.equal(agent(stopped).state, 'stopped');
+    assert.equal(stopped.interruption ?? null, null);
+    assert.equal(agent(stopped).interruption ?? null, null);
     assert.equal(agent(stopped).body, 'Fixture is waiting.');
     assert.ok(agent(stopped).completedAt);
     assert.equal(
@@ -1076,8 +1108,7 @@ test(
     const recoveredSession = (
       await recovered.request('list-sessions')
     ).sessions.find(value => value.id === session.id);
-    assert.equal(recoveredSession.status, 'interrupted');
-    assert.equal(agent(recoveredSession).state, 'interrupted');
+    assertInterruption(recoveredSession, 'host-restart');
     assert.equal(recoveredSession.activity, null);
     assert.ok(recoveredSession.error);
     assert.ok(recoveredSession.revision > resumed.revision);
@@ -1111,8 +1142,8 @@ test(
     const finalSession = (
       await finalHost.request('list-sessions')
     ).sessions.find(value => value.id === session.id);
-    assert.equal(finalSession.status, 'stopped');
-    assert.equal(agent(finalSession).state, 'stopped');
+    assertInterruption(finalSession, 'host-shutdown');
+    assert.equal(finalSession.runId, shutdownRun.started.runId);
     const codexStatus = await finalHost.request('codex-status');
     assert.equal(codexStatus.type, 'codex-status');
     assert.equal(
@@ -1150,6 +1181,56 @@ test(
       assert.equal(response.type, 'session', JSON.stringify(response));
       return response.session;
     };
+    const disconnectedTarget = await createCodex('read-only');
+    const disconnectedRun = await sendCodex(
+      finalHost,
+      disconnectedTarget,
+      'fixture:disconnect',
+    );
+    const disconnected = await finalHost.event(
+      value =>
+        value.runId === disconnectedRun.runId && value.status === 'interrupted',
+    );
+    assertInterruption(disconnected, 'provider-disconnected');
+    assert.equal(agent(disconnected).body, 'Codex fixture disconnected.');
+    assert.deepEqual(disconnected.pendingApprovals, []);
+    assert.equal(
+      (await finalHost.request('list-reviews')).reviews.some(
+        value => value.runId === disconnected.runId,
+      ),
+      false,
+    );
+    await delay(100);
+    assert.deepEqual(
+      (await finalHost.request('list-sessions')).sessions.find(
+        value => value.id === disconnected.id,
+      ),
+      disconnected,
+    );
+    const explicitResume = await sendCodex(
+      finalHost,
+      disconnected,
+      'fixture:continue',
+    );
+    const afterDisconnect = await finalHost.event(
+      value =>
+        value.runId === explicitResume.runId && value.status === 'completed',
+    );
+    assert.equal(
+      afterDisconnect.providerSessionId,
+      disconnected.providerSessionId,
+    );
+    assert.equal(
+      afterDisconnect.messages.length,
+      disconnected.messages.length + 2,
+    );
+    assert.equal(afterDisconnect.interruption ?? null, null);
+    assert.deepEqual(
+      afterDisconnect.messages.find(
+        message => message.id === agent(disconnected).id,
+      ).interruption,
+      disconnected.interruption,
+    );
     const readOnly = await createCodex('read-only');
     await seedNativeSkill(readOnly.directory);
     const selectedCatalog = await finalHost.request('discover-skills', {
@@ -1809,7 +1890,7 @@ test(
     const recoveredActivities = (
       await codexReopened.request('list-sessions')
     ).sessions.find(item => item.id === readOnly.id);
-    assert.equal(recoveredActivities.status, 'interrupted');
+    assertInterruption(recoveredActivities, 'host-restart');
     assert.equal(recoveredActivities.activities[0].status, 'completed');
     assert.equal(recoveredActivities.activities[1].status, 'interrupted');
     assert.equal(
@@ -1940,7 +2021,7 @@ test(
     const shutdownSession = (
       await checked.request('list-sessions')
     ).sessions.find(value => value.id === supervised.id);
-    assert.equal(shutdownSession.status, 'stopped');
+    assertInterruption(shutdownSession, 'host-shutdown');
     assert.deepEqual(shutdownSession.pendingApprovals, []);
     const legacyRun = await sendCodex(
       checked,
@@ -2552,13 +2633,30 @@ test(
     const afterGroup = open();
     const persistedGroup = (await afterGroup.request('list-sessions')).sessions;
     const persistedRoot = persistedGroup.find(value => value.id === root.id);
-    assert.equal(persistedRoot.status, 'stopped');
+    assertInterruption(persistedRoot, 'host-shutdown');
+    assert.equal(persistedRoot.runId, closingPlan.run.runId);
     assert.equal(persistedRoot.delegationEnabled, true);
-    for (const worker of closingWorkers)
-      assert.equal(
-        persistedGroup.find(value => value.id === worker.child.id).status,
-        'stopped',
+    for (const worker of closingWorkers) {
+      const restoredWorker = persistedGroup.find(
+        value => value.id === worker.child.id,
       );
+      assertInterruption(restoredWorker, 'host-shutdown');
+      for (const key of [
+        'id',
+        'runId',
+        'providerSessionId',
+        'parentId',
+        'parentRunId',
+        'scope',
+        'directory',
+      ])
+        assert.equal(restoredWorker[key], worker.child[key]);
+      const proposal = persistedRoot.delegations.find(
+        value => value.childSessionId === restoredWorker.id,
+      );
+      assert.equal(proposal.runId, closingPlan.run.runId);
+      assert.equal(proposal.status, 'interrupted');
+    }
     const continuedRoot = await sendCodex(afterGroup, root, 'fixture:continue');
     await afterGroup.event(
       value =>
@@ -2735,10 +2833,48 @@ test(
       (await afterGroup.request('decide-review', acceptCorrected)).review,
       acceptedFiles.review,
     );
+    const beforeRestartSessions = (await afterGroup.request('list-sessions'))
+      .sessions;
+    const beforeRestartReviews = (await afterGroup.request('list-reviews'))
+      .reviews;
+    assert.ok(beforeRestartReviews.some(value => value.status === 'pending'));
+    const providerState = async () =>
+      Promise.all(
+        (await readdir(pidFile + '.state'))
+          .sort()
+          .map(async name => [
+            name,
+            await readFile(join(pidFile + '.state', name), 'utf8'),
+          ]),
+      );
+    const beforeRestartProviderState = await providerState();
     await afterGroup.stop();
     const reviewsReopened = open();
     const restoredReviews = (await reviewsReopened.request('list-reviews'))
       .reviews;
+    assert.deepEqual(byId(restoredReviews), byId(beforeRestartReviews));
+    assert.deepEqual(
+      byId((await reviewsReopened.request('list-sessions')).sessions),
+      byId(beforeRestartSessions),
+    );
+    assert.deepEqual(
+      (await reviewsReopened.request('decide-review', acceptCorrected)).review,
+      acceptedFiles.review,
+    );
+    assert.deepEqual(
+      (await reviewsReopened.request('decide-review', correctionInput)).review,
+      beforeRestartReviews.find(value => value.id === initialReview.id),
+    );
+    await delay(150);
+    assert.deepEqual(
+      byId((await reviewsReopened.request('list-reviews')).reviews),
+      byId(beforeRestartReviews),
+    );
+    assert.deepEqual(
+      byId((await reviewsReopened.request('list-sessions')).sessions),
+      byId(beforeRestartSessions),
+    );
+    assert.deepEqual(await providerState(), beforeRestartProviderState);
     assert.deepEqual(
       restoredReviews.find(value => value.id === correctedReview.id),
       acceptedFiles.review,
@@ -2818,7 +2954,152 @@ test(
       ).code,
       'invalid-request',
     );
-    await reviewsReopened.stop();
+    const lostClient = await codexHold(reviewsReopened);
+    reviewsReopened.child.stdin.end();
+    assert.deepEqual(
+      await bounded(
+        reviewsReopened.exited,
+        'Host did not close after client EOF',
+      ),
+      { code: 0, signal: null },
+    );
+    await processesGone(lostClient.pids, ownedPids);
+    const afterClientLoss = open();
+    const recoveredClient = (
+      await afterClientLoss.request('list-sessions')
+    ).sessions.find(value => value.id === supervised.id);
+    assertInterruption(recoveredClient, 'host-shutdown');
+    assert.equal(recoveredClient.runId, lostClient.run.runId);
+    assert.deepEqual(recoveredClient.pendingApprovals, []);
+    assert.equal(
+      (
+        await afterClientLoss.request(
+          'respond-approval',
+          decision(lostClient, 'accept'),
+        )
+      ).code,
+      'invalid-request',
+    );
+    const unfinishedParent = (
+      await afterClientLoss.request('create-session', {
+        ...create(''),
+        provider: 'Codex',
+        model: 'fixture-codex',
+        mode: 'read-only',
+      })
+    ).session;
+    const unfinishedRun = await sendCodex(
+      afterClientLoss,
+      unfinishedParent,
+      'fixture:delegate',
+    );
+    const unfinishedPlan = await afterClientLoss.event(
+      value =>
+        value.id === unfinishedParent.id &&
+        value.delegations.filter(
+          proposal => proposal.runId === unfinishedRun.runId,
+        ).length === 2,
+    );
+    const approvedProposal = unfinishedPlan.delegations.find(
+      proposal =>
+        proposal.runId === unfinishedRun.runId &&
+        proposal.title === 'Fixture worker A',
+    );
+    await afterClientLoss.request('decide-delegation', {
+      sessionId: unfinishedParent.id,
+      runId: unfinishedRun.runId,
+      delegationId: approvedProposal.id,
+      decision: 'accept',
+    });
+    const durableChild = await afterClientLoss.event(
+      value =>
+        value.parentId === unfinishedParent.id &&
+        value.parentRunId === unfinishedRun.runId &&
+        value.status === 'completed',
+    );
+    const durableChildReview = await afterClientLoss.review(
+      value =>
+        value.sessionId === durableChild.id &&
+        value.runId === durableChild.runId &&
+        value.status === 'pending',
+    );
+    const crashSnapshot = (
+      await afterClientLoss.request('list-sessions')
+    ).sessions.find(value => value.id === unfinishedParent.id);
+    assert.equal(crashSnapshot.status, 'running');
+    assert.equal(
+      crashSnapshot.delegations.find(
+        proposal => proposal.id === approvedProposal.id,
+      ).childRunId,
+      durableChild.runId,
+    );
+    assert.equal(
+      (await afterClientLoss.request('list-reviews')).reviews.some(
+        review => review.sessionId === unfinishedParent.id,
+      ),
+      false,
+    );
+    await afterClientLoss.stop();
+    crashSnapshot.delegations.find(
+      proposal => proposal.id === approvedProposal.id,
+    ).status = 'running';
+    const crashDatabase = new DatabaseSync(path);
+    try {
+      crashDatabase
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(JSON.stringify(crashSnapshot), unfinishedParent.id);
+    } finally {
+      crashDatabase.close();
+    }
+    const stateBeforeRecovery = await providerState();
+    const afterParentCrash = open();
+    const crashRecovered = (
+      await afterParentCrash.request('list-sessions')
+    ).sessions.find(value => value.id === unfinishedParent.id);
+    assertInterruption(crashRecovered, 'host-restart');
+    const recoveredProposal = crashRecovered.delegations.find(
+      proposal => proposal.id === approvedProposal.id,
+    );
+    assert.equal(recoveredProposal.status, 'completed');
+    assert.equal(recoveredProposal.childSessionId, durableChild.id);
+    assert.equal(recoveredProposal.childRunId, durableChild.runId);
+    assert.equal(
+      crashRecovered.delegations.find(
+        proposal => proposal.id !== approvedProposal.id,
+      ).status,
+      'interrupted',
+    );
+    assert.deepEqual(
+      (await afterParentCrash.request('list-sessions')).sessions.find(
+        value => value.id === durableChild.id,
+      ),
+      durableChild,
+    );
+    assert.equal(
+      (await afterParentCrash.request('list-reviews')).reviews.some(
+        review => review.sessionId === unfinishedParent.id,
+      ),
+      false,
+    );
+    await delay(100);
+    assert.deepEqual(await providerState(), stateBeforeRecovery);
+    const resumedParentRun = await sendCodex(
+      afterParentCrash,
+      crashRecovered,
+      'fixture:continue',
+    );
+    const resumedParentReview = await afterParentCrash.review(
+      review =>
+        review.runId === resumedParentRun.runId && review.status === 'pending',
+    );
+    assert.deepEqual(resumedParentReview.dependencies, [
+      {
+        sessionId: durableChild.id,
+        reviewId: durableChildReview.id,
+        version: durableChildReview.version,
+      },
+    ]);
+    await afterParentCrash.stop();
   },
 );
 

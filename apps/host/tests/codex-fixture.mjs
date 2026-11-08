@@ -584,9 +584,14 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = params.input[0].text;
-      const command = prompt.split('\n')[0].trim();
+      const requestPrompt = prompt.split(
+        '\n\nRecovery context supplied by the host, not authorization to repeat previous operations:',
+      )[0];
+      const command = requestPrompt.split('\n')[0].trim();
       const worker =
-        /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(prompt);
+        /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(
+          requestPrompt,
+        );
       if (worker) {
         assert.equal(
           experimentalApi,
@@ -606,14 +611,14 @@ if (args.length === 1 && args[0] === '--version') {
             },
           });
         } else complete(`Codex worker ${worker[2]} completed its scoped task.`);
-      } else if (prompt.includes('fixture:review-binary')) {
+      } else if (requestPrompt.includes('fixture:review-binary')) {
         assert.equal(thread.supervised, true);
         writeFileSync(
           join(thread.cwd, 'binary.bin'),
           Buffer.from([0, 1, 0, 2]),
         );
         complete('Codex fixture binary result.');
-      } else if (prompt.includes('fixture:review-correct')) {
+      } else if (requestPrompt.includes('fixture:review-correct')) {
         assert.equal(thread.supervised, true);
         assert.equal(
           thread.resumed,
@@ -629,7 +634,7 @@ if (args.length === 1 && args[0] === '--version') {
           'corrected created text\n',
         );
         complete('Codex fixture corrected files.');
-      } else if (prompt.includes('fixture:review-write')) {
+      } else if (requestPrompt.includes('fixture:review-write')) {
         assert.equal(thread.supervised, true);
         writeFileSync(join(thread.cwd, 'tracked.txt'), 'initial agent text\n');
         writeFileSync(
@@ -640,7 +645,11 @@ if (args.length === 1 && args[0] === '--version') {
         complete('Codex fixture initial files.');
       } else if (/^fixture:delegate(?:-|$)/.test(command)) {
         delegate(command.slice('fixture:delegate-'.length) || 'default');
-      } else if (prompt === 'fixture:stream') {
+      } else if (command === 'fixture:disconnect') {
+        delta('Codex fixture disconnected.');
+        await new Promise(resolve => process.stdout.write('', resolve));
+        process.exit(73);
+      } else if (command === 'fixture:stream') {
         const read = commandItem('read', {
           command: 'read sample.txt',
           commandActions: [
@@ -675,7 +684,7 @@ if (args.length === 1 && args[0] === '--version') {
           delta('reply.');
           complete('Codex fixture streamed reply.');
         }, 300);
-      } else if (prompt === 'fixture:activities') {
+      } else if (command === 'fixture:activities') {
         for (let index = 0; index < 105; index++) {
           const item = commandItem(String(index));
           tool('started', item);
@@ -697,20 +706,20 @@ if (args.length === 1 && args[0] === '--version') {
           aggregatedOutput: 'late evicted output',
         });
         complete('Codex fixture bounded activities.');
-      } else if (prompt === 'fixture:approve' || prompt === 'fixture:file') {
-        requestApproval(prompt === 'fixture:file' ? 'file' : 'command');
-      } else if (prompt === 'fixture:missing-command') {
+      } else if (command === 'fixture:approve' || command === 'fixture:file') {
+        requestApproval(command === 'fixture:file' ? 'file' : 'command');
+      } else if (command === 'fixture:missing-command') {
         requestApproval('command', 'missing-command');
-      } else if (prompt === 'fixture:missing-changes') {
+      } else if (command === 'fixture:missing-changes') {
         requestApproval('file', 'missing-changes');
-      } else if (prompt === 'fixture:oversize-approval') {
+      } else if (command === 'fixture:oversize-approval') {
         requestApproval('command', 'oversize');
-      } else if (prompt === 'fixture:remote-environment') {
+      } else if (command === 'fixture:remote-environment') {
         requestApproval('command', 'remote-environment');
-      } else if (prompt === 'fixture:approval-hold') {
+      } else if (command === 'fixture:approval-hold') {
         await hold();
         requestApproval('command');
-      } else if (prompt === 'fixture:hold') {
+      } else if (command === 'fixture:hold') {
         await hold();
       } else {
         complete(

@@ -187,7 +187,8 @@ if (args.length === 1 && args[0] === '--version') {
       session_id: sessionId,
     });
   };
-  if (prompt === 'fixture:hold') {
+  const command = prompt.split('\n')[0].trim();
+  if (command === 'fixture:hold') {
     const child = spawn(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],
@@ -209,7 +210,7 @@ if (args.length === 1 && args[0] === '--version') {
     start('Fixture is waiting.');
     startRead();
     setInterval(() => {}, 1000);
-  } else if (prompt === 'fixture:fail') {
+  } else if (command === 'fixture:fail') {
     emit({
       type: 'rate_limit_event',
       rate_limit_info: {
@@ -231,12 +232,12 @@ if (args.length === 1 && args[0] === '--version') {
       is_error: true,
       result: 'Fixture account limit reached.',
     });
-  } else if (prompt === 'fixture:result-fail') {
+  } else if (command === 'fixture:result-fail') {
     start('Fixture unsuccessful result.');
     startRead();
     finishRead(true);
     finish('Fixture unsuccessful result.', true);
-  } else if (prompt === 'fixture:stream') {
+  } else if (command === 'fixture:stream') {
     start('Fixture streamed ');
     startRead();
     await setTimeout(300);
