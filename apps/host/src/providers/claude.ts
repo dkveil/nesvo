@@ -20,8 +20,9 @@ export type ClaudeEvent =
   | { type: 'tool-activity'; activity: ProviderActivity };
 
 export type ClaudeResult = {
-  status: 'completed' | 'stopped' | 'failed';
+  status: 'completed' | 'stopped' | 'failed' | 'interrupted';
   error: string | null;
+  interruption?: 'provider-disconnected';
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -480,6 +481,7 @@ export function startClaude(options: {
       let stderr = '';
       let resultSeen = false;
       let successful = false;
+      let initialized = false;
       let providerFailure: string | null = null;
       let rateLimitFailure: string | null = null;
       const fail = (message: string) => {
@@ -564,6 +566,7 @@ export function startClaude(options: {
           ) {
             fail('Claude returned invalid session metadata.');
           } else {
+            initialized = true;
             emit({
               type: 'init',
               sessionId: value.session_id,
@@ -776,7 +779,16 @@ export function startClaude(options: {
         };
       if (providerFailure || rateLimitFailure)
         return { status: 'failed', error: providerFailure ?? rateLimitFailure };
+      if (stopped && resultSeen && successful && lastText)
+        return { status: 'completed', error: null };
       if (stopped) return { status: 'stopped', error: null };
+      if (!resultSeen && initialized)
+        return {
+          status: 'interrupted',
+          interruption: 'provider-disconnected',
+          error:
+            'Claude Code disconnected before confirming the turn outcome. Inspect the workspace before continuing.',
+        };
       if (exit.error)
         throw new Error(
           'Claude Code process failed. Check the executable and working directory.',

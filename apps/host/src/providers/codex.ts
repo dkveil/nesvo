@@ -38,8 +38,9 @@ export type CodexEvent =
   | { type: 'approval-resolved'; id: string };
 
 export type CodexResult = {
-  status: 'completed' | 'stopped' | 'failed';
+  status: 'completed' | 'stopped' | 'failed' | 'interrupted';
   error: string | null;
+  interruption?: 'provider-disconnected';
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -311,7 +312,7 @@ type RpcPeer = {
   owned: OwnedProcess;
   request: (method: string, params: RecordValue) => Promise<RecordValue>;
   send: (value: RecordValue) => void;
-  failure: Promise<string>;
+  failure: Promise<Error>;
   close: () => Promise<ProcessExit>;
 };
 
@@ -323,6 +324,8 @@ class CodexRpcError extends Error {
     this.code = typeof code === 'number' ? code : null;
   }
 }
+
+class CodexDisconnectedError extends Error {}
 
 function rpcPeer(
   executable: Executable,
@@ -361,34 +364,42 @@ function rpcPeer(
   let line = '';
   let bytes = 0;
   let closed = false;
-  let failureMessage: string | null = null;
-  let resolveFailure: (message: string) => void;
-  const failure = new Promise<string>(resolve => {
+  let failureError: Error | null = null;
+  let resolveFailure: (error: Error) => void;
+  const failure = new Promise<Error>(resolve => {
     resolveFailure = resolve;
   });
-  const fail = (message: string) => {
-    if (failureMessage || closed) return;
-    failureMessage = safeMessage(message);
-    resolveFailure(failureMessage);
+  const fail = (message: string, disconnected = false) => {
+    if (failureError || closed) return;
+    failureError = disconnected
+      ? new CodexDisconnectedError(safeMessage(message))
+      : new Error(safeMessage(message));
+    resolveFailure(failureError);
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);
-      entry.reject(new Error(failureMessage));
+      entry.reject(failureError);
     }
     pending.clear();
     void owned.stop();
   };
   const send = (message: RecordValue) => {
-    if (closed || failureMessage)
-      throw new Error(failureMessage ?? 'Codex connection is closed.');
+    if (closed || failureError)
+      throw failureError ?? new Error('Codex connection is closed.');
     const serialized = JSON.stringify(message);
     if (Buffer.byteLength(serialized) > maxLineBytes)
       throw new Error('Codex request exceeded the supported size.');
     owned.child.stdin.write(`${serialized}\n`, error => {
-      if (error) fail('Codex request delivery failed.');
+      if (error)
+        fail(
+          'Codex request delivery failed.',
+          ['EPIPE', 'ECONNRESET'].includes(
+            (error as NodeJS.ErrnoException).code ?? '',
+          ),
+        );
     });
   };
   const consume = (serialized: string) => {
-    if (!serialized.trim() || closed || failureMessage) return;
+    if (!serialized.trim() || closed || failureError) return;
     try {
       const message = object(JSON.parse(serialized) as unknown);
       if (!message)
@@ -432,7 +443,7 @@ function rpcPeer(
   };
   owned.child.stdout.setEncoding('utf8');
   owned.child.stdout.on('data', (chunk: string) => {
-    if (closed || failureMessage) return;
+    if (closed || failureError) return;
     bytes += Buffer.byteLength(chunk);
     if (bytes > maxOutputBytes)
       return fail('Codex streaming output exceeded the supported size.');
@@ -456,6 +467,7 @@ function rpcPeer(
         exit.error
           ? 'Codex app-server failed to start or communicate.'
           : `Codex app-server closed before the operation completed (exit ${exit.code}).`,
+        Boolean(owned.child.pid),
       );
   });
   return {
@@ -464,9 +476,9 @@ function rpcPeer(
     failure,
     request: (method, params) =>
       new Promise((resolve, reject) => {
-        if (closed || failureMessage)
+        if (closed || failureError)
           return reject(
-            new Error(failureMessage ?? 'Codex connection is closed.'),
+            failureError ?? new Error('Codex connection is closed.'),
           );
         const id = ++nextId;
         const timer = setTimeout(
@@ -1128,6 +1140,12 @@ export function startCodex(options: {
   const turnDone = new Promise<CodexResult>(resolve => {
     resolveTurn = resolve;
   });
+  const outcome: { confirmed?: CodexResult } = {};
+  const confirmTurn = (result: CodexResult) => {
+    if (outcome.confirmed) return;
+    outcome.confirmed = result;
+    resolveTurn(result);
+  };
   const fail = (message: string) => {
     failure ??= safeMessage(message);
     delegationController.abort();
@@ -1516,7 +1534,7 @@ export function startCodex(options: {
     if (message.method === 'turn/completed') {
       const turn = object(params.turn);
       if (turn?.id !== turnId) return;
-      if (pendingDelegates.size > 0)
+      if (turn.status === 'completed' && pendingDelegates.size > 0)
         throw new Error(
           'Codex completed the turn before receiving worker outcomes.',
         );
@@ -1524,7 +1542,7 @@ export function startCodex(options: {
       pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       if (turn.status === 'completed')
-        resolveTurn(
+        confirmTurn(
           lastText
             ? { status: 'completed', error: null }
             : {
@@ -1533,10 +1551,19 @@ export function startCodex(options: {
               },
         );
       else if (turn.status === 'interrupted')
-        resolveTurn({ status: 'stopped', error: null });
+        confirmTurn(
+          stopped
+            ? { status: 'stopped', error: null }
+            : {
+                status: 'interrupted',
+                interruption: 'provider-disconnected',
+                error:
+                  'Codex interrupted the turn before confirming its outcome. Inspect the workspace before continuing.',
+              },
+        );
       else {
         const error = object(turn.error);
-        resolveTurn({
+        confirmTurn({
           status: 'failed',
           error: safeMessage(
             typeof error?.message === 'string'
@@ -1845,19 +1872,33 @@ export function startCodex(options: {
       for (const message of queued.splice(0)) consume(message);
       result = await Promise.race([
         turnDone,
-        peer.failure.then(error => ({ status: 'failed' as const, error })),
+        peer.failure.then(error =>
+          error instanceof CodexDisconnectedError
+            ? {
+                status: 'interrupted' as const,
+                interruption: 'provider-disconnected' as const,
+                error: error.message,
+              }
+            : { status: 'failed' as const, error: error.message },
+        ),
       ]);
     } catch (error) {
       result = failure
         ? { status: 'failed', error: failure }
         : stopped
           ? { status: 'stopped', error: null }
-          : {
-              status: 'failed',
-              error: safeMessage(
-                error instanceof Error ? error.message : 'Codex failed.',
-              ),
-            };
+          : error instanceof CodexDisconnectedError
+            ? {
+                status: 'interrupted',
+                interruption: 'provider-disconnected',
+                error: error.message,
+              }
+            : {
+                status: 'failed',
+                error: safeMessage(
+                  error instanceof Error ? error.message : 'Codex failed.',
+                ),
+              };
     } finally {
       clearTimeout(timer);
       finished = true;
@@ -1870,9 +1911,12 @@ export function startCodex(options: {
     }
     return failure
       ? { status: 'failed', error: failure }
-      : stopped
-        ? { status: 'stopped', error: null }
-        : result;
+      : outcome.confirmed?.status === 'completed' ||
+          outcome.confirmed?.status === 'failed'
+        ? outcome.confirmed
+        : stopped
+          ? { status: 'stopped', error: null }
+          : result;
   })();
   return {
     done,

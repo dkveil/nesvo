@@ -89,9 +89,22 @@ export class ReviewStore {
     };
   }
 
-  inherited(sessionId: string): Review[] {
-    return (this.latest(sessionId)?.dependencies ?? [])
-      .map(dependency => this.latest(dependency.sessionId))
+  inherited(
+    sessionId: string,
+    delegations: Session['delegations'] = [],
+  ): Review[] {
+    const dependencies = this.latest(sessionId)?.dependencies ?? [];
+    const previousGroup = delegations.at(-1)?.runId;
+    const children = dependencies.length
+      ? dependencies.map(dependency => dependency.sessionId)
+      : delegations
+          .filter(
+            proposal =>
+              proposal.runId === previousGroup && proposal.childSessionId,
+          )
+          .map(proposal => proposal.childSessionId!);
+    return [...new Set(children)]
+      .map(childId => this.latest(childId))
       .filter(
         (review): review is Review =>
           !!review && review.status !== 'superseded',
@@ -113,7 +126,7 @@ export class ReviewStore {
         });
     }
     if (dependencies.length === 0 && session.role === 'orchestrator') {
-      for (const current of this.inherited(session.id))
+      for (const current of this.inherited(session.id, session.delegations))
         dependencies.push({
           sessionId: current.sessionId,
           reviewId: current.id,

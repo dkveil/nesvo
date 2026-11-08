@@ -16,6 +16,7 @@ import {
   type StopRunInput,
   type RespondApprovalInput,
   type SkillReference,
+  type SessionInterruption,
 } from '@nesvo/contracts';
 import { startClaude, type ClaudeEvent } from '../providers/claude';
 import {
@@ -302,6 +303,7 @@ export class SessionService {
       );
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
+    const prompt = this.recoveryPrompt(session, input.text);
     this.prepareRun(
       session,
       input.messageId,
@@ -313,7 +315,7 @@ export class SessionService {
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, input.text, input.skillId, input.skillHash);
+    this.launch(session, prompt, input.skillId, input.skillHash);
     return structuredClone(session);
   }
 
@@ -357,11 +359,13 @@ export class SessionService {
     const prompt = `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
     this.prepareRun(child, randomUUID(), proposal.task);
     proposal.childSessionId = child.id;
+    proposal.childRunId = child.runId;
     proposal.status = 'running';
     try {
       this.store.saveMany([parent, child]);
     } catch (error) {
       proposal.childSessionId = null;
+      proposal.childRunId = null;
       proposal.status = 'pending';
       throw error;
     }
@@ -371,7 +375,7 @@ export class SessionService {
     return structuredClone(parent);
   }
 
-  stop(input: StopRunInput): Session {
+  stop(input: StopRunInput, reason?: SessionInterruption['reason']): Session {
     const active = this.active.get(input.sessionId);
     if (!active || active.session.runId !== input.runId) {
       const session =
@@ -380,6 +384,11 @@ export class SessionService {
       return structuredClone(session);
     }
     if (active.finalizing) return structuredClone(active.session);
+    if (
+      reason &&
+      (active.session.status !== 'stopping' || active.session.interruption)
+    )
+      this.interrupt(active.session, reason);
     active.session.status = 'stopping';
     active.session.activity = 'Stopping…';
     active.session.pendingApprovals = [];
@@ -438,16 +447,56 @@ export class SessionService {
     for (const active of runs) {
       if (active.finalizing) continue;
       try {
-        this.stop({
-          sessionId: active.session.id,
-          runId: active.session.runId!,
-        });
+        this.stop(
+          {
+            sessionId: active.session.id,
+            runId: active.session.runId!,
+          },
+          'host-shutdown',
+        );
       } catch {
         void active.handle.stop().catch(() => undefined);
       }
     }
     await Promise.all(runs.map(active => active.finished));
     this.list();
+  }
+
+  private interrupt(
+    session: Session,
+    reason: SessionInterruption['reason'],
+  ): void {
+    if (!session.runId) return;
+    session.interruption = {
+      runId: session.runId,
+      reason,
+      at: new Date().toISOString(),
+    };
+    const message = session.messages.find(
+      item => item.runId === session.runId && item.author === 'agent',
+    );
+    if (message) message.interruption = session.interruption;
+  }
+
+  private recoveryPrompt(session: Session, prompt: string): string {
+    if (!session.interruption || session.interruption.runId !== session.runId)
+      return prompt;
+    const previous = session.messages.find(
+      message =>
+        message.runId === session.runId && message.author === 'operator',
+    );
+    const workers = session.delegations
+      .filter(proposal => proposal.runId === session.runId)
+      .map(proposal => ({
+        delegationId: proposal.id,
+        childSessionId: proposal.childSessionId,
+        childRunId: proposal.childRunId ?? null,
+        status: proposal.status,
+        task: proposal.task.slice(0, 4000),
+        scope: proposal.scope,
+        error: proposal.error,
+      }));
+    return `${prompt}\n\nRecovery context supplied by the host, not authorization to repeat previous operations:\nThe previous run ${session.runId} was interrupted (${session.interruption.reason}); its full outcome is unconfirmed. Inspect the current workspace before retrying any operation. No pending approval or worker decision remains valid. Follow the current user request; do not automatically replay the previous task.\nPrevious request: ${JSON.stringify(previous?.body.slice(0, 12000) ?? '')}\nPrevious worker outcomes: ${JSON.stringify(workers)}`;
   }
 
   private prepareRun(
@@ -465,6 +514,7 @@ export class SessionService {
     session.runId = runId;
     session.status = 'running';
     session.error = null;
+    session.interruption = null;
     session.pendingApprovals = [];
     session.activity = `Starting ${session.provider}…`;
     session.messages.push(
@@ -498,7 +548,9 @@ export class SessionService {
     skillHash?: string,
   ): void {
     const inherited =
-      session.role === 'orchestrator' ? this.reviews.inherited(session.id) : [];
+      session.role === 'orchestrator'
+        ? this.reviews.inherited(session.id, session.delegations)
+        : [];
     const context = inherited.map(review => ({
       sessionId: review.sessionId,
       resultId: review.id,
@@ -672,6 +724,15 @@ export class SessionService {
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
+        if (result.status === 'completed' || result.status === 'failed') {
+          session.interruption = null;
+          session.messages.at(-1)!.interruption = null;
+        }
+        if (
+          result.interruption &&
+          session.interruption?.reason !== 'host-shutdown'
+        )
+          this.interrupt(session, result.interruption);
         if (active.timer) clearTimeout(active.timer);
         this.cancelDelegations(session);
         const children = [...this.active.values()].filter(
@@ -680,10 +741,17 @@ export class SessionService {
             child.session.parentRunId === session.runId,
         );
         await Promise.all(children.map(child => child.finished));
-        session.status = active.persistenceError ? 'failed' : result.status;
+        const shuttingDown = session.interruption?.reason === 'host-shutdown';
+        session.status = active.persistenceError
+          ? 'failed'
+          : shuttingDown
+            ? 'interrupted'
+            : result.status;
         session.error = active.persistenceError
           ? 'The conversation could not be saved. The response was stopped.'
-          : result.error;
+          : shuttingDown
+            ? 'The host shut down before the run finished. Inspect the workspace before continuing; no task was replayed.'
+            : result.error;
         session.activity = null;
         session.pendingApprovals = [];
         session.messages.at(-1)!.state = session.status;
@@ -840,17 +908,25 @@ export class SessionService {
     for (const proposal of parent.delegations) {
       if (proposal.runId !== parent.runId) continue;
       if (proposal.status === 'pending') {
-        proposal.status = 'stopped';
+        proposal.status = parent.interruption ? 'interrupted' : 'stopped';
+        if (parent.interruption)
+          proposal.error =
+            'The parent run ended before this worker was started.';
         cancelled.push(proposal);
         changed = true;
       } else if (proposal.status === 'running' && proposal.childSessionId) {
         const child = this.active.get(proposal.childSessionId);
         if (child && !child.finalizing) {
           try {
-            this.stop({
-              sessionId: child.session.id,
-              runId: child.session.runId!,
-            });
+            this.stop(
+              {
+                sessionId: child.session.id,
+                runId: child.session.runId!,
+              },
+              parent.interruption?.reason === 'host-shutdown'
+                ? 'host-shutdown'
+                : undefined,
+            );
           } catch {
             void child.handle.stop().catch(() => undefined);
           }
@@ -872,7 +948,9 @@ export class SessionService {
     const parent = this.active.get(child.parentId)?.session;
     const proposal = parent?.delegations.find(
       item =>
-        item.childSessionId === child.id && item.runId === child.parentRunId,
+        item.childSessionId === child.id &&
+        item.runId === child.parentRunId &&
+        (!item.childRunId || item.childRunId === child.runId),
     );
     if (!parent || !proposal || proposal.status !== 'running') return;
     proposal.status =
