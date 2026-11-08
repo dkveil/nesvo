@@ -18,12 +18,13 @@
     "host": "bun run --cwd apps/host start",
     "build": "bun run --cwd apps/host build && bun run --cwd apps/desktop build",
     "typecheck": "bun run --filter '@nesvo/*' typecheck",
-    "lint": "eslint apps/desktop/src apps/host/src packages/contracts/src scripts/desktop-smoke.mjs apps/host/tests/*.mjs eslint.config.mjs",
+    "lint": "eslint apps/desktop/src apps/host/src packages/contracts/src scripts/desktop-smoke.mjs scripts/remote-smoke.mjs apps/host/tests/*.mjs eslint.config.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "bun run --cwd apps/host build && node --test apps/host/tests/host.integration.test.mjs apps/host/tests/daemon.integration.test.mjs",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
     "smoke:desktop": "node scripts/desktop-smoke.mjs",
+    "smoke:remote": "node scripts/remote-smoke.mjs",
     "package:dir": "bun run --cwd apps/desktop package:dir"
   },
   "trustedDependencies": [
