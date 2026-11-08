@@ -16,6 +16,7 @@ import {
   discoverSkillsSchema,
   hostIdSchema,
   sshComputerInputSchema,
+  providerUsageInputSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -106,6 +107,17 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  ipcMain.handle(
+    'nesvo:provider-usage',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'provider-usage',
+        providerUsageInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   ipcMain.handle('nesvo:health', async (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('health', undefined, route(hostId));

@@ -228,9 +228,11 @@ export function connectSshHost(
         },
         method === 'discover-skills'
           ? 60_000
-          : method === 'claude-status' || method === 'codex-status'
-            ? 30_000
-            : 15_000,
+          : method === 'provider-usage'
+            ? 40_000
+            : method === 'claude-status' || method === 'codex-status'
+              ? 30_000
+              : 15_000,
       );
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(line);

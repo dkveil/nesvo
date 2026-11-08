@@ -23,12 +23,22 @@ import {
   hostIdSchema,
   sshComputerInputSchema,
   workspaceEventSchema,
+  providerUsageInputSchema,
+  providerUsageSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
 const route = (hostId: string | undefined) =>
   hostIdSchema.parse(hostId ?? 'local');
 const api: DesktopApi = {
+  providerUsage: async (input, hostId) =>
+    providerUsageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:provider-usage',
+        providerUsageInputSchema.parse(input),
+        route(hostId),
+      ),
+    ),
   listComputers: async () =>
     computerSchema
       .array()

@@ -86,9 +86,11 @@ export function startHost(directory: string) {
         },
         method === 'discover-skills'
           ? 60000
-          : method === 'claude-status' || method === 'codex-status'
-            ? 30000
-            : 15000,
+          : method === 'provider-usage'
+            ? 40000
+            : method === 'claude-status' || method === 'codex-status'
+              ? 30000
+              : 15000,
       );
       pending.set(id, { resolve, reject, timer });
       try {

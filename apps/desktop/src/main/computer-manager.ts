@@ -364,6 +364,7 @@ export class ComputerManager {
       health: 'health',
       'claude-status': 'claude-status',
       'codex-status': 'codex-status',
+      'provider-usage': 'provider-usage',
       'create-session': 'session',
       'send-message': 'session',
       'stop-run': 'session',
@@ -378,6 +379,8 @@ export class ComputerManager {
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
     switch (response.type) {
+      case 'provider-usage':
+        return response.usage;
       case 'health':
         return response.health;
       case 'claude-status':
