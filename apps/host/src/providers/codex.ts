@@ -318,6 +318,7 @@ type RpcPeer = {
   send: (value: RecordValue) => void;
   failure: Promise<Error>;
   close: () => Promise<ProcessExit>;
+  closeIdle: () => Promise<ProcessExit>;
 };
 
 class CodexRpcError extends Error {
@@ -474,6 +475,23 @@ function rpcPeer(
         Boolean(owned.child.pid),
       );
   });
+  const close = async (idle: boolean): Promise<ProcessExit> => {
+    const graceful = idle && !closed && !failureError && pending.size === 0;
+    closed = true;
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error('Codex connection closed.'));
+    }
+    pending.clear();
+    if (graceful && !owned.child.stdin.destroyed) {
+      try {
+        owned.child.stdin.end();
+        await Promise.race([owned.closed, wait(300)]);
+      } catch {}
+    }
+    await owned.stop();
+    return owned.closed;
+  };
   return {
     owned,
     send,
@@ -498,16 +516,8 @@ function rpcPeer(
           );
         }
       }),
-    close: async () => {
-      closed = true;
-      for (const entry of pending.values()) {
-        clearTimeout(entry.timer);
-        entry.reject(new Error('Codex connection closed.'));
-      }
-      pending.clear();
-      await owned.stop();
-      return owned.closed;
-    },
+    close: () => close(false),
+    closeIdle: () => close(true),
   };
 }
 
@@ -639,7 +649,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
     };
   } finally {
     signal?.removeEventListener('abort', cancel);
-    await peer?.close();
+    await peer?.closeIdle();
   }
 }
 
@@ -723,7 +733,7 @@ export async function inspectCodexUsage(
     };
   } finally {
     scoped.removeEventListener('abort', cancel);
-    const closed = await peer?.close();
+    const closed = await peer?.closeIdle();
     if (closed && !closed.confirmed) {
       result.status = 'error';
       result.windows = [];
@@ -1026,7 +1036,7 @@ export async function inspectCodexSkills(
       throw new Error(
         'Codex has an MCP server name that cannot be safely isolated.',
       );
-    const bootstrapExit = await peer.close();
+    const bootstrapExit = await peer.closeIdle();
     if (!bootstrapExit.confirmed)
       throw new Error(
         'Codex inspection process closure could not be confirmed.',
@@ -1170,7 +1180,7 @@ export async function inspectCodexSkills(
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
-    const exit = await peer?.close();
+    const exit = await peer?.closeIdle();
     if (exit && !exit.confirmed) {
       discovery.status = 'unavailable';
       discovery.extraRootsSupported = false;
@@ -1809,7 +1819,7 @@ export function startCodex(options: {
         throw new Error(
           'Codex has an MCP server name that cannot be safely isolated.',
         );
-      const bootstrapExit = await peer.close();
+      const bootstrapExit = await peer.closeIdle();
       if (!bootstrapExit.confirmed)
         throw new Error(
           'Codex inspection process closure could not be confirmed.',
