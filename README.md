@@ -19,6 +19,8 @@ The desktop uses Electron's embedded Node runtime. The Node version above is for
 
 ## Workspace
 
+The narrow left rail shows the remaining reported allowance for Claude Code and Codex on the selected computer. Open a provider indicator for its quota windows and reset times, or the account icon below for both accounts. Refresh is available in that panel. Unavailable data stays unknown; offline, expired and older observations are labeled explicitly. Reading limits starts no model task. Claude's native usage capability is experimental and may be unavailable in another CLI version. The panel covers reported subscription windows, not billing or account management.
+
 ```text
 apps/desktop     Electron main/preload and React renderer
 apps/host        Effect services, SQLite and standalone entry
