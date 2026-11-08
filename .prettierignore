@@ -35,6 +35,9 @@
 !packages/contracts/**
 !scripts/
 !scripts/desktop-smoke.mjs
+!scripts/remote-smoke.mjs
+!scripts/remote-smoke/
+!scripts/remote-smoke/**
 !docs/
 !docs/architecture.md
 !docs/testing.md
@@ -43,6 +46,7 @@
 !docs/roadmap.md
 !docs/baseline.md
 !docs/independent-host.md
+!docs/ssh-host.md
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml

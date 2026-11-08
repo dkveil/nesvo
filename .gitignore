@@ -41,6 +41,8 @@
 !/scripts/
 /scripts/*
 !/scripts/desktop-smoke.mjs
+!/scripts/remote-smoke.mjs
+!/scripts/remote-smoke/
 !/docs/
 /docs/*
 !/docs/architecture.md
@@ -50,6 +52,7 @@
 !/docs/roadmap.md
 !/docs/baseline.md
 !/docs/independent-host.md
+!/docs/ssh-host.md
 !/.github/
 /.github/*
 !/.github/workflows/

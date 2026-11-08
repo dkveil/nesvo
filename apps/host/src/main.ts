@@ -3,9 +3,31 @@ import { Effect } from 'effect';
 import { serveHost } from './host';
 import { runDaemon } from './daemon';
 import { connectDaemon } from './daemon-bridge';
+import { resolve } from 'node:path';
+import { renderServiceUnit } from './service-unit';
 
 async function main() {
   const command = process.argv[2];
+  if (command === 'service-unit') {
+    if (process.platform !== 'linux')
+      throw new Error('Service units must be prepared on the Linux host.');
+    const directory = process.env.NESVO_DATA_DIR;
+    const runtimeDirectory = process.env.NESVO_RUNTIME_DIR;
+    if (!directory || !runtimeDirectory)
+      throw new Error(
+        'Set NESVO_DATA_DIR and NESVO_RUNTIME_DIR before preparing a service.',
+      );
+    process.stdout.write(
+      renderServiceUnit({
+        nodePath: process.execPath,
+        entryPath: resolve(process.argv[1]!),
+        directory,
+        runtimeDirectory,
+        path: process.env.PATH ?? '',
+      }),
+    );
+    return;
+  }
   if (command === 'daemon' || command === 'connect') {
     const runtimeDirectory = process.env.NESVO_RUNTIME_DIR;
     if (!runtimeDirectory)
@@ -27,7 +49,7 @@ async function main() {
   }
   if (command)
     throw new Error(
-      'Supported commands: daemon, connect, or no command for an owned stdio host.',
+      'Supported commands: daemon, connect, service-unit, or no command for an owned stdio host.',
     );
   const directory = process.env.NESVO_DATA_DIR;
   if (!directory)
