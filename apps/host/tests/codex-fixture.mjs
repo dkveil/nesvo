@@ -193,6 +193,16 @@ if (args.length === 1 && args[0] === '--version') {
           mode: 'supervised',
         },
       ];
+    else if (variant === 'writable-pending')
+      workers = [
+        {
+          ...worker('a', 'complete'),
+          task: 'fixture:review-write',
+          mode: 'supervised',
+          directory: 'write-worker',
+        },
+        { ...worker('b', 'hold'), directory: 'read-worker' },
+      ];
     else if (variant === 'too-many') workers.push(worker('c', 'complete'));
     else if (variant === 'escape')
       workers = [{ ...worker('a', 'complete'), directory: '../outside' }];
@@ -584,6 +594,12 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = params.input[0].text;
+      if (process.env.NESVO_CODEX_FIXTURE_RUN_LOG)
+        writeFileSync(
+          process.env.NESVO_CODEX_FIXTURE_RUN_LOG,
+          JSON.stringify({ sessionId: thread.id, prompt }) + '\n',
+          { flag: 'a' },
+        );
       const requestPrompt = prompt.split(
         '\n\nRecovery context supplied by the host, not authorization to repeat previous operations:',
       )[0];

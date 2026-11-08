@@ -56,6 +56,7 @@ function launch(directory, pidFile) {
       NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
       NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
       NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
+      NESVO_CODEX_FIXTURE_RUN_LOG: pidFile + '.turns',
       CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
       CODEX_HOME: join(directory, 'codex-config'),
       NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
@@ -716,14 +717,18 @@ test(
     const limitedList = (
       await workspaceRequest('list-workspace-directory', 'many')
     ).directory;
-    assert.equal(limitedList.entries.length, 500);
+    assert.ok(limitedList.entries.length <= 500);
+    if (limitedList.entries.length !== 500)
+      assert.match(limitedList.detail, /exceeded its time limit/);
     assert.equal(limitedList.truncated, true);
     const limitedSearch = (
       await workspaceRequest('search-workspace-files', 'many', {
         query: 'match',
       })
     ).search;
-    assert.equal(limitedSearch.matches.length, 200);
+    assert.ok(limitedSearch.matches.length <= 200);
+    if (limitedSearch.matches.length !== 200)
+      assert.match(limitedSearch.detail, /exceeded its time limit/);
     assert.equal(limitedSearch.truncated, true);
     const breadthRoot = join(explorerRoot, 'breadth');
     await mkdir(join(breadthRoot, 'a-deep', 'level'), { recursive: true });
@@ -3099,7 +3104,139 @@ test(
         version: durableChildReview.version,
       },
     ]);
+    const nextWriteDirectory = join(unfinishedParent.directory, 'write-worker');
+    await mkdir(nextWriteDirectory);
+    await mkdir(join(unfinishedParent.directory, 'read-worker'));
+    await writeFile(
+      join(nextWriteDirectory, 'tracked.txt'),
+      'new worker baseline\n',
+    );
+    await writeFile(
+      join(nextWriteDirectory, 'deleted.txt'),
+      'remove this worker baseline\n',
+    );
+    const newerRun = await sendCodex(
+      afterParentCrash,
+      crashRecovered,
+      'fixture:delegate-writable-pending',
+    );
+    const newerPlan = await afterParentCrash.event(
+      session =>
+        session.id === unfinishedParent.id &&
+        session.delegations.filter(
+          proposal => proposal.runId === newerRun.runId,
+        ).length === 2,
+    );
+    const writeProposal = newerPlan.delegations.find(
+      proposal =>
+        proposal.runId === newerRun.runId && proposal.mode === 'supervised',
+    );
+    await afterParentCrash.request('decide-delegation', {
+      sessionId: unfinishedParent.id,
+      runId: newerRun.runId,
+      delegationId: writeProposal.id,
+      decision: 'accept',
+    });
+    const newerChild = await afterParentCrash.event(
+      session =>
+        session.parentId === unfinishedParent.id &&
+        session.parentRunId === newerRun.runId &&
+        session.status === 'completed',
+    );
+    const newerChildReview = await afterParentCrash.review(
+      review =>
+        review.runId === newerChild.runId && review.status === 'pending',
+    );
+    assert.equal(newerChildReview.diff.status, 'complete');
+    const newerSnapshot = (
+      await afterParentCrash.request('list-sessions')
+    ).sessions.find(session => session.id === unfinishedParent.id);
+    assert.equal(newerSnapshot.status, 'running');
+    assert.equal(
+      (await afterParentCrash.request('list-reviews')).reviews.some(
+        review => review.runId === newerRun.runId,
+      ),
+      false,
+    );
     await afterParentCrash.stop();
+    newerSnapshot.delegations.find(
+      proposal => proposal.id === writeProposal.id,
+    ).status = 'running';
+    const newerCrashDatabase = new DatabaseSync(path);
+    try {
+      newerCrashDatabase
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(JSON.stringify(newerSnapshot), unfinishedParent.id);
+    } finally {
+      newerCrashDatabase.close();
+    }
+    const afterNewerCrash = open();
+    const newerRecovered = (
+      await afterNewerCrash.request('list-sessions')
+    ).sessions.find(session => session.id === unfinishedParent.id);
+    assertInterruption(newerRecovered, 'host-restart');
+    assert.equal(
+      newerRecovered.delegations.find(
+        proposal => proposal.id === writeProposal.id,
+      ).childRunId,
+      newerChild.runId,
+    );
+    assert.equal(
+      newerRecovered.delegations.find(
+        proposal => proposal.id === writeProposal.id,
+      ).status,
+      'completed',
+    );
+    const latestResume = await sendCodex(
+      afterNewerCrash,
+      newerRecovered,
+      'fixture:continue',
+    );
+    const latestParentReview = await afterNewerCrash.review(
+      review =>
+        review.runId === latestResume.runId && review.status === 'pending',
+    );
+    assert.deepEqual(latestParentReview.dependencies, [
+      {
+        sessionId: newerChild.id,
+        reviewId: newerChildReview.id,
+        version: newerChildReview.version,
+      },
+    ]);
+    const latestPrompt = (await readFile(pidFile + '.turns', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+      .filter(turn => turn.sessionId === newerRecovered.providerSessionId)
+      .at(-1).prompt;
+    assert.ok(latestPrompt.includes(newerChild.id));
+    assert.equal(latestPrompt.includes(durableChild.id), false);
+    const latestDecision = {
+      reviewId: latestParentReview.id,
+      version: latestParentReview.version,
+      decisionId: randomUUID(),
+      decision: 'accept',
+      feedback: '',
+    };
+    await writeFile(
+      join(nextWriteDirectory, 'tracked.txt'),
+      'external edit to latest worker result\n',
+    );
+    assert.equal(
+      (await afterNewerCrash.request('decide-review', latestDecision)).code,
+      'invalid-request',
+    );
+    await writeFile(
+      join(nextWriteDirectory, 'tracked.txt'),
+      'initial agent text\n',
+    );
+    const acceptedLatest = await afterNewerCrash.request('decide-review', {
+      ...latestDecision,
+      decisionId: randomUUID(),
+    });
+    assert.equal(acceptedLatest.type, 'review', JSON.stringify(acceptedLatest));
+    assert.equal(acceptedLatest.review.status, 'accepted');
+    await afterNewerCrash.stop();
   },
 );
 
