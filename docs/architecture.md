@@ -1,5 +1,11 @@
 # Architecture
 
+## Mobile companion
+
+D66 adds an Expo React Native client in `apps/mobile-client` and a narrow opt-in HTTP/WebSocket gateway. The reusable gateway belongs to `apps/host/src/mobile`; Electron supplies its lifetime and an adapter to the existing ComputerManager. It routes to Local or an already-connected SSH host without creating another host runtime or database. Mobile and desktop share Zod contracts, session revisions and action identities; native views remain separate from the desktop component library.
+
+The gateway is off at startup. Short-lived one-use pairing grants create revocable device tokens whose hashes are persisted atomically. HTTP uses Bearer authentication; an alternative WebSocket endpoint authenticates in a bounded first frame. The mobile app uses a bounded NDJSON HTTP event stream with redirects rejected because native WebSockets can follow redirects before exposing the connection to JavaScript. Public connections require TLS. Snapshot/event delivery subscribes before reading state and buffers intervening events; reconnect replaces the client view with authoritative state. The phone stores credentials in SecureStore, rejects external plaintext, suspends streams in the background and never replays mutations. [Mobile setup](mobile.md) describes the execution model, limits and deployment options.
+
 ## Provider account usage
 
 D65 adds a host-scoped, read-only `provider-usage` request with shared Zod contracts. A dedicated service coalesces concurrent requests and caches successful Claude observations for four minutes and Codex observations for 30 seconds. Unsuccessful reads back off from five minutes to one hour, report their next eligible check and reset the delay after success. Manual and post-turn refreshes share this host gate. It runs independently of session execution and joins the host's existing bounded probe lifecycle. Account metadata and quota observations stay in memory; they are not written to session history or offline computer snapshots.

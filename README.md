@@ -1,5 +1,7 @@
 # Nesvo
 
+The Expo mobile companion supports existing conversations, live activity and operator decisions. See [mobile setup and scope](docs/mobile.md).
+
 A desktop workspace for technical sessions, visible delegation and operator review.
 
 The approved prototype targets Windows, macOS and Linux. The desktop connects installed Claude Code and Codex for technical conversations, streaming, Stop and persistent history. Codex adds provider-specific modes, one-time operation approvals and visible delegation. P0, the initial P1 layout, the delivered Codex scope of P3 and P4 are accepted. P5 provides direct decisions on session-linked inbox rows; successful Claude task evidence remains open in P2.
