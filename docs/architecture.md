@@ -30,7 +30,7 @@ Bun installs dependencies, runs scripts and builds the standalone host. It is no
 Electron provides its own embedded Node for the utility process. The standalone host uses Node 24.
 The host imports no Electron code; its desktop transport adapter belongs to the desktop main process.
 
-Effect owns the database, session service, capability probes and request stream lifetime. Finalizers cancel owned provider work before closing SQLite. They run on normal shutdown and transport completion.
+Effect owns the database, session service, capability probes and request stream lifetime. Finalizers cancel owned provider work before closing SQLite. In the embedded/stdio host, they run on normal shutdown and owner transport completion. The independent host below supplies a process-owned request stream instead of an individual client's stream.
 SQLite uses a versioned bootstrap and transaction, WAL, foreign keys and a busy timeout. An unsupported newer schema is rejected before migration.
 Schema v4 preserves host identity, provider threads and conversation snapshots. Earlier migrations retain provider modes and pending approvals; v4 adds parent/run relationships, worker scopes, delegation capability and proposals. Existing conversations default to delegation disabled. A snapshot atomically contains the user message, agent message, run ID, provider ID, state and revision. Accepting a worker commits both parent and child snapshots in one transaction before launch. Text is flushed in short batches and at termination. If final persistence fails, a bounded retry and unsaved snapshots prevent new messages from overwriting results. Restart marks unfinished runs and proposals interrupted and invalidates pending operation approvals.
 SQLite remains on Node's built-in driver. Drizzle integration waits for stable support for this driver; no release candidate is installed. Database types would not replace public Zod request validation.
@@ -38,6 +38,12 @@ SQLite remains on Node's built-in driver. Drizzle integration waits for stable s
 Schema v6 adds durable tool activity to session snapshots. Each item is identified by its run and native provider item ID, with normalized kind, title, paths, status and timestamps. Output and details are bounded; private reasoning and raw provider payloads are not persisted as activity. Text and activity updates share the existing batched persistence path. Terminal updates cannot regress to running. Stop and restart finalize unfinished items without inventing successful completion, and older sessions default to empty activity and unknown completion timestamps.
 
 Activity retains the latest 100 entries per run and 300 per session. Run-specific markers identify omitted history, including wholly evicted runs; late updates cannot reinsert evicted entries during an active run. Output is limited to its last 4,000 characters, details to 2,000, and paths to ten. Known credential patterns and terminal control sequences are filtered; this is not a guarantee that arbitrary tool output contains no sensitive data.
+
+## Independent host connections
+
+D63/R1 adds a Linux daemon with one existing host runtime behind a process-owned request queue. Clients attach through a private Unix socket and a version/identity handshake. Client EOF removes reply routing and subscriptions; only daemon shutdown ends the owner queue and triggers provider cleanup. Transport request IDs are mapped per connection; semantic message/decision IDs are preserved. Pending operations keep their runtime budget after their client disconnects.
+
+The same OS user owns the private socket, repositories, provider logins and data. No TCP port is opened. The bridge uses JSONL and never reconnects or replays commands automatically. The stable instance ID detects a mismatched database; it is not an authentication credential. SSH, managed installation and desktop routing are later stages. Full startup, reconnect and resource-limit behavior is documented in [independent-host.md](independent-host.md).
 
 ## Restart and recovery
 
