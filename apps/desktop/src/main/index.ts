@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
 import { ComputerManager } from './computer-manager';
+import { mobileAccess } from './mobile-access';
 import {
   createSessionSchema,
   decideDelegationSchema,
@@ -17,6 +18,7 @@ import {
   hostIdSchema,
   sshComputerInputSchema,
   providerUsageInputSchema,
+  mobileDeviceSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -31,6 +33,7 @@ void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   const host = startHost(join(app.getPath('userData'), 'host'));
   const computers = new ComputerManager(app.getPath('userData'), host);
+  const mobile = mobileAccess(app.getPath('userData'), computers);
   if (smokeTest && process.env.NESVO_TEST_PID_FILE) {
     host.child.once('spawn', () => {
       writeFileSync(
@@ -85,6 +88,26 @@ void app.whenReady().then(async () => {
   computers.subscribe(event => {
     if (window && !window.isDestroyed())
       window.webContents.send('nesvo:event', event);
+  });
+  ipcMain.handle('nesvo:mobile-status', event => {
+    authorize(event);
+    return mobile.status();
+  });
+  ipcMain.handle('nesvo:enable-mobile', event => {
+    authorize(event);
+    return mobile.enable();
+  });
+  ipcMain.handle('nesvo:disable-mobile', event => {
+    authorize(event);
+    return mobile.disable();
+  });
+  ipcMain.handle('nesvo:pair-mobile', event => {
+    authorize(event);
+    return mobile.pair();
+  });
+  ipcMain.handle('nesvo:revoke-mobile', (event, deviceId: unknown) => {
+    authorize(event);
+    return mobile.revoke(mobileDeviceSchema.shape.id.parse(deviceId));
   });
   ipcMain.handle('nesvo:list-computers', event => {
     authorize(event);
@@ -271,9 +294,13 @@ void app.whenReady().then(async () => {
     event.preventDefault();
     if (closing) return;
     closing = true;
-    void computers.close().finally(() => {
-      closed = true;
-      app.quit();
-    });
+    void mobile
+      .close()
+      .catch(() => undefined)
+      .then(() => computers.close())
+      .finally(() => {
+        closed = true;
+        app.quit();
+      });
   });
 });

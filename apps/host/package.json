@@ -4,19 +4,22 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/host.ts"
+    ".": "./src/host.ts",
+    "./mobile": "./src/mobile/gateway.ts"
   },
   "scripts": {
-    "build": "bun build src/main.ts --target=node --outfile=dist/main.js",
+    "build": "bun build src/main.ts --target=node --outfile=dist/main.js && bun build src/mobile/gateway.ts --target=node --outfile=dist/mobile.js",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@nesvo/contracts": "workspace:*",
     "effect": "4.1.2",
-    "js-yaml": "4.3.2"
+    "js-yaml": "4.3.2",
+    "ws": "8.22.1"
   },
   "devDependencies": {
-    "@types/js-yaml": "4.0.9"
+    "@types/js-yaml": "4.0.9",
+    "@types/ws": "8.18.2"
   }
 }

@@ -25,12 +25,36 @@ import {
   workspaceEventSchema,
   providerUsageInputSchema,
   providerUsageSchema,
+  mobileDeviceSchema,
+  mobileGatewayStatusSchema,
+  mobilePairingSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
 const route = (hostId: string | undefined) =>
   hostIdSchema.parse(hostId ?? 'local');
 const api: DesktopApi = {
+  mobileStatus: async () =>
+    mobileGatewayStatusSchema.parse(
+      await ipcRenderer.invoke('nesvo:mobile-status'),
+    ),
+  enableMobile: async () =>
+    mobileGatewayStatusSchema.parse(
+      await ipcRenderer.invoke('nesvo:enable-mobile'),
+    ),
+  disableMobile: async () =>
+    mobileGatewayStatusSchema.parse(
+      await ipcRenderer.invoke('nesvo:disable-mobile'),
+    ),
+  pairMobile: async () =>
+    mobilePairingSchema.parse(await ipcRenderer.invoke('nesvo:pair-mobile')),
+  revokeMobile: async deviceId =>
+    mobileGatewayStatusSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:revoke-mobile',
+        mobileDeviceSchema.shape.id.parse(deviceId),
+      ),
+    ),
   providerUsage: async (input, hostId) =>
     providerUsageSchema.parse(
       await ipcRenderer.invoke(

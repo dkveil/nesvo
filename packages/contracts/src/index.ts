@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import {
   providerUsageInputSchema,
   providerUsageSchema,
@@ -63,6 +64,7 @@ export * from './workspace';
 export * from './skills';
 export * from './computers';
 export * from './provider-usage';
+export * from './mobile';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -255,6 +257,11 @@ export const hostMessageSchema = z.union([
 ]);
 export type HostMessage = z.infer<typeof hostMessageSchema>;
 export type DesktopApi = {
+  mobileStatus: () => Promise<MobileGatewayStatus>;
+  enableMobile: () => Promise<MobileGatewayStatus>;
+  disableMobile: () => Promise<MobileGatewayStatus>;
+  pairMobile: () => Promise<MobilePairing>;
+  revokeMobile: (deviceId: string) => Promise<MobileGatewayStatus>;
   providerUsage: (
     input: ProviderUsageInput,
     hostId?: HostId,
