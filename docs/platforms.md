@@ -1,5 +1,17 @@
 # Platform verification
 
+## D65 provider limits and accounts
+
+The metadata readers, validated per-host route and compact account rail are delivered at 3ef253f, da74148 and c0afdd3. Existing host/desktop scenarios are extended at 7e5fb3f; 568ad02 adds usage isolation assertions to the existing SSH scenario. These checks use controlled provider responses, not real account access.
+
+Windows passed strict types, ESLint, Prettier, build, both existing host cases and the complete built-Electron desktop scenario. Usage checks cover account metadata, reported percentages/reset times, concurrent request coalescing, cache reuse, no model turns, process cleanup, unchanged history and unavailable data after restart. A separate actual SSH run to an isolated Linux daemon passed different Local/remote usage responses and rejected an offline request without reconnecting. Existing remote work/review/recovery assertions and owned cleanup also passed.
+
+An independent Windows read through the built Electron application used installed Claude Code and Codex with their existing sign-ins. Both returned real account metadata and quota windows without prompts or model tasks. The observation at approximately 12:52 Europe/Warsaw on November 8 reported Claude weekly usage at 100%, a model-specific weekly window at 27%, and Codex weekly usage at 58%. These are timestamped observations, not current availability guarantees. Public evidence omits account identities. Claude's experimental native usage capability remains version-dependent; this successful metadata read does not close P2's pending successful-model evidence.
+
+The final pacing correction cce3d0b passed strict types, scoped lint/format, build and both Windows host cases again. A focused scratch check of the actual service with controlled time and provider stubs verified concurrent coalescing, independent 30-second/four-minute cache boundaries, five-to-sixty-minute failure backoff, success reset and abort. No permanent unit-test suite was added. Screenshots and sanitized real metadata are in the [D65 acceptance document](https://linear.app/reveil/document/d65-limity-dostawcow-i-konto-odbior-2026-11-08-636753a48e10). Owner acceptance remains separate.
+
+[Foundation CI at cce3d0b](https://github.com/dkveil/nesvo/actions/runs/42478888118) passed on Ubuntu, including all three host cases. The [native workflow at 7e5fb3f](https://github.com/dkveil/nesvo/actions/runs/42477813284) passed the complete application and unpacked-package scenario separately on macOS and Linux. Windows passed installation, check and build, but both attempts failed before Electron launch while downloading the Windows Electron archive with HTTP 504. The workflow is therefore failed; local Windows desktop evidence is separate, and no D65 Windows packaged-runtime pass is claimed. Native package results precede cce3d0b's pacing correction, whose checks are recorded above. This infrastructure failure was not worked around by changing dependency versions or weakening tests.
+
 ## R2 and R3 computers and SSH
 
 D64 connects Local and prepared Linux computers through separate desktop routes. Implementation commits 20647b7, 77d9b83, b803865 and 26da03c cover the renderer, service preparation, SSH boundary and connection manager; 5dfba75 rejects executable paths that systemd cannot accept.
