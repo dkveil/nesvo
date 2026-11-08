@@ -57,7 +57,7 @@ export default function ConnectionsScreen() {
             secondary
             disabled={!!pending}
             onPress={() => void forget(item.id)}
-            testID={`forget-${item.id}`}
+            testID={`forget-${item.deviceId}`}
           />
         </View>
       )}

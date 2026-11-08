@@ -157,7 +157,7 @@ export default function ConversationScreen() {
             <View style={styles.actions}>
               <Action
                 label="Approve worker"
-                testID="approve-worker"
+                testID={`approve-worker-${delegation.id}`}
                 disabled={
                   !ready ||
                   session.status !== 'running' ||
@@ -174,7 +174,7 @@ export default function ConversationScreen() {
               />
               <Action
                 label="Decline"
-                testID="decline-worker"
+                testID={`decline-worker-${delegation.id}`}
                 secondary
                 disabled={
                   !ready ||
