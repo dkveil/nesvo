@@ -7,6 +7,7 @@ import {
   Plus,
   Search,
   Monitor,
+  Smartphone,
 } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey } from '@/shared/lib/host-key';
@@ -23,6 +24,7 @@ type Props = {
   sessions: Session[];
   computers: Computer[];
   onComputers: () => void;
+  onMobile: () => void;
   pendingActions: number;
   selectedId: string;
   inbox: boolean;
@@ -35,6 +37,7 @@ export function SessionSidebar({
   sessions,
   computers,
   onComputers,
+  onMobile,
   pendingActions,
   selectedId,
   inbox,
@@ -193,6 +196,15 @@ export function SessionSidebar({
         >
           <Monitor className="size-3.5" />
           Computers
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-full justify-start px-2 text-[13px] font-normal text-muted-foreground"
+          onClick={onMobile}
+        >
+          <Smartphone className="size-3.5" />
+          Phone access
         </Button>
       </div>
     </div>

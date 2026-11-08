@@ -25,6 +25,7 @@ import {
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
 import { ManageComputers } from '@/features/manage-computers';
+import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
@@ -83,6 +84,7 @@ export function Workspace() {
   const [creating, setCreating] = useState(false);
   const [creatingHostId, setCreatingHostId] = useState('local');
   const [computersOpen, setComputersOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
@@ -584,6 +586,10 @@ export function Workspace() {
     onComputers: () => {
       setNavigationOpen(false);
       setComputersOpen(true);
+    },
+    onMobile: () => {
+      setNavigationOpen(false);
+      setMobileOpen(true);
     },
     pendingActions:
       store.reviews.filter(review => review.status === 'pending').length +
@@ -1126,6 +1132,9 @@ export function Workspace() {
           api={desktopApi()}
           onOpenChange={setComputersOpen}
         />
+      )}
+      {mobileOpen && (
+        <MobileAccess api={desktopApi()} onOpenChange={setMobileOpen} />
       )}
       {creating && (
         <CreateSession
