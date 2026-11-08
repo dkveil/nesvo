@@ -13,9 +13,9 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The desktop opens your saved sessions in a black workspace with an English interface. Use New session to choose a provider, model, access permissions and optional directory, then send a message. There is no role picker: new Codex sessions can propose workers when the task calls for delegation, without changing their permissions. A directory does not need Git; leaving it empty creates a separate local working folder. Connection and provider status are available on demand. Quitting the application stops its active group and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
+The desktop opens your saved sessions in a black workspace with an English interface. Use New session to choose a provider, model, access permissions and optional directory, then send a message. There is no role picker: new Codex sessions can propose workers when the task calls for delegation, without changing their permissions. A directory does not need Git; leaving it empty creates a separate local working folder. Connection and provider status are available on demand. Quitting the application stops its local active group and host. On macOS, use Quit to exit; closing the last window keeps the application available in the dock.
 
-The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host.
+The desktop uses Electron's embedded Node runtime. The Node version above is for development tools and the standalone host. Local remains the default computer. In Computers, add a prepared Linux host through SSH and connect it explicitly. New sessions can choose that connected computer; its files, skills and provider login belong to it. Quitting Nesvo stops Local work and disconnects remote computers without stopping their hosts. See [Linux host setup](docs/ssh-host.md).
 
 ## Workspace
 
@@ -24,23 +24,24 @@ apps/desktop     Electron main/preload and React renderer
 apps/host        Effect services, SQLite and standalone entry
 packages/contracts  Zod schemas and inferred types
 docs             Architecture, workflow and acceptance plan
-scripts          One desktop integration scenario
+scripts          Desktop and focused remote-host integration scenarios
 ```
 
 ## Commands
 
-| Command               | Purpose                                                |
-| --------------------- | ------------------------------------------------------ |
-| bun run dev           | Start the desktop with development reload              |
-| bun run check         | Types, lint, formatting and two host integration cases |
-| bun run build         | Build the standalone host and desktop                  |
-| bun run smoke:desktop | Check the built desktop, real host and shutdown        |
-| bun run package:dir   | Produce an unpacked native desktop package             |
-| bun run format        | Format current workspace files                         |
+| Command               | Purpose                                            |
+| --------------------- | -------------------------------------------------- |
+| bun run dev           | Start the desktop with development reload          |
+| bun run check         | Types, lint, formatting and host integration cases |
+| bun run build         | Build the standalone host and desktop              |
+| bun run smoke:desktop | Check the built desktop, real host and shutdown    |
+| bun run smoke:remote  | Check two hosts over isolated Docker SSH           |
+| bun run package:dir   | Produce an unpacked native desktop package         |
+| bun run format        | Format current workspace files                     |
 
 Install the native Claude Code or Codex CLI and sign in using `claude auth login` or `codex login`. Nesvo uses that existing login and requires no new model API key. It checks the installed CLI and authentication before execution. Claude choices are CLI aliases; Codex choices come from its local model catalog. Actual account access is confirmed by the provider, and the running model is shown in session details.
 
-Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs at a time: a parent with up to two approved workers, or a single session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. The inbox brings operation approvals, worker proposals and successful results into compact rows with distinct inline actions. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
+Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs per host at a time: a parent with up to two approved workers, or a single session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. The inbox brings operation approvals, worker proposals and successful results into compact rows with distinct inline actions. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
 
 ## P2 acceptance walkthrough
 
@@ -102,7 +103,7 @@ The catalog covers known project/user/managed sources and the isolated native Co
 4. Use Continue conversation to focus the composer, then send a new instruction after checking the current state. The button itself starts nothing. Nesvo retains the provider thread and includes interruption context; it never replays the previous task automatically.
 5. Continue reviewing the same saved result version. Re-delivery of an already recorded decision returns that decision rather than starting another correction.
 
-Reloading the window leaves the host running. Quitting the app closes its owned work; a host restart reconciles incomplete records. Local view preferences contain only navigation identifiers and a diff path, not authoritative status or permission. Unsent composer and review-feedback drafts remain transient in this stage. Only one app/host may own a data directory.
+Reloading the window leaves the host running. Quitting the app closes its local owned work and disconnects remote computers; a host restart reconciles incomplete records. Local view preferences contain only navigation identifiers and a diff path, not authoritative status or permission. Unsent composer and review-feedback drafts remain transient in this stage. Only one app/host may own a data directory.
 
 ## Working agreement
 

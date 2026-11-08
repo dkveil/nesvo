@@ -43,7 +43,15 @@ Activity retains the latest 100 entries per run and 300 per session. Run-specifi
 
 D63/R1 adds a Linux daemon with one existing host runtime behind a process-owned request queue. Clients attach through a private Unix socket and a version/identity handshake. Client EOF removes reply routing and subscriptions; only daemon shutdown ends the owner queue and triggers provider cleanup. Transport request IDs are mapped per connection; semantic message/decision IDs are preserved. Pending operations keep their runtime budget after their client disconnects.
 
-The same OS user owns the private socket, repositories, provider logins and data. No TCP port is opened. The bridge uses JSONL and never reconnects or replays commands automatically. The stable instance ID detects a mismatched database; it is not an authentication credential. SSH, managed installation and desktop routing are later stages. Full startup, reconnect and resource-limit behavior is documented in [independent-host.md](independent-host.md).
+The same OS user owns the private socket, repositories, provider logins and data. No TCP port is opened. The bridge uses JSONL and never reconnects or replays commands automatically. The stable instance ID detects a mismatched database; it is not an authentication credential. Full startup, reconnect and resource-limit behavior is documented in [independent-host.md](independent-host.md).
+
+D64/R2 and R3 add Computers in Electron main. Local keeps its owned utility process; each remote connection owns an OpenSSH child attached to the Linux bridge. OpenSSH requires an existing verified host key and public-key authentication. The renderer cannot supply shell commands. The daemon instance ID is pinned after its first verified handshake and persisted before the connection becomes available. [Linux host setup](ssh-host.md) describes installation and the generated systemd user unit.
+
+Every desktop session and review carries a host ID separately from its native record ID. IPC validates that target, and command routing never depends on the selected conversation. Sidebar and Inbox aggregate all computers; workers, files, skills and decisions remain on the originating host. Local is the default for a new session. Provider availability is inspected independently per connected host.
+
+Connection setup subscribes before fetching both authoritative snapshots, buffers intervening events and merges by revision before enabling commands. Generation checks reject late responses from replaced connections. Disconnect invalidates that connection without rewriting run statuses or replaying requests. The UI labels offline work as last known and disables mutations and live reads while retaining saved conversations and diffs.
+
+Remote configuration and the bounded offline cache use separate atomic files under the desktop profile. Configuration records connection parameters and the host identity, never private key bytes or provider credentials. Cache save failures are visible but cannot prevent disconnection or removal. Reopening restores saved remote histories as disconnected; explicit Connect reloads the host's current state. Removing a computer deletes its desktop registration and cache, not its remote data or running service. App shutdown terminates Local work and closes remote SSH children only.
 
 ## Restart and recovery
 
