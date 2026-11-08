@@ -414,7 +414,11 @@ export default function ConversationScreen() {
                 !!store.pending[key] ||
                 !store.draft(hostId, id).trim()
               }
-              onPress={() => void store.send(session)}
+              onPress={() => {
+                nearBottom.current = true;
+                list.current?.scrollToEnd({ animated: false });
+                void store.send(session);
+              }}
             />
           )}
         </View>
