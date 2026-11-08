@@ -125,6 +125,32 @@ export const hostHealthSchema = z.strictObject({
   protocolVersion: z.literal(1),
 });
 
+export const hostConnectSchema = z.strictObject({
+  type: z.literal('connect'),
+  protocolVersion: z.literal(1),
+  expectedInstanceId: z.uuid().optional(),
+});
+
+export const hostConnectionSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('connected'),
+    health: hostHealthSchema,
+  }),
+  z.strictObject({
+    type: z.literal('connection-error'),
+    code: z.enum([
+      'invalid-handshake',
+      'incompatible-protocol',
+      'identity-mismatch',
+      'invalid-frame',
+      'busy',
+    ]),
+  }),
+]);
+
+export type HostConnect = z.infer<typeof hostConnectSchema>;
+export type HostConnection = z.infer<typeof hostConnectionSchema>;
+
 export const hostResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('skills'),
