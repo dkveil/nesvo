@@ -66,3 +66,4 @@ bun.lock
 **/.expo/
 apps/mobile-client/android/
 apps/mobile-client/ios/
+apps/mobile-client/expo-env.d.ts

@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Nesvo",
+    "slug": "nesvo-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "nesvo",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "ios": {
+      "bundleIdentifier": "dev.dkveil.nesvomobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true }
+      }
+    },
+    "android": {
+      "package": "dev.dkveil.nesvomobile",
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

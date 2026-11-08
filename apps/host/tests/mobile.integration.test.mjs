@@ -65,6 +65,68 @@ async function connection(url) {
   };
 }
 
+async function eventStream(url, credentials) {
+  const controller = new AbortController();
+  const response = await fetch(new URL('/v1/events', url), {
+    headers: {
+      authorization: `Bearer ${credentials.token}`,
+      'x-nesvo-server-id': credentials.serverId,
+    },
+    redirect: 'error',
+    signal: controller.signal,
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /^application\/x-ndjson/);
+  const queued = [];
+  const waiting = new Set();
+  const decoder = new TextDecoder();
+  const closed = (async () => {
+    let pending = '';
+    try {
+      for await (const chunk of response.body) {
+        pending += decoder.decode(chunk, { stream: true });
+        assert.ok(pending.length <= 8 * 1024 * 1024);
+        let newline;
+        while ((newline = pending.indexOf('\n')) >= 0) {
+          const line = pending.slice(0, newline).trim();
+          pending = pending.slice(newline + 1);
+          if (!line) continue;
+          const message = JSON.parse(line);
+          const waiter = [...waiting].find(value => value.match(message));
+          if (waiter) {
+            waiting.delete(waiter);
+            waiter.resolve(message);
+          } else queued.push(message);
+        }
+      }
+    } catch (error) {
+      if (!(controller.signal.aborted || error instanceof TypeError))
+        throw error;
+    }
+  })();
+  closed.catch(() => {});
+  return {
+    close: () => controller.abort(),
+    closed,
+    async message(match) {
+      const index = queued.findIndex(match);
+      if (index >= 0) return queued.splice(index, 1)[0];
+      const waiter = { match };
+      try {
+        return await bounded(
+          new Promise(resolve => {
+            waiter.resolve = resolve;
+            waiting.add(waiter);
+          }),
+          'Mobile HTTP event stream response missing',
+        );
+      } finally {
+        waiting.delete(waiter);
+      }
+    },
+  };
+}
+
 test(
   'mobile gateway authenticates, restricts commands and durably revokes paired devices',
   { timeout: 30_000 },
@@ -77,6 +139,7 @@ test(
     let sessionReads = 0;
     const listeners = new Set();
     const sockets = [];
+    const streams = [];
     const remoteId = randomUUID();
     const instanceId = randomUUID();
     const workspace = {
@@ -134,6 +197,7 @@ test(
       return await gateway.status();
     };
     t.after(async () => {
+      for (const stream of streams) stream.close();
       for (const peer of sockets)
         if (peer.socket.readyState < WebSocket.CLOSING) peer.socket.close();
       await gateway?.stop();
@@ -153,6 +217,7 @@ test(
           ...headers,
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
+        redirect: 'error',
         signal: AbortSignal.timeout(5000),
       });
       return { status: response.status, body: await response.json() };
@@ -218,6 +283,21 @@ test(
       ).status,
       403,
     );
+    assert.equal(sessionReads, readsBeforeAuthentication);
+    for (const headers of [{}, { 'x-nesvo-server-id': randomUUID() }]) {
+      const response = await request('/v1/events', {
+        token: credentials.token,
+        headers,
+      });
+      assert.equal(response.status, 401);
+      assert.equal(response.body.code, 'server-mismatch');
+    }
+    const badStream = await request('/v1/events', {
+      token: randomBytes(32).toString('base64url'),
+      headers: { 'x-nesvo-server-id': status.serverId },
+    });
+    assert.equal(badStream.status, 401);
+    assert.equal(badStream.body.code, 'unauthorized');
     assert.equal(sessionReads, readsBeforeAuthentication);
     for (const method of [
       'create-session',
@@ -289,6 +369,11 @@ test(
     });
     const initial = await peer.message(value => value.type === 'snapshot');
     assert.equal(initial.serverId, status.serverId);
+    const http = await eventStream(status.url, credentials);
+    streams.push(http);
+    const httpSnapshot = await http.message(value => value.type === 'snapshot');
+    assert.equal(httpSnapshot.serverId, status.serverId);
+    assert.deepEqual(httpSnapshot.sessions, []);
     for (const listener of listeners)
       listener({ type: 'host-disconnected', hostId: 'local' });
     const changed = await peer.message(
@@ -296,6 +381,10 @@ test(
     );
     assert.equal(changed.hostId, 'local');
     assert.ok(changed.sequence > initial.sequence);
+    const httpChanged = await http.message(
+      value => value.type === 'host-disconnected',
+    );
+    assert.deepEqual(httpChanged, changed);
     const unauthenticated = await connection(status.url);
     sockets.push(unauthenticated);
     assert.notEqual(
@@ -310,6 +399,7 @@ test(
     const serverId = status.serverId;
     await gateway.stop();
     await bounded(peer.closed, 'Gateway stop left its client connected');
+    await bounded(http.closed, 'Gateway stop left its HTTP stream connected');
     status = await open();
     assert.equal(status.serverId, serverId);
     assert.equal(status.devices[0].id, credentials.deviceId);
@@ -326,6 +416,9 @@ test(
       token: credentials.token,
     });
     await resumed.message(value => value.type === 'snapshot');
+    const resumedHttp = await eventStream(status.url, credentials);
+    streams.push(resumedHttp);
+    await resumedHttp.message(value => value.type === 'snapshot');
     await gateway.revoke(credentials.deviceId);
     assert.equal(
       (await resumed.message(value => value.type === 'error')).code,
@@ -335,6 +428,11 @@ test(
       (await bounded(resumed.closed, 'Revoked client stayed connected')).code,
       4001,
     );
+    assert.equal(
+      (await resumedHttp.message(value => value.type === 'error')).code,
+      'revoked',
+    );
+    await bounded(resumedHttp.closed, 'Revoked HTTP stream stayed connected');
     assert.equal(
       (await request('/v1/snapshot', { token: credentials.token })).status,
       401,
@@ -356,6 +454,7 @@ test(
         privateTokenHash: true,
         forbiddenCommandsRejected: true,
         durableRevocation: true,
+        authenticatedHttpStream: true,
       }),
     );
   },

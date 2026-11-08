@@ -48,8 +48,11 @@ export type MobileGatewayOptions = {
   };
 };
 type Client = {
-  ws: WebSocket;
+  ws?: WebSocket;
+  response?: ServerResponse;
   deviceId?: string;
+  controller: AbortController;
+  closing: boolean;
   buffering: boolean;
   buffered: string[];
   bytes: number;
@@ -87,12 +90,27 @@ function json(value: unknown) {
     );
   return text;
 }
-async function deadline<T>(operation: Promise<T>, timeout = 25000) {
+async function deadline<T>(
+  operation: Promise<T>,
+  timeout = 25000,
+  signal?: AbortSignal,
+) {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   try {
     return await Promise.race([
       operation,
       new Promise<never>((_, reject) => {
+        abort = () =>
+          reject(
+            new GatewayError(
+              'unavailable',
+              'The mobile connection closed.',
+              503,
+            ),
+          );
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
         timer = setTimeout(
           () =>
             reject(
@@ -108,6 +126,7 @@ async function deadline<T>(operation: Promise<T>, timeout = 25000) {
     ]);
   } finally {
     clearTimeout(timer);
+    if (abort) signal?.removeEventListener('abort', abort);
   }
 }
 async function body(request: IncomingMessage) {
@@ -217,7 +236,7 @@ export class MobileGateway {
       serverId: this.store.serverId,
       url: this.accepting ? this.url : null,
       clients: [...this.clients].filter(
-        client => client.deviceId && client.ws.readyState === WebSocket.OPEN,
+        client => client.deviceId && this.isOpen(client),
       ).length,
       devices: this.store.list(),
     });
@@ -290,15 +309,19 @@ export class MobileGateway {
         );
         this.heartbeat = setInterval(() => {
           for (const client of this.clients) {
-            if (client.ws.readyState !== WebSocket.OPEN) continue;
+            if (!this.isOpen(client)) continue;
+            if (client.response) {
+              this.send(client, '');
+              continue;
+            }
             if (!client.alive) {
-              client.ws.terminate();
+              this.destroyClient(client);
               continue;
             }
             client.alive = false;
-            client.ws.ping();
+            client.ws?.ping();
           }
-        }, 30000);
+        }, 15000);
         this.heartbeat.unref();
         return this.status();
       } catch {
@@ -363,7 +386,7 @@ export class MobileGateway {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     clearInterval(this.heartbeat);
-    for (const client of this.clients) client.ws.terminate();
+    for (const client of this.clients) this.destroyClient(client);
     for (const socket of this.sockets) socket.destroy();
     if (this.server)
       await new Promise<void>(resolve => this.server!.close(() => resolve()));
@@ -484,7 +507,34 @@ export class MobileGateway {
         this.reply(response, 200, paired);
         return;
       }
+      const streaming =
+        request.method === 'GET' && request.url === '/v1/events';
+      if (
+        streaming &&
+        request.headers['x-nesvo-server-id'] !== this.store.serverId
+      )
+        throw new GatewayError(
+          'server-mismatch',
+          'This is a different mobile gateway. Pair it explicitly.',
+          401,
+        );
       const device = this.authenticate(request);
+      if (streaming) {
+        if (
+          this.clients.size >= mobileLimits.clients ||
+          [...this.clients].filter(
+            client => client.deviceId === device.id && !client.closing,
+          ).length >= 2 ||
+          !this.rate(`stream:${device.id}`, 20)
+        )
+          throw new GatewayError(
+            'busy',
+            'Too many mobile event connections. Wait before reconnecting.',
+            429,
+          );
+        this.acceptHttp(response, device.id);
+        return;
+      }
       if (
         this.requests.size >= 16 ||
         [...this.requests].filter(entry => entry.deviceId === device.id)
@@ -597,10 +647,30 @@ export class MobileGateway {
     return snapshot;
   }
 
+  private isOpen(client: Client) {
+    return (
+      !client.closing &&
+      (client.ws
+        ? client.ws.readyState === WebSocket.OPEN
+        : !!client.response &&
+          !client.response.destroyed &&
+          !client.response.writableEnded)
+    );
+  }
+
+  private destroyClient(client: Client) {
+    client.closing = true;
+    client.controller.abort();
+    if (client.ws) client.ws.terminate();
+    else client.response?.destroy();
+  }
+
   private send(client: Client, payload: string) {
-    if (client.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isOpen(client)) return;
     if (
-      client.ws.bufferedAmount + Buffer.byteLength(payload) >
+      (client.ws?.bufferedAmount ?? client.response?.writableLength ?? 0) +
+        Buffer.byteLength(payload) +
+        (client.response ? 1 : 0) >
       mobileLimits.responseBytes
     ) {
       this.rejectClient(
@@ -611,7 +681,8 @@ export class MobileGateway {
       );
       return;
     }
-    client.ws.send(payload);
+    if (client.ws) client.ws.send(payload);
+    else client.response?.write(`${payload}\n`);
   }
 
   private rejectClient(
@@ -620,23 +691,85 @@ export class MobileGateway {
     message: string,
     closeCode = 1008,
   ) {
-    if (client.ws.readyState !== WebSocket.OPEN) {
-      client.ws.terminate();
+    if (!this.isOpen(client)) {
+      this.destroyClient(client);
       return;
     }
-    if (client.ws.bufferedAmount < 4096)
-      client.ws.send(
-        JSON.stringify({ type: 'error', id: null, code, message }),
-      );
-    client.ws.close(closeCode);
-    const timer = setTimeout(() => client.ws.terminate(), 250);
+    client.closing = true;
+    client.controller.abort();
+    const payload = JSON.stringify({ type: 'error', id: null, code, message });
+    if (client.ws) {
+      if (client.ws.bufferedAmount < 4096) client.ws.send(payload);
+      client.ws.close(closeCode);
+    } else if (client.response) {
+      if (client.response.writableLength < 4096)
+        client.response.end(`${payload}\n`);
+      else client.response.destroy();
+    }
+    const timer = setTimeout(() => this.destroyClient(client), 250);
     timer.unref();
-    client.ws.once('close', () => clearTimeout(timer));
+    (client.ws ?? client.response)?.once('close', () => clearTimeout(timer));
+  }
+
+  private acceptHttp(response: ServerResponse, deviceId: string) {
+    const client: Client = {
+      response,
+      deviceId,
+      controller: new AbortController(),
+      closing: false,
+      buffering: true,
+      buffered: [],
+      bytes: 0,
+      alive: true,
+    };
+    this.clients.add(client);
+    response.once('close', () => {
+      client.controller.abort();
+      this.clients.delete(client);
+    });
+    response.on('error', () => this.destroyClient(client));
+    response.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store, no-transform',
+      'x-content-type-options': 'nosniff',
+      'x-accel-buffering': 'no',
+      'referrer-policy': 'no-referrer',
+    });
+    response.flushHeaders();
+    this.synchronize(client);
+  }
+
+  private synchronize(client: Client) {
+    void deadline(this.snapshot(), 25000, client.controller.signal)
+      .then(snapshot => {
+        if (
+          !this.accepting ||
+          !client.deviceId ||
+          !this.store.active(client.deviceId) ||
+          !this.isOpen(client)
+        )
+          return;
+        this.send(client, json({ type: 'snapshot', ...snapshot }));
+        for (const event of client.buffered) this.send(client, event);
+        client.buffered = [];
+        client.bytes = 0;
+        client.buffering = false;
+      })
+      .catch(error => {
+        if (!this.isOpen(client)) return;
+        this.rejectClient(
+          client,
+          error instanceof GatewayError ? error.code : 'unavailable',
+          'The workspace snapshot could not be delivered. Reconnect to refresh.',
+        );
+      });
   }
 
   private accept(ws: WebSocket) {
     const client: Client = {
       ws,
+      controller: new AbortController(),
+      closing: false,
       buffering: true,
       buffered: [],
       bytes: 0,
@@ -658,6 +791,7 @@ export class MobileGateway {
     });
     ws.once('close', () => {
       clearTimeout(timeout);
+      client.controller.abort();
       this.clients.delete(client);
     });
     let authenticating = false;
@@ -714,27 +848,7 @@ export class MobileGateway {
       authenticating = true;
       client.deviceId = device.id;
       clearTimeout(timeout);
-      void deadline(this.snapshot())
-        .then(snapshot => {
-          if (
-            !this.accepting ||
-            !this.store.active(device.id) ||
-            ws.readyState !== WebSocket.OPEN
-          )
-            return;
-          this.send(client, json({ type: 'snapshot', ...snapshot }));
-          for (const event of client.buffered) this.send(client, event);
-          client.buffered = [];
-          client.bytes = 0;
-          client.buffering = false;
-        })
-        .catch(error => {
-          this.rejectClient(
-            client,
-            error instanceof GatewayError ? error.code : 'unavailable',
-            'The workspace snapshot could not be delivered. Reconnect to refresh.',
-          );
-        });
+      this.synchronize(client);
     });
   }
 
@@ -759,7 +873,12 @@ export class MobileGateway {
             : { ...event, sequence };
       const payload = json(mobileServerMessageSchema.parse(value));
       for (const client of this.clients) {
-        if (!client.deviceId || !this.store.active(client.deviceId)) continue;
+        if (
+          !client.deviceId ||
+          !this.store.active(client.deviceId) ||
+          !this.isOpen(client)
+        )
+          continue;
         if (client.buffering) {
           client.bytes += Buffer.byteLength(payload);
           if (
