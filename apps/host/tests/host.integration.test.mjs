@@ -51,6 +51,8 @@ function launch(directory, pidFile) {
       NESVO_CLAUDE_EXECUTABLE: fixturePath,
       NESVO_FIXTURE_PID_FILE: pidFile,
       NESVO_FIXTURE_SKILL_LOG: pidFile + '.shared',
+      NESVO_FIXTURE_USAGE_LOG: pidFile + '.usage',
+      NESVO_FIXTURE_USAGE_CONTROL: join(directory, 'usage-control.json'),
       NESVO_CODEX_EXECUTABLE: codexFixturePath,
       NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
       NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
@@ -227,6 +229,7 @@ test(
     );
     const workspace = join(directory, 'non-git-workspace');
     const pidFile = join(directory, 'fixture-pids.json');
+    const usageControl = join(directory, 'usage-control.json');
     const children = [];
     const ownedPids = new Set();
     t.after(async () => {
@@ -257,6 +260,7 @@ test(
       .prepare('INSERT INTO metadata (key, value) VALUES (?, ?)')
       .run('instance_id', instanceId);
     database.close();
+    await writeFile(usageControl, '{}');
     const open = () => {
       const host = launch(directory, pidFile);
       children.push(host);
@@ -294,6 +298,93 @@ test(
       status.status.models.map(model => model.id),
       ['default', 'opus', 'sonnet', 'haiku'],
     );
+    const usageBefore = await host.request('list-sessions');
+    const providers = ['Claude Code', 'Codex'];
+    const readyUsage = new Map();
+    for (const provider of providers) {
+      const responses = await Promise.all(
+        Array.from({ length: 3 }, () =>
+          host.request('provider-usage', { provider }),
+        ),
+      );
+      assert.ok(
+        responses.every(response => response.type === 'provider-usage'),
+      );
+      const usage = responses[0].usage;
+      for (const response of responses) assert.deepEqual(response.usage, usage);
+      assert.equal(usage.provider, provider);
+      assert.equal(usage.status, 'ready', JSON.stringify(usage));
+      assert.ok(Number.isFinite(Date.parse(usage.checkedAt)));
+      assert.equal(
+        usage.source,
+        provider === 'Codex' ? 'codex-app-server' : 'claude-control',
+      );
+      assert.equal(
+        usage.account.label,
+        provider === 'Codex'
+          ? 'fixture@example.invalid'
+          : 'claude-fixture@example.invalid',
+      );
+      assert.equal(usage.account.plan, provider === 'Codex' ? 'plus' : 'max');
+      assert.deepEqual(
+        usage.windows.map(window => window.usedPercent),
+        provider === 'Codex' ? [25, 40] : [23.5, 61.25],
+      );
+      assert.deepEqual(
+        usage.windows.map(window => window.resetsAt),
+        ['2030-01-02T03:04:05.000Z', '2030-01-07T03:04:05.000Z'],
+      );
+      assert.deepEqual(
+        usage.windows.map(window => window.windowMinutes),
+        [300, 10080],
+      );
+      assert.equal(
+        usage.ordinaryUsageAllowed,
+        provider === 'Codex' ? true : null,
+      );
+      readyUsage.set(provider, usage);
+    }
+    const readUsageTrace = async () =>
+      (await readFile(pidFile + '.usage', 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line));
+    const usageProbes = await readUsageTrace();
+    assert.equal(usageProbes.length, 2);
+    for (const trace of usageProbes) {
+      ownedPids.add(trace.pid);
+      assert.deepEqual(
+        trace.methods,
+        trace.provider === 'Codex'
+          ? [
+              'initialize',
+              'initialized',
+              'account/read',
+              'account/rateLimits/read',
+            ]
+          : ['initialize', 'get_usage'],
+      );
+    }
+    await processesGone(
+      usageProbes.map(trace => trace.pid),
+      ownedPids,
+    );
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions,
+      usageBefore.sessions,
+    );
+    assert.deepEqual((await host.request('list-reviews')).reviews, []);
+    await assert.rejects(readFile(pidFile + '.turns'), { code: 'ENOENT' });
+    await writeFile(
+      usageControl,
+      JSON.stringify({ 'Claude Code': 'unavailable', Codex: 'unavailable' }),
+    );
+    for (const provider of providers)
+      assert.deepEqual(
+        (await host.request('provider-usage', { provider })).usage,
+        readyUsage.get(provider),
+      );
+    assert.deepEqual(await readUsageTrace(), usageProbes);
     const create = directory => ({
       title: 'Fixture conversation',
       model: 'sonnet',
@@ -1144,6 +1235,27 @@ test(
       false,
     );
     const finalHost = open();
+    for (const provider of providers) {
+      const response = await finalHost.request('provider-usage', { provider });
+      assert.equal(response.type, 'provider-usage');
+      assert.equal(
+        response.usage.status,
+        'unavailable',
+        JSON.stringify(response),
+      );
+      assert.deepEqual(response.usage.windows, []);
+      assert.ok(response.usage.account);
+      assert.ok(response.usage.detail);
+    }
+    const unavailableProbes = (await readUsageTrace()).slice(
+      usageProbes.length,
+    );
+    assert.equal(unavailableProbes.length, 2);
+    for (const trace of unavailableProbes) ownedPids.add(trace.pid);
+    await processesGone(
+      unavailableProbes.map(trace => trace.pid),
+      ownedPids,
+    );
     const finalSession = (
       await finalHost.request('list-sessions')
     ).sessions.find(value => value.id === session.id);

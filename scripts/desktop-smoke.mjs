@@ -25,6 +25,8 @@ const workerPidDirectory = join(directory, 'worker-processes');
 const claudeConfigDirectory = join(directory, 'claude-config');
 const codexConfigDirectory = join(directory, 'codex-config');
 const skillsLog = join(directory, 'skills-probes.jsonl');
+const usageLog = join(directory, 'usage-probes.jsonl');
+const usageControl = join(directory, 'usage-control.json');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
 const executablePath =
   process.env.NESVO_PACKAGED_EXECUTABLE || requireDesktop('electron');
@@ -36,11 +38,14 @@ const env = {
   NESVO_CLAUDE_EXECUTABLE: resolve('apps/host/tests/claude-fixture.mjs'),
   NESVO_FIXTURE_PID_FILE: providerPidFile,
   NESVO_FIXTURE_SKILL_LOG: join(directory, 'shared-instructions.jsonl'),
+  NESVO_FIXTURE_USAGE_LOG: usageLog,
+  NESVO_FIXTURE_USAGE_CONTROL: usageControl,
   NESVO_CODEX_EXECUTABLE: resolve('apps/host/tests/codex-fixture.mjs'),
   NESVO_CODEX_FIXTURE_PID_FILE: codexPidFile,
   NESVO_CODEX_FIXTURE_PID_DIR: workerPidDirectory,
   NESVO_CODEX_FIXTURE_STATE_DIR: join(directory, 'codex-state'),
   NESVO_CODEX_FIXTURE_SKILLS_LOG: skillsLog,
+  NESVO_CODEX_FIXTURE_RUN_LOG: join(directory, 'codex-turns.jsonl'),
   CLAUDE_CONFIG_DIR: claudeConfigDirectory,
   CODEX_HOME: codexConfigDirectory,
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
@@ -75,6 +80,7 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 try {
+  await writeFile(usageControl, '{}');
   const skillDocument = (name, marker, fields = '') =>
     `---\nname: ${name}\ndescription: Shared fixture instructions.\n${fields}---\n${marker}\n`;
   const writeSkill = async (path, body) => {
@@ -346,6 +352,120 @@ try {
   const versions = await application.evaluate(() => process.versions);
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   assert.equal(typeof hostPid, 'number');
+  const readUsageTrace = async () =>
+    (await readFile(usageLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  const checkUsagePanel = async (targetPage, status) => {
+    const account = targetPage.getByRole('button', {
+      name: 'Account and limits',
+      exact: true,
+    });
+    await account.click();
+    const panel = targetPage.getByRole('dialog', {
+      name: 'Account and limits',
+      exact: true,
+    });
+    await panel
+      .getByRole('button', { name: 'Refresh limits', exact: true })
+      .click();
+    assert.equal(await panel.getAttribute('data-host-id'), 'local');
+    for (const provider of ['Claude Code', 'Codex']) {
+      const section = panel.getByRole('region', {
+        name: `${provider} usage`,
+        exact: true,
+      });
+      await panel
+        .locator(
+          `[data-provider-usage="${provider}"][data-usage-status="${status}"]`,
+        )
+        .waitFor();
+      await section
+        .getByText(
+          provider === 'Codex'
+            ? 'fixture@example.invalid'
+            : 'claude-fixture@example.invalid',
+          { exact: true },
+        )
+        .waitFor();
+      const bars = section.getByRole('progressbar');
+      if (status === 'ready') {
+        assert.deepEqual(
+          await bars.evaluateAll(nodes =>
+            nodes.map(node => node.getAttribute('aria-valuenow')),
+          ),
+          provider === 'Codex' ? ['25', '40'] : ['23.5', '61.25'],
+        );
+        assert.deepEqual(
+          await section
+            .locator('[data-usage-window] time')
+            .evaluateAll(nodes =>
+              nodes.map(node => node.getAttribute('datetime')),
+            ),
+          ['2030-01-02T03:04:05.000Z', '2030-01-07T03:04:05.000Z'],
+        );
+      } else {
+        assert.equal(await bars.count(), 0);
+        await section
+          .getByText('No current quota values are available.', { exact: true })
+          .waitFor();
+      }
+    }
+    return { account, panel };
+  };
+  const initialUsage = await checkUsagePanel(page, 'ready');
+  await screenshot('-provider-limits');
+  const initialUsageProbes = await readUsageTrace();
+  assert.equal(initialUsageProbes.length, 2);
+  for (const trace of initialUsageProbes) {
+    providerPids.add(trace.pid);
+    assert.deepEqual(
+      trace.methods,
+      trace.provider === 'Codex'
+        ? [
+            'initialize',
+            'initialized',
+            'account/read',
+            'account/rateLimits/read',
+          ]
+        : ['initialize', 'get_usage'],
+    );
+    await waitDead(trace.pid);
+  }
+  await assert.rejects(readFile(env.NESVO_CODEX_FIXTURE_RUN_LOG), {
+    code: 'ENOENT',
+  });
+  assert.deepEqual(await page.evaluate(() => window.nesvo.listSessions()), []);
+  await initialUsage.panel
+    .getByRole('button', { name: 'Refresh limits', exact: true })
+    .click();
+  assert.deepEqual(await readUsageTrace(), initialUsageProbes);
+  await page.keyboard.press('Escape');
+  await initialUsage.panel.waitFor({ state: 'hidden' });
+  await page.waitForFunction(
+    element => element === document.activeElement,
+    await initialUsage.account.elementHandle(),
+  );
+  assert.equal(
+    await initialUsage.account.evaluate(
+      node => node === document.activeElement,
+    ),
+    true,
+  );
+  await page
+    .getByRole('button', {
+      name: 'Codex limits: Codex · 7 days, 60% remaining',
+      exact: true,
+    })
+    .waitFor();
+  await page
+    .getByRole('button', {
+      name: 'Claude Code limits: Weekly, 38.8% remaining',
+      exact: true,
+    })
+    .waitFor();
+  await screenshot('-provider-rail');
   await page
     .getByRole('button', { name: 'New session', exact: true })
     .first()
@@ -1757,6 +1877,10 @@ try {
     );
   };
   const stateAfterClose = await fixtureState();
+  await writeFile(
+    usageControl,
+    JSON.stringify({ 'Claude Code': 'unavailable', Codex: 'unavailable' }),
+  );
   application = await launchApplication();
   const restartedPage = await application.firstWindow();
   restartedPage.setDefaultTimeout(20000);
@@ -1792,6 +1916,23 @@ try {
     restoredPatch,
     /corrected agent text|Live workspace edit/,
   );
+  const restartedUsage = await checkUsagePanel(restartedPage, 'unavailable');
+  await restartedPage.keyboard.press('Escape');
+  await restartedUsage.panel.waitFor({ state: 'hidden' });
+  for (const provider of ['Claude Code', 'Codex']) {
+    const indicator = restartedPage.locator(
+      `[data-provider-indicator="${provider}"]`,
+    );
+    assert.equal(
+      await indicator.getAttribute('aria-label'),
+      `${provider} limits: unavailable`,
+    );
+    assert.ok((await indicator.innerText()).includes('—'));
+  }
+  for (const trace of await readUsageTrace()) {
+    providerPids.add(trace.pid);
+    await waitDead(trace.pid);
+  }
   const restored = await restartedPage.evaluate(async () => ({
     sessions: await window.nesvo.listSessions(),
     reviews: await window.nesvo.listReviews(),

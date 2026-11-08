@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
@@ -22,6 +23,7 @@ const flags = [
   '--session-id',
   '--resume',
   '--model',
+  '--no-session-persistence',
 ];
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 
@@ -31,6 +33,98 @@ if (args.length === 1 && args[0] === '--version') {
   console.log(flags.join('\n'));
 } else if (args.join(' ') === 'auth status --json') {
   emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
+} else if (args[args.indexOf('--input-format') + 1] === 'stream-json') {
+  const switches = new Set([
+    '--print',
+    '--verbose',
+    '--no-session-persistence',
+    '--strict-mcp-config',
+  ]);
+  const values = new Map();
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    assert.ok(flags.includes(flag), `Unexpected usage argument: ${flag}`);
+    assert.equal(values.has(flag), false);
+    values.set(flag, switches.has(flag) ? true : args[++index]);
+  }
+  for (const flag of switches) assert.equal(values.get(flag), true, flag);
+  for (const [flag, expected] of [
+    ['--input-format', 'stream-json'],
+    ['--output-format', 'stream-json'],
+    ['--permission-mode', 'plan'],
+    ['--permission-prompts', 'none'],
+    ['--tools', ''],
+    ['--mcp-config', '{"mcpServers":{}}'],
+    ['--settings', '{"disableAllHooks":true}'],
+  ])
+    assert.equal(values.get(flag), expected, flag);
+  assert.equal(values.size, switches.size + 7);
+  const methods = [];
+  for await (const line of createInterface({ input: process.stdin })) {
+    const frame = JSON.parse(line);
+    assert.equal(frame.type, 'control_request');
+    assert.match(frame.request_id, /^[0-9a-f-]{36}$/);
+    methods.push(frame.request.subtype);
+    let response;
+    if (methods.length === 1) {
+      assert.deepEqual(frame.request, {
+        subtype: 'initialize',
+        hooks: {},
+        sdkMcpServers: [],
+      });
+      response = {
+        account: {
+          email: 'claude-fixture@example.invalid',
+          organization: 'Fixture organization',
+          subscriptionType: 'max',
+        },
+      };
+    } else {
+      assert.equal(methods.length, 2);
+      assert.deepEqual(frame.request, {
+        subtype: 'get_usage',
+        skip_behaviors: true,
+      });
+      if (process.env.NESVO_FIXTURE_USAGE_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_USAGE_LOG,
+          JSON.stringify({
+            provider: 'Claude Code',
+            pid: process.pid,
+            methods,
+          }) + '\n',
+          { flag: 'a' },
+        );
+      const control = process.env.NESVO_FIXTURE_USAGE_CONTROL
+        ? JSON.parse(
+            readFileSync(process.env.NESVO_FIXTURE_USAGE_CONTROL, 'utf8'),
+          )
+        : {};
+      await setTimeout(150);
+      response =
+        control['Claude Code'] === 'unavailable'
+          ? { subscription_type: 'max', rate_limits_available: false }
+          : {
+              subscription_type: 'max',
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: {
+                  utilization: 23.5,
+                  resets_at: '2030-01-02T03:04:05.000Z',
+                },
+                seven_day: {
+                  utilization: 61.25,
+                  resets_at: '2030-01-07T03:04:05.000Z',
+                },
+              },
+            };
+    }
+    emit({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: frame.request_id, response },
+    });
+  }
+  assert.deepEqual(methods, ['initialize', 'get_usage']);
 } else {
   const switches = new Set([
     '--print',

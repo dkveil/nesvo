@@ -369,6 +369,51 @@ if (args.length === 1 && args[0] === '--version') {
         },
         requiresOpenaiAuth: true,
       });
+    } else if (method === 'account/rateLimits/read') {
+      assert.deepEqual(params, {});
+      assert.deepEqual(methods, [
+        'initialize',
+        'initialized',
+        'account/read',
+        'account/rateLimits/read',
+      ]);
+      if (process.env.NESVO_FIXTURE_USAGE_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_USAGE_LOG,
+          JSON.stringify({ provider: 'Codex', pid: process.pid, methods }) +
+            '\n',
+          { flag: 'a' },
+        );
+      const control = process.env.NESVO_FIXTURE_USAGE_CONTROL
+        ? JSON.parse(
+            readFileSync(process.env.NESVO_FIXTURE_USAGE_CONTROL, 'utf8'),
+          )
+        : {};
+      await new Promise(resolve => setTimeout(resolve, 150));
+      response(id, {
+        rateLimits: {
+          limitId: 'codex',
+          limitName: 'Codex',
+          primary:
+            control.Codex === 'unavailable'
+              ? null
+              : {
+                  usedPercent: 25,
+                  windowDurationMins: 300,
+                  resetsAt: Date.parse('2030-01-02T03:04:05.000Z') / 1000,
+                },
+          secondary:
+            control.Codex === 'unavailable'
+              ? null
+              : {
+                  usedPercent: 40,
+                  windowDurationMins: 10080,
+                  resetsAt: Date.parse('2030-01-07T03:04:05.000Z') / 1000,
+                },
+        },
+        rateLimitsByLimitId: null,
+        ordinaryUsageAllowed: true,
+      });
     } else if (method === 'config/read') {
       assert.equal(params.includeLayers, false);
       if (
