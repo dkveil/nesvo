@@ -54,7 +54,7 @@ D59 explicitly authorizes P6.1 discovery after the file explorer delivery. The s
 
 P6.1 is delivered at 653ad2d and In Review in REV-261. Actual Windows discovery and separate native application/package checks on Windows, macOS and Linux passed; see docs/platforms.md. P6 remains In Progress because invocation and its owner acceptance are still pending.
 
-Cursor, remote hosts/VPS, mobile control, automatic merge and a general plugin marketplace are deferred.
+Cursor, mobile control, automatic merge and a general plugin marketplace are deferred. D63 below supersedes the earlier deferral of remote hosts/VPS.
 The prototype prioritizes operator satisfaction, visible control and a coherent working flow.
 
 D60 authorizes P6.2: slash selection, one skill per message, native Codex invocation and persisted source attribution. The selected skill is verified again in the isolated execution process; unavailable selections fail without silently running an ordinary prompt. The supported Claude picker remains discovery-only until exact invocation is verified. The stage requires a real Codex task and owner review; it does not authorize P7 through P10.
@@ -65,4 +65,19 @@ D61 extends P6 with the owner-authorized common local library. Both providers se
 
 D62 explicitly authorizes P7 after the owner reviewed its goal: reopen the app and safely continue the same work. The stage restores the last session/Inbox and saved-diff location, keeps durable conversation/worker/review identities and explains host shutdown, host recovery and provider disconnection. A data directory has one host owner. There is no automatic replay; continuation requires a new operator message in the existing provider thread. Review retry identity survives restart. P8 through P10 remain separate stages, and successful real Claude evidence remains open independently.
 
-P7 implementation and regression checks at 1ef58dd passed the existing host cases and native application/package scenarios separately on Windows, macOS and Linux. Real Windows Codex demonstrated parent/worker and pending-review recovery, acceptance retry and deliberate continuation in the same thread after closing an active session. The latest saved worker group takes precedence over earlier parent review dependencies. Local fixture cleanup remained intermittently unstable; targeted probes and an instrumented full scenario did not reproduce it, so its cause is not claimed as fixed. Screenshots, evidence and the explicit observation are in REV-273. P7 is In Review; Damian's acceptance is still required before the next stage.
+P7 implementation and regression checks at 1ef58dd passed the existing host cases and native application/package scenarios separately on Windows, macOS and Linux. Real Windows Codex demonstrated parent/worker and pending-review recovery, acceptance retry and deliberate continuation in the same thread after closing an active session. The latest saved worker group takes precedence over earlier parent review dependencies. Local fixture cleanup remained intermittently unstable; targeted probes and an instrumented full scenario did not reproduce it, so its cause is not claimed as fixed. Screenshots, evidence and the explicit observation are in REV-273. P7 is In Review. D63 separately authorizes the next remote-host stage without changing P7's owner-review status.
+
+## D63: Local and VPS extension
+
+The owner authorized this extension before P8 on November 8. Local stays the default and uses its existing lifecycle. A Linux host owns its provider processes and state independently of desktop connections. Reconnecting reads current state without replaying messages, decisions or Stop. A session and all its workers stay on one host; accounts, files and skills are not copied between machines.
+
+| Stage | Delivery                                                    | Owner review                                                        |
+| ----- | ----------------------------------------------------------- | ------------------------------------------------------------------- |
+| R1    | Independent host, private channel and reconnect             | Disconnect during worker execution, recover the same run and result |
+| R2    | Computers, host routing and unified Inbox                   | Use two hosts without mixing sessions or decisions                  |
+| R3    | SSH with identity verification and installation preparation | Exercise connection failures and recovery in an isolated setup      |
+| R4    | Actual VPS installation and provider login                  | Complete real work after disconnecting the desktop                  |
+
+R1 is in progress. Subsequent stages require owner acceptance. P8 through P10 follow this extension; November 16 remains the demonstration target. Cross-host delegation, session migration and repository/skill synchronization remain deferred. No actual VPS has been supplied yet. Runtime fixtures and CI evidence must not be presented as proof on that VPS.
+
+Linear rejected a new R1 issue because the workspace issue limit was reached. R1 status and evidence are tracked in the project discussion and approved roadmap document, without repurposing unrelated issues.
