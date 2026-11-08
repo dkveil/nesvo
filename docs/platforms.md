@@ -1,5 +1,13 @@
 # Platform verification
 
+## R1 independent Linux host
+
+D63/R1 transport code fc280cd and the focused integration at 48542bb separate daemon ownership from detachable clients. The Linux scenario passed locally in Docker with Node 24.22.2, UID 1000, no network and a read-only repository mount. Real Unix sockets, SQLite and controlled provider processes verified a worker surviving detach, stable run/approval/review identities, offline completion, private reply routing, malformed connection rejection, competing data/runtime owners, live foreign socket preservation and explicit daemon shutdown/restart without replay.
+
+[Foundation CI at de6cf4e](https://github.com/dkveil/nesvo/actions/runs/42458523910) passed on Ubuntu with pinned Node 24.20.0: all three host cases, strict types, lint, formatting and the complete build. Local Windows passed `bun run check` with the two existing cases and an explicit Linux-only skip for the daemon case, plus `bun run build` and the principal built-Electron desktop scenario. That scenario used Electron 45.2.3 / embedded Node 24.22.2 and existing Claude/Codex delegation fixtures. No new macOS or unpacked-package run is claimed for R1.
+
+This evidence does not establish successful model execution, SSH authentication, systemd/logout persistence or operation on an actual VPS. R1 adds no desktop Computers view. R2, R3 and R4 retain their separate owner reviews. R1 is In Review; its project discussion and approved Linear roadmap carry status because the workspace issue limit prevented creating an R1 issue.
+
 ## P7 history and recovery
 
 D62 implementation and regression checks at 1ef58dd preserve conversation, parent/worker, native-thread and review identities after reopening. The last session/Inbox and exact saved-diff file are restored as local navigation preferences. One Electron instance and one host own each data directory. Host shutdown, startup recovery and provider disconnection remain distinct from operator Stop or confirmed provider failure. Opening the app never replays work or decisions; continuation requires a new message.

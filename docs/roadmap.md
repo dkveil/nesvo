@@ -78,6 +78,6 @@ The owner authorized this extension before P8 on November 8. Local stays the def
 | R3    | SSH with identity verification and installation preparation | Exercise connection failures and recovery in an isolated setup      |
 | R4    | Actual VPS installation and provider login                  | Complete real work after disconnecting the desktop                  |
 
-R1 is in progress. Subsequent stages require owner acceptance. P8 through P10 follow this extension; November 16 remains the demonstration target. Cross-host delegation, session migration and repository/skill synchronization remain deferred. No actual VPS has been supplied yet. Runtime fixtures and CI evidence must not be presented as proof on that VPS.
+R1 is In Review: transport fc280cd, integration 48542bb, documentation de6cf4e. Linux Docker and native Ubuntu CI passed the reconnect/worker/approval scenario; Windows passed local checks and the existing built-desktop scenario. See docs/platforms.md for exact evidence and limits. Subsequent stages require owner acceptance. P8 through P10 follow this extension; November 16 remains the demonstration target. Cross-host delegation, session migration and repository/skill synchronization remain deferred. No actual VPS has been supplied yet. Runtime fixtures and CI evidence must not be presented as proof on that VPS.
 
 Linear rejected a new R1 issue because the workspace issue limit was reached. R1 status and evidence are tracked in the project discussion and approved roadmap document, without repurposing unrelated issues.
