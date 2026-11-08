@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import type { DesktopSession } from '@nesvo/contracts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Action, colors, Notice, styles } from '@/components/ui';
@@ -20,6 +21,7 @@ export default function ConversationScreen() {
   const list = useRef<FlatList<DesktopSession['messages'][number]>>(null);
   const nearBottom = useRef(true);
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const session = store.view?.sessions.find(
     item => item.id === id && item.hostId === hostId,
   );
@@ -224,8 +226,8 @@ export default function ConversationScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={90}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={headerHeight}
     >
       <Stack.Screen options={{ title: session.title }} />
       <FlatList
@@ -375,6 +377,8 @@ export default function ConversationScreen() {
         <TextInput
           accessibilityLabel="Message"
           testID="message-input"
+          autoCapitalize="none"
+          autoCorrect={false}
           multiline
           maxLength={32000}
           value={store.draft(hostId, id)}

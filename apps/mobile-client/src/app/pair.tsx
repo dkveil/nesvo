@@ -7,11 +7,13 @@ import {
   TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { Action, colors, Notice, styles } from '@/components/ui';
 import { useMobileWorkspace } from '@/hooks/mobile-workspace';
 
 export default function PairScreen() {
   const store = useMobileWorkspace();
+  const headerHeight = useHeaderHeight();
   const [link, setLink] = useState('');
   const [name, setName] = useState('My phone');
   const [pending, setPending] = useState(false);
@@ -37,7 +39,8 @@ export default function PairScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={headerHeight}
     >
       <ScrollView
         contentContainerStyle={styles.content}
