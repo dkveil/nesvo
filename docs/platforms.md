@@ -1,5 +1,17 @@
 # Platform verification
 
+## R2 and R3 computers and SSH
+
+D64 connects Local and prepared Linux computers through separate desktop routes. Implementation commits 20647b7, 77d9b83, b803865 and 26da03c cover the renderer, service preparation, SSH boundary and connection manager; 5dfba75 rejects executable paths that systemd cannot accept.
+
+Local Windows passed strict types, ESLint, Prettier, build, the two existing host cases and the principal built-desktop scenario using Electron 45.2.3 / embedded Node 24.22.2. The Linux-only daemon case is explicitly skipped on Windows. [Foundation checks at 5dfba75](https://github.com/dkveil/nesvo/actions/runs/42460828848) passed on Ubuntu, including all three host cases.
+
+[Native checks at 5dfba75](https://github.com/dkveil/nesvo/actions/runs/42460828744) passed separately on Windows, macOS and Linux: clean installation, check, build, the principal desktop scenario, packaging and the same scenario against the unpacked application. [Foundation checks at 72f46f1](https://github.com/dkveil/nesvo/actions/runs/42461542772) passed with the added remote test harness included in lint. Runtime code is unchanged after 5dfba75; subsequent changes add evidence, documentation and that opt-in scenario.
+
+A separate focused Windows scenario at 72f46f1 uses actual native OpenSSH, an isolated Linux Docker SSH server and Node 24.20.0 daemon under UID 1000. The repository mount is read-only; keys, verified known-hosts file and desktop profile are temporary. Unknown and changed server keys are rejected. Sessions, file reads, skill catalogs and Inbox decisions target the correct host; Local state remains independent. Remote workers and pending approvals survive client disconnect and app restart. A second bridge stops a worker while the desktop is detached: its cache stays unchanged until reconnect restores the exact newer terminal revision and messages. Configuration pins and offline snapshots persist, reconnect does not replay provider turns, and removal leaves the daemon running. Controlled provider fixtures do not use real accounts. Owned resource cleanup passed.
+
+The service-unit generator is checked by the real systemd parser, including supported literal path characters and rejection of unsupported executable names. This is syntax evidence, not a running systemd service or a logout/reboot test. An actual VPS, provider login and persistent-service acceptance remain R4 and require an available server. The SSH client was exercised on Windows; native desktop/package results on other systems are recorded separately.
+
 ## R1 independent Linux host
 
 D63/R1 transport code fc280cd and the focused integration at 48542bb separate daemon ownership from detachable clients. The Linux scenario passed locally in Docker with Node 24.22.2, UID 1000, no network and a read-only repository mount. Real Unix sockets, SQLite and controlled provider processes verified a worker surviving detach, stable run/approval/review identities, offline completion, private reply routing, malformed connection rejection, competing data/runtime owners, live foreign socket preservation and explicit daemon shutdown/restart without replay.
