@@ -95,14 +95,14 @@ export class ReviewStore {
   ): Review[] {
     const dependencies = this.latest(sessionId)?.dependencies ?? [];
     const previousGroup = delegations.at(-1)?.runId;
-    const children = dependencies.length
-      ? dependencies.map(dependency => dependency.sessionId)
-      : delegations
-          .filter(
-            proposal =>
-              proposal.runId === previousGroup && proposal.childSessionId,
-          )
-          .map(proposal => proposal.childSessionId!);
+    const groupChildren = delegations
+      .filter(
+        proposal => proposal.runId === previousGroup && proposal.childSessionId,
+      )
+      .map(proposal => proposal.childSessionId!);
+    const children = groupChildren.length
+      ? groupChildren
+      : dependencies.map(dependency => dependency.sessionId);
     return [...new Set(children)]
       .map(childId => this.latest(childId))
       .filter(
