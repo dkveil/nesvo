@@ -35,7 +35,7 @@ function stale(
   return (
     !!data &&
     (!connected ||
-      now - Date.parse(data.checkedAt) > 180000 ||
+      now - Date.parse(data.checkedAt) > 300000 ||
       data.windows.some(
         window =>
           window.resetsAt !== null && Date.parse(window.resetsAt) <= now,

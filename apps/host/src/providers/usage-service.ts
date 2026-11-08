@@ -9,7 +9,7 @@ import { inspectCodexUsage } from './codex';
 export class ProviderUsageService {
   private readonly cached = new Map<
     ProviderUsageInput['provider'],
-    { value: ProviderUsage; expiresAt: number }
+    { value: ProviderUsage; expiresAt: number; failures: number }
   >();
   private readonly pending = new Map<
     ProviderUsageInput['provider'],
@@ -43,8 +43,24 @@ export class ProviderUsageService {
         detail: 'Account limits could not be read. Refresh to try again.',
       }))
       .then(value => {
-        this.cached.set(provider, { value, expiresAt: Date.now() + 30_000 });
-        return value;
+        const failures =
+          value.status === 'ready'
+            ? 0
+            : Math.min((previous?.failures ?? 0) + 1, 5);
+        const delay = failures
+          ? Math.min(300_000 * 2 ** (failures - 1), 3_600_000)
+          : provider === 'Claude Code'
+            ? 240_000
+            : 30_000;
+        const expiresAt = Date.now() + delay;
+        const observation = failures
+          ? {
+              ...value,
+              detail: `${(value.detail ?? 'Account limits are unavailable.').slice(0, 800)} Next provider check after ${new Date(expiresAt).toISOString()}.`,
+            }
+          : value;
+        this.cached.set(provider, { value: observation, expiresAt, failures });
+        return observation;
       })
       .finally(() => this.pending.delete(provider));
     this.pending.set(provider, operation);
