@@ -1,10 +1,14 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
+import { type ProviderUsage } from '@nesvo/contracts';
+import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
+import { claudeUsageResult } from './claude-usage';
 
 export type ClaudeStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -408,6 +412,197 @@ export async function inspectClaude(
   signal?: AbortSignal,
 ): Promise<ClaudeStatus> {
   return (await inspect(() => signal?.aborted ?? false)).status;
+}
+
+export async function inspectClaudeUsage(
+  signal?: AbortSignal,
+): Promise<ProviderUsage> {
+  let owned: OwnedProcess | null = null;
+  let result = claudeUsageResult(null, null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let detach: (() => void) | undefined;
+  let abort: (() => void) | undefined;
+  let failureReported = false;
+  const failResult = (status: ProviderUsage['status'], detail: string) => {
+    failureReported = true;
+    result = {
+      ...result,
+      status,
+      detail,
+      windows: [],
+      checkedAt: new Date().toISOString(),
+    };
+  };
+  try {
+    if (signal?.aborted) throw new Error('Stopped.');
+    const executable = await executablePath();
+    if (!executable) {
+      failResult(
+        'unavailable',
+        'Install Claude Code to read its account limits.',
+      );
+      return result;
+    }
+    if (signal?.aborted) throw new Error('Stopped.');
+    owned = ownProcess(executable, [
+      '--print',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--no-session-persistence',
+      '--permission-mode',
+      'plan',
+      '--permission-prompts',
+      'none',
+      '--tools',
+      '',
+      '--strict-mcp-config',
+      '--mcp-config',
+      '{"mcpServers":{}}',
+      '--settings',
+      '{"disableAllHooks":true}',
+    ]);
+    const running = owned;
+    let finished = false;
+    let account: unknown;
+    const initializeId = randomUUID();
+    const usageId = randomUUID();
+    let initialized = false;
+    let resolveAnswer!: (value: unknown) => void;
+    let rejectAnswer!: (error: Error) => void;
+    const answer = new Promise<unknown>((resolve, reject) => {
+      resolveAnswer = resolve;
+      rejectAnswer = reject;
+    });
+    const fail = (status: ProviderUsage['status'], detail: string) => {
+      if (finished) return;
+      finished = true;
+      failResult(status, detail);
+      rejectAnswer(new Error(detail));
+      void running.stop();
+    };
+    const send = (id: string, request: RecordValue) => {
+      try {
+        running.child.stdin.write(
+          JSON.stringify({ type: 'control_request', request_id: id, request }) +
+            '\n',
+        );
+      } catch {
+        fail('error', 'Claude Code closed during usage inspection.');
+      }
+    };
+    let outputBytes = 0;
+    running.child.stdout.on('data', (chunk: Buffer) => {
+      outputBytes += chunk.length;
+      if (outputBytes > 4 * maxLineBytes)
+        fail('error', 'Claude Code usage inspection returned too much data.');
+    });
+    detach = readFrames(
+      running.child.stdout,
+      maxLineBytes,
+      value => {
+        if (finished) return;
+        const frame = object(value);
+        if (frame?.type === 'control_request') {
+          fail(
+            'error',
+            'Claude Code requested an operation during usage inspection.',
+          );
+          return;
+        }
+        if (frame?.type !== 'control_response') return;
+        const response = object(frame.response);
+        const expected = initialized ? usageId : initializeId;
+        if (response?.request_id !== expected) return;
+        if (response.subtype !== 'success') {
+          const message =
+            typeof response.error === 'string'
+              ? response.error.toLowerCase()
+              : '';
+          if (
+            /not logged|not authenticated|authentication required|unauthenticated/.test(
+              message,
+            )
+          )
+            fail(
+              'unauthenticated',
+              'Sign in with Claude Code, then refresh its limits.',
+            );
+          else if (
+            /unsupported|unknown|unrecognized|not implemented/.test(message)
+          )
+            fail(
+              'unavailable',
+              'This Claude Code version does not support native usage inspection. Update the CLI or inspect /usage in Claude Code.',
+            );
+          else
+            fail(
+              'error',
+              'Claude Code could not read its account limits. Try again later.',
+            );
+          return;
+        }
+        if (!initialized) {
+          account = object(response.response)?.account;
+          initialized = true;
+          send(usageId, { subtype: 'get_usage', skip_behaviors: true });
+        } else {
+          finished = true;
+          resolveAnswer(response.response);
+        }
+      },
+      () => fail('error', 'Claude Code returned an invalid usage frame.'),
+    );
+    running.child.stderr.resume();
+    abort = () => fail('error', 'Claude Code usage inspection stopped.');
+    signal?.addEventListener('abort', abort, { once: true });
+    timer = setTimeout(
+      () => fail('error', 'Claude Code usage inspection timed out.'),
+      15_000,
+    );
+    if (signal?.aborted) abort();
+    else
+      send(initializeId, {
+        subtype: 'initialize',
+        hooks: {},
+        sdkMcpServers: [],
+      });
+    const value = await Promise.race([
+      answer,
+      running.closed.then(() => {
+        throw new Error('Claude Code closed before returning usage data.');
+      }),
+    ]);
+    result = claudeUsageResult(value, account);
+  } catch {
+    if (!failureReported)
+      failResult(
+        'unavailable',
+        signal?.aborted
+          ? 'Claude Code usage inspection stopped.'
+          : 'Claude Code did not return native usage data. Update the CLI or inspect /usage in Claude Code.',
+      );
+  } finally {
+    clearTimeout(timer);
+    if (abort) signal?.removeEventListener('abort', abort);
+    detach?.();
+    if (owned) {
+      owned.child.stdin.end();
+      await Promise.race([owned.closed, wait(300)]);
+      await owned.stop();
+      const exit = await owned.closed;
+      if (!exit.confirmed)
+        failResult(
+          'error',
+          'Claude Code usage process cleanup could not be confirmed.',
+        );
+    }
+  }
+  if (signal?.aborted)
+    failResult('error', 'Claude Code usage inspection stopped.');
+  return result;
 }
 
 export function startClaude(options: {

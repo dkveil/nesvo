@@ -10,8 +10,10 @@ import {
   skillLimits,
   type SkillDiscovery,
   type SkillReference,
+  type ProviderUsage,
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
+import { readCodexUsage } from './codex-usage';
 
 export type CodexStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -639,6 +641,96 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
     signal?.removeEventListener('abort', cancel);
     await peer?.close();
   }
+}
+
+export async function inspectCodexUsage(
+  signal?: AbortSignal,
+): Promise<ProviderUsage> {
+  const scoped = AbortSignal.any([
+    ...(signal ? [signal] : []),
+    AbortSignal.timeout(20_000),
+  ]);
+  let peer: RpcPeer | null = null;
+  let result: ProviderUsage = {
+    provider: 'Codex',
+    status: 'error',
+    account: null,
+    windows: [],
+    checkedAt: new Date().toISOString(),
+    source: 'codex-app-server',
+    ordinaryUsageAllowed: null,
+    detail: 'Codex usage could not be checked. Refresh to try again.',
+  };
+  const cancel = () => {
+    void peer?.close();
+  };
+  try {
+    scoped.throwIfAborted();
+    const executable = await executablePath();
+    if (!executable)
+      return {
+        ...result,
+        status: 'unavailable',
+        detail: 'Install Codex on this computer to read its account limits.',
+      };
+    scoped.throwIfAborted();
+    peer = rpcPeer(executable, undefined, message =>
+      rejectRequest(peer!, message),
+    );
+    scoped.addEventListener('abort', cancel, { once: true });
+    scoped.throwIfAborted();
+    await initialize(peer);
+    const auth = await peer.request('account/read', { refreshToken: false });
+    if (auth.account === null) {
+      result.status = 'unauthenticated';
+      result.detail = 'Sign in with codex login on this computer.';
+    } else {
+      const account = object(auth.account);
+      if (!account) throw new Error('Invalid account.');
+      if (account.type === 'chatgpt') {
+        result.account = {
+          label: typeof account.email === 'string' ? account.email : null,
+          plan: typeof account.planType === 'string' ? account.planType : null,
+        };
+        result = readCodexUsage(
+          await peer.request('account/rateLimits/read', {}),
+          result.account,
+        );
+      } else if (['apiKey', 'amazonBedrock'].includes(String(account.type))) {
+        result.status = 'unavailable';
+        result.account = {
+          label: account.type === 'apiKey' ? 'API key' : 'Amazon Bedrock',
+          plan: null,
+        };
+        result.detail =
+          'Subscription usage windows are not available for this authentication method.';
+      } else throw new Error('Unsupported account.');
+    }
+    scoped.throwIfAborted();
+  } catch (error) {
+    result = {
+      ...result,
+      status:
+        error instanceof CodexRpcError && error.code === -32601
+          ? 'unavailable'
+          : 'error',
+      windows: [],
+      ordinaryUsageAllowed: null,
+      detail:
+        error instanceof CodexRpcError && error.code === -32601
+          ? 'This Codex version does not expose account limits. Update Codex.'
+          : 'Codex usage could not be checked. Refresh to try again.',
+    };
+  } finally {
+    scoped.removeEventListener('abort', cancel);
+    const closed = await peer?.close();
+    if (closed && !closed.confirmed) {
+      result.status = 'error';
+      result.windows = [];
+      result.detail = 'The Codex account inspection could not close cleanly.';
+    }
+  }
+  return { ...result, checkedAt: new Date().toISOString() };
 }
 
 class CodexSkillProtocolError extends Error {}

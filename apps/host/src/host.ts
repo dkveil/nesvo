@@ -15,6 +15,7 @@ import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { discoverSessionSkills } from './skills/service';
+import { ProviderUsageService } from './providers/usage-service';
 
 type HostTransport = {
   directory: string;
@@ -62,6 +63,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           }),
       );
       let workspaceRequests = 0;
+      const usage = new ProviderUsageService(probes.controller.signal);
       let skillRequests = 0;
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
@@ -121,6 +123,25 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 code: 'unavailable',
                 message: 'The provider could not be checked. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(inspection);
+          void inspection.finally(() => probes.pending.delete(inspection));
+          continue;
+        }
+        if (request.method === 'provider-usage') {
+          const inspection = usage
+            .read(request.input)
+            .then(usage =>
+              send({ type: 'provider-usage', id: request.id, usage }),
+            )
+            .catch(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message: 'Account limits could not be read.',
               }),
             )
             .catch(() => undefined);

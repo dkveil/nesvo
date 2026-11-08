@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  providerUsageInputSchema,
+  providerUsageSchema,
+  type ProviderUsageInput,
+  type ProviderUsage,
+} from './provider-usage';
+import {
   type Computer,
   type DesktopReview,
   type DesktopSession,
@@ -56,6 +62,7 @@ export * from './reviews';
 export * from './workspace';
 export * from './skills';
 export * from './computers';
+export * from './provider-usage';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -72,6 +79,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ id: z.uuid(), method: z.literal('shutdown') }),
   z.strictObject({ id: z.uuid(), method: z.literal('claude-status') }),
   z.strictObject({ id: z.uuid(), method: z.literal('codex-status') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('provider-usage'),
+    input: providerUsageInputSchema,
+  }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
   z.strictObject({
@@ -160,6 +172,11 @@ export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({
+    type: z.literal('provider-usage'),
+    id: z.uuid(),
+    usage: providerUsageSchema,
+  }),
+  z.strictObject({
     type: z.literal('skills'),
     id: z.uuid(),
     catalog: skillCatalogSchema,
@@ -238,6 +255,10 @@ export const hostMessageSchema = z.union([
 ]);
 export type HostMessage = z.infer<typeof hostMessageSchema>;
 export type DesktopApi = {
+  providerUsage: (
+    input: ProviderUsageInput,
+    hostId?: HostId,
+  ) => Promise<ProviderUsage>;
   listComputers: () => Promise<Computer[]>;
   addComputer: (input: SshComputerInput) => Promise<Computer>;
   connectComputer: (hostId: HostId) => Promise<Computer>;
