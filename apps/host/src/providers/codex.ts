@@ -198,11 +198,13 @@ function ownProcess(
         child.stdin.destroy();
         child.stdout.destroy();
         child.stderr.destroy();
-        closeResolve({
-          code: null,
-          error: new Error('Codex process did not close after cleanup.'),
-          confirmed: false,
-        });
+        await Promise.race([closed, wait(300)]);
+        if (!hasClosed)
+          closeResolve({
+            code: null,
+            error: new Error('Codex process did not close after cleanup.'),
+            confirmed: false,
+          });
       }
     })();
     return cleanup;
