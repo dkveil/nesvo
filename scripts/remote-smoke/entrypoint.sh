@@ -42,11 +42,13 @@ export NESVO_CODEX_FIXTURE_PID_FILE=/var/lib/nesvo/codex-pids.json
 export NESVO_CODEX_FIXTURE_PID_DIR=/var/lib/nesvo/worker-pids
 export NESVO_CODEX_FIXTURE_STATE_DIR=/var/lib/nesvo/codex-state
 export NESVO_CODEX_FIXTURE_RUN_LOG=/var/lib/nesvo/turns.jsonl
+export NESVO_FIXTURE_USAGE_CONTROL=/var/lib/nesvo/usage-control.json
 export CLAUDE_CONFIG_DIR=/var/lib/nesvo/claude-config
 export CODEX_HOME=/var/lib/nesvo/codex-config
 export NESVO_TEST_SKILLS_HOME=/var/lib/nesvo/skills-home
 
 mkdir -p "$CLAUDE_CONFIG_DIR/skills/remote-smoke" "$CODEX_HOME" "$NESVO_TEST_SKILLS_HOME" /var/lib/nesvo/.git
+printf '%s\n' '{"Codex":"unavailable"}' > "$NESVO_FIXTURE_USAGE_CONTROL"
 printf '%s\n' '---' 'name: Remote smoke instructions' 'description: Metadata from the isolated SSH fixture host.' '---' 'REMOTE_SMOKE_INSTRUCTIONS' > "$CLAUDE_CONFIG_DIR/skills/remote-smoke/SKILL.md"
 chown -R node:node /var/lib/nesvo
 

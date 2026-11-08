@@ -554,7 +554,45 @@ try {
   assert.equal(await readFile(knownHostsFile, 'utf8'), '');
   await writeFile(knownHostsFile, correctHostRecord);
   await connectRemote();
+  const localUsage = await page.evaluate(() =>
+    window.nesvo.providerUsage({ provider: 'Codex' }),
+  );
+  const remoteUsage = await page.evaluate(
+    hostId => window.nesvo.providerUsage({ provider: 'Codex' }, hostId),
+    remoteId,
+  );
+  assert.equal(localUsage.status, 'ready');
+  assert.deepEqual(
+    localUsage.windows.map(window => window.usedPercent),
+    [25, 40],
+  );
+  assert.equal(remoteUsage.status, 'unavailable');
+  assert.deepEqual(remoteUsage.windows, []);
+  assert.ok(remoteUsage.detail);
+  for (const usage of [localUsage, remoteUsage]) {
+    assert.equal(usage.provider, 'Codex');
+    assert.equal(usage.source, 'codex-app-server');
+    assert.deepEqual(usage.account, {
+      label: 'fixture@example.invalid',
+      plan: 'plus',
+    });
+  }
+  assert.deepEqual(await remoteTurns(), []);
   await disconnectRemote();
+  await assert.rejects(
+    page.evaluate(
+      hostId => window.nesvo.providerUsage({ provider: 'Codex' }, hostId),
+      remoteId,
+    ),
+    /connect|offline|disconnected/i,
+  );
+  assert.equal((await computer(remoteId)).status, 'disconnected');
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.nesvo.providerUsage({ provider: 'Codex' }),
+    ),
+    localUsage,
+  );
   await writeFile(knownHostsFile, `[127.0.0.1]:${port} ${wrongPublicKey}\n`);
   await assert.rejects(
     page.evaluate(id => window.nesvo.connectComputer(id), remoteId),
@@ -946,6 +984,8 @@ try {
     systemdUnitVerified: true,
     noReconnectReplay: true,
     authoritativeCatchUp: true,
+    hostScopedProviderUsage: true,
+    offlineUsageRejected: true,
     removePreservedDaemon: true,
   };
 } catch (error) {
