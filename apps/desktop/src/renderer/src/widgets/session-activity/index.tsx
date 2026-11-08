@@ -27,6 +27,7 @@ type Props = {
   status: Session['status'];
   live: boolean;
   truncated: boolean;
+  offline?: boolean;
 };
 
 const icons = {
@@ -116,6 +117,7 @@ export function SessionActivity({
   status,
   live,
   truncated,
+  offline = false,
 }: Props) {
   const region = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
@@ -146,7 +148,9 @@ export function SessionActivity({
     startedAt && (completedAt || live)
       ? elapsedLabel(startedAt, completedAt, now)
       : '';
-  const label = runLabel(status, elapsed, live);
+  const label = offline
+    ? `Last known: ${status === 'stopping' ? 'Stopping' : 'Working'}`
+    : runLabel(status, elapsed, live);
   const latest =
     items.findLast(item => item.status === 'running') ?? items.at(-1);
   const failures = items.filter(item => item.status === 'failed').length;

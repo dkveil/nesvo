@@ -3,7 +3,7 @@ import type {
   CreateSessionInput,
   DecideDelegationInput,
   DecideReviewInput,
-  Review,
+  DesktopReview as Review,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import {
@@ -24,6 +24,8 @@ import {
 } from '@/entities/session';
 import { CreateSession } from '@/features/create-session';
 import { HostStatus } from '@/features/host-status';
+import { ManageComputers } from '@/features/manage-computers';
+import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -46,7 +48,9 @@ import { desktopApi, useSessions } from './use-sessions';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
+
 const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
+
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
 export function Workspace() {
@@ -75,6 +79,8 @@ export function Workspace() {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [creatingHostId, setCreatingHostId] = useState('local');
+  const [computersOpen, setComputersOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
@@ -100,26 +106,42 @@ export function Workspace() {
   const stopping = useRef(new Set<string>());
   const createTrigger = useRef<HTMLElement | null>(null);
   const selected =
-    store.sessions.find(session => session.id === selectedId) ??
+    store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
+  const selectedKey = selected ? entityKey(selected) : '';
+  const selectedHostId = selected?.hostId ?? 'local';
+  const selectedComputer = store.computers.find(
+    computer => computer.id === selectedHostId,
+  );
+  const connection = store.hostReady(selectedHostId)
+    ? 'ready'
+    : selectedComputer?.status === 'connecting' ||
+        selectedComputer?.status === 'syncing'
+      ? 'connecting'
+      : 'unavailable';
   const parentSession = store.sessions.find(
-    session => session.id === selected?.parentId,
+    session =>
+      session.id === selected?.parentId && session.hostId === selected?.hostId,
   );
   const workers = store.sessions.filter(
-    session => session.parentId === selected?.id,
+    session =>
+      session.parentId === selected?.id && session.hostId === selected?.hostId,
   );
   const selectedProviderState = selected
-    ? store.providerStates[selected.provider]
+    ? store.providerStates(selectedHostId)[selected.provider]
     : undefined;
   const activeRun = store.sessions.find(
-    session => session.status === 'running' || session.status === 'stopping',
+    session =>
+      session.hostId === selectedHostId &&
+      (session.status === 'running' || session.status === 'stopping'),
   );
   const diffReview =
     !inbox && diffTarget
       ? store.reviews.find(
           review =>
             review.id === diffTarget.reviewId &&
-            review.sessionId === selected?.id,
+            review.sessionId === selected?.id &&
+            review.hostId === selectedHostId,
         )
       : undefined;
   const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
@@ -132,12 +154,12 @@ export function Workspace() {
     )
       return;
     saveWorkspaceLocation({
-      selectedId: selected?.id ?? '',
+      selectedId: selectedKey,
       inbox,
       diff: !inbox && panel === 'diff' && diffReview ? diffTarget : null,
     });
   }, [
-    selected?.id,
+    selectedKey,
     inbox,
     panel,
     diffReview,
@@ -162,7 +184,11 @@ export function Workspace() {
         : null;
     if (!diffReview) {
       const latest = store.reviews
-        .filter(review => review.sessionId === selected?.id)
+        .filter(
+          review =>
+            review.sessionId === selected?.id &&
+            review.hostId === selectedHostId,
+        )
         .sort((a, b) => b.version - a.version)[0];
       setDiffTarget(latest ? { reviewId: latest.id } : null);
     }
@@ -197,12 +223,15 @@ export function Workspace() {
         ? document.activeElement
         : null;
     setNavigationOpen(false);
+    setCreatingHostId('local');
     setCreating(true);
   };
   const create = async (input: CreateSessionInput) => {
-    const session = await desktopApi().createSession(input);
+    if (!store.hostReady(creatingHostId))
+      throw new Error('Connect this computer before creating a session.');
+    const session = await desktopApi(creatingHostId).createSession(input);
     store.merge([session]);
-    select(session.id);
+    select(entityKey(session));
     return session;
   };
   const changeDraft = (id: string, value: string) => {
@@ -218,38 +247,40 @@ export function Workspace() {
       !selected ||
       sendingRef.current ||
       activeRun ||
-      store.connection !== 'ready' ||
+      connection !== 'ready' ||
       selectedProviderState?.status?.status !== 'ready' ||
       selectedProviderState.loading ||
       selectedProviderState.error
     )
       return;
     const sessionId = selected.id;
-    const text = drafts[sessionId]?.trim();
+    const sessionKey = entityKey(selected);
+    const hostId = selected.hostId;
+    const text = drafts[sessionKey]?.trim();
     if (!text || text.length > 32000) return;
-    const version = draftVersions.current[sessionId] ?? 0;
-    const skillId = selectedSkills[sessionId]?.id;
-    const skillHash = selectedSkills[sessionId]?.contentHash;
-    const prior = sendAttempts.current[sessionId];
+    const version = draftVersions.current[sessionKey] ?? 0;
+    const skillId = selectedSkills[sessionKey]?.id;
+    const skillHash = selectedSkills[sessionKey]?.contentHash;
+    const prior = sendAttempts.current[sessionKey];
     const attempt =
       prior?.text === text &&
       prior.skillId === skillId &&
       prior.skillHash === skillHash
         ? prior
         : { text, skillId, skillHash, messageId: crypto.randomUUID() };
-    sendAttempts.current[sessionId] = attempt;
+    sendAttempts.current[sessionKey] = attempt;
     sendingRef.current = true;
     setSending(true);
-    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    setErrors(previous => ({ ...previous, [sessionKey]: '' }));
     const acknowledge = () => {
-      delete sendAttempts.current[sessionId];
-      if ((draftVersions.current[sessionId] ?? 0) === version) {
-        setDrafts(previous => ({ ...previous, [sessionId]: '' }));
-        setSelectedSkills(previous => ({ ...previous, [sessionId]: null }));
+      delete sendAttempts.current[sessionKey];
+      if ((draftVersions.current[sessionKey] ?? 0) === version) {
+        setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
+        setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
       }
     };
     try {
-      const session = await desktopApi().sendMessage({
+      const session = await desktopApi(hostId).sendMessage({
         sessionId,
         messageId: attempt.messageId,
         text,
@@ -261,10 +292,10 @@ export function Workspace() {
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Could not confirm that the message was sent. ${errorDetail(failure)}`,
+        [sessionKey]: `Could not confirm that the message was sent. ${errorDetail(failure)}`,
       }));
       try {
-        const history = await store.recover();
+        const history = await store.recover(hostId);
         if (
           history
             .find(session => session.id === sessionId)
@@ -274,7 +305,7 @@ export function Workspace() {
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)} You can retry the same message.`,
+          [sessionKey]: `${previous[sessionKey] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)} You can retry the same message.`,
         }));
       }
     } finally {
@@ -285,39 +316,49 @@ export function Workspace() {
   const stop = async () => {
     if (
       !selected?.runId ||
+      !store.hostReady(selected.hostId) ||
       selected.status !== 'running' ||
-      stopping.current.has(selected.runId)
+      stopping.current.has(hostKey(selected.runId, selected.hostId))
     )
       return;
     const { id: sessionId, runId } = selected;
-    stopping.current.add(runId);
-    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    const key = entityKey(selected);
+    const runKey = hostKey(runId, selected.hostId);
+    stopping.current.add(runKey);
+    setErrors(previous => ({ ...previous, [key]: '' }));
     try {
-      store.merge([await desktopApi().stopRun({ sessionId, runId })]);
+      store.merge([
+        await desktopApi(selected.hostId).stopRun({ sessionId, runId }),
+      ]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Could not stop the run. ${errorDetail(failure)}`,
+        [key]: `Could not stop the run. ${errorDetail(failure)}`,
       }));
       try {
-        await store.recover();
+        await store.recover(selected.hostId);
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
+          [key]: `${previous[key] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
-      stopping.current.delete(runId);
+      stopping.current.delete(runKey);
     }
   };
-  const respondApproval = async (input: RespondApprovalInput) => {
-    const session = store.sessions.find(item => item.id === input.sessionId);
+  const respondApproval = async (
+    input: RespondApprovalInput,
+    hostId = 'local',
+  ) => {
+    const session = store.sessions.find(
+      item => item.id === input.sessionId && item.hostId === hostId,
+    );
     if (
       !session ||
       session.runId !== input.runId ||
       session.status !== 'running' ||
-      store.connection !== 'ready' ||
+      !store.hostReady(hostId) ||
       store.loading ||
       store.error ||
       !session.pendingApprovals.some(
@@ -326,24 +367,26 @@ export function Workspace() {
     )
       return;
     const { sessionId, runId, requestId } = input;
-    const key = `${sessionId}/${runId}/${requestId}`;
+    const key = `${hostKey(sessionId, hostId)}/${runId}/${requestId}`;
     if (approvalRequests.current.has(key)) return;
     approvalRequests.current.add(key);
     setApprovalPending(previous => ({ ...previous, [key]: true }));
-    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    setErrors(previous => ({ ...previous, [hostKey(sessionId, hostId)]: '' }));
     try {
-      store.merge([await desktopApi().respondApproval(input)]);
+      store.merge([await desktopApi(hostId).respondApproval(input)]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Could not send the decision. ${errorDetail(failure)}`,
+        [hostKey(sessionId, hostId)]:
+          `Could not send the decision. ${errorDetail(failure)}`,
       }));
       try {
-        await store.recover();
+        await store.recover(hostId);
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
+          [hostKey(sessionId, hostId)]:
+            `${previous[hostKey(sessionId, hostId)] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
@@ -355,13 +398,18 @@ export function Workspace() {
       });
     }
   };
-  const decideDelegation = async (input: DecideDelegationInput) => {
-    const session = store.sessions.find(item => item.id === input.sessionId);
+  const decideDelegation = async (
+    input: DecideDelegationInput,
+    hostId = 'local',
+  ) => {
+    const session = store.sessions.find(
+      item => item.id === input.sessionId && item.hostId === hostId,
+    );
     if (
       !session ||
       session.runId !== input.runId ||
       session.status !== 'running' ||
-      store.connection !== 'ready' ||
+      !store.hostReady(hostId) ||
       store.loading ||
       store.error ||
       !session.delegations.some(
@@ -373,24 +421,26 @@ export function Workspace() {
     )
       return;
     const { sessionId, runId, delegationId } = input;
-    const key = `${sessionId}/${runId}/${delegationId}`;
+    const key = `${hostKey(sessionId, hostId)}/${runId}/${delegationId}`;
     if (delegationRequests.current.has(key)) return;
     delegationRequests.current.add(key);
     setDelegationPending(previous => ({ ...previous, [key]: true }));
-    setErrors(previous => ({ ...previous, [sessionId]: '' }));
+    setErrors(previous => ({ ...previous, [hostKey(sessionId, hostId)]: '' }));
     try {
-      store.merge([await desktopApi().decideDelegation(input)]);
+      store.merge([await desktopApi(hostId).decideDelegation(input)]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
-        [sessionId]: `Could not send the worker decision. ${errorDetail(failure)}`,
+        [hostKey(sessionId, hostId)]:
+          `Could not send the worker decision. ${errorDetail(failure)}`,
       }));
       try {
-        await store.recover();
+        await store.recover(hostId);
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
-          [sessionId]: `${previous[sessionId] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
+          [hostKey(sessionId, hostId)]:
+            `${previous[hostKey(sessionId, hostId)] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
     } finally {
@@ -402,30 +452,30 @@ export function Workspace() {
       });
     }
   };
-  const reviewBlockedReason =
-    store.connection !== 'ready'
-      ? 'Reconnect before making a decision.'
-      : store.loading ||
-          store.error ||
-          store.reviewsLoading ||
-          store.reviewsError
-        ? 'Refresh the session state before making a decision.'
-        : activeRun || sending
-          ? 'Result review is available once all sessions and workers finish.'
-          : '';
+  const reviewBlockedReason = (review: Review) =>
+    !store.hostReady(review.hostId)
+      ? 'Connect this computer and sync its history before making a decision.'
+      : store.sessions.some(
+            session =>
+              session.hostId === review.hostId &&
+              (session.status === 'running' || session.status === 'stopping'),
+          ) || sending
+        ? 'Result review is available once this computer’s sessions and workers finish.'
+        : '';
   const decideReview = async (
     review: Review,
     decision: DecideReviewInput['decision'],
     feedback: string,
   ) => {
-    if (reviewRequests.current.has(review.id) || reviewBlockedReason) return;
+    const key = entityKey(review);
+    if (reviewRequests.current.has(key) || reviewBlockedReason(review)) return;
     if (
       review.status !== 'pending' ||
       (decision === 'accept' && review.diff.status === 'unavailable') ||
       (decision === 'request-changes' && !feedback.trim())
     )
       return;
-    const prior = reviewAttempts.current[review.id];
+    const prior = reviewAttempts.current[key];
     const attempt =
       prior?.version === review.version &&
       prior.decision === decision &&
@@ -438,33 +488,34 @@ export function Workspace() {
             decision,
             feedback: feedback.trim(),
           };
-    reviewAttempts.current[review.id] = attempt;
-    reviewRequests.current.add(review.id);
-    setReviewPending(previous => ({ ...previous, [review.id]: true }));
-    setReviewErrors(previous => ({ ...previous, [review.id]: '' }));
+    reviewAttempts.current[key] = attempt;
+    reviewRequests.current.add(key);
+    setReviewPending(previous => ({ ...previous, [key]: true }));
+    setReviewErrors(previous => ({ ...previous, [key]: '' }));
     const acknowledge = (result: Review) => {
       store.mergeReviews([result]);
-      setReviewErrors(previous => ({ ...previous, [review.id]: '' }));
-      delete reviewAttempts.current[review.id];
+      setReviewErrors(previous => ({ ...previous, [key]: '' }));
+      delete reviewAttempts.current[key];
       if (attempt.decision === 'request-changes') {
-        select(result.sessionId);
-        void store.recover().catch(failure =>
+        select(hostKey(result.sessionId, result.hostId));
+        void store.recover(review.hostId).catch(failure =>
           setErrors(previous => ({
             ...previous,
-            [result.sessionId]: `The correction was requested, but the conversation could not be refreshed. ${errorDetail(failure)}`,
+            [hostKey(result.sessionId, result.hostId)]:
+              `The correction was requested, but the conversation could not be refreshed. ${errorDetail(failure)}`,
           })),
         );
       }
     };
     try {
-      acknowledge(await desktopApi().decideReview(attempt));
+      acknowledge(await desktopApi(review.hostId).decideReview(attempt));
     } catch (failure) {
       setReviewErrors(previous => ({
         ...previous,
-        [review.id]: `Could not save the decision. ${errorDetail(failure)}`,
+        [key]: `Could not save the decision. ${errorDetail(failure)}`,
       }));
       try {
-        const history = await store.recoverReviews();
+        const history = await store.recoverReviews(review.hostId);
         const confirmed = history.find(
           result =>
             result.id === review.id &&
@@ -474,20 +525,21 @@ export function Workspace() {
       } catch (recoveryFailure) {
         setReviewErrors(previous => ({
           ...previous,
-          [review.id]: `${previous[review.id] ?? ''} Could not refresh the results. ${errorDetail(recoveryFailure)} Retrying the same decision will not create a duplicate request.`,
+          [key]: `${previous[key] ?? ''} Could not refresh the results. ${errorDetail(recoveryFailure)} Retrying the same decision will not create a duplicate request.`,
         }));
       }
     } finally {
-      reviewRequests.current.delete(review.id);
+      reviewRequests.current.delete(key);
       setReviewPending(previous => {
         const next = { ...previous };
-        delete next[review.id];
+        delete next[key];
         return next;
       });
     }
   };
   const reviewDecisionProps = {
-    blockedReason: reviewBlockedReason,
+    blockedReason: '',
+    getBlockedReason: reviewBlockedReason,
     pending: reviewPending,
     decisionErrors: reviewErrors,
     feedbacks: reviewFeedbacks,
@@ -500,9 +552,14 @@ export function Workspace() {
     ) => void decideReview(review, decision, feedback),
   };
   const operationEnabled =
-    store.connection === 'ready' && !store.loading && !store.error;
+    connection === 'ready' && !store.loading && !store.error;
   const sidebarProps = {
     sessions: store.sessions,
+    computers: store.computers,
+    onComputers: () => {
+      setNavigationOpen(false);
+      setComputersOpen(true);
+    },
     pendingActions:
       store.reviews.filter(review => review.status === 'pending').length +
       store.sessions.reduce(
@@ -517,7 +574,7 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: selected?.id ?? '',
+    selectedId: selectedKey,
     inbox,
     onSelect: select,
     onInbox: openInbox,
@@ -562,7 +619,7 @@ export function Workspace() {
               size="icon-sm"
               aria-label="Back to parent session"
               title={`Back to: ${parentSession.title}`}
-              onClick={() => select(parentSession.id)}
+              onClick={() => select(entityKey(parentSession))}
             >
               <ArrowLeft />
             </Button>
@@ -577,6 +634,17 @@ export function Workspace() {
               </span>
             )}
           </div>
+          {!inbox && selected && (
+            <span
+              className="max-w-32 truncate text-[11px] text-muted-foreground"
+              title={selectedComputer?.name}
+            >
+              {selectedHostId !== 'local'
+                ? (selectedComputer?.name ?? 'Remote')
+                : ''}
+              {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
+            </span>
+          )}
           {!inbox && selected && selected.status !== 'ready' && (
             <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
               {sessionStatusLabel(selected)}
@@ -641,7 +709,7 @@ export function Workspace() {
               <SheetHeader className="border-b px-5 py-4">
                 <SheetTitle className="text-sm">Context</SheetTitle>
                 <SheetDescription className="text-xs">
-                  Session details and local connection.
+                  Session details and computer connection.
                 </SheetDescription>
               </SheetHeader>
               <ScrollArea className="min-h-0 flex-1">
@@ -652,11 +720,34 @@ export function Workspace() {
                 >
                   <h2 className="text-xs font-medium">Connection</h2>
                   <HostStatus
-                    connection={store.connection}
-                    onRefresh={store.refresh}
+                    connection={connection}
+                    name={selectedComputer?.name ?? 'Local'}
+                    local={selectedHostId === 'local'}
+                    onRefresh={() => void store.refresh(selectedHostId)}
                   />
+                  {selectedComputer?.error && (
+                    <p
+                      role="alert"
+                      className="text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+                    >
+                      {selectedComputer.error}
+                    </p>
+                  )}
+                  {selectedComputer?.lastSyncedAt &&
+                    !store.hostReady(selectedHostId) && (
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        Offline snapshot · last synced{' '}
+                        {new Intl.DateTimeFormat('en', {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        }).format(new Date(selectedComputer.lastSyncedAt))}
+                        . Work may still be running. Reconnecting will not
+                        replay commands.
+                      </p>
+                    )}
                   {providers.map(provider => {
-                    const state = store.providerStates[provider];
+                    const state =
+                      store.providerStates(selectedHostId)[provider];
                     return (
                       <div key={provider} className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
@@ -669,7 +760,12 @@ export function Workspace() {
                             aria-label={`Refresh ${provider} status`}
                             title={`Refresh ${provider} status`}
                             disabled={state.loading}
-                            onClick={() => void store.refreshProvider(provider)}
+                            onClick={() =>
+                              void store.refreshProvider(
+                                provider,
+                                selectedHostId,
+                              )
+                            }
                           >
                             <RefreshCw />
                           </Button>
@@ -695,7 +791,9 @@ export function Workspace() {
                         )}
                         {state.status?.status === 'unauthenticated' && (
                           <p className="text-xs leading-5 text-muted-foreground">
-                            Sign in from your terminal with{' '}
+                            Sign in on{' '}
+                            {selectedComputer?.name ?? 'this computer'} from its
+                            terminal with{' '}
                             <code>
                               {provider === 'Claude Code'
                                 ? 'claude auth login'
@@ -756,20 +854,27 @@ export function Workspace() {
               sessions={store.sessions}
               loading={store.reviewsLoading}
               error={store.reviewsError}
-              operationEnabled={operationEnabled}
+              operationEnabled={!store.loading && !store.error}
+              computers={store.computers}
+              isOperationEnabled={session => store.hostReady(session.hostId)}
               operationErrors={errors}
               approvalPending={approvalPending}
               delegationPending={delegationPending}
-              onApproval={input => void respondApproval(input)}
-              onDelegation={input => void decideDelegation(input)}
+              onApproval={(input, hostId) =>
+                void respondApproval(input, hostId)
+              }
+              onDelegation={(input, hostId) =>
+                void decideDelegation(input, hostId)
+              }
               onSession={select}
-              onRefresh={store.refresh}
+              onRefresh={store.reload}
             />
           ) : selected ? (
             <div
               className={`flex min-h-0 min-w-0 flex-1 ${visiblePanel ? 'max-[1200px]:hidden' : ''}`}
             >
               <Conversation
+                key={selectedKey}
                 session={selected}
                 activity={(runId, startedAt, completedAt, status, live) => (
                   <SessionActivity
@@ -780,7 +885,8 @@ export function Workspace() {
                     startedAt={startedAt}
                     completedAt={completedAt}
                     status={status}
-                    live={live}
+                    live={live && store.hostReady(selectedHostId)}
+                    offline={live && !store.hostReady(selectedHostId)}
                     truncated={selected.activityTruncatedRunIds.includes(runId)}
                   />
                 )}
@@ -790,9 +896,13 @@ export function Workspace() {
                   <SessionReviews
                     {...reviewDecisionProps}
                     reviews={store.reviews.filter(
-                      review => review.sessionId === selected.id,
+                      review =>
+                        review.sessionId === selected.id &&
+                        review.hostId === selectedHostId,
                     )}
-                    allReviews={store.reviews}
+                    allReviews={store.reviews.filter(
+                      review => review.hostId === selectedHostId,
+                    )}
                     focusedId={
                       sessionTarget.startsWith('review-')
                         ? sessionTarget.slice(7)
@@ -810,25 +920,30 @@ export function Workspace() {
                     pending={delegationPending}
                     onDecision={(delegationId, decision) =>
                       selected.runId &&
-                      void decideDelegation({
-                        sessionId: selected.id,
-                        runId: selected.runId,
-                        delegationId,
-                        decision,
-                      })
+                      void decideDelegation(
+                        {
+                          sessionId: selected.id,
+                          runId: selected.runId,
+                          delegationId,
+                          decision,
+                        },
+                        selectedHostId,
+                      )
                     }
                     onSelect={select}
                   />
                 }
-                draft={drafts[selected.id] ?? ''}
-                selectedSkill={selectedSkills[selected.id] ?? null}
-                skillApi={desktopApi()}
-                onSkillChange={skill => changeSkill(selected.id, skill)}
+                draft={drafts[selectedKey] ?? ''}
+                selectedSkill={selectedSkills[selectedKey] ?? null}
+                skillApi={desktopApi(selectedHostId)}
+                connected={store.hostReady(selectedHostId)}
+                computerName={selectedComputer?.name ?? selectedHostId}
+                onSkillChange={skill => changeSkill(selectedKey, skill)}
                 sending={sending}
                 canSend={
                   !sending &&
                   !activeRun &&
-                  store.connection === 'ready' &&
+                  connection === 'ready' &&
                   selectedProviderState?.status?.status === 'ready' &&
                   !selectedProviderState.loading &&
                   !selectedProviderState.error
@@ -837,12 +952,15 @@ export function Workspace() {
                 approvalPending={approvalPending}
                 onApproval={(requestId, decision) =>
                   selected.runId &&
-                  void respondApproval({
-                    sessionId: selected.id,
-                    runId: selected.runId,
-                    requestId,
-                    decision,
-                  })
+                  void respondApproval(
+                    {
+                      sessionId: selected.id,
+                      runId: selected.runId,
+                      requestId,
+                      decision,
+                    },
+                    selectedHostId,
+                  )
                 }
                 otherRun={
                   !!activeRun &&
@@ -850,8 +968,8 @@ export function Workspace() {
                   selected.status !== 'running' &&
                   selected.status !== 'stopping'
                 }
-                error={errors[selected.id] ?? ''}
-                onDraft={value => changeDraft(selected.id, value)}
+                error={errors[selectedKey] ?? ''}
+                onDraft={value => changeDraft(selectedKey, value)}
                 onSend={() => void send()}
                 onStop={() => void stop()}
               />
@@ -883,6 +1001,21 @@ export function Workspace() {
               )}
             </section>
           )}
+          {(panel === 'files' || panel === 'skills') &&
+            !inbox &&
+            selected &&
+            !store.hostReady(selectedHostId) && (
+              <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-card p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
+                <p>
+                  This computer is offline. Current files and skills are
+                  unavailable; saved conversations and result diffs remain
+                  readable.
+                </p>
+                <Button variant="outline" onClick={closeDiff}>
+                  Close panel
+                </Button>
+              </aside>
+            )}
           {panel === 'diff' && diffReview && diffTarget && (
             <Suspense
               fallback={
@@ -895,7 +1028,7 @@ export function Workspace() {
               }
             >
               <ReviewDiff
-                key={diffReview.id}
+                key={entityKey(diffReview)}
                 review={diffReview}
                 selectedPath={diffTarget.path}
                 onSelectPath={path =>
@@ -906,53 +1039,71 @@ export function Workspace() {
               />
             </Suspense>
           )}
-          {panel === 'files' && !inbox && selected && (
-            <Suspense
-              fallback={
-                <aside
-                  role="status"
-                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
-                >
-                  Loading files…
-                </aside>
-              }
-            >
-              <WorkspaceFiles
-                key={selected.id}
-                session={selected}
-                api={desktopApi()}
-                savedVersion={diffReview?.version}
-                onSavedDiff={() => setPanel('diff')}
-                onClose={closeDiff}
-              />
-            </Suspense>
-          )}
-          {panel === 'skills' && !inbox && selected && (
-            <Suspense
-              fallback={
-                <aside
-                  role="status"
-                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
-                >
-                  Loading skills…
-                </aside>
-              }
-            >
-              <SessionSkills
-                key={selected.id}
-                session={selected}
-                api={desktopApi()}
-                onClose={closeDiff}
-              />
-            </Suspense>
-          )}
+          {panel === 'files' &&
+            !inbox &&
+            selected &&
+            store.hostReady(selectedHostId) && (
+              <Suspense
+                fallback={
+                  <aside
+                    role="status"
+                    className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+                  >
+                    Loading files…
+                  </aside>
+                }
+              >
+                <WorkspaceFiles
+                  key={selectedKey}
+                  session={selected}
+                  api={desktopApi(selectedHostId)}
+                  savedVersion={diffReview?.version}
+                  onSavedDiff={() => setPanel('diff')}
+                  onClose={closeDiff}
+                />
+              </Suspense>
+            )}
+          {panel === 'skills' &&
+            !inbox &&
+            selected &&
+            store.hostReady(selectedHostId) && (
+              <Suspense
+                fallback={
+                  <aside
+                    role="status"
+                    className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+                  >
+                    Loading skills…
+                  </aside>
+                }
+              >
+                <SessionSkills
+                  key={selectedKey}
+                  session={selected}
+                  api={desktopApi(selectedHostId)}
+                  onClose={closeDiff}
+                />
+              </Suspense>
+            )}
         </main>
       </div>
+      {computersOpen && (
+        <ManageComputers
+          computers={store.computers}
+          api={desktopApi()}
+          onOpenChange={setComputersOpen}
+        />
+      )}
       {creating && (
         <CreateSession
           open={creating}
-          statuses={store.providerStates}
-          onRefreshProvider={provider => void store.refreshProvider(provider)}
+          computers={store.computers}
+          hostId={creatingHostId}
+          onHostChange={setCreatingHostId}
+          statuses={store.providerStates(creatingHostId)}
+          onRefreshProvider={provider =>
+            void store.refreshProvider(provider, creatingHostId)
+          }
           onOpenChange={setCreating}
           onCreate={create}
           onReturnFocus={() => {

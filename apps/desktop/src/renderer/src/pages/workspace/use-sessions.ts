@@ -1,215 +1,296 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DesktopApi, Review, Session } from '@nesvo/contracts';
+import type {
+  Computer,
+  DesktopApi,
+  DesktopReview,
+  DesktopSession,
+  WorkspaceEvent,
+} from '@nesvo/contracts';
 import {
   errorDetail,
   providers,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
+import { entityKey } from '@/shared/lib/host-key';
 
-export function desktopApi(): DesktopApi {
-  if (!window.nesvo)
+const boundApis = new Map<string, DesktopApi>();
+
+export function desktopApi(hostId = 'local'): DesktopApi {
+  const api = window.nesvo;
+  if (!api)
     throw new Error(
       'The app connection is unavailable. Reload the window or reopen Nesvo.',
     );
-  return window.nesvo;
+  const existing = boundApis.get(hostId);
+  if (existing) return existing;
+  const bound: DesktopApi = {
+    ...api,
+    health: () => api.health(hostId),
+    claudeStatus: () => api.claudeStatus(hostId),
+    codexStatus: () => api.codexStatus(hostId),
+    listSessions: () => api.listSessions(hostId),
+    listReviews: () => api.listReviews(hostId),
+    createSession: input => api.createSession(input, hostId),
+    sendMessage: input => api.sendMessage(input, hostId),
+    stopRun: input => api.stopRun(input, hostId),
+    respondApproval: input => api.respondApproval(input, hostId),
+    decideDelegation: input => api.decideDelegation(input, hostId),
+    decideReview: input => api.decideReview(input, hostId),
+    discoverSkills: input => api.discoverSkills(input, hostId),
+    listWorkspaceDirectory: input => api.listWorkspaceDirectory(input, hostId),
+    searchWorkspaceFiles: input => api.searchWorkspaceFiles(input, hostId),
+    readWorkspaceFile: input => api.readWorkspaceFile(input, hostId),
+  };
+  boundApis.set(hostId, bound);
+  return bound;
 }
 
-function initialProviders(): ProviderStates {
-  return {
-    'Claude Code': { status: null, loading: true, error: '' },
-    Codex: { status: null, loading: true, error: '' },
-  };
-}
+const emptyProviders: ProviderStates = {
+  'Claude Code': { status: null, loading: false, error: '' },
+  Codex: { status: null, loading: false, error: '' },
+};
 
 export function useSessions() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [reviewsLoading, setReviewsLoading] = useState(true);
-  const [reviewsError, setReviewsError] = useState('');
-  const [connection, setConnection] = useState<
-    'connecting' | 'ready' | 'unavailable'
-  >('connecting');
+  const [sessions, setSessions] = useState<DesktopSession[]>([]);
+  const [reviews, setReviews] = useState<DesktopReview[]>([]);
+  const [computers, setComputers] = useState<Computer[]>([]);
+  const computersRef = useRef<Computer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [providerStates, setProviderStates] = useState(initialProviders);
+  const [providersByHost, setProvidersByHost] = useState<
+    Record<string, ProviderStates>
+  >({});
   const [attempt, setAttempt] = useState(0);
-  const statusRequests = useRef<Record<Provider, number>>({
-    'Claude Code': 0,
-    Codex: 0,
-  });
-  const merge = useCallback((updates: Session[]) => {
+  const statusRequests = useRef<Record<string, number>>({});
+  const merge = useCallback((updates: DesktopSession[]) => {
     setSessions(previous => {
-      const merged = new Map(previous.map(session => [session.id, session]));
-      for (const session of updates) {
-        const current = merged.get(session.id);
-        if (!current || session.revision > current.revision)
-          merged.set(session.id, session);
+      const merged = new Map(previous.map(item => [entityKey(item), item]));
+      for (const item of updates) {
+        if (!computersRef.current.some(computer => computer.id === item.hostId))
+          continue;
+        const current = merged.get(entityKey(item));
+        if (!current || item.revision > current.revision)
+          merged.set(entityKey(item), item);
       }
       return [...merged.values()].sort(
-        (left, right) =>
-          right.updatedAt.localeCompare(left.updatedAt) ||
-          left.id.localeCompare(right.id),
+        (a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt) ||
+          entityKey(a).localeCompare(entityKey(b)),
       );
     });
   }, []);
-  const mergeReviews = useCallback((updates: Review[]) => {
+  const mergeReviews = useCallback((updates: DesktopReview[]) => {
     setReviews(previous => {
-      const merged = new Map(previous.map(review => [review.id, review]));
-      for (const review of updates) {
-        const current = merged.get(review.id);
-        if (!current || review.revision > current.revision)
-          merged.set(review.id, review);
+      const merged = new Map(previous.map(item => [entityKey(item), item]));
+      for (const item of updates) {
+        if (!computersRef.current.some(computer => computer.id === item.hostId))
+          continue;
+        const current = merged.get(entityKey(item));
+        if (!current || item.revision > current.revision)
+          merged.set(entityKey(item), item);
       }
       return [...merged.values()].sort(
-        (left, right) =>
-          right.createdAt.localeCompare(left.createdAt) ||
-          right.version - left.version ||
-          left.id.localeCompare(right.id),
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          b.version - a.version ||
+          entityKey(a).localeCompare(entityKey(b)),
       );
     });
   }, []);
-  const inspectProvider = useCallback(async (provider: Provider) => {
-    const request = ++statusRequests.current[provider];
-    setProviderStates(previous => ({
-      ...previous,
-      [provider]: { ...previous[provider], loading: true, error: '' },
-    }));
-    try {
-      const api = desktopApi();
-      const status = await (provider === 'Claude Code'
-        ? api.claudeStatus()
-        : api.codexStatus());
-      if (request === statusRequests.current[provider])
-        setProviderStates(previous => ({
-          ...previous,
-          [provider]: { status, loading: false, error: '' },
-        }));
-    } catch (failure) {
-      if (request === statusRequests.current[provider])
-        setProviderStates(previous => ({
-          ...previous,
+  const inspectProvider = useCallback(
+    async (provider: Provider, hostId = 'local') => {
+      const key = `${hostId}/${provider}`;
+      const request = (statusRequests.current[key] ?? 0) + 1;
+      statusRequests.current[key] = request;
+      setProvidersByHost(previous => ({
+        ...previous,
+        [hostId]: {
+          ...(previous[hostId] ?? emptyProviders),
           [provider]: {
-            ...previous[provider],
-            loading: false,
-            error: `Could not check ${provider}. ${errorDetail(failure)}`,
+            ...(previous[hostId] ?? emptyProviders)[provider],
+            loading: true,
+            error: '',
           },
-        }));
-    }
-  }, []);
+        },
+      }));
+      try {
+        const api = desktopApi(hostId);
+        const status = await (provider === 'Claude Code'
+          ? api.claudeStatus()
+          : api.codexStatus());
+        if (statusRequests.current[key] === request)
+          setProvidersByHost(previous => ({
+            ...previous,
+            [hostId]: {
+              ...(previous[hostId] ?? emptyProviders),
+              [provider]: { status, loading: false, error: '' },
+            },
+          }));
+      } catch (failure) {
+        if (statusRequests.current[key] === request)
+          setProvidersByHost(previous => ({
+            ...previous,
+            [hostId]: {
+              ...(previous[hostId] ?? emptyProviders),
+              [provider]: {
+                status: null,
+                loading: false,
+                error: `Could not check ${provider}. ${errorDetail(failure)}`,
+              },
+            },
+          }));
+      }
+    },
+    [],
+  );
   useEffect(() => {
-    const requestCounters = statusRequests.current;
+    const counters = statusRequests.current;
     let active = true;
-    let disconnected = false;
+    let initial = true;
+    const events: WorkspaceEvent[] = [];
     let unsubscribe = () => {};
+    const updateComputers = (updates: Computer[], inspect = false) => {
+      const previous = computersRef.current;
+      computersRef.current = updates;
+      setComputers(updates);
+      const ids = new Set(updates.map(item => item.id));
+      setSessions(current => current.filter(item => ids.has(item.hostId)));
+      setReviews(current => current.filter(item => ids.has(item.hostId)));
+      for (const computer of updates) {
+        if (
+          computer.status === 'connected' &&
+          (inspect ||
+            !previous.some(
+              item => item.id === computer.id && item.status === 'connected',
+            ))
+        )
+          for (const provider of providers)
+            void inspectProvider(provider, computer.id);
+        if (computer.status !== 'connected')
+          for (const provider of providers) {
+            const key = `${computer.id}/${provider}`;
+            statusRequests.current[key] =
+              (statusRequests.current[key] ?? 0) + 1;
+          }
+      }
+    };
+    const apply = (event: WorkspaceEvent) => {
+      if (event.type === 'session-changed') merge([event.session]);
+      else if (event.type === 'review-changed') mergeReviews([event.review]);
+      else if (event.type === 'host-snapshot') {
+        setSessions(previous => [
+          ...previous.filter(item => item.hostId !== event.hostId),
+          ...event.sessions,
+        ]);
+        setReviews(previous => [
+          ...previous.filter(item => item.hostId !== event.hostId),
+          ...event.reviews,
+        ]);
+      } else if (event.type === 'computers-changed')
+        updateComputers(event.computers);
+      else if (event.type === 'host-disconnected')
+        updateComputers(
+          computersRef.current.map(item =>
+            item.id === event.hostId
+              ? { ...item, status: 'disconnected' }
+              : item,
+          ),
+        );
+    };
     try {
-      const api = desktopApi();
+      const api = window.nesvo;
+      if (!api)
+        throw new Error(
+          'The app connection is unavailable. Reload the window or reopen Nesvo.',
+        );
       unsubscribe = api.subscribe(event => {
         if (!active) return;
-        if (event.type === 'session-changed') merge([event.session]);
-        else if (event.type === 'review-changed') mergeReviews([event.review]);
-        else if (event.type === 'host-disconnected') {
-          disconnected = true;
-          setConnection('unavailable');
-          setError(
-            'The host stopped. Reopen Nesvo to restore saved history. The outcome of active work is unconfirmed; no commands will be replayed automatically.',
-          );
-        }
+        if (initial) events.push(event);
+        else apply(event);
       });
-      void Promise.allSettled([api.health(), api.listSessions()]).then(
-        ([health, history]) => {
+      void Promise.all([
+        api.listComputers(),
+        api.listSessions(),
+        api.listReviews(),
+      ]).then(
+        ([hosts, history, results]) => {
           if (!active) return;
-          if (!disconnected) {
-            setConnection(
-              health.status === 'fulfilled' ? 'ready' : 'unavailable',
-            );
-            setError(
-              health.status === 'rejected'
-                ? `Could not connect to the host. ${errorDetail(health.reason)}`
-                : history.status === 'rejected'
-                  ? `Could not load the conversation history. ${errorDetail(history.reason)}`
-                  : '',
-            );
-          }
-          if (history.status === 'fulfilled') merge(history.value);
+          setSessions(history);
+          setReviews(results);
+          updateComputers(hosts, true);
+          initial = false;
+          for (const event of events) apply(event);
+          setError('');
           setLoading(false);
-        },
-      );
-      void api.listReviews().then(
-        history => {
-          if (!active) return;
-          mergeReviews(history);
-          setReviewsError('');
-          setReviewsLoading(false);
         },
         failure => {
           if (!active) return;
-          setReviewsError(
-            `Could not load the results. ${errorDetail(failure)}`,
-          );
-          setReviewsLoading(false);
+          initial = false;
+          for (const event of events) apply(event);
+          setError(`Could not refresh the workspace. ${errorDetail(failure)}`);
+          setLoading(false);
         },
       );
-      queueMicrotask(() => {
-        if (active)
-          for (const provider of providers) void inspectProvider(provider);
-      });
     } catch (failure) {
       queueMicrotask(() => {
-        if (!active) return;
-        setConnection('unavailable');
-        setLoading(false);
-        setReviewsLoading(false);
-        setReviewsError(errorDetail(failure));
-        setProviderStates(
-          previous =>
-            Object.fromEntries(
-              providers.map(provider => [
-                provider,
-                { ...previous[provider], loading: false },
-              ]),
-            ) as ProviderStates,
-        );
-        setError(errorDetail(failure));
+        if (active) {
+          setError(errorDetail(failure));
+          setLoading(false);
+        }
       });
     }
     return () => {
       active = false;
-      for (const provider of providers) requestCounters[provider] += 1;
+      for (const key of Object.keys(counters))
+        counters[key] = (counters[key] ?? 0) + 1;
       unsubscribe();
     };
   }, [attempt, inspectProvider, merge, mergeReviews]);
-  const refresh = () => {
+  const reload = () => {
     setLoading(true);
-    setReviewsLoading(true);
-    setConnection('connecting');
     setAttempt(value => value + 1);
   };
-  const recover = async () => {
-    const history = await desktopApi().listSessions();
+  const refresh = async (hostId = 'local') => {
+    try {
+      await window.nesvo.connectComputer(hostId);
+      for (const provider of providers) void inspectProvider(provider, hostId);
+    } catch {
+      return;
+    }
+  };
+  const recover = async (hostId?: string) => {
+    const history = await window.nesvo.listSessions(hostId);
     merge(history);
     return history;
   };
-  const recoverReviews = async () => {
-    const history = await desktopApi().listReviews();
+  const recoverReviews = async (hostId?: string) => {
+    const history = await window.nesvo.listReviews(hostId);
     mergeReviews(history);
-    setReviewsError('');
     return history;
   };
+  const hostReady = (hostId = 'local') =>
+    !loading &&
+    !error &&
+    computers.some(item => item.id === hostId && item.status === 'connected');
+  const providerStates = (hostId = 'local') =>
+    providersByHost[hostId] ?? emptyProviders;
   return {
     sessions,
     reviews,
-    reviewsLoading,
-    reviewsError,
-    mergeReviews,
-    recoverReviews,
-    connection,
+    computers,
     loading,
     error,
+    reviewsLoading: loading,
+    reviewsError: error,
+    hostReady,
     providerStates,
     merge,
-    refresh,
-    refreshProvider: inspectProvider,
+    mergeReviews,
     recover,
+    recoverReviews,
+    refresh,
+    reload,
+    refreshProvider: inspectProvider,
   };
 }

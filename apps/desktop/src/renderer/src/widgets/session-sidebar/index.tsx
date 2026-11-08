@@ -6,7 +6,10 @@ import {
   MessageSquare,
   Plus,
   Search,
+  Monitor,
 } from 'lucide-react';
+import type { Computer } from '@nesvo/contracts';
+import { entityKey } from '@/shared/lib/host-key';
 import {
   sessionRoleLabel,
   sessionStatusLabel,
@@ -18,6 +21,8 @@ import { ScrollArea } from '@/shared/ui/scroll-area';
 
 type Props = {
   sessions: Session[];
+  computers: Computer[];
+  onComputers: () => void;
   pendingActions: number;
   selectedId: string;
   inbox: boolean;
@@ -28,6 +33,8 @@ type Props = {
 
 export function SessionSidebar({
   sessions,
+  computers,
+  onComputers,
   pendingActions,
   selectedId,
   inbox,
@@ -37,27 +44,41 @@ export function SessionSidebar({
 }: Props) {
   const [search, setSearch] = useState('');
   const matches = (session: Session) =>
-    session.title
+    `${session.title} ${computers.find(item => item.id === session.hostId)?.name ?? ''}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
   const roots = sessions.filter(
     session =>
       !session.parentId ||
-      !sessions.some(parent => parent.id === session.parentId),
+      !sessions.some(
+        parent =>
+          parent.id === session.parentId && parent.hostId === session.hostId,
+      ),
   );
   const filtered = roots.filter(
     root =>
       matches(root) ||
-      sessions.some(child => child.parentId === root.id && matches(child)),
+      sessions.some(
+        child =>
+          child.parentId === root.id &&
+          child.hostId === root.hostId &&
+          matches(child),
+      ),
   );
   const row = (session: Session, child = false) => (
     <Button
-      key={session.id}
-      variant={!inbox && selectedId === session.id ? 'secondary' : 'ghost'}
-      title={`${session.provider} · ${sessionRoleLabel(session) || 'Session'} · ${sessionStatusLabel(session)}`}
+      key={entityKey(session)}
+      data-host-id={session.hostId}
+      data-session-id={session.id}
+      variant={
+        !inbox && selectedId === entityKey(session) ? 'secondary' : 'ghost'
+      }
+      title={`${computers.find(item => item.id === session.hostId)?.name ?? session.hostId} · ${session.provider} · ${sessionRoleLabel(session) || 'Session'} · ${sessionStatusLabel(session)}`}
       className={`grid h-8 w-full grid-cols-[0.875rem_minmax(0,1fr)_auto] items-center gap-x-2.5 overflow-hidden py-1 text-left text-[13px] font-normal ${child ? 'pr-3 pl-5' : 'pr-3 pl-2'}`}
-      onClick={() => onSelect(session.id)}
-      aria-current={!inbox && selectedId === session.id ? 'page' : undefined}
+      onClick={() => onSelect(entityKey(session))}
+      aria-current={
+        !inbox && selectedId === entityKey(session) ? 'page' : undefined
+      }
     >
       {child ? (
         <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />
@@ -66,9 +87,23 @@ export function SessionSidebar({
       ) : (
         <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
       )}
-      <span className="min-w-0 flex-1 truncate">{session.title}</span>
+      <span className="min-w-0 flex-1 truncate">
+        {session.title}
+        {session.hostId !== 'local' && (
+          <span className="ml-1.5 text-[11px] text-muted-foreground">
+            ·{' '}
+            {computers.find(item => item.id === session.hostId)?.name ??
+              'Remote'}
+          </span>
+        )}
+      </span>
       <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
-        {session.status === 'ready' ? '' : sessionStatusLabel(session)}
+        {computers.find(item => item.id === session.hostId)?.status !==
+        'connected'
+          ? 'Offline'
+          : session.status === 'ready'
+            ? ''
+            : sessionStatusLabel(session)}
       </span>
     </Button>
   );
@@ -125,12 +160,13 @@ export function SessionSidebar({
             Sessions
           </p>
           {filtered.map(root => (
-            <div key={root.id} className="space-y-0.5">
+            <div key={entityKey(root)} className="space-y-0.5">
               {row(root)}
               {sessions
                 .filter(
                   child =>
                     child.parentId === root.id &&
+                    child.hostId === root.hostId &&
                     (matches(root) || matches(child)),
                 )
                 .sort(
@@ -148,6 +184,17 @@ export function SessionSidebar({
           )}
         </nav>
       </ScrollArea>
+      <div className="shrink-0 border-t p-2.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-full justify-start px-2 text-[13px] font-normal text-muted-foreground"
+          onClick={onComputers}
+        >
+          <Monitor className="size-3.5" />
+          Computers
+        </Button>
+      </div>
     </div>
   );
 }

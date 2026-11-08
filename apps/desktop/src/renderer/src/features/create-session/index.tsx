@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { CreateSessionInput, Session } from '@nesvo/contracts';
+import type { Computer, CreateSessionInput, Session } from '@nesvo/contracts';
 import {
   errorDetail,
   modeLabels,
@@ -29,6 +29,9 @@ import {
 type Props = {
   open: boolean;
   statuses: ProviderStates;
+  computers: Computer[];
+  hostId: string;
+  onHostChange: (hostId: string) => void;
   onRefreshProvider: (provider: Provider) => void;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: CreateSessionInput) => Promise<Session>;
@@ -38,6 +41,9 @@ type Props = {
 export function CreateSession({
   open,
   statuses,
+  computers,
+  hostId,
+  onHostChange,
   onRefreshProvider,
   onOpenChange,
   onCreate,
@@ -51,13 +57,15 @@ export function CreateSession({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const providerState = statuses[provider];
+  const computer = computers.find(item => item.id === hostId);
+  const connected = computer?.status === 'connected';
   const models = providerState.status?.models ?? [];
   const selectedModel = models.some(option => option.id === model)
     ? model
     : (models[0]?.id ?? 'default');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (pending) return;
+    if (pending || !connected) return;
     setPending(true);
     setError('');
     try {
@@ -101,6 +109,34 @@ export function CreateSession({
           onSubmit={event => void submit(event)}
           className="space-y-5 px-5 pb-5"
         >
+          <div className="space-y-2">
+            <Label htmlFor="session-computer">Computer</Label>
+            <Select
+              value={hostId}
+              disabled={pending}
+              onValueChange={value => {
+                onHostChange(value);
+                setModel('default');
+              }}
+            >
+              <SelectTrigger id="session-computer" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {computers.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                    {item.status !== 'connected' ? ' · Offline' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!connected && (
+              <p className="text-xs text-muted-foreground">
+                Connect this computer in Computers before creating a session.
+              </p>
+            )}
+          </div>
           <div className="space-y-2">
             <Label htmlFor="session-title">Session name</Label>
             <Input
@@ -165,7 +201,7 @@ export function CreateSession({
                 size="sm"
                 variant="ghost"
                 className="h-6 px-1 text-[11px] font-normal text-muted-foreground"
-                disabled={pending || providerState.loading}
+                disabled={pending || providerState.loading || !connected}
                 onClick={() => onRefreshProvider(provider)}
               >
                 Refresh status
@@ -242,7 +278,8 @@ export function CreateSession({
               id="directory-help"
               className="text-[11px] text-muted-foreground"
             >
-              Any local folder. A Git repository is not required.
+              Any folder on {computer?.name ?? 'this computer'}. A Git
+              repository is not required.
             </p>
           </div>
           {error && (
@@ -262,7 +299,7 @@ export function CreateSession({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending}>
+            <Button type="submit" disabled={pending || !connected}>
               {pending ? 'Creating…' : 'Create session'}
             </Button>
           </DialogFooter>

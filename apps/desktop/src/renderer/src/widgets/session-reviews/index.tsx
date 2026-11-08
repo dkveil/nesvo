@@ -13,6 +13,7 @@ import {
   type ReviewDecisionProps,
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
+import { entityKey, hostKey } from '@/shared/lib/host-key';
 
 type Props = ReviewDecisionProps & {
   reviews: Review[];
@@ -172,7 +173,9 @@ function ReviewVersion({
             <div className="flex flex-wrap gap-2">
               {review.dependencies.map(dependency => {
                 const source = allReviews.find(
-                  item => item.id === dependency.reviewId,
+                  item =>
+                    item.id === dependency.reviewId &&
+                    item.hostId === review.hostId,
                 );
                 return (
                   <Button
@@ -183,7 +186,7 @@ function ReviewVersion({
                     className="h-auto min-w-0 py-1.5 whitespace-normal [overflow-wrap:anywhere]"
                     onClick={() =>
                       onSession(
-                        dependency.sessionId,
+                        hostKey(dependency.sessionId, review.hostId),
                         `review-${dependency.reviewId}`,
                       )
                     }
@@ -222,8 +225,8 @@ function ReviewVersion({
           </section>
         )}
         {(review.status === 'pending' ||
-          decisionProps.feedbacks[review.id] ||
-          decisionProps.decisionErrors[review.id]) && (
+          decisionProps.feedbacks[entityKey(review)] ||
+          decisionProps.decisionErrors[entityKey(review)]) && (
           <ReviewDecision review={review} {...decisionProps} />
         )}
       </div>

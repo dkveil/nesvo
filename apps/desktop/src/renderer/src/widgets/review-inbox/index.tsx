@@ -2,7 +2,6 @@ import { useState } from 'react';
 import type {
   DecideDelegationInput,
   RespondApprovalInput,
-  Session,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
 import {
@@ -12,7 +11,14 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { directoryLabel, modeLabels, modelLabel } from '@/entities/session';
+import {
+  directoryLabel,
+  modeLabels,
+  modelLabel,
+  type Session,
+} from '@/entities/session';
+import type { Computer } from '@nesvo/contracts';
+import { entityKey, hostKey } from '@/shared/lib/host-key';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -34,16 +40,19 @@ type Props = ReviewDecisionProps & {
   loading: boolean;
   error: string;
   operationEnabled: boolean;
+  computers: Computer[];
+  isOperationEnabled: (session: Pick<Session, 'hostId'>) => boolean;
   operationErrors: Record<string, string>;
   approvalPending: Record<string, boolean>;
   delegationPending: Record<string, boolean>;
-  onApproval: (input: RespondApprovalInput) => void;
-  onDelegation: (input: DecideDelegationInput) => void;
+  onApproval: (input: RespondApprovalInput, hostId: string) => void;
+  onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
   onRefresh: () => void;
 };
 
 type Filter = 'pending' | 'history' | 'all';
+
 type ActionRow =
   | { type: 'review'; review: Review; at: string; id: string }
   | {
@@ -115,6 +124,8 @@ export function ReviewInbox({
   loading,
   error,
   operationEnabled,
+  computers,
+  isOperationEnabled,
   operationErrors,
   approvalPending,
   delegationPending,
@@ -137,7 +148,7 @@ export function ReviewInbox({
       type: 'review',
       review,
       at: review.createdAt,
-      id: review.id,
+      id: entityKey(review),
     }));
   if (filter !== 'history')
     for (const session of sessions) {
@@ -148,7 +159,7 @@ export function ReviewInbox({
           session,
           approval,
           at: session.updatedAt,
-          id: `${session.id}/${session.runId}/${approval.id}`,
+          id: `${entityKey(session)}/${session.runId}/${approval.id}`,
         });
       for (const delegation of session.delegations)
         if (
@@ -160,7 +171,7 @@ export function ReviewInbox({
             session,
             delegation,
             at: session.updatedAt,
-            id: `${session.id}/${session.runId}/${delegation.id}`,
+            id: `${entityKey(session)}/${session.runId}/${delegation.id}`,
           });
     }
   rows.sort(
@@ -273,19 +284,34 @@ export function ReviewInbox({
               if (row.type === 'review') {
                 const { review } = row;
                 const title =
-                  sessions.find(session => session.id === review.sessionId)
-                    ?.title ?? review.title;
+                  sessions.find(
+                    session =>
+                      session.id === review.sessionId &&
+                      session.hostId === review.hostId,
+                  )?.title ?? review.title;
                 return (
                   <article
                     key={`review/${row.id}`}
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
+                    data-host-id={review.hostId}
                     className={rowClass}
                   >
                     <div className="min-w-0 space-y-1">
                       {sessionLink(
-                        review.sessionId,
+                        hostKey(review.sessionId, review.hostId),
                         title,
                         `review-${review.id}`,
+                      )}
+                      {(review.hostId !== 'local' ||
+                        computers.length > 1 ||
+                        !isOperationEnabled({ hostId: review.hostId })) && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {computers.find(item => item.id === review.hostId)
+                            ?.name ?? review.hostId}
+                          {!isOperationEnabled({ hostId: review.hostId })
+                            ? ' · Offline snapshot'
+                            : ''}
+                        </p>
                       )}
                       <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                         {reviewPreview(review)}
@@ -318,12 +344,12 @@ export function ReviewInbox({
                         {...decisionProps}
                       />
                     ) : (
-                      decisionProps.decisionErrors[review.id] && (
+                      decisionProps.decisionErrors[entityKey(review)] && (
                         <p
                           role="alert"
                           className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
                         >
-                          {decisionProps.decisionErrors[review.id]}
+                          {decisionProps.decisionErrors[entityKey(review)]}
                         </p>
                       )
                     )}
@@ -331,23 +357,38 @@ export function ReviewInbox({
                 );
               }
               const { session } = row;
+              const computerName =
+                computers.find(item => item.id === session.hostId)?.name ??
+                session.hostId;
               if (row.type === 'approval') {
                 const { approval } = row;
                 const deciding = !!approvalPending[row.id];
-                const enabled = operationEnabled && !deciding;
+                const enabled =
+                  operationEnabled && isOperationEnabled(session) && !deciding;
                 const preview = approvalPreview(approval) || approval.title;
                 return (
                   <article
                     key={`approval/${row.id}`}
                     aria-label={`Operation approval: ${session.title}`}
                     data-approval-id={approval.id}
+                    data-host-id={session.hostId}
                     className={rowClass}
                   >
                     <div className="min-w-0 space-y-1">
                       {sessionLink(
-                        session.id,
+                        entityKey(session),
                         session.title,
                         `approval-${approval.id}`,
+                      )}
+                      {(session.hostId !== 'local' ||
+                        computers.length > 1 ||
+                        !isOperationEnabled(session)) && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {computerName}
+                          {!isOperationEnabled(session)
+                            ? ' · Offline snapshot'
+                            : ''}
+                        </p>
                       )}
                       <p
                         className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
@@ -375,12 +416,15 @@ export function ReviewInbox({
                         disabled={!enabled}
                         onClick={() => {
                           if (session.runId)
-                            onApproval({
-                              sessionId: session.id,
-                              runId: session.runId,
-                              requestId: approval.id,
-                              decision: 'accept',
-                            });
+                            onApproval(
+                              {
+                                sessionId: session.id,
+                                runId: session.runId,
+                                requestId: approval.id,
+                                decision: 'accept',
+                              },
+                              session.hostId,
+                            );
                         }}
                       >
                         Allow once
@@ -393,12 +437,15 @@ export function ReviewInbox({
                         disabled={!enabled}
                         onClick={() => {
                           if (session.runId)
-                            onApproval({
-                              sessionId: session.id,
-                              runId: session.runId,
-                              requestId: approval.id,
-                              decision: 'decline',
-                            });
+                            onApproval(
+                              {
+                                sessionId: session.id,
+                                runId: session.runId,
+                                requestId: approval.id,
+                                decision: 'decline',
+                              },
+                              session.hostId,
+                            );
                         }}
                       >
                         Deny
@@ -412,12 +459,12 @@ export function ReviewInbox({
                         Sending decision…
                       </p>
                     )}
-                    {operationErrors[session.id] && (
+                    {operationErrors[entityKey(session)] && (
                       <p
                         role="alert"
                         className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
                       >
-                        {operationErrors[session.id]}
+                        {operationErrors[entityKey(session)]}
                       </p>
                     )}
                   </article>
@@ -425,18 +472,30 @@ export function ReviewInbox({
               }
               const { delegation } = row;
               const deciding = !!delegationPending[row.id];
-              const enabled = operationEnabled && !deciding;
+              const enabled =
+                operationEnabled && isOperationEnabled(session) && !deciding;
               return (
                 <article
                   key={`delegation/${row.id}`}
                   aria-label={`Start worker: ${delegation.title}`}
+                  data-host-id={session.hostId}
                   className={rowClass}
                 >
                   <div className="min-w-0 space-y-1">
                     {sessionLink(
-                      session.id,
+                      entityKey(session),
                       session.title,
                       `delegation-${delegation.id}`,
+                    )}
+                    {(session.hostId !== 'local' ||
+                      computers.length > 1 ||
+                      !isOperationEnabled(session)) && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {computerName}
+                        {!isOperationEnabled(session)
+                          ? ' · Offline snapshot'
+                          : ''}
+                      </p>
                     )}
                     <p
                       className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
@@ -469,12 +528,15 @@ export function ReviewInbox({
                       disabled={!enabled}
                       onClick={() => {
                         if (session.runId)
-                          onDelegation({
-                            sessionId: session.id,
-                            runId: session.runId,
-                            delegationId: delegation.id,
-                            decision: 'accept',
-                          });
+                          onDelegation(
+                            {
+                              sessionId: session.id,
+                              runId: session.runId,
+                              delegationId: delegation.id,
+                              decision: 'accept',
+                            },
+                            session.hostId,
+                          );
                       }}
                     >
                       Approve worker
@@ -487,12 +549,15 @@ export function ReviewInbox({
                       disabled={!enabled}
                       onClick={() => {
                         if (session.runId)
-                          onDelegation({
-                            sessionId: session.id,
-                            runId: session.runId,
-                            delegationId: delegation.id,
-                            decision: 'decline',
-                          });
+                          onDelegation(
+                            {
+                              sessionId: session.id,
+                              runId: session.runId,
+                              delegationId: delegation.id,
+                              decision: 'decline',
+                            },
+                            session.hostId,
+                          );
                       }}
                     >
                       Decline
@@ -506,12 +571,12 @@ export function ReviewInbox({
                       Sending decision…
                     </p>
                   )}
-                  {operationErrors[session.id] && (
+                  {operationErrors[entityKey(session)] && (
                     <p
                       role="alert"
                       className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
                     >
-                      {operationErrors[session.id]}
+                      {operationErrors[entityKey(session)]}
                     </p>
                   )}
                 </article>

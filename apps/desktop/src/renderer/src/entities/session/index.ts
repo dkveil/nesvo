@@ -1,6 +1,10 @@
-import type { ClaudeStatus, CodexStatus, Session } from '@nesvo/contracts';
+import type {
+  ClaudeStatus,
+  CodexStatus,
+  DesktopSession as Session,
+} from '@nesvo/contracts';
 
-export type { Session } from '@nesvo/contracts';
+export type { DesktopSession as Session } from '@nesvo/contracts';
 
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',

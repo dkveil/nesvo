@@ -1,6 +1,9 @@
-import type { Review } from '@nesvo/contracts';
+import type { DesktopReview as Review } from '@nesvo/contracts';
 
-export type { Review, DecideReviewInput } from '@nesvo/contracts';
+export type {
+  DesktopReview as Review,
+  DecideReviewInput,
+} from '@nesvo/contracts';
 
 export const reviewStatusLabels: Record<Review['status'], string> = {
   pending: 'Pending',

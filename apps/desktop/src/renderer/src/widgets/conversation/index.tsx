@@ -16,6 +16,7 @@ import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
+import { entityKey } from '@/shared/lib/host-key';
 
 const interruptionLabels: Record<SessionInterruption['reason'], string> = {
   'host-shutdown': 'Interrupted when Nesvo closed',
@@ -38,6 +39,8 @@ type Props = {
   ) => ReactNode;
   draft: string;
   selectedSkill: SelectedSkill | null;
+  connected: boolean;
+  computerName: string;
   skillApi: Pick<DesktopApi, 'discoverSkills'>;
   onSkillChange: (skill: SelectedSkill | null) => void;
   sending: boolean;
@@ -64,6 +67,8 @@ export function Conversation({
   activity,
   draft,
   selectedSkill,
+  connected,
+  computerName,
   skillApi,
   onSkillChange,
   sending,
@@ -109,9 +114,10 @@ export function Conversation({
       firstAgents.set(message.runId, message.id);
   const composer = (
     <SelectSkill
-      key={session.id}
+      key={entityKey(session)}
       session={session}
       api={skillApi}
+      enabled={connected}
       draft={draft}
       onSelect={skill => {
         onSkillChange(skill);
@@ -215,7 +221,7 @@ export function Conversation({
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={session.status === 'stopping'}
+                    disabled={!connected || session.status === 'stopping'}
                     onClick={onStop}
                     aria-label={stopLabel}
                     title={
@@ -262,6 +268,14 @@ export function Conversation({
               {session.actualModel ?? modelLabel(session.model)}
             </span>
           </div>
+          {(!connected || session.hostId !== 'local') && (
+            <p className="mt-2 px-1 text-[11px] leading-5 text-muted-foreground">
+              {computerName}
+              {!connected
+                ? ' · Offline snapshot. Work may still be running. Reconnect to send messages or decisions.'
+                : ''}
+            </p>
+          )}
         </form>
       )}
     </SelectSkill>
@@ -296,6 +310,7 @@ export function Conversation({
   return (
     <section
       aria-label="Conversation"
+      data-host-id={session.hostId}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ScrollArea
@@ -390,7 +405,7 @@ export function Conversation({
           {session.pendingApprovals.map(approval => {
             const pending =
               !!approvalPending[
-                `${session.id}/${session.runId}/${approval.id}`
+                `${entityKey(session)}/${session.runId}/${approval.id}`
               ];
             const enabled =
               approvalsEnabled &&

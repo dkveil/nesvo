@@ -3,9 +3,11 @@ import type { DecideReviewInput, Review } from '@/entities/review';
 import { Button } from '@/shared/ui/button';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
+import { entityKey } from '@/shared/lib/host-key';
 
 export type ReviewDecisionProps = {
   blockedReason: string;
+  getBlockedReason?: (review: Review) => string;
   pending: Record<string, boolean>;
   decisionErrors: Record<string, string>;
   feedbacks: Record<string, string>;
@@ -23,23 +25,25 @@ export function ReviewDecision({
   review,
   compact = false,
   blockedReason,
+  getBlockedReason,
   pending,
   decisionErrors,
   feedbacks,
   onFeedback,
   onDecision,
 }: Props) {
-  const feedback = feedbacks[review.id] ?? '';
+  const key = entityKey(review);
+  const feedback = feedbacks[key] ?? '';
   const [expanded, setExpanded] = useState(!!feedback);
-  const deciding = !!pending[review.id];
+  const deciding = !!pending[key];
   const reason =
     review.status !== 'pending'
       ? 'This version is no longer awaiting a decision.'
-      : blockedReason;
+      : getBlockedReason?.(review) || blockedReason;
   const disabled = !!reason || deciding;
   const unavailable = review.diff.status === 'unavailable';
-  const feedbackId = `review-feedback-${review.id}`;
-  const formId = `review-correction-${review.id}`;
+  const feedbackId = `review-feedback-${key}`;
+  const formId = `review-correction-${key}`;
   return (
     <div className={compact ? 'contents' : 'space-y-3'}>
       <div
@@ -55,6 +59,7 @@ export function ReviewDecision({
           variant={compact ? 'secondary' : 'default'}
           className={compact ? 'h-7 px-2.5 text-[13px] font-normal' : undefined}
           disabled={disabled || unavailable}
+          title={reason || undefined}
           onClick={() => onDecision(review, 'accept', '')}
         >
           Accept result
@@ -69,6 +74,7 @@ export function ReviewDecision({
               : undefined
           }
           disabled={disabled}
+          title={reason || undefined}
           aria-expanded={expanded}
           aria-controls={formId}
           onClick={() => setExpanded(value => !value)}
@@ -90,7 +96,7 @@ export function ReviewDecision({
           <Textarea
             id={feedbackId}
             value={feedback}
-            onChange={event => onFeedback(review.id, event.target.value)}
+            onChange={event => onFeedback(key, event.target.value)}
             maxLength={8000}
             required
             placeholder="What needs to change?"
@@ -132,12 +138,12 @@ export function ReviewDecision({
           Diff unavailable. Request changes before accepting.
         </p>
       )}
-      {decisionErrors[review.id] && (
+      {decisionErrors[key] && (
         <p
           role="alert"
           className="col-span-full text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
         >
-          {decisionErrors[review.id]}
+          {decisionErrors[key]}
         </p>
       )}
     </div>

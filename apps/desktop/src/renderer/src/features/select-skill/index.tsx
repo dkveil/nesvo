@@ -37,6 +37,7 @@ type Props = {
   session: Pick<Session, 'id' | 'provider'>;
   api: Pick<DesktopApi, 'discoverSkills'>;
   draft: string;
+  enabled?: boolean;
   onSelect: (skill: SelectedSkill) => void;
   onFocusMessage: () => void;
   children: (controls: Controls) => ReactNode;
@@ -76,6 +77,7 @@ export function SelectSkill({
   session,
   api,
   draft,
+  enabled = true,
   onSelect,
   onFocusMessage,
   children,
@@ -94,7 +96,7 @@ export function SelectSkill({
   const list = useRef<HTMLDivElement>(null);
   const slashQuery = /^\/([^\s]*)/.exec(draft)?.[1];
   const slash = slashQuery !== undefined;
-  const open = manualOpen || (slash && dismissedDraft !== draft);
+  const open = enabled && (manualOpen || (slash && dismissedDraft !== draft));
   const query = (manualQuery ?? slashQuery ?? '').trim().toLowerCase();
   const { catalog, error } = state;
   const loading = !catalog && !error;
@@ -216,6 +218,7 @@ export function SelectSkill({
               size="xs"
               className="text-muted-foreground"
               aria-label="Choose skill"
+              disabled={!enabled}
               title="Choose skill"
             >
               <BookOpen className="size-3.5" />

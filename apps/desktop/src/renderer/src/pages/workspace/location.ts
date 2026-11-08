@@ -6,6 +6,10 @@ export type WorkspaceLocation = {
 
 const key = 'nesvo.workspace-location.v1';
 const identifier = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const entityIdentifier = (value: string) =>
+  identifier.test(value) ||
+  (value.split('/').length === 2 &&
+    value.split('/').every(part => identifier.test(part)));
 const initial: WorkspaceLocation = { selectedId: '', inbox: false, diff: null };
 
 export function readWorkspaceLocation(): WorkspaceLocation {
@@ -18,7 +22,7 @@ export function readWorkspaceLocation(): WorkspaceLocation {
     const saved = value as Record<string, unknown>;
     if (
       typeof saved.selectedId !== 'string' ||
-      (saved.selectedId !== '' && !identifier.test(saved.selectedId)) ||
+      (saved.selectedId !== '' && !entityIdentifier(saved.selectedId)) ||
       typeof saved.inbox !== 'boolean'
     )
       return initial;

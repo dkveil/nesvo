@@ -4,13 +4,20 @@ import { Button } from '@/shared/ui/button';
 type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
   onRefresh: () => void;
+  name?: string;
+  local?: boolean;
 };
 
-export function HostStatus({ connection, onRefresh }: Props) {
+export function HostStatus({
+  connection,
+  onRefresh,
+  name = 'Local',
+  local = true,
+}: Props) {
   const label = {
     connecting: 'Connecting to host…',
-    ready: 'Connected to local host',
-    unavailable: 'Host disconnected',
+    ready: local ? 'Connected to local host' : `Connected to ${name}`,
+    unavailable: `${name} is offline`,
   }[connection];
   return (
     <div className="flex items-center gap-2">

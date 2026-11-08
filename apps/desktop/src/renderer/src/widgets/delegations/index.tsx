@@ -8,6 +8,7 @@ import {
   type Session,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { entityKey } from '@/shared/lib/host-key';
 
 type Props = {
   session: Session;
@@ -53,7 +54,9 @@ export function Delegations({
           item => item.id === delegation.childSessionId,
         );
         const deciding =
-          !!pending[`${session.id}/${delegation.runId}/${delegation.id}`];
+          !!pending[
+            `${entityKey(session)}/${delegation.runId}/${delegation.id}`
+          ];
         const canDecide =
           enabled &&
           session.status === 'running' &&
@@ -136,7 +139,7 @@ export function Delegations({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => onSelect(child.id)}
+                onClick={() => onSelect(entityKey(child))}
               >
                 Open worker session
                 <ArrowUpRight />
@@ -162,7 +165,7 @@ export function Delegations({
               type="button"
               variant="ghost"
               className="h-auto w-full justify-between gap-3 px-2 py-2 text-left"
-              onClick={() => onSelect(child.id)}
+              onClick={() => onSelect(entityKey(child))}
             >
               <span className="min-w-0 truncate text-xs">{child.title}</span>
               <span className="shrink-0 text-xs font-normal text-muted-foreground">
