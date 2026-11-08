@@ -734,7 +734,6 @@ try {
   assert.equal(child.parentRunId, plan.runId);
   assert.ok(group.messages.at(-1).body.includes(child.messages.at(-1).body));
   await node('send-message', { enabled: false });
-  await node(group.messages.at(-1).body);
   await screenshot('04-worker-decision.png');
   phase('reconnecting-active-run');
   await adb(['shell', 'input', 'keyevent', '4']);

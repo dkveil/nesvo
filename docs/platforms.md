@@ -1,5 +1,19 @@
 # Platform verification
 
+## D66 mobile companion
+
+M1 through M3 add an Expo React Native companion in `apps/mobile-client`, an authenticated workspace gateway and desktop device controls. Runtime checkpoints are 35b1ad5, 1445169 and 332388e; 4f67812 and f87b55b refine the Android keyboard and post-send scrolling. Setup and deployment boundaries are in [mobile.md](mobile.md).
+
+Windows passed the final strict typecheck, ESLint, Prettier, build, the existing host checks and the complete built-Electron desktop scenario with Electron 45.2.3 / Node 24.22.2. The Linux-only daemon case is explicitly skipped locally. [Foundation CI at c20ca03](https://github.com/dkveil/nesvo/actions/runs/42486970936) passed on Ubuntu, including all host cases. The new single transport case uses actual HTTP/WebSocket clients and checks one-use pairing, private token hashes, pinned gateway identity, authentication, forbidden commands, persistence and durable revocation.
+
+Focused Android 16 / API 36 emulator checks through Expo Go SDK 58 passed pairing, history, visible nonterminal output, operation approval and denial, worker decisions, gateway disconnect while provider processes stayed alive, reconnect without extra turns, Stop with both provider and descendant gone, cold app restart, SecureStore restoration, device revocation and removal of the exact connection. The owned Nesvo_D66 AVD is separate from user emulators. The native scenario is tracked at d8b3365.
+
+A separate native Android run used installed Codex 0.156.0 with model gpt-6-sol and the existing login. A message sent from the phone asked it to read tasks.txt; the response correctly reported five tasks and two pending. Exactly one operator message, the returned activity and unchanged file bytes were verified. Controlled-provider screenshots and test results remain distinct from this successful real task. The real task precedes c20ca03's inspection-shutdown adjustment; the later focused and regression checks cover that adjustment.
+
+An early Android scenario reproduced the pre-existing Windows process-closure failure. Temporary tracing showed successful taskkill and closed pipes but no child exit notification. Commit c20ca03 allows healthy, completed inspections to end stdin and wait up to 300 ms for actual closure before the unchanged forced cleanup. A focused built-Electron check verified metadata, an approved operation and active Stop with both provider and descendant gone. Installed Codex metadata closed normally after EOF without a model turn. Production instrumentation was removed. This avoids the observed abrupt inspection shutdown; it does not establish an upstream cause or promise that every hard-kill path is immune.
+
+The delivery uses a running Desktop as the gateway to Local or already-connected SSH hosts. External access requires trusted HTTPS; the emulator uses loopback HTTP through ADB reverse. No standalone VPS mobile gateway, physical-device/TLS deployment, iOS runtime, app-store build or mobile saved-result review is claimed. Screenshots and the final review record are in the [D66 acceptance document](https://linear.app/reveil/document/d66-nesvo-mobile-m1-m3-odbior-2026-11-08-6507212751ba). Owner acceptance remains separate.
+
 ## D65 provider limits and accounts
 
 The metadata readers, validated per-host route and compact account rail are delivered at 3ef253f, da74148 and c0afdd3. Existing host/desktop scenarios are extended at 7e5fb3f; 568ad02 adds usage isolation assertions to the existing SSH scenario. These checks use controlled provider responses, not real account access.
