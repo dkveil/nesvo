@@ -39,7 +39,7 @@ node "$HOME/.local/lib/nesvo/main.mjs" service-unit \
   > "$HOME/.config/systemd/user/nesvo-host.service"
 ```
 
-The generator prints a unit; it does not write files, start a service or change system configuration. The shell redirection above writes only the chosen unit. Inspect it before enabling it. Its ExecStart captures the absolute Node executable and bundle path, and its Environment entries capture only the data directory, runtime directory and PATH. It invokes no shell and escapes systemd specifiers and literal path characters.
+The generator prints a unit; it does not write files, start a service or change system configuration. The shell redirection above writes only the chosen unit. Inspect it before enabling it. Its ExecStart captures the absolute Node executable and bundle path, and its Environment entries capture only the data directory, runtime directory and PATH. Use a Node executable path without quotes or backslashes and without a trailing slash; systemd rejects those executable names, so the generator rejects them explicitly while preserving escaped special characters in the bundle argument and environment values. It invokes no shell and escapes systemd specifiers and literal path characters.
 
 ```sh
 systemd-analyze --user verify "$HOME/.config/systemd/user/nesvo-host.service"

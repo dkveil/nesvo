@@ -38,6 +38,10 @@ export function renderServiceUnit(input: ServiceUnitInput): string {
     if (!posix.isAbsolute(input[name]))
       throw new Error(`${name} must be an absolute Linux path.`);
   }
+  if (/['"\\]/.test(input.nodePath) || input.nodePath.endsWith('/'))
+    throw new Error(
+      'The Node executable path must not contain quotes or backslashes or end with a slash. Use a standard absolute Node path supported by systemd.',
+    );
   validateValue(input.path, 'PATH', 32768);
   if (posix.resolve(input.directory) === posix.resolve(input.runtimeDirectory))
     throw new Error('Data and runtime directories must be separate.');
