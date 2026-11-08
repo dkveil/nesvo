@@ -27,6 +27,7 @@
 !apps/host/src/skills/**
 !apps/host/tests/
 !apps/host/tests/host.integration.test.mjs
+!apps/host/tests/daemon.integration.test.mjs
 !apps/host/tests/claude-fixture.mjs
 !apps/host/tests/codex-fixture.mjs
 !packages/
@@ -41,6 +42,7 @@
 !docs/platforms.md
 !docs/roadmap.md
 !docs/baseline.md
+!docs/independent-host.md
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
