@@ -107,6 +107,7 @@ export function startHost(directory: string) {
     });
   return {
     child,
+    request,
     subscribe: (listener: (event: DesktopEvent) => void) => {
       listeners.add(listener);
       return () => {

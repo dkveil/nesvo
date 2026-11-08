@@ -1,5 +1,13 @@
 import { z } from 'zod';
 import {
+  type Computer,
+  type DesktopReview,
+  type DesktopSession,
+  type HostId,
+  type SshComputerInput,
+  type WorkspaceEvent,
+} from './computers';
+import {
   claudeStatusSchema,
   codexStatusSchema,
   createSessionSchema,
@@ -12,7 +20,6 @@ import {
   type CodexStatus,
   type CreateSessionInput,
   type SendMessageInput,
-  type Session,
   type StopRunInput,
   type RespondApprovalInput,
   type DecideDelegationInput,
@@ -20,7 +27,6 @@ import {
 import {
   reviewSchema,
   decideReviewSchema,
-  type Review,
   type DecideReviewInput,
 } from './reviews';
 import {
@@ -49,6 +55,7 @@ export * from './activities';
 export * from './reviews';
 export * from './workspace';
 export * from './skills';
+export * from './computers';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -231,24 +238,52 @@ export const hostMessageSchema = z.union([
 ]);
 export type HostMessage = z.infer<typeof hostMessageSchema>;
 export type DesktopApi = {
-  health: () => Promise<HostHealth>;
-  claudeStatus: () => Promise<ClaudeStatus>;
-  codexStatus: () => Promise<CodexStatus>;
-  listSessions: () => Promise<Session[]>;
-  listReviews: () => Promise<Review[]>;
-  discoverSkills: (input: DiscoverSkillsInput) => Promise<SkillCatalog>;
+  listComputers: () => Promise<Computer[]>;
+  addComputer: (input: SshComputerInput) => Promise<Computer>;
+  connectComputer: (hostId: HostId) => Promise<Computer>;
+  disconnectComputer: (hostId: HostId) => Promise<Computer>;
+  removeComputer: (hostId: HostId) => Promise<void>;
+  health: (hostId?: HostId) => Promise<HostHealth>;
+  claudeStatus: (hostId?: HostId) => Promise<ClaudeStatus>;
+  codexStatus: (hostId?: HostId) => Promise<CodexStatus>;
+  listSessions: (hostId?: HostId) => Promise<DesktopSession[]>;
+  listReviews: (hostId?: HostId) => Promise<DesktopReview[]>;
+  discoverSkills: (
+    input: DiscoverSkillsInput,
+    hostId?: HostId,
+  ) => Promise<SkillCatalog>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
+    hostId?: HostId,
   ) => Promise<WorkspaceDirectory>;
   searchWorkspaceFiles: (
     input: SearchWorkspaceFilesInput,
+    hostId?: HostId,
   ) => Promise<WorkspaceSearch>;
-  readWorkspaceFile: (input: ReadWorkspaceFileInput) => Promise<WorkspaceFile>;
-  decideReview: (input: DecideReviewInput) => Promise<Review>;
-  createSession: (input: CreateSessionInput) => Promise<Session>;
-  sendMessage: (input: SendMessageInput) => Promise<Session>;
-  stopRun: (input: StopRunInput) => Promise<Session>;
-  respondApproval: (input: RespondApprovalInput) => Promise<Session>;
-  decideDelegation: (input: DecideDelegationInput) => Promise<Session>;
-  subscribe: (listener: (event: DesktopEvent) => void) => () => void;
+  readWorkspaceFile: (
+    input: ReadWorkspaceFileInput,
+    hostId?: HostId,
+  ) => Promise<WorkspaceFile>;
+  decideReview: (
+    input: DecideReviewInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReview>;
+  createSession: (
+    input: CreateSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  sendMessage: (
+    input: SendMessageInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  stopRun: (input: StopRunInput, hostId?: HostId) => Promise<DesktopSession>;
+  respondApproval: (
+    input: RespondApprovalInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  decideDelegation: (
+    input: DecideDelegationInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  subscribe: (listener: (event: WorkspaceEvent) => void) => () => void;
 };
