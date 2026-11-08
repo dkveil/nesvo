@@ -464,10 +464,19 @@ try {
   );
   const firstTurnState = await readFile(firstStatePath, 'utf8');
   const originalPidFile = await readFile(pidFile, 'utf8');
-  const duplicateApp = spawn(executablePath, launchArgs, {
-    env,
-    stdio: 'ignore',
-    windowsHide: true,
+  const duplicateApp = spawn(
+    executablePath,
+    process.platform === 'linux' ? ['--no-sandbox', ...launchArgs] : launchArgs,
+    {
+      env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    },
+  );
+  let duplicateStderr = '';
+  duplicateApp.stderr.setEncoding('utf8');
+  duplicateApp.stderr.on('data', value => {
+    duplicateStderr = (duplicateStderr + value).slice(-4000);
   });
   const duplicateExit = new Promise((resolve, reject) => {
     duplicateApp.once('error', reject);
@@ -480,12 +489,18 @@ try {
         duplicateExit,
         new Promise((_, reject) => {
           duplicateTimer = setTimeout(
-            () => reject(new Error('Second application instance did not exit')),
+            () =>
+              reject(
+                new Error(
+                  `Second application instance did not exit: ${duplicateStderr}`,
+                ),
+              ),
             15000,
           );
         }),
       ]),
       { code: 0, signal: null },
+      duplicateStderr,
     );
   } finally {
     clearTimeout(duplicateTimer);
@@ -1948,6 +1963,34 @@ try {
       hostPid: closedHostPid,
     }),
   );
+} catch (error) {
+  const failurePage = application?.windows()[0];
+  if (failurePage) {
+    const state = await failurePage
+      .evaluate(async () => ({
+        sessions: (await window.nesvo.listSessions()).map(session => ({
+          id: session.id,
+          title: session.title,
+          providerSessionId: session.providerSessionId,
+          runId: session.runId,
+          status: session.status,
+          error: session.error,
+          messages: session.messages.slice(-2).map(message => ({
+            author: message.author,
+            state: message.state,
+            body: message.body.slice(0, 500),
+            skill: message.skill,
+          })),
+        })),
+        location: localStorage.getItem('nesvo.workspace-location.v1'),
+        alerts: [...document.querySelectorAll('[role="alert"]')].map(
+          node => node.textContent,
+        ),
+      }))
+      .catch(() => null);
+    console.error(JSON.stringify({ desktopFailure: state }));
+  }
+  throw error;
 } finally {
   await application?.close();
   if (hostPid) await waitDead(hostPid);
