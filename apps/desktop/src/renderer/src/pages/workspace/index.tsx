@@ -44,7 +44,9 @@ import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
+import { ProviderRail } from '@/widgets/provider-rail';
 import { desktopApi, useSessions } from './use-sessions';
+import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
@@ -113,6 +115,29 @@ export function Workspace() {
   const selectedComputer = store.computers.find(
     computer => computer.id === selectedHostId,
   );
+  const usageTerminal =
+    store.sessions
+      .filter(session => session.hostId === selectedHostId)
+      .flatMap(session =>
+        session.messages
+          .filter(message => message.author === 'agent' && message.completedAt)
+          .map(message => `${message.completedAt}/${message.runId}`),
+      )
+      .sort()
+      .at(-1) ?? '';
+  const usage = useProviderUsage(
+    selectedHostId,
+    store.hostReady(selectedHostId),
+    window.nesvo ? desktopApi(selectedHostId) : undefined,
+    usageTerminal,
+  );
+  const usageProps = {
+    hostId: selectedHostId,
+    computerName: selectedComputer?.name ?? 'Local',
+    connected: store.hostReady(selectedHostId),
+    states: usage.states,
+    onRefresh: () => void usage.refresh(),
+  };
   const connection = store.hostReady(selectedHostId)
     ? 'ready'
     : selectedComputer?.status === 'connecting' ||
@@ -589,11 +614,19 @@ export function Workspace() {
       : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
+      <ProviderRail key={`${selectedHostId}/rail`} {...usageProps} />
       <aside className="hidden w-60 shrink-0 border-r bg-[#080808] md:block">
         <SessionSidebar {...sidebarProps} />
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <header className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5 lg:px-5">
+          <div className="md:hidden">
+            <ProviderRail
+              key={`${selectedHostId}/compact`}
+              compact
+              {...usageProps}
+            />
+          </div>
           <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
             <SheetTrigger asChild>
               <Button

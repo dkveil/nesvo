@@ -29,6 +29,7 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     health: () => api.health(hostId),
     claudeStatus: () => api.claudeStatus(hostId),
     codexStatus: () => api.codexStatus(hostId),
+    providerUsage: input => api.providerUsage(input, hostId),
     listSessions: () => api.listSessions(hostId),
     listReviews: () => api.listReviews(hostId),
     createSession: input => api.createSession(input, hostId),
