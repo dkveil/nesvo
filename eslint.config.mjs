@@ -6,6 +6,7 @@ import prettier from 'eslint-config-prettier';
 const typed = [
   'apps/desktop/src/**/*.{ts,tsx}',
   'apps/host/src/**/*.ts',
+  'apps/mobile-client/src/**/*.{ts,tsx}',
   'packages/contracts/src/**/*.ts',
 ];
 export default tseslint.config(
@@ -35,6 +36,27 @@ export default tseslint.config(
             'electron',
             '../../main/*',
             '../../preload/*',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/mobile-client/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': hooks },
+    rules: {
+      ...hooks.configs.recommended.rules,
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            'effect',
+            'effect/*',
+            'node:*',
+            'electron',
+            '@nesvo/host',
+            '@nesvo/host/*',
+            '@nesvo/desktop',
           ],
         },
       ],

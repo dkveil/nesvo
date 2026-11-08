@@ -10,6 +10,8 @@
 !apps/
 !apps/desktop/
 !apps/desktop/**
+!apps/mobile-client/
+!apps/mobile-client/**
 !apps/host/
 !apps/host/package.json
 !apps/host/tsconfig.json
@@ -25,9 +27,12 @@
 !apps/host/src/workspace/**
 !apps/host/src/skills/
 !apps/host/src/skills/**
+!apps/host/src/mobile/
+!apps/host/src/mobile/**
 !apps/host/tests/
 !apps/host/tests/host.integration.test.mjs
 !apps/host/tests/daemon.integration.test.mjs
+!apps/host/tests/mobile.integration.test.mjs
 !apps/host/tests/claude-fixture.mjs
 !apps/host/tests/codex-fixture.mjs
 !packages/
@@ -36,6 +41,7 @@
 !scripts/
 !scripts/desktop-smoke.mjs
 !scripts/remote-smoke.mjs
+!scripts/mobile-smoke.mjs
 !scripts/remote-smoke/
 !scripts/remote-smoke/**
 !docs/
@@ -47,6 +53,7 @@
 !docs/baseline.md
 !docs/independent-host.md
 !docs/ssh-host.md
+!docs/mobile.md
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
@@ -56,3 +63,6 @@
 **/out/
 **/release/
 bun.lock
+**/.expo/
+apps/mobile-client/android/
+apps/mobile-client/ios/
