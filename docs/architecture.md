@@ -39,6 +39,18 @@ Schema v6 adds durable tool activity to session snapshots. Each item is identifi
 
 Activity retains the latest 100 entries per run and 300 per session. Run-specific markers identify omitted history, including wholly evicted runs; late updates cannot reinsert evicted entries during an active run. Output is limited to its last 4,000 characters, details to 2,000, and paths to ten. Known credential patterns and terminal control sequences are filtered; this is not a guarantee that arbitrary tool output contains no sensitive data.
 
+## Restart and recovery
+
+D62 adds an exclusive owner for each host data directory. Electron takes its single-instance lock before creating a host. The host independently holds an exclusive transaction on a separate ownership.sqlite connection before opening the application database or reconciling sessions. The operating system releases this ownership when the process closes or dies; no stale PID file is deleted and no unknown process is killed. Effect keeps ownership until provider cleanup and database closure finish.
+
+Reloading the renderer does not stop the host or replay requests. The renderer subscribes before loading authoritative history and merges by revision; review actions remain disabled while session or result loading failed or remains pending. Local navigation preferences restore the last session/Inbox and saved review ID/file. Missing or invalid preferences fall back safely. They do not store run status, permissions, commands or review decisions. Unsent drafts remain transient.
+
+Optional interruption metadata records the run ID, reason and time on the session and agent message. Controlled host shutdown, unfinished records found at startup and unexpected provider disconnection have distinct reasons. Explicit provider errors remain failures, and operator Stop remains stopped. Partial output and prior interruption causes remain in history after a new turn. Incomplete outcomes never create successful reviews.
+
+Startup reconciles unfinished sessions, activities, expired operation approvals and parent/worker proposals in one transaction. New proposals preserve the exact child run ID; legacy matching is conservative. A durably completed worker remains completed even when its parent did not receive the terminal event before shutdown. A resumed parent can reference already saved child review versions even if it never produced its first review; their fingerprints still participate in acceptance checks.
+
+Continuation requires a new operator message and keeps the existing provider thread. The prompt explains the previous unconfirmed outcome and available worker state so that the provider can inspect current files before doing more work. Opening the app or pressing Continue conversation never sends a provider task. Already committed messages, worker decisions and review decisions are not replayed. Stable IDs and transactional correction preparation make retries idempotent, including after restart.
+
 ## Ownership
 
 | Area                 | Owns                                                 | Must not own                                           |

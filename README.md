@@ -94,6 +94,16 @@ Writable review uses a bounded local snapshot: 500 files, 512 KiB per file, 8 Mi
 
 The catalog covers known project/user/managed sources and the isolated native Codex catalog, with explicit coverage limits. It does not promise every plugin or remote skill. Claude's Shared instructions delivery is distinct from native Claude skill execution. Real Codex use of a Claude-source skill is verified on Windows; a successful real Claude task remains open because the account reached its weekly limit.
 
+## P7 restart walkthrough
+
+1. Finish a parent/worker task and leave a result pending in Inbox. Open a saved result diff if you want to resume that review location.
+2. Quit and reopen Nesvo. The last session or Inbox and the exact saved diff are restored. Sessions, worker relationships, results, decisions and selected skill references come from the host database.
+3. An unfinished run is marked Interrupted with its cause. Partial output remains available; no successful result or operation completion is invented. Expired operation and worker approvals are not restored as actionable requests.
+4. Use Continue conversation to focus the composer, then send a new instruction after checking the current state. The button itself starts nothing. Nesvo retains the provider thread and includes interruption context; it never replays the previous task automatically.
+5. Continue reviewing the same saved result version. Re-delivery of an already recorded decision returns that decision rather than starting another correction.
+
+Reloading the window leaves the host running. Quitting the app closes its owned work; a host restart reconciles incomplete records. Local view preferences contain only navigation identifiers and a diff path, not authoritative status or permission. Unsent composer and review-feedback drafts remain transient in this stage. Only one app/host may own a data directory.
+
 ## Working agreement
 
 Small conventional commits go directly to master during the prototype. Each stage ends with Damian's acceptance. See [roadmap](docs/roadmap.md), [contributing](CONTRIBUTING.md), [testing](docs/testing.md) and [platform evidence](docs/platforms.md).
