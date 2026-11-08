@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
+import { ComputerManager } from './computer-manager';
 import {
   createSessionSchema,
   decideDelegationSchema,
@@ -13,6 +14,8 @@ import {
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
   discoverSkillsSchema,
+  hostIdSchema,
+  sshComputerInputSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -23,9 +26,10 @@ if (process.env.NESVO_DATA_DIR)
 
 const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   const host = startHost(join(app.getPath('userData'), 'host'));
+  const computers = new ComputerManager(app.getPath('userData'), host);
   if (smokeTest && process.env.NESVO_TEST_PID_FILE) {
     host.child.once('spawn', () => {
       writeFileSync(
@@ -77,78 +81,162 @@ void app.whenReady().then(() => {
       throw new Error('Unauthorized caller');
     }
   };
-  host.subscribe(event => {
+  computers.subscribe(event => {
     if (window && !window.isDestroyed())
       window.webContents.send('nesvo:event', event);
   });
-  ipcMain.handle('nesvo:health', async event => {
+  ipcMain.handle('nesvo:list-computers', event => {
     authorize(event);
-    return host.health();
+    return computers.listComputers();
   });
-  ipcMain.handle('nesvo:claude-status', async event => {
+  ipcMain.handle('nesvo:add-computer', (event, input: unknown) => {
     authorize(event);
-    return host.claudeStatus();
+    return computers.addComputer(sshComputerInputSchema.parse(input));
   });
-  ipcMain.handle('nesvo:codex-status', async event => {
+  ipcMain.handle('nesvo:connect-computer', (event, hostId: unknown) => {
     authorize(event);
-    return host.codexStatus();
+    return computers.connectComputer(hostIdSchema.parse(hostId));
   });
-  ipcMain.handle('nesvo:decide-delegation', async (event, input: unknown) => {
+  ipcMain.handle('nesvo:disconnect-computer', (event, hostId: unknown) => {
     authorize(event);
-    return host.decideDelegation(decideDelegationSchema.parse(input));
+    return computers.disconnectComputer(hostIdSchema.parse(hostId));
   });
-  ipcMain.handle('nesvo:respond-approval', async (event, input: unknown) => {
+  ipcMain.handle('nesvo:remove-computer', (event, hostId: unknown) => {
     authorize(event);
-    return host.respondApproval(respondApprovalSchema.parse(input));
+    return computers.removeComputer(hostIdSchema.parse(hostId));
   });
-  ipcMain.handle('nesvo:list-sessions', async event => {
+  const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  ipcMain.handle('nesvo:health', async (event, hostId: unknown) => {
     authorize(event);
-    return host.listSessions();
+    return computers.execute('health', undefined, route(hostId));
   });
-  ipcMain.handle('nesvo:list-reviews', async event => {
+  ipcMain.handle('nesvo:claude-status', async (event, hostId: unknown) => {
     authorize(event);
-    return host.listReviews();
+    return computers.execute('claude-status', undefined, route(hostId));
   });
-  ipcMain.handle('nesvo:discover-skills', async (event, input: unknown) => {
+  ipcMain.handle('nesvo:codex-status', async (event, hostId: unknown) => {
     authorize(event);
-    return host.discoverSkills(discoverSkillsSchema.parse(input));
+    return computers.execute('codex-status', undefined, route(hostId));
   });
   ipcMain.handle(
-    'nesvo:list-workspace-directory',
-    async (event, input: unknown) => {
+    'nesvo:decide-delegation',
+    async (event, input: unknown, hostId: unknown) => {
       authorize(event);
-      return host.listWorkspaceDirectory(
+      return computers.execute(
+        'decide-delegation',
+        decideDelegationSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:respond-approval',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'respond-approval',
+        respondApprovalSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle('nesvo:list-sessions', async (event, hostId: unknown) => {
+    authorize(event);
+    return computers.listSessions(hostIdSchema.optional().parse(hostId));
+  });
+  ipcMain.handle('nesvo:list-reviews', async (event, hostId: unknown) => {
+    authorize(event);
+    return computers.listReviews(hostIdSchema.optional().parse(hostId));
+  });
+  ipcMain.handle(
+    'nesvo:discover-skills',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'discover-skills',
+        discoverSkillsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:list-workspace-directory',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-workspace-directory',
         listWorkspaceDirectorySchema.parse(input),
+        route(hostId),
       );
     },
   );
   ipcMain.handle(
     'nesvo:search-workspace-files',
-    async (event, input: unknown) => {
+    async (event, input: unknown, hostId: unknown) => {
       authorize(event);
-      return host.searchWorkspaceFiles(searchWorkspaceFilesSchema.parse(input));
+      return computers.execute(
+        'search-workspace-files',
+        searchWorkspaceFilesSchema.parse(input),
+        route(hostId),
+      );
     },
   );
-  ipcMain.handle('nesvo:read-workspace-file', async (event, input: unknown) => {
-    authorize(event);
-    return host.readWorkspaceFile(readWorkspaceFileSchema.parse(input));
-  });
-  ipcMain.handle('nesvo:decide-review', async (event, input: unknown) => {
-    authorize(event);
-    return host.decideReview(decideReviewSchema.parse(input));
-  });
-  ipcMain.handle('nesvo:create-session', async (event, input: unknown) => {
-    authorize(event);
-    return host.createSession(createSessionSchema.parse(input));
-  });
-  ipcMain.handle('nesvo:send-message', async (event, input: unknown) => {
-    authorize(event);
-    return host.sendMessage(sendMessageSchema.parse(input));
-  });
-  ipcMain.handle('nesvo:stop-run', async (event, input: unknown) => {
-    authorize(event);
-    return host.stopRun(stopRunSchema.parse(input));
-  });
+  ipcMain.handle(
+    'nesvo:read-workspace-file',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-workspace-file',
+        readWorkspaceFileSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:decide-review',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'decide-review',
+        decideReviewSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:create-session',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'create-session',
+        createSessionSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:send-message',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'send-message',
+        sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:stop-run',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'stop-run',
+        stopRunSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  await computers.initialize();
   createWindow();
   app.on('second-instance', () => {
     if (!window) createWindow();
@@ -171,7 +259,7 @@ void app.whenReady().then(() => {
     event.preventDefault();
     if (closing) return;
     closing = true;
-    void host.stop().finally(() => {
+    void computers.close().finally(() => {
       closed = true;
       app.quit();
     });

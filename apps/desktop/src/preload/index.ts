@@ -6,11 +6,8 @@ import {
   createSessionSchema,
   decideDelegationSchema,
   decideReviewSchema,
-  reviewSchema,
-  desktopEventSchema,
   hostHealthSchema,
   sendMessageSchema,
-  sessionSchema,
   stopRunSchema,
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
@@ -20,92 +17,162 @@ import {
   workspaceFileSchema,
   discoverSkillsSchema,
   skillCatalogSchema,
+  computerSchema,
+  desktopSessionSchema,
+  desktopReviewSchema,
+  hostIdSchema,
+  sshComputerInputSchema,
+  workspaceEventSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
+const route = (hostId: string | undefined) =>
+  hostIdSchema.parse(hostId ?? 'local');
 const api: DesktopApi = {
-  health: async () =>
-    hostHealthSchema.parse(await ipcRenderer.invoke('nesvo:health')),
-  claudeStatus: async () =>
-    claudeStatusSchema.parse(await ipcRenderer.invoke('nesvo:claude-status')),
-  codexStatus: async () =>
-    codexStatusSchema.parse(await ipcRenderer.invoke('nesvo:codex-status')),
-  decideDelegation: async input =>
-    sessionSchema.parse(
+  listComputers: async () =>
+    computerSchema
+      .array()
+      .parse(await ipcRenderer.invoke('nesvo:list-computers')),
+  addComputer: async input =>
+    computerSchema.parse(
       await ipcRenderer.invoke(
-        'nesvo:decide-delegation',
-        decideDelegationSchema.parse(input),
+        'nesvo:add-computer',
+        sshComputerInputSchema.parse(input),
       ),
     ),
-  respondApproval: async input =>
-    sessionSchema.parse(
+  connectComputer: async hostId =>
+    computerSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:connect-computer',
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  disconnectComputer: async hostId =>
+    computerSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:disconnect-computer',
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  removeComputer: async hostId => {
+    await ipcRenderer.invoke(
+      'nesvo:remove-computer',
+      hostIdSchema.parse(hostId),
+    );
+  },
+  health: async hostId =>
+    hostHealthSchema.parse(
+      await ipcRenderer.invoke('nesvo:health', route(hostId)),
+    ),
+  claudeStatus: async hostId =>
+    claudeStatusSchema.parse(
+      await ipcRenderer.invoke('nesvo:claude-status', route(hostId)),
+    ),
+  codexStatus: async hostId =>
+    codexStatusSchema.parse(
+      await ipcRenderer.invoke('nesvo:codex-status', route(hostId)),
+    ),
+  listSessions: async hostId =>
+    desktopSessionSchema
+      .array()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-sessions',
+          hostIdSchema.optional().parse(hostId),
+        ),
+      ),
+  listReviews: async hostId =>
+    desktopReviewSchema
+      .array()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-reviews',
+          hostIdSchema.optional().parse(hostId),
+        ),
+      ),
+  createSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:create-session',
+        createSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  sendMessage: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:send-message',
+        sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  stopRun: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:stop-run',
+        stopRunSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  respondApproval: async (input, hostId) =>
+    desktopSessionSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:respond-approval',
         respondApprovalSchema.parse(input),
+        route(hostId),
       ),
     ),
-  listSessions: async () =>
-    sessionSchema
-      .array()
-      .parse(await ipcRenderer.invoke('nesvo:list-sessions')),
-  listReviews: async () =>
-    reviewSchema.array().parse(await ipcRenderer.invoke('nesvo:list-reviews')),
-  discoverSkills: async input =>
+  decideDelegation: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-delegation',
+        decideDelegationSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideReview: async (input, hostId) =>
+    desktopReviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-review',
+        decideReviewSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  discoverSkills: async (input, hostId) =>
     skillCatalogSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:discover-skills',
         discoverSkillsSchema.parse(input),
+        route(hostId),
       ),
     ),
-  listWorkspaceDirectory: async input =>
+  listWorkspaceDirectory: async (input, hostId) =>
     workspaceDirectorySchema.parse(
       await ipcRenderer.invoke(
         'nesvo:list-workspace-directory',
         listWorkspaceDirectorySchema.parse(input),
+        route(hostId),
       ),
     ),
-  searchWorkspaceFiles: async input =>
+  searchWorkspaceFiles: async (input, hostId) =>
     workspaceSearchSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:search-workspace-files',
         searchWorkspaceFilesSchema.parse(input),
+        route(hostId),
       ),
     ),
-  readWorkspaceFile: async input =>
+  readWorkspaceFile: async (input, hostId) =>
     workspaceFileSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:read-workspace-file',
         readWorkspaceFileSchema.parse(input),
+        route(hostId),
       ),
-    ),
-  decideReview: async input =>
-    reviewSchema.parse(
-      await ipcRenderer.invoke(
-        'nesvo:decide-review',
-        decideReviewSchema.parse(input),
-      ),
-    ),
-  createSession: async input =>
-    sessionSchema.parse(
-      await ipcRenderer.invoke(
-        'nesvo:create-session',
-        createSessionSchema.parse(input),
-      ),
-    ),
-  sendMessage: async input =>
-    sessionSchema.parse(
-      await ipcRenderer.invoke(
-        'nesvo:send-message',
-        sendMessageSchema.parse(input),
-      ),
-    ),
-  stopRun: async input =>
-    sessionSchema.parse(
-      await ipcRenderer.invoke('nesvo:stop-run', stopRunSchema.parse(input)),
     ),
   subscribe: listener => {
     const receive = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      const parsed = desktopEventSchema.safeParse(payload);
+      const parsed = workspaceEventSchema.safeParse(payload);
       if (parsed.success) listener(parsed.data);
     };
     ipcRenderer.on('nesvo:event', receive);
