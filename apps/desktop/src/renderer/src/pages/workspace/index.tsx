@@ -11,6 +11,7 @@ import {
   BookOpen,
   FolderOpen,
   Menu,
+  PanelLeft,
   PanelRight,
   Plus,
   RefreshCw,
@@ -49,6 +50,7 @@ import { ProviderRail } from '@/widgets/provider-rail';
 import { desktopApi, useSessions } from './use-sessions';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
+import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 
@@ -80,6 +82,8 @@ export function Workspace() {
   const reviewRequests = useRef(new Set<string>());
   const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
+  const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingHostId, setCreatingHostId] = useState('local');
@@ -196,6 +200,28 @@ export function Workspace() {
     store.reviewsLoading,
     store.reviewsError,
   ]);
+  useEffect(() => {
+    saveSidebarOpen(sidebarOpen);
+  }, [sidebarOpen]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'b'
+      ) {
+        event.preventDefault();
+        setSidebarOpen(previous => !previous);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+  const collapseSidebar = () => {
+    setSidebarOpen(false);
+    requestAnimationFrame(() => sidebarToggle.current?.focus());
+  };
   const openDiff = (reviewId: string, path?: string) => {
     diffTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -620,12 +646,28 @@ export function Workspace() {
       : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-      <ProviderRail key={`${selectedHostId}/rail`} {...usageProps} />
-      <aside className="hidden w-60 shrink-0 border-r bg-[#080808] md:block">
-        <SessionSidebar {...sidebarProps} />
+      <aside
+        aria-label="Sidebar"
+        data-state={sidebarOpen ? 'expanded' : 'collapsed'}
+        inert={!sidebarOpen}
+        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width] duration-150 ease-out data-[state=collapsed]:w-0 data-[state=collapsed]:border-r-0 md:block"
+      >
+        <div className="h-full w-(--sidebar-width)">
+          <SessionSidebar
+            {...sidebarProps}
+            onCollapse={collapseSidebar}
+            usage={
+              <ProviderRail
+                key={`${selectedHostId}/rail`}
+                orientation="horizontal"
+                {...usageProps}
+              />
+            }
+          />
+        </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <header className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5 lg:px-5">
+        <header className="flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 border-b pr-(--shell-gutter) pl-2">
           <div className="md:hidden">
             <ProviderRail
               key={`${selectedHostId}/compact`}
@@ -652,6 +694,19 @@ export function Workspace() {
               <SessionSidebar {...sidebarProps} />
             </SheetContent>
           </Sheet>
+          <Button
+            ref={sidebarToggle}
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={`size-7 text-muted-foreground ${sidebarOpen ? 'hidden' : 'hidden md:inline-flex'}`}
+            aria-label="Toggle sidebar"
+            aria-pressed={sidebarOpen}
+            title="Expand sidebar (Ctrl+B)"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <PanelLeft className="size-4" />
+          </Button>
           {parentSession && !inbox && (
             <Button
               variant="ghost"
