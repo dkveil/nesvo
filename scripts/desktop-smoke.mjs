@@ -1858,9 +1858,15 @@ try {
   await sidebarToggle.click();
   await navigation.waitFor({ state: 'hidden' });
   assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'false');
+  await waitForFocus(sidebarToggle);
   await page.keyboard.press('Control+b');
   await navigation.waitFor({ state: 'visible' });
   assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'true');
+  await waitForFocus(sidebarToggle);
+  await messageEditor.press('Control+b');
+  await navigation.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Control+b');
+  await navigation.waitFor({ state: 'visible' });
   await page
     .getByRole('navigation', { name: 'Breadcrumb', exact: true })
     .getByRole('heading', { name: 'Prototype analysis', level: 1 })
