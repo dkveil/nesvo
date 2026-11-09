@@ -651,7 +651,7 @@ export function Workspace() {
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
         inert={!sidebarOpen}
-        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width] duration-150 ease-out data-[state=collapsed]:w-0 data-[state=collapsed]:border-r-0 md:block"
+        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width,visibility] duration-150 ease-out data-[state=collapsed]:invisible data-[state=collapsed]:w-0 data-[state=collapsed]:border-r-0 md:block"
       >
         <div className="h-full w-(--sidebar-width)">
           <SessionSidebar
