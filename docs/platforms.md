@@ -1,5 +1,17 @@
 # Platform verification
 
+## R4 actual VPS: host service (Linux)
+
+On November 9, a Nesvo host was installed as a persistent systemd user service on the actual Linux VPS: Ubuntu 26.04.1 LTS, kernel 7.0.0-42, x86_64, under the dedicated account with UID 1000 and lingering already enabled. The bundle was built with Bun 1.4.0 from d54331c following [ssh-host.md](ssh-host.md); f8b67a8 and fb54624 do not change host source, and the rebuilt bundle kept the same SHA256 (`2819abe9…cf5ec`). The account's Node is 24.22.2 while .node-version pins 24.20.0, within the documented 24.x tolerance.
+
+An earlier host service on the same account, installed outside this stage, runs a different bundle (`fbba96bb…6cc6a`). It was left untouched. A second instance therefore uses distinct names: unit `nesvo-host-r4.service`, bundle `~/.local/lib/nesvo-r4/main.mjs`, data `~/.local/share/nesvo-r4` and runtime `$XDG_RUNTIME_DIR/nesvo-r4`. The generated unit passed `systemd-analyze --user verify`, was enabled with `systemctl --user enable --now` and reported `active (running)`. The journal recorded `daemon-ready` with protocol version 1 and a stable instance ID. The socket, data and runtime directories and files are owned by the account with modes 0700 or 0600.
+
+A local `connect` bridge with the recorded instance ID returned `connected` and exited cleanly after EOF; a mismatched ID returned `identity-mismatch`. The daemon stayed active. The same bridge succeeded with both the service's Node 24.22.2 and a system-wide Node 26.12.1. The latter is the `node` an SSH command would resolve, because the account's shell startup file returns early for noninteractive shells. A Node 26 bridge is outside the supported 24.x runtime; selecting the bridge's Node remains an open configuration decision.
+
+Installed Codex CLI 0.167.0 reports an existing ChatGPT login, and Claude Code 2.1.311 reports an existing claude.ai login. No model turn, browser login or credential access was used.
+
+Not verified: the logout test, because ending the account's sessions would disturb other services on this shared VPS; reboot persistence; an SSH connection from the desktop; and real provider work on this host. Host key fingerprints and connection parameters were recorded for the next stage outside this public repository.
+
 ## D66 mobile companion
 
 M1 through M3 add an Expo React Native companion in `apps/mobile-client`, an authenticated workspace gateway and desktop device controls. Runtime checkpoints are 35b1ad5, 1445169 and 332388e; 4f67812 and f87b55b refine the Android keyboard and post-send scrolling. Setup and deployment boundaries are in [mobile.md](mobile.md).
