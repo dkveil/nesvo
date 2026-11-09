@@ -1,5 +1,15 @@
 # Platform verification
 
+## D66 repeatable Android run
+
+On November 9, the native mobile scenario passed three consecutive uninterrupted runs on the dedicated `Nesvo_D66` AVD (Android 16 / API 36, x86_64) with a local development build of `apps/mobile-client`. Each run covered pairing, history and streaming, a phone message, operation approval and denial, worker decisions, gateway disconnect while provider processes stayed alive, reconnect without extra turns, Stop, a forced cold restart with SecureStore restoration, device revocation and removal of the exact connection. Providers were the existing Codex fixtures; no real provider work was involved.
+
+The development build is a Gradle debug build of `dev.dkveil.nesvomobile` produced by Expo prebuild on this Windows PC, with Metro port 8095 compiled in. No EAS, Expo account, cloud service or new dependency was used. The harness force-stops the app and launches its package activity for both cold starts; Expo Go remains available through an explicit option. The debug source set alone adds a network security configuration that trusts user certificate authorities and keeps loopback cleartext; release builds keep the system trust store. The Windows build needed CMake 3.31.6 instead of the SDK default 3.22.1, whose ninja 1.10 fails on long checkout paths.
+
+Before the change, one Expo Go run reproduced the earlier failure: every step through Stop passed, then the cold-launch step left the Android launcher in front. This is classified as launch automation; the development build did not show it. One intermediate development-build run lost its emulator mid-scenario because the agent's background task limit terminated the emulator process; that is classified as test-environment automation, not a product failure, and the series was restarted on a fresh boot. No product defect was found, so no app, gateway or host code changed.
+
+Emulator evidence does not certify a physical device, iOS, TLS deployment or an actual VPS.
+
 ## R4 actual VPS: host service (Linux)
 
 On November 9, a Nesvo host was installed as a persistent systemd user service on the actual Linux VPS: Ubuntu 26.04.1 LTS, kernel 7.0.0-42, x86_64, under the dedicated account with UID 1000 and lingering already enabled. The bundle was built with Bun 1.4.0 from d54331c following [ssh-host.md](ssh-host.md); f8b67a8 and fb54624 do not change host source, and the rebuilt bundle kept the same SHA256 (`2819abe9…cf5ec`). The account's Node is 24.22.2 while .node-version pins 24.20.0, within the documented 24.x tolerance.

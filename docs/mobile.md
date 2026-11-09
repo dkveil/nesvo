@@ -26,25 +26,44 @@ The phone chooses a saved connection, then a computer and an existing conversati
 
 Install the pinned dependencies with `bun install --frozen-lockfile`. Start Nesvo Desktop with `bun run dev`, enable Phone access and leave it running. The default gateway is `http://127.0.0.1:48371`.
 
-With an Android emulator available:
+The primary Android client is a local development build of `apps/mobile-client` with the package `dev.dkveil.nesvomobile`. It is a debug build produced by Expo prebuild and Gradle on the PC; no EAS, Expo account or cloud service is involved, and the generated `android/` directory stays out of Git. Build and install it on the selected emulator:
 
 ```powershell
-adb -s <emulator-serial> reverse tcp:48371 tcp:48371
-bun run mobile:android --localhost --port 8095
+cd apps/mobile-client
+bunx expo prebuild --platform android --no-install
+cd android
+./gradlew.bat app:assembleDebug -PreactNativeDevServerPort=8095 -PreactNativeArchitectures=x86_64
+adb -s <emulator-serial> install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Use the SDK 58-compatible Expo Go app. The CLI can install it on the selected emulator. The gateway's loopback address reaches the PC through ADB reverse. Metro and the workspace gateway are separate services. Use the same explicit gateway port when restarting; a random port is useful only for isolated tests.
+The Metro port is compiled into the debug build, so Metro must use the same port. JavaScript changes only need Metro; rebuild after changing native dependencies or `app.json`. On Windows, the SDK's default CMake 3.22.1 ships ninja 1.10, which fails on long checkout paths with `ninja: error: mkdir(...): No such file or directory`. With Windows long paths enabled, point Gradle to CMake 3.31 or newer in `android/local.properties`, for example `cmake.dir=C:/Users/<user>/AppData/Local/Android/Sdk/cmake/3.31.6`. A clean prebuild removes that file.
 
-The native scenario uses a dedicated AVD named `Nesvo_D66` and a running Metro instance. It owns its Electron profile, provider fixtures, temporary workspace and newly created ADB forwarding rules:
+Start Metro and forward Metro and the gateway through ADB:
+
+```powershell
+adb -s <emulator-serial> reverse tcp:8095 tcp:8095
+adb -s <emulator-serial> reverse tcp:48371 tcp:48371
+bun run mobile --localhost --port 8095
+```
+
+The gateway's loopback address reaches the PC through ADB reverse. Metro and the workspace gateway are separate services. Use the same explicit gateway port when restarting; a random port is useful only for isolated tests.
+
+The debug build alone trusts user-installed certificate authorities, so a later private HTTPS gateway can be tested on the emulator. It also keeps loopback cleartext for the local gateway. Release builds keep the system trust store.
+
+Expo Go SDK 58 remains an explicit option through `bun run mobile:go --localhost --port 8095`.
+
+The native scenario uses a dedicated AVD named `Nesvo_D66`, the installed development build and a running Metro instance. It owns its Electron profile, provider fixtures, temporary workspace and newly created ADB forwarding rules. Each cold start force-stops the app and launches `dev.dkveil.nesvomobile/.MainActivity`:
 
 ```powershell
 $env:NESVO_ANDROID_SERIAL = 'emulator-5580'
-$env:NESVO_MOBILE_EXPO_URL = 'exp://127.0.0.1:8095'
+$env:NESVO_MOBILE_METRO_PORT = '8095'
 $env:NESVO_MOBILE_SCREENSHOTS = '<absolute-output-directory>'
 bun run smoke:mobile
 ```
 
-It does not create or stop an AVD, operate other emulators, clear Expo Go storage or use real provider accounts. Create and start the dedicated AVD first. Run `bun run build` before the scenario. Screenshots are taken after pairing so the one-time secret is excluded.
+To run the same scenario in Expo Go, set `NESVO_MOBILE_CLIENT=expo-go` and `NESVO_MOBILE_EXPO_URL=exp://127.0.0.1:8095`. On `Nesvo_D66`, that mode can leave the Android launcher in front after the cold-restart step. A failed run writes `failure-state.json` with the foreground activity and host session state. Another package in front, such as the launcher, indicates launch automation; the app in front with a missing control or unexpected host state indicates a product failure.
+
+It does not create or stop an AVD, operate other emulators, clear app or Expo Go storage or use real provider accounts. Create and start the dedicated AVD first. Run `bun run build` before the scenario. Screenshots are taken after pairing so the one-time secret is excluded.
 
 ## Connect a physical device
 
