@@ -45,6 +45,9 @@ export function ModelPicker({
     visible.find(option => option.id === activeId) ??
     visible.find(option => option.id === model) ??
     visible[0];
+  const currentLabel = model
+    ? (models.find(option => option.id === model)?.label ?? modelLabel(model))
+    : 'No model';
   const listId = 'thread-model-options';
   const optionId = (id: string) => `${listId}-${id.replace(/[^\w-]/g, '_')}`;
   const choose = (id: string) => {
@@ -91,15 +94,13 @@ export function ModelPicker({
         <ComposerChip
           disabled={disabled}
           aria-label="Choose model"
-          title={`${provider} · ${model ? modelLabel(model) : 'No model'}`}
+          title={`${provider} · ${currentLabel}`}
           className="h-7 gap-1.5 text-xs text-foreground"
         >
           <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
             {providerMarks[provider]}
           </span>
-          <span className="truncate font-medium">
-            {model ? modelLabel(model) : 'No model'}
-          </span>
+          <span className="truncate font-medium">{currentLabel}</span>
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
