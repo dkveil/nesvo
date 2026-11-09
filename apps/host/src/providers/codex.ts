@@ -14,6 +14,7 @@ import {
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
+import { descendantPids, signalProcesses } from './process-tree';
 
 export type CodexStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -56,6 +57,7 @@ type OwnedProcess = {
   child: ChildProcessWithoutNullStreams;
   closed: Promise<ProcessExit>;
   stop: () => Promise<void>;
+  recordDescendants: () => void;
 };
 
 const maxLineBytes = 1024 * 1024;
@@ -167,6 +169,11 @@ function ownProcess(
     processError = error;
     void stop();
   });
+  const descendants = new Set<number>();
+  const recordDescendants = () => {
+    if (!child.pid || hasExited) return;
+    for (const pid of descendantPids(child.pid)) descendants.add(pid);
+  };
   const signalGroup = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
@@ -176,6 +183,7 @@ function ownProcess(
         child.kill(signal);
       }
     }
+    signalProcesses(descendants, signal);
   };
   function stop(): Promise<void> {
     cleanup ??= (async () => {
@@ -189,6 +197,7 @@ function ownProcess(
           )
             await taskkill(child.pid);
         } else {
+          recordDescendants();
           signalGroup('SIGTERM');
           await Promise.race([closed, wait(300)]);
           signalGroup('SIGKILL');
@@ -219,7 +228,7 @@ function ownProcess(
     hasClosed = true;
     closeResolve({ code, error: processError, confirmed: true });
   });
-  return { child, closed, stop };
+  return { child, closed, stop, recordDescendants };
 }
 
 async function executablePath(): Promise<Executable | null> {
@@ -483,6 +492,7 @@ function rpcPeer(
       entry.reject(new Error('Codex connection closed.'));
     }
     pending.clear();
+    owned.recordDescendants();
     if (graceful && !owned.child.stdin.destroyed) {
       try {
         owned.child.stdin.end();

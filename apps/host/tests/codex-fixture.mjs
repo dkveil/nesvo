@@ -138,6 +138,7 @@ if (args.length === 1 && args[0] === '--version') {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: 'ignore',
         windowsHide: true,
+        detached: process.platform !== 'win32',
       },
     );
     await new Promise((resolve, reject) => {
