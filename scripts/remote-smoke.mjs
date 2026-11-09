@@ -785,13 +785,12 @@ try {
   assert.equal(
     (
       await page
-        .getByRole('dialog', { name: 'New session', exact: true })
-        .getByRole('combobox', { name: 'Computer', exact: true })
+        .getByRole('region', { name: 'New thread', exact: true })
+        .getByRole('button', { name: 'Run on', exact: true })
         .innerText()
     ).trim(),
     'Local',
   );
-  await page.keyboard.press('Escape');
   const reads = await page.evaluate(
     async ({ localId, remoteId, localSessionId, remoteSessionId }) => ({
       local: await window.nesvo.readWorkspaceFile(
