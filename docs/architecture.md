@@ -1,5 +1,11 @@
 # Architecture
 
+## Workspace shell
+
+The desktop shell is one collapsible sidebar beside a conversation column. The sidebar carries the product name, a search row with the new-session action, the Inbox entry, the session list and a bottom utility row with Computers, Phone access, the provider usage indicators and the account entry. Sessions are grouped by computer when more than one computer is known; each row shows the working-directory basename, the status or relative time of the last update, the title and the provider, with workers nested under their parent. The header shows a breadcrumb of directory and session title and keeps the skills, files and context panel toggles at the right.
+
+Collapsing the sidebar hides it with `inert`, moves focus to the header toggle and is available from either toggle or Ctrl+B. The open state is a local view preference stored in the renderer, like the last session and saved-diff location; the host remains authoritative for all session data. Compact widths keep the existing sheet navigation. Shell spacing, sidebar surfaces and status colours are CSS custom properties in `styles.css`, consumed through Tailwind theme tokens rather than literal colours in components. The layout follows patterns studied in T3 Code (MIT) and is reimplemented with base shadcn components; no T3 source was copied.
+
 ## Mobile companion
 
 D66 adds an Expo React Native client in `apps/mobile-client` and a narrow opt-in HTTP/WebSocket gateway. The reusable gateway belongs to `apps/host/src/mobile`; Electron supplies its lifetime and an adapter to the existing ComputerManager. It routes to Local or an already-connected SSH host without creating another host runtime or database. Mobile and desktop share Zod contracts, session revisions and action identities; native views remain separate from the desktop component library.
