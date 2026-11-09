@@ -34,6 +34,7 @@ bunx expo prebuild --platform android --no-install
 cd android
 ./gradlew.bat app:assembleDebug -PreactNativeDevServerPort=8095 -PreactNativeArchitectures=x86_64
 adb -s <emulator-serial> install -r app/build/outputs/apk/debug/app-debug.apk
+cd ../../..
 ```
 
 The Metro port is compiled into the debug build, so Metro must use the same port. JavaScript changes only need Metro; rebuild after changing native dependencies or `app.json`. On Windows, the SDK's default CMake 3.22.1 ships ninja 1.10, which fails on long checkout paths with `ninja: error: mkdir(...): No such file or directory`. With Windows long paths enabled, point Gradle to CMake 3.31 or newer in `android/local.properties`, for example `cmake.dir=C:/Users/<user>/AppData/Local/Android/Sdk/cmake/3.31.6`. A clean prebuild removes that file.
@@ -61,7 +62,9 @@ $env:NESVO_MOBILE_SCREENSHOTS = '<absolute-output-directory>'
 bun run smoke:mobile
 ```
 
-To run the same scenario in Expo Go, set `NESVO_MOBILE_CLIENT=expo-go` and `NESVO_MOBILE_EXPO_URL=exp://127.0.0.1:8095`. On `Nesvo_D66`, that mode can leave the Android launcher in front after the cold-restart step. A failed run writes `failure-state.json` with the foreground activity and host session state. Another package in front, such as the launcher, indicates launch automation; the app in front with a missing control or unexpected host state indicates a product failure.
+To run the same scenario in Expo Go, set `NESVO_MOBILE_CLIENT=expo-go` and `NESVO_MOBILE_EXPO_URL=exp://127.0.0.1:8095`. On `Nesvo_D66`, that mode can leave the Android launcher in front after the cold-restart step. A failed run writes `failure-state.json` with the foreground activity and host session state. The foreground activity is diagnostic evidence only: an application crash can also leave the launcher in front. Assign a failure to launch automation or the product only after checking the launch output and the device log for a crash.
+
+The scenario forgets its own saved connection at the end. An interrupted run can leave one behind in the app; forget it under **Connections** before the app reaches its limit of eight saved connections.
 
 It does not create or stop an AVD, operate other emulators, clear app or Expo Go storage or use real provider accounts. Create and start the dedicated AVD first. Run `bun run build` before the scenario. Screenshots are taken after pairing so the one-time secret is excluded.
 
