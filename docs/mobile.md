@@ -49,7 +49,7 @@ bun run mobile --localhost --port 8095
 
 The gateway's loopback address reaches the PC through ADB reverse. Metro and the workspace gateway are separate services. Use the same explicit gateway port when restarting; a random port is useful only for isolated tests.
 
-The debug build alone trusts user-installed certificate authorities, so a later private HTTPS gateway can be tested on the emulator. It also keeps loopback cleartext for the local gateway. Release builds keep the system trust store.
+The debug build alone trusts user-installed certificate authorities, so a private HTTPS gateway can be tested on the emulator. It also keeps loopback cleartext for the local gateway. Release builds keep the system trust store.
 
 Expo Go SDK 58 remains an explicit option through `bun run mobile:go --localhost --port 8095`.
 
@@ -67,6 +67,28 @@ To run the same scenario in Expo Go, set `NESVO_MOBILE_CLIENT=expo-go` and `NESV
 The scenario forgets its own saved connection at the end. An interrupted run can leave one behind in the app; forget it under **Connections** before the app reaches its limit of eight saved connections.
 
 It does not create or stop an AVD, operate other emulators, clear app or Expo Go storage or use real provider accounts. Create and start the dedicated AVD first. Run `bun run build` before the scenario. Screenshots are taken after pairing so the one-time secret is excluded.
+
+## Run over HTTPS with a private CA on the emulator
+
+The emulator can exercise the direct TLS listener without public routing. The certificate authority stays on the PC and in the dedicated emulator; the gateway keeps its loopback listener and ADB reverse carries the traffic.
+
+1. Create a short-lived private CA and a gateway certificate signed by it. The leaf needs `extendedKeyUsage=serverAuth` and `subjectAltName=IP:127.0.0.1`, because Android verifies the IP address against the SAN. Add `IP:10.0.2.2` only if you connect through the emulator's host alias instead of ADB reverse. Keep the CA private key in a temporary directory.
+2. Install only the CA certificate as a user CA on the dedicated AVD. On a Google APIs `userdebug` image, `adb root` allows copying the DER certificate to `/data/misc/user/0/cacerts-added/<subject_hash_old>.0`, owned by `system:system` with mode 0644, followed by `restorecon`. On other images use **Settings > Security > Encryption & credentials > Install a certificate > CA certificate**. Restart the app after installing or removing it. Only the debug build trusts user CAs; release builds keep the system trust store.
+3. Start the built desktop with a fresh data directory and the TLS settings:
+
+```powershell
+$env:NESVO_DATA_DIR = '<fresh-temporary-directory>'
+$env:NESVO_MOBILE_TLS_CERT = '<temp>\gateway.pem'
+$env:NESVO_MOBILE_TLS_KEY = '<temp>\gateway.key'
+$env:NESVO_MOBILE_BIND = '127.0.0.1'
+$env:NESVO_MOBILE_PORT = '48573'
+$env:NESVO_MOBILE_PUBLIC_URL = 'https://127.0.0.1:48573'
+```
+
+4. Forward the port with `adb -s <emulator-serial> reverse tcp:48573 tcp:48573`, enable Phone access and confirm with `netstat -an` that the port listens only on `127.0.0.1`. Pairing links then carry the `https://` origin, and the phone validates the certificate chain through the user CA.
+5. Afterwards revoke the device, forget the connection on the phone, disable Phone access, close the desktop, delete the user CA file from the emulator and remove the temporary CA directory.
+
+A plain `http://` origin other than `127.0.0.1`, such as `http://10.0.2.2`, is refused by the app before any request. A successful emulator run with a private CA does not establish public reachability, a publicly trusted certificate, a physical device or iOS.
 
 ## Connect a physical device
 
@@ -91,4 +113,4 @@ For direct TLS, set both certificate paths, the bind address and the HTTPS publi
 - Messages keep their client-generated ID across an uncertain acknowledgement. An explicit retry checks the host state; automatic mutation retry is absent. Drafts remain in memory across navigation and network loss, not across process termination.
 - Operation approvals are distinct from saved-result acceptance. Full result review/diffs, skill selection, file editing, push notifications and app-store distribution remain desktop-only or deferred.
 - Responses and event buffers are limited to 8 MiB, requests to 256 KiB, workspace snapshots to 512 sessions, paired devices to 16 and simultaneous clients to eight. An exceeded limit reports an error rather than silently truncating authoritative state.
-- Mobile source targets Android and iOS. Android emulator evidence does not certify iOS, a physical device, TLS deployment or an actual VPS.
+- Mobile source targets Android and iOS. Android emulator evidence, including the private-CA TLS run with a VPS session, does not certify iOS, a physical device or public TLS reachability.
