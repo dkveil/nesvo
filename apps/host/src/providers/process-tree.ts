@@ -1,47 +1,65 @@
 import { readdirSync, readFileSync } from 'node:fs';
 
-function parentPid(pid: string): number | null {
+type ProcessStat = { parent: number; startTime: number };
+
+function readStat(pid: number): ProcessStat | null {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const parent = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
-    return Number.isInteger(parent) ? parent : null;
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const parent = Number(fields[1]);
+    const startTime = Number(fields[19]);
+    return Number.isInteger(parent) && Number.isInteger(startTime)
+      ? { parent, startTime }
+      : null;
   } catch {
     return null;
   }
 }
 
-export function descendantPids(root: number): number[] {
-  if (process.platform !== 'linux') return [];
+export function recordDescendants(
+  root: number,
+  recorded: Map<number, number>,
+): void {
+  if (process.platform !== 'linux') return;
+  const rootStat = readStat(root);
+  if (!rootStat) return;
   let entries: string[];
   try {
     entries = readdirSync('/proc');
   } catch {
-    return [];
+    return;
   }
-  const children = new Map<number, number[]>();
+  const children = new Map<number, { pid: number; startTime: number }[]>();
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
-    const parent = parentPid(entry);
-    if (parent === null) continue;
-    children.set(parent, [...(children.get(parent) ?? []), Number(entry)]);
+    const pid = Number(entry);
+    const stat = readStat(pid);
+    if (!stat || stat.startTime < rootStat.startTime) continue;
+    children.set(stat.parent, [
+      ...(children.get(stat.parent) ?? []),
+      { pid, startTime: stat.startTime },
+    ]);
   }
-  const descendants: number[] = [];
   const visit = (pid: number) => {
     for (const child of children.get(pid) ?? []) {
-      descendants.push(child);
-      visit(child);
+      recorded.set(child.pid, child.startTime);
+      visit(child.pid);
     }
   };
   visit(root);
-  return descendants;
 }
 
-export function signalProcesses(
-  pids: Iterable<number>,
+export function signalRecorded(
+  recorded: Map<number, number>,
   signal: NodeJS.Signals,
 ): void {
-  for (const pid of pids)
+  for (const [pid, startTime] of recorded) {
+    if (readStat(pid)?.startTime !== startTime) {
+      recorded.delete(pid);
+      continue;
+    }
     try {
       process.kill(pid, signal);
     } catch {}
+  }
 }

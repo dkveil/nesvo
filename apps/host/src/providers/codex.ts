@@ -14,7 +14,7 @@ import {
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
-import { descendantPids, signalProcesses } from './process-tree';
+import { recordDescendants, signalRecorded } from './process-tree';
 
 export type CodexStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -66,6 +66,7 @@ const maxTextBytes = 2_000_000;
 const probeTimeoutMs = 10_000;
 const runTimeoutMs = 10 * 60_000;
 const cleanupTimeoutMs = 4_000;
+const descendantScanMs = 1_000;
 const isolatedFeatures = [
   'hooks',
   'plugins',
@@ -169,11 +170,14 @@ function ownProcess(
     processError = error;
     void stop();
   });
-  const descendants = new Set<number>();
-  const recordDescendants = () => {
-    if (!child.pid || hasExited) return;
-    for (const pid of descendantPids(child.pid)) descendants.add(pid);
+  const descendants = new Map<number, number>();
+  const recordOwnedDescendants = () => {
+    if (child.pid && !hasExited) recordDescendants(child.pid, descendants);
   };
+  const descendantScan =
+    process.platform === 'linux' && child.pid
+      ? setInterval(recordOwnedDescendants, descendantScanMs).unref()
+      : null;
   const signalGroup = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
@@ -183,7 +187,7 @@ function ownProcess(
         child.kill(signal);
       }
     }
-    signalProcesses(descendants, signal);
+    signalRecorded(descendants, signal);
   };
   function stop(): Promise<void> {
     cleanup ??= (async () => {
@@ -197,7 +201,7 @@ function ownProcess(
           )
             await taskkill(child.pid);
         } else {
-          recordDescendants();
+          recordOwnedDescendants();
           signalGroup('SIGTERM');
           await Promise.race([closed, wait(300)]);
           signalGroup('SIGKILL');
@@ -222,13 +226,20 @@ function ownProcess(
   }
   child.once('exit', () => {
     hasExited = true;
+    if (descendantScan) clearInterval(descendantScan);
     void stop();
   });
   child.once('close', code => {
     hasClosed = true;
+    if (descendantScan) clearInterval(descendantScan);
     closeResolve({ code, error: processError, confirmed: true });
   });
-  return { child, closed, stop, recordDescendants };
+  return {
+    child,
+    closed,
+    stop,
+    recordDescendants: recordOwnedDescendants,
+  };
 }
 
 async function executablePath(): Promise<Executable | null> {

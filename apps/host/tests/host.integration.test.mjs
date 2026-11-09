@@ -1324,6 +1324,22 @@ test(
       ),
       disconnected,
     );
+    if (process.platform === 'linux') {
+      const orphanRun = await sendCodex(
+        finalHost,
+        await createCodex('read-only'),
+        'fixture:hold-disconnect',
+      );
+      const orphaned = await finalHost.event(
+        value =>
+          value.runId === orphanRun.runId && value.status === 'interrupted',
+      );
+      assertInterruption(orphaned, 'provider-disconnected');
+      const orphanPids = JSON.parse(await readFile(pidFile + '.codex', 'utf8'));
+      assert.equal(orphanPids.sessionId, orphaned.providerSessionId);
+      ownedPids.add(orphanPids.pid).add(orphanPids.childPid);
+      await processesGone([orphanPids.pid, orphanPids.childPid], ownedPids);
+    }
     const explicitResume = await sendCodex(
       finalHost,
       disconnected,

@@ -138,7 +138,7 @@ if (args.length === 1 && args[0] === '--version') {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: 'ignore',
         windowsHide: true,
-        detached: process.platform !== 'win32',
+        detached: process.platform === 'linux',
       },
     );
     await new Promise((resolve, reject) => {
@@ -783,6 +783,10 @@ if (args.length === 1 && args[0] === '--version') {
         requestApproval('command');
       } else if (command === 'fixture:hold') {
         await hold();
+      } else if (command === 'fixture:hold-disconnect') {
+        await hold();
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        process.exit(73);
       } else {
         complete(
           `Codex fixture ${thread.resumed ? 'resumed' : 'initial'} reply.`,
