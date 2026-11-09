@@ -1,5 +1,29 @@
 # Platform verification
 
+## D66 mobile over TLS with a VPS session
+
+On November 9, the local Android development build on the dedicated `Nesvo_D66` AVD (Android 16 / API 36, x86_64) followed and controlled sessions on the actual VPS host through the gateway of the built desktop on this Windows PC, over HTTPS. Setup is in [mobile.md](mobile.md#run-over-https-with-a-private-ca-on-the-emulator). Screenshots are kept outside this public repository.
+
+The gateway used a direct TLS listener with a certificate from a short-lived private CA (IP SAN for loopback only), bound to `127.0.0.1` and reached through ADB reverse; `netstat` showed only the loopback listener. The CA was installed as a user CA on that AVD only, trusted by the debug build. No tunnel, public route or non-loopback listener was used. The desktop ran with a fresh data directory and connected to the `nesvo-host-r4` instance over the verified SSH key from the R4 desktop flow.
+
+| Step                                     | Result                                                                                                                                                                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Refuse plain HTTP outside loopback       | Passed. A pairing link with an `http://10.0.2.2` origin was rejected by the app; the gateway recorded no device or client                                                                                                                  |
+| Pair over HTTPS                          | Passed. The `https://` link paired once; the desktop listed one device and one authenticated client                                                                                                                                        |
+| Choose the VPS computer and a session    | Passed. Local and VPS were listed as connected; the VPS list showed its own sessions                                                                                                                                                       |
+| Live activity and a phone message        | Passed. One message to a read-only Claude Code session (default resolved to claude-opus-5-5) showed waiting state, then live activity with two operations; the response correctly quoted both files. A successful real task, not a fixture |
+| Operation approval                       | Passed. A supervised Codex session (default resolved to gpt-6.1-sol) raised a command approval with Allow once and Deny; Allow once started the command in the provider sandbox on the VPS                                                 |
+| Approval distinct from result acceptance | Passed. The phone offered only the operation decision; the Claude run's saved result appeared in the desktop Inbox with Accept result and Request changes                                                                                  |
+| Background and return                    | Passed. During the running command the authenticated stream closed in the background and reopened on return; host status, run ID and message count were unchanged and nothing was replayed                                                 |
+| Stop                                     | Passed. Stop from the phone ended the run; within seconds the app-server, sandbox, `bwrap`, shell and `sleep` processes were gone on the VPS and the command's output file was never written                                               |
+| Revoke                                   | Passed. Revoking on the desktop closed the stream; Reconnect on the phone reported the revoked device. The phone then forgot the connection                                                                                                |
+
+Exactly one Codex turn and one Claude turn ran. Text input once lost the first character of the pasted link through `adb input`; that is attributed to emulator automation, and a retry with a short delay paired normally. The dev-only LogBox warning about the Expo CLI connection belongs to the development tooling. No product defect was found, so no app, gateway or host code changed. Assistant Markdown is displayed as plain text on the phone, as before.
+
+Windows passed `bun run check`, `bun run build` and the fixture-based `bun run smoke:mobile` on the same AVD after this run; the smoke scenario uses loopback HTTP and provider fixtures, separate from the TLS and VPS evidence above.
+
+Not verified: a physical device, iOS, a publicly trusted certificate, public reachability or a reverse proxy, and a standalone mobile gateway on the VPS.
+
 ## N1 Node executable for SSH computers
 
 On November 9, the built desktop on this Windows PC (Electron 45.2.3, system OpenSSH, isolated temporary data directory) connected to the `nesvo-host-r4` instance on the actual VPS with the new optional Node executable field. With the field set to the Node 24.22.2 path from the unit's ExecStart, the VPS process table showed the bridge as `<that path> .../main.mjs connect` and the connection reached `connected`. With the field empty, the same computer connected as before and the bridge ran as `node .../main.mjs connect`, which resolves to the account's noninteractive Node 26.12.1. Nothing on the VPS was restarted or changed; the unit and daemon were only observed, and an unrelated bridge from another client was left alone.
