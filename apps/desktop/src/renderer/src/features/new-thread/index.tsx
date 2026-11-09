@@ -1,19 +1,18 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ArrowUp, Lock, Pencil } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import type { Computer, CreateSessionInput } from '@nesvo/contracts';
 import {
   directoryLabel,
   errorDetail,
-  modeLabels,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
-import { ComposerChip } from './composer-chip';
 import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
+import { PermissionPicker } from './permission-picker';
 import { deriveThreadTitle } from './thread-title';
 
 export type ThreadSetup = {
@@ -214,10 +213,12 @@ export function NewThread({
               onChange={directory => onSetupChange({ ...setup, directory })}
             />
             <div className="flex-1" />
-            <ComposerChip disabled title="Permissions">
-              {setup.mode === 'read-only' ? <Lock /> : <Pencil />}
-              <span>{modeLabels[setup.mode]}</span>
-            </ComposerChip>
+            <PermissionPicker
+              provider={setup.provider}
+              mode={setup.mode}
+              disabled={pending}
+              onChange={mode => onSetupChange({ ...setup, mode })}
+            />
           </div>
           {error && (
             <p
