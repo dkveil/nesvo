@@ -13,6 +13,7 @@ type Props = {
   states: Record<Provider, UsageState>;
   onRefresh: () => void;
   compact?: boolean;
+  orientation?: 'vertical' | 'horizontal';
 };
 
 const percent = (value: number) =>
@@ -198,6 +199,7 @@ export function ProviderRail({
   states,
   onRefresh,
   compact = false,
+  orientation = 'vertical',
 }: Props) {
   const [selected, setSelected] = useState<Provider | 'all'>('all');
   const [open, setOpen] = useState(false);
@@ -218,7 +220,9 @@ export function ProviderRail({
   const content = (
     <Popover.Portal>
       <Popover.Content
-        side={compact ? 'bottom' : 'right'}
+        side={
+          compact ? 'bottom' : orientation === 'horizontal' ? 'top' : 'right'
+        }
         align="end"
         sideOffset={10}
         collisionPadding={12}
@@ -303,16 +307,27 @@ export function ProviderRail({
         {content}
       </Popover.Root>
     );
+  const horizontal = orientation === 'horizontal';
   return (
     <aside
       aria-label="Provider limits"
       data-host-id={hostId}
-      className="hidden w-12 shrink-0 flex-col items-center border-r bg-[#050505] py-3 md:flex"
+      className={
+        horizontal
+          ? 'flex shrink-0 items-center gap-0.5'
+          : 'hidden w-12 shrink-0 flex-col items-center border-r bg-[#050505] py-3 md:flex'
+      }
     >
-      <div className="flex-1" />
+      {!horizontal && <div className="flex-1" />}
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Anchor asChild>
-          <div className="flex flex-col items-center gap-2">
+          <div
+            className={
+              horizontal
+                ? 'flex items-center gap-0.5'
+                : 'flex flex-col items-center gap-2'
+            }
+          >
             {providers.map(provider => {
               const state = states[provider];
               const window = !state.error
@@ -323,6 +338,7 @@ export function ProviderRail({
                 ? percent(Math.max(0, 100 - window.usedPercent))
                 : '—';
               const label = `${provider} limits: ${window ? `${window.label}, ${remaining} remaining${outdated ? ', stale' : ''}` : state.loading ? 'checking' : 'unavailable'}${!connected ? ', offline' : ''}`;
+              const short = provider === 'Claude Code' ? 'CL' : 'CX';
               return (
                 <button
                   key={provider}
@@ -333,25 +349,40 @@ export function ProviderRail({
                   aria-expanded={open && selected === provider}
                   data-provider-indicator={provider}
                   data-usage-stale={outdated}
-                  className="flex w-10 flex-col items-center gap-1 rounded-md px-1 py-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                  className={
+                    horizontal
+                      ? 'flex h-7 min-w-9 flex-col items-center justify-center gap-1 rounded-md px-1.5 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring'
+                      : 'flex w-10 flex-col items-center gap-1 rounded-md px-1 py-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring'
+                  }
                   onClick={event => {
                     returnFocus.current = event.currentTarget;
                     setSelected(provider);
                     setOpen(true);
                   }}
                 >
-                  <span className="text-[10px] font-medium tracking-wide">
-                    {provider === 'Claude Code' ? 'CL' : 'CX'}
-                  </span>
-                  <span
-                    className={`text-[10px] leading-4 tabular-nums ${outdated ? 'opacity-50' : ''}`}
-                  >
-                    {remaining}
-                  </span>
-                  {window && outdated && (
-                    <span className="text-[9px] leading-3 text-muted-foreground">
-                      Stale
+                  {horizontal ? (
+                    <span
+                      className={`flex items-baseline gap-1 text-[10px] leading-3 tabular-nums ${outdated ? 'opacity-50' : ''}`}
+                    >
+                      <span className="font-medium tracking-wide">{short}</span>
+                      <span>{remaining}</span>
                     </span>
+                  ) : (
+                    <>
+                      <span className="text-[10px] font-medium tracking-wide">
+                        {short}
+                      </span>
+                      <span
+                        className={`text-[10px] leading-4 tabular-nums ${outdated ? 'opacity-50' : ''}`}
+                      >
+                        {remaining}
+                      </span>
+                      {window && outdated && (
+                        <span className="text-[9px] leading-3 text-muted-foreground">
+                          Stale
+                        </span>
+                      )}
+                    </>
                   )}
                   <span className="h-0.5 w-6 overflow-hidden rounded-full bg-secondary">
                     {window && (
@@ -373,7 +404,11 @@ export function ProviderRail({
                 size="icon-sm"
                 aria-label="Account and limits"
                 title="Account and limits"
-                className="mt-1 text-muted-foreground"
+                className={
+                  horizontal
+                    ? 'size-7 text-muted-foreground'
+                    : 'mt-1 text-muted-foreground'
+                }
                 onClick={event => {
                   returnFocus.current = event.currentTarget;
                   setSelected('all');
