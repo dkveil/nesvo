@@ -21,7 +21,11 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]
+      [
+        "expo-build-properties",
+        { "android": { "usesCleartextTraffic": true } }
+      ],
+      "./plugins/with-debug-network-security.js"
     ],
     "experiments": {
       "typedRoutes": true
