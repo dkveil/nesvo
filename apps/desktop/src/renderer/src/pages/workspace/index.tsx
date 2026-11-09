@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import type {
   CreateSessionInput,
   DecideDelegationInput,
@@ -86,6 +93,7 @@ export function Workspace() {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
+  const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
@@ -210,25 +218,34 @@ export function Workspace() {
   useEffect(() => {
     saveSidebarOpen(sidebarOpen);
   }, [sidebarOpen]);
+  const toggleSidebar = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    requestAnimationFrame(() => {
+      const target = open
+        ? sidebarCollapseToggle.current
+        : sidebarToggle.current;
+      target?.focus();
+    });
+  }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === 'b'
-      ) {
-        event.preventDefault();
-        setSidebarOpen(previous => !previous);
-      }
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== 'b' ||
+        !window.matchMedia('(min-width: 768px)').matches
+      )
+        return;
+      event.preventDefault();
+      toggleSidebar(!readSidebarOpen());
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-  const collapseSidebar = () => {
-    setSidebarOpen(false);
-    requestAnimationFrame(() => sidebarToggle.current?.focus());
-  };
+  }, [toggleSidebar]);
   const openDiff = (reviewId: string, path?: string) => {
     diffTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -687,7 +704,8 @@ export function Workspace() {
         <div className="h-full w-(--sidebar-width)">
           <SessionSidebar
             {...sidebarProps}
-            onCollapse={collapseSidebar}
+            onCollapse={() => toggleSidebar(false)}
+            collapseToggleRef={sidebarCollapseToggle}
             usage={
               <ProviderRail
                 key={`${selectedHostId}/rail`}
@@ -735,7 +753,7 @@ export function Workspace() {
             aria-label="Toggle sidebar"
             aria-pressed={sidebarOpen}
             title="Expand sidebar (Ctrl+B)"
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => toggleSidebar(true)}
           >
             <PanelLeft className="size-4" />
           </Button>

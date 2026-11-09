@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type RefObject } from 'react';
 import {
   ChevronDown,
   CircleCheck,
@@ -36,6 +36,7 @@ type Props = {
   onInbox: () => void;
   onCreate: () => void;
   onCollapse?: () => void;
+  collapseToggleRef?: RefObject<HTMLButtonElement | null>;
   usage?: ReactNode;
 };
 
@@ -102,6 +103,7 @@ export function SessionSidebar({
   onInbox,
   onCreate,
   onCollapse,
+  collapseToggleRef,
   usage,
 }: Props) {
   const [search, setSearch] = useState('');
@@ -211,6 +213,7 @@ export function SessionSidebar({
         <div className="flex-1" />
         {onCollapse && (
           <Button
+            ref={collapseToggleRef}
             type="button"
             variant="ghost"
             size="icon-sm"
