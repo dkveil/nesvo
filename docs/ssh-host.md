@@ -6,7 +6,7 @@ Nesvo connects to an independent Linux host through your installed OpenSSH clien
 
 Use a dedicated account you control, with a working systemd user manager and Node.js 24.20.0 or a compatible pinned 24.x version. Check the repository's .node-version before distributing a new host build. Install and sign in to Claude Code and Codex separately on this account for the providers you intend to use. The desktop's provider login and local skills are not transferred to the server.
 
-Confirm that `node`, `claude` and `codex` resolve in the account's PATH as applicable. The systemd service records the PATH used when generating its unit. The SSH bridge separately runs the fixed command `node <entry> connect`; Node must also be available in the account's noninteractive SSH PATH. Shell startup files, a desktop terminal and a systemd user manager may have different environments. Verify the actual connection path:
+Confirm that `node`, `claude` and `codex` resolve in the account's PATH as applicable. The systemd service records the PATH used when generating its unit. The SSH bridge separately runs the fixed command `node <entry> connect`; Node must also be available in the account's noninteractive SSH PATH. That `node` can differ from the Node captured in the unit, for example when a shell startup file returns early for noninteractive shells and a system-wide Node comes first. Shell startup files, a desktop terminal and a systemd user manager may have different environments. Verify the actual connection path:
 
 ```sh
 ssh -o BatchMode=yes -o StrictHostKeyChecking=yes your-host 'node --version'
@@ -38,6 +38,8 @@ NESVO_RUNTIME_DIR="$XDG_RUNTIME_DIR/nesvo" \
 node "$HOME/.local/lib/nesvo/main.mjs" service-unit \
   > "$HOME/.config/systemd/user/nesvo-host.service"
 ```
+
+To run another host beside an existing one on the same account, give it a distinct bundle directory, data directory, runtime directory and unit filename, for example `nesvo-r4`, and use that unit name in the commands below. The generator takes the paths from the bundle location and environment; the unit name comes only from the redirection target.
 
 The generator prints a unit; it does not write files, start a service or change system configuration. The shell redirection above writes only the chosen unit. Inspect it before enabling it. Its ExecStart captures the absolute Node executable and bundle path, and its Environment entries capture only the data directory, runtime directory and PATH. Use a Node executable path without quotes or backslashes and without a trailing slash; systemd rejects those executable names, so the generator rejects them explicitly while preserving escaped special characters in the bundle argument and environment values. It invokes no shell and escapes systemd specifiers and literal path characters.
 
