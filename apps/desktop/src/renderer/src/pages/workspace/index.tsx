@@ -4,6 +4,7 @@ import type {
   DecideDelegationInput,
   DecideReviewInput,
   DesktopReview as Review,
+  DesktopSession as Session,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import {
@@ -24,7 +25,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { CreateSession } from '@/features/create-session';
+import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import { HostStatus } from '@/features/host-status';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
@@ -87,7 +88,13 @@ export function Workspace() {
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [creatingHostId, setCreatingHostId] = useState('local');
+  const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
+    hostId: 'local',
+    provider: 'Claude Code',
+    model: 'default',
+    mode: 'read-only',
+    directory: '',
+  });
   const [computersOpen, setComputersOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -113,7 +120,6 @@ export function Workspace() {
     >
   >({});
   const stopping = useRef(new Set<string>());
-  const createTrigger = useRef<HTMLElement | null>(null);
   const selected =
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
@@ -259,6 +265,7 @@ export function Workspace() {
   const select = (id: string, targetId = '') => {
     setPanel(null);
     setDiffTarget(null);
+    setCreating(false);
     setSelectedId(id);
     setSessionTarget(targetId);
     setInbox(false);
@@ -268,25 +275,17 @@ export function Workspace() {
   const openInbox = () => {
     setPanel(null);
     setDiffTarget(null);
+    setCreating(false);
     setInbox(true);
     setNavigationOpen(false);
   };
   const openCreate = () => {
-    createTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
     setNavigationOpen(false);
-    setCreatingHostId('local');
+    setDetailsOpen(false);
+    setPanel(null);
+    setDiffTarget(null);
+    setInbox(false);
     setCreating(true);
-  };
-  const create = async (input: CreateSessionInput) => {
-    if (!store.hostReady(creatingHostId))
-      throw new Error('Connect this computer before creating a session.');
-    const session = await desktopApi(creatingHostId).createSession(input);
-    store.merge([session]);
-    select(entityKey(session));
-    return session;
   };
   const changeDraft = (id: string, value: string) => {
     draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
@@ -296,25 +295,17 @@ export function Workspace() {
     draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
     setSelectedSkills(previous => ({ ...previous, [id]: skill }));
   };
-  const send = async () => {
-    if (
-      !selected ||
-      sendingRef.current ||
-      activeRun ||
-      connection !== 'ready' ||
-      selectedProviderState?.status?.status !== 'ready' ||
-      selectedProviderState.loading ||
-      selectedProviderState.error
-    )
-      return;
-    const sessionId = selected.id;
-    const sessionKey = entityKey(selected);
-    const hostId = selected.hostId;
-    const text = drafts[sessionKey]?.trim();
-    if (!text || text.length > 32000) return;
-    const version = draftVersions.current[sessionKey] ?? 0;
-    const skillId = selectedSkills[sessionKey]?.id;
-    const skillHash = selectedSkills[sessionKey]?.contentHash;
+  const deliver = async (
+    target: Session,
+    text: string,
+    skill: SelectedSkill | null,
+    onAcknowledge: () => void,
+  ) => {
+    const sessionId = target.id;
+    const sessionKey = entityKey(target);
+    const hostId = target.hostId;
+    const skillId = skill?.id;
+    const skillHash = skill?.contentHash;
     const prior = sendAttempts.current[sessionKey];
     const attempt =
       prior?.text === text &&
@@ -328,10 +319,7 @@ export function Workspace() {
     setErrors(previous => ({ ...previous, [sessionKey]: '' }));
     const acknowledge = () => {
       delete sendAttempts.current[sessionKey];
-      if ((draftVersions.current[sessionKey] ?? 0) === version) {
-        setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
-        setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
-      }
+      onAcknowledge();
     };
     try {
       const session = await desktopApi(hostId).sendMessage({
@@ -367,6 +355,48 @@ export function Workspace() {
       setSending(false);
     }
   };
+  const send = async () => {
+    if (
+      !selected ||
+      sendingRef.current ||
+      activeRun ||
+      connection !== 'ready' ||
+      selectedProviderState?.status?.status !== 'ready' ||
+      selectedProviderState.loading ||
+      selectedProviderState.error
+    )
+      return;
+    const sessionKey = entityKey(selected);
+    const text = drafts[sessionKey]?.trim();
+    if (!text || text.length > 32000) return;
+    const version = draftVersions.current[sessionKey] ?? 0;
+    await deliver(selected, text, selectedSkills[sessionKey] ?? null, () => {
+      if ((draftVersions.current[sessionKey] ?? 0) === version) {
+        setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
+        setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
+      }
+    });
+  };
+  const startThread = async (input: CreateSessionInput, text: string) => {
+    const hostId = threadSetup.hostId;
+    if (sendingRef.current) return;
+    if (!store.hostReady(hostId))
+      throw new Error('Connect this computer before starting a thread.');
+    const session = await desktopApi(hostId).createSession(input);
+    store.merge([session]);
+    select(entityKey(session));
+    await deliver(session, text, null, () => undefined);
+  };
+  const threadBusyReason =
+    store.loading || store.error
+      ? 'Session history is still loading.'
+      : store.sessions.some(
+            session =>
+              session.hostId === threadSetup.hostId &&
+              (session.status === 'running' || session.status === 'stopping'),
+          )
+        ? 'Another session is working on this computer.'
+        : '';
   const stop = async () => {
     if (
       !selected?.runId ||
@@ -632,7 +662,7 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: selectedKey,
+    selectedId: creating ? '' : selectedKey,
     inbox,
     onSelect: select,
     onInbox: openInbox,
@@ -640,6 +670,7 @@ export function Workspace() {
   };
   const providerIssue =
     !inbox &&
+    !creating &&
     selectedProviderState &&
     (selectedProviderState.error ||
       selectedProviderState.status?.status !== 'ready')
@@ -708,7 +739,7 @@ export function Workspace() {
           >
             <PanelLeft className="size-4" />
           </Button>
-          {parentSession && !inbox && (
+          {parentSession && !inbox && !creating && (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -721,7 +752,25 @@ export function Workspace() {
           )}
           <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-1">
             <ol className="flex min-w-0 items-center gap-2 text-[13px]">
-              {!inbox && selected && (
+              {creating && (
+                <>
+                  <li
+                    className="hidden max-w-40 shrink-0 truncate font-medium text-muted-foreground sm:block"
+                    title={threadSetup.directory || 'Isolated folder'}
+                  >
+                    {threadSetup.directory.trim()
+                      ? directoryLabel(threadSetup.directory.trim())
+                      : 'No project'}
+                  </li>
+                  <li
+                    aria-hidden="true"
+                    className="hidden text-muted-foreground/60 sm:block"
+                  >
+                    /
+                  </li>
+                </>
+              )}
+              {!inbox && !creating && selected && (
                 <>
                   <li
                     className="hidden max-w-40 shrink-0 truncate font-medium text-muted-foreground sm:block"
@@ -742,17 +791,24 @@ export function Workspace() {
                 className="flex min-w-0 items-center gap-3"
               >
                 <h1 className="truncate text-[13px] font-medium">
-                  {inbox ? 'Inbox' : (selected?.title ?? 'New session')}
+                  {creating
+                    ? 'New thread'
+                    : inbox
+                      ? 'Inbox'
+                      : (selected?.title ?? 'New thread')}
                 </h1>
-                {!inbox && selected && sessionRoleLabel(selected) && (
-                  <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                    {sessionRoleLabel(selected)}
-                  </span>
-                )}
+                {!inbox &&
+                  !creating &&
+                  selected &&
+                  sessionRoleLabel(selected) && (
+                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                      {sessionRoleLabel(selected)}
+                    </span>
+                  )}
               </li>
             </ol>
           </nav>
-          {!inbox && selected && (
+          {!inbox && !creating && selected && (
             <span
               className="max-w-32 truncate text-[11px] text-muted-foreground"
               title={selectedComputer?.name}
@@ -763,7 +819,7 @@ export function Workspace() {
               {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
             </span>
           )}
-          {!inbox && selected && selected.status !== 'ready' && (
+          {!inbox && !creating && selected && selected.status !== 'ready' && (
             <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
               {sessionStatusLabel(selected)}
             </span>
@@ -777,7 +833,7 @@ export function Workspace() {
           >
             <Plus />
           </Button>
-          {!inbox && selected && (
+          {!inbox && !creating && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -797,7 +853,7 @@ export function Workspace() {
               <BookOpen className="size-4" />
             </Button>
           )}
-          {!inbox && selected && (
+          {!inbox && !creating && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -831,7 +887,9 @@ export function Workspace() {
                 </SheetDescription>
               </SheetHeader>
               <ScrollArea className="min-h-0 flex-1">
-                {!inbox && selected && <SessionDetails session={selected} />}
+                {!inbox && !creating && selected && (
+                  <SessionDetails session={selected} />
+                )}
                 <section
                   aria-label="Connection"
                   className="space-y-5 border-t p-5"
@@ -965,7 +1023,17 @@ export function Workspace() {
           </div>
         )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
-          {inbox ? (
+          {creating ||
+          (!inbox && !selected && !store.loading && !store.error) ? (
+            <NewThread
+              setup={threadSetup}
+              onSetupChange={setThreadSetup}
+              computers={store.computers}
+              statuses={store.providerStates(threadSetup.hostId)}
+              busyReason={threadBusyReason}
+              onStart={startThread}
+            />
+          ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
               reviews={store.reviews}
@@ -1098,29 +1166,18 @@ export function Workspace() {
               aria-label="Sessions"
             >
               <h2 className="text-2xl font-medium tracking-tight">
-                {store.loading
-                  ? 'Loading sessions…'
-                  : store.error
-                    ? 'History is unavailable'
-                    : 'What would you like to work on?'}
+                {store.loading ? 'Loading sessions…' : 'History is unavailable'}
               </h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
                 {store.loading
                   ? 'Loading your local history.'
-                  : store.error
-                    ? 'Reconnect to load your saved sessions.'
-                    : 'Create a session with your preferred agent.'}
+                  : 'Reconnect to load your saved sessions.'}
               </p>
-              {!store.loading && !store.error && (
-                <Button onClick={openCreate}>
-                  <Plus />
-                  New session
-                </Button>
-              )}
             </section>
           )}
           {(panel === 'files' || panel === 'skills') &&
             !inbox &&
+            !creating &&
             selected &&
             !store.hostReady(selectedHostId) && (
               <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-card p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
@@ -1134,7 +1191,7 @@ export function Workspace() {
                 </Button>
               </aside>
             )}
-          {panel === 'diff' && diffReview && diffTarget && (
+          {panel === 'diff' && !creating && diffReview && diffTarget && (
             <Suspense
               fallback={
                 <aside
@@ -1159,6 +1216,7 @@ export function Workspace() {
           )}
           {panel === 'files' &&
             !inbox &&
+            !creating &&
             selected &&
             store.hostReady(selectedHostId) && (
               <Suspense
@@ -1183,6 +1241,7 @@ export function Workspace() {
             )}
           {panel === 'skills' &&
             !inbox &&
+            !creating &&
             selected &&
             store.hostReady(selectedHostId) && (
               <Suspense
@@ -1214,24 +1273,6 @@ export function Workspace() {
       )}
       {mobileOpen && (
         <MobileAccess api={desktopApi()} onOpenChange={setMobileOpen} />
-      )}
-      {creating && (
-        <CreateSession
-          open={creating}
-          computers={store.computers}
-          hostId={creatingHostId}
-          onHostChange={setCreatingHostId}
-          statuses={store.providerStates(creatingHostId)}
-          onRefreshProvider={provider =>
-            void store.refreshProvider(provider, creatingHostId)
-          }
-          onOpenChange={setCreating}
-          onCreate={create}
-          onReturnFocus={() => {
-            if (createTrigger.current?.isConnected)
-              createTrigger.current.focus();
-          }}
-        />
       )}
     </div>
   );
