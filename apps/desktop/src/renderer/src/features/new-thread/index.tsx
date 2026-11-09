@@ -5,14 +5,13 @@ import {
   directoryLabel,
   errorDetail,
   modeLabels,
-  modelLabel,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
 import { ComposerChip } from './composer-chip';
-import { providerMarks } from './provider-mark';
+import { ModelPicker } from './model-picker';
 import { deriveThreadTitle } from './thread-title';
 
 export type ThreadSetup = {
@@ -28,6 +27,7 @@ type Props = {
   onSetupChange: (setup: ThreadSetup) => void;
   computers: Computer[];
   statuses: ProviderStates;
+  onRefreshProvider: (provider: Provider) => void;
   busyReason: string;
   onStart: (input: CreateSessionInput, text: string) => Promise<void>;
 };
@@ -39,6 +39,7 @@ export function NewThread({
   onSetupChange,
   computers,
   statuses,
+  onRefreshProvider,
   busyReason,
   onStart,
 }: Props) {
@@ -156,17 +157,22 @@ export function NewThread({
                 {pending ? 'Starting…' : blockedReason}
               </span>
               <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className="inline-flex h-7 items-center gap-1.5 px-2 text-xs"
-                  title={`${setup.provider} · ${modelLabel(model || setup.model)}`}
-                >
-                  <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
-                    {providerMarks[setup.provider]}
-                  </span>
-                  <span className="font-medium">
-                    {model ? modelLabel(model) : 'No model'}
-                  </span>
-                </span>
+                <ModelPicker
+                  provider={setup.provider}
+                  model={model}
+                  statuses={statuses}
+                  disabled={pending}
+                  onChange={(provider, nextModel) =>
+                    onSetupChange({
+                      ...setup,
+                      provider,
+                      model: nextModel,
+                      mode:
+                        provider === 'Claude Code' ? 'read-only' : setup.mode,
+                    })
+                  }
+                  onRefreshProvider={onRefreshProvider}
+                />
                 <Button
                   type="submit"
                   size="icon-sm"

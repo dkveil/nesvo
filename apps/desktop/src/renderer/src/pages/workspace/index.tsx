@@ -1030,6 +1030,9 @@ export function Workspace() {
               onSetupChange={setThreadSetup}
               computers={store.computers}
               statuses={store.providerStates(threadSetup.hostId)}
+              onRefreshProvider={provider =>
+                void store.refreshProvider(provider, threadSetup.hostId)
+              }
               busyReason={threadBusyReason}
               onStart={startThread}
             />
