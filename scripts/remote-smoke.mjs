@@ -127,6 +127,10 @@ const remoteActors = pids =>
     "const f=require('node:fs');console.log(JSON.stringify(JSON.parse(process.argv[1]).map(pid=>{try{process.kill(pid,0);return f.readFileSync('/proc/'+pid+'/environ','utf8').split('\\0').includes('NESVO_DATA_DIR=/var/lib/nesvo')}catch{return false}})))",
     [JSON.stringify(pids)],
   );
+const remoteBridgeCommands = () =>
+  remoteJson(
+    "const f=require('node:fs');const out=[];for(const pid of f.readdirSync('/proc').filter(v=>/^\\d+$/.test(v))){try{const a=f.readFileSync('/proc/'+pid+'/cmdline','utf8').split('\\0').slice(0,-1);if(a[2]==='connect'&&a[1]==='/workspace/apps/host/dist/main.js')out.push(a)}catch{}}console.log(JSON.stringify(out))",
+  );
 const hostSnapshot = hostId =>
   page.evaluate(
     async hostId => ({
@@ -537,9 +541,26 @@ try {
     port,
     identityFile,
     knownHostsFile,
+    nodePath: '/usr/local/bin/node',
     entryPath: '/workspace/apps/host/dist/main.js',
     runtimeDirectory: '/run/nesvo-host',
   };
+  for (const nodePath of [
+    'node',
+    '/usr/local/bin/node --version',
+    "/usr/local/bin/node'",
+    '/usr/local/bin/node;id',
+    '/usr/local/bin/$(id)',
+    '/usr/local/bin/no\nde',
+  ])
+    await assert.rejects(
+      page.evaluate(input => window.nesvo.addComputer(input), {
+        ...target,
+        nodePath,
+      }),
+      /absolute Linux path/,
+    );
+  assert.equal((await computers()).length, 1);
   const remote = await page.evaluate(
     input => window.nesvo.addComputer(input),
     target,
@@ -554,6 +575,9 @@ try {
   assert.equal(await readFile(knownHostsFile, 'utf8'), '');
   await writeFile(knownHostsFile, correctHostRecord);
   await connectRemote();
+  assert.deepEqual(await remoteBridgeCommands(), [
+    ['/usr/local/bin/node', target.entryPath, 'connect'],
+  ]);
   const localUsage = await page.evaluate(() =>
     window.nesvo.providerUsage({ provider: 'Codex' }),
   );

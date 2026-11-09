@@ -16,6 +16,16 @@ const remotePathSchema = pathSchema.refine(
   'Use an absolute Linux path.',
 );
 
+const remoteExecutablePathSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(1024)
+  .regex(
+    /^(?:\/[A-Za-z0-9._+@=:,%-]+)+$/,
+    'Use an absolute Linux path without spaces, quotes or shell characters.',
+  );
+
 export const sshComputerInputSchema = z.strictObject({
   name: z.string().trim().min(1).max(80),
   hostname: z
@@ -39,6 +49,7 @@ export const sshComputerInputSchema = z.strictObject({
   port: z.number().int().min(1).max(65535).default(22),
   identityFile: pathSchema.optional(),
   knownHostsFile: pathSchema.optional(),
+  nodePath: remoteExecutablePathSchema.optional(),
   entryPath: remotePathSchema,
   runtimeDirectory: remotePathSchema,
 });

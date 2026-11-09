@@ -61,7 +61,7 @@ export function spawnSshBridge(
   const command = [
     'exec /usr/bin/env',
     ...environment.map(shellArgument),
-    'node',
+    shellArgument(target.nodePath ?? 'node'),
     shellArgument(target.entryPath),
     'connect',
   ].join(' ');

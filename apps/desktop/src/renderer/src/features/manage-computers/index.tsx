@@ -45,6 +45,7 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
     port: '22',
     entryPath: '',
     runtimeDirectory: '',
+    nodePath: '',
     identityFile: '',
     knownHostsFile: '',
   });
@@ -68,6 +69,7 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
       port: Number(fields.port),
       entryPath: fields.entryPath,
       runtimeDirectory: fields.runtimeDirectory,
+      ...(fields.nodePath.trim() ? { nodePath: fields.nodePath.trim() } : {}),
       ...(fields.username.trim() ? { username: fields.username.trim() } : {}),
       ...(fields.identityFile.trim()
         ? { identityFile: fields.identityFile.trim() }
@@ -233,6 +235,9 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
                     {computer.ssh && (
                       <>
                         <p>Host entry: {computer.ssh.entryPath}</p>
+                        {computer.ssh.nodePath && (
+                          <p>Node executable: {computer.ssh.nodePath}</p>
+                        )}
                         <p>
                           Runtime directory: {computer.ssh.runtimeDirectory}
                         </p>
@@ -274,6 +279,11 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
               '/home/user/.nesvo-runtime',
               true,
             )}
+            {field(
+              'nodePath',
+              'Node executable',
+              'Optional, for example /usr/bin/node',
+            )}
             <details className="text-xs">
               <summary className="cursor-pointer text-muted-foreground">
                 Advanced SSH options
@@ -292,8 +302,9 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
               </div>
             </details>
             <p className="text-xs leading-5 text-muted-foreground">
-              Requires an installed, running Linux host and Node on the remote
-              PATH. Credentials and local files are not uploaded.
+              Requires an installed, running Linux host and Node, from the path
+              above or the remote PATH. Credentials and local files are not
+              uploaded.
             </p>
             <div className="flex justify-end gap-2">
               <Button
