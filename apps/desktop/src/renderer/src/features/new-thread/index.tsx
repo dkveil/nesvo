@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { ArrowUp, FolderOpen, Lock, Monitor, Pencil } from 'lucide-react';
+import { ArrowUp, Lock, Pencil } from 'lucide-react';
 import type { Computer, CreateSessionInput } from '@nesvo/contracts';
 import {
   directoryLabel,
@@ -11,6 +11,8 @@ import {
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
 import { ComposerChip } from './composer-chip';
+import { HostPicker } from './host-picker';
+import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
 import { deriveThreadTitle } from './thread-title';
 
@@ -28,6 +30,7 @@ type Props = {
   computers: Computer[];
   statuses: ProviderStates;
   onRefreshProvider: (provider: Provider) => void;
+  onManageComputers: () => void;
   busyReason: string;
   onStart: (input: CreateSessionInput, text: string) => Promise<void>;
 };
@@ -40,12 +43,14 @@ export function NewThread({
   computers,
   statuses,
   onRefreshProvider,
+  onManageComputers,
   busyReason,
   onStart,
 }: Props) {
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [locationOpen, setLocationOpen] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const computer = computers.find(item => item.id === setup.hostId);
   const connected = computer?.status === 'connected';
@@ -131,7 +136,13 @@ export function NewThread({
                 or start without a project
               </button>
             ) : (
-              'Work starts in an isolated folder on this computer.'
+              <button
+                type="button"
+                className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => setLocationOpen(true)}
+              >
+                or choose a project folder
+              </button>
             )}
           </p>
         </header>
@@ -187,15 +198,21 @@ export function NewThread({
             </div>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-1 px-1">
-            <ComposerChip disabled title="Run on">
-              <Monitor />
-              <span className="truncate">{computer?.name ?? 'Local'}</span>
-              {!connected && <span>· Offline</span>}
-            </ComposerChip>
-            <ComposerChip disabled title={setup.directory || 'Isolated folder'}>
-              <FolderOpen />
-              <span className="truncate">{project || 'Isolated folder'}</span>
-            </ComposerChip>
+            <HostPicker
+              computers={computers}
+              hostId={setup.hostId}
+              disabled={pending}
+              onChange={hostId => onSetupChange({ ...setup, hostId })}
+              onManageComputers={onManageComputers}
+            />
+            <LocationPicker
+              directory={setup.directory}
+              computerName={computer?.name ?? 'this computer'}
+              disabled={pending}
+              open={locationOpen}
+              onOpenChange={setLocationOpen}
+              onChange={directory => onSetupChange({ ...setup, directory })}
+            />
             <div className="flex-1" />
             <ComposerChip disabled title="Permissions">
               {setup.mode === 'read-only' ? <Lock /> : <Pencil />}

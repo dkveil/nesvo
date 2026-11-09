@@ -1033,6 +1033,7 @@ export function Workspace() {
               onRefreshProvider={provider =>
                 void store.refreshProvider(provider, threadSetup.hostId)
               }
+              onManageComputers={() => setComputersOpen(true)}
               busyReason={threadBusyReason}
               onStart={startThread}
             />
