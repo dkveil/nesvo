@@ -40,7 +40,13 @@ const metroPort = Number(
     ? new URL(expoUrl).port
     : (process.env.NESVO_MOBILE_METRO_PORT ?? '8095'),
 );
-assert.ok(Number.isInteger(metroPort) && metroPort > 0 && metroPort !== 8789);
+assert.ok(
+  Number.isInteger(metroPort) &&
+    metroPort > 0 &&
+    metroPort <= 65535 &&
+    metroPort !== 8789,
+  'Metro port must be an integer from 1 to 65535 other than 8789',
+);
 const sdk =
   process.env.ANDROID_HOME ??
   join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk');
