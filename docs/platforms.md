@@ -1,5 +1,29 @@
 # Platform verification
 
+## R4 actual VPS: desktop flow
+
+On November 9, the built desktop on this Windows PC connected over verified SSH to the `nesvo-host-r4` instance on the actual VPS and ran real Codex and Claude Code work there. Windows and Linux evidence are recorded separately below. Screenshots, timestamps and the redacted command log are kept outside this public repository.
+
+### Windows (desktop)
+
+Windows 11 Pro 10.0.26200 ran the built application with Electron 45.2.3 / embedded Node 24.22.2 and an isolated, temporary data directory; the SSH client was the system OpenSSH for Windows 9.5p2. A dedicated ed25519 key, created for this stage, was authorized on the VPS with `restrict` and an expiry date. The computer was added through Computers with explicit Identity file and Known hosts file fields. With a wrong host key in that file the connection was rejected as a changed host identification and the file was not rewritten; with the recorded host keys it connected to the expected instance ID. The `restrict` key options did not affect the stdin/stdout bridge.
+
+A supervised Codex session (Workspace edits, Codex default resolved to gpt-6.1-sol) used a new empty working directory. Text streamed in visible increments. Each shell command raised one native command approval in the conversation, with Allow once and Deny, separate from the Inbox saved-result row with Accept result and Request changes. The allowed write appeared on the VPS disk; the denied write did not, and the provider reported the decline. Stop ended a running turn in about 1.4 seconds.
+
+The desktop was then closed while an approved command was running. Reopened, it showed the VPS and session as offline with the last known Working state and disabled controls, not as stopped work. After Connect, it loaded a newer revision with the completed turn and its new saved result version. Operator messages, approvals, Stop outcomes and review decisions were unchanged; nothing was replayed.
+
+Provider limits for the VPS accounts were read before the Claude task: Claude weekly 30% used and Fable 50% used, both resetting November 15, and Codex weekly 96% used. A read-only Claude Code session in the same directory, with the default model resolved to claude-opus-5-5, ran one search and two reads and correctly quoted both files. This is a successful real Claude task on the VPS, not a limit error or fixture output.
+
+### Linux (host)
+
+The VPS runs Ubuntu 26.04.1 LTS, kernel 7.0.0-42, x86_64. The service runs on Node 24.22.2. The SSH bridge uses the account's noninteractive `node`, a system-wide Node 26.12.1 outside the supported 24.x runtime. The owner accepted this as a recorded deviation for this stage; a later stage adds a Node path for SSH computers. Codex CLI 0.167.0 and Claude Code 2.1.311 used their existing logins on the host.
+
+All provider effects were checked over SSH on the VPS disk and process table. The first real Stop exposed a defect: Codex runs an approved command in a sandbox that starts a new session, so signalling the provider's process group left the sandbox and its `sleep` running under the service. That leftover was ended by its exact PID. Commit b36164d snapshots the owned provider's descendants on Linux and signals them with the group; only processes descending from the host's own provider process are signalled. A Linux Docker run of the host and daemon cases with the fixture holding its child in a separate session failed with leaked owned PIDs before the fix and passed after it. The rebuilt bundle was deployed only to the `nesvo-host-r4` instance and only that service was restarted; the repeated real Stop left no provider, sandbox or command process. That restart showed the desktop's existing Connection lost state until Connect, with the same instance ID.
+
+While the desktop was closed, the running turn completed on the VPS and wrote its file. The Codex sandbox also created empty `.agents`, `.aws`, `.codex` and `.git` directories in the working directory.
+
+Not verified here: reboot or logout persistence, the macOS or Linux desktop, and a Codex turn that edits files through patches instead of shell commands.
+
 ## D66 repeatable Android run
 
 On November 9, the native mobile scenario passed three consecutive uninterrupted runs on the dedicated `Nesvo_D66` AVD (Android 16 / API 36, x86_64) with a local development build of `apps/mobile-client`. Each run covered pairing, history and streaming, a phone message, operation approval and denial, worker decisions, gateway disconnect while provider processes stayed alive, reconnect without extra turns, Stop, a forced cold restart with SecureStore restoration, device revocation and removal of the exact connection. Providers were the existing Codex fixtures; no real provider work was involved.
