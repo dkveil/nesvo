@@ -17,6 +17,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {
+  directoryLabel,
   errorDetail,
   providers,
   providerStatusLabel,
@@ -718,16 +719,39 @@ export function Workspace() {
               <ArrowLeft />
             </Button>
           )}
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <h1 className="truncate text-[13px] font-medium">
-              {inbox ? 'Inbox' : (selected?.title ?? 'New session')}
-            </h1>
-            {!inbox && selected && sessionRoleLabel(selected) && (
-              <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                {sessionRoleLabel(selected)}
-              </span>
-            )}
-          </div>
+          <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-1">
+            <ol className="flex min-w-0 items-center gap-2 text-[13px]">
+              {!inbox && selected && (
+                <>
+                  <li
+                    className="hidden max-w-40 shrink-0 truncate font-medium text-muted-foreground sm:block"
+                    title={selected.directory}
+                  >
+                    {directoryLabel(selected.directory)}
+                  </li>
+                  <li
+                    aria-hidden="true"
+                    className="hidden text-muted-foreground/60 sm:block"
+                  >
+                    /
+                  </li>
+                </>
+              )}
+              <li
+                aria-current="page"
+                className="flex min-w-0 items-center gap-3"
+              >
+                <h1 className="truncate text-[13px] font-medium">
+                  {inbox ? 'Inbox' : (selected?.title ?? 'New session')}
+                </h1>
+                {!inbox && selected && sessionRoleLabel(selected) && (
+                  <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                    {sessionRoleLabel(selected)}
+                  </span>
+                )}
+              </li>
+            </ol>
+          </nav>
           {!inbox && selected && (
             <span
               className="max-w-32 truncate text-[11px] text-muted-foreground"
