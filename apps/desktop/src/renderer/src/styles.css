@@ -26,6 +26,18 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-success-foreground: var(--success-foreground);
+  --color-info-foreground: var(--info-foreground);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-error-foreground: var(--error-foreground);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 }
 
 :root {
@@ -49,6 +61,22 @@
   --border: #1c1c1c;
   --input: #2a2a2a;
   --ring: #737373;
+  --sidebar: #080808;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-row-hover: rgb(255 255 255 / 5%);
+  --sidebar-row-selected: rgb(255 255 255 / 8%);
+  --sidebar-border: var(--border);
+  --sidebar-width: 14rem;
+  --sidebar-inset: 0.5rem;
+  --sidebar-row-inset: 0.625rem;
+  --shell-topbar-height: 2.75rem;
+  --shell-gutter: 0.75rem;
+  --control-radius: 0.5rem;
+  --success-foreground: #4ade80;
+  --info-foreground: #60a5fa;
+  --warning-foreground: #fbbf24;
+  --error-foreground: #f87171;
 }
 
 @media (prefers-reduced-motion: reduce) {
