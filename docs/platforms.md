@@ -1,5 +1,11 @@
 # Platform verification
 
+## N1 Node executable for SSH computers
+
+On November 9, the built desktop on this Windows PC (Electron 45.2.3, system OpenSSH, isolated temporary data directory) connected to the `nesvo-host-r4` instance on the actual VPS with the new optional Node executable field. With the field set to the Node 24.22.2 path from the unit's ExecStart, the VPS process table showed the bridge as `<that path> .../main.mjs connect` and the connection reached `connected`. With the field empty, the same computer connected as before and the bridge ran as `node .../main.mjs connect`, which resolves to the account's noninteractive Node 26.12.1. Nothing on the VPS was restarted or changed; the unit and daemon were only observed, and an unrelated bridge from another client was left alone.
+
+The isolated Docker SSH scenario (`bun run smoke:remote`) passed on this PC with the field set. It also rejects relative paths and paths with spaces, quotes, `;`, `$(` or newlines before a computer is saved, and checks in the container's process table that the bridge was started with the absolute Node path. Saved computers without the field parse unchanged, so no migration was needed. macOS and Linux desktops were not verified.
+
 ## R4 actual VPS: desktop flow
 
 On November 9, the built desktop on this Windows PC connected over verified SSH to the `nesvo-host-r4` instance on the actual VPS and ran real Codex and Claude Code work there. Windows and Linux evidence are recorded separately below. Screenshots, timestamps and the redacted command log are kept outside this public repository.
