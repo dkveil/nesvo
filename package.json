@@ -30,6 +30,7 @@
     "package:dir": "bun run --cwd apps/desktop package:dir",
     "mobile": "bun run --cwd apps/mobile-client start",
     "mobile:android": "bun run --cwd apps/mobile-client android",
+    "mobile:go": "bun run --cwd apps/mobile-client start:go",
     "mobile:typecheck": "bun run --cwd apps/mobile-client typecheck"
   },
   "trustedDependencies": [

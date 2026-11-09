@@ -20,13 +20,26 @@ import { _electron as electron } from 'playwright';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serial = process.env.NESVO_ANDROID_SERIAL;
-const expoUrl = process.env.NESVO_MOBILE_EXPO_URL ?? process.env.NESVO_EXPO_URL;
 assert.match(serial ?? '', /^emulator-\d+$/, 'Set NESVO_ANDROID_SERIAL');
-assert.ok(expoUrl, 'Set NESVO_MOBILE_EXPO_URL to the owned Metro launch URL');
-const launchUrl = new URL(expoUrl);
-assert.equal(launchUrl.protocol, 'exp:');
-assert.ok(['127.0.0.1', 'localhost'].includes(launchUrl.hostname));
-const metroPort = Number(launchUrl.port);
+const client = process.env.NESVO_MOBILE_CLIENT ?? 'development';
+assert.ok(
+  ['development', 'expo-go'].includes(client),
+  'NESVO_MOBILE_CLIENT must be development or expo-go',
+);
+const appPackage =
+  client === 'expo-go' ? 'host.exp.exponent' : 'dev.dkveil.nesvomobile';
+const expoUrl = process.env.NESVO_MOBILE_EXPO_URL ?? process.env.NESVO_EXPO_URL;
+if (client === 'expo-go') {
+  assert.ok(expoUrl, 'Set NESVO_MOBILE_EXPO_URL to the owned Metro launch URL');
+  const launchUrl = new URL(expoUrl);
+  assert.equal(launchUrl.protocol, 'exp:');
+  assert.ok(['127.0.0.1', 'localhost'].includes(launchUrl.hostname));
+}
+const metroPort = Number(
+  client === 'expo-go'
+    ? new URL(expoUrl).port
+    : (process.env.NESVO_MOBILE_METRO_PORT ?? '8095'),
+);
 assert.ok(Number.isInteger(metroPort) && metroPort > 0 && metroPort !== 8789);
 const sdk =
   process.env.ANDROID_HOME ??
@@ -56,6 +69,7 @@ let paired = false;
 const pageErrors = [];
 let screen;
 const phase = value => console.log(JSON.stringify({ phase: value }));
+const launchTimeout = 120_000;
 
 function command(
   binary,
@@ -372,7 +386,7 @@ async function openPairForm() {
   assert.fail('Android could not return to its pairing screen');
 }
 
-async function dismissExpoMenu() {
+async function dismissExpoMenu(milliseconds) {
   const values = await waitFor(
     hierarchy,
     values =>
@@ -382,6 +396,7 @@ async function dismissExpoMenu() {
         findNode(values, label, { enabled: false }),
       ),
     'Android did not display the mobile application',
+    milliseconds,
   );
   const close = findNode(values, 'Close');
   if (!findNode(values, 'React Native dev menu', { enabled: false }) || !close)
@@ -396,6 +411,23 @@ async function dismissExpoMenu() {
       ),
     'Expo Go developer menu stayed open',
   );
+}
+
+async function launchApplication() {
+  await adb([
+    'shell',
+    client === 'expo-go'
+      ? `am start -W -a android.intent.action.VIEW -d ${shellQuote(expoUrl)} ${appPackage}`
+      : `am start -W -n ${appPackage}/.MainActivity`,
+  ]);
+  await dismissExpoMenu(launchTimeout);
+}
+
+async function foregroundActivity() {
+  const state = (
+    await adb(['shell', 'dumpsys', 'activity', 'activities'])
+  ).stdout.toString('utf8');
+  return /topResumedActivity=.*?\{[^}]*\s(\S+\/\S+)/.exec(state)?.[1] ?? null;
 }
 
 async function screenshot(filename) {
@@ -496,6 +528,13 @@ try {
   ].at(-1);
   assert.ok(size);
   screen = { width: Number(size[1]), height: Number(size[2]) };
+  assert.match(
+    (
+      await adb(['shell', 'pm', 'path', appPackage], { allowFailure: true })
+    ).stdout.toString('utf8'),
+    /^package:/,
+    `Install ${appPackage} on the emulator before the scenario`,
+  );
   const gatewayPort = await freePort();
   await reverse(metroPort);
   await mkdir(join(directory, '.git'));
@@ -577,11 +616,9 @@ try {
       pairing.link.startsWith('nesvo://pair#'),
     true,
   );
-  await adb([
-    'shell',
-    `am start -W -a android.intent.action.VIEW -d ${shellQuote(expoUrl)} host.exp.exponent`,
-  ]);
-  await dismissExpoMenu();
+  if (client === 'development')
+    await adb(['shell', 'am', 'force-stop', appPackage]);
+  await launchApplication();
   await openPairForm();
   await fill('Pairing link', pairing.link);
   await fill('Device name', 'D66 emulator fixture');
@@ -807,17 +844,13 @@ try {
   phase('restoring-native-secure-store');
   const beforeReopen = await sessions();
   const turnsBeforeReopen = await turns();
-  await adb(['shell', 'am', 'force-stop', 'host.exp.exponent']);
+  await adb(['shell', 'am', 'force-stop', appPackage]);
   await waitFor(
     () => page.evaluate(() => window.nesvo.mobileStatus()),
     value => value.clients === 0,
     'Stopped Android app retained a gateway connection',
   );
-  await adb([
-    'shell',
-    `am start -W -a android.intent.action.VIEW -d ${shellQuote(expoUrl)} host.exp.exponent`,
-  ]);
-  await dismissExpoMenu();
+  await launchApplication();
   await tap('Connections');
   await scrollTo(`connection-${gateway.serverId}`);
   await node(`connection-${gateway.serverId}`);
@@ -856,6 +889,8 @@ try {
   evidence = {
     result: 'passed',
     surface: 'Android emulator native UI and isolated Electron',
+    client,
+    appPackage,
     serial,
     android: (
       await adb(['shell', 'getprop', 'ro.build.version.release'])
@@ -899,6 +934,8 @@ try {
         join(screenshotDirectory, 'failure-state.json'),
         JSON.stringify(
           {
+            client,
+            foreground: await foregroundActivity().catch(() => null),
             processes,
             sessions: sessions.map(value => ({
               id: value.id,
