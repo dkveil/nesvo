@@ -1851,6 +1851,20 @@ try {
     .fill('nonexistent session');
   await page.getByText('No matching sessions.').waitFor();
   await page.getByRole('textbox', { name: 'Search sessions' }).fill('');
+  const sidebarToggle = page.getByRole('button', {
+    name: 'Toggle sidebar',
+    exact: true,
+  });
+  await sidebarToggle.click();
+  await navigation.waitFor({ state: 'hidden' });
+  assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'false');
+  await page.keyboard.press('Control+b');
+  await navigation.waitFor({ state: 'visible' });
+  assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'true');
+  await page
+    .getByRole('navigation', { name: 'Breadcrumb', exact: true })
+    .getByRole('heading', { name: 'Prototype analysis', level: 1 })
+    .waitFor();
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(720, 700),
   );
