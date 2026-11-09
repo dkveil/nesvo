@@ -1,5 +1,32 @@
 # Platform verification
 
+## D66 mobile over a temporary public HTTPS tunnel
+
+On November 9, the local Android development build on the dedicated `Nesvo_D66` AVD tried to reach the gateway of the built desktop on this Windows PC only through a temporary Cloudflare quick tunnel (`trycloudflare.com`, no account, no domain), with its publicly trusted certificate. The owner approved the tunnel for this test only. It ran from 21:08:36 to 21:19:57 UTC (22:08:36 to 22:19:57 Europe/Warsaw); after it was stopped, three requests to its URL returned HTTP 530 with Cloudflare's tunnel error page. The tunnel URL is kept outside this public repository.
+
+The run used `cloudflared` 2026.10.7, the signed Windows binary from Cloudflare's GitHub releases, started as a quick tunnel to the gateway port, never installed as a service and deleted afterwards. The desktop ran with a fresh data directory, `NESVO_MOBILE_BIND=127.0.0.1`, the tunnel's HTTPS origin as `NESVO_MOBILE_PUBLIC_URL` and `NESVO_MOBILE_TRUSTED_PROXY=1`; `netstat` showed only the loopback listener. The AVD had no user CA installed and no ADB reverse rule for the gateway. The desktop connected to the `nesvo-host-r4` instance on the actual VPS with the Node executable field, and a read-only Claude Code session was created there.
+
+| Step                                    | Result                                                                                                                                                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pair over the public HTTPS URL          | Passed. The one-time `https://` link paired; the desktop listed the device and its authenticated stream                                                                                                               |
+| Choose the VPS computer and the session | Blocked by quick-tunnel stream buffering. The phone stayed on Connecting and Refreshing computers and history, because the initial snapshot on the event stream never arrived                                         |
+| Live activity and a phone message       | Blocked by quick-tunnel stream buffering. No message was sent and no provider turn ran                                                                                                                                |
+| Stop of a running Claude turn           | Blocked by quick-tunnel stream buffering                                                                                                                                                                              |
+| Background and return                   | Blocked by quick-tunnel stream buffering                                                                                                                                                                              |
+| Refuse `http://` for the public origin  | Passed. A pairing link with the tunnel host over `http://` was rejected by the app before any request; the gateway recorded no new device                                                                             |
+| Revoke                                  | Passed. Revoking on the desktop ended the stream; the tunnel then delivered the buffered snapshot and the revocation error together, and the phone showed the device as revoked. The phone then forgot the connection |
+
+Measurements of the buffering:
+
+- Event stream through the tunnel: HTTP 200 with the `application/x-ndjson` headers after about 0.3 seconds, then 0 bytes in 12 seconds with `curl` and in 50 seconds with `fetch`, although the gateway writes the snapshot immediately and a heartbeat every 15 seconds. The same request on the loopback listener returned the 14.7 KB snapshot within 1 ms.
+- A temporary test server on the same port, with Phone access disabled, wrote six 220-byte lines, one per second. Through the tunnel each of `application/x-ndjson` (with and without `charset`), `text/event-stream` and `application/json` arrived as one chunk after about 6.3 seconds, when the response ended. `curl` over HTTP/1.1 with `Accept-Encoding: identity` behaved the same.
+- With 70 KB lines, the first bytes arrived after about 2.5 seconds, once roughly 140 KB had been written, and the rest then streamed. Events and snapshots below that size are held until the response ends.
+- A public streaming endpoint reached from the same PC delivered its first byte after 0.4 seconds and the rest over 4 seconds, so the local network does not buffer. The `cloudflared` source flushes `application/x-ndjson` and chunked responses, so the buffer is on the quick-tunnel or edge path; this run did not identify the component.
+
+The mobile app, gateway and host behaved as designed; no code changed. The authenticated WebSocket endpoint was not tried through the tunnel. The smallest product option is to let the phone use that existing endpoint for HTTPS origins, keeping the NDJSON stream for loopback; this changes the mobile transport and needs an owner decision. A buffer-free HTTPS proxy or named tunnel would avoid it without code changes. The temporary curl probe device was revoked; the empty Claude session remains in the VPS instance's history.
+
+Not verified: live activity, a phone message, Stop and background return over a public route, the WebSocket endpoint through a tunnel, a physical device and iOS.
+
 ## D66 mobile over TLS with a VPS session
 
 On November 9, the local Android development build on the dedicated `Nesvo_D66` AVD (Android 16 / API 36, x86_64) followed and controlled sessions on the actual VPS host through the gateway of the built desktop on this Windows PC, over HTTPS. Setup is in [mobile.md](mobile.md#run-over-https-with-a-private-ca-on-the-emulator). Screenshots are kept outside this public repository.
