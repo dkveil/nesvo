@@ -550,6 +550,7 @@ try {
     '/usr/local/bin/node --version',
     "/usr/local/bin/node'",
     '/usr/local/bin/node;id',
+    '/usr/local/bin/node=v24/bin/node',
     '/usr/local/bin/$(id)',
     '/usr/local/bin/no\nde',
   ])

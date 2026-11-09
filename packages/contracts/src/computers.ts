@@ -22,7 +22,7 @@ const remoteExecutablePathSchema = z
   .min(2)
   .max(1024)
   .regex(
-    /^(?:\/[A-Za-z0-9._+@=:,%-]+)+$/,
+    /^(?:\/[A-Za-z0-9._+@:,%-]+)+$/,
     'Use an absolute Linux path without spaces, quotes or shell characters.',
   );
 
