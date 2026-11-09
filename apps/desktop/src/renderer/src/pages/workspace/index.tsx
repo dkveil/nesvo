@@ -96,6 +96,8 @@ export function Workspace() {
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const threadRequest = useRef(false);
+  const navigationVersion = useRef(0);
   const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
     hostId: 'local',
     provider: 'Claude Code',
@@ -280,6 +282,7 @@ export function Workspace() {
     });
   };
   const select = (id: string, targetId = '') => {
+    navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
     setCreating(false);
@@ -290,6 +293,7 @@ export function Workspace() {
     setDetailsOpen(false);
   };
   const openInbox = () => {
+    navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
     setCreating(false);
@@ -297,6 +301,7 @@ export function Workspace() {
     setNavigationOpen(false);
   };
   const openCreate = () => {
+    navigationVersion.current += 1;
     setNavigationOpen(false);
     setDetailsOpen(false);
     setPanel(null);
@@ -396,13 +401,27 @@ export function Workspace() {
   };
   const startThread = async (input: CreateSessionInput, text: string) => {
     const hostId = threadSetup.hostId;
-    if (sendingRef.current) return;
+    if (threadRequest.current || sendingRef.current)
+      throw new Error('Another thread is still starting.');
     if (!store.hostReady(hostId))
       throw new Error('Connect this computer before starting a thread.');
-    const session = await desktopApi(hostId).createSession(input);
-    store.merge([session]);
-    select(entityKey(session));
-    await deliver(session, text, null, () => undefined);
+    threadRequest.current = true;
+    const origin = navigationVersion.current;
+    try {
+      const session = await desktopApi(hostId).createSession(input);
+      store.merge([session]);
+      const key = entityKey(session);
+      draftVersions.current[key] = (draftVersions.current[key] ?? 0) + 1;
+      const version = draftVersions.current[key];
+      setDrafts(previous => ({ ...previous, [key]: text }));
+      if (navigationVersion.current === origin) select(key);
+      await deliver(session, text, null, () => {
+        if ((draftVersions.current[key] ?? 0) === version)
+          setDrafts(previous => ({ ...previous, [key]: '' }));
+      });
+    } finally {
+      threadRequest.current = false;
+    }
   };
   const threadBusyReason =
     store.loading || store.error

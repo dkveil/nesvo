@@ -60,6 +60,20 @@ export function ModelPicker({
     setQuery('');
     setActiveId('');
   };
+  const onProviderKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const index = providers.indexOf(provider);
+    const offset = event.key === 'ArrowDown' ? 1 : -1;
+    const next =
+      providers[(index + offset + providers.length) % providers.length];
+    if (next) {
+      selectProvider(next);
+      document
+        .getElementById(`thread-provider-${providerMarks[next]}`)
+        ?.focus();
+    }
+  };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -126,11 +140,14 @@ export function ModelPicker({
             return (
               <button
                 key={item}
+                id={`thread-provider-${providerMarks[item]}`}
                 type="button"
                 role="radio"
                 aria-checked={item === provider}
                 aria-label={item}
+                tabIndex={item === provider ? 0 : -1}
                 title={providerStatusLabel(item, itemState)}
+                onKeyDown={onProviderKeyDown}
                 onClick={() => selectProvider(item)}
                 className={cn(
                   'relative flex size-9 items-center justify-center rounded-md text-[11px] font-medium tracking-wide text-muted-foreground transition-colors duration-100 outline-none',
