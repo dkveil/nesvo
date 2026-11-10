@@ -600,7 +600,10 @@ try {
   const localComputer = (
     await page.evaluate(() => window.nesvo.listComputers())
   ).find(computer => computer.id === 'local');
-  assert.deepEqual(localComputer.capabilities, ['scheduled-jobs', 'reasoning-effort']);
+  assert.deepEqual(localComputer.capabilities, [
+    'scheduled-jobs',
+    'reasoning-effort',
+  ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
     'save',
@@ -672,6 +675,27 @@ try {
       },
     }),
   );
+  const threadDetailsToggle = page.getByRole('button', {
+    name: 'Thread details',
+    exact: true,
+  });
+  await threadDetailsToggle.click();
+  const threadDetails = page.getByRole('complementary', {
+    name: 'Thread details',
+    exact: true,
+  });
+  assert.equal(
+    await threadDetails
+      .locator('[data-provider-indicator="Claude Code"]')
+      .getAttribute('aria-label'),
+    'Claude Code limits: Weekly, 38.8% remaining',
+  );
+  assert.equal(
+    await threadDetails.locator('[data-provider-indicator]').count(),
+    2,
+  );
+  await threadDetailsToggle.click();
+  await threadDetails.waitFor({ state: 'hidden' });
   await openNewThread();
   await page.waitForFunction(
     async () => (await window.nesvo.claudeStatus()).status === 'ready',
@@ -1996,6 +2020,20 @@ try {
     .fill('nonexistent session');
   await page.getByText('No matching sessions.').waitFor();
   await page.getByRole('textbox', { name: 'Search sessions' }).fill('');
+  const sidebarResizer = page.getByRole('separator', {
+    name: 'Resize sidebar',
+    exact: true,
+  });
+  assert.equal(await sidebarResizer.getAttribute('aria-valuenow'), '256');
+  await sidebarResizer.focus();
+  await sidebarResizer.press('Home');
+  assert.equal(await sidebarResizer.getAttribute('aria-valuenow'), '208');
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('nesvo.sidebar-width.v1')),
+    '208',
+  );
+  await sidebarResizer.dblclick();
+  assert.equal(await sidebarResizer.getAttribute('aria-valuenow'), '256');
   const sidebarToggle = page.getByRole('button', {
     name: 'Toggle sidebar',
     exact: true,
