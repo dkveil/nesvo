@@ -2124,7 +2124,10 @@ try {
       await indicator.getAttribute('aria-label'),
       `${provider} limits: unavailable`,
     );
-    assert.ok((await indicator.innerText()).includes('—'));
+    assert.equal(
+      await indicator.getAttribute('data-usage-state'),
+      'unavailable',
+    );
   }
   for (const trace of await readUsageTrace()) {
     providerPids.add(trace.pid);
