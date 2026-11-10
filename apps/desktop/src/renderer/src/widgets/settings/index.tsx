@@ -33,6 +33,11 @@ export function Settings({
   children,
 }: Props) {
   const [query, setQuery] = useState('');
+  const [returnFocus] = useState(() =>
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
   const search = useRef<HTMLInputElement>(null);
   const visible = settingsPages.filter(entry =>
     matchesSettingsPage(entry, query),
@@ -44,6 +49,12 @@ export function Settings({
       <DialogContent
         showCloseButton={false}
         aria-describedby="settings-description"
+        onCloseAutoFocus={event => {
+          if (!returnFocus?.isConnected) return;
+          event.preventDefault();
+          returnFocus.focus();
+        }}
+
         onKeyDown={event => {
           if (
             event.key === '/' &&
