@@ -4,7 +4,9 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { startHost } from './host-client';
 import { ComputerManager } from './computer-manager';
 import { mobileAccess } from './mobile-access';
+import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
+  colorSchemeSchema,
   createSessionSchema,
   decideDelegationSchema,
   decideReviewSchema,
@@ -50,6 +52,7 @@ const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
 void app.whenReady().then(async () => {
   if (!ownsInstance) return;
+  nativeTheme.themeSource = readColorScheme(app.getPath('userData'));
   const host = startHost(join(app.getPath('userData'), 'host'));
   const computers = new ComputerManager(app.getPath('userData'), host);
   const mobile = mobileAccess(app.getPath('userData'), computers);
@@ -116,6 +119,17 @@ void app.whenReady().then(async () => {
   computers.subscribe(event => {
     if (window && !window.isDestroyed())
       window.webContents.send('nesvo:event', event);
+  });
+  ipcMain.handle('nesvo:color-scheme', event => {
+    authorize(event);
+    return nativeTheme.themeSource;
+  });
+  ipcMain.handle('nesvo:set-color-scheme', (event, scheme: unknown) => {
+    authorize(event);
+    const next = colorSchemeSchema.parse(scheme);
+    saveColorScheme(app.getPath('userData'), next);
+    nativeTheme.themeSource = next;
+    return next;
   });
   ipcMain.handle('nesvo:mobile-status', event => {
     authorize(event);
