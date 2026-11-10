@@ -1075,6 +1075,27 @@ test(
       'stopped',
     );
     await processesGone(held.pids, ownedPids);
+    if (process.platform === 'linux') {
+      const exiting = (await host.request('create-session', create(workspace)))
+        .session;
+      const exitingRun = (
+        await host.request('send-message', {
+          sessionId: exiting.id,
+          messageId: randomUUID(),
+          text: 'fixture:hold-exit',
+        })
+      ).session;
+      assertInterruption(
+        await host.event(
+          value =>
+            value.runId === exitingRun.runId && value.status === 'interrupted',
+        ),
+        'provider-disconnected',
+      );
+      const exitingPids = JSON.parse(await readFile(pidFile, 'utf8'));
+      ownedPids.add(exitingPids.pid).add(exitingPids.childPid);
+      await processesGone([exitingPids.pid, exitingPids.childPid], ownedPids);
+    }
     for (const text of ['fixture:fail', 'fixture:result-fail']) {
       const failedRun = (
         await host.request('send-message', {

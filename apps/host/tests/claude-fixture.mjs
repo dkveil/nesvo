@@ -282,7 +282,7 @@ if (args.length === 1 && args[0] === '--version') {
     });
   };
   const command = prompt.split('\n')[0].trim();
-  if (command === 'fixture:hold') {
+  if (command === 'fixture:hold' || command === 'fixture:hold-exit') {
     const child = spawn(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],
@@ -290,6 +290,7 @@ if (args.length === 1 && args[0] === '--version') {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: 'ignore',
         windowsHide: true,
+        detached: process.platform === 'linux',
       },
     );
     await new Promise((resolve, reject) => {
@@ -303,6 +304,10 @@ if (args.length === 1 && args[0] === '--version') {
     );
     start('Fixture is waiting.');
     startRead();
+    if (command === 'fixture:hold-exit') {
+      await setTimeout(2500);
+      process.exit(73);
+    }
     setInterval(() => {}, 1000);
   } else if (command === 'fixture:fail') {
     emit({
