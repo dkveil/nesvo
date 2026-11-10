@@ -9,6 +9,11 @@ import { type ProviderUsage } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
 import { claudeUsageResult } from './claude-usage';
+import {
+  descendantScanMs,
+  recordDescendants,
+  signalRecorded,
+} from './process-tree';
 
 export type ClaudeStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -151,6 +156,14 @@ function ownProcess(
     processError = error;
     void stop();
   });
+  const descendants = new Map<number, number>();
+  const recordOwnedDescendants = () => {
+    if (child.pid && !hasExited) recordDescendants(child.pid, descendants);
+  };
+  const descendantScan =
+    process.platform === 'linux' && child.pid
+      ? setInterval(recordOwnedDescendants, descendantScanMs).unref()
+      : null;
   const signalGroup = (signal: NodeJS.Signals) => {
     if (!child.pid) return;
     try {
@@ -160,6 +173,7 @@ function ownProcess(
         child.kill(signal);
       }
     }
+    signalRecorded(descendants, signal);
   };
   function stop(): Promise<void> {
     cleanup ??= (async () => {
@@ -173,6 +187,7 @@ function ownProcess(
           )
             await taskkill(child.pid);
         } else {
+          recordOwnedDescendants();
           signalGroup('SIGTERM');
           await Promise.race([closed, wait(300)]);
           signalGroup('SIGKILL');
@@ -197,10 +212,12 @@ function ownProcess(
   }
   child.once('exit', () => {
     hasExited = true;
+    if (descendantScan) clearInterval(descendantScan);
     void stop();
   });
   child.once('close', code => {
     hasClosed = true;
+    if (descendantScan) clearInterval(descendantScan);
     closeResolve({ code, error: processError, confirmed: true });
   });
   return { child, closed, stop };

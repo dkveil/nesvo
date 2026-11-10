@@ -14,7 +14,11 @@ import {
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
-import { recordDescendants, signalRecorded } from './process-tree';
+import {
+  descendantScanMs,
+  recordDescendants,
+  signalRecorded,
+} from './process-tree';
 
 export type CodexStatus = {
   status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
@@ -66,7 +70,6 @@ const maxTextBytes = 2_000_000;
 const probeTimeoutMs = 10_000;
 const runTimeoutMs = 10 * 60_000;
 const cleanupTimeoutMs = 4_000;
-const descendantScanMs = 1_000;
 const isolatedFeatures = [
   'hooks',
   'plugins',

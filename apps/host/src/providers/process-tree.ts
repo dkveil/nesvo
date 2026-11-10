@@ -1,5 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 
+export const descendantScanMs = 1_000;
+
 type ProcessStat = { parent: number; startTime: number };
 
 function readStat(pid: number): ProcessStat | null {
