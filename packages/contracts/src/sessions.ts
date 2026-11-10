@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { activityLimits, sessionActivitySchema } from './activities';
+import { effortSupportSchema, modelEffortsSchema } from './reasoning-effort';
 import { skillHashSchema, skillReferenceSchema } from './skills';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
@@ -171,9 +172,16 @@ export const claudeStatusSchema = z.strictObject({
   version: z.string().nullable(),
   detail: z.string().nullable(),
   models: z.array(z.strictObject({ id: claudeModelSchema, label: z.string() })),
+  effort: effortSupportSchema,
 });
 export const codexStatusSchema = claudeStatusSchema.extend({
-  models: z.array(z.strictObject({ id: modelSchema, label: z.string() })),
+  models: z.array(
+    z.strictObject({
+      id: modelSchema,
+      label: z.string(),
+      efforts: modelEffortsSchema.nullable(),
+    }),
+  ),
 });
 
 export type Session = z.infer<typeof sessionSchema>;

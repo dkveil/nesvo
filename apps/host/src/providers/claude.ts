@@ -5,7 +5,7 @@ import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { type ProviderUsage } from '@nesvo/contracts';
+import { type ClaudeStatus, type ProviderUsage } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
 import { claudeUsageResult } from './claude-usage';
@@ -14,13 +14,6 @@ import {
   recordDescendants,
   signalRecorded,
 } from './process-tree';
-
-export type ClaudeStatus = {
-  status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
-  version: string | null;
-  detail: string | null;
-  models: { id: string; label: string }[];
-};
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -52,7 +45,7 @@ const models = [
   { id: 'opus', label: 'Opus' },
   { id: 'sonnet', label: 'Sonnet' },
   { id: 'haiku', label: 'Haiku' },
-];
+] satisfies ClaudeStatus['models'];
 const requiredFlags = [
   '--print',
   '--output-format',
@@ -331,6 +324,11 @@ async function inspect(cancelled: () => boolean): Promise<{
     version,
     detail,
     models: state === 'ready' ? models.map(model => ({ ...model })) : [],
+    effort: {
+      status: 'unsupported',
+      reason:
+        'Nesvo runs Claude Code without a reasoning effort setting, so the CLI default applies.',
+    },
   });
   try {
     const executable = await executablePath();
