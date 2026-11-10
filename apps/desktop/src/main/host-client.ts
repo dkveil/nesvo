@@ -84,7 +84,9 @@ export function startHost(directory: string) {
           ? 60000
           : method === 'provider-usage'
             ? 40000
-            : method === 'claude-status' || method === 'codex-status'
+            : method === 'claude-status' ||
+                method === 'codex-status' ||
+                method === 'create-session'
               ? 30000
               : 15000,
       );

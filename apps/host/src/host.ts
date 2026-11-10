@@ -189,6 +189,27 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void inspection.finally(() => probes.pending.delete(inspection));
           continue;
         }
+        if (request.method === 'create-session' && request.input.effort) {
+          const creation = sessions
+            .createWithEffort(request.input, probes.controller.signal)
+            .then(session => send({ type: 'session', id: request.id, session }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The session could not be created. Refresh Codex and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(creation);
+          void creation.finally(() => probes.pending.delete(creation));
+          continue;
+        }
         if (request.method === 'decide-review') {
           const decision = sessions
             .decideReview(request.input)

@@ -230,7 +230,9 @@ export function connectSshHost(
           ? 60_000
           : method === 'provider-usage'
             ? 40_000
-            : method === 'claude-status' || method === 'codex-status'
+            : method === 'claude-status' ||
+                method === 'codex-status' ||
+                method === 'create-session'
               ? 30_000
               : 15_000,
       );

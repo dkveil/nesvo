@@ -1478,6 +1478,21 @@ test(
       effort: 'high',
     });
     assert.equal(effortSession.session.effort, 'high');
+    const sessionsBeforeUnsupportedEffort = (
+      await finalHost.request('list-sessions')
+    ).sessions.length;
+    const unsupportedEffort = await finalHost.request('create-session', {
+      ...create(''),
+      provider: 'Codex',
+      model: 'fixture-codex',
+      effort: 'max',
+    });
+    assert.equal(unsupportedEffort.code, 'invalid-request');
+    assert.match(unsupportedEffort.message, /max reasoning effort/);
+    assert.equal(
+      (await finalHost.request('list-sessions')).sessions.length,
+      sessionsBeforeUnsupportedEffort,
+    );
     assert.equal((await createCodex('read-only')).effort, null);
     let effortTarget = effortSession.session;
     for (const text of ['Reason carefully.', 'Continue carefully.']) {
