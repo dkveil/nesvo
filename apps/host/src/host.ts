@@ -301,6 +301,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 branch: request.input.directory
                   ? await readGitBranch(
                       sessions.draftDirectory(request.input.directory),
+                      probes.controller.signal,
                     )
                   : { kind: 'none' },
               };
