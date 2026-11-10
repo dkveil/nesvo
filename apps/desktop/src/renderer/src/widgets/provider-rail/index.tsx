@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import { RefreshCw, UserRound } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { UserRound } from 'lucide-react';
 import { Popover, Tooltip } from 'radix-ui';
 import { cn } from 'cn';
 import { providers, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { UsageDetails } from './usage-details';
+import { ProviderAccounts } from './provider-accounts';
+import { useUsageClock } from './use-usage-clock';
 import { UsageIndicator, type UsageLayout } from './usage-indicator';
 import type { UsageState } from './usage-state';
 
 export type { UsageLayout } from './usage-indicator';
+export { ProviderAccounts } from './provider-accounts';
 
 type Props = {
   hostId: string;
@@ -19,8 +21,6 @@ type Props = {
   layout: UsageLayout;
   popoverSide?: 'bottom' | 'top';
 };
-
-const REFRESH_CLOCK_MS = 15_000;
 
 export function ProviderUsage({
   hostId,
@@ -33,20 +33,8 @@ export function ProviderUsage({
 }: Props) {
   const [selected, setSelected] = useState<Provider | 'all'>('all');
   const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useUsageClock();
   const returnFocus = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    const update = () => {
-      if (document.visibilityState === 'visible') setNow(Date.now());
-    };
-    const timer = window.setInterval(update, REFRESH_CLOCK_MS);
-    document.addEventListener('visibilitychange', update);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', update);
-    };
-  }, []);
-  const loading = providers.some(provider => states[provider].loading);
   const openFrom = (trigger: HTMLButtonElement, provider: Provider) => {
     returnFocus.current = trigger;
     setSelected(provider);
@@ -79,7 +67,7 @@ export function ProviderUsage({
                   onOpen={trigger => openFrom(trigger, provider)}
                 />
               ))}
-            {layout !== 'bars' && (
+            {layout === 'account' && (
               <Popover.Trigger asChild>
                 <Button
                   type="button"
@@ -115,58 +103,26 @@ export function ProviderUsage({
             data-host-id={hostId}
             className="glass-popover z-50 max-h-[min(40rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border p-4 text-popover-foreground"
           >
-            <header className="mb-3 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-sm font-medium">Account and limits</h2>
-                <p
-                  className="mt-0.5 truncate text-xs text-muted-foreground"
-                  title={computerName}
+            <ProviderAccounts
+              hostId={hostId}
+              computerName={computerName}
+              connected={connected}
+              states={states}
+              onRefresh={onRefresh}
+              shown={selected}
+            >
+              {selected !== 'all' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="mb-3 px-0 text-muted-foreground"
+                  onClick={() => setSelected('all')}
                 >
-                  {computerName}
-                  {connected ? '' : ' · Offline'}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Refresh limits"
-                title="Refresh limits"
-                disabled={!connected || loading}
-                onClick={onRefresh}
-              >
-                <RefreshCw
-                  className={cn(
-                    'size-3.5',
-                    loading && 'animate-spin motion-reduce:animate-none',
-                  )}
-                />
-              </Button>
-            </header>
-            {selected !== 'all' && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                className="mb-3 px-0 text-muted-foreground"
-                onClick={() => setSelected('all')}
-              >
-                All accounts
-              </Button>
-            )}
-            <div className="divide-y">
-              {providers
-                .filter(provider => selected === 'all' || selected === provider)
-                .map(provider => (
-                  <UsageDetails
-                    key={provider}
-                    provider={provider}
-                    state={states[provider]}
-                    connected={connected}
-                    now={now}
-                  />
-                ))}
-            </div>
+                  All accounts
+                </Button>
+              )}
+            </ProviderAccounts>
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>

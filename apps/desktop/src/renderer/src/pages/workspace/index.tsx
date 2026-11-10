@@ -23,19 +23,16 @@ import {
   PanelLeft,
   PanelRight,
   Plus,
-  RefreshCw,
   SquareDashed,
 } from 'lucide-react';
 import {
   directoryLabel,
   errorDetail,
-  providers,
   providerStatusLabel,
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
-import { HostStatus } from '@/features/host-status';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
@@ -59,7 +56,13 @@ import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { ThreadDetails } from '@/widgets/thread-details';
-import { ProviderUsage } from '@/widgets/provider-rail';
+import { ProviderAccounts, ProviderUsage } from '@/widgets/provider-rail';
+import {
+  AppearanceSettings,
+  GeneralSettings,
+  Settings,
+  type SettingsPage,
+} from '@/widgets/settings';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { useProviderUsage } from './use-provider-usage';
@@ -121,8 +124,7 @@ export function Workspace() {
     mode: 'read-only',
     directory: '',
   });
-  const [computersOpen, setComputersOpen] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
@@ -711,11 +713,11 @@ export function Workspace() {
     hostName: selectedComputer?.name ?? 'Local',
     onComputers: () => {
       setNavigationOpen(false);
-      setComputersOpen(true);
+      setSettingsPage('computers');
     },
-    onMobile: () => {
+    onSettings: () => {
       setNavigationOpen(false);
-      setMobileOpen(true);
+      setSettingsPage('general');
     },
     pendingActions:
       store.reviews.filter(review => review.status === 'pending').length +
@@ -978,124 +980,32 @@ export function Workspace() {
               <FolderOpen className="size-4" />
             </Button>
           )}
-          <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
-            <SheetTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground"
-                aria-label="Open context"
-                title="Context and connection"
-              >
-                <PanelRight className="size-4" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent className="gap-0 bg-card">
-              <SheetHeader className="border-b px-5 py-4">
-                <SheetTitle className="text-sm">Context</SheetTitle>
-                <SheetDescription className="text-xs">
-                  Session details and computer connection.
-                </SheetDescription>
-              </SheetHeader>
-              <ScrollArea className="min-h-0 flex-1">
-                {!inbox && !creating && selected && (
-                  <SessionDetails session={selected} />
-                )}
-                <section
-                  aria-label="Connection"
-                  className="space-y-5 border-t p-5"
+          {!inbox && !creating && selected && (
+            <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  aria-label="Open context"
+                  title="Session context"
                 >
-                  <h2 className="text-xs font-medium">Connection</h2>
-                  <HostStatus
-                    connection={connection}
-                    name={selectedComputer?.name ?? 'Local'}
-                    local={selectedHostId === 'local'}
-                    onRefresh={() => void store.refresh(selectedHostId)}
-                  />
-                  {selectedComputer?.error && (
-                    <p
-                      role="alert"
-                      className="text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-                    >
-                      {selectedComputer.error}
-                    </p>
-                  )}
-                  {selectedComputer?.lastSyncedAt &&
-                    !store.hostReady(selectedHostId) && (
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        Offline snapshot · last synced{' '}
-                        {new Intl.DateTimeFormat('en', {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        }).format(new Date(selectedComputer.lastSyncedAt))}
-                        . Work may still be running. Reconnecting will not
-                        replay commands.
-                      </p>
-                    )}
-                  {providers.map(provider => {
-                    const state =
-                      store.providerStates(selectedHostId)[provider];
-                    return (
-                      <div key={provider} className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium">
-                            {provider}
-                          </span>
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            aria-label={`Refresh ${provider} status`}
-                            title={`Refresh ${provider} status`}
-                            disabled={state.loading}
-                            onClick={() =>
-                              void store.refreshProvider(
-                                provider,
-                                selectedHostId,
-                              )
-                            }
-                          >
-                            <RefreshCw />
-                          </Button>
-                        </div>
-                        <p
-                          role="status"
-                          className="text-xs text-muted-foreground"
-                        >
-                          {providerStatusLabel(provider, state)}
-                        </p>
-                        {state.error && (
-                          <p
-                            role="alert"
-                            className="text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-                          >
-                            {state.error}
-                          </p>
-                        )}
-                        {state.status?.detail && (
-                          <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
-                            {state.status.detail}
-                          </p>
-                        )}
-                        {state.status?.status === 'unauthenticated' && (
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            Sign in on{' '}
-                            {selectedComputer?.name ?? 'this computer'} from its
-                            terminal with{' '}
-                            <code>
-                              {provider === 'Claude Code'
-                                ? 'claude auth login'
-                                : 'codex login'}
-                            </code>
-                            , then refresh status.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </section>
-              </ScrollArea>
-            </SheetContent>
-          </Sheet>
+                  <PanelRight className="size-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="gap-0 bg-card">
+                <SheetHeader className="border-b px-5 py-4">
+                  <SheetTitle className="text-sm">Context</SheetTitle>
+                  <SheetDescription className="text-xs">
+                    Session details and access.
+                  </SheetDescription>
+                </SheetHeader>
+                <ScrollArea className="min-h-0 flex-1">
+                  <SessionDetails session={selected} />
+                </ScrollArea>
+              </SheetContent>
+            </Sheet>
+          )}
         </header>
         {store.error && (
           <div className="flex max-h-32 shrink-0 flex-wrap items-center gap-3 overflow-y-auto border-b px-5 py-2.5">
@@ -1127,7 +1037,7 @@ export function Workspace() {
               size="sm"
               variant="ghost"
               className="h-6 text-xs text-muted-foreground"
-              onClick={() => setDetailsOpen(true)}
+              onClick={() => setSettingsPage('general')}
             >
               View status
             </Button>
@@ -1157,7 +1067,7 @@ export function Workspace() {
               onRefreshProvider={provider =>
                 void store.refreshProvider(provider, threadSetup.hostId)
               }
-              onManageComputers={() => setComputersOpen(true)}
+              onManageComputers={() => setSettingsPage('computers')}
               busyReason={threadBusyReason}
               hostApi={desktopApi(threadSetup.hostId)}
               onStart={startThread}
@@ -1393,15 +1303,40 @@ export function Workspace() {
             )}
         </main>
       </div>
-      {computersOpen && (
-        <ManageComputers
-          computers={store.computers}
-          api={desktopApi()}
-          onOpenChange={setComputersOpen}
-        />
-      )}
-      {mobileOpen && (
-        <MobileAccess api={desktopApi()} onOpenChange={setMobileOpen} />
+      {settingsPage && (
+        <Settings
+          page={settingsPage}
+          onPageChange={setSettingsPage}
+          onOpenChange={open => {
+            if (!open) setSettingsPage(null);
+          }}
+        >
+          {page =>
+            page === 'general' ? (
+              <GeneralSettings
+                connection={connection}
+                computer={selectedComputer}
+                hostId={selectedHostId}
+                providerStates={store.providerStates(selectedHostId)}
+                onRefreshConnection={() => void store.refresh(selectedHostId)}
+                onRefreshProvider={provider =>
+                  void store.refreshProvider(provider, selectedHostId)
+                }
+              />
+            ) : page === 'appearance' ? (
+              <AppearanceSettings api={desktopApi()} />
+            ) : page === 'computers' ? (
+              <ManageComputers computers={store.computers} api={desktopApi()} />
+            ) : page === 'phone' ? (
+              <MobileAccess api={desktopApi()} />
+            ) : (
+              <ProviderAccounts
+                {...usageProps}
+                className="rounded-lg border bg-card px-4 pt-3 pb-4"
+              />
+            )
+          }
+        </Settings>
       )}
     </div>
   );
