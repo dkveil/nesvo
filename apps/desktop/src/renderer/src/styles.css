@@ -73,6 +73,9 @@
   --shell-topbar-height: 2.75rem;
   --shell-gutter: 0.75rem;
   --control-radius: 0.5rem;
+  --usage-rail-width: 3.25rem;
+  --usage-rail-background: #050505;
+  --usage-ring-track: rgb(255 255 255 / 12%);
   --success-foreground: #4ade80;
   --info-foreground: #60a5fa;
   --warning-foreground: #fbbf24;
