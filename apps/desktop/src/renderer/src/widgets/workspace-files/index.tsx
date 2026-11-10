@@ -420,7 +420,7 @@ export default function WorkspaceFiles({
     <section
       aria-label="Workspace files"
       data-session-id={session.id}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-[#090909] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px] min-[1200px]:shrink-0"
+      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px] min-[1200px]:shrink-0"
     >
       <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5">
         <FolderOpen className="size-4 shrink-0 text-muted-foreground" />

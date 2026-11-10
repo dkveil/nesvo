@@ -343,7 +343,7 @@ export default function SessionSkills(props: Props) {
     <section
       aria-label="Session skills"
       data-session-id={props.session.id}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-[#090909] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[380px] min-[1200px]:shrink-0 min-[1600px]:w-[440px]"
+      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[380px] min-[1200px]:shrink-0 min-[1600px]:w-[440px]"
     >
       <Catalog
         key={`${props.session.id}:${refresh}`}

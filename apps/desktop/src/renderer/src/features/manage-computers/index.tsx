@@ -118,7 +118,7 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
         if (!pending) onOpenChange(value);
       }}
     >
-      <DialogContent className="max-h-[90dvh] overflow-y-auto bg-[#090909] sm:max-w-xl">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto bg-code-background sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Computers</DialogTitle>
           <DialogDescription>

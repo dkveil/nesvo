@@ -22,8 +22,17 @@ import {
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
-nativeTheme.themeSource = 'dark';
-const TITLE_BAR_HEIGHT = 44;
+nativeTheme.themeSource = 'system';
+const TITLE_BAR_HEIGHT = 40;
+const windowColors = () =>
+  nativeTheme.shouldUseDarkColors
+    ? { background: '#000000', symbol: '#f8fafc' }
+    : { background: '#fcfcfc', symbol: '#1f2937' };
+const titleBarOverlay = (): Electron.TitleBarOverlay => ({
+  color: '#01000000',
+  symbolColor: windowColors().symbol,
+  height: TITLE_BAR_HEIGHT,
+});
 const titleBarOptions = (
   platform: NodeJS.Platform,
 ): Electron.BrowserWindowConstructorOptions =>
@@ -32,14 +41,7 @@ const titleBarOptions = (
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 16, y: TITLE_BAR_HEIGHT / 2 - 7 },
       }
-    : {
-        titleBarStyle: 'hidden',
-        titleBarOverlay: {
-          color: '#01000000',
-          symbolColor: '#a3a3a3',
-          height: TITLE_BAR_HEIGHT,
-        },
-      };
+    : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() };
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -67,7 +69,7 @@ void app.whenReady().then(async () => {
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
-      backgroundColor: '#000000',
+      backgroundColor: windowColors().background,
       show: !smokeTest,
       autoHideMenuBar: true,
       ...titleBarOptions(process.platform),
@@ -85,7 +87,15 @@ void app.whenReady().then(async () => {
     next.webContents.session.setPermissionRequestHandler(
       (_contents, _permission, callback) => callback(false),
     );
+    const applyColors = () => {
+      if (next.isDestroyed()) return;
+      next.setBackgroundColor(windowColors().background);
+      if (process.platform !== 'darwin')
+        next.setTitleBarOverlay(titleBarOverlay());
+    };
+    nativeTheme.on('updated', applyColors);
     next.on('closed', () => {
+      nativeTheme.off('updated', applyColors);
       if (window === next) window = null;
     });
     if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
