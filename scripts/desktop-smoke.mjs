@@ -357,7 +357,14 @@ try {
     await input.press('Enter');
     await input.waitFor({ state: 'hidden' });
   };
-  const startThread = async ({ title, provider, model, access, directory }) => {
+  const startThread = async ({
+    title,
+    provider,
+    model,
+    effort,
+    access,
+    directory,
+  }) => {
     await openNewThread();
     if (provider) {
       await newThread
@@ -377,6 +384,27 @@ try {
           .waitFor();
         await search.press('Enter');
       } else await page.keyboard.press('Escape');
+      await modelPicker.waitFor({ state: 'hidden' });
+    }
+    if (effort) {
+      await newThread
+        .getByRole('button', { name: 'Choose model', exact: true })
+        .click();
+      const efforts = modelPicker.getByRole('radiogroup', {
+        name: 'Reasoning effort',
+        exact: true,
+      });
+      assert.equal(
+        await efforts.locator('[data-default]').getAttribute('data-effort'),
+        'medium',
+      );
+      assert.equal(
+        await efforts
+          .locator('[aria-checked="true"]')
+          .getAttribute('data-effort'),
+        'medium',
+      );
+      await efforts.locator(`[data-effort="${effort}"]`).click();
       await modelPicker.waitFor({ state: 'hidden' });
     }
     if (access) {
@@ -589,6 +617,18 @@ try {
     await modelSearch.getAttribute('aria-activedescendant'),
     firstActive,
   );
+  const claudeReasoning = modelPicker.getByRole('group', {
+    name: 'Reasoning',
+    exact: true,
+  });
+  await claudeReasoning
+    .getByText(/without a reasoning effort setting/)
+    .waitFor();
+  assert.equal(
+    await claudeReasoning.getAttribute('data-effort-support'),
+    'unsupported',
+  );
+  assert.equal(await claudeReasoning.getByRole('radio').count(), 0);
   await modelSearch.press('Escape');
   await modelPicker.waitFor({ state: 'hidden' });
   await waitForFocus(modelChip);
@@ -775,7 +815,22 @@ try {
       .inputValue(),
     'Workspace analysis',
   );
+  const branchLocation = join(directory, 'branch-location');
+  await mkdir(join(branchLocation, '.git'), { recursive: true });
+  await writeFile(
+    join(branchLocation, '.git', 'HEAD'),
+    'ref: refs/heads/smoke-branch\n',
+  );
+  const branchChip = newThread.locator('[data-branch-kind]');
+  await chooseLocation(branchLocation);
+  await branchChip.filter({ hasText: 'smoke-branch' }).waitFor();
+  assert.equal(await branchChip.getAttribute('data-branch-kind'), 'branch');
+  assert.equal(
+    await branchChip.getAttribute('title'),
+    'Git branch smoke-branch',
+  );
   await chooseLocation(directory);
+  await branchChip.waitFor({ state: 'detached' });
   await newThread
     .getByRole('heading', { name: /What should we build in / })
     .waitFor();
@@ -865,6 +920,7 @@ try {
     title: 'Supervised Codex',
     provider: 'Codex',
     model: 'Codex fixture',
+    effort: 'high',
     access: 'Workspace edits',
   });
   await page
@@ -875,6 +931,16 @@ try {
   const codex = await waitState(createdCodex.id, 'completed');
   assert.equal(codex.provider, 'Codex');
   assert.equal(codex.model, 'fixture-codex');
+  assert.equal(codex.effort, 'high');
+  assert.deepEqual(
+    (await readFile(env.NESVO_CODEX_FIXTURE_RUN_LOG, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+      .filter(turn => turn.sessionId === codex.providerSessionId)
+      .map(turn => turn.effort),
+    ['high'],
+  );
   assert.equal(codex.mode, 'supervised');
   assert.equal(codex.role, 'standalone');
   assert.equal(codex.delegationEnabled, true);
