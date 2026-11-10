@@ -197,7 +197,7 @@ export default function ReviewDiff({
       aria-label="Saved result diff"
       data-review-id={review.id}
       data-review-version={review.version}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-[#090909] min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[46%] min-[1200px]:max-w-[850px] min-[1200px]:shrink-0"
+      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[46%] min-[1200px]:max-w-[850px] min-[1200px]:shrink-0"
     >
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
         <FileCode2 className="size-4 text-muted-foreground" />
