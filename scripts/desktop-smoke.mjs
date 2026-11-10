@@ -136,6 +136,11 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  assert.equal(await page.evaluate(() => window.nesvo.colorScheme()), 'system');
+  assert.equal(
+    await page.evaluate(() => window.nesvo.setColorScheme('dark')),
+    'dark',
+  );
   const conversation = page.getByRole('region', {
     name: 'Conversation',
     exact: true,
