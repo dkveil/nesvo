@@ -77,8 +77,7 @@
   --titlebar-inset-right: calc(
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)
   );
-  --usage-rail-width: 3.25rem;
-  --usage-rail-background: #050505;
+  --sidebar-collapsed-width: 3.25rem;
   --usage-ring-track: rgb(255 255 255 / 12%);
   --success-foreground: #4ade80;
   --info-foreground: #60a5fa;

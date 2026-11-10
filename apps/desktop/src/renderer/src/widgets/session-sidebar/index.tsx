@@ -1,4 +1,4 @@
-import { useState, type RefObject } from 'react';
+import { useState, type ReactNode, type RefObject } from 'react';
 import {
   ChevronDown,
   CircleCheck,
@@ -37,6 +37,8 @@ type Props = {
   onCreate: () => void;
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
+  usage?: ReactNode;
+  footerStart?: ReactNode;
 };
 
 const statusTone: Partial<Record<Session['status'], string>> = {
@@ -103,6 +105,8 @@ export function SessionSidebar({
   onCreate,
   onCollapse,
   collapseToggleRef,
+  usage,
+  footerStart,
 }: Props) {
   const [search, setSearch] = useState('');
   const [closedHosts, setClosedHosts] = useState<string[]>([]);
@@ -359,7 +363,20 @@ export function SessionSidebar({
           )}
         </nav>
       </div>
+      {usage && (
+        <section
+          aria-label="Usage"
+          className="shrink-0 border-t border-sidebar-border px-2 pt-2 pb-1.5"
+        >
+          <h2 className="px-(--sidebar-row-inset) pb-1 text-2xs font-medium text-sidebar-muted-foreground">
+            Usage
+          </h2>
+          {usage}
+        </section>
+      )}
       <div className="flex shrink-0 items-center gap-0.5 border-t border-sidebar-border px-2 py-1.5">
+        {footerStart}
+        <div className="flex-1" />
         <Button
           type="button"
           variant="ghost"
