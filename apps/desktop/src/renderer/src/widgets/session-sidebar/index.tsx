@@ -206,9 +206,7 @@ export function SessionSidebar({
   };
   return (
     <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex h-(--shell-topbar-height) shrink-0 items-center gap-1 pr-2 pl-3">
-        <span className="text-[13px] font-medium tracking-tight">Nesvo</span>
-        <div className="flex-1" />
+      <div className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-2 pl-[calc(0.5rem+var(--titlebar-inset-left))]">
         {onCollapse && (
           <Button
             ref={collapseToggleRef}
@@ -224,6 +222,14 @@ export function SessionSidebar({
             <PanelLeftClose className="size-4" />
           </Button>
         )}
+        <span
+          className={cn(
+            'text-[13px] font-semibold tracking-tight select-none',
+            !onCollapse && 'pl-1',
+          )}
+        >
+          Nesvo
+        </span>
       </div>
       <div className="space-y-1 px-2 pb-2">
         <div className="flex items-center gap-1">
