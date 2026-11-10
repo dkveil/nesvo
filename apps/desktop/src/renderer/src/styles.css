@@ -65,6 +65,8 @@
     100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)
   );
   --composer-max-width: 38.25rem;
+  --chat-column-width: 38rem;
+
   --glass-opacity: 80%;
   color-scheme: light;
   --background: #fcfcfc;
