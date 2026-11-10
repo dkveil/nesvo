@@ -1048,6 +1048,11 @@ export function Workspace() {
             <div className="hidden md:contents">
               <ThreadDetails
                 id="thread-details"
+                computer={selectedComputer}
+                connection={connection}
+                session={!inbox && !creating && selected ? selected : null}
+                onComputers={() => setSettingsPage('computers')}
+                onFiles={openFiles}
                 usage={
                   <ProviderUsage
                     key={`${selectedHostId}/details`}
