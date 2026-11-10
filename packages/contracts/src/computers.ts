@@ -10,7 +10,11 @@ import {
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
 
-export const hostCapabilitySchema = z.enum(['scheduled-jobs']);
+export const hostCapabilitySchema = z.enum([
+  'scheduled-jobs',
+  'reasoning-effort',
+  'git-branch',
+]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
 const pathSchema = z

@@ -56,6 +56,31 @@ type Entry = {
   removing?: boolean;
 };
 
+const capabilityUpdates: Record<HostCapability, string> = {
+  'scheduled-jobs':
+    'This computer runs an older Nesvo host without scheduled jobs. Update it, then reconnect.',
+  'reasoning-effort':
+    'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
+  'git-branch':
+    'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
+};
+
+function requiredCapability(
+  method: HostRequest['method'],
+  input: unknown,
+): HostCapability | null {
+  if (method === 'read-git-branch') return 'git-branch';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'effort' in input &&
+    input.effort
+  )
+    return 'reasoning-effort';
+  return null;
+}
+
 export class ComputerManager {
   private readonly entries = new Map<string, Entry>();
   private readonly listeners = new Set<(event: WorkspaceEvent) => void>();
@@ -369,10 +394,9 @@ export class ComputerManager {
       throw new Error(
         'This computer is offline or still synchronizing. Connect before sending a command.',
       );
-    if (requires && !entry.computer.capabilities.includes(requires))
-      throw new Error(
-        'This computer runs an older Nesvo host without scheduled jobs. Update it, then reconnect.',
-      );
+    const capability = requires ?? requiredCapability(method, input);
+    if (capability && !entry.computer.capabilities.includes(capability))
+      throw new Error(capabilityUpdates[capability]);
     const generation = entry.generation;
     const response = await entry.connection.request(method, input);
     if (

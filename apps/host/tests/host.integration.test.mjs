@@ -300,7 +300,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
-      capabilities: ['scheduled-jobs'],
+      capabilities: ['scheduled-jobs', 'reasoning-effort', 'git-branch'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');
@@ -4513,7 +4513,11 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
     const health = (await host.request('health')).health;
-    assert.deepEqual(health.capabilities, ['scheduled-jobs']);
+    assert.deepEqual(health.capabilities, [
+      'scheduled-jobs',
+      'reasoning-effort',
+      'git-branch',
+    ]);
     const id = randomUUID();
     const jobInput = {
       id,

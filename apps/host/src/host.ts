@@ -1,5 +1,6 @@
 import {
   hostHealthSchema,
+  hostCapabilitySchema,
   hostRequestSchema,
   claudeStatusSchema,
   codexStatusSchema,
@@ -476,7 +477,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 status: 'ready',
                 instanceId: row?.value,
                 protocolVersion: 1,
-                capabilities: ['scheduled-jobs'],
+                capabilities: [...hostCapabilitySchema.options],
               }),
             };
           } catch (error) {
