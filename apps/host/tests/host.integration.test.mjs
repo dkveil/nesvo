@@ -3537,6 +3537,37 @@ test('scheduled job contracts compute time-zone aware schedules and bounds', asy
     assert.throws(
       () =>
         nextOccurrence(
+          { kind: 'interval', minutes: 30, anchorAt: '2026-11-10T09:00:00Z' },
+          at('2026-11-10T08:00:00Z'),
+          'Mars/Olympus',
+        ),
+      error =>
+        error instanceof ScheduleError && error.code === 'invalid-time-zone',
+    );
+    assert.throws(
+      () =>
+        collapseMissed(
+          { kind: 'daily', time: '09:00' },
+          at('2026-11-10T09:00:00Z'),
+          new Date(Number.NaN),
+          'UTC',
+        ),
+      error => error instanceof ScheduleError && error.code === 'invalid-date',
+    );
+    assert.throws(
+      () =>
+        previewOccurrences(
+          { kind: 'daily', time: '09:00' },
+          at('2026-11-10T08:00:00Z'),
+          'UTC',
+          21,
+        ),
+      error =>
+        error instanceof ScheduleError && error.code === 'invalid-schedule',
+    );
+    assert.throws(
+      () =>
+        nextOccurrence(
           { kind: 'daily', time: '09:00' },
           new Date(Number.NaN),
           'UTC',
@@ -3716,6 +3747,16 @@ test('scheduled job contracts compute time-zone aware schedules and bounds', asy
         false,
       );
       assert.equal(rejected({ hostId: 'local' }), false);
+      assert.equal(rejected({ timeZone: '+02:00' }), false);
+      assert.equal(rejected({ prompt: 'run\u0000now' }), false);
+      assert.equal(rejected({ prompt: 'line one\nline two' }), true);
+      assert.equal(
+        saveScheduledJobSchema.parse({
+          ...definition,
+          timeZone: 'europe/warsaw',
+        }).timeZone,
+        'Europe/Warsaw',
+      );
     },
   );
 

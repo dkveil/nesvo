@@ -4,6 +4,7 @@ import {
   SCHEDULE_TIME_PATTERN,
   SCHEDULED_JOB_MAX_INTERVAL_MINUTES,
   SCHEDULED_JOB_MIN_INTERVAL_MINUTES,
+  canonicalizeTimeZone,
   isValidTimeZone,
 } from './schedule';
 
@@ -13,6 +14,7 @@ export {
   SCHEDULED_JOB_MIN_INTERVAL_MINUTES,
   ScheduleError,
   assertValidSchedule,
+  canonicalizeTimeZone,
   collapseMissed,
   describeSchedule,
   isValidTimeZone,
@@ -65,7 +67,8 @@ export const scheduledJobTimeZoneSchema = z
   .trim()
   .min(1)
   .max(100)
-  .refine(isValidTimeZone, 'Use an IANA time zone such as Europe/Warsaw.');
+  .refine(isValidTimeZone, 'Use an IANA time zone such as Europe/Warsaw.')
+  .transform(canonicalizeTimeZone);
 
 const scheduledJobDefinitionShape = {
   name: z
@@ -74,7 +77,12 @@ const scheduledJobDefinitionShape = {
     .min(1)
     .max(scheduledJobLimits.name)
     .regex(/^[^\u0000-\u001f\u007f]+$/),
-  prompt: z.string().trim().min(1).max(scheduledJobLimits.prompt),
+  prompt: z
+    .string()
+    .trim()
+    .min(1)
+    .max(scheduledJobLimits.prompt)
+    .regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/),
   directory: z.string().trim().max(scheduledJobLimits.directory),
   provider: scheduledJobProviderSchema,
   model: z.string().trim().min(1).max(scheduledJobLimits.model),

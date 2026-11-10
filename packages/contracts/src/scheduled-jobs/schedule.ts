@@ -3,6 +3,7 @@ export const SCHEDULED_JOB_MAX_INTERVAL_MINUTES = 525_600;
 export const SCHEDULE_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const OCCURRENCE_SEARCH_DAYS = 8;
+const MAX_PREVIEW_COUNT = 20;
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 const WEEKDAY_NAMES = [
@@ -81,6 +82,7 @@ const getFormatter = (timeZone: string) => {
 };
 
 export const isValidTimeZone = (timeZone: string) => {
+  if (/^[+-]/.test(timeZone)) return false;
   try {
     getFormatter(timeZone);
     return true;
@@ -89,6 +91,9 @@ export const isValidTimeZone = (timeZone: string) => {
     throw error;
   }
 };
+
+export const canonicalizeTimeZone = (timeZone: string) =>
+  getFormatter(timeZone).resolvedOptions().timeZone;
 
 const readWallClock = (instant: number, timeZone: string): WallClock => {
   const values: Record<string, number> = {};
@@ -232,6 +237,7 @@ export const nextOccurrence = (
 ): Date => {
   assertValidSchedule(schedule);
   assertValidDate(after);
+  getFormatter(timeZone);
   if (schedule.kind === 'interval') {
     const anchor = Date.parse(schedule.anchorAt);
     const step = schedule.minutes * MINUTE_MS;
@@ -268,6 +274,7 @@ export const collapseMissed = (
   now: Date,
   timeZone: string,
 ): MissedOccurrences => {
+  assertValidDate(now);
   let scheduledFor = from;
   let nextRunAt = nextOccurrence(schedule, scheduledFor, timeZone);
   let skipped = 0;
@@ -298,6 +305,11 @@ export const previewOccurrences = (
   timeZone: string,
   count = 3,
 ): Date[] => {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_PREVIEW_COUNT)
+    throw new ScheduleError(
+      'invalid-schedule',
+      `Preview count must be a whole number from 1 to ${MAX_PREVIEW_COUNT}`,
+    );
   const occurrences: Date[] = [];
   let cursor = now;
   for (let index = 0; index < count; index += 1) {
