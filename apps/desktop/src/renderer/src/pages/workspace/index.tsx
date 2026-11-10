@@ -55,9 +55,10 @@ import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
-import { ProviderRail } from '@/widgets/provider-rail';
+import { ProviderUsage } from '@/widgets/provider-rail';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
+import { readUsageVariant } from './usage-variant';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -93,6 +94,7 @@ export function Workspace() {
   const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
+  const [usageVariant] = useState(readUsageVariant);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -724,20 +726,47 @@ export function Workspace() {
       : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-      <ProviderRail key={`${selectedHostId}/rail`} {...usageProps} />
       <aside
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
-        inert={!sidebarOpen}
-        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width,visibility] duration-150 ease-out data-[state=collapsed]:invisible data-[state=collapsed]:w-0 data-[state=collapsed]:border-r-0 md:block"
+        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width] duration-150 ease-out data-[state=collapsed]:w-(--sidebar-collapsed-width) md:block"
       >
-        <div className="h-full w-(--sidebar-width)">
-          <SessionSidebar
-            {...sidebarProps}
-            onCollapse={() => toggleSidebar(false)}
-            collapseToggleRef={sidebarCollapseToggle}
-          />
-        </div>
+        {sidebarOpen ? (
+          <div className="h-full w-(--sidebar-width)">
+            <SessionSidebar
+              {...sidebarProps}
+              onCollapse={() => toggleSidebar(false)}
+              collapseToggleRef={sidebarCollapseToggle}
+              usage={
+                usageVariant === 'b' ? (
+                  <ProviderUsage
+                    key={`${selectedHostId}/bars`}
+                    layout="bars"
+                    {...usageProps}
+                  />
+                ) : undefined
+              }
+              footerStart={
+                <ProviderUsage
+                  key={`${selectedHostId}/footer`}
+                  layout={usageVariant === 'b' ? 'account' : 'row'}
+                  popoverSide="top"
+                  {...usageProps}
+                />
+              }
+            />
+          </div>
+        ) : (
+          <div className="flex h-full w-(--sidebar-collapsed-width) flex-col items-center pb-3">
+            <div className="drag-region h-(--shell-topbar-height) w-full shrink-0" />
+            <div className="flex-1" />
+            <ProviderUsage
+              key={`${selectedHostId}/column`}
+              layout="column"
+              {...usageProps}
+            />
+          </div>
+        )}
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <header
@@ -747,9 +776,10 @@ export function Workspace() {
           )}
         >
           <div className="md:hidden">
-            <ProviderRail
+            <ProviderUsage
               key={`${selectedHostId}/compact`}
-              compact
+              layout="account"
+              popoverSide="bottom"
               {...usageProps}
             />
           </div>
