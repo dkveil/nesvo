@@ -31,6 +31,7 @@ import {
 export type SelectedSkill = SkillReference & { description: string };
 
 export type SkillScope = {
+  hostId: string;
   provider: Provider;
   input: DiscoverSkillsInput;
 };
@@ -222,7 +223,14 @@ export function SelectSkill({
       const next =
         selectable[(index + offset + selectable.length) % selectable.length];
       if (next) setActiveId(next.id);
-    } else if ((event.key === 'Enter' || event.key === 'Tab') && active) {
+    } else if (
+      (event.key === 'Enter' || event.key === 'Tab') &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      active
+    ) {
       event.preventDefault();
       choose(active);
     }
