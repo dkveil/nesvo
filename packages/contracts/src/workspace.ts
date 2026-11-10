@@ -61,3 +61,21 @@ export type WorkspaceEntry = z.infer<typeof workspaceEntrySchema>;
 export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
 export type WorkspaceSearch = z.infer<typeof workspaceSearchSchema>;
 export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
+
+export const readGitBranchSchema = z.strictObject({
+  directory: z.string().trim().max(4096),
+});
+export const gitBranchSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('branch'),
+    name: z.string().min(1).max(255),
+  }),
+  z.strictObject({
+    kind: z.literal('detached'),
+    sha: z.string().regex(/^[0-9a-f]{7}$/),
+  }),
+  z.strictObject({ kind: z.literal('none') }),
+]);
+
+export type ReadGitBranchInput = z.infer<typeof readGitBranchSchema>;
+export type GitBranch = z.infer<typeof gitBranchSchema>;
