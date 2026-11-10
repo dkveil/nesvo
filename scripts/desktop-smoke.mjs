@@ -429,11 +429,14 @@ try {
     (await page.evaluate(() => window.nesvo.listSessions())).find(
       session => session.title === title,
     );
-  await page.getByRole('button', { name: 'Open context', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const initialContext = page.getByRole('dialog', {
-    name: 'Context',
+    name: 'Settings',
     exact: true,
   });
+  await initialContext
+    .getByRole('region', { name: 'General', exact: true })
+    .waitFor();
   await initialContext
     .getByRole('status')
     .filter({ hasText: 'Connected to local host' })
@@ -471,18 +474,32 @@ try {
       .map(line => JSON.parse(line));
   const checkUsagePanel = async (targetPage, status) => {
     const account = targetPage.getByRole('button', {
-      name: 'Account and limits',
+      name: 'Settings',
       exact: true,
     });
     await account.click();
-    const panel = targetPage.getByRole('dialog', {
+    const settings = targetPage.getByRole('dialog', {
+      name: 'Settings',
+      exact: true,
+    });
+    await settings
+      .getByRole('button', { name: 'Account and limits', exact: true })
+      .click();
+    const panel = settings.getByRole('region', {
       name: 'Account and limits',
       exact: true,
     });
     await panel
       .getByRole('button', { name: 'Refresh limits', exact: true })
       .click();
-    assert.equal(await panel.getAttribute('data-host-id'), 'local');
+    assert.equal(
+      await panel
+        .locator('[data-host-id]')
+        .first()
+        .getAttribute('data-host-id'),
+      'local',
+    );
+
     for (const provider of ['Claude Code', 'Codex']) {
       const section = panel.getByRole('region', {
         name: `${provider} usage`,

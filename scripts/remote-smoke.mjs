@@ -633,7 +633,7 @@ try {
   await connectRemote();
   await page.getByRole('button', { name: 'Computers', exact: true }).click();
   await page
-    .getByRole('dialog', { name: 'Computers', exact: true })
+    .getByRole('dialog', { name: 'Settings', exact: true })
     .getByRole('region', { name: 'Computer: Isolated SSH host', exact: true })
     .waitFor();
   await screenshot('01-computers.png');
