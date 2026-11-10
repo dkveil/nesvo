@@ -308,6 +308,66 @@ test(
       status.status.models.map(model => model.id),
       ['default', 'opus', 'sonnet', 'haiku'],
     );
+    assert.equal(status.status.effort.status, 'unsupported');
+    assert.match(status.status.effort.reason, /reasoning effort/);
+    const branchRoot = join(directory, 'branches');
+    const seedHead = async (path, head) => {
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'HEAD'), head);
+    };
+    await seedHead(
+      join(branchRoot, 'named', '.git'),
+      'ref: refs/heads/feature/ui1c\n',
+    );
+    await mkdir(join(branchRoot, 'named', 'src', 'deep'), { recursive: true });
+    await seedHead(
+      join(branchRoot, 'detached', '.git'),
+      `${'ab12cd34'.repeat(5)}\n`,
+    );
+    await seedHead(
+      join(branchRoot, 'linked-git', 'worktree'),
+      'ref: refs/heads/linked\n',
+    );
+    await mkdir(join(branchRoot, 'linked'), { recursive: true });
+    await writeFile(
+      join(branchRoot, 'linked', '.git'),
+      'gitdir: ../linked-git/worktree\n',
+    );
+    await seedHead(join(branchRoot, 'malformed', '.git'), 'ref: refs/heads/\n');
+    await mkdir(join(branchRoot, 'plain'), { recursive: true });
+    const branchOf = async target =>
+      host.request('read-git-branch', { directory: target });
+    for (const [target, expected] of [
+      ['named', { kind: 'branch', name: 'feature/ui1c' }],
+      [join('named', 'src', 'deep'), { kind: 'branch', name: 'feature/ui1c' }],
+      ['detached', { kind: 'detached', sha: 'ab12cd3' }],
+      ['linked', { kind: 'branch', name: 'linked' }],
+      ['malformed', { kind: 'none' }],
+      ['plain', { kind: 'none' }],
+    ])
+      assert.deepEqual(
+        (await branchOf(join(branchRoot, target))).branch,
+        expected,
+        target,
+      );
+    assert.deepEqual((await branchOf('')).branch, { kind: 'none' });
+    assert.equal(
+      (await branchOf(join(branchRoot, 'missing'))).code,
+      'invalid-directory',
+    );
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'read-git-branch',
+          input: {
+            directory: join(branchRoot, 'named'),
+            sessionId: randomUUID(),
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
     const usageBefore = await host.request('list-sessions');
     const providers = ['Claude Code', 'Codex'];
     const readyUsage = new Map();
@@ -1350,6 +1410,40 @@ test(
     assert.ok(
       codexStatus.status.models.some(model => model.id === 'fixture-codex'),
     );
+    assert.deepEqual(codexStatus.status.effort, { status: 'per-model' });
+    const codexModel = id =>
+      codexStatus.status.models.find(model => model.id === id);
+    assert.equal(codexModel('default').efforts, null);
+    assert.deepEqual(codexModel('fixture-codex').efforts, {
+      options: [
+        { id: 'low', description: 'Fixture low effort' },
+        { id: 'medium', description: 'Fixture medium effort' },
+        { id: 'high', description: 'Fixture high effort' },
+      ],
+      defaultEffort: 'medium',
+    });
+    for (const input of [
+      { ...create(''), effort: 'high' },
+      { ...create(''), provider: 'Codex', model: 'default', effort: 'high' },
+      { ...create(''), provider: 'Codex', model: 'fixture-codex', effort: '' },
+      {
+        ...create(''),
+        provider: 'Codex',
+        model: 'fixture-codex',
+        effort: 'High!',
+      },
+    ])
+      assert.deepEqual(
+        await finalHost.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'create-session',
+            input,
+          }),
+        ),
+        { type: 'error', id: null, code: 'invalid-request' },
+        JSON.stringify(input),
+      );
     const createCodex = async mode => {
       const response = await finalHost.request('create-session', {
         ...create(''),
@@ -1376,6 +1470,35 @@ test(
       assert.equal(response.type, 'session', JSON.stringify(response));
       return response.session;
     };
+    const effortSession = await finalHost.request('create-session', {
+      ...create(''),
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'read-only',
+      effort: 'high',
+    });
+    assert.equal(effortSession.session.effort, 'high');
+    assert.equal((await createCodex('read-only')).effort, null);
+    let effortTarget = effortSession.session;
+    for (const text of ['Reason carefully.', 'Continue carefully.']) {
+      const run = await sendCodex(finalHost, effortTarget, text);
+      effortTarget = await finalHost.event(
+        value => value.runId === run.runId && value.status === 'completed',
+      );
+    }
+    assert.equal(effortTarget.effort, 'high');
+    assert.deepEqual(
+      (await readFile(pidFile + '.turns', 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+        .filter(turn => turn.sessionId === effortTarget.providerSessionId)
+        .map(turn => [turn.prompt, turn.effort]),
+      [
+        ['Reason carefully.', 'high'],
+        ['Continue carefully.', 'high'],
+      ],
+    );
     const disconnectedTarget = await createCodex('read-only');
     const disconnectedRun = await sendCodex(
       finalHost,
