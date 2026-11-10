@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
 import type {
   Computer,
@@ -68,6 +68,14 @@ export function NewThread({
   const [error, setError] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const computer = computers.find(item => item.id === setup.hostId);
   const connected = computer?.status === 'connected';
   const providerState = statuses[setup.provider];
@@ -95,14 +103,15 @@ export function NewThread({
   const submit = async (
     resolveTyped: (draft: string) => Promise<TypedSubmission>,
   ) => {
-    if (!canSend) return;
-    const typed = skill ? null : await resolveTyped(text);
-    if (typed?.status === 'error') return;
-    const message = typed?.status === 'skill' ? typed.text : text.trim();
-    const chosen = typed?.status === 'skill' ? typed.skill : skill;
+    if (!canSend || submitting.current) return;
+    submitting.current = true;
     setPending(true);
     setError('');
     try {
+      const typed = skill ? null : await resolveTyped(text);
+      if (typed?.status === 'error' || !mounted.current) return;
+      const message = typed?.status === 'skill' ? typed.text : text.trim();
+      const chosen = typed?.status === 'skill' ? typed.skill : skill;
       await onStart(
         {
           title: deriveThreadTitle(message),
@@ -117,7 +126,8 @@ export function NewThread({
     } catch (failure) {
       setError(`Could not start the thread. ${errorDetail(failure)}`);
     } finally {
-      setPending(false);
+      submitting.current = false;
+      if (mounted.current) setPending(false);
     }
   };
   return (
@@ -163,6 +173,7 @@ export function NewThread({
         </header>
         <SelectSkill
           scope={{
+            hostId: setup.hostId,
             provider: setup.provider,
             input: {
               provider: setup.provider,

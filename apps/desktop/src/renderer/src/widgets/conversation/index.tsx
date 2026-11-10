@@ -85,6 +85,10 @@ export function Conversation({
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
+  const latestDraft = useRef(draft);
+  useEffect(() => {
+    latestDraft.current = draft;
+  }, [draft]);
   const followOutput = useRef(true);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
@@ -116,7 +120,11 @@ export function Conversation({
   const composer = (
     <SelectSkill
       key={entityKey(session)}
-      scope={{ provider: session.provider, input: { sessionId: session.id } }}
+      scope={{
+        hostId: session.hostId,
+        provider: session.provider,
+        input: { sessionId: session.id },
+      }}
       api={skillApi}
       enabled={connected}
       draft={draft}
@@ -145,7 +153,9 @@ export function Conversation({
               onSend();
               return;
             }
-            void resolveTyped(draft).then(typed => {
+            const submitted = draft;
+            void resolveTyped(submitted).then(typed => {
+              if (latestDraft.current !== submitted) return;
               if (typed.status === 'skill')
                 onSend({ text: typed.text, skill: typed.skill });
               else if (typed.status === 'none') onSend();
