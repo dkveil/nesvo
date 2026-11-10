@@ -19,7 +19,6 @@ import {
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
-import { BranchChip } from './branch-chip';
 import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
@@ -44,7 +43,7 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   onManageComputers: () => void;
   busyReason: string;
-  hostApi: Pick<DesktopApi, 'discoverSkills' | 'readGitBranch'>;
+  hostApi: Pick<DesktopApi, 'discoverSkills'>;
   onStart: (
     input: CreateSessionInput,
     text: string,
@@ -327,12 +326,6 @@ export function NewThread({
                     if (directory !== setup.directory) setSkill(null);
                     onSetupChange({ ...setup, directory });
                   }}
-                />
-                <BranchChip
-                  hostId={setup.hostId}
-                  directory={setup.directory.trim()}
-                  enabled={connected}
-                  api={hostApi}
                 />
                 <div className="flex-1" />
                 <PermissionPicker

@@ -919,16 +919,12 @@ try {
     join(branchLocation, '.git', 'HEAD'),
     'ref: refs/heads/smoke-branch\n',
   );
-  const branchChip = newThread.locator('[data-branch-kind]');
   await chooseLocation(branchLocation);
-  await branchChip.filter({ hasText: 'smoke-branch' }).waitFor();
-  assert.equal(await branchChip.getAttribute('data-branch-kind'), 'branch');
-  assert.equal(
-    await branchChip.getAttribute('title'),
-    'Git branch smoke-branch',
-  );
+  await newThread
+    .getByRole('heading', { name: /What should we build in branch-location/ })
+    .waitFor();
+  assert.equal(await newThread.locator('[data-branch-kind]').count(), 0);
   await chooseLocation(directory);
-  await branchChip.waitFor({ state: 'detached' });
   await newThread
     .getByRole('heading', { name: /What should we build in / })
     .waitFor();
