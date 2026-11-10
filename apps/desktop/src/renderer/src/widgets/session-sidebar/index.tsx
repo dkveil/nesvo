@@ -2,10 +2,11 @@ import { useState, type ReactNode, type RefObject } from 'react';
 import {
   ChevronDown,
   CircleCheck,
+  Cloud,
   CornerDownRight,
   Inbox,
   Monitor,
-  PanelLeftClose,
+  PanelLeft,
   Search,
   Smartphone,
   SquarePen,
@@ -18,15 +19,18 @@ import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import {
   directoryLabel,
+  ProviderGlyph,
   sessionRoleLabel,
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { ProjectChip } from '@/shared/ui/project-chip';
 
 type Props = {
   sessions: Session[];
   computers: Computer[];
+  hostName: string;
   onComputers: () => void;
   onMobile: () => void;
   pendingActions: number;
@@ -37,7 +41,6 @@ type Props = {
   onCreate: () => void;
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
-  usage?: ReactNode;
   footerStart?: ReactNode;
 };
 
@@ -47,15 +50,6 @@ const statusTone: Partial<Record<Session['status'], string>> = {
   completed: 'text-success-foreground',
   failed: 'text-error-foreground',
 };
-
-function initials(label: string) {
-  const words = label.split(/[\s\-_.]+/).filter(Boolean);
-  const letters =
-    words.length > 1
-      ? `${words[0]?.[0] ?? ''}${words[1]?.[0] ?? ''}`
-      : label.slice(0, 2);
-  return letters.toLocaleUpperCase();
-}
 
 function SessionStatus({
   session,
@@ -83,7 +77,7 @@ function SessionStatus({
       ? 'text-warning-foreground'
       : (statusTone[session.status] ?? 'text-sidebar-muted-foreground');
   return (
-    <span className={cn('inline-flex items-center gap-1', tone)}>
+    <span className={cn('inline-flex items-center gap-1 font-medium', tone)}>
       {session.status === 'completed' && (
         <CircleCheck className="size-3" aria-hidden="true" />
       )}
@@ -95,6 +89,7 @@ function SessionStatus({
 export function SessionSidebar({
   sessions,
   computers,
+  hostName,
   onComputers,
   onMobile,
   pendingActions,
@@ -105,7 +100,6 @@ export function SessionSidebar({
   onCreate,
   onCollapse,
   collapseToggleRef,
-  usage,
   footerStart,
 }: Props) {
   const [search, setSearch] = useState('');
@@ -150,6 +144,7 @@ export function SessionSidebar({
     const offline = computer?.status !== 'connected';
     const directory = directoryLabel(session.directory);
     const role = sessionRoleLabel(session);
+    const remote = session.hostId !== 'local';
     return (
       <li key={entityKey(session)}>
         <button
@@ -161,48 +156,37 @@ export function SessionSidebar({
           title={`${computer?.name ?? session.hostId} · ${session.provider} · ${role || 'Session'} · ${sessionStatusLabel(session)}`}
           onClick={() => onSelect(entityKey(session))}
           className={cn(
-            'flex w-full flex-col rounded-(--control-radius) py-(--sidebar-inset) pr-(--sidebar-row-inset) text-left transition-colors duration-100 outline-none',
+            'flex w-full flex-col rounded-lg py-2 pr-(--sidebar-row-inset) text-left transition-colors duration-100 outline-none',
             'hover:bg-sidebar-row-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
             child ? 'pl-5' : 'pl-(--sidebar-row-inset)',
-            selected && 'bg-sidebar-row-selected',
+            selected && 'bg-sidebar-row-selected hover:bg-sidebar-row-selected',
           )}
         >
           <span className="flex h-5 min-w-0 items-center gap-1.5 text-xs text-sidebar-muted-foreground">
             {child ? (
               <CornerDownRight
-                className="size-3.5 shrink-0"
+                className="size-3.5 shrink-0 text-sidebar-icon"
                 aria-hidden="true"
               />
             ) : (
-              <span
-                aria-hidden="true"
-                className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm bg-secondary text-[9px] leading-none font-semibold text-secondary-foreground"
-              >
-                {initials(directory)}
-              </span>
+              <ProjectChip label={directory} />
             )}
             <span className="min-w-0 flex-1 truncate">{directory}</span>
             <span className="shrink-0 text-xs tabular-nums">
               <SessionStatus session={session} offline={offline} now={now} />
             </span>
           </span>
-          <span className="mt-0.5 block truncate text-[13px] font-medium">
-            {session.title}
-          </span>
-          <span className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-2xs text-sidebar-muted-foreground">
-            <span className="truncate">{session.provider}</span>
-            {role && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="truncate">{role}</span>
-              </>
+          <span className="mt-1 flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-sidebar-foreground">
+              {session.title}
+            </span>
+            {remote && !grouped && (
+              <Cloud
+                className="size-3.5 shrink-0 text-sidebar-icon"
+                aria-hidden="true"
+              />
             )}
-            {!grouped && session.hostId !== 'local' && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="truncate">{computer?.name ?? 'Remote'}</span>
-              </>
-            )}
+            <ProviderGlyph provider={session.provider} />
           </span>
         </button>
       </li>
@@ -217,13 +201,13 @@ export function SessionSidebar({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-sidebar-muted-foreground"
+            className="size-7 text-sidebar-icon hover:text-sidebar-foreground"
             aria-label="Toggle sidebar"
             aria-pressed="true"
             title="Collapse sidebar (Ctrl+B)"
             onClick={onCollapse}
           >
-            <PanelLeftClose className="size-4" />
+            <PanelLeft className="size-4" />
           </Button>
         )}
         <span
@@ -235,15 +219,18 @@ export function SessionSidebar({
           Nesvo
         </span>
       </div>
-      <div className="space-y-1 px-2 pb-2">
-        <div className="flex items-center gap-1">
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-(--control-radius) px-2 text-sidebar-muted-foreground transition-colors duration-100 focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-ring/70 focus-within:ring-inset hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
-            <Search className="size-4 shrink-0" aria-hidden="true" />
+      <div className="space-y-0.5 px-(--sidebar-inset) pb-2">
+        <div className="flex items-center gap-0.5">
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-ring/70 focus-within:ring-inset hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
+            <Search
+              className="size-4 shrink-0 text-sidebar-icon"
+              aria-hidden="true"
+            />
             <input
               type="text"
               aria-label="Search sessions"
               placeholder="Search"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-sidebar-foreground outline-none placeholder:text-sidebar-muted-foreground"
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium text-sidebar-foreground outline-none placeholder:text-sidebar-muted-foreground"
               value={search}
               onChange={event => setSearch(event.target.value)}
               onKeyDown={event => {
@@ -268,7 +255,7 @@ export function SessionSidebar({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 text-sidebar-muted-foreground"
+            className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             aria-label="New session"
             title="New session"
             onClick={onCreate}
@@ -276,17 +263,17 @@ export function SessionSidebar({
             <SquarePen className="size-4" />
           </Button>
         </div>
-        <Button
+        <button
           type="button"
-          variant="ghost"
           className={cn(
-            'h-7 w-full justify-start gap-2 rounded-(--control-radius) px-2 text-[13px] font-normal hover:bg-sidebar-row-hover',
-            inbox && 'bg-sidebar-row-selected',
+            'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 outline-none',
+            'hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+            inbox && 'bg-sidebar-row-selected text-sidebar-foreground',
           )}
           onClick={onInbox}
           aria-current={inbox ? 'page' : undefined}
         >
-          <Inbox className="size-4 text-sidebar-muted-foreground" />
+          <Inbox className="size-4 text-sidebar-icon" aria-hidden="true" />
           Inbox
           {pendingActions > 0 && (
             <span
@@ -296,10 +283,13 @@ export function SessionSidebar({
               {pendingActions}
             </span>
           )}
-        </Button>
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
-        <nav aria-label="Sessions" className="space-y-1 px-2 pb-3">
+        <nav
+          aria-label="Sessions"
+          className="space-y-1 px-(--sidebar-inset) pb-3"
+        >
           {groups.map(({ computer, roots }) => {
             const closed = grouped && closedHosts.includes(computer.id);
             return (
@@ -308,7 +298,7 @@ export function SessionSidebar({
                   <button
                     type="button"
                     aria-expanded={!closed}
-                    className="flex h-8 w-full items-center gap-2 rounded-(--control-radius) px-(--sidebar-row-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+                    className="flex h-7 w-full items-center gap-2 rounded-md px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
                     onClick={() =>
                       setClosedHosts(previous =>
                         closed
@@ -317,34 +307,39 @@ export function SessionSidebar({
                       )
                     }
                   >
-                    <Monitor
-                      className="size-3.5 shrink-0 text-sidebar-muted-foreground"
-                      aria-hidden="true"
-                    />
+                    {computer.id === 'local' ? (
+                      <Monitor
+                        className="size-3.5 shrink-0 text-sidebar-icon"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Cloud
+                        className="size-3.5 shrink-0 text-sidebar-icon"
+                        aria-hidden="true"
+                      />
+                    )}
                     <span className="min-w-0 flex-1 truncate text-xs font-medium">
                       {computer.name}
                     </span>
                     {computer.status !== 'connected' && (
-                      <span className="text-2xs text-sidebar-muted-foreground">
-                        Offline
-                      </span>
+                      <span className="text-2xs">Offline</span>
                     )}
                     {closed && (
-                      <span className="text-xs text-sidebar-muted-foreground tabular-nums">
+                      <span className="text-xs tabular-nums">
                         {roots.length}
                       </span>
                     )}
                     <ChevronDown
                       aria-hidden="true"
                       className={cn(
-                        'size-3 shrink-0 text-sidebar-muted-foreground transition-transform duration-150',
+                        'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
                         closed && '-rotate-90',
                       )}
                     />
                   </button>
                 )}
                 {!closed && (
-                  <ul className="flex flex-col gap-px">
+                  <ul className="flex flex-col gap-0.5">
                     {roots.flatMap(root => [
                       row(root),
                       ...childrenOf(root)
@@ -363,36 +358,26 @@ export function SessionSidebar({
           )}
         </nav>
       </div>
-      {usage && (
-        <section
-          aria-label="Usage"
-          className="shrink-0 border-t border-sidebar-border px-2 pt-2 pb-1.5"
-        >
-          <h2 className="px-(--sidebar-row-inset) pb-1 text-2xs font-medium text-sidebar-muted-foreground">
-            Usage
-          </h2>
-          {usage}
-        </section>
-      )}
-      <div className="flex shrink-0 items-center gap-0.5 border-t border-sidebar-border px-2 py-1.5">
+      <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
         {footerStart}
         <div className="flex-1" />
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
-          className="size-7 text-sidebar-muted-foreground"
+          size="sm"
+          className="h-7 max-w-28 gap-1.5 px-2 text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           aria-label="Computers"
-          title="Computers"
+          title={`Computers · ${hostName}`}
           onClick={onComputers}
         >
-          <Monitor className="size-4" />
+          <Monitor className="size-3.5 text-sidebar-icon" />
+          <span className="truncate">{hostName}</span>
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="size-7 text-sidebar-muted-foreground"
+          className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           aria-label="Phone access"
           title="Phone access"
           onClick={onMobile}

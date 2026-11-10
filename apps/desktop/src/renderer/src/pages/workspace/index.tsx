@@ -705,6 +705,7 @@ export function Workspace() {
   const sidebarProps = {
     sessions: store.sessions,
     computers: store.computers,
+    hostName: selectedComputer?.name ?? 'Local',
     onComputers: () => {
       setNavigationOpen(false);
       setComputersOpen(true);

@@ -5,6 +5,7 @@ import type {
 } from '@nesvo/contracts';
 
 export type { DesktopSession as Session } from '@nesvo/contracts';
+export { ProviderGlyph } from './provider-glyph';
 
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',
@@ -42,6 +43,10 @@ export type ProviderState = {
 export type ProviderStates = Record<Provider, ProviderState>;
 
 export const providers: Provider[] = ['Claude Code', 'Codex'];
+export const providerMarks: Record<Provider, string> = {
+  'Claude Code': 'CL',
+  Codex: 'CX',
+};
 export const modeLabels: Record<Session['mode'], string> = {
   'read-only': 'Read-only',
   supervised: 'Workspace edits',
