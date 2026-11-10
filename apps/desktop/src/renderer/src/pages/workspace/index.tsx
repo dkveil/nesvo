@@ -110,6 +110,7 @@ export function Workspace() {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const visibleSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
+  const navigationToggle = useRef<HTMLButtonElement | null>(null);
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [threadDetailsOpen, setThreadDetailsOpen] = useState(false);
@@ -809,6 +810,7 @@ export function Workspace() {
           <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
             <SheetTrigger asChild>
               <Button
+                ref={navigationToggle}
                 variant="ghost"
                 size="icon"
                 className="md:hidden"
@@ -1312,11 +1314,13 @@ export function Workspace() {
         <Settings
           page={settingsPage}
           onPageChange={setSettingsPage}
+          fallbackFocus={navigationToggle}
+
           onOpenChange={open => {
             if (!open) setSettingsPage(null);
           }}
         >
-          {page =>
+          {(page, onBusyChange) =>
             page === 'general' ? (
               <GeneralSettings
                 connection={connection}
@@ -1331,7 +1335,11 @@ export function Workspace() {
             ) : page === 'appearance' ? (
               <AppearanceSettings api={desktopApi()} />
             ) : page === 'computers' ? (
-              <ManageComputers computers={store.computers} api={desktopApi()} />
+              <ManageComputers
+                computers={store.computers}
+                api={desktopApi()}
+                onBusyChange={onBusyChange}
+              />
             ) : page === 'phone' ? (
               <MobileAccess api={desktopApi()} />
             ) : (

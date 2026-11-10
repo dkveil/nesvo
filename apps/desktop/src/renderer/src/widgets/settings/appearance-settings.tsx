@@ -66,34 +66,44 @@ function SchemePreview({ scheme }: { scheme: ColorScheme }) {
 
 export function AppearanceSettings({ api }: Props) {
   const [scheme, setScheme] = useState<ColorScheme | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const options = useRef<Partial<Record<ColorScheme, HTMLButtonElement>>>({});
   const request = useRef(0);
+  const confirmed = useRef<ColorScheme | null>(null);
   useEffect(() => {
     let active = true;
     api
       .colorScheme()
       .then(value => {
-        if (active) setScheme(previous => previous ?? value);
+        if (!active) return;
+        confirmed.current ??= value;
+        setScheme(previous => previous ?? value);
       })
       .catch((failure: unknown) => {
-        if (active) setError(errorDetail(failure));
+        if (active)
+          setError(
+            `Could not read the color scheme. ${errorDetail(failure)} Choose one to set it.`,
+          );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
     };
   }, [api]);
   const choose = async (next: ColorScheme) => {
-    const previous = scheme;
     const attempt = ++request.current;
     setScheme(next);
     setError('');
     try {
       const saved = await api.setColorScheme(next);
+      confirmed.current = saved;
       if (attempt === request.current) setScheme(saved);
     } catch (failure) {
       if (attempt !== request.current) return;
-      setScheme(previous);
+      setScheme(confirmed.current);
       setError(`Could not change the color scheme. ${errorDetail(failure)}`);
     }
   };
@@ -123,7 +133,7 @@ export function AppearanceSettings({ api }: Props) {
       <div
         role="radiogroup"
         aria-label="Color scheme"
-        aria-busy={!scheme}
+        aria-busy={loading}
         className="grid grid-cols-3 gap-3"
       >
         {colorSchemes.map(option => (
@@ -138,7 +148,8 @@ export function AppearanceSettings({ api }: Props) {
             aria-label={schemeLabels[option]}
             title={schemeDescriptions[option]}
             tabIndex={option === focusable ? 0 : -1}
-            disabled={!scheme}
+            disabled={loading}
+
             onClick={() => void choose(option)}
             onKeyDown={event => moveFocus(event, option)}
             className={cn(

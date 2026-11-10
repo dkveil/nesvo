@@ -6,6 +6,7 @@ import type {
 
 export type { DesktopSession as Session } from '@nesvo/contracts';
 export { ProviderGlyph } from './provider-glyph';
+export { effortLabel } from './effort-label';
 
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   sshComputerInputSchema,
   type Computer,
@@ -17,6 +17,7 @@ type Props = {
     DesktopApi,
     'addComputer' | 'connectComputer' | 'disconnectComputer' | 'removeComputer'
   >;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 const statusLabels: Record<Computer['status'], string> = {
@@ -27,9 +28,14 @@ const statusLabels: Record<Computer['status'], string> = {
   error: 'Connection failed',
 };
 
-export function ManageComputers({ computers, api }: Props) {
+export function ManageComputers({ computers, api, onBusyChange }: Props) {
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState('');
+  useEffect(() => {
+    onBusyChange?.(!!pending);
+  }, [pending, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
   const [error, setError] = useState('');
   const [fields, setFields] = useState({
     name: '',

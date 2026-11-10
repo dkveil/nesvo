@@ -1,7 +1,8 @@
 import { Check } from 'lucide-react';
 import { cn } from 'cn';
 import type { ProviderState } from '@/entities/session';
-import { effortLabel, modelEfforts } from './reasoning-effort';
+import { effortLabel } from '@/entities/session';
+import { modelEfforts } from './reasoning-effort';
 
 type Props = {
   state: ProviderState;

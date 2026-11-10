@@ -97,7 +97,7 @@ export function GeneralSettings({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                className="size-7 text-muted-foreground hover:text-foreground"
+                className="size-7 text-muted-foreground enabled:hover:text-foreground"
                 aria-label={`Refresh ${provider} status`}
                 title={`Refresh ${provider} status`}
                 disabled={state.loading}

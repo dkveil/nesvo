@@ -15,6 +15,7 @@ import type {
   SessionInterruption,
 } from '@nesvo/contracts';
 import {
+  effortLabel,
   modeLabels,
   modelLabel,
   directoryLabel,
@@ -22,7 +23,6 @@ import {
   statusLabels,
   type Session,
 } from '@/entities/session';
-import { effortLabel } from '@/features/new-thread/reasoning-effort';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';

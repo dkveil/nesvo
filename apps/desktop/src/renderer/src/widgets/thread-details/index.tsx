@@ -10,13 +10,13 @@ import {
 import type { Computer } from '@nesvo/contracts';
 import { cn } from 'cn';
 import {
+  effortLabel,
   directoryLabel,
   modeLabels,
   modelLabel,
   ProviderGlyph,
   type Session,
 } from '@/entities/session';
-import { effortLabel } from '@/features/new-thread/reasoning-effort';
 
 type Props = {
   id: string;
