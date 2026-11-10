@@ -28,6 +28,9 @@ const fixturePath = fileURLToPath(
 const codexFixturePath = fileURLToPath(
   new URL('./codex-fixture.mjs', import.meta.url),
 );
+const hungReaderPath = fileURLToPath(
+  new URL('./git-head-hang-fixture.mjs', import.meta.url),
+);
 
 function bounded(promise, description, timeout = 10_000) {
   let timer;
@@ -4710,5 +4713,102 @@ test(
     } finally {
       check.close();
     }
+  },
+);
+
+test(
+  'Git branch reader isolates, bounds and cancels file reads',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-branch-')),
+    );
+    const tracked = new Set();
+    const previousReader = process.env.NESVO_GIT_HEAD_READER ?? null;
+    t.after(async () => {
+      if (previousReader) process.env.NESVO_GIT_HEAD_READER = previousReader;
+      else delete process.env.NESVO_GIT_HEAD_READER;
+      for (const pid of tracked) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          tracked.delete(pid);
+        }
+      }
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    const { readGitBranch } = await import('../src/workspace/git-branch.ts');
+    const seedHead = async (path, head) => {
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'HEAD'), head);
+    };
+    await seedHead(
+      join(directory, 'named', '.git'),
+      'ref: refs/heads/feature/ui1c\n',
+    );
+    await mkdir(join(directory, 'named', 'src', 'deep'), { recursive: true });
+    await seedHead(
+      join(directory, 'detached', '.git'),
+      `${'ab12cd34'.repeat(5)}\n`,
+    );
+    await seedHead(
+      join(directory, 'linked-git', 'worktree'),
+      'ref: refs/heads/linked\n',
+    );
+    await mkdir(join(directory, 'linked'), { recursive: true });
+    await writeFile(
+      join(directory, 'linked', '.git'),
+      'gitdir: ../linked-git/worktree\n',
+    );
+    await seedHead(join(directory, 'malformed', '.git'), 'ref: refs/heads/\n');
+    await mkdir(join(directory, 'plain'), { recursive: true });
+    const idle = new AbortController().signal;
+    for (const [target, expected] of [
+      ['named', { kind: 'branch', name: 'feature/ui1c' }],
+      [join('named', 'src', 'deep'), { kind: 'branch', name: 'feature/ui1c' }],
+      ['detached', { kind: 'detached', sha: 'ab12cd3' }],
+      ['linked', { kind: 'branch', name: 'linked' }],
+      ['malformed', { kind: 'none' }],
+      ['plain', { kind: 'none' }],
+    ])
+      assert.deepEqual(
+        await readGitBranch(join(directory, target), idle),
+        expected,
+        target,
+      );
+    const pidFile = join(directory, 'hung-reader.pid');
+    const readerPid = async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const value = await readFile(pidFile, 'utf8').catch(() => '');
+        if (value) {
+          tracked.add(Number(value));
+          return Number(value);
+        }
+        await delay(20);
+      }
+      assert.fail('The branch reader did not start.');
+    };
+    process.env.NESVO_GIT_HEAD_READER = hungReaderPath;
+    const started = Date.now();
+    await assert.rejects(readGitBranch(directory, idle), /in time/);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 1900 && elapsed < 4000, String(elapsed));
+    await processesGone([await readerPid()], tracked);
+    await rm(pidFile);
+    const controller = new AbortController();
+    const pending = readGitBranch(directory, controller.signal);
+    const hung = await readerPid();
+    assert.equal(alive(hung), true);
+    const aborting = Date.now();
+    controller.abort();
+    await assert.rejects(pending, /in time/);
+    assert.ok(Date.now() - aborting < 500, String(Date.now() - aborting));
+    await processesGone([hung], tracked);
   },
 );
