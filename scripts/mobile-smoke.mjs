@@ -444,9 +444,17 @@ async function screenshot(filename) {
   await writeFile(join(screenshotDirectory, filename), result.stdout);
 }
 
+async function openPhoneAccess() {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Settings', exact: true })
+    .getByRole('button', { name: 'Phone access', exact: true })
+    .click();
+}
+
 async function desktopScreenshot(filename) {
   if (!screenshotDirectory || !paired) return;
-  const modal = page.getByRole('dialog', { name: 'Phone access', exact: true });
+  const modal = page.getByRole('dialog', { name: 'Settings', exact: true });
   await modal.waitFor({ state: 'visible' });
   assert.equal(
     await modal
@@ -642,9 +650,9 @@ try {
   const device = connected.devices.find(
     device => device.name === 'D66 emulator fixture',
   );
-  await page.getByRole('button', { name: 'Phone access', exact: true }).click();
+  await openPhoneAccess();
   const access = page.getByRole('dialog', {
-    name: 'Phone access',
+    name: 'Settings',
     exact: true,
   });
   await access.waitFor({ state: 'visible' });
@@ -871,7 +879,7 @@ try {
   assert.deepEqual(await sessions(), beforeReopen);
   assert.deepEqual(await turns(), turnsBeforeReopen);
   phase('revoking-paired-device');
-  await page.getByRole('button', { name: 'Phone access', exact: true }).click();
+  await openPhoneAccess();
   await access
     .getByRole('button', { name: `Revoke ${device.name}`, exact: true })
     .click();
