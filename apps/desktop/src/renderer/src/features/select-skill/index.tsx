@@ -19,7 +19,7 @@ import { cn } from 'cn';
 import { errorDetail, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
-  matchesSkillQuery,
+  rankSkills,
   resolveTypedSkill,
   skillCommand,
   slashQueryOf,
@@ -126,8 +126,7 @@ export function SelectSkill({
   const current = state.key === scopeKey ? state : { key: scopeKey };
   const { catalog, error } = current;
   const loading = !catalog && !error;
-  const skills =
-    catalog?.skills.filter(skill => matchesSkillQuery(skill, query)) ?? [];
+  const skills = catalog ? rankSkills(catalog.skills, query) : [];
   const selectable = skills.filter(skill => !unavailableReason(skill, catalog));
   const active =
     selectable.find(skill => skill.id === activeId) ?? selectable[0];
@@ -290,7 +289,7 @@ export function SelectSkill({
           side="top"
           align="start"
           sideOffset={8}
-          collisionPadding={12}
+          collisionPadding={{ top: 56, right: 12, bottom: 12, left: 12 }}
           aria-label="Skill menu"
           className="z-50 flex max-h-[min(22rem,var(--radix-popover-content-available-height))] w-(--radix-popover-trigger-width) min-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"
           onOpenAutoFocus={event => {
@@ -424,9 +423,7 @@ export function SelectSkill({
                     {reason || skill.description || 'No description provided.'}
                   </span>
                   <span className="hidden shrink-0 text-[11px] text-muted-foreground/70 sm:inline">
-                    {skill.invocation === 'instructions'
-                      ? `${source} · Shared instructions`
-                      : source}
+                    {source}
                   </span>
                 </div>
               );
