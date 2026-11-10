@@ -40,6 +40,25 @@ import {
   type WorkspaceSnapshot,
 } from '../review/workspace';
 
+async function confirmCodexEffort(
+  model: string,
+  effort: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const status = await inspectCodex(signal);
+  if (status.status !== 'ready')
+    throw new SessionError(
+      'unavailable',
+      'Codex is not ready, so the reasoning effort could not be confirmed. Refresh Codex and try again.',
+    );
+  const efforts = status.models.find(item => item.id === model)?.efforts;
+  if (!efforts?.options.some(option => option.id === effort))
+    throw new SessionError(
+      'invalid-request',
+      `Codex does not report the ${effort} reasoning effort for ${model}.`,
+    );
+}
+
 export class SessionError extends Error {
   constructor(
     readonly code:
@@ -267,20 +286,8 @@ export class SessionService {
     input: CreateSessionInput,
     signal: AbortSignal,
   ): Promise<Session> {
-    const status = await inspectCodex(signal);
-    if (status.status !== 'ready')
-      throw new SessionError(
-        'unavailable',
-        'Codex is not ready, so the reasoning effort could not be confirmed. Refresh Codex and try again.',
-      );
-    const efforts = status.models.find(
-      model => model.id === input.model,
-    )?.efforts;
-    if (!efforts?.options.some(option => option.id === input.effort))
-      throw new SessionError(
-        'invalid-request',
-        `Codex does not report the ${input.effort} reasoning effort for ${input.model}.`,
-      );
+    if (input.effort)
+      await confirmCodexEffort(input.model, input.effort, signal);
     return this.create(input);
   }
 
@@ -635,6 +642,30 @@ export class SessionService {
     };
     const handle: ReturnType<typeof startCodex> = {
       done: Promise.resolve().then(async (): Promise<CodexResult> => {
+        if (session.provider === 'Codex' && session.effort) {
+          try {
+            this.update(session, {
+              type: 'activity',
+              text: 'Checking reasoning effort…',
+            });
+            await confirmCodexEffort(
+              session.model,
+              session.effort,
+              controller.signal,
+            );
+          } catch (error) {
+            return controller.signal.aborted
+              ? { status: 'stopped', error: null }
+              : {
+                  status: 'failed',
+                  error: `${
+                    error instanceof Error
+                      ? error.message.slice(0, 700)
+                      : 'The reasoning effort could not be confirmed.'
+                  } No provider turn was started.`,
+                };
+          }
+        }
         let selected:
           Awaited<ReturnType<typeof resolveSessionSkill>> | undefined;
         if (skillId) {
