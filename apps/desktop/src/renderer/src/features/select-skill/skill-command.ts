@@ -48,15 +48,44 @@ export const unavailableReason = (skill: SkillEntry, catalog?: SkillCatalog) =>
                   ? 'Manual invocation is disabled'
                   : '';
 
-export const matchesSkillQuery = (skill: SkillEntry, query: string) =>
-  [
-    skillCommand(skill),
-    skill.name,
+const commandScore = (value: string, query: string): number | null =>
+  value === query
+    ? 0
+    : value.startsWith(query)
+      ? 1
+      : value.split(/[-_.:\s]/).some(part => part.startsWith(query))
+        ? 2
+        : value.includes(query)
+          ? 3
+          : null;
+
+const skillQueryScore = (skill: SkillEntry, query: string): number | null => {
+  if (!query) return 0;
+  const commandScores = commandAliases(skill)
+    .map(alias => commandScore(alias ?? '', query))
+    .filter((score): score is number => score !== null);
+  if (commandScores.length) return Math.min(...commandScores);
+  const context = [
     skill.description,
-    skill.path,
     sourceLabels[skill.source],
     ...(skill.origins ?? []),
-  ].some(value => value?.toLowerCase().includes(query));
+  ];
+  return context.some(value => value.toLowerCase().includes(query)) ? 10 : null;
+};
+
+export const rankSkills = (skills: SkillEntry[], query: string) =>
+  skills
+    .map((skill, index) => ({
+      skill,
+      index,
+      score: skillQueryScore(skill, query),
+    }))
+    .filter(
+      (entry): entry is { skill: SkillEntry; index: number; score: number } =>
+        entry.score !== null,
+    )
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .map(entry => entry.skill);
 
 export const typedCommandOf = (draft: string) => {
   const match = typedCommandPattern.exec(draft.trim());
