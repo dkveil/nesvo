@@ -149,7 +149,6 @@ export function AppearanceSettings({ api }: Props) {
             title={schemeDescriptions[option]}
             tabIndex={option === focusable ? 0 : -1}
             disabled={loading}
-
             onClick={() => void choose(option)}
             onKeyDown={event => moveFocus(event, option)}
             className={cn(

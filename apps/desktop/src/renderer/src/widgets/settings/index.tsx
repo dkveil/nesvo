@@ -134,7 +134,6 @@ export function Settings({
                     className={cn(
                       'flex h-7.5 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors duration-100 outline-none',
                       'enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-64',
-
                       'aria-[current=page]:bg-highlight aria-[current=page]:font-medium aria-[current=page]:text-foreground',
                     )}
                   >
