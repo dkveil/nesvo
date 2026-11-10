@@ -8,7 +8,7 @@ import {
   Monitor,
   PanelLeft,
   Search,
-  Smartphone,
+  Settings,
   SquarePen,
   X,
 } from 'lucide-react';
@@ -32,7 +32,7 @@ type Props = {
   computers: Computer[];
   hostName: string;
   onComputers: () => void;
-  onMobile: () => void;
+  onSettings: () => void;
   pendingActions: number;
   selectedId: string;
   inbox: boolean;
@@ -91,7 +91,7 @@ export function SessionSidebar({
   computers,
   hostName,
   onComputers,
-  onMobile,
+  onSettings,
   pendingActions,
   selectedId,
   inbox,
@@ -360,6 +360,17 @@ export function SessionSidebar({
         </nav>
       </div>
       <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+          aria-label="Settings"
+          title="Settings"
+          onClick={onSettings}
+        >
+          <Settings className="size-4" />
+        </Button>
         {footerStart}
         <div className="min-w-0 flex-1" />
         <Button
@@ -373,17 +384,6 @@ export function SessionSidebar({
         >
           <Monitor className="size-3.5 text-sidebar-icon" />
           <span className="truncate">{hostName}</span>
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-          aria-label="Phone access"
-          title="Phone access"
-          onClick={onMobile}
-        >
-          <Smartphone className="size-4" />
         </Button>
       </div>
     </div>

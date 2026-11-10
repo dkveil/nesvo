@@ -7,15 +7,9 @@ import {
 import { Monitor, Plus, Server } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
+import { SettingsSection } from '@/shared/ui/settings-section';
 
 type Props = {
   computers: Computer[];
@@ -23,7 +17,6 @@ type Props = {
     DesktopApi,
     'addComputer' | 'connectComputer' | 'disconnectComputer' | 'removeComputer'
   >;
-  onOpenChange: (open: boolean) => void;
 };
 
 const statusLabels: Record<Computer['status'], string> = {
@@ -34,7 +27,7 @@ const statusLabels: Record<Computer['status'], string> = {
   error: 'Connection failed',
 };
 
-export function ManageComputers({ computers, api, onOpenChange }: Props) {
+export function ManageComputers({ computers, api }: Props) {
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState('');
   const [error, setError] = useState('');
@@ -112,25 +105,30 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
     </div>
   );
   return (
-    <Dialog
-      open
-      onOpenChange={value => {
-        if (!pending) onOpenChange(value);
-      }}
-    >
-      <DialogContent className="max-h-[90dvh] overflow-y-auto bg-code-background sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Computers</DialogTitle>
-          <DialogDescription>
-            Sessions, files and provider accounts stay on their computer.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="divide-y">
+    <div className="space-y-8">
+      <div className="space-y-2">
+        <SettingsSection
+          title="Computers"
+          action={
+            !adding && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-foreground"
+                disabled={!!pending}
+                onClick={() => setAdding(true)}
+              >
+                <Plus />
+                Add computer
+              </Button>
+            )
+          }
+        >
           {computers.map(computer => (
             <section
               key={computer.id}
               aria-label={`Computer: ${computer.name}`}
-              className="space-y-2 py-3"
+              className="space-y-2 px-3 py-3"
             >
               <div className="flex items-start gap-3">
                 {computer.kind === 'local' ? (
@@ -257,10 +255,14 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
               )}
             </section>
           ))}
-        </div>
-        {adding ? (
-          <form className="space-y-4 border-t pt-4" onSubmit={submit}>
-            <h3 className="text-sm font-medium">Add SSH computer</h3>
+        </SettingsSection>
+        <p className="px-3 text-xs text-muted-foreground">
+          Sessions, files and provider accounts stay on their computer.
+        </p>
+      </div>
+      {adding && (
+        <SettingsSection title="Add SSH computer">
+          <form className="space-y-4 p-3" onSubmit={submit}>
             <div className="grid gap-4 sm:grid-cols-2">
               {field('name', 'Computer name', 'My VPS', true)}
               {field('hostname', 'SSH hostname', 'server.example.com', true)}
@@ -321,27 +323,16 @@ export function ManageComputers({ computers, api, onOpenChange }: Props) {
               </Button>
             </div>
           </form>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            className="justify-self-start"
-            disabled={!!pending}
-            onClick={() => setAdding(true)}
-          >
-            <Plus className="size-3.5" />
-            Add computer
-          </Button>
-        )}
-        {error && (
-          <p
-            role="alert"
-            className="text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-          >
-            {error}
-          </p>
-        )}
-      </DialogContent>
-    </Dialog>
+        </SettingsSection>
+      )}
+      {error && (
+        <p
+          role="alert"
+          className="px-3 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+        >
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

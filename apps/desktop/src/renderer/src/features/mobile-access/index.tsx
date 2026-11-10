@@ -7,13 +7,7 @@ import type {
 import { Copy, Smartphone } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { Textarea } from '@/shared/ui/textarea';
 
 type Props = {
@@ -25,10 +19,9 @@ type Props = {
     | 'pairMobile'
     | 'revokeMobile'
   >;
-  onOpenChange: (open: boolean) => void;
 };
 
-export function MobileAccess({ api, onOpenChange }: Props) {
+export function MobileAccess({ api }: Props) {
   const [status, setStatus] = useState<MobileGatewayStatus | null>(null);
   const [pairing, setPairing] = useState<MobilePairing | null>(null);
   const [pending, setPending] = useState('');
@@ -85,40 +78,34 @@ export function MobileAccess({ api, onOpenChange }: Props) {
   const validPairing =
     pairing && Date.parse(pairing.expiresAt) > now ? pairing : null;
   return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Phone access</DialogTitle>
-          <DialogDescription>
-            Continue your sessions from Nesvo on your phone.
-          </DialogDescription>
-        </DialogHeader>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {!status ? (
-          <p className="py-5 text-sm text-muted-foreground">
-            {error ? 'Phone access is unavailable.' : 'Loading devices…'}
-          </p>
-        ) : (
-          <div className="space-y-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">
-                  {status.enabled
-                    ? 'Phone access is on'
-                    : 'Phone access is off'}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {status.enabled
-                    ? 'Keep Nesvo open while using this connection.'
-                    : 'Enable access before pairing a device.'}
-                </p>
-              </div>
+    <div className="space-y-8">
+      {error && (
+        <p
+          role="alert"
+          className="px-3 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+        >
+          {error}
+        </p>
+      )}
+      {!status ? (
+        <p className="px-3 text-sm text-muted-foreground">
+          {error ? 'Phone access is unavailable.' : 'Loading devices…'}
+        </p>
+      ) : (
+        <>
+          <SettingsSection title="Phone access">
+            <SettingsRow
+              title={
+                status.enabled ? 'Phone access is on' : 'Phone access is off'
+              }
+              description={
+                status.enabled
+                  ? 'Keep Nesvo open while using this connection.'
+                  : 'Continue your sessions from Nesvo on your phone. Enable access before pairing a device.'
+              }
+            >
               <Button
-                size="sm"
+                size="xs"
                 variant="outline"
                 disabled={!!pending}
                 onClick={() =>
@@ -137,13 +124,13 @@ export function MobileAccess({ api, onOpenChange }: Props) {
                     ? 'Disable'
                     : 'Enable phone access'}
               </Button>
-            </div>
+            </SettingsRow>
             {status.enabled && (
-              <div className="space-y-3 border-y py-4">
+              <div className="space-y-3 px-3 py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium">Pair a phone</p>
+                  <p className="text-[13px] font-medium">Pair a phone</p>
                   <Button
-                    size="sm"
+                    size="xs"
                     disabled={!!pending}
                     onClick={() =>
                       void action('pair', async () => {
@@ -170,12 +157,12 @@ export function MobileAccess({ api, onOpenChange }: Props) {
                       aria-label="Pairing link"
                       value={validPairing.link}
                       readOnly
-                      className="min-h-24 break-all text-xs"
+                      className="min-h-24 font-mono text-xs break-all"
                       onFocus={event => event.currentTarget.select()}
                     />
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="xs"
                       onClick={() =>
                         void action('copy', async () => {
                           await navigator.clipboard.writeText(
@@ -185,7 +172,7 @@ export function MobileAccess({ api, onOpenChange }: Props) {
                         })
                       }
                     >
-                      <Copy className="size-3.5" />
+                      <Copy />
                       {copied ? 'Copied' : 'Copy link'}
                     </Button>
                   </>
@@ -204,51 +191,48 @@ export function MobileAccess({ api, onOpenChange }: Props) {
                 )}
               </div>
             )}
-            <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">
-                Paired devices
+          </SettingsSection>
+          <SettingsSection title="Paired devices">
+            {status.devices.length === 0 ? (
+              <p className="px-3 py-4 text-xs text-muted-foreground">
+                No paired devices yet.
               </p>
-              {status.devices.length === 0 ? (
-                <p className="py-3 text-sm text-muted-foreground">
-                  No paired devices yet.
-                </p>
-              ) : (
-                <ul className="divide-y">
-                  {status.devices.map(device => (
-                    <li
-                      key={device.id}
-                      className="flex items-center gap-3 py-3"
-                    >
-                      <Smartphone className="size-4 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm">{device.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {device.lastSeenAt
-                            ? `Last seen ${new Date(device.lastSeenAt).toLocaleString()}`
-                            : 'Paired, waiting for connection'}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!!pending}
-                        aria-label={`Revoke ${device.name}`}
-                        onClick={() =>
-                          void action(device.id, async () => {
-                            setStatus(await api.revokeMobile(device.id));
-                          })
-                        }
-                      >
-                        Revoke
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+            ) : (
+              status.devices.map(device => (
+                <SettingsRow
+                  key={device.id}
+                  title={
+                    <span className="flex items-center gap-2">
+                      <Smartphone className="size-3.5 text-muted-foreground" />
+                      <span className="truncate">{device.name}</span>
+                    </span>
+                  }
+                  description={
+                    device.lastSeenAt
+                      ? `Last seen ${new Date(device.lastSeenAt).toLocaleString()}`
+                      : 'Paired, waiting for connection'
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-muted-foreground hover:text-foreground"
+                    disabled={!!pending}
+                    aria-label={`Revoke ${device.name}`}
+                    onClick={() =>
+                      void action(device.id, async () => {
+                        setStatus(await api.revokeMobile(device.id));
+                      })
+                    }
+                  >
+                    Revoke
+                  </Button>
+                </SettingsRow>
+              ))
+            )}
+          </SettingsSection>
+        </>
+      )}
+    </div>
   );
 }
