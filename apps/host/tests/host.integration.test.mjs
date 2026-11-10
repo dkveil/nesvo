@@ -595,6 +595,53 @@ test(
         { type: 'error', id: null, code: 'invalid-request' },
       );
     }
+    const sessionsBeforeDraft = (await host.request('list-sessions')).sessions;
+    const draftInventory = await host.request('discover-skills', {
+      provider: 'Claude Code',
+      directory: skillsProject,
+    });
+    assert.equal(draftInventory.type, 'skills', JSON.stringify(draftInventory));
+    assert.equal(draftInventory.catalog.sessionId, undefined);
+    assert.ok(draftInventory.catalog.directory);
+    assert.deepEqual(
+      draftInventory.catalog.skills.map(skill => [
+        skill.id,
+        skill.invocation,
+        skill.contentHash,
+      ]),
+      claudeInventory.catalog.skills.map(skill => [
+        skill.id,
+        skill.invocation,
+        skill.contentHash,
+      ]),
+    );
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions,
+      sessionsBeforeDraft,
+    );
+    assert.equal(
+      (
+        await host.request('discover-skills', {
+          provider: 'Claude Code',
+          directory: join(directory, 'missing-draft-folder'),
+        })
+      ).code,
+      'invalid-directory',
+    );
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'discover-skills',
+          input: {
+            provider: 'Claude Code',
+            directory: skillsProject,
+            mode: 'supervised',
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
     const nativeSkillSessions = new Map();
     const nativeSkillCatalogs = new Map();
     const readSkillTraces = async () =>

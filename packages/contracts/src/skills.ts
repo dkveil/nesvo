@@ -9,7 +9,14 @@ export const skillLimits = {
   detail: 800,
 } as const;
 
-export const discoverSkillsSchema = z.strictObject({ sessionId: z.uuid() });
+const skillProviderSchema = z.enum(['Claude Code', 'Codex']);
+export const discoverSkillsSchema = z.union([
+  z.strictObject({ sessionId: z.uuid() }),
+  z.strictObject({
+    provider: skillProviderSchema,
+    directory: z.string().trim().max(skillLimits.path),
+  }),
+]);
 export const skillOriginsSchema = z
   .array(z.enum(['Claude Code', 'Codex', 'Shared']))
   .max(3);
@@ -42,7 +49,7 @@ export const skillReferenceSchema = skillEntrySchema
   });
 
 export const skillDiscoverySchema = z.strictObject({
-  provider: z.enum(['Claude Code', 'Codex']),
+  provider: skillProviderSchema,
   method: z.enum(['native', 'filesystem', 'library']),
   status: z.enum(['ready', 'partial', 'unsupported', 'unavailable']),
   skills: z.array(skillEntrySchema).max(skillLimits.entries),
@@ -60,7 +67,8 @@ export const skillDiscoverySchema = z.strictObject({
 });
 
 export const skillCatalogSchema = skillDiscoverySchema.extend({
-  sessionId: z.uuid(),
+  sessionId: z.uuid().optional(),
+  directory: z.string().max(skillLimits.path).optional(),
 });
 
 export type DiscoverSkillsInput = z.infer<typeof discoverSkillsSchema>;
