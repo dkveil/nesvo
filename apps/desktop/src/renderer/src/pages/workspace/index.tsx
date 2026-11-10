@@ -377,7 +377,7 @@ export function Workspace() {
       setSending(false);
     }
   };
-  const send = async () => {
+  const send = async (typed?: { text: string; skill: SelectedSkill }) => {
     if (
       !selected ||
       sendingRef.current ||
@@ -389,10 +389,11 @@ export function Workspace() {
     )
       return;
     const sessionKey = entityKey(selected);
-    const text = drafts[sessionKey]?.trim();
+    const text = typed?.text ?? drafts[sessionKey]?.trim();
     if (!text || text.length > 32000) return;
     const version = draftVersions.current[sessionKey] ?? 0;
-    await deliver(selected, text, selectedSkills[sessionKey] ?? null, () => {
+    const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
+    await deliver(selected, text, skill, () => {
       if ((draftVersions.current[sessionKey] ?? 0) === version) {
         setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
         setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
@@ -1197,7 +1198,7 @@ export function Workspace() {
                 }
                 error={errors[selectedKey] ?? ''}
                 onDraft={value => changeDraft(selectedKey, value)}
-                onSend={() => void send()}
+                onSend={typed => void send(typed)}
                 onStop={() => void stop()}
               />
             </div>

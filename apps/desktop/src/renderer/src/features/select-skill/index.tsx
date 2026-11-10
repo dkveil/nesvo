@@ -8,33 +8,57 @@ import {
 } from 'react';
 import type {
   DesktopApi,
-  Session,
+  DiscoverSkillsInput,
   SkillCatalog,
   SkillEntry,
   SkillReference,
 } from '@nesvo/contracts';
 import { BookOpen, RefreshCw } from 'lucide-react';
 import { Popover } from 'radix-ui';
-import { errorDetail } from '@/entities/session';
+import { cn } from 'cn';
+import { errorDetail, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
+import {
+  matchesSkillQuery,
+  resolveTypedSkill,
+  skillCommand,
+  slashQueryOf,
+  sourceLabels,
+  typedCommandOf,
+  unavailableReason,
+} from './skill-command';
 
 export type SelectedSkill = SkillReference & { description: string };
 
+export type SkillScope = {
+  provider: Provider;
+  input: DiscoverSkillsInput;
+};
+
+export type TypedSubmission =
+  | { status: 'none' }
+  | { status: 'skill'; skill: SelectedSkill; text: string }
+  | { status: 'error' };
+
 type Controls = {
   trigger: ReactNode;
+  anchor: (node: ReactNode) => ReactNode;
+  notice: ReactNode;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onInput: () => void;
+  resolveTyped: (draft: string) => Promise<TypedSubmission>;
   inputAria: {
     'aria-controls'?: string;
     'aria-activedescendant'?: string;
     'aria-autocomplete'?: 'list';
     'aria-haspopup'?: 'listbox';
+    'aria-expanded'?: boolean;
+    'data-skill-input': true;
   };
 };
 
 type Props = {
-  session: Pick<Session, 'id' | 'provider'>;
+  scope: SkillScope;
   api: Pick<DesktopApi, 'discoverSkills'>;
   draft: string;
   enabled?: boolean;
@@ -43,38 +67,37 @@ type Props = {
   children: (controls: Controls) => ReactNode;
 };
 
-const sourceLabels: Record<SkillEntry['source'], string> = {
-  project: 'Project',
-  user: 'Personal',
-  system: 'Built-in',
-  managed: 'Managed',
-  plugin: 'Plugin',
-  unknown: 'Unknown source',
-};
+const toSelected = (skill: SkillEntry): SelectedSkill => ({
+  id: skill.id,
+  name: skill.name,
+  path: skill.path ?? '',
+  source: skill.source,
+  description: skill.description,
+  origins: skill.origins,
+  delivery: skill.invocation === 'instructions' ? 'instructions' : 'native',
+  contentHash: skill.contentHash,
+});
 
-const unavailableReason = (skill: SkillEntry, catalog?: SkillCatalog) =>
-  skill.invocation === 'blocked'
-    ? skill.invocationReason || 'Unavailable for this connection'
-    : skill.invocation === 'native' || skill.invocation === 'instructions'
-      ? skill.path
-        ? ''
-        : 'Source file is unavailable'
-      : catalog?.method !== 'native' || !catalog.invocationSupported
-        ? 'Invocation unavailable'
-        : skill.enabled !== true
-          ? 'Not enabled in this connection'
-          : skill.source === 'plugin'
-            ? 'Plugin skill invocation is not supported'
-            : skill.kind !== 'skill'
-              ? 'Command invocation is not supported'
-              : !skill.path
-                ? 'Source file is unavailable'
-                : skill.userInvocable === false
-                  ? 'Manual invocation is disabled'
-                  : '';
+const belongsTo = (catalog: SkillCatalog, scope: SkillScope) =>
+  catalog.provider === scope.provider &&
+  ('sessionId' in scope.input
+    ? catalog.sessionId === scope.input.sessionId
+    : !catalog.sessionId);
+
+const requestCatalog = (
+  api: Pick<DesktopApi, 'discoverSkills'>,
+  scope: SkillScope,
+) =>
+  api.discoverSkills(scope.input).then(result => {
+    if (!belongsTo(result, scope))
+      throw new Error(
+        'The skill catalog does not match this thread. Refresh to try again.',
+      );
+    return result;
+  });
 
 export function SelectSkill({
-  session,
+  scope,
   api,
   draft,
   enabled = true,
@@ -83,33 +106,28 @@ export function SelectSkill({
   children,
 }: Props) {
   const listId = useId();
+  const scopeKey = JSON.stringify(scope);
   const [manualOpen, setManualOpen] = useState(false);
   const [dismissedDraft, setDismissedDraft] = useState<string | null>(null);
   const [manualQuery, setManualQuery] = useState<string | null>(null);
   const [activeId, setActiveId] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [typedError, setTypedError] = useState('');
   const [state, setState] = useState<{
+    key: string;
     catalog?: SkillCatalog;
     error?: string;
-  }>({});
-  const search = useRef<HTMLInputElement>(null);
-  const list = useRef<HTMLDivElement>(null);
-  const slashQuery = /^\/([^\s]*)/.exec(draft)?.[1];
+  }>({ key: '' });
+  const filter = useRef<HTMLInputElement>(null);
+  const slashQuery = slashQueryOf(draft);
   const slash = slashQuery !== undefined;
   const open = enabled && (manualOpen || (slash && dismissedDraft !== draft));
   const query = (manualQuery ?? slashQuery ?? '').trim().toLowerCase();
-  const { catalog, error } = state;
+  const current = state.key === scopeKey ? state : { key: scopeKey };
+  const { catalog, error } = current;
   const loading = !catalog && !error;
   const skills =
-    catalog?.skills.filter(skill =>
-      [
-        skill.name,
-        skill.description,
-        skill.path,
-        sourceLabels[skill.source],
-        ...(skill.origins ?? []),
-      ].some(value => value?.toLowerCase().includes(query)),
-    ) ?? [];
+    catalog?.skills.filter(skill => matchesSkillQuery(skill, query)) ?? [];
   const selectable = skills.filter(skill => !unavailableReason(skill, catalog));
   const active =
     selectable.find(skill => skill.id === activeId) ?? selectable[0];
@@ -118,30 +136,22 @@ export function SelectSkill({
     : -1;
   const activeOptionId =
     activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
+  const fetchCatalog = () => requestCatalog(api, scope);
   useEffect(() => {
     if (!open) return;
-    let current = true;
-    void api.discoverSkills({ sessionId: session.id }).then(
+    let live = true;
+    requestCatalog(api, JSON.parse(scopeKey) as SkillScope).then(
       result => {
-        if (!current) return;
-        setState(
-          result.sessionId === session.id &&
-            result.provider === session.provider
-            ? { catalog: result }
-            : {
-                error:
-                  'The skill catalog does not match this session. Refresh to try again.',
-              },
-        );
+        if (live) setState({ key: scopeKey, catalog: result });
       },
       failure => {
-        if (current) setState({ error: errorDetail(failure) });
+        if (live) setState({ key: scopeKey, error: errorDetail(failure) });
       },
     );
     return () => {
-      current = false;
+      live = false;
     };
-  }, [api, open, session.id, session.provider, refresh]);
+  }, [api, open, scopeKey, refresh]);
   useEffect(() => {
     if (open && activeOptionId)
       document
@@ -156,17 +166,39 @@ export function SelectSkill({
   const choose = (skill: SkillEntry) => {
     if (unavailableReason(skill, catalog) || !skill.path) return;
     close();
-    onSelect({
-      id: skill.id,
-      name: skill.name,
-      path: skill.path,
-      source: skill.source,
-      description: skill.description,
-      origins: skill.origins,
-      delivery: skill.invocation === 'instructions' ? 'instructions' : 'native',
-      contentHash: skill.contentHash,
-    });
+    setTypedError('');
+    onSelect(toSelected(skill));
     requestAnimationFrame(onFocusMessage);
+  };
+  const resolveTyped = async (text: string): Promise<TypedSubmission> => {
+    const typed = typedCommandOf(text);
+    if (!typed) return { status: 'none' };
+    try {
+      const resolved = resolveTypedSkill(
+        catalog ?? (await fetchCatalog()),
+        typed.command,
+        typed.text,
+      );
+      if (resolved.status === 'error') {
+        setTypedError(resolved.message);
+        return { status: 'error' };
+      }
+      if (!resolved.text) {
+        setTypedError(
+          `Add a message after /${typed.command} to send it with this skill.`,
+        );
+        return { status: 'error' };
+      }
+      setTypedError('');
+      return {
+        status: 'skill',
+        skill: toSelected(resolved.skill),
+        text: resolved.text,
+      };
+    } catch (failure) {
+      setTypedError(`Skills could not be checked. ${errorDetail(failure)}`);
+      return { status: 'error' };
+    }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!open || event.nativeEvent.isComposing) return;
@@ -196,7 +228,7 @@ export function SelectSkill({
     }
   };
   const reload = () => {
-    setState({});
+    setState({ key: '' });
     setRefresh(value => value + 1);
   };
   return (
@@ -219,180 +251,202 @@ export function SelectSkill({
               className="text-muted-foreground"
               aria-label="Choose skill"
               disabled={!enabled}
-              title="Choose skill"
+              title="Choose skill (type / in the message)"
             >
               <BookOpen className="size-3.5" />
               <span className="hidden sm:inline">Skills</span>
             </Button>
           </Popover.Trigger>
         ),
+        anchor: node => <Popover.Anchor asChild>{node}</Popover.Anchor>,
+        notice: typedError ? (
+          <p
+            role="alert"
+            className="px-1 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
+          >
+            {typedError}
+          </p>
+        ) : null,
         onKeyDown,
         onInput: () => {
           setDismissedDraft(null);
           setManualQuery(null);
+          setTypedError('');
         },
+        resolveTyped,
         inputAria: open
           ? {
               'aria-controls': listId,
               'aria-activedescendant': activeOptionId,
               'aria-autocomplete': 'list',
               'aria-haspopup': 'listbox',
+              'aria-expanded': true,
+              'data-skill-input': true,
             }
-          : {},
+          : { 'data-skill-input': true },
       })}
       <Popover.Portal>
         <Popover.Content
           side="top"
           align="start"
-          sideOffset={12}
+          sideOffset={8}
           collisionPadding={12}
-          className="z-50 flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"
+          aria-label="Skill menu"
+          className="z-50 flex max-h-[min(22rem,var(--radix-popover-content-available-height))] w-(--radix-popover-trigger-width) min-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"
           onOpenAutoFocus={event => {
             event.preventDefault();
-            if (manualOpen) search.current?.focus();
+            if (manualOpen) filter.current?.focus();
           }}
           onCloseAutoFocus={event => event.preventDefault()}
           onInteractOutside={event => {
             if (
               event.target instanceof Element &&
-              event.target.closest('#message-input')
+              event.target.closest('[data-skill-input]')
             )
               event.preventDefault();
           }}
           onKeyDown={onKeyDown}
         >
-          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-            <span className="text-xs font-medium">Shared library</span>
-            <span className="ml-auto text-[11px] text-muted-foreground">
-              {session.provider}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              aria-label="Refresh skill choices"
-              disabled={loading}
-              onClick={reload}
-            >
-              <RefreshCw className="size-3" />
-            </Button>
-          </div>
-          <>
-            <Input
-              ref={search}
-              aria-label="Filter skills"
-              placeholder="Find a skill…"
-              value={manualQuery ?? slashQuery ?? ''}
-              onChange={event => setManualQuery(event.target.value)}
-              maxLength={256}
-              className="m-2 h-8 w-auto shrink-0 border-transparent text-xs shadow-none"
-              aria-controls={listId}
-              aria-activedescendant={activeOptionId}
-              aria-autocomplete="list"
-            />
-            {loading && (
-              <p role="status" className="p-3 text-xs text-muted-foreground">
-                Loading skills…
-              </p>
-            )}
-            {error && (
-              <div className="space-y-2 p-3">
-                <p
-                  role="alert"
-                  className="text-xs text-destructive [overflow-wrap:anywhere]"
-                >
-                  {error}
-                </p>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  onClick={reload}
-                >
-                  Retry skill discovery
-                </Button>
-              </div>
-            )}
-            <div
-              ref={list}
-              id={listId}
-              role="listbox"
-              aria-label="Skills"
-              className="min-h-0 overflow-y-auto p-1"
-            >
-              {skills.map((skill, index) => {
-                const reason = unavailableReason(skill, catalog);
-                const delivery =
-                  skill.invocation === 'instructions'
-                    ? 'Shared instructions'
-                    : 'Native skill';
-                return (
-                  <div
-                    key={skill.id}
-                    id={`${listId}-${index}`}
-                    role="option"
-                    aria-label={skill.name}
-                    aria-selected={active?.id === skill.id}
-                    aria-disabled={!!reason}
-                    tabIndex={-1}
-                    title={[
-                      skill.description,
-                      sourceLabels[skill.source],
-                      skill.origins?.join(', '),
-                      reason || delivery,
-                      skill.path,
-                      skill.contentHash,
-                      skill.detail,
-                      reason,
-                    ]
-                      .filter(Boolean)
-                      .join('\n')}
-                    onMouseDown={event => event.preventDefault()}
-                    onMouseEnter={() => {
-                      if (!reason) setActiveId(skill.id);
-                    }}
-                    onClick={() => choose(skill)}
-                    className={`rounded-lg px-3 py-2 text-xs ${reason ? 'opacity-50' : active?.id === skill.id ? 'cursor-pointer bg-accent' : 'cursor-pointer hover:bg-accent/60'}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="truncate font-medium">{skill.name}</span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {[skill.origins?.join(', '), sourceLabels[skill.source]]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    </div>
-                    <p className="mt-1 line-clamp-1 leading-5 text-muted-foreground">
-                      {skill.description || 'No description provided.'}
-                    </p>
-                    <p className="text-[11px] leading-5 text-muted-foreground">
-                      {reason || delivery}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-            {catalog && !skills.length && (
-              <p className="p-3 text-xs text-muted-foreground">
-                {query
-                  ? 'No matching skills.'
-                  : 'No skills available in this session.'}
-              </p>
-            )}
-            {catalog && (catalog.truncated || catalog.issues.length > 0) && (
-              <p
-                className="border-t px-3 py-2 text-[11px] text-muted-foreground"
-                title={catalog.issues.map(issue => issue.message).join('\n')}
+          {manualOpen && (
+            <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+              <span
+                aria-hidden="true"
+                className="pl-1 text-sm text-muted-foreground"
               >
-                Some sources or entries could not be included. Open Skills for
-                discovery details.
+                /
+              </span>
+              <input
+                ref={filter}
+                aria-label="Filter skills"
+                placeholder="Find a skill"
+                value={manualQuery ?? ''}
+                onChange={event => setManualQuery(event.target.value)}
+                maxLength={256}
+                className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+                aria-controls={listId}
+                aria-activedescendant={activeOptionId}
+                aria-autocomplete="list"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 text-muted-foreground"
+                aria-label="Refresh skill choices"
+                title="Refresh skill choices"
+                disabled={loading}
+                onClick={reload}
+              >
+                <RefreshCw className="size-3" />
+              </Button>
+            </div>
+          )}
+          {loading && (
+            <p
+              role="status"
+              className="px-3 py-2.5 text-xs text-muted-foreground"
+            >
+              Loading skills…
+            </p>
+          )}
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2.5">
+              <p
+                role="alert"
+                className="min-w-0 flex-1 text-xs text-destructive [overflow-wrap:anywhere]"
+              >
+                {error}
+              </p>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={reload}
+              >
+                Retry skill discovery
+              </Button>
+            </div>
+          )}
+          <div
+            id={listId}
+            role="listbox"
+            aria-label="Skills"
+            className="min-h-0 overflow-y-auto p-1"
+          >
+            {skills.map((skill, index) => {
+              const reason = unavailableReason(skill, catalog);
+              const selected = active?.id === skill.id;
+              const source = [
+                skill.origins?.join(', '),
+                sourceLabels[skill.source],
+              ]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <div
+                  key={skill.id}
+                  id={`${listId}-${index}`}
+                  role="option"
+                  aria-label={skill.name}
+                  aria-selected={selected}
+                  aria-disabled={!!reason}
+                  tabIndex={-1}
+                  data-skill-command={skillCommand(skill)}
+                  title={[
+                    skill.name,
+                    skill.description,
+                    source,
+                    reason ||
+                      (skill.invocation === 'instructions'
+                        ? 'Shared instructions'
+                        : 'Native skill'),
+                    skill.path,
+                    skill.contentHash,
+                    skill.detail,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
+                  onMouseDown={event => event.preventDefault()}
+                  onMouseMove={() => {
+                    if (!reason && !selected) setActiveId(skill.id);
+                  }}
+                  onClick={() => choose(skill)}
+                  className={cn(
+                    'flex h-8 min-w-0 items-center gap-2 rounded-lg px-2.5 text-[13px] transition-colors duration-100',
+                    reason ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
+                    selected && 'bg-accent',
+                  )}
+                >
+                  <span className="shrink-0 font-semibold">
+                    /{skillCommand(skill)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {reason || skill.description || 'No description provided.'}
+                  </span>
+                  <span className="hidden shrink-0 text-[11px] text-muted-foreground/70 sm:inline">
+                    {skill.invocation === 'instructions'
+                      ? `${source} · Shared instructions`
+                      : source}
+                  </span>
+                </div>
+              );
+            })}
+            {catalog && !skills.length && (
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                {query
+                  ? `No skill matches /${query}.`
+                  : 'No skills are available here.'}
               </p>
             )}
-            <p className="shrink-0 border-t px-3 py-2 text-[11px] text-muted-foreground">
-              ↑ ↓ to navigate · Enter or Tab to select · Esc to close
+          </div>
+          {catalog && (catalog.truncated || catalog.issues.length > 0) && (
+            <p
+              className="shrink-0 border-t px-3 py-1.5 text-[11px] text-muted-foreground"
+              title={catalog.issues.map(issue => issue.message).join('\n')}
+            >
+              Some sources could not be included. Open Skills for details.
             </p>
-          </>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
