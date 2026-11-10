@@ -545,7 +545,14 @@ if (args.length === 1 && args[0] === '--version') {
                 description: 'Fixture medium effort',
               },
               { reasoningEffort: 'high', description: 'Fixture high effort' },
-            ],
+            ].filter(
+              option =>
+                !process.env.NESVO_CODEX_FIXTURE_CATALOG ||
+                !existsSync(process.env.NESVO_CODEX_FIXTURE_CATALOG) ||
+                JSON.parse(
+                  readFileSync(process.env.NESVO_CODEX_FIXTURE_CATALOG, 'utf8'),
+                ).efforts.includes(option.reasoningEffort),
+            ),
             defaultReasoningEffort: 'medium',
           },
         ],

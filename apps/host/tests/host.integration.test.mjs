@@ -56,6 +56,7 @@ const fixtureEnvironment = (directory, pidFile) => ({
   NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
   NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
   NESVO_CODEX_FIXTURE_RUN_LOG: pidFile + '.turns',
+  NESVO_CODEX_FIXTURE_CATALOG: pidFile + '.catalog',
   CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
   CODEX_HOME: join(directory, 'codex-config'),
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
@@ -1513,6 +1514,29 @@ test(
         ['Reason carefully.', 'high'],
         ['Continue carefully.', 'high'],
       ],
+    );
+    await writeFile(
+      pidFile + '.catalog',
+      JSON.stringify({ efforts: ['low', 'medium'] }),
+    );
+    const withdrawnRun = await sendCodex(
+      finalHost,
+      effortTarget,
+      'Withdrawn effort.',
+    );
+    const withdrawn = await finalHost.event(
+      value => value.runId === withdrawnRun.runId && value.status === 'failed',
+    );
+    assert.match(
+      withdrawn.error,
+      /does not report the high reasoning effort.*No provider turn was started/,
+    );
+    await rm(pidFile + '.catalog');
+    assert.equal(
+      (await readFile(pidFile + '.turns', 'utf8')).includes(
+        'Withdrawn effort.',
+      ),
+      false,
     );
     const disconnectedTarget = await createCodex('read-only');
     const disconnectedRun = await sendCodex(
