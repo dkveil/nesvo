@@ -23,6 +23,7 @@ import {
   PanelRight,
   Plus,
   RefreshCw,
+  SquareDashed,
 } from 'lucide-react';
 import {
   directoryLabel,
@@ -39,6 +40,7 @@ import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
+import { ProjectChip } from '@/shared/ui/project-chip';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
   Sheet,
@@ -58,10 +60,15 @@ import { SessionSidebar } from '@/widgets/session-sidebar';
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
-import { readUsageVariant } from './usage-variant';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
+import { SidebarResizer } from './sidebar-resizer';
+import {
+  clampSidebarWidth,
+  readSidebarWidth,
+  saveSidebarWidth,
+} from './sidebar-width';
 
 const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 
@@ -94,7 +101,9 @@ export function Workspace() {
   const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
-  const [usageVariant] = useState(readUsageVariant);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const visibleSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -224,6 +233,14 @@ export function Workspace() {
   useEffect(() => {
     saveSidebarOpen(sidebarOpen);
   }, [sidebarOpen]);
+  useEffect(() => {
+    saveSidebarWidth(sidebarWidth);
+  }, [sidebarWidth]);
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const toggleSidebar = useCallback((open: boolean) => {
     setSidebarOpen(open);
     requestAnimationFrame(() => {
@@ -716,6 +733,13 @@ export function Workspace() {
     onInbox: openInbox,
     onCreate: openCreate,
   };
+  const showingNewThread =
+    creating || (!inbox && !selected && !store.loading && !store.error);
+  const breadcrumbDirectory = showingNewThread
+    ? threadSetup.directory.trim()
+    : !inbox && selected
+      ? selected.directory
+      : null;
   const providerIssue =
     !inbox &&
     !creating &&
@@ -729,43 +753,36 @@ export function Workspace() {
       <aside
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
-        className="hidden w-(--sidebar-width) shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar transition-[width] duration-150 ease-out data-[state=collapsed]:w-(--sidebar-collapsed-width) md:block"
+        style={{ width: visibleSidebarWidth }}
+        className={cn(
+          'relative hidden shrink-0 border-r border-sidebar-border bg-sidebar',
+          sidebarOpen && 'md:block',
+        )}
       >
-        {sidebarOpen ? (
-          <div className="h-full w-(--sidebar-width)">
-            <SessionSidebar
-              {...sidebarProps}
-              onCollapse={() => toggleSidebar(false)}
-              collapseToggleRef={sidebarCollapseToggle}
-              usage={
-                usageVariant === 'b' ? (
+        {sidebarOpen && (
+          <>
+            <div className="h-full overflow-hidden">
+              <SessionSidebar
+                {...sidebarProps}
+                onCollapse={() => toggleSidebar(false)}
+                collapseToggleRef={sidebarCollapseToggle}
+                footerStart={
                   <ProviderUsage
-                    key={`${selectedHostId}/bars`}
-                    layout="bars"
+                    key={`${selectedHostId}/footer`}
+                    layout="row"
+                    popoverSide="top"
                     {...usageProps}
                   />
-                ) : undefined
-              }
-              footerStart={
-                <ProviderUsage
-                  key={`${selectedHostId}/footer`}
-                  layout={usageVariant === 'b' ? 'account' : 'row'}
-                  popoverSide="top"
-                  {...usageProps}
-                />
+                }
+              />
+            </div>
+            <SidebarResizer
+              width={visibleSidebarWidth}
+              onResize={width =>
+                setSidebarWidth(clampSidebarWidth(width, viewportWidth))
               }
             />
-          </div>
-        ) : (
-          <div className="flex h-full w-(--sidebar-collapsed-width) flex-col items-center pb-3">
-            <div className="drag-region h-(--shell-topbar-height) w-full shrink-0" />
-            <div className="flex-1" />
-            <ProviderUsage
-              key={`${selectedHostId}/column`}
-              layout="column"
-              {...usageProps}
-            />
-          </div>
+          </>
         )}
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -833,31 +850,27 @@ export function Workspace() {
           )}
           <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-1">
             <ol className="flex min-w-0 items-center gap-2 text-[13px]">
-              {creating && (
+              {breadcrumbDirectory !== null && (
                 <>
                   <li
-                    className="hidden max-w-40 shrink-0 truncate font-medium text-muted-foreground sm:block"
-                    title={threadSetup.directory || 'Isolated folder'}
+                    className="hidden max-w-48 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex"
+                    title={breadcrumbDirectory || 'Isolated folder'}
                   >
-                    {threadSetup.directory.trim()
-                      ? directoryLabel(threadSetup.directory.trim())
-                      : 'No project'}
-                  </li>
-                  <li
-                    aria-hidden="true"
-                    className="hidden text-muted-foreground/60 sm:block"
-                  >
-                    /
-                  </li>
-                </>
-              )}
-              {!inbox && !creating && selected && (
-                <>
-                  <li
-                    className="hidden max-w-40 shrink-0 truncate font-medium text-muted-foreground sm:block"
-                    title={selected.directory}
-                  >
-                    {directoryLabel(selected.directory)}
+                    {breadcrumbDirectory ? (
+                      <ProjectChip
+                        label={directoryLabel(breadcrumbDirectory)}
+                      />
+                    ) : (
+                      <SquareDashed
+                        className="size-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="truncate">
+                      {breadcrumbDirectory
+                        ? directoryLabel(breadcrumbDirectory)
+                        : 'No project'}
+                    </span>
                   </li>
                   <li
                     aria-hidden="true"
@@ -871,7 +884,7 @@ export function Workspace() {
                 aria-current="page"
                 className="flex min-w-0 items-center gap-3"
               >
-                <h1 className="truncate text-[13px] font-medium">
+                <h1 className="truncate text-[13px] font-semibold">
                   {creating
                     ? 'New thread'
                     : inbox
@@ -929,7 +942,7 @@ export function Workspace() {
                     : null;
                 setPanel('skills');
               }}
-              className="text-muted-foreground"
+              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
             >
               <BookOpen className="size-4" />
             </Button>
@@ -943,7 +956,7 @@ export function Workspace() {
               title="Workspace files"
               aria-pressed={panel === 'files'}
               onClick={openFiles}
-              className="text-muted-foreground"
+              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
             >
               <FolderOpen className="size-4" />
             </Button>
@@ -1104,8 +1117,7 @@ export function Workspace() {
           </div>
         )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
-          {creating ||
-          (!inbox && !selected && !store.loading && !store.error) ? (
+          {showingNewThread ? (
             <NewThread
               setup={threadSetup}
               onSetupChange={setThreadSetup}
