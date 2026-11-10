@@ -150,10 +150,13 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
 ]);
 
+export const hostCapabilities = ['reasoning-effort', 'git-branch'] as const;
+export type HostCapability = (typeof hostCapabilities)[number];
 export const hostHealthSchema = z.strictObject({
   status: z.literal('ready'),
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
+  capabilities: z.array(z.string().min(1).max(64)).max(32).default([]),
 });
 
 export const hostConnectSchema = z.strictObject({

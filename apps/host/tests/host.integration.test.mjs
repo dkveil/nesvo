@@ -291,6 +291,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
+      capabilities: ['reasoning-effort', 'git-branch'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');

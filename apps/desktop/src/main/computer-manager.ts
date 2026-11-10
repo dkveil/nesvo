@@ -4,6 +4,7 @@ import {
   type DesktopEvent,
   type DesktopSession,
   type DesktopReview,
+  type HostCapability,
   type HostHealth,
   type HostRequest,
   type HostResponse,
@@ -40,7 +41,31 @@ type Entry = {
   connecting?: Promise<Computer>;
   buffered?: DesktopEvent[];
   removing?: boolean;
+  capabilities?: string[];
 };
+
+const capabilityUpdates: Record<HostCapability, string> = {
+  'reasoning-effort':
+    'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
+  'git-branch':
+    'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
+};
+
+function requiredCapability(
+  method: HostRequest['method'],
+  input: unknown,
+): HostCapability | null {
+  if (method === 'read-git-branch') return 'git-branch';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'effort' in input &&
+    input.effort
+  )
+    return 'reasoning-effort';
+  return null;
+}
 
 export class ComputerManager {
   private readonly entries = new Map<string, Entry>();
@@ -351,6 +376,9 @@ export class ComputerManager {
       throw new Error(
         'This computer is offline or still synchronizing. Connect before sending a command.',
       );
+    const capability = requiredCapability(method, input);
+    if (capability && !entry.capabilities?.includes(capability))
+      throw new Error(capabilityUpdates[capability]);
     const generation = entry.generation;
     const response = await entry.connection.request(method, input);
     if (
@@ -515,6 +543,7 @@ export class ComputerManager {
     for (const event of entry.buffered ?? []) this.apply(entry, event, false);
     entry.buffered = undefined;
     entry.computer.instanceId = health.instanceId;
+    entry.capabilities = health.capabilities;
     entry.computer.lastSyncedAt = new Date().toISOString();
     entry.computer.error = null;
     this.publish({

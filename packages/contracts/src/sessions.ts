@@ -190,14 +190,18 @@ export const claudeStatusSchema = z.strictObject({
   version: z.string().nullable(),
   detail: z.string().nullable(),
   models: z.array(z.strictObject({ id: claudeModelSchema, label: z.string() })),
-  effort: effortSupportSchema,
+  effort: effortSupportSchema.default({
+    status: 'unsupported',
+    reason:
+      'This computer runs an older Nesvo host that does not report reasoning effort support. Update the host to choose an effort.',
+  }),
 });
 export const codexStatusSchema = claudeStatusSchema.extend({
   models: z.array(
     z.strictObject({
       id: modelSchema,
       label: z.string(),
-      efforts: modelEffortsSchema.nullable(),
+      efforts: modelEffortsSchema.nullable().default(null),
     }),
   ),
 });
