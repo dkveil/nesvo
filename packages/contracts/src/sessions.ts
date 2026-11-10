@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { activityLimits, sessionActivitySchema } from './activities';
-import { effortSupportSchema, modelEffortsSchema } from './reasoning-effort';
+import {
+  effortSupportSchema,
+  modelEffortsSchema,
+  reasoningEffortSchema,
+} from './reasoning-effort';
 import { skillHashSchema, skillReferenceSchema } from './skills';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
@@ -77,6 +81,7 @@ export const createSessionSchema = z
     mode: sessionModeSchema.default('read-only'),
     role: z.enum(['orchestrator', 'standalone']).optional(),
     directory: z.string().trim().max(4096),
+    effort: reasoningEffortSchema.optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -87,6 +92,18 @@ export const createSessionSchema = z
       context.addIssue({
         code: 'custom',
         message: 'Unsupported Claude Code model or mode',
+      });
+    if (
+      value.effort &&
+      (value.provider === 'Claude Code' || value.model === 'default')
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['effort'],
+        message:
+          value.provider === 'Claude Code'
+            ? 'Claude Code sessions do not accept a reasoning effort'
+            : 'Choose a specific Codex model to set a reasoning effort',
       });
   });
 export const sendMessageSchema = z.strictObject({
@@ -132,6 +149,7 @@ export const sessionSchema = z.strictObject({
   providerInitialized: z.boolean(),
   title: z.string(),
   model: modelSchema,
+  effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.default('read-only'),
   pendingApprovals: z.array(approvalSchema).max(20).default([]),
   actualModel: z.string().nullable(),

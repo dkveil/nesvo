@@ -30,6 +30,7 @@ export class SessionStore {
     const now = new Date().toISOString();
     const session: Session = {
       ...input,
+      effort: input.effort ?? null,
       id: randomUUID(),
       role: 'standalone',
       providerSessionId: input.provider === 'Claude Code' ? randomUUID() : null,
@@ -93,6 +94,7 @@ export class SessionStore {
       title: proposal.title,
       provider: proposal.provider,
       model: proposal.model,
+      effort: null,
       mode: proposal.mode,
       role: 'worker',
       parentId: parent.id,

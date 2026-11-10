@@ -559,11 +559,17 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(params.approvalsReviewer, 'user');
       assert.ok(params.model === undefined || params.model === 'fixture-codex');
       const resumed = method === 'thread/resume';
+      const effort = params.config?.model_reasoning_effort ?? null;
+      assert.ok(
+        effort === null || ['low', 'medium', 'high'].includes(effort),
+        'Reasoning effort must come from the reported catalog',
+      );
       thread = {
         id: resumed ? params.threadId : randomUUID(),
         cwd: params.cwd,
         supervised,
         resumed,
+        effort,
       };
       assert.equal(
         existsSync(statePath(thread.id)),
@@ -598,6 +604,7 @@ if (args.length === 1 && args[0] === '--version') {
       response(id, {
         thread: { id: thread.id, turns: [] },
         model: 'fixture-codex',
+        reasoningEffort: thread.effort,
         approvalPolicy: params.approvalPolicy,
         sandbox: policy(),
         cwd: thread.cwd,
@@ -611,6 +618,7 @@ if (args.length === 1 && args[0] === '--version') {
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.deepEqual(params.sandboxPolicy, policy());
+      assert.equal(params.effort ?? null, thread.effort);
       assert.equal(params.input.length, selectedSkills ? 2 : 1);
       assert.equal(params.input[0].type, 'text');
       assert.ok(params.input[0].text.trim());
@@ -652,7 +660,11 @@ if (args.length === 1 && args[0] === '--version') {
       if (process.env.NESVO_CODEX_FIXTURE_RUN_LOG)
         writeFileSync(
           process.env.NESVO_CODEX_FIXTURE_RUN_LOG,
-          JSON.stringify({ sessionId: thread.id, prompt }) + '\n',
+          JSON.stringify({
+            sessionId: thread.id,
+            prompt,
+            effort: params.effort ?? null,
+          }) + '\n',
           { flag: 'a' },
         );
       const requestPrompt = prompt.split(
