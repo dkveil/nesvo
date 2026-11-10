@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
+import type { ColorScheme } from './appearance';
 import {
   providerUsageInputSchema,
   providerUsageSchema,
@@ -84,6 +85,7 @@ export * from './computers';
 export * from './provider-usage';
 export * from './mobile';
 export * from './scheduled-jobs';
+export * from './appearance';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -375,6 +377,8 @@ export type ScheduledJobsApi = {
 };
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
+  colorScheme: () => Promise<ColorScheme>;
+  setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;

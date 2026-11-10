@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   claudeStatusSchema,
   codexStatusSchema,
+  colorSchemeSchema,
   respondApprovalSchema,
   createSessionSchema,
   decideDelegationSchema,
@@ -93,6 +94,15 @@ const scheduledJobs: DesktopApi['scheduledJobs'] = {
 };
 const api: DesktopApi = {
   scheduledJobs,
+  colorScheme: async () =>
+    colorSchemeSchema.parse(await ipcRenderer.invoke('nesvo:color-scheme')),
+  setColorScheme: async scheme =>
+    colorSchemeSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-color-scheme',
+        colorSchemeSchema.parse(scheme),
+      ),
+    ),
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),
