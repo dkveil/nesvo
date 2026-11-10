@@ -5,10 +5,11 @@ import type {
   SkillCatalog,
   SkillEntry,
 } from '@nesvo/contracts';
-import { BookOpen, ChevronRight, RefreshCw, Search, X } from 'lucide-react';
+import { BookOpen, ChevronRight, RefreshCw, X } from 'lucide-react';
+import { cn } from 'cn';
 import { errorDetail } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
+import { PanelAction, PanelHeader, PanelSearch } from '@/shared/ui/panel';
+import { panelSurface } from '@/shared/ui/panel-styles';
 
 type Props = {
   session: Session;
@@ -30,33 +31,30 @@ const declaredValue = (value: boolean | null) =>
 
 function SkillRow({ skill }: { skill: SkillEntry }) {
   return (
-    <details
-      data-skill-id={skill.id}
-      className="group border-b border-border/60"
-    >
+    <details data-skill-id={skill.id} className="group">
       <summary
         aria-label={`Details for ${skill.name}`}
-        className="flex cursor-pointer list-none gap-2 px-4 py-3 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none gap-2 rounded-md px-2 py-2 outline-none transition-colors duration-100 hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring group-open:bg-accent [&::-webkit-details-marker]:hidden"
       >
         <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
-            <span className="min-w-0 text-xs font-medium [overflow-wrap:anywhere]">
+            <span className="min-w-0 text-[13px] font-medium [overflow-wrap:anywhere]">
               {skill.name}
             </span>
-            <span className="shrink-0 text-[10px] text-muted-foreground">
+            <span className="shrink-0 text-2xs text-muted-foreground">
               {[skill.origins?.join(', '), sourceLabels[skill.source]]
                 .filter(Boolean)
                 .join(' · ')}
             </span>
           </div>
           {skill.description && (
-            <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground group-open:hidden [overflow-wrap:anywhere]">
+            <p className="mt-1 line-clamp-2 text-2xs leading-5 text-muted-foreground group-open:hidden [overflow-wrap:anywhere]">
               {skill.description}
             </p>
           )}
           {skill.invocation && (
-            <p className="mt-1 text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+            <p className="mt-1 text-2xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
               {skill.invocation === 'blocked'
                 ? skill.invocationReason || 'Unavailable for this connection'
                 : skill.invocation === 'instructions'
@@ -65,11 +63,11 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
             </p>
           )}
           {!skill.invocation && skill.enabled === false && (
-            <p className="mt-1 text-[11px] text-muted-foreground">Disabled</p>
+            <p className="mt-1 text-2xs text-muted-foreground">Disabled</p>
           )}
         </div>
       </summary>
-      <div className="space-y-3 px-4 pb-4 pl-9 text-[11px] leading-5 text-muted-foreground">
+      <div className="space-y-3 px-2 pt-2 pb-3 pl-7.5 text-xs leading-5 text-muted-foreground">
         {skill.description && (
           <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
             {skill.description}
@@ -120,7 +118,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
         {skill.path && (
           <div>
             <p className="mb-1">Source file</p>
-            <p className="font-mono text-[10px] [overflow-wrap:anywhere]">
+            <p className="font-mono text-2xs [overflow-wrap:anywhere]">
               {skill.path}
             </p>
           </div>
@@ -131,7 +129,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
         {skill.contentHash && (
           <div>
             <p>Content SHA-256</p>
-            <p className="font-mono text-[10px] [overflow-wrap:anywhere]">
+            <p className="font-mono text-2xs [overflow-wrap:anywhere]">
               {skill.contentHash}
             </p>
           </div>
@@ -210,50 +208,36 @@ function Catalog({
     ) ?? [];
   return (
     <>
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5">
-        <BookOpen className="size-4 text-muted-foreground" />
-        <h2 className="text-xs font-medium">Shared library</h2>
-        <span className="text-[11px] text-muted-foreground">
-          {session.provider}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="ml-auto size-7"
+      <PanelHeader
+        icon={BookOpen}
+        title="Shared library"
+        meta={session.provider}
+      >
+        <PanelAction
           aria-label="Refresh skills"
           title="Refresh skills"
           disabled={loading}
           onClick={onRefresh}
         >
-          <RefreshCw className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label="Close skills"
-          onClick={onClose}
-        >
+          <RefreshCw
+            className={cn(loading && 'animate-spin motion-reduce:animate-none')}
+          />
+        </PanelAction>
+        <PanelAction aria-label="Close skills" onClick={onClose}>
           <X className="size-4" />
-        </Button>
-      </header>
-      <div className="relative m-3 shrink-0">
-        <Search className="pointer-events-none absolute top-2 left-2 size-3.5 text-muted-foreground" />
-        <Input
-          ref={search}
-          type="search"
-          aria-label="Search skills"
-          placeholder="Search skills"
-          maxLength={200}
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-          className="h-8 border-transparent pl-7 text-xs shadow-none"
-        />
-      </div>
+        </PanelAction>
+      </PanelHeader>
+      <PanelSearch
+        ref={search}
+        aria-label="Search skills"
+        placeholder="Search skills"
+        maxLength={200}
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+        className="m-1.5"
+      />
       {catalog && (
-        <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-3 text-[10px] text-muted-foreground">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-3 pt-1 pb-2 text-2xs text-muted-foreground">
           <span>
             {term
               ? `${skills.length} of ${catalog.skills.length}`
@@ -269,7 +253,7 @@ function Catalog({
           </span>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-px overflow-y-auto px-1.5 pb-1.5">
         {loading && (
           <p role="status" className="p-4 text-xs text-muted-foreground">
             Discovering skills…
@@ -298,7 +282,7 @@ function Catalog({
           <SkillRow key={skill.id} skill={skill} />
         ))}
         {catalog && (catalog.issues.length > 0 || catalog.truncated) && (
-          <details className="border-t px-4 py-3 text-[11px] text-muted-foreground">
+          <details className="mt-1.5 border-t px-2 py-3 text-2xs text-muted-foreground">
             <summary className="cursor-pointer">
               {catalog.status === 'unavailable' ||
               catalog.status === 'unsupported'
@@ -310,7 +294,7 @@ function Catalog({
                 <li key={index} className="[overflow-wrap:anywhere]">
                   <p>{issue.message}</p>
                   {issue.path && (
-                    <p className="mt-1 font-mono text-[10px]">{issue.path}</p>
+                    <p className="mt-1 font-mono text-2xs">{issue.path}</p>
                   )}
                 </li>
               ))}
@@ -323,7 +307,7 @@ function Catalog({
           </details>
         )}
       </div>
-      <footer className="shrink-0 border-t px-4 py-3 text-[10px] leading-4 text-muted-foreground">
+      <footer className="shrink-0 border-t px-3 py-2.5 text-2xs text-muted-foreground">
         {catalog?.method === 'filesystem'
           ? 'File metadata only. Provider availability is not verified. '
           : ''}
@@ -343,7 +327,10 @@ export default function SessionSkills(props: Props) {
     <section
       aria-label="Session skills"
       data-session-id={props.session.id}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[380px] min-[1200px]:shrink-0 min-[1600px]:w-[440px]"
+      className={cn(
+        panelSurface,
+        'min-[1200px]:w-[380px] min-[1600px]:w-[440px]',
+      )}
     >
       <Catalog
         key={`${props.session.id}:${refresh}`}

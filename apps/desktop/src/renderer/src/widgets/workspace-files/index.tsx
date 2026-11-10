@@ -28,13 +28,14 @@ import {
   Folder,
   FolderOpen,
   RefreshCw,
-  Search,
   WrapText,
   X,
 } from 'lucide-react';
+import { cn } from 'cn';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
+import { PanelAction, PanelHeader, PanelSearch } from '@/shared/ui/panel';
+import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
 
 type Props = {
   session: Session;
@@ -86,7 +87,7 @@ function Directory({
   }, [api, path, sessionId]);
   if (state.loading)
     return (
-      <p role="status" className="px-3 py-2 text-[11px] text-muted-foreground">
+      <p role="status" className="px-3 py-2 text-2xs text-muted-foreground">
         Loading folder…
       </p>
     );
@@ -100,7 +101,7 @@ function Directory({
       </p>
     );
   return (
-    <ul className="min-w-0">
+    <ul className="min-w-0 space-y-px">
       {state.data?.entries.map(entry => {
         const open = expanded.includes(entry.path);
         const isDirectory = entry.kind === 'directory';
@@ -119,8 +120,11 @@ function Directory({
                 isDirectory ? undefined : selectedPath === entry.path
               }
               title={entry.path}
-              style={{ paddingLeft: 12 + Math.min(level, 12) * 12 }}
-              className="flex w-full min-w-0 items-center gap-1.5 py-1.5 pr-3 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight aria-pressed:text-foreground"
+              style={{ paddingLeft: 8 + Math.min(level, 12) * 12 }}
+              className={cn(
+                panelRow,
+                'flex h-7 w-full min-w-0 items-center gap-1.5 pr-2',
+              )}
               onClick={() =>
                 isDirectory
                   ? setExpanded(previous =>
@@ -140,7 +144,7 @@ function Directory({
               ) : (
                 <span className="w-3 shrink-0" />
               )}
-              <Icon className="size-3.5 shrink-0" />
+              <Icon className="size-4 shrink-0" />
               <span className="truncate">{entry.name}</span>
             </button>
             {isDirectory && open && (
@@ -157,14 +161,14 @@ function Directory({
         );
       })}
       {state.data?.entries.length === 0 && (
-        <li className="px-3 py-2 text-[11px] text-muted-foreground">
+        <li className="px-3 py-2 text-2xs text-muted-foreground">
           Empty folder
         </li>
       )}
       {state.data?.truncated && (
         <li
           title={state.data.detail ?? undefined}
-          className="px-3 py-2 text-[11px] leading-5 text-muted-foreground"
+          className="px-3 py-2 text-2xs leading-5 text-muted-foreground"
         >
           Some entries could not be listed.
         </li>
@@ -218,7 +222,7 @@ function SearchResults({
     );
   if (!state.data)
     return (
-      <p role="status" className="px-3 py-2 text-[11px] text-muted-foreground">
+      <p role="status" className="px-3 py-2 text-2xs text-muted-foreground">
         Searching…
       </p>
     );
@@ -232,17 +236,17 @@ function SearchResults({
             aria-pressed={selectedPath === entry.path}
             title={entry.path}
             onClick={() => onSelect(entry.path)}
-            className="w-full min-w-0 px-3 py-2 text-left text-xs hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight"
+            className={cn(panelRow, 'w-full min-w-0 px-2 py-1.5')}
           >
-            <span className="block truncate">{entry.name}</span>
-            <span className="mt-1 block truncate text-[10px] text-muted-foreground">
+            <span className="block truncate text-foreground">{entry.name}</span>
+            <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
               {entry.path}
             </span>
           </button>
         </li>
       ))}
       {state.data.matches.length === 0 && (
-        <li className="px-3 py-2 text-[11px] text-muted-foreground">
+        <li className="px-3 py-2 text-2xs text-muted-foreground">
           {state.data.truncated
             ? 'No matches in scanned files'
             : 'No matching files'}
@@ -251,7 +255,7 @@ function SearchResults({
       {state.data.truncated && (
         <li
           title={state.data.detail ?? undefined}
-          className="px-3 py-2 text-[11px] leading-5 text-muted-foreground"
+          className="px-3 py-2 text-2xs leading-5 text-muted-foreground"
         >
           Partial results. Browse folders for more.
         </li>
@@ -350,7 +354,7 @@ function FilePreview({
       data-file-path={path}
       className="flex h-full min-h-0 min-w-0 flex-col"
     >
-      <header className="shrink-0 border-b px-3 py-2 text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+      <header className="shrink-0 border-b px-3 py-2 text-2xs text-muted-foreground [overflow-wrap:anywhere]">
         {path}
       </header>
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -420,81 +424,65 @@ export default function WorkspaceFiles({
     <section
       aria-label="Workspace files"
       data-session-id={session.id}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px] min-[1200px]:shrink-0"
+      className={cn(
+        panelSurface,
+        'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]',
+      )}
     >
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5">
-        <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
-        <h2 className="text-xs font-medium">Files</h2>
+      <PanelHeader icon={FolderOpen} title="Files" meta="Current workspace">
         {savedVersion !== undefined && (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="xs"
             aria-label={`Open saved result version ${savedVersion}`}
             onClick={onSavedDiff}
-            className="h-7 px-2 text-[11px] text-muted-foreground"
+            className="h-7 text-muted-foreground hover:text-foreground"
           >
             Result v{savedVersion}
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="ml-auto size-7"
+        <PanelAction
           aria-label="Refresh files"
           title="Refresh files and preview"
           onClick={() => setRefresh(value => value + 1)}
         >
-          <RefreshCw className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7"
+          <RefreshCw />
+        </PanelAction>
+        <PanelAction
           aria-label="Wrap file lines"
           aria-pressed={wrap}
           onClick={() => setWrap(value => !value)}
         >
-          <WrapText className="size-3.5" />
-        </Button>
-        <Button
+          <WrapText />
+        </PanelAction>
+        <PanelAction
           ref={closeButton}
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7"
           aria-label="Close files"
           onClick={onClose}
         >
           <X className="size-4" />
-        </Button>
-      </header>
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b px-3 py-2 text-[11px] text-muted-foreground">
+        </PanelAction>
+      </PanelHeader>
+      <div className="flex h-8 shrink-0 items-center justify-between gap-3 border-b px-3 text-xs text-muted-foreground">
         <span className="truncate" title={session.directory}>
           {name}
         </span>
-        <span className="shrink-0">Current workspace</span>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1">
         <nav
           aria-label="Workspace folders"
           className="flex min-h-0 w-[34%] min-w-[150px] max-w-[230px] shrink-0 flex-col border-r"
         >
-          <div className="relative m-2 shrink-0">
-            <Search className="pointer-events-none absolute top-2 left-2 size-3.5 text-muted-foreground" />
-            <Input
-              type="search"
-              aria-label="Search files"
-              placeholder="Search files"
-              maxLength={100}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              className="h-8 border-transparent bg-transparent pl-7 text-xs shadow-none"
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <PanelSearch
+            aria-label="Search files"
+            placeholder="Search files"
+            maxLength={100}
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            className="m-1.5"
+          />
+          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
             {query.trim() ? (
               <SearchResults
                 key={`${refresh}:${query.trim()}`}
@@ -516,7 +504,8 @@ export default function WorkspaceFiles({
             )}
           </div>
           <p
-            className="shrink-0 border-t px-3 py-2 text-[10px] leading-4 text-muted-foreground"
+            className="shrink-0 border-t px-3 py-2 text-2xs text-muted-foreground"
+
             title="Generated and private entries are excluded. Symbolic links are not followed."
           >
             Generated/private files hidden

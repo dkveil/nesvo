@@ -1224,7 +1224,7 @@ export function Workspace() {
             !creating &&
             selected &&
             !store.hostReady(selectedHostId) && (
-              <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-card p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
+              <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-background p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
                 <p>
                   This computer is offline. Current files and skills are
                   unavailable; saved conversations and result diffs remain
@@ -1240,7 +1240,7 @@ export function Workspace() {
               fallback={
                 <aside
                   role="status"
-                  className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
+                  className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
                 >
                   Loading saved diff…
                 </aside>
@@ -1267,7 +1267,7 @@ export function Workspace() {
                 fallback={
                   <aside
                     role="status"
-                    className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
                   >
                     Loading files…
                   </aside>
@@ -1292,7 +1292,7 @@ export function Workspace() {
                 fallback={
                   <aside
                     role="status"
-                    className="absolute inset-0 z-10 bg-card p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
                   >
                     Loading skills…
                   </aside>
