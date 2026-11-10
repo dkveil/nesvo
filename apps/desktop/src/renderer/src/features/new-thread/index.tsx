@@ -154,41 +154,17 @@ export function NewThread({
       data-host-id={setup.hostId}
       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-5 pb-16 lg:px-6"
     >
-      <div className="w-full max-w-3xl space-y-7">
-        <header className="space-y-2 text-center">
-          <h2 className="text-2xl font-medium tracking-tight sm:text-[1.875rem]">
-            {project ? (
-              <>
-                What should we build in{' '}
-                <span className="font-semibold">{project}</span>?
-              </>
-            ) : (
-              'What should we build?'
-            )}
+      <div className="w-full max-w-(--composer-max-width) space-y-5">
+        <header className="space-y-1 text-center">
+          <h2 className="text-2xl font-normal tracking-tight text-foreground sm:text-3xl">
+            What should we build?
           </h2>
-          <p className="text-[13px] text-muted-foreground">
-            {project ? (
-              <button
-                type="button"
-                disabled={pending}
-                className="rounded-sm underline-offset-4 outline-none enabled:hover:text-foreground enabled:hover:underline focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => {
-                  setSkill(null);
-                  onSetupChange({ ...setup, directory: '' });
-                }}
-              >
-                or start without a project
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={pending}
-                className="rounded-sm underline-offset-4 outline-none enabled:hover:text-foreground enabled:hover:underline focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => setLocationOpen(true)}
-              >
-                or choose a project folder
-              </button>
-            )}
+          <p
+            data-thread-project
+            className="truncate text-[13px] font-semibold text-foreground"
+            title={setup.directory.trim() || 'Isolated folder'}
+          >
+            {project || 'No project'}
           </p>
         </header>
         <SelectSkill
@@ -229,7 +205,7 @@ export function NewThread({
                 Message
               </label>
               {anchor(
-                <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
+                <div className="glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input">
                   {skill && (
                     <SelectedSkillChip
                       skill={skill}
@@ -259,16 +235,16 @@ export function NewThread({
                     }}
                     maxLength={MAX_MESSAGE_LENGTH}
                     disabled={pending}
-                    className="max-h-48 min-h-20 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+                    className="max-h-48 min-h-11 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-sm leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent"
                   />
-                  <div className="flex items-end justify-between gap-3 px-1 pt-2">
+                  <div className="flex items-center justify-between gap-3 pt-1">
                     <div className="flex min-w-0 items-center gap-2">
                       {trigger}
                       <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
                         {pending ? 'Starting…' : blockedReason}
                       </span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       <ModelPicker
                         provider={setup.provider}
                         model={model}
@@ -293,7 +269,7 @@ export function NewThread({
                       <Button
                         type="submit"
                         size="icon-sm"
-                        className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
+                        className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
                         disabled={!canSend}
                         aria-label="Send message"
                         title="Send message (Enter)"
@@ -305,7 +281,7 @@ export function NewThread({
                 </div>,
               )}
               {notice}
-              <div className="flex min-w-0 flex-wrap items-center gap-1 px-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-1 px-2">
                 <HostPicker
                   computers={computers}
                   hostId={setup.hostId}
