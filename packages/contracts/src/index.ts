@@ -37,8 +37,6 @@ import {
   type DecideReviewInput,
 } from './reviews';
 import {
-  gitBranchSchema,
-  readGitBranchSchema,
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
@@ -51,8 +49,6 @@ import {
   type WorkspaceDirectory,
   type WorkspaceSearch,
   type WorkspaceFile,
-  type ReadGitBranchInput,
-  type GitBranch,
 } from './workspace';
 import {
   discoverSkillsSchema,
@@ -115,11 +111,6 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('read-git-branch'),
-    input: readGitBranchSchema,
-  }),
-  z.strictObject({
-    id: z.uuid(),
     method: z.literal('decide-review'),
     input: decideReviewSchema,
   }),
@@ -150,7 +141,7 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
 ]);
 
-export const hostCapabilities = ['reasoning-effort', 'git-branch'] as const;
+export const hostCapabilities = ['reasoning-effort'] as const;
 export type HostCapability = (typeof hostCapabilities)[number];
 export const hostHealthSchema = z.strictObject({
   status: z.literal('ready'),
@@ -210,11 +201,6 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('workspace-file'),
     id: z.uuid(),
     file: workspaceFileSchema,
-  }),
-  z.strictObject({
-    type: z.literal('git-branch'),
-    id: z.uuid(),
-    branch: gitBranchSchema,
   }),
   z.strictObject({
     type: z.literal('reviews'),
@@ -298,10 +284,6 @@ export type DesktopApi = {
     input: DiscoverSkillsInput,
     hostId?: HostId,
   ) => Promise<SkillCatalog>;
-  readGitBranch: (
-    input: ReadGitBranchInput,
-    hostId?: HostId,
-  ) => Promise<GitBranch>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
     hostId?: HostId,

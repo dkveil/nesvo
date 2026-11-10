@@ -39,7 +39,6 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     decideDelegation: input => api.decideDelegation(input, hostId),
     decideReview: input => api.decideReview(input, hostId),
     discoverSkills: input => api.discoverSkills(input, hostId),
-    readGitBranch: input => api.readGitBranch(input, hostId),
     listWorkspaceDirectory: input => api.listWorkspaceDirectory(input, hostId),
     searchWorkspaceFiles: input => api.searchWorkspaceFiles(input, hostId),
     readWorkspaceFile: input => api.readWorkspaceFile(input, hostId),
