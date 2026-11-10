@@ -270,6 +270,13 @@ export class SessionService {
     return session;
   }
 
+  draftDirectory(directory: string): string {
+    if (directory) return this.resolveDirectory(directory);
+    const workspaces = join(this.directory, 'workspaces');
+    mkdirSync(workspaces, { recursive: true });
+    return this.resolveDirectory(workspaces);
+  }
+
   send(input: SendMessageInput): Session {
     if (this.unsaved.size) {
       this.list();

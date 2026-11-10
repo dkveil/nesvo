@@ -44,7 +44,9 @@ async function parallel<T>(items: T[], inspect: (item: T) => Promise<void>) {
   );
 }
 
-async function loadLibrary(session: Session, signal: AbortSignal) {
+type SkillTarget = Pick<Session, 'provider' | 'directory'> & { id?: string };
+
+async function loadLibrary(session: SkillTarget, signal: AbortSignal) {
   signal.throwIfAborted();
   const directory = resolve(session.directory);
   const info = await withSignal(lstat(directory), signal);
@@ -169,7 +171,7 @@ async function loadLibrary(session: Session, signal: AbortSignal) {
       left.path!.localeCompare(right.path!),
   );
   const catalog = skillCatalogSchema.parse({
-    sessionId: session.id,
+    ...(session.id ? { sessionId: session.id } : { directory }),
     provider: session.provider,
     method: 'library',
     status: issues.length || truncated ? 'partial' : 'ready',
@@ -192,6 +194,14 @@ export async function discoverSessionSkills(
   signal: AbortSignal,
 ) {
   return (await loadLibrary(session, signal)).catalog;
+}
+
+export async function discoverDirectorySkills(
+  provider: Session['provider'],
+  directory: string,
+  signal: AbortSignal,
+) {
+  return (await loadLibrary({ provider, directory }, signal)).catalog;
 }
 
 export async function resolveSessionSkill(

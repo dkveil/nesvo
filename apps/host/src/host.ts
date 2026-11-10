@@ -6,6 +6,7 @@ import {
   type HostMessage,
   type HostRequest,
   type HostResponse,
+  type SkillCatalog,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { openDatabase, ownDataDirectory } from './database';
@@ -15,7 +16,10 @@ import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
-import { discoverSessionSkills } from './skills/service';
+import {
+  discoverDirectorySkills,
+  discoverSessionSkills,
+} from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
@@ -206,33 +210,65 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (request.method === 'discover-skills') {
-          const session = store.get(request.input.sessionId);
-          if (!session || skillRequests >= 2) {
+          const input = request.input;
+          const session =
+            'sessionId' in input ? store.get(input.sessionId) : undefined;
+          const missing = 'sessionId' in input && !session;
+          if (missing || skillRequests >= 2) {
             yield* Effect.tryPromise(() =>
               send({
                 type: 'error',
                 id: request.id,
-                code: session ? 'busy' : 'not-found',
-                message: session
-                  ? 'Skill discovery is busy. Try again shortly.'
-                  : 'Session not found.',
+                code: missing ? 'not-found' : 'busy',
+                message: missing
+                  ? 'Session not found.'
+                  : 'Skill discovery is busy. Try again shortly.',
               }),
             );
             continue;
           }
+          let discovery: Promise<SkillCatalog>;
+          if (session)
+            discovery = discoverSessionSkills(
+              session,
+              probes.controller.signal,
+            );
+          else if ('provider' in input) {
+            try {
+              discovery = discoverDirectorySkills(
+                input.provider,
+                sessions.draftDirectory(input.directory),
+                probes.controller.signal,
+              );
+            } catch (error) {
+              yield* Effect.tryPromise(() =>
+                send({
+                  type: 'error',
+                  id: request.id,
+                  code:
+                    error instanceof SessionError
+                      ? error.code
+                      : 'invalid-directory',
+                  message:
+                    error instanceof SessionError
+                      ? error.message
+                      : 'The folder cannot be accessed.',
+                }),
+              );
+              continue;
+            }
+          } else continue;
           skillRequests++;
-          const inspection = discoverSessionSkills(
-            session,
-            probes.controller.signal,
-          )
+          const inspection = discovery
             .then(catalog => send({ type: 'skills', id: request.id, catalog }))
             .catch(() =>
               send({
                 type: 'error',
                 id: request.id,
                 code: 'unavailable',
-                message:
-                  'Skills could not be checked. Verify the session directory and refresh.',
+                message: session
+                  ? 'Skills could not be checked. Verify the session directory and refresh.'
+                  : 'Skills could not be checked for this folder. Verify the folder and refresh.',
               }),
             )
             .catch(() => undefined);
