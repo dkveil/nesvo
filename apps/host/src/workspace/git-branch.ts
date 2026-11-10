@@ -1,60 +1,60 @@
-import { constants } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 import type { GitBranch } from '@nesvo/contracts';
+import { WorkspaceError } from './files';
 
-const maxPointerBytes = 4096;
-const maxParentLevels = 256;
 const BRANCH_READ_TIMEOUT_MS = 2000;
+const MAX_READER_OUTPUT_BYTES = 16 * 1024;
 const noBranch: GitBranch = { kind: 'none' };
-const readFlags =
-  constants.O_RDONLY |
-  (process.platform === 'win32' ? 0 : constants.O_NONBLOCK);
 
-async function readSmallFile(
-  path: string,
-  signal: AbortSignal,
-): Promise<string | null> {
-  signal.throwIfAborted();
-  const handle = await open(path, readFlags).catch(() => null);
-  if (!handle) return null;
-  try {
-    const info = await handle.stat();
-    signal.throwIfAborted();
-    if (!info.isFile() || info.size > maxPointerBytes) return null;
-    const buffer = Buffer.alloc(maxPointerBytes);
-    const { bytesRead } = await handle.read(buffer, 0, maxPointerBytes, 0);
-    signal.throwIfAborted();
-    return buffer.subarray(0, bytesRead).toString('utf8');
-  } catch (error) {
-    if (signal.aborted) throw error;
-    return null;
-  } finally {
-    await handle.close();
-  }
-}
-
-async function findGitDirectory(
-  start: string,
-  signal: AbortSignal,
-): Promise<string | null> {
-  let current = resolve(start);
-  for (let level = 0; level < maxParentLevels; level++) {
-    signal.throwIfAborted();
-    const marker = join(current, '.git');
-    const info = await stat(marker).catch(() => null);
-    if (info?.isDirectory()) return marker;
-    if (info?.isFile()) {
-      const pointer = /^gitdir:[ \t]*(\S.*?)[ \t]*$/m.exec(
-        (await readSmallFile(marker, signal)) ?? '',
-      )?.[1];
-      return pointer ? resolve(current, pointer) : null;
+function readGitHeadInChild(): void {
+  const fs = process.getBuiltinModule('node:fs');
+  const path = process.getBuiltinModule('node:path');
+  const maxBytes = 4096;
+  const flags =
+    fs.constants.O_RDONLY |
+    (process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK);
+  const readSmallFile = (file: string): string | null => {
+    let descriptor: number | null = null;
+    try {
+      descriptor = fs.openSync(file, flags);
+      const info = fs.fstatSync(descriptor);
+      if (!info.isFile() || info.size > maxBytes) return null;
+      const buffer = Buffer.alloc(maxBytes);
+      const bytes = fs.readSync(descriptor, buffer, 0, maxBytes, 0);
+      return buffer.subarray(0, bytes).toString('utf8');
+    } catch {
+      return null;
+    } finally {
+      if (descriptor !== null) fs.closeSync(descriptor);
     }
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
+  };
+  const findGitDirectory = (start: string): string | null => {
+    let current = path.resolve(start);
+    for (let level = 0; level < 256; level++) {
+      const marker = path.join(current, '.git');
+      const info = fs.statSync(marker, { throwIfNoEntry: false });
+      if (info?.isDirectory()) return marker;
+      if (info?.isFile()) {
+        const pointer = /^gitdir:[ \t]*(\S.*?)[ \t]*$/m.exec(
+          readSmallFile(marker) ?? '',
+        )?.[1];
+        return pointer ? path.resolve(current, pointer) : null;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
+    return null;
+  };
+  let head: string | null = null;
+  try {
+    const gitDirectory = findGitDirectory(process.argv[1] ?? '');
+    head = gitDirectory ? readSmallFile(path.join(gitDirectory, 'HEAD')) : null;
+  } catch {
+    head = null;
   }
-  return null;
+  process.stdout.write(JSON.stringify({ head }));
 }
 
 function parseGitHead(content: string): GitBranch {
@@ -66,16 +66,95 @@ function parseGitHead(content: string): GitBranch {
   return noBranch;
 }
 
-export async function readGitBranch(
+function readerArguments(directory: string): string[] {
+  const override = process.env.NESVO_GIT_HEAD_READER;
+  if (override && !isAbsolute(override))
+    throw new WorkspaceError(
+      'unavailable',
+      'NESVO_GIT_HEAD_READER must be an absolute path.',
+    );
+  return override
+    ? [override, directory]
+    : ['-e', `(${readGitHeadInChild.toString()})()`, directory];
+}
+
+function readerEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ELECTRON_RUN_AS_NODE: '1',
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+  };
+}
+
+export function readGitBranch(
   directory: string,
   signal: AbortSignal,
 ): Promise<GitBranch> {
-  const scoped = AbortSignal.any([
-    signal,
-    AbortSignal.timeout(BRANCH_READ_TIMEOUT_MS),
-  ]);
-  const gitDirectory = await findGitDirectory(directory, scoped);
-  if (!gitDirectory) return noBranch;
-  const head = await readSmallFile(join(gitDirectory, 'HEAD'), scoped);
-  return head === null ? noBranch : parseGitHead(head);
+  signal.throwIfAborted();
+  const child = spawn(process.execPath, readerArguments(directory), {
+    env: readerEnvironment(),
+    shell: false,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+  return new Promise<GitBranch>((resolve, reject) => {
+    let output = '';
+    let settled = false;
+    const finish = (result: GitBranch | WorkspaceError) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', cutOff);
+      if (result instanceof WorkspaceError) reject(result);
+      else resolve(result);
+    };
+    const cutOff = () => {
+      child.kill('SIGKILL');
+      child.stdout.destroy();
+      child.unref();
+      finish(
+        new WorkspaceError(
+          'unavailable',
+          'The Git branch could not be read in time.',
+        ),
+      );
+    };
+    const timer = setTimeout(cutOff, BRANCH_READ_TIMEOUT_MS);
+    signal.addEventListener('abort', cutOff, { once: true });
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      output += chunk;
+      if (output.length > MAX_READER_OUTPUT_BYTES) cutOff();
+    });
+    child.once('error', () =>
+      finish(
+        new WorkspaceError('unavailable', 'The Git branch could not be read.'),
+      ),
+    );
+    child.once('close', code => {
+      const head = code === 0 ? parsedHead(output) : undefined;
+      finish(
+        head === undefined
+          ? new WorkspaceError(
+              'unavailable',
+              'The Git branch could not be read.',
+            )
+          : head === null
+            ? noBranch
+            : parseGitHead(head),
+      );
+    });
+  });
+}
+
+function parsedHead(output: string): string | null | undefined {
+  try {
+    const value: unknown = JSON.parse(output);
+    if (value === null || typeof value !== 'object' || !('head' in value))
+      return undefined;
+    return typeof value.head === 'string' || value.head === null
+      ? value.head
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
