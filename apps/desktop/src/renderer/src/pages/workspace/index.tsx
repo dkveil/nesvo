@@ -400,7 +400,11 @@ export function Workspace() {
       }
     });
   };
-  const startThread = async (input: CreateSessionInput, text: string) => {
+  const startThread = async (
+    input: CreateSessionInput,
+    text: string,
+    skill: SelectedSkill | null,
+  ) => {
     const hostId = threadSetup.hostId;
     if (threadRequest.current || sendingRef.current)
       throw new Error('Another thread is still starting.');
@@ -415,10 +419,13 @@ export function Workspace() {
       draftVersions.current[key] = (draftVersions.current[key] ?? 0) + 1;
       const version = draftVersions.current[key];
       setDrafts(previous => ({ ...previous, [key]: text }));
+      setSelectedSkills(previous => ({ ...previous, [key]: skill }));
       if (navigationVersion.current === origin) select(key);
-      await deliver(session, text, null, () => {
-        if ((draftVersions.current[key] ?? 0) === version)
+      await deliver(session, text, skill, () => {
+        if ((draftVersions.current[key] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [key]: '' }));
+          setSelectedSkills(previous => ({ ...previous, [key]: null }));
+        }
       });
     } finally {
       threadRequest.current = false;
@@ -1073,6 +1080,7 @@ export function Workspace() {
               }
               onManageComputers={() => setComputersOpen(true)}
               busyReason={threadBusyReason}
+              skillApi={desktopApi(threadSetup.hostId)}
               onStart={startThread}
             />
           ) : inbox ? (
