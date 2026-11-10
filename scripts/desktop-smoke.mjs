@@ -823,12 +823,12 @@ try {
   );
   await chooseLocation(branchLocation);
   await newThread
-    .getByRole('heading', { name: /What should we build in branch-location/ })
+    .locator('[data-thread-project]', { hasText: /^branch-location$/ })
     .waitFor();
   assert.equal(await newThread.locator('[data-branch-kind]').count(), 0);
   await chooseLocation(directory);
   await newThread
-    .getByRole('heading', { name: /What should we build in / })
+    .locator('[data-thread-project]', { hasText: /^nesvo-desktop-/ })
     .waitFor();
   await newThread
     .getByRole('button', { name: 'Send message', exact: true })
