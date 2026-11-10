@@ -31,9 +31,10 @@ type Props = {
 
 function parseReview(review: Review) {
   try {
-    const files = parsePatchFiles(review.diff.patch, review.id, true).flatMap(
-      patch => patch.files,
-    );
+    const files = parsePatchFiles(review.diff.patch, {
+      cacheKeyPrefix: review.id,
+      throwOnError: true,
+    }).flatMap(patch => patch.files);
     const indexed = new Map(files.map(file => [file.name, file]));
     const blocks = review.diff.patch
       .split(/(?=^diff --git )/m)
