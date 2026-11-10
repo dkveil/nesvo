@@ -1315,7 +1315,6 @@ export function Workspace() {
           page={settingsPage}
           onPageChange={setSettingsPage}
           fallbackFocus={navigationToggle}
-
           onOpenChange={open => {
             if (!open) setSettingsPage(null);
           }}
