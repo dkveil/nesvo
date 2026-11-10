@@ -65,6 +65,7 @@ export * from './skills';
 export * from './computers';
 export * from './provider-usage';
 export * from './mobile';
+export * from './scheduled-jobs';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
