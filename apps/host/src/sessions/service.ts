@@ -662,6 +662,7 @@ export class SessionService {
                 ...options,
                 sessionId: session.providerSessionId,
                 mode: session.mode,
+                effort: session.effort,
                 ...(selected
                   ? {
                       skillId: selected.native!.id,

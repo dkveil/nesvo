@@ -1256,6 +1256,7 @@ export function startCodex(options: {
   sessionId: string | null;
   resume: boolean;
   model: string;
+  effort?: string | null;
   mode: 'read-only' | 'supervised';
   prompt: string;
   skillId?: string;
@@ -1948,6 +1949,7 @@ export function startCodex(options: {
               excludeSlashTmp: true,
             };
       const model = options.model === 'default' ? {} : { model: options.model };
+      const effort = options.effort ? { effort: options.effort } : {};
       const response = await peer.request(
         options.resume ? 'thread/resume' : 'thread/start',
         {
@@ -1975,6 +1977,9 @@ export function startCodex(options: {
             options.mode === 'read-only' ? 'read-only' : 'workspace-write',
           config: {
             ...isolatedConfig,
+            ...(options.effort
+              ? { model_reasoning_effort: options.effort }
+              : {}),
             mcp_servers: disabledServers,
             notify: [],
             allow_login_shell: false,
@@ -2005,6 +2010,10 @@ export function startCodex(options: {
           response.approvalsReviewer !== 'user')
       )
         throw new Error('Codex did not apply the requested permission policy.');
+      if (options.effort && response.reasoningEffort !== options.effort)
+        throw new Error(
+          'Codex did not apply the requested reasoning effort. No provider turn was started.',
+        );
       threadId = thread.id;
       emit({ type: 'init', sessionId: threadId, model: response.model });
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
@@ -2022,6 +2031,7 @@ export function startCodex(options: {
         approvalsReviewer: 'user',
         sandboxPolicy,
         ...model,
+        ...effort,
       });
       const turn = object(started.turn);
       if (typeof turn?.id !== 'string' || !turn.id || turn.id.length > 200)
