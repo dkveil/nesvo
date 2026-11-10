@@ -600,11 +600,7 @@ try {
   const localComputer = (
     await page.evaluate(() => window.nesvo.listComputers())
   ).find(computer => computer.id === 'local');
-  assert.deepEqual(localComputer.capabilities, [
-    'scheduled-jobs',
-    'reasoning-effort',
-    'git-branch',
-  ]);
+  assert.deepEqual(localComputer.capabilities, ['scheduled-jobs', 'reasoning-effort']);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
     'save',

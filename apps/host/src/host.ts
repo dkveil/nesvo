@@ -17,7 +17,6 @@ import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
-import { readGitBranch } from './workspace/git-branch';
 import {
   discoverDirectorySkills,
   discoverSessionSkills,
@@ -305,8 +304,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         if (
           request.method === 'list-workspace-directory' ||
           request.method === 'search-workspace-files' ||
-          request.method === 'read-workspace-file' ||
-          request.method === 'read-git-branch'
+          request.method === 'read-workspace-file'
         ) {
           if (workspaceRequests >= 8) {
             yield* Effect.tryPromise(() =>
@@ -329,17 +327,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                   request.input,
                   probes.controller.signal,
                 ),
-              };
-            if (request.method === 'read-git-branch')
-              return {
-                type: 'git-branch',
-                id: request.id,
-                branch: request.input.directory
-                  ? await readGitBranch(
-                      sessions.draftDirectory(request.input.directory),
-                      probes.controller.signal,
-                    )
-                  : { kind: 'none' },
               };
             if (request.method === 'search-workspace-files')
               return {

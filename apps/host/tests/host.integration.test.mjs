@@ -28,9 +28,6 @@ const fixturePath = fileURLToPath(
 const codexFixturePath = fileURLToPath(
   new URL('./codex-fixture.mjs', import.meta.url),
 );
-const hungReaderPath = fileURLToPath(
-  new URL('./git-head-hang-fixture.mjs', import.meta.url),
-);
 
 function bounded(promise, description, timeout = 10_000) {
   let timer;
@@ -65,13 +62,12 @@ const fixtureEnvironment = (directory, pidFile) => ({
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
 });
 
-function launch(directory, pidFile, extraEnvironment = {}) {
+function launch(directory, pidFile) {
   const child = spawn(process.execPath, ['apps/host/dist/main.js'], {
     env: {
       ...process.env,
       NESVO_DATA_DIR: directory,
       ...fixtureEnvironment(directory, pidFile),
-      ...extraEnvironment,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -304,7 +300,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
-      capabilities: ['scheduled-jobs', 'reasoning-effort', 'git-branch'],
+      capabilities: ['scheduled-jobs', 'reasoning-effort'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');
@@ -315,60 +311,12 @@ test(
     );
     assert.equal(status.status.effort.status, 'unsupported');
     assert.match(status.status.effort.reason, /reasoning effort/);
-    const branchRoot = join(directory, 'branches');
-    const seedHead = async (path, head) => {
-      await mkdir(path, { recursive: true });
-      await writeFile(join(path, 'HEAD'), head);
-    };
-    await seedHead(
-      join(branchRoot, 'named', '.git'),
-      'ref: refs/heads/feature/ui1c\n',
-    );
-    await mkdir(join(branchRoot, 'named', 'src', 'deep'), { recursive: true });
-    await seedHead(
-      join(branchRoot, 'detached', '.git'),
-      `${'ab12cd34'.repeat(5)}\n`,
-    );
-    await seedHead(
-      join(branchRoot, 'linked-git', 'worktree'),
-      'ref: refs/heads/linked\n',
-    );
-    await mkdir(join(branchRoot, 'linked'), { recursive: true });
-    await writeFile(
-      join(branchRoot, 'linked', '.git'),
-      'gitdir: ../linked-git/worktree\n',
-    );
-    await seedHead(join(branchRoot, 'malformed', '.git'), 'ref: refs/heads/\n');
-    await mkdir(join(branchRoot, 'plain'), { recursive: true });
-    const branchOf = async target =>
-      host.request('read-git-branch', { directory: target });
-    for (const [target, expected] of [
-      ['named', { kind: 'branch', name: 'feature/ui1c' }],
-      [join('named', 'src', 'deep'), { kind: 'branch', name: 'feature/ui1c' }],
-      ['detached', { kind: 'detached', sha: 'ab12cd3' }],
-      ['linked', { kind: 'branch', name: 'linked' }],
-      ['malformed', { kind: 'none' }],
-      ['plain', { kind: 'none' }],
-    ])
-      assert.deepEqual(
-        (await branchOf(join(branchRoot, target))).branch,
-        expected,
-        target,
-      );
-    assert.deepEqual((await branchOf('')).branch, { kind: 'none' });
-    assert.equal(
-      (await branchOf(join(branchRoot, 'missing'))).code,
-      'invalid-directory',
-    );
     assert.deepEqual(
       await host.send(
         JSON.stringify({
           id: randomUUID(),
           method: 'read-git-branch',
-          input: {
-            directory: join(branchRoot, 'named'),
-            sessionId: randomUUID(),
-          },
+          input: { directory },
         }),
       ),
       { type: 'error', id: null, code: 'invalid-request' },
@@ -4520,7 +4468,6 @@ test(
     assert.deepEqual(health.capabilities, [
       'scheduled-jobs',
       'reasoning-effort',
-      'git-branch',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -4763,53 +4710,5 @@ test(
     } finally {
       check.close();
     }
-  },
-);
-
-test(
-  'host cuts off a hung Git branch read and still shuts down',
-  { timeout: 30_000 },
-  async t => {
-    const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-branch-')),
-    );
-    t.after(() =>
-      rm(directory, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 100,
-      }),
-    );
-    const pidFile = join(directory, 'hung-reader.pid');
-    const readerPid = async () => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const value = await readFile(pidFile, 'utf8').catch(() => '');
-        if (value) return Number(value);
-        await delay(20);
-      }
-      assert.fail('The branch reader did not start.');
-    };
-    const host = launch(directory, join(directory, 'fixture-pids.json'), {
-      NESVO_GIT_HEAD_READER: hungReaderPath,
-    });
-    const started = Date.now();
-    const response = await host.request('read-git-branch', { directory });
-    const elapsed = Date.now() - started;
-    assert.equal(response.code, 'unavailable', JSON.stringify(response));
-    assert.match(response.message, /in time/);
-    assert.ok(elapsed >= 1900 && elapsed < 4000, String(elapsed));
-    const timedOut = await readerPid();
-    await processesGone([timedOut], new Set([timedOut]));
-    await rm(pidFile);
-    const pending = host.request('read-git-branch', { directory });
-    const hung = await readerPid();
-    assert.equal(alive(hung), true);
-    const stopping = Date.now();
-    await host.stop();
-    assert.ok(Date.now() - stopping < 5000, String(Date.now() - stopping));
-    await pending.catch(() => undefined);
-    await processesGone([hung], new Set([hung]));
   },
 );
