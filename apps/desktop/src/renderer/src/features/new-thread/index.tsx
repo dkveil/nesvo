@@ -23,12 +23,14 @@ import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
 import { PermissionPicker } from './permission-picker';
+import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
 
 export type ThreadSetup = {
   hostId: string;
   provider: Provider;
   model: string;
+  effort: string;
   mode: CreateSessionInput['mode'];
   directory: string;
 };
@@ -91,6 +93,10 @@ export function NewThread({
   const model = models.some(option => option.id === setup.model)
     ? setup.model
     : (models[0]?.id ?? '');
+  const effort = resolveEffort(
+    modelEfforts(providerState, model),
+    setup.effort,
+  );
   const project = setup.directory.trim()
     ? directoryLabel(setup.directory.trim())
     : '';
@@ -128,6 +134,7 @@ export function NewThread({
           title: deriveThreadTitle(message),
           provider: setup.provider,
           model,
+          ...(effort ? { effort } : {}),
           mode: setup.mode,
           directory: setup.directory.trim(),
         },
@@ -265,14 +272,16 @@ export function NewThread({
                       <ModelPicker
                         provider={setup.provider}
                         model={model}
+                        effort={effort}
                         statuses={statuses}
                         disabled={pending}
-                        onChange={(provider, nextModel) => {
+                        onChange={(provider, nextModel, nextEffort) => {
                           if (provider !== setup.provider) setSkill(null);
                           onSetupChange({
                             ...setup,
                             provider,
                             model: nextModel,
+                            effort: nextEffort,
                             mode:
                               provider === 'Claude Code'
                                 ? 'read-only'

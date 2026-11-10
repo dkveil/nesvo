@@ -12,19 +12,23 @@ import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { ComposerChip } from './composer-chip';
 import { providerMarks } from './provider-mark';
+import { ReasoningColumn } from './reasoning-column';
+import { effortLabel } from './reasoning-effort';
 
 type Props = {
   provider: Provider;
   model: string;
+  effort: string;
   statuses: ProviderStates;
   disabled?: boolean;
-  onChange: (provider: Provider, model: string) => void;
+  onChange: (provider: Provider, model: string, effort: string) => void;
   onRefreshProvider: (provider: Provider) => void;
 };
 
 export function ModelPicker({
   provider,
   model,
+  effort,
   statuses,
   disabled = false,
   onChange,
@@ -48,15 +52,23 @@ export function ModelPicker({
   const currentLabel = model
     ? (models.find(option => option.id === model)?.label ?? modelLabel(model))
     : 'No model';
+  const chipLabel = effort
+    ? `${currentLabel} · ${effortLabel(effort)}`
+    : currentLabel;
+  const previewModel = active?.id ?? model;
   const listId = 'thread-model-options';
   const optionId = (id: string) => `${listId}-${id.replace(/[^\w-]/g, '_')}`;
   const choose = (id: string) => {
-    onChange(provider, id);
+    onChange(provider, id, effort);
+    setOpen(false);
+  };
+  const chooseEffort = (next: string) => {
+    onChange(provider, previewModel, next);
     setOpen(false);
   };
   const selectProvider = (next: Provider) => {
     const nextModels = statuses[next].status?.models ?? [];
-    onChange(next, nextModels[0]?.id ?? '');
+    onChange(next, nextModels[0]?.id ?? '', '');
     setQuery('');
     setActiveId('');
   };
@@ -108,13 +120,13 @@ export function ModelPicker({
         <ComposerChip
           disabled={disabled}
           aria-label="Choose model"
-          title={`${provider} · ${currentLabel}`}
+          title={`${provider} · ${chipLabel}`}
           className="h-7 gap-1.5 text-xs text-foreground"
         >
           <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
             {providerMarks[provider]}
           </span>
-          <span className="truncate font-medium">{currentLabel}</span>
+          <span className="truncate font-medium">{chipLabel}</span>
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
@@ -123,7 +135,7 @@ export function ModelPicker({
         sideOffset={10}
         collisionPadding={12}
         aria-label="Model"
-        className="flex w-[min(26rem,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0"
+        className="flex w-[min(35rem,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0"
         onOpenAutoFocus={event => {
           event.preventDefault();
           search.current?.focus();
@@ -245,6 +257,12 @@ export function ModelPicker({
             </Button>
           </div>
         </div>
+        <ReasoningColumn
+          state={state}
+          model={previewModel}
+          selected={previewModel === model ? effort : ''}
+          onChoose={chooseEffort}
+        />
       </PopoverContent>
     </Popover>
   );
