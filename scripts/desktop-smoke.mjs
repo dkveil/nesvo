@@ -391,7 +391,7 @@ try {
       await newThread
         .getByRole('button', { name: 'Choose model', exact: true })
         .click();
-      const efforts = modelPicker.getByRole('radiogroup', {
+      const efforts = modelPicker.getByRole('group', {
         name: 'Reasoning effort',
         exact: true,
       });
@@ -401,7 +401,7 @@ try {
       );
       assert.equal(
         await efforts
-          .locator('[aria-checked="true"]')
+          .locator('[aria-pressed="true"]')
           .getAttribute('data-effort'),
         'medium',
       );
@@ -726,7 +726,7 @@ try {
     await claudeReasoning.getAttribute('data-effort-support'),
     'unsupported',
   );
-  assert.equal(await claudeReasoning.getByRole('radio').count(), 0);
+  assert.equal(await claudeReasoning.getByRole('button').count(), 0);
   await modelSearch.press('Escape');
   await modelPicker.waitFor({ state: 'hidden' });
   await waitForFocus(modelChip);

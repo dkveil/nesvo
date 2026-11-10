@@ -32,7 +32,7 @@ export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
       </div>
       {efforts ? (
         <div
-          role="radiogroup"
+          role="group"
           aria-label="Reasoning effort"
           className="flex flex-col gap-0.5 p-1.5"
         >
@@ -43,8 +43,7 @@ export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
               <button
                 key={option.id}
                 type="button"
-                role="radio"
-                aria-checked={isSelected}
+                aria-pressed={isSelected}
                 data-effort={option.id}
                 data-default={isDefault || undefined}
                 title={option.description || undefined}
