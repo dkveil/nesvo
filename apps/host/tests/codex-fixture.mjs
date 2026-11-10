@@ -538,6 +538,15 @@ if (args.length === 1 && args[0] === '--version') {
             displayName: 'Codex fixture',
             hidden: false,
             isDefault: true,
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: 'Fixture low effort' },
+              {
+                reasoningEffort: 'medium',
+                description: 'Fixture medium effort',
+              },
+              { reasoningEffort: 'high', description: 'Fixture high effort' },
+            ],
+            defaultReasoningEffort: 'medium',
           },
         ],
         nextCursor: null,

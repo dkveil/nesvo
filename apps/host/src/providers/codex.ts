@@ -7,7 +7,10 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, normalize } from 'node:path';
 import {
   activityLimits,
+  modelEffortsSchema,
   skillLimits,
+  type CodexStatus,
+  type ModelEfforts,
   type SkillDiscovery,
   type SkillReference,
   type ProviderUsage,
@@ -15,13 +18,6 @@ import {
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
 import { recordDescendants, signalRecorded } from './process-tree';
-
-export type CodexStatus = {
-  status: 'ready' | 'missing' | 'unauthenticated' | 'unsupported' | 'error';
-  version: string | null;
-  detail: string | null;
-  models: { id: string; label: string }[];
-};
 
 export type CodexEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -574,9 +570,35 @@ async function initialize(
   return version;
 }
 
+const codexEffortSupport = { status: 'per-model' } as const;
+
+function modelEfforts(model: RecordValue): ModelEfforts | null {
+  const supported = model.supportedReasoningEfforts;
+  if (supported == null || (Array.isArray(supported) && !supported.length))
+    return null;
+  if (!Array.isArray(supported))
+    throw new Error('Codex returned invalid reasoning effort metadata.');
+  const parsed = modelEffortsSchema.safeParse({
+    options: supported.map(value => {
+      const option = object(value);
+      return {
+        id: option?.reasoningEffort,
+        description:
+          typeof option?.description === 'string'
+            ? option.description.slice(0, 500)
+            : '',
+      };
+    }),
+    defaultEffort: model.defaultReasoningEffort,
+  });
+  if (!parsed.success)
+    throw new Error('Codex returned invalid reasoning effort metadata.');
+  return parsed.data;
+}
+
 async function readAccountAndModels(
   peer: RpcPeer,
-): Promise<Pick<CodexStatus, 'status' | 'detail' | 'models'>> {
+): Promise<Pick<CodexStatus, 'status' | 'detail' | 'models' | 'effort'>> {
   const auth = await peer.request('account/read', { refreshToken: false });
   const account = object(auth.account);
   if (auth.account === null)
@@ -584,14 +606,15 @@ async function readAccountAndModels(
       status: 'unauthenticated',
       detail: 'Sign in with codex login, then refresh Codex status.',
       models: [],
+      effort: codexEffortSupport,
     };
   if (
     !account ||
     !['chatgpt', 'apiKey', 'amazonBedrock'].includes(String(account.type))
   )
     throw new Error('Codex authentication could not be verified.');
-  const models = new Map<string, { id: string; label: string }>([
-    ['default', { id: 'default', label: 'Codex default' }],
+  const models = new Map<string, CodexStatus['models'][number]>([
+    ['default', { id: 'default', label: 'Codex default', efforts: null }],
   ]);
   let cursor: string | null = null;
   const cursors = new Set<string>();
@@ -617,10 +640,16 @@ async function readAccountAndModels(
         models.set(model.model, {
           id: model.model,
           label: model.displayName.slice(0, 200),
+          efforts: modelEfforts(model),
         });
     }
     if (result.nextCursor === null)
-      return { status: 'ready', detail: null, models: [...models.values()] };
+      return {
+        status: 'ready',
+        detail: null,
+        models: [...models.values()],
+        effort: codexEffortSupport,
+      };
     if (
       typeof result.nextCursor !== 'string' ||
       !result.nextCursor ||
@@ -649,6 +678,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
         detail:
           'Install the native Codex CLI, then sign in with codex login. Restart Nesvo if PATH changed.',
         models: [],
+        effort: codexEffortSupport,
       };
     if (signal?.aborted) throw new Error('Stopped.');
     peer = rpcPeer(executable, undefined, message =>
@@ -667,6 +697,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
         error instanceof Error ? error.message : 'Codex inspection failed.',
       ),
       models: [],
+      effort: codexEffortSupport,
     };
   } finally {
     signal?.removeEventListener('abort', cancel);
