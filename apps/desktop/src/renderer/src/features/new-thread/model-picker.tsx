@@ -3,6 +3,7 @@ import { Check, RefreshCw, Search } from 'lucide-react';
 import { cn } from 'cn';
 import {
   modelLabel,
+  providerMarks,
   providers,
   providerStatusLabel,
   type Provider,
@@ -11,7 +12,6 @@ import {
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { ComposerChip } from './composer-chip';
-import { providerMarks } from './provider-mark';
 import { ReasoningColumn } from './reasoning-column';
 import { effortLabel } from './reasoning-effort';
 
