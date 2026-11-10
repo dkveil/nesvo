@@ -2,6 +2,7 @@ import { useRef, useState, type KeyboardEvent } from 'react';
 import { Check, RefreshCw, Search } from 'lucide-react';
 import { cn } from 'cn';
 import {
+  effortLabel,
   modelLabel,
   providerMarks,
   providers,
@@ -14,7 +15,6 @@ import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { ComposerChip } from './composer-chip';
 import { ReasoningColumn } from './reasoning-column';
-import { effortLabel } from './reasoning-effort';
 
 type Props = {
   provider: Provider;

@@ -45,7 +45,7 @@ export function PanelAction({
       variant="ghost"
       size="icon-sm"
       className={cn(
-        'size-7 text-muted-foreground hover:text-foreground aria-pressed:bg-highlight aria-pressed:text-foreground [&_svg:not([class*=size-])]:size-3.5',
+        'size-7 text-muted-foreground enabled:hover:text-foreground aria-pressed:bg-highlight aria-pressed:text-foreground [&_svg:not([class*=size-])]:size-3.5',
         className,
       )}
       {...props}

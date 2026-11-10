@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Search, X } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/shared/ui/button';
@@ -23,16 +23,22 @@ type Props = {
   page: SettingsPage;
   onPageChange: (page: SettingsPage) => void;
   onOpenChange: (open: boolean) => void;
-  children: (page: SettingsPage) => ReactNode;
+  fallbackFocus?: RefObject<HTMLElement | null>;
+  children: (
+    page: SettingsPage,
+    onBusyChange: (busy: boolean) => void,
+  ) => ReactNode;
 };
 
 export function Settings({
   page,
   onPageChange,
   onOpenChange,
+  fallbackFocus,
   children,
 }: Props) {
   const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
   const [returnFocus] = useState(() =>
     document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -45,16 +51,29 @@ export function Settings({
   const groups = [...new Set(visible.map(entry => entry.group))];
   const current = settingsPages.find(entry => entry.id === page)!;
   return (
-    <Dialog open onOpenChange={onOpenChange}>
+    <Dialog
+      open
+      onOpenChange={open => {
+        if (!busy) onOpenChange(open);
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         aria-describedby="settings-description"
         onCloseAutoFocus={event => {
-          if (!returnFocus?.isConnected) return;
+          const target = returnFocus?.isConnected
+            ? returnFocus
+            : fallbackFocus?.current;
+          if (!target?.isConnected) return;
           event.preventDefault();
-          returnFocus.focus();
+          target.focus();
         }}
-
+        onEscapeKeyDown={event => {
+          if (query && document.activeElement === search.current) {
+            event.preventDefault();
+            setQuery('');
+          }
+        }}
         onKeyDown={event => {
           if (
             event.key === '/' &&
@@ -85,14 +104,9 @@ export function Settings({
               value={query}
               onChange={event => setQuery(event.target.value)}
               onKeyDown={event => {
-                if (event.key === 'Enter' && visible[0]) {
+                if (event.key === 'Enter' && visible[0] && !busy) {
                   event.preventDefault();
                   onPageChange(visible[0].id);
-                }
-                if (event.key === 'Escape' && query) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setQuery('');
                 }
               }}
               className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
@@ -115,10 +129,12 @@ export function Settings({
                     key={entry.id}
                     type="button"
                     aria-current={entry.id === page ? 'page' : undefined}
+                    disabled={busy && entry.id !== page}
                     onClick={() => onPageChange(entry.id)}
                     className={cn(
                       'flex h-7.5 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors duration-100 outline-none',
-                      'hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+                      'enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-64',
+
                       'aria-[current=page]:bg-highlight aria-[current=page]:font-medium aria-[current=page]:text-foreground',
                     )}
                   >
@@ -155,8 +171,9 @@ export function Settings({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="size-7 text-muted-foreground hover:text-foreground"
+                className="size-7 text-muted-foreground enabled:hover:text-foreground"
                 aria-label="Close settings"
+                disabled={busy}
               >
                 <X className="size-4" />
               </Button>
@@ -167,7 +184,7 @@ export function Settings({
               aria-label={current.label}
               className="mx-auto w-full max-w-[44rem] px-6 py-7"
             >
-              {children(page)}
+              {children(page, setBusy)}
             </section>
           </div>
         </div>
