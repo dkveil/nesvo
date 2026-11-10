@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -19,7 +19,8 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 const fixturePath = fileURLToPath(
   new URL('./claude-fixture.mjs', import.meta.url),
@@ -3396,3 +3397,384 @@ test(
     }
   },
 );
+
+const loadScheduledJobContracts = async directory => {
+  const outfile = join(directory, 'contracts.mjs');
+  await promisify(execFile)('bun', [
+    'build',
+    fileURLToPath(
+      new URL('../../../packages/contracts/src/index.ts', import.meta.url),
+    ),
+    '--target=node',
+    '--format=esm',
+    `--outfile=${outfile}`,
+  ]);
+  return import(pathToFileURL(outfile).href);
+};
+
+test('scheduled job contracts compute time-zone aware schedules and bounds', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-scheduled-jobs-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const contracts = await loadScheduledJobContracts(directory);
+  const {
+    ScheduleError,
+    assertValidSchedule,
+    collapseMissed,
+    describeSchedule,
+    nextOccurrence,
+    previewOccurrences,
+    saveScheduledJobSchema,
+    scheduledJobRunSchema,
+    scheduledJobSchema,
+    scheduledJobScheduleSchema,
+    scheduledJobSessionOriginSchema,
+  } = contracts;
+  const at = value => new Date(value);
+  const next = (schedule, after, timeZone = 'UTC') =>
+    nextOccurrence(schedule, at(after), timeZone).toISOString();
+
+  await t.test('daily fires later the same day', () => {
+    assert.equal(
+      next({ kind: 'daily', time: '09:00' }, '2026-11-10T08:00:00Z'),
+      '2026-11-10T09:00:00.000Z',
+    );
+  });
+
+  await t.test('daily at the exact time moves to the next day', () => {
+    assert.equal(
+      next({ kind: 'daily', time: '09:00' }, '2026-11-10T09:00:00Z'),
+      '2026-11-11T09:00:00.000Z',
+    );
+  });
+
+  await t.test('weekdays skips the weekend', () => {
+    assert.equal(
+      next({ kind: 'weekdays', time: '09:00' }, '2026-11-13T10:00:00Z'),
+      '2026-11-16T09:00:00.000Z',
+    );
+  });
+
+  await t.test('weekly lands on the chosen weekday', () => {
+    assert.equal(
+      next(
+        { kind: 'weekly', weekday: 1, time: '07:30' },
+        '2026-11-10T12:00:00Z',
+      ),
+      '2026-11-16T07:30:00.000Z',
+    );
+  });
+
+  await t.test('interval steps from its anchor', () => {
+    const schedule = {
+      kind: 'interval',
+      minutes: 30,
+      anchorAt: '2026-11-10T09:00:00.000Z',
+    };
+    assert.equal(
+      next(schedule, '2026-11-10T08:00:00Z'),
+      '2026-11-10T09:00:00.000Z',
+    );
+    assert.equal(
+      next(schedule, '2026-11-10T09:20:00Z'),
+      '2026-11-10T09:30:00.000Z',
+    );
+    assert.equal(
+      next(schedule, '2026-11-10T09:30:00Z'),
+      '2026-11-10T10:00:00.000Z',
+    );
+  });
+
+  await t.test('a week of missed occurrences collapses into one run', () => {
+    const result = collapseMissed(
+      { kind: 'daily', time: '09:00' },
+      at('2026-11-03T09:00:00Z'),
+      at('2026-11-10T12:00:00Z'),
+      'UTC',
+    );
+    assert.equal(result.scheduledFor.toISOString(), '2026-11-10T09:00:00.000Z');
+    assert.equal(result.nextRunAt.toISOString(), '2026-11-11T09:00:00.000Z');
+    assert.equal(result.skipped, 7);
+    const none = collapseMissed(
+      { kind: 'daily', time: '09:00' },
+      at('2026-11-10T09:00:00Z'),
+      at('2026-11-10T12:00:00Z'),
+      'UTC',
+    );
+    assert.equal(none.skipped, 0);
+    assert.equal(none.scheduledFor.toISOString(), '2026-11-10T09:00:00.000Z');
+  });
+
+  await t.test('invalid schedules are rejected with a typed error', () => {
+    const invalid = [
+      { kind: 'daily', time: '25:00' },
+      { kind: 'daily', time: '9:00' },
+      { kind: 'weekly', weekday: 9, time: '09:00' },
+      { kind: 'weekly', time: '09:00' },
+      { kind: 'cron' },
+      { kind: 'interval', minutes: 29, anchorAt: '2026-11-10T09:00:00Z' },
+      { kind: 'interval', minutes: 45.5, anchorAt: '2026-11-10T09:00:00Z' },
+      { kind: 'interval', minutes: 60, anchorAt: 'tomorrow-ish' },
+      null,
+    ];
+    for (const schedule of invalid) {
+      assert.throws(
+        () => assertValidSchedule(schedule),
+        error =>
+          error instanceof ScheduleError && error.code === 'invalid-schedule',
+        JSON.stringify(schedule),
+      );
+    }
+    assert.throws(
+      () =>
+        nextOccurrence(
+          { kind: 'daily', time: '09:00' },
+          at('2026-11-10T08:00:00Z'),
+          'Mars/Olympus',
+        ),
+      error =>
+        error instanceof ScheduleError && error.code === 'invalid-time-zone',
+    );
+    assert.throws(
+      () =>
+        nextOccurrence(
+          { kind: 'daily', time: '09:00' },
+          new Date(Number.NaN),
+          'UTC',
+        ),
+      error => error instanceof ScheduleError && error.code === 'invalid-date',
+    );
+  });
+
+  await t.test(
+    'the same wall time differs between UTC and Europe/Warsaw',
+    () => {
+      const schedule = { kind: 'daily', time: '09:00' };
+      assert.equal(
+        next(schedule, '2026-11-10T00:00:00Z', 'UTC'),
+        '2026-11-10T09:00:00.000Z',
+      );
+      assert.equal(
+        next(schedule, '2026-11-10T00:00:00Z', 'Europe/Warsaw'),
+        '2026-11-10T08:00:00.000Z',
+      );
+      assert.equal(
+        next(schedule, '2026-07-10T00:00:00Z', 'Europe/Warsaw'),
+        '2026-07-10T07:00:00.000Z',
+      );
+    },
+  );
+
+  await t.test(
+    'a nonexistent spring-forward time moves to the first valid minute',
+    () => {
+      const schedule = { kind: 'daily', time: '02:30' };
+      const first = next(schedule, '2026-03-28T12:00:00Z', 'Europe/Warsaw');
+      assert.equal(first, '2026-03-29T01:00:00.000Z');
+      assert.equal(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Europe/Warsaw',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        }).format(at(first)),
+        '03:00',
+      );
+      assert.equal(
+        next(schedule, first, 'Europe/Warsaw'),
+        '2026-03-30T00:30:00.000Z',
+      );
+    },
+  );
+
+  await t.test(
+    'a repeated fall-back time fires once at the first instance',
+    () => {
+      const schedule = { kind: 'daily', time: '02:30' };
+      const first = next(schedule, '2026-10-24T12:00:00Z', 'Europe/Warsaw');
+      assert.equal(first, '2026-10-25T00:30:00.000Z');
+      assert.equal(
+        next(schedule, first, 'Europe/Warsaw'),
+        '2026-10-26T01:30:00.000Z',
+      );
+      assert.equal(
+        next(schedule, '2026-10-25T01:00:00Z', 'Europe/Warsaw'),
+        '2026-10-26T01:30:00.000Z',
+      );
+    },
+  );
+
+  await t.test('daily local time is preserved across a DST change', () => {
+    const schedule = { kind: 'daily', time: '09:00' };
+    assert.deepEqual(
+      previewOccurrences(
+        schedule,
+        at('2026-03-28T09:00:00Z'),
+        'Europe/Warsaw',
+      ).map(value => value.toISOString()),
+      [
+        '2026-03-29T07:00:00.000Z',
+        '2026-03-30T07:00:00.000Z',
+        '2026-03-31T07:00:00.000Z',
+      ],
+    );
+  });
+
+  await t.test('schedules are described in English', () => {
+    assert.equal(
+      describeSchedule({ kind: 'daily', time: '09:00' }),
+      'Every day at 09:00',
+    );
+    assert.equal(
+      describeSchedule({ kind: 'weekdays', time: '09:00' }),
+      'Weekdays at 09:00',
+    );
+    assert.equal(
+      describeSchedule({ kind: 'weekly', weekday: 1, time: '07:30' }),
+      'Every Monday at 07:30',
+    );
+    assert.equal(
+      describeSchedule({
+        kind: 'interval',
+        minutes: 30,
+        anchorAt: '2026-11-10T09:00:00Z',
+      }),
+      'Every 30 minutes',
+    );
+    assert.equal(
+      describeSchedule({
+        kind: 'interval',
+        minutes: 120,
+        anchorAt: '2026-11-10T09:00:00Z',
+      }),
+      'Every 2 hours',
+    );
+  });
+
+  await t.test(
+    'schemas enforce interval, name, prompt, timeout and provider bounds',
+    () => {
+      const interval = minutes => ({
+        kind: 'interval',
+        minutes,
+        anchorAt: '2026-11-10T09:00:00.000Z',
+      });
+      assert.equal(
+        scheduledJobScheduleSchema.safeParse(interval(29)).success,
+        false,
+      );
+      assert.equal(
+        scheduledJobScheduleSchema.safeParse(interval(30)).success,
+        true,
+      );
+      assert.equal(
+        scheduledJobScheduleSchema.safeParse({
+          kind: 'weekly',
+          weekday: 7,
+          time: '09:00',
+        }).success,
+        false,
+      );
+      const definition = {
+        id: randomUUID(),
+        expectedRevision: null,
+        name: 'Daily summary',
+        prompt: '/summarize the repository',
+        directory: '',
+        provider: 'codex',
+        model: 'gpt-5.5',
+        effort: 'high',
+        mode: 'read-only',
+        schedule: { kind: 'daily', time: '09:00' },
+        timeZone: 'Europe/Warsaw',
+        active: true,
+      };
+      const parsed = saveScheduledJobSchema.parse(definition);
+      assert.equal(parsed.timeoutMinutes, 30);
+      const rejected = patch =>
+        saveScheduledJobSchema.safeParse({ ...definition, ...patch }).success;
+      assert.equal(rejected({ name: 'a'.repeat(80) }), true);
+      assert.equal(rejected({ name: 'a'.repeat(81) }), false);
+      assert.equal(rejected({ name: '   ' }), false);
+      assert.equal(rejected({ prompt: 'a'.repeat(8000) }), true);
+      assert.equal(rejected({ prompt: 'a'.repeat(8001) }), false);
+      assert.equal(rejected({ timeoutMinutes: 5 }), true);
+      assert.equal(rejected({ timeoutMinutes: 120 }), true);
+      assert.equal(rejected({ timeoutMinutes: 4 }), false);
+      assert.equal(rejected({ timeoutMinutes: 121 }), false);
+      assert.equal(rejected({ mode: 'supervised' }), false);
+      assert.equal(rejected({ timeZone: 'Mars/Olympus' }), false);
+      assert.equal(
+        rejected({ provider: 'claude', model: 'sonnet', effort: 'high' }),
+        false,
+      );
+      assert.equal(
+        rejected({ provider: 'claude', model: 'sonnet', effort: null }),
+        true,
+      );
+      assert.equal(
+        rejected({ provider: 'claude', model: 'gpt-5.5', effort: null }),
+        false,
+      );
+      assert.equal(rejected({ hostId: 'local' }), false);
+    },
+  );
+
+  await t.test('runs distinguish manual and scheduled triggers', () => {
+    const run = {
+      id: randomUUID(),
+      scheduledJobId: randomUUID(),
+      scheduledFor: null,
+      trigger: 'manual',
+      status: 'running',
+      reason: null,
+      missedCount: 0,
+      sessionId: randomUUID(),
+      runId: randomUUID(),
+      reviewId: null,
+      resetAt: null,
+      startedAt: '2026-11-10T09:00:00.000Z',
+      finishedAt: null,
+    };
+    assert.equal(scheduledJobRunSchema.safeParse(run).success, true);
+    assert.equal(
+      scheduledJobRunSchema.safeParse({ ...run, trigger: 'schedule' }).success,
+      false,
+    );
+    assert.equal(
+      scheduledJobRunSchema.safeParse({ ...run, status: 'paused' }).success,
+      false,
+    );
+  });
+
+  await t.test(
+    'the session origin is strict and not a public session field',
+    () => {
+      const origin = {
+        kind: 'scheduled-job',
+        scheduledJobId: randomUUID(),
+        runId: randomUUID(),
+      };
+      assert.equal(
+        scheduledJobSessionOriginSchema.safeParse(origin).success,
+        true,
+      );
+      assert.equal(
+        scheduledJobSessionOriginSchema.safeParse({ ...origin, path: '/tmp' })
+          .success,
+        false,
+      );
+      assert.equal(scheduledJobSchema.safeParse(origin).success, false);
+      assert.equal(
+        contracts.createSessionSchema.safeParse({
+          title: 'Origin',
+          provider: 'Codex',
+          model: 'gpt-5.5',
+          mode: 'read-only',
+          directory: '',
+          origin,
+        }).success,
+        false,
+      );
+    },
+  );
+});
