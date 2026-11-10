@@ -199,16 +199,16 @@ export function ReviewInbox({
     </span>
   );
   const rowClass =
-    'grid grid-cols-1 items-start gap-x-5 gap-y-2 py-3.5 md:grid-cols-[minmax(0,1fr)_auto]';
+    'grid grid-cols-1 items-start gap-x-5 gap-y-2 rounded-lg px-3 py-3 transition-colors duration-100 hover:bg-accent focus-within:bg-accent md:grid-cols-[minmax(0,1fr)_auto]';
   const actionClass = 'flex flex-wrap items-center gap-1.5 self-center';
   return (
     <ScrollArea className="min-h-0 min-w-0 flex-1">
       <section
         aria-label="Inbox"
-        className="mx-auto w-full max-w-5xl px-5 py-5 lg:px-8"
+        className="mx-auto w-full max-w-4xl px-5 py-6 lg:px-8"
       >
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">
+        <div className="mb-3 flex items-center justify-between gap-3 px-3">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {rows.length}{' '}
             {filter === 'history'
               ? 'past decisions'
@@ -234,7 +234,7 @@ export function ReviewInbox({
               <SelectTrigger
                 id="inbox-filter"
                 size="sm"
-                className="h-7 w-28 border-transparent bg-transparent text-xs shadow-none dark:bg-transparent"
+                className="h-7 w-28 border-transparent bg-transparent text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground dark:bg-transparent dark:hover:bg-accent"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -247,7 +247,7 @@ export function ReviewInbox({
           </div>
         </div>
         {error && (
-          <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="mb-4 flex flex-wrap items-center gap-3 px-3">
             <p
               role="alert"
               className="text-xs text-destructive [overflow-wrap:anywhere]"
@@ -260,26 +260,26 @@ export function ReviewInbox({
           </div>
         )}
         {loading && (
-          <p role="status" className="py-3 text-xs text-muted-foreground">
+          <p role="status" className="px-3 py-3 text-xs text-muted-foreground">
             Loading results…
           </p>
         )}
         {filter !== 'history' &&
           decisionProps.blockedReason &&
           reviews.some(review => review.status === 'pending') && (
-            <p className="mb-3 text-[11px] text-muted-foreground">
+            <p className="mb-3 px-3 text-2xs text-muted-foreground">
               {decisionProps.blockedReason}
             </p>
           )}
         {filter !== 'history' &&
           !operationEnabled &&
           rows.some(row => row.type !== 'review') && (
-            <p className="mb-3 text-[11px] text-muted-foreground">
+            <p className="mb-3 px-3 text-2xs text-muted-foreground">
               Reconnect to respond to pending requests.
             </p>
           )}
         {rows.length > 0 ? (
-          <div className="divide-y divide-border/80">
+          <div className="space-y-px">
             {rows.map(row => {
               if (row.type === 'review') {
                 const { review } = row;
@@ -305,7 +305,7 @@ export function ReviewInbox({
                       {(review.hostId !== 'local' ||
                         computers.length > 1 ||
                         !isOperationEnabled({ hostId: review.hostId })) && (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-2xs text-muted-foreground">
                           {computers.find(item => item.id === review.hostId)
                             ?.name ?? review.hostId}
                           {!isOperationEnabled({ hostId: review.hostId })
@@ -316,7 +316,7 @@ export function ReviewInbox({
                       <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                         {reviewPreview(review)}
                       </p>
-                      <p className="flex flex-wrap gap-x-2 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                      <p className="flex flex-wrap gap-x-2 gap-y-1 text-2xs leading-4 text-muted-foreground">
                         <span>
                           Result · v{review.version} ·{' '}
                           {reviewStatusLabels[review.status]}
@@ -330,7 +330,7 @@ export function ReviewInbox({
                       </p>
                       {review.decision?.feedback && (
                         <p
-                          className="line-clamp-1 text-[11px] text-muted-foreground"
+                          className="line-clamp-1 text-2xs text-muted-foreground"
                           title={review.decision.feedback}
                         >
                           {compactPreview(review.decision.feedback, 200)}
@@ -383,7 +383,7 @@ export function ReviewInbox({
                       {(session.hostId !== 'local' ||
                         computers.length > 1 ||
                         !isOperationEnabled(session)) && (
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-2xs text-muted-foreground">
                           {computerName}
                           {!isOperationEnabled(session)
                             ? ' · Offline snapshot'
@@ -396,7 +396,7 @@ export function ReviewInbox({
                       >
                         {preview}
                       </p>
-                      <p className="flex items-center gap-2 text-[11px] leading-4 text-muted-foreground">
+                      <p className="flex items-center gap-2 text-2xs leading-4 text-muted-foreground">
                         <span className="shrink-0">
                           {approval.kind === 'command'
                             ? 'Command approval'
@@ -454,7 +454,7 @@ export function ReviewInbox({
                     {deciding && (
                       <p
                         role="status"
-                        className="col-span-full text-[11px] text-muted-foreground"
+                        className="col-span-full text-2xs text-muted-foreground"
                       >
                         Sending decision…
                       </p>
@@ -490,7 +490,7 @@ export function ReviewInbox({
                     {(session.hostId !== 'local' ||
                       computers.length > 1 ||
                       !isOperationEnabled(session)) && (
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-2xs text-muted-foreground">
                         {computerName}
                         {!isOperationEnabled(session)
                           ? ' · Offline snapshot'
@@ -503,7 +503,7 @@ export function ReviewInbox({
                     >
                       {delegation.title}: {compactPreview(delegation.task, 180)}
                     </p>
-                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs leading-4 text-muted-foreground">
                       <span>
                         Worker · {delegation.provider} ·{' '}
                         {modelLabel(delegation.model)} ·{' '}
@@ -566,7 +566,7 @@ export function ReviewInbox({
                   {deciding && (
                     <p
                       role="status"
-                      className="col-span-full text-[11px] text-muted-foreground"
+                      className="col-span-full text-2xs text-muted-foreground"
                     >
                       Sending decision…
                     </p>
@@ -586,9 +586,11 @@ export function ReviewInbox({
         ) : (
           !loading &&
           !error && (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
-              <Inbox className="mb-1 size-5 text-muted-foreground" />
-              <h2 className="text-sm font-medium">
+            <div className="flex min-h-80 flex-col items-center justify-center gap-2 text-center">
+              <span className="mb-2 flex size-10 items-center justify-center rounded-xl border bg-card text-muted-foreground">
+                <Inbox className="size-4.5" aria-hidden="true" />
+              </span>
+              <h2 className="text-[15px] font-semibold tracking-tight">
                 {filter === 'history'
                   ? 'No past decisions'
                   : 'You are all caught up'}

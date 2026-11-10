@@ -19,7 +19,9 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { Button } from '@/shared/ui/button';
+import { cn } from 'cn';
+import { PanelAction, PanelHeader } from '@/shared/ui/panel';
+import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
 
 type Props = {
   review: Review;
@@ -196,53 +198,43 @@ export default function ReviewDiff({
       aria-label="Saved result diff"
       data-review-id={review.id}
       data-review-version={review.version}
-      className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l bg-code-background min-[1200px]:relative min-[1200px]:inset-auto min-[1200px]:w-[46%] min-[1200px]:max-w-[850px] min-[1200px]:shrink-0"
+      className={cn(
+        panelSurface,
+        'min-[1200px]:w-[46%] min-[1200px]:max-w-[850px]',
+      )}
     >
-      <header className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
-        <FileCode2 className="size-4 text-muted-foreground" />
-        <h2 className="text-xs font-medium">Result v{review.version}</h2>
-        <span className="text-xs text-muted-foreground">
-          {reviewStatusLabels[review.status]}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
+      <PanelHeader
+        icon={FileCode2}
+        title={`Result v${review.version}`}
+        meta={reviewStatusLabels[review.status]}
+      >
+        <PanelAction
           aria-label="Browse workspace files"
           title="Current workspace files"
           onClick={onFiles}
-          className="ml-auto size-7"
         >
-          <FolderOpen className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
+          <FolderOpen />
+        </PanelAction>
+        <PanelAction
           aria-label="Wrap diff lines"
           aria-pressed={wrap}
           onClick={() => setWrap(value => !value)}
-          className="size-7"
         >
-          <WrapText className="size-3.5" />
-        </Button>
-        <Button
+          <WrapText />
+        </PanelAction>
+        <PanelAction
           ref={closeButton}
-          type="button"
-          variant="ghost"
-          size="icon"
           aria-label="Close diff"
           onClick={onClose}
-          className="size-7"
         >
           <X className="size-4" />
-        </Button>
-      </header>
-      <div className="shrink-0 border-b px-4 py-3">
-        <p className="truncate text-xs" title={review.title}>
+        </PanelAction>
+      </PanelHeader>
+      <div className="shrink-0 border-b px-3 py-2.5">
+        <p className="truncate text-[13px] font-medium" title={review.title}>
           {review.title}
         </p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
+        <p className="mt-1 text-2xs text-muted-foreground">
           Saved changes · Start → end of this turn
         </p>
       </div>
@@ -266,7 +258,7 @@ export default function ReviewDiff({
       )}
       <nav
         aria-label="Changed files"
-        className="max-h-[25%] shrink-0 overflow-auto border-b py-1"
+        className="max-h-[25%] shrink-0 space-y-px overflow-auto border-b p-1.5"
       >
         {review.diff.files.map(file => {
           const stat = counts(parsed.files.get(file.path));
@@ -278,16 +270,19 @@ export default function ReviewDiff({
               aria-pressed={path === file.path}
               title={file.path}
               onClick={() => onSelectPath(file.path)}
-              className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight aria-pressed:text-foreground"
+              className={cn(
+                panelRow,
+                'flex h-7 w-full min-w-0 items-center gap-3 px-2',
+              )}
             >
               <span className="min-w-0 flex-1 truncate">{file.path}</span>
               {stat && (stat.added > 0 || stat.removed > 0) ? (
-                <span className="flex shrink-0 gap-2 font-mono text-[11px]">
-                  <span className="text-emerald-400">+{stat.added}</span>
-                  <span className="text-red-400">−{stat.removed}</span>
+                <span className="flex shrink-0 gap-2 font-mono text-2xs">
+                  <span className="text-success-foreground">+{stat.added}</span>
+                  <span className="text-error-foreground">−{stat.removed}</span>
                 </span>
               ) : (
-                <span className="text-[11px]">{fileKindLabels[file.kind]}</span>
+                <span className="text-2xs">{fileKindLabels[file.kind]}</span>
               )}
             </button>
           );
@@ -295,7 +290,7 @@ export default function ReviewDiff({
       </nav>
       {parsed.metadata.has(path) && (
         <p
-          className="shrink-0 border-b px-4 py-2 text-[11px] text-muted-foreground"
+          className="shrink-0 border-b px-4 py-2 text-2xs text-muted-foreground"
           aria-label="File metadata"
         >
           {parsed.metadata.get(path)}
