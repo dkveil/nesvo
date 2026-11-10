@@ -38,12 +38,15 @@ export function PermissionPicker({
   onChange,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [previewMode, setPreviewMode] = useState<Mode | null>(null);
   const unavailable = (candidate: Mode) =>
     candidate === 'supervised' && provider === 'Claude Code'
       ? CLAUDE_READ_ONLY_REASON
       : '';
   const current =
     segments.find(segment => segment.mode === mode) ?? segments[0]!;
+  const shown =
+    segments.find(segment => segment.mode === previewMode) ?? current;
   const Icon = current.icon;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -59,7 +62,13 @@ export function PermissionPicker({
     }
   };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={next => {
+        setOpen(next);
+        setPreviewMode(null);
+      }}
+    >
       <PopoverTrigger asChild>
         <ComposerChip
           disabled={disabled}
@@ -71,20 +80,19 @@ export function PermissionPicker({
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
-        side="bottom"
+        side="top"
         align="end"
         sideOffset={8}
         collisionPadding={12}
         aria-label="Permissions"
-        className="w-72 space-y-3 p-3"
+        className="w-62 space-y-2.5 p-2.5"
       >
-        <p className="text-[11px] font-medium text-muted-foreground">
-          Permissions
-        </p>
+        <p className="text-xs font-medium text-muted-foreground">Permissions</p>
         <div
           role="radiogroup"
           aria-label="Permission mode"
-          className="grid grid-cols-2 gap-1 rounded-lg bg-secondary/60 p-1"
+          className="grid grid-cols-2 gap-1 rounded-lg bg-segment-track p-1"
+          onPointerLeave={() => setPreviewMode(null)}
         >
           {segments.map(segment => {
             const SegmentIcon = segment.icon;
@@ -102,16 +110,19 @@ export function PermissionPicker({
                 title={reason || modeLabels[segment.mode]}
                 tabIndex={checked ? 0 : -1}
                 onKeyDown={onKeyDown}
+                onPointerEnter={() => setPreviewMode(segment.mode)}
+                onFocus={() => setPreviewMode(segment.mode)}
+                onBlur={() => setPreviewMode(null)}
                 onClick={() => {
                   if (!reason) onChange(segment.mode);
                 }}
                 className={cn(
-                  'flex h-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
-                  'focus-visible:ring-1 focus-visible:ring-ring',
+                  'flex h-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
+                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   reason
                     ? 'cursor-not-allowed opacity-40'
                     : 'hover:text-foreground',
-                  checked && 'bg-accent text-foreground shadow-xs',
+                  checked && 'bg-segment-active text-foreground shadow-xs',
                 )}
               >
                 <SegmentIcon className="size-3.5" aria-hidden="true" />
@@ -119,12 +130,12 @@ export function PermissionPicker({
             );
           })}
         </div>
-        <div className="space-y-1">
-          <p className="text-[13px] font-medium">{modeLabels[current.mode]}</p>
+        <div className="space-y-0.5" aria-live="polite">
+          <p className="text-sm font-semibold">{modeLabels[shown.mode]}</p>
           <p className="text-xs leading-5 text-muted-foreground">
-            {current.description}
+            {unavailable(shown.mode) || shown.description}
           </p>
-          {provider === 'Claude Code' && (
+          {provider === 'Claude Code' && shown.mode === mode && (
             <p role="note" className="text-xs leading-5 text-muted-foreground">
               {CLAUDE_READ_ONLY_REASON}.
             </p>
