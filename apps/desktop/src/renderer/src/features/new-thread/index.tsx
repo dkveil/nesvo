@@ -162,7 +162,6 @@ export function NewThread({
           </p>
         </header>
         <SelectSkill
-          key={`${setup.hostId}/${setup.provider}`}
           scope={{
             provider: setup.provider,
             input: {
