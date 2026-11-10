@@ -46,6 +46,7 @@ type Controls = {
   notice: ReactNode;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onInput: () => void;
+  hasTypedCommand: boolean;
   resolveTyped: (draft: string) => Promise<TypedSubmission>;
   inputAria: {
     'aria-controls'?: string;
@@ -272,6 +273,7 @@ export function SelectSkill({
           setManualQuery(null);
           setTypedError('');
         },
+        hasTypedCommand: !!typedCommandOf(draft),
         resolveTyped,
         inputAria: open
           ? {

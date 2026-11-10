@@ -132,6 +132,7 @@ export function Conversation({
         notice,
         onKeyDown,
         onInput,
+        hasTypedCommand,
         resolveTyped,
         inputAria,
       }) => (
@@ -140,7 +141,7 @@ export function Conversation({
           onSubmit={event => {
             event.preventDefault();
             if (!draft.trim() || !canSend) return;
-            if (selectedSkill) {
+            if (selectedSkill || !hasTypedCommand) {
               onSend();
               return;
             }
