@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import {
   ChevronDown,
   CircleCheck,
@@ -37,7 +37,6 @@ type Props = {
   onCreate: () => void;
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
-  usage?: ReactNode;
 };
 
 const statusTone: Partial<Record<Session['status'], string>> = {
@@ -104,7 +103,6 @@ export function SessionSidebar({
   onCreate,
   onCollapse,
   collapseToggleRef,
-  usage,
 }: Props) {
   const [search, setSearch] = useState('');
   const [closedHosts, setClosedHosts] = useState<string[]>([]);
@@ -378,8 +376,6 @@ export function SessionSidebar({
         >
           <Smartphone className="size-4" />
         </Button>
-        <div className="flex-1" />
-        {usage}
       </div>
     </div>
   );

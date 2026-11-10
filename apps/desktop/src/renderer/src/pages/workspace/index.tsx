@@ -723,6 +723,7 @@ export function Workspace() {
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <aside
+      <ProviderRail key={`${selectedHostId}/rail`} {...usageProps} />
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
         inert={!sidebarOpen}
@@ -733,13 +734,6 @@ export function Workspace() {
             {...sidebarProps}
             onCollapse={() => toggleSidebar(false)}
             collapseToggleRef={sidebarCollapseToggle}
-            usage={
-              <ProviderRail
-                key={`${selectedHostId}/rail`}
-                orientation="horizontal"
-                {...usageProps}
-              />
-            }
           />
         </div>
       </aside>
