@@ -49,7 +49,7 @@ function ActivityItem({ item }: { item: Activity }) {
     >
       <summary
         aria-label={`Activity: ${item.title}`}
-        className="flex cursor-pointer list-none items-start gap-2 rounded-sm py-1 text-[13px] leading-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none items-start gap-2 rounded-md px-1.5 py-1 text-[13px] leading-5 text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset group-open/activity-item:text-foreground [&::-webkit-details-marker]:hidden"
       >
         <Icon
           className={`mt-0.5 size-3.5 shrink-0 ${item.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
@@ -86,7 +86,7 @@ function ActivityItem({ item }: { item: Activity }) {
         {item.detail && (
           <pre
             aria-label="Activity details"
-            className="max-h-48 overflow-auto text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
+            className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
           >
             {item.detail}
           </pre>
@@ -94,7 +94,7 @@ function ActivityItem({ item }: { item: Activity }) {
         {item.output && (
           <pre
             aria-label="Command output"
-            className="max-h-56 overflow-auto rounded-md bg-card p-3 text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
+            className="max-h-56 overflow-auto rounded-lg border bg-code-background p-3 font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
           >
             {item.output}
           </pre>
@@ -169,7 +169,7 @@ export function SessionActivity({
       <details className="group/activity">
         <summary
           aria-label="Toggle activity"
-          className="flex cursor-pointer list-none items-center gap-2 rounded-sm py-1 text-xs leading-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+          className="flex cursor-pointer list-none items-center gap-2 rounded-md py-1 text-[13px] leading-5 transition-colors duration-100 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
         >
           <ChevronRight className="activity-caret size-3 shrink-0 group-open/activity:rotate-90" />
           <span
@@ -179,7 +179,7 @@ export function SessionActivity({
             {label}
           </span>
           {summary && (
-            <span className="min-w-0 truncate text-[11px]" title={summary}>
+            <span className="min-w-0 truncate text-xs" title={summary}>
               {summary}
             </span>
           )}
@@ -189,7 +189,7 @@ export function SessionActivity({
             </span>
           )}
         </summary>
-        <div className="mt-2 max-h-80 space-y-1 overflow-y-auto border-l pl-3">
+        <div className="mt-1.5 ml-1.5 max-h-80 space-y-px overflow-y-auto border-l pl-2.5">
           {batches.map(batch => {
             if (batch.items.length === 1)
               return <ActivityItem key={batch.id} item={batch.items[0]!} />;
@@ -198,7 +198,7 @@ export function SessionActivity({
               <details key={batch.id} className="group/activity-batch">
                 <summary
                   aria-label={`Toggle ${batch.kind} activity`}
-                  className="flex cursor-pointer list-none items-center gap-2 rounded-sm py-1 text-[13px] leading-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+                  className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1.5 py-1 text-[13px] leading-5 transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden"
                 >
                   <Icon className="size-3.5 shrink-0" />
                   <span>{batchLabel(batch)}</span>

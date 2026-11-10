@@ -1,5 +1,14 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ArrowUp, FolderOpen, Square } from 'lucide-react';
+import {
+  ArrowUp,
+  FolderOpen,
+  Lock,
+  Monitor,
+  Pencil,
+  Server,
+  Square,
+} from 'lucide-react';
+import { cn } from 'cn';
 import type {
   DesktopApi,
   RespondApprovalInput,
@@ -9,15 +18,18 @@ import {
   modeLabels,
   modelLabel,
   directoryLabel,
+  ProviderGlyph,
   statusLabels,
   type Session,
 } from '@/entities/session';
+import { effortLabel } from '@/features/new-thread/reasoning-effort';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { entityKey } from '@/shared/lib/host-key';
+import { MessageBody } from './message-body';
 
 const interruptionLabels: Record<SessionInterruption['reason'], string> = {
   'host-shutdown': 'Interrupted when Nesvo closed',
@@ -108,6 +120,9 @@ export function Conversation({
     !error &&
     session.pendingApprovals.length === 0 &&
     session.delegations.length === 0;
+  const model = session.actualModel ?? modelLabel(session.model);
+  const ModeIcon = session.mode === 'supervised' ? Pencil : Lock;
+  const HostIcon = session.hostId === 'local' ? Monitor : Server;
   const runStarts = new Map(
     session.messages
       .filter(message => message.author === 'operator')
@@ -145,7 +160,7 @@ export function Conversation({
         inputAria,
       }) => (
         <form
-          className="mx-auto w-full max-w-3xl"
+          className="mx-auto w-full max-w-(--composer-max-width) space-y-2"
           onSubmit={event => {
             event.preventDefault();
             if (!draft.trim() || !canSend) return;
@@ -166,7 +181,7 @@ export function Conversation({
             Message
           </label>
           {anchor(
-            <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
+            <div className="glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input">
               {selectedSkill && (
                 <SelectedSkillChip
                   skill={selectedSkill}
@@ -179,16 +194,16 @@ export function Conversation({
                 {...inputAria}
                 onKeyDown={onKeyDown}
                 onInput={onInput}
-                placeholder="Ask anything about your task…"
+                placeholder="Ask anything. / for skills"
                 value={draft}
                 onChange={event => onDraft(event.target.value)}
                 maxLength={32000}
-                className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+                className="max-h-48 min-h-11 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-sm leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent"
               />
-              <div className="flex items-end justify-between gap-3 px-1 pt-3">
+              <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="flex min-w-0 items-center gap-2">
                   {trigger}
-                  <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
+                  <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
                     {otherRun
                       ? 'Another session is working'
                       : sending
@@ -201,22 +216,28 @@ export function Conversation({
                           ? 'Worker approval needed'
                           : session.pendingApprovals.length > 0
                             ? 'Approval needed'
-                            : modeLabels[session.mode]}
+                            : ''}
                   </span>
                 </div>
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <span
-                    className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
-                    title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
+                    className="flex h-7 max-w-56 min-w-0 items-center gap-1.5 px-1.5 text-xs"
+                    title={`${session.provider} · ${model}`}
                   >
-                    {session.provider} ·{' '}
-                    {session.actualModel ?? modelLabel(session.model)}
+                    <ProviderGlyph provider={session.provider} />
+                    <span className="truncate font-semibold">{model}</span>
+                    {session.effort && (
+                      <span className="shrink-0 text-muted-foreground">
+                        {effortLabel(session.effort)}
+                      </span>
+                    )}
                   </span>
                   {running ? (
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
+                      size="xs"
+                      className="h-7 rounded-full px-2.5"
                       disabled={!connected || session.status === 'stopping'}
                       onClick={onStop}
                       aria-label={stopLabel}
@@ -226,7 +247,7 @@ export function Conversation({
                           : 'Stop this session'
                       }
                     >
-                      <Square />
+                      <Square className="fill-current" />
                       {session.status === 'stopping'
                         ? groupRun
                           ? 'Stopping group…'
@@ -237,7 +258,7 @@ export function Conversation({
                     <Button
                       type="submit"
                       size="icon-sm"
-                      className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
+                      className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
                       disabled={!draft.trim() || !canSend}
                       aria-label="Send message"
                       title="Send message"
@@ -250,28 +271,34 @@ export function Conversation({
             </div>,
           )}
           {notice}
-          <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 text-[11px] text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground">
             <span
-              className="flex min-w-0 items-center gap-1.5"
+              className="flex h-7 max-w-40 min-w-0 items-center gap-1.5 px-1.5"
+              title={computerName}
+            >
+              <HostIcon className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">{computerName}</span>
+            </span>
+            <span
+              className="flex h-7 min-w-0 items-center gap-1.5 px-1.5"
               title={session.directory}
               aria-label={`Working directory: ${session.directory}`}
             >
-              <FolderOpen className="size-3 shrink-0" />
+              <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
               <span className="truncate">
                 {directoryLabel(session.directory)}
               </span>
             </span>
-            <span className="truncate sm:hidden">
-              {session.provider} ·{' '}
-              {session.actualModel ?? modelLabel(session.model)}
+            <span className="flex-1" />
+            <span className="flex h-7 shrink-0 items-center gap-1.5 px-1.5">
+              <ModeIcon className="size-3.5" aria-hidden="true" />
+              {modeLabels[session.mode]}
             </span>
           </div>
-          {(!connected || session.hostId !== 'local') && (
-            <p className="mt-2 px-1 text-[11px] leading-5 text-muted-foreground">
-              {computerName}
-              {!connected
-                ? ' · Offline snapshot. Work may still be running. Reconnect to send messages or decisions.'
-                : ''}
+          {!connected && (
+            <p className="px-3 text-[11px] leading-5 text-muted-foreground">
+              Offline snapshot. Work may still be running. Reconnect to send
+              messages or decisions.
             </p>
           )}
         </form>
@@ -316,7 +343,7 @@ export function Conversation({
           empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
         }
       >
-        <div className="mx-auto max-w-3xl space-y-10 px-5 py-10 lg:px-6">
+        <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
           {session.messages.map(message => {
             const live =
               message.author === 'agent' &&
@@ -329,11 +356,18 @@ export function Conversation({
                 session.activityTruncatedRunIds.includes(message.runId) ||
                 session.activities.some(item => item.runId === message.runId));
             return (
-              <article key={message.id} className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-medium">
-                  <span>
-                    {message.author === 'operator' ? 'You' : session.provider}
-                  </span>
+              <article
+                key={message.id}
+                aria-label={
+                  message.author === 'operator' ? 'You' : session.provider
+                }
+                data-author={message.author}
+                className={cn(
+                  'space-y-2',
+                  message.author === 'operator' && 'flex flex-col items-end',
+                )}
+              >
+                <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
                   {message.author === 'operator' &&
                     (message.skill || message.skillId) && (
                       <span
@@ -387,9 +421,14 @@ export function Conversation({
                     live,
                   )}
                 {(message.body || !live) && (
-                  <p className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                    {message.body || 'No response text.'}
-                  </p>
+                  <MessageBody
+                    body={message.body || 'No response text.'}
+                    className={
+                      message.author === 'operator'
+                        ? 'max-w-[85%] rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6'
+                        : 'w-full text-sm leading-7'
+                    }
+                  />
                 )}
                 {message.interruption && message.runId !== session.runId && (
                   <p className="text-xs text-muted-foreground">
@@ -425,7 +464,7 @@ export function Conversation({
                 <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
                   {approval.title}
                 </h2>
-                <pre className="max-h-60 overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+                <pre className="max-h-60 overflow-auto rounded-lg border bg-code-background p-3 font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
                   {approval.detail}
                 </pre>
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
@@ -506,14 +545,17 @@ export function Conversation({
         </div>
       </ScrollArea>
       {empty && (
-        <div className="mx-auto mt-auto w-full max-w-3xl px-5 pt-10 pb-7 text-center lg:px-6">
-          <h2 className="text-2xl font-medium tracking-tight sm:text-[1.875rem]">
+        <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
+          <h2 className="text-2xl font-normal tracking-tight sm:text-3xl">
             What would you like to work on?
           </h2>
+          <p className="truncate text-[13px] font-semibold">
+            {directoryLabel(session.directory)}
+          </p>
         </div>
       )}
       <div
-        className={`shrink-0 px-5 lg:px-6 ${empty ? 'mb-auto pb-12' : 'pt-3 pb-4'}`}
+        className={cn('shrink-0 px-5', empty ? 'mb-auto pb-16' : 'pt-2 pb-4')}
       >
         {composer}
       </div>
