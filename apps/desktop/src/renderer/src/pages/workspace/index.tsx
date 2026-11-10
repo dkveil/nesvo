@@ -1086,7 +1086,7 @@ export function Workspace() {
               }
               onManageComputers={() => setComputersOpen(true)}
               busyReason={threadBusyReason}
-              skillApi={desktopApi(threadSetup.hostId)}
+              hostApi={desktopApi(threadSetup.hostId)}
               onStart={startThread}
             />
           ) : inbox ? (
