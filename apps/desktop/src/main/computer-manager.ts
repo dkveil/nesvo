@@ -455,6 +455,7 @@ export class ComputerManager {
       'list-workspace-directory': 'workspace-directory',
       'search-workspace-files': 'workspace-search',
       'read-workspace-file': 'workspace-file',
+      'read-git-branch': 'git-branch',
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
@@ -474,6 +475,8 @@ export class ComputerManager {
         return response.search;
       case 'workspace-file':
         return response.file;
+      case 'git-branch':
+        return response.branch;
       case 'session':
         this.apply(entry, {
           type: 'session-changed',
