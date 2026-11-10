@@ -20,6 +20,7 @@ import {
 } from '@nesvo/contracts';
 import { startClaude, type ClaudeEvent } from '../providers/claude';
 import {
+  inspectCodex,
   startCodex,
   type CodexEvent,
   type CodexResult,
@@ -42,7 +43,11 @@ import {
 export class SessionError extends Error {
   constructor(
     readonly code:
-      'busy' | 'not-found' | 'invalid-directory' | 'invalid-request',
+      | 'busy'
+      | 'not-found'
+      | 'invalid-directory'
+      | 'invalid-request'
+      | 'unavailable',
     message: string,
   ) {
     super(message);
@@ -256,6 +261,27 @@ export class SessionService {
     const session = this.store.create(input, directory);
     this.emitSession(session);
     return session;
+  }
+
+  async createWithEffort(
+    input: CreateSessionInput,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const status = await inspectCodex(signal);
+    if (status.status !== 'ready')
+      throw new SessionError(
+        'unavailable',
+        'Codex is not ready, so the reasoning effort could not be confirmed. Refresh Codex and try again.',
+      );
+    const efforts = status.models.find(
+      model => model.id === input.model,
+    )?.efforts;
+    if (!efforts?.options.some(option => option.id === input.effort))
+      throw new SessionError(
+        'invalid-request',
+        `Codex does not report the ${input.effort} reasoning effort for ${input.model}.`,
+      );
+    return this.create(input);
   }
 
   draftDirectory(directory: string): string {
