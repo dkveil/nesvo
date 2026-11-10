@@ -58,6 +58,7 @@ import {
 } from './skills';
 
 export * from './sessions';
+export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
 export * from './workspace';
