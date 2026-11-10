@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from 'react';
-import { Check, Monitor, Plus } from 'lucide-react';
+import { Check, Cloud, Monitor, Plus } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import { cn } from 'cn';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
@@ -61,14 +61,14 @@ export function HostPicker({
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
-        side="bottom"
+        side="top"
         align="start"
         sideOffset={8}
         collisionPadding={12}
         aria-label="Run on"
-        className="w-64 p-1.5"
+        className="w-60 p-1"
       >
-        <p className="px-2 pt-1 pb-1.5 text-[11px] font-medium text-muted-foreground">
+        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
           Run on
         </p>
         <div role="radiogroup" aria-label="Computer" className="space-y-px">
@@ -86,18 +86,24 @@ export function HostPicker({
                 setOpen(false);
               }}
               className={cn(
-                'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors duration-100 outline-none',
-                'hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring',
-                item.id === hostId && 'bg-accent',
+                'flex min-h-7 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-sm transition-colors duration-100 outline-none',
+                'hover:bg-highlight focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
               )}
             >
-              <Monitor
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
+              {item.id === 'local' ? (
+                <Monitor
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Cloud
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              )}
               <span className="min-w-0 flex-1 truncate">{item.name}</span>
               {statusLabels[item.status] && (
-                <span className="shrink-0 text-[11px] text-muted-foreground">
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {statusLabels[item.status]}
                 </span>
               )}
@@ -107,15 +113,16 @@ export function HostPicker({
             </button>
           ))}
         </div>
+        <div aria-hidden="true" className="mx-2 my-1 h-px bg-border" />
         <button
           type="button"
           onClick={() => {
             setOpen(false);
             onManageComputers();
           }}
-          className="mt-1 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors duration-100 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex min-h-7 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-sm text-muted-foreground transition-colors duration-100 outline-none hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
-          <Plus className="size-3.5 shrink-0" aria-hidden="true" />
+          <Plus className="size-4 shrink-0" aria-hidden="true" />
           Add to another machine
         </button>
       </PopoverContent>

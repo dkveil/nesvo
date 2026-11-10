@@ -5,6 +5,7 @@ import {
   modelLabel,
   providerMarks,
   providers,
+  ProviderGlyph,
   providerStatusLabel,
   type Provider,
   type ProviderStates,
@@ -56,6 +57,9 @@ export function ModelPicker({
     ? `${currentLabel} · ${effortLabel(effort)}`
     : currentLabel;
   const previewModel = active?.id ?? model;
+  const previewLabel =
+    models.find(option => option.id === previewModel)?.label ??
+    modelLabel(previewModel);
   const listId = 'thread-model-options';
   const optionId = (id: string) => `${listId}-${id.replace(/[^\w-]/g, '_')}`;
   const choose = (id: string) => {
@@ -121,12 +125,15 @@ export function ModelPicker({
           disabled={disabled}
           aria-label="Choose model"
           title={`${provider} · ${chipLabel}`}
-          className="h-7 gap-1.5 text-xs text-foreground"
+          className="h-7 gap-1.5 text-[13px] text-foreground"
         >
-          <span className="text-[10px] font-medium tracking-wide text-muted-foreground">
-            {providerMarks[provider]}
-          </span>
-          <span className="truncate font-medium">{chipLabel}</span>
+          <ProviderGlyph provider={provider} />
+          <span className="truncate font-semibold">{currentLabel}</span>
+          {effort && (
+            <span className="shrink-0 text-muted-foreground">
+              {effortLabel(effort)}
+            </span>
+          )}
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
@@ -135,7 +142,7 @@ export function ModelPicker({
         sideOffset={10}
         collisionPadding={12}
         aria-label="Model"
-        className="flex w-[min(35rem,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0"
+        className="flex w-[min(30rem,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0"
         onOpenAutoFocus={event => {
           event.preventDefault();
           search.current?.focus();
@@ -144,7 +151,7 @@ export function ModelPicker({
         <div
           role="radiogroup"
           aria-label="Provider"
-          className="flex flex-col gap-1 border-r p-2"
+          className="flex w-10 shrink-0 flex-col items-center gap-1 border-r py-1.5"
         >
           {providers.map(item => {
             const itemState = statuses[item];
@@ -162,16 +169,17 @@ export function ModelPicker({
                 onKeyDown={onProviderKeyDown}
                 onClick={() => selectProvider(item)}
                 className={cn(
-                  'relative flex size-9 items-center justify-center rounded-md text-[11px] font-medium tracking-wide text-muted-foreground transition-colors duration-100 outline-none',
-                  'hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
-                  item === provider && 'bg-accent text-foreground',
+                  'relative flex size-7 items-center justify-center rounded-md text-[10px] font-semibold tracking-tight text-muted-foreground transition-colors duration-100 outline-none',
+                  'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                  'after:absolute after:top-1.5 after:-right-1.5 after:h-4 after:w-0.5 after:rounded-full after:bg-transparent',
+                  item === provider && 'text-foreground after:bg-primary',
                 )}
               >
                 {providerMarks[item]}
                 <span
                   aria-hidden="true"
                   className={cn(
-                    'absolute top-1.5 right-1.5 size-1.5 rounded-full',
+                    'absolute top-0.5 right-0.5 size-1.5 rounded-full',
                     ready ? 'bg-success-foreground' : 'bg-muted-foreground/50',
                   )}
                 />
@@ -180,7 +188,7 @@ export function ModelPicker({
           })}
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-10 items-center gap-2 border-b px-3 text-muted-foreground">
+          <div className="mx-2 mt-1.5 flex h-8 items-center gap-2 border-b px-1 text-muted-foreground transition-colors duration-150 focus-within:border-ring">
             <Search className="size-3.5 shrink-0" aria-hidden="true" />
             <input
               ref={search}
@@ -205,7 +213,7 @@ export function ModelPicker({
             id={listId}
             role="listbox"
             aria-label="Models"
-            className="max-h-64 overflow-y-auto p-1.5"
+            className="max-h-64 overflow-y-auto p-1"
           >
             {visible.map(option => (
               <li
@@ -217,10 +225,11 @@ export function ModelPicker({
                 onMouseEnter={() => setActiveId(option.id)}
                 onClick={() => choose(option.id)}
                 className={cn(
-                  'flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[13px]',
-                  'data-active:bg-accent data-active:text-foreground',
+                  'flex h-7 cursor-pointer items-center gap-2 rounded-sm px-2 text-[13px] font-medium',
+                  'data-active:bg-highlight data-active:text-foreground',
                 )}
               >
+                <ProviderGlyph provider={provider} />
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
                 {option.id === model && (
                   <Check className="size-3.5 shrink-0" aria-hidden="true" />
@@ -235,7 +244,7 @@ export function ModelPicker({
               </li>
             )}
           </ul>
-          <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="flex h-9 items-center justify-between gap-2 border-t px-3 text-[11px] text-muted-foreground">
             <span role="status" className="min-w-0 truncate">
               {state.error || providerStatusLabel(provider, state)}
             </span>
@@ -260,6 +269,7 @@ export function ModelPicker({
         <ReasoningColumn
           state={state}
           model={previewModel}
+          modelLabel={previewLabel}
           selected={previewModel === model ? effort : ''}
           onChoose={chooseEffort}
         />

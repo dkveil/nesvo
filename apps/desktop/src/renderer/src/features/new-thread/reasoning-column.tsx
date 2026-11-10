@@ -6,11 +6,18 @@ import { effortLabel, modelEfforts } from './reasoning-effort';
 type Props = {
   state: ProviderState;
   model: string;
+  modelLabel: string;
   selected: string;
   onChoose: (effort: string) => void;
 };
 
-export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
+export function ReasoningColumn({
+  state,
+  model,
+  modelLabel,
+  selected,
+  onChoose,
+}: Props) {
   const support = state.status?.effort;
   const efforts =
     support?.status === 'per-model' ? modelEfforts(state, model) : null;
@@ -25,16 +32,19 @@ export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
       role="group"
       aria-label="Reasoning"
       data-effort-support={support?.status ?? 'unknown'}
-      className="flex w-36 shrink-0 flex-col border-l"
+      className="flex w-40 shrink-0 flex-col border-l"
     >
-      <div className="flex h-10 shrink-0 items-center border-b px-3 text-[11px] font-medium text-muted-foreground">
-        Reasoning
+      <div className="mx-2 mt-1.5 flex h-8 shrink-0 items-center justify-between gap-2 border-b px-1 text-xs">
+        <span className="font-medium text-muted-foreground">Reasoning</span>
+        <span className="min-w-0 truncate text-2xs text-secondary-label">
+          {modelLabel}
+        </span>
       </div>
       {efforts ? (
         <div
           role="group"
           aria-label="Reasoning effort"
-          className="flex flex-col gap-0.5 p-1.5"
+          className="flex flex-col p-1"
         >
           {efforts.options.map(option => {
             const isDefault = option.id === efforts.defaultEffort;
@@ -49,8 +59,8 @@ export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
                 title={option.description || undefined}
                 onClick={() => onChoose(option.id)}
                 className={cn(
-                  'flex h-8 items-center gap-1.5 rounded-md px-2 text-left text-[13px] transition-colors duration-100 outline-none',
-                  'hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+                  'flex h-7 items-center gap-1.5 rounded-sm px-2 text-left text-[13px] font-medium text-foreground/85 transition-colors duration-100 outline-none',
+                  'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   isSelected && 'text-foreground',
                 )}
               >
@@ -58,7 +68,7 @@ export function ReasoningColumn({ state, model, selected, onChoose }: Props) {
                   {effortLabel(option.id)}
                 </span>
                 {isDefault && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                  <span className="shrink-0 text-2xs font-normal text-secondary-label">
                     Default
                   </span>
                 )}
