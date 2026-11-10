@@ -56,6 +56,7 @@ import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { ProviderRail } from '@/widgets/provider-rail';
+import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
@@ -722,8 +723,8 @@ export function Workspace() {
       : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-      <aside
       <ProviderRail key={`${selectedHostId}/rail`} {...usageProps} />
+      <aside
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
         inert={!sidebarOpen}
@@ -738,7 +739,12 @@ export function Workspace() {
         </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <header className="flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 border-b pr-(--shell-gutter) pl-2">
+        <header
+          className={cn(
+            'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))]',
+            sidebarOpen && 'md:pl-2',
+          )}
+        >
           <div className="md:hidden">
             <ProviderRail
               key={`${selectedHostId}/compact`}
@@ -778,6 +784,11 @@ export function Workspace() {
           >
             <PanelLeft className="size-4" />
           </Button>
+          {!sidebarOpen && (
+            <span className="hidden pr-2 text-[13px] font-semibold tracking-tight select-none md:inline">
+              Nesvo
+            </span>
+          )}
           {parentSession && !inbox && !creating && (
             <Button
               variant="ghost"

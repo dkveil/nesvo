@@ -73,6 +73,10 @@
   --shell-topbar-height: 2.75rem;
   --shell-gutter: 0.75rem;
   --control-radius: 0.5rem;
+  --titlebar-inset-left: 0px;
+  --titlebar-inset-right: calc(
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)
+  );
   --usage-rail-width: 3.25rem;
   --usage-rail-background: #050505;
   --usage-ring-track: rgb(255 255 255 / 12%);
@@ -80,6 +84,31 @@
   --info-foreground: #60a5fa;
   --warning-foreground: #fbbf24;
   --error-foreground: #f87171;
+}
+
+:root[data-platform='mac'] {
+  --titlebar-inset-left: 1.5rem;
+}
+
+@media (max-width: 767px) {
+  :root[data-platform='mac'] {
+    --titlebar-inset-left: 4.5rem;
+  }
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.drag-region :is(button, input, textarea, select, a, [role='button']),
+[data-radix-popper-content-wrapper],
+[data-slot='dialog-overlay'],
+[data-slot='sheet-overlay'],
+[role='dialog'],
+[role='alertdialog'] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 @media (prefers-reduced-motion: reduce) {

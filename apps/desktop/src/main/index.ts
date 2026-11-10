@@ -23,6 +23,23 @@ import {
 
 app.setName('Nesvo');
 nativeTheme.themeSource = 'dark';
+const TITLE_BAR_HEIGHT = 44;
+const titleBarOptions = (
+  platform: NodeJS.Platform,
+): Electron.BrowserWindowConstructorOptions =>
+  platform === 'darwin'
+    ? {
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: { x: 16, y: TITLE_BAR_HEIGHT / 2 - 7 },
+      }
+    : {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#01000000',
+          symbolColor: '#a3a3a3',
+          height: TITLE_BAR_HEIGHT,
+        },
+      };
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -53,6 +70,7 @@ void app.whenReady().then(async () => {
       backgroundColor: '#000000',
       show: !smokeTest,
       autoHideMenuBar: true,
+      ...titleBarOptions(process.platform),
       webPreferences: {
         preload: join(import.meta.dirname, '../preload/index.cjs'),
         contextIsolation: true,
