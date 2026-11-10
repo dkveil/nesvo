@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { isAbsolute } from 'node:path';
 import type { GitBranch } from '@nesvo/contracts';
-import { WorkspaceError } from './files';
 
 const BRANCH_READ_TIMEOUT_MS = 2000;
 const MAX_READER_OUTPUT_BYTES = 16 * 1024;
@@ -69,10 +68,7 @@ function parseGitHead(content: string): GitBranch {
 function readerArguments(directory: string): string[] {
   const override = process.env.NESVO_GIT_HEAD_READER;
   if (override && !isAbsolute(override))
-    throw new WorkspaceError(
-      'unavailable',
-      'NESVO_GIT_HEAD_READER must be an absolute path.',
-    );
+    throw new Error('NESVO_GIT_HEAD_READER must be an absolute path.');
   return override
     ? [override, directory]
     : ['-e', `(${readGitHeadInChild.toString()})()`, directory];
@@ -99,24 +95,19 @@ export function readGitBranch(
   return new Promise<GitBranch>((resolve, reject) => {
     let output = '';
     let settled = false;
-    const finish = (result: GitBranch | WorkspaceError) => {
+    const finish = (result: GitBranch | Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal.removeEventListener('abort', cutOff);
-      if (result instanceof WorkspaceError) reject(result);
+      if (result instanceof Error) reject(result);
       else resolve(result);
     };
     const cutOff = () => {
       child.kill('SIGKILL');
       child.stdout.destroy();
       child.unref();
-      finish(
-        new WorkspaceError(
-          'unavailable',
-          'The Git branch could not be read in time.',
-        ),
-      );
+      finish(new Error('The Git branch could not be read in time.'));
     };
     const timer = setTimeout(cutOff, BRANCH_READ_TIMEOUT_MS);
     signal.addEventListener('abort', cutOff, { once: true });
@@ -126,18 +117,13 @@ export function readGitBranch(
       if (output.length > MAX_READER_OUTPUT_BYTES) cutOff();
     });
     child.once('error', () =>
-      finish(
-        new WorkspaceError('unavailable', 'The Git branch could not be read.'),
-      ),
+      finish(new Error('The Git branch could not be read.')),
     );
     child.once('close', code => {
       const head = code === 0 ? parsedHead(output) : undefined;
       finish(
         head === undefined
-          ? new WorkspaceError(
-              'unavailable',
-              'The Git branch could not be read.',
-            )
+          ? new Error('The Git branch could not be read.')
           : head === null
             ? noBranch
             : parseGitHead(head),
