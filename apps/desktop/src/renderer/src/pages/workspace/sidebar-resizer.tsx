@@ -1,4 +1,9 @@
-import type { KeyboardEvent, PointerEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react';
 import {
   SIDEBAR_DEFAULT_WIDTH_PX,
   SIDEBAR_MIN_WIDTH_PX,
@@ -13,9 +18,12 @@ type Props = {
 };
 
 export function SidebarResizer({ width, onResize }: Props) {
+  const stopDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopDrag.current?.(), []);
   const startDrag = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    stopDrag.current?.();
     const handle = event.currentTarget;
     const startX = event.clientX;
     const startWidth = width;
@@ -26,12 +34,16 @@ export function SidebarResizer({ width, onResize }: Props) {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', stop);
       handle.removeEventListener('pointercancel', stop);
+      handle.removeEventListener('lostpointercapture', stop);
       document.body.style.removeProperty('cursor');
+      stopDrag.current = null;
     };
+    stopDrag.current = stop;
     document.body.style.cursor = 'col-resize';
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', stop);
     handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('lostpointercapture', stop);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const next =

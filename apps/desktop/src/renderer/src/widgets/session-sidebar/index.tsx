@@ -159,7 +159,8 @@ export function SessionSidebar({
             'flex w-full flex-col rounded-lg py-2 pr-(--sidebar-row-inset) text-left transition-colors duration-100 outline-none',
             'hover:bg-sidebar-row-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
             child ? 'pl-5' : 'pl-(--sidebar-row-inset)',
-            selected && 'bg-sidebar-row-selected hover:bg-sidebar-row-selected',
+            selected &&
+              'bg-sidebar-row-selected shadow-(--sidebar-row-selected-shadow) hover:bg-sidebar-row-selected',
           )}
         >
           <span className="flex h-5 min-w-0 items-center gap-1.5 text-xs text-sidebar-muted-foreground">
@@ -360,12 +361,12 @@ export function SessionSidebar({
       </div>
       <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
         {footerStart}
-        <div className="flex-1" />
+        <div className="min-w-0 flex-1" />
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 max-w-28 gap-1.5 px-2 text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+          className="h-7 max-w-28 min-w-0 shrink gap-1.5 px-2 text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           aria-label="Computers"
           title={`Computers · ${hostName}`}
           onClick={onComputers}

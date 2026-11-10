@@ -120,7 +120,7 @@ function Directory({
               }
               title={entry.path}
               style={{ paddingLeft: 12 + Math.min(level, 12) * 12 }}
-              className="flex w-full min-w-0 items-center gap-1.5 py-1.5 pr-3 text-left text-xs text-muted-foreground hover:bg-white/5 focus-visible:outline-ring aria-pressed:bg-white/7 aria-pressed:text-foreground"
+              className="flex w-full min-w-0 items-center gap-1.5 py-1.5 pr-3 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight aria-pressed:text-foreground"
               onClick={() =>
                 isDirectory
                   ? setExpanded(previous =>
@@ -232,7 +232,7 @@ function SearchResults({
             aria-pressed={selectedPath === entry.path}
             title={entry.path}
             onClick={() => onSelect(entry.path)}
-            className="w-full min-w-0 px-3 py-2 text-left text-xs hover:bg-white/5 focus-visible:outline-ring aria-pressed:bg-white/7"
+            className="w-full min-w-0 px-3 py-2 text-left text-xs hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight"
           >
             <span className="block truncate">{entry.name}</span>
             <span className="mt-1 block truncate text-[10px] text-muted-foreground">
@@ -292,15 +292,15 @@ function SourceCode({ file, wrap }: { file: WorkspaceFile; wrap: boolean }) {
   );
   const options = useMemo<CodeViewReactOptions<undefined, undefined>>(
     () => ({
-      theme: 'github-dark',
-      themeType: 'dark',
+      theme: { dark: 'github-dark', light: 'github-light' },
+      themeType: 'system',
       preferredHighlighter: 'shiki-js',
       disableFileHeader: true,
       overflow: wrap ? 'wrap' : 'scroll',
       tokenizeMaxLength: 100000,
       tokenizeMaxLineLength: 1000,
       unsafeCSS:
-        ':host{--diffs-font-size:12px;--diffs-line-height:22px;--diffs-bg:#090909;--diffs-fg:#d4d4d4} [data-diffs]{background:#090909} [data-code]{font-family:Consolas,monospace}',
+        ':host{--diffs-font-size:12px;--diffs-line-height:22px;--diffs-bg:var(--code-background);--diffs-fg:var(--foreground)} [data-diffs]{background:var(--code-background)} [data-code]{font-family:Consolas,monospace}',
     }),
     [wrap],
   );
