@@ -91,6 +91,7 @@
   --sidebar-icon: #8a8a93;
   --sidebar-row-hover: #f4f4f5;
   --sidebar-row-selected: #ffffff;
+  --sidebar-row-selected-shadow: 0 0 0 1px #e4e4e7, 0 1px 2px rgb(0 0 0 / 4%);
   --sidebar-border: #e4e4e7;
   --secondary-label: #8a8a93;
   --code-background: #f7f7f8;
@@ -148,6 +149,7 @@
     --sidebar-icon: #8b8b8b;
     --sidebar-row-hover: #151617;
     --sidebar-row-selected: #1d1e1e;
+    --sidebar-row-selected-shadow: none;
     --sidebar-border: #141414;
     --secondary-label: #8f8f8f;
     --code-background: #090909;

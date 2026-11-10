@@ -116,8 +116,8 @@ function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
   );
   const options = useMemo<CodeViewReactOptions<undefined, undefined>>(
     () => ({
-      theme: 'github-dark',
-      themeType: 'dark',
+      theme: { dark: 'github-dark', light: 'github-light' },
+      themeType: 'system',
       preferredHighlighter: 'shiki-js',
       diffStyle: 'unified',
       diffIndicators: 'classic',
@@ -128,7 +128,7 @@ function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
       tokenizeMaxLength: 100000,
       tokenizeMaxLineLength: 1000,
       unsafeCSS:
-        ':host{--diffs-font-size:12px;--diffs-line-height:22px;--diffs-bg:#090909;--diffs-fg:#d4d4d4} [data-diffs]{background:#090909} [data-code]{font-family:Consolas,monospace}',
+        ':host{--diffs-font-size:12px;--diffs-line-height:22px;--diffs-bg:var(--code-background);--diffs-fg:var(--foreground)} [data-diffs]{background:var(--code-background)} [data-code]{font-family:Consolas,monospace}',
     }),
     [wrap],
   );
@@ -278,7 +278,7 @@ export default function ReviewDiff({
               aria-pressed={path === file.path}
               title={file.path}
               onClick={() => onSelectPath(file.path)}
-              className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left text-xs text-muted-foreground hover:bg-white/5 focus-visible:outline-ring aria-pressed:bg-white/5 aria-pressed:text-foreground"
+              className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-ring aria-pressed:bg-highlight aria-pressed:text-foreground"
             >
               <span className="min-w-0 flex-1 truncate">{file.path}</span>
               {stat && (stat.added > 0 || stat.removed > 0) ? (

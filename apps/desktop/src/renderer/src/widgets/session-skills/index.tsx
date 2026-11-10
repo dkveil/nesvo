@@ -36,7 +36,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
     >
       <summary
         aria-label={`Details for ${skill.name}`}
-        className="flex cursor-pointer list-none gap-2 px-4 py-3 outline-none hover:bg-white/3 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none gap-2 px-4 py-3 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
       >
         <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" />
         <div className="min-w-0 flex-1">
