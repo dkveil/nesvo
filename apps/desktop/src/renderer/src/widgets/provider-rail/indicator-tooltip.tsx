@@ -1,4 +1,5 @@
 import type { Provider } from '@/entities/session';
+import { formatRelativeTime } from '@/shared/lib/relative-time';
 import {
   formatPercent,
   formatShortReset,
@@ -11,6 +12,7 @@ type Props = {
   provider: Provider;
   state: UsageState;
   indicator: IndicatorState;
+  now: number;
 };
 
 const stateLabels: Record<IndicatorState, string> = {
@@ -21,9 +23,12 @@ const stateLabels: Record<IndicatorState, string> = {
   checking: 'Checking limits…',
 };
 
-export function IndicatorTooltip({ provider, state, indicator }: Props) {
+export function IndicatorTooltip({ provider, state, indicator, now }: Props) {
   const windows =
     state.data?.status === 'ready' && !state.error ? state.data.windows : [];
+  const checked = state.data
+    ? formatRelativeTime(state.data.checkedAt, now)
+    : '';
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-4">
@@ -52,6 +57,11 @@ export function IndicatorTooltip({ provider, state, indicator }: Props) {
       {!windows.length && (
         <p className="text-muted-foreground">
           {state.data?.detail ?? 'No quota values are reported right now.'}
+        </p>
+      )}
+      {checked && (
+        <p className="text-secondary-label">
+          {checked === 'now' ? 'Checked just now' : `Checked ${checked} ago`}
         </p>
       )}
     </div>

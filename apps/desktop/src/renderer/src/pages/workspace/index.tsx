@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   BookOpen,
   FolderOpen,
+  Gauge,
   Menu,
   PanelLeft,
   PanelRight,
@@ -57,6 +58,7 @@ import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
+import { ThreadDetails } from '@/widgets/thread-details';
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
@@ -107,6 +109,7 @@ export function Workspace() {
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [threadDetailsOpen, setThreadDetailsOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const threadRequest = useRef(false);
   const navigationVersion = useRef(0);
@@ -928,6 +931,19 @@ export function Workspace() {
           >
             <Plus />
           </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="hidden text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground md:inline-flex"
+            aria-label="Thread details"
+            title="Thread details"
+            aria-pressed={threadDetailsOpen}
+            aria-controls={threadDetailsOpen ? 'thread-details' : undefined}
+            onClick={() => setThreadDetailsOpen(open => !open)}
+          >
+            <Gauge className="size-4" />
+          </Button>
           {!inbox && !creating && selected && (
             <Button
               type="button"
@@ -1118,6 +1134,20 @@ export function Workspace() {
           </div>
         )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
+          {threadDetailsOpen && (
+            <div className="hidden md:contents">
+              <ThreadDetails
+                id="thread-details"
+                usage={
+                  <ProviderUsage
+                    key={`${selectedHostId}/details`}
+                    layout="bars"
+                    {...usageProps}
+                  />
+                }
+              />
+            </div>
+          )}
           {showingNewThread ? (
             <NewThread
               setup={threadSetup}

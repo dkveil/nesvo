@@ -1,7 +1,6 @@
 import { Tooltip } from 'radix-ui';
 import { cn } from 'cn';
-import type { Provider } from '@/entities/session';
-import { providerMarks } from '@/features/new-thread/provider-mark';
+import { providerMarks, type Provider } from '@/entities/session';
 import { IndicatorTooltip } from './indicator-tooltip';
 import { UsageBar } from './usage-bar';
 import { UsageRing } from './usage-ring';
@@ -14,7 +13,7 @@ import {
   type UsageState,
 } from './usage-state';
 
-export type UsageLayout = 'column' | 'row' | 'bars' | 'account';
+export type UsageLayout = 'row' | 'bars' | 'account';
 
 type Props = {
   provider: Provider;
@@ -58,12 +57,10 @@ export function UsageIndicator({
           data-usage-state={indicator}
           data-usage-stale={indicator === 'stale'}
           className={cn(
-            'outline-none transition-[background-color,scale] duration-150 ease-out hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] aria-expanded:bg-sidebar-row-selected',
+            'transition-[background-color,scale] duration-150 ease-out outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:scale-[0.97] aria-expanded:bg-sidebar-row-selected',
             layout === 'bars'
-              ? 'flex h-7 w-full items-center rounded-(--control-radius) px-(--sidebar-row-inset)'
-              : 'grid place-items-center rounded-full',
-            layout === 'column' && 'size-10',
-            layout === 'row' && 'size-8',
+              ? 'flex h-7 w-full items-center rounded-md px-1.5'
+              : 'grid size-7 place-items-center rounded-full',
           )}
           onClick={event => onOpen(event.currentTarget)}
         >
@@ -80,23 +77,23 @@ export function UsageIndicator({
               remaining={shown}
               level={level}
               state={indicator}
-              size={layout === 'row' ? 'sm' : 'md'}
             />
           )}
         </button>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          side={layout === 'row' ? 'top' : 'right'}
+          side={layout === 'row' ? 'top' : 'left'}
           align="center"
           sideOffset={8}
           collisionPadding={12}
-          className="z-50 w-80 rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-xl"
+          className="glass-popover z-50 w-80 rounded-md border px-3 py-2 text-xs text-popover-foreground"
         >
           <IndicatorTooltip
             provider={provider}
             state={state}
             indicator={indicator}
+            now={now}
           />
         </Tooltip.Content>
       </Tooltip.Portal>

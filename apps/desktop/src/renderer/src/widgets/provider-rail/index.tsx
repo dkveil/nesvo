@@ -17,7 +17,7 @@ type Props = {
   states: Record<Provider, UsageState>;
   onRefresh: () => void;
   layout: UsageLayout;
-  popoverSide?: 'right' | 'bottom' | 'top';
+  popoverSide?: 'bottom' | 'top';
 };
 
 const REFRESH_CLOCK_MS = 15_000;
@@ -29,7 +29,7 @@ export function ProviderUsage({
   states,
   onRefresh,
   layout,
-  popoverSide = 'right',
+  popoverSide = 'bottom',
 }: Props) {
   const [selected, setSelected] = useState<Provider | 'all'>('all');
   const [open, setOpen] = useState(false);
@@ -62,7 +62,6 @@ export function ProviderUsage({
             data-host-id={hostId}
             className={cn(
               'flex',
-              layout === 'column' && 'flex-col items-center gap-2.5',
               layout === 'row' && 'items-center gap-0.5',
               layout === 'bars' && 'flex-col gap-px',
             )}
@@ -88,10 +87,7 @@ export function ProviderUsage({
                   size="icon-sm"
                   aria-label="Account and limits"
                   title="Account and limits"
-                  className={cn(
-                    'text-sidebar-muted-foreground',
-                    layout === 'column' ? 'size-9 rounded-full' : 'size-7',
-                  )}
+                  className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   onClick={event => {
                     returnFocus.current = event.currentTarget;
                     setSelected('all');
@@ -117,7 +113,7 @@ export function ProviderUsage({
               }
             }}
             data-host-id={hostId}
-            className="z-50 max-h-[min(40rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border bg-popover p-4 text-popover-foreground shadow-xl"
+            className="glass-popover z-50 max-h-[min(40rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border p-4 text-popover-foreground"
           >
             <header className="mb-3 flex items-center gap-3">
               <div className="min-w-0 flex-1">
