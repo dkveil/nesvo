@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ArrowUp, FolderOpen, Square, X } from 'lucide-react';
+import { ArrowUp, FolderOpen, Square } from 'lucide-react';
 import type {
   DesktopApi,
   RespondApprovalInput,
@@ -16,6 +16,7 @@ import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
+import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { entityKey } from '@/shared/lib/host-key';
 
 const interruptionLabels: Record<SessionInterruption['reason'], string> = {
@@ -54,7 +55,7 @@ type Props = {
   ) => void;
   error: string;
   onDraft: (value: string) => void;
-  onSend: () => void;
+  onSend: (typed?: { text: string; skill: SelectedSkill }) => void;
   onStop: () => void;
 };
 
@@ -115,7 +116,7 @@ export function Conversation({
   const composer = (
     <SelectSkill
       key={entityKey(session)}
-      session={session}
+      scope={{ provider: session.provider, input: { sessionId: session.id } }}
       api={skillApi}
       enabled={connected}
       draft={draft}
@@ -125,133 +126,119 @@ export function Conversation({
       }}
       onFocusMessage={() => messageInput.current?.focus()}
     >
-      {({ trigger, onKeyDown, onInput, inputAria }) => (
+      {({
+        trigger,
+        anchor,
+        notice,
+        onKeyDown,
+        onInput,
+        resolveTyped,
+        inputAria,
+      }) => (
         <form
           className="mx-auto w-full max-w-3xl"
           onSubmit={event => {
             event.preventDefault();
-            if (draft.trim() && canSend) onSend();
+            if (!draft.trim() || !canSend) return;
+            if (selectedSkill) {
+              onSend();
+              return;
+            }
+            void resolveTyped(draft).then(typed => {
+              if (typed.status === 'skill')
+                onSend({ text: typed.text, skill: typed.skill });
+              else if (typed.status === 'none') onSend();
+            });
           }}
         >
           <label htmlFor="message-input" className="sr-only">
             Message
           </label>
-          <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
-            {selectedSkill && (
-              <div className="mb-2 flex items-center gap-1">
-                <span
-                  aria-label={`Selected skill: ${selectedSkill.name}`}
-                  title={[
-                    selectedSkill.description,
-                    `${selectedSkill.source} · ${selectedSkill.path}`,
-                    selectedSkill.origins?.join(', '),
-                    selectedSkill.delivery === 'instructions'
-                      ? 'Shared instructions · static snapshot for this message'
-                      : selectedSkill.delivery === 'native'
-                        ? 'Native skill'
-                        : '',
-                    selectedSkill.contentHash
-                      ? `SHA-256: ${selectedSkill.contentHash}`
-                      : '',
-                  ]
-                    .filter(Boolean)
-                    .join('\n')}
-                  className="max-w-[calc(100%-2rem)] truncate rounded-md border bg-secondary/60 px-2 py-1 text-xs"
-                >
-                  {selectedSkill.name}
-                  {selectedSkill.delivery === 'instructions' && (
-                    <span className="ml-2 text-muted-foreground">
-                      Shared instructions
-                    </span>
+          {anchor(
+            <div className="rounded-2xl border border-input/70 bg-card p-3 transition-colors focus-within:border-ring/70">
+              {selectedSkill && (
+                <SelectedSkillChip
+                  skill={selectedSkill}
+                  onRemove={() => onSkillChange(null)}
+                />
+              )}
+              <Textarea
+                ref={messageInput}
+                id="message-input"
+                {...inputAria}
+                onKeyDown={onKeyDown}
+                onInput={onInput}
+                placeholder="Ask anything about your task…"
+                value={draft}
+                onChange={event => onDraft(event.target.value)}
+                maxLength={32000}
+                className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
+              />
+              <div className="flex items-end justify-between gap-3 px-1 pt-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  {trigger}
+                  <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
+                    {otherRun
+                      ? 'Another session is working'
+                      : sending
+                        ? 'Sending…'
+                        : session.delegations.some(
+                              delegation =>
+                                delegation.runId === session.runId &&
+                                delegation.status === 'pending',
+                            )
+                          ? 'Worker approval needed'
+                          : session.pendingApprovals.length > 0
+                            ? 'Approval needed'
+                            : modeLabels[session.mode]}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span
+                    className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
+                    title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
+                  >
+                    {session.provider} ·{' '}
+                    {session.actualModel ?? modelLabel(session.model)}
+                  </span>
+                  {running ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!connected || session.status === 'stopping'}
+                      onClick={onStop}
+                      aria-label={stopLabel}
+                      title={
+                        groupRun
+                          ? 'Stop this session and its workers'
+                          : 'Stop this session'
+                      }
+                    >
+                      <Square />
+                      {session.status === 'stopping'
+                        ? groupRun
+                          ? 'Stopping group…'
+                          : 'Stopping…'
+                        : stopLabel}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      size="icon-sm"
+                      className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
+                      disabled={!draft.trim() || !canSend}
+                      aria-label="Send message"
+                      title="Send message"
+                    >
+                      <ArrowUp />
+                    </Button>
                   )}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-6 text-muted-foreground"
-                  aria-label="Remove skill"
-                  onClick={() => onSkillChange(null)}
-                >
-                  <X className="size-3" />
-                </Button>
+                </div>
               </div>
-            )}
-            <Textarea
-              ref={messageInput}
-              id="message-input"
-              {...inputAria}
-              onKeyDown={onKeyDown}
-              onInput={onInput}
-              placeholder="Ask anything about your task…"
-              value={draft}
-              onChange={event => onDraft(event.target.value)}
-              maxLength={32000}
-              className="max-h-48 min-h-24 resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 shadow-none placeholder:text-muted-foreground/80 focus-visible:ring-0 dark:bg-transparent"
-            />
-            <div className="flex items-end justify-between gap-3 px-1 pt-3">
-              <div className="flex min-w-0 items-center gap-2">
-                {trigger}
-                <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
-                  {otherRun
-                    ? 'Another session is working'
-                    : sending
-                      ? 'Sending…'
-                      : session.delegations.some(
-                            delegation =>
-                              delegation.runId === session.runId &&
-                              delegation.status === 'pending',
-                          )
-                        ? 'Worker approval needed'
-                        : session.pendingApprovals.length > 0
-                          ? 'Approval needed'
-                          : modeLabels[session.mode]}
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-3">
-                <span
-                  className="hidden max-w-56 truncate text-xs text-muted-foreground sm:inline"
-                  title={`${session.provider} · ${session.actualModel ?? modelLabel(session.model)}`}
-                >
-                  {session.provider} ·{' '}
-                  {session.actualModel ?? modelLabel(session.model)}
-                </span>
-                {running ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!connected || session.status === 'stopping'}
-                    onClick={onStop}
-                    aria-label={stopLabel}
-                    title={
-                      groupRun
-                        ? 'Stop this session and its workers'
-                        : 'Stop this session'
-                    }
-                  >
-                    <Square />
-                    {session.status === 'stopping'
-                      ? groupRun
-                        ? 'Stopping group…'
-                        : 'Stopping…'
-                      : stopLabel}
-                  </Button>
-                ) : (
-                  <Button
-                    type="submit"
-                    size="icon-sm"
-                    className="rounded-full disabled:bg-secondary disabled:text-muted-foreground"
-                    disabled={!draft.trim() || !canSend}
-                    aria-label="Send message"
-                    title="Send message"
-                  >
-                    <ArrowUp />
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
+            </div>,
+          )}
+          {notice}
           <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-1 text-[11px] text-muted-foreground">
             <span
               className="flex min-w-0 items-center gap-1.5"
