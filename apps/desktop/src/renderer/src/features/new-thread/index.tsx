@@ -70,6 +70,10 @@ export function NewThread({
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
   const mounted = useRef(true);
+  const latestSetup = useRef(setup);
+  useEffect(() => {
+    latestSetup.current = setup;
+  }, [setup]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -108,8 +112,15 @@ export function NewThread({
     setPending(true);
     setError('');
     try {
+      const submittedSetup = setup;
       const typed = skill ? null : await resolveTyped(text);
       if (typed?.status === 'error' || !mounted.current) return;
+      if (latestSetup.current !== submittedSetup) {
+        setError(
+          'The thread settings changed while the skill was checked. Send again to use the new settings.',
+        );
+        return;
+      }
       const message = typed?.status === 'skill' ? typed.text : text.trim();
       const chosen = typed?.status === 'skill' ? typed.skill : skill;
       await onStart(
@@ -152,7 +163,8 @@ export function NewThread({
             {project ? (
               <button
                 type="button"
-                className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                disabled={pending}
+                className="rounded-sm underline-offset-4 outline-none enabled:hover:text-foreground enabled:hover:underline focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => {
                   setSkill(null);
                   onSetupChange({ ...setup, directory: '' });
@@ -163,7 +175,8 @@ export function NewThread({
             ) : (
               <button
                 type="button"
-                className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                disabled={pending}
+                className="rounded-sm underline-offset-4 outline-none enabled:hover:text-foreground enabled:hover:underline focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => setLocationOpen(true)}
               >
                 or choose a project folder
@@ -298,7 +311,7 @@ export function NewThread({
                   directory={setup.directory}
                   computerName={computer?.name ?? 'this computer'}
                   disabled={pending}
-                  open={locationOpen}
+                  open={locationOpen && !pending}
                   onOpenChange={setLocationOpen}
                   onChange={directory => {
                     if (directory !== setup.directory) setSkill(null);
