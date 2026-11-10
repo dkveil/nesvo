@@ -27,6 +27,9 @@ const fixturePath = fileURLToPath(
 const codexFixturePath = fileURLToPath(
   new URL('./codex-fixture.mjs', import.meta.url),
 );
+const hungReaderPath = fileURLToPath(
+  new URL('./git-head-hang-fixture.mjs', import.meta.url),
+);
 
 function bounded(promise, description, timeout = 10_000) {
   let timer;
@@ -43,7 +46,7 @@ function bounded(promise, description, timeout = 10_000) {
   ]).finally(() => clearTimeout(timer));
 }
 
-function launch(directory, pidFile) {
+function launch(directory, pidFile, extraEnvironment = {}) {
   const child = spawn(process.execPath, ['apps/host/dist/main.js'], {
     env: {
       ...process.env,
@@ -63,6 +66,7 @@ function launch(directory, pidFile) {
       CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
       CODEX_HOME: join(directory, 'codex-config'),
       NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
+      ...extraEnvironment,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -3604,5 +3608,53 @@ test(
     } finally {
       check.close();
     }
+  },
+);
+
+test(
+  'host cuts off a hung Git branch read and still shuts down',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-branch-')),
+    );
+    t.after(() =>
+      rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      }),
+    );
+    const pidFile = join(directory, 'hung-reader.pid');
+    const readerPid = async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const value = await readFile(pidFile, 'utf8').catch(() => '');
+        if (value) return Number(value);
+        await delay(20);
+      }
+      assert.fail('The branch reader did not start.');
+    };
+    const host = launch(directory, join(directory, 'fixture-pids.json'), {
+      NESVO_GIT_HEAD_READER: hungReaderPath,
+    });
+    const started = Date.now();
+    const response = await host.request('read-git-branch', { directory });
+    const elapsed = Date.now() - started;
+    assert.equal(response.code, 'unavailable', JSON.stringify(response));
+    assert.match(response.message, /in time/);
+    assert.ok(elapsed >= 1900 && elapsed < 4000, String(elapsed));
+    const timedOut = await readerPid();
+    await processesGone([timedOut], new Set([timedOut]));
+    await rm(pidFile);
+    const pending = host.request('read-git-branch', { directory });
+    const hung = await readerPid();
+    assert.equal(alive(hung), true);
+    const stopping = Date.now();
+    await host.stop();
+    assert.ok(Date.now() - stopping < 5000, String(Date.now() - stopping));
+    await pending.catch(() => undefined);
+    await processesGone([hung], new Set([hung]));
   },
 );
