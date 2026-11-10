@@ -103,6 +103,7 @@ export function Workspace() {
     hostId: 'local',
     provider: 'Claude Code',
     model: 'default',
+    effort: '',
     mode: 'read-only',
     directory: '',
   });
