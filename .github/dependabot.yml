@@ -11,6 +11,8 @@ updates:
     ignore:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      - dependency-name: react-native-gesture-handler
+      - dependency-name: react-native-worklets
     commit-message:
       prefix: chore(deps)
     groups:
