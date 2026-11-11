@@ -73,14 +73,31 @@ export class SessionService {
   private readonly unsaved = new Map<string, Session>();
   private closing = false;
   private reviewDecision?: AbortController;
+  private lastOperatorActivityAt?: number;
 
   constructor(
     private readonly store: SessionStore,
     private readonly directory: string,
     private readonly emit: (event: DesktopEvent) => void,
     private readonly reviews: ReviewStore,
+    recoverRelated?: () => void,
   ) {
-    store.recover();
+    store.recover(recoverRelated);
+  }
+
+  isBusy(): boolean {
+    return this.closing || this.active.size > 0 || !!this.reviewDecision;
+  }
+
+  recordOperatorActivity(at = new Date()): void {
+    this.lastOperatorActivityAt = at.getTime();
+  }
+
+  isIdleFor(milliseconds: number, now = new Date()): boolean {
+    return (
+      !this.lastOperatorActivityAt ||
+      now.getTime() - this.lastOperatorActivityAt >= milliseconds
+    );
   }
 
   listReviews(): Review[] {
@@ -102,12 +119,7 @@ export class SessionService {
         );
       return recorded;
     }
-    if (
-      this.closing ||
-      this.active.size ||
-      this.reviewDecision ||
-      this.unsaved.size
-    )
+    if (this.isBusy() || this.unsaved.size)
       throw new SessionError(
         'busy',
         'Wait for the active group to finish and its result to be saved.',
@@ -291,7 +303,7 @@ export class SessionService {
         );
       return structuredClone(session);
     }
-    if (this.closing || this.active.size || this.reviewDecision)
+    if (this.isBusy())
       throw new SessionError(
         'busy',
         'Wait for the active group to finish or use Stop.',

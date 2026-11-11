@@ -120,7 +120,7 @@ export class SessionStore {
     };
   }
 
-  recover(): void {
+  recover(writeRelated?: () => void): void {
     const sessions = this.list();
     const byId = new Map(sessions.map(session => [session.id, session]));
     const updates = new Map<string, Session>();
@@ -203,6 +203,7 @@ export class SessionStore {
         updates.set(session.id, session);
       }
     }
-    if (updates.size) this.saveMany([...updates.values()]);
+    if (updates.size || writeRelated)
+      this.saveMany([...updates.values()], writeRelated);
   }
 }
