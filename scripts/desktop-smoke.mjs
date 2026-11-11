@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import {
   mkdir,
@@ -466,6 +467,99 @@ try {
     })
     .waitFor();
   await screenshot('-provider-rail');
+  const scheduledJobCall = (method, ...args) =>
+    page.evaluate(
+      ([name, params]) => window.nesvo.scheduledJobs[name](...params),
+      [method, args],
+    );
+  const scheduledJobDefinition = {
+    id: randomUUID(),
+    name: 'Morning summary',
+    prompt: 'Summarize yesterday.',
+    directory,
+    provider: 'claude',
+    model: 'sonnet',
+    effort: null,
+    mode: 'read-only',
+    schedule: { kind: 'daily', time: '08:00' },
+    timeZone: 'Europe/Warsaw',
+    active: false,
+  };
+  const localComputer = (
+    await page.evaluate(() => window.nesvo.listComputers())
+  ).find(computer => computer.id === 'local');
+  assert.deepEqual(localComputer.capabilities, ['scheduled-jobs']);
+  assert.deepEqual(await scheduledJobCall('list', 'local'), []);
+  const savedScheduledJob = await scheduledJobCall(
+    'save',
+    'local',
+    scheduledJobDefinition,
+    null,
+  );
+  assert.equal(savedScheduledJob.hostId, 'local');
+  assert.equal(savedScheduledJob.revision, 1);
+  assert.equal(savedScheduledJob.nextRunAt, null);
+  assert.deepEqual(await scheduledJobCall('list', 'local'), [
+    savedScheduledJob,
+  ]);
+  await assert.rejects(
+    scheduledJobCall('save', 'local', scheduledJobDefinition, null),
+    /already exists/,
+  );
+  await assert.rejects(
+    scheduledJobCall(
+      'save',
+      'local',
+      { ...scheduledJobDefinition, mode: 'supervised' },
+      1,
+    ),
+  );
+  await assert.rejects(scheduledJobCall('list', 'not-a-host'));
+  const offlineComputer = await page.evaluate(() =>
+    window.nesvo.addComputer({
+      name: 'Offline computer',
+      hostname: 'offline.invalid',
+      entryPath: '/opt/nesvo/host.js',
+      runtimeDirectory: '/var/lib/nesvo',
+    }),
+  );
+  assert.deepEqual(offlineComputer.capabilities, []);
+  await assert.rejects(
+    scheduledJobCall('list', offlineComputer.id),
+    /offline or still synchronizing/,
+  );
+  await assert.rejects(
+    scheduledJobCall('save', offlineComputer.id, scheduledJobDefinition, null),
+    /offline or still synchronizing/,
+  );
+  assert.equal(
+    (await page.evaluate(() => window.nesvo.listComputers())).find(
+      computer => computer.id === offlineComputer.id,
+    ).status,
+    'disconnected',
+  );
+  await page.evaluate(
+    id => window.nesvo.removeComputer(id),
+    offlineComputer.id,
+  );
+  await scheduledJobCall(
+    'delete',
+    'local',
+    scheduledJobDefinition.id,
+    savedScheduledJob.revision,
+  );
+  assert.deepEqual(await scheduledJobCall('list', 'local'), []);
+  console.log(
+    JSON.stringify({
+      scheduledJobs: {
+        capabilities: localComputer.capabilities,
+        savedRevision: savedScheduledJob.revision,
+        hostId: savedScheduledJob.hostId,
+        offlineRefused: true,
+        offlineStatus: 'disconnected',
+      },
+    }),
+  );
   await page
     .getByRole('button', { name: 'New session', exact: true })
     .first()
