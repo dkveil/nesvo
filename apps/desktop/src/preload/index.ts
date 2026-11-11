@@ -3,6 +3,7 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   colorSchemeSchema,
+  appliedColorSchemeSchema,
   respondApprovalSchema,
   createSessionSchema,
   decideDelegationSchema,
@@ -40,6 +41,11 @@ import {
   type DesktopApi,
 } from '@nesvo/contracts';
 
+const launchColorScheme = appliedColorSchemeSchema.safeParse(
+  process.argv
+    .find(argument => argument.startsWith('--nesvo-color-scheme='))
+    ?.split('=')[1],
+);
 const route = (hostId: string | undefined) =>
   hostIdSchema.parse(hostId ?? 'local');
 const scheduledJobs: DesktopApi['scheduledJobs'] = {
@@ -103,6 +109,19 @@ const api: DesktopApi = {
         colorSchemeSchema.parse(scheme),
       ),
     ),
+  onAppliedColorScheme: listener => {
+    const deliver = (payload: unknown) => {
+      const parsed = appliedColorSchemeSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    const receive = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+      deliver(payload);
+    if (launchColorScheme.success) listener(launchColorScheme.data);
+    ipcRenderer.on('nesvo:applied-color-scheme', receive);
+    void ipcRenderer.invoke('nesvo:applied-color-scheme').then(deliver);
+    return () =>
+      ipcRenderer.removeListener('nesvo:applied-color-scheme', receive);
+  },
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),

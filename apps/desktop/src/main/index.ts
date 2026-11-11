@@ -27,11 +27,14 @@ import {
   runScheduledJobNowSchema,
   saveScheduledJobSchema,
   setScheduledJobActiveSchema,
+  type AppliedColorScheme,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
 nativeTheme.themeSource = 'system';
 const TITLE_BAR_HEIGHT = 40;
+const appliedColorScheme = (): AppliedColorScheme =>
+  nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 const windowColors = () =>
   nativeTheme.shouldUseDarkColors
     ? { background: '#000000', symbol: '#f8fafc' }
@@ -88,6 +91,7 @@ void app.whenReady().then(async () => {
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: !smokeTest,
+        additionalArguments: [`--nesvo-color-scheme=${appliedColorScheme()}`],
       },
     });
     window = next;
@@ -99,6 +103,7 @@ void app.whenReady().then(async () => {
     const applyColors = () => {
       if (next.isDestroyed()) return;
       next.setBackgroundColor(windowColors().background);
+      next.webContents.send('nesvo:applied-color-scheme', appliedColorScheme());
       if (process.platform !== 'darwin')
         next.setTitleBarOverlay(titleBarOverlay());
     };
@@ -130,11 +135,19 @@ void app.whenReady().then(async () => {
     authorize(event);
     return nativeTheme.themeSource;
   });
+  ipcMain.handle('nesvo:applied-color-scheme', event => {
+    authorize(event);
+    return appliedColorScheme();
+  });
   ipcMain.handle('nesvo:set-color-scheme', (event, scheme: unknown) => {
     authorize(event);
     const next = colorSchemeSchema.parse(scheme);
     saveColorScheme(app.getPath('userData'), next);
     nativeTheme.themeSource = next;
+    window?.webContents.send(
+      'nesvo:applied-color-scheme',
+      appliedColorScheme(),
+    );
     return next;
   });
   ipcMain.handle('nesvo:mobile-status', event => {

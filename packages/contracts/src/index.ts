@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
-import type { ColorScheme } from './appearance';
+import type { AppliedColorScheme, ColorScheme } from './appearance';
 import {
   providerUsageInputSchema,
   providerUsageSchema,
@@ -379,6 +379,9 @@ export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
   colorScheme: () => Promise<ColorScheme>;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
+  onAppliedColorScheme: (
+    listener: (scheme: AppliedColorScheme) => void,
+  ) => () => void;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;
