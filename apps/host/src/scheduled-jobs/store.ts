@@ -275,7 +275,7 @@ export class ScheduledJobStore {
   prune(scheduledJobId: string): void {
     this.database
       .prepare(
-        "DELETE FROM scheduled_job_runs WHERE scheduled_job_id = ? AND status NOT IN ('starting', 'running') AND id NOT IN (SELECT id FROM scheduled_job_runs WHERE scheduled_job_id = ? ORDER BY recorded_at DESC, id DESC LIMIT ?)",
+        "DELETE FROM scheduled_job_runs WHERE scheduled_job_id = ? AND status NOT IN ('starting', 'running') AND id NOT IN (SELECT id FROM scheduled_job_runs WHERE scheduled_job_id = ? AND status NOT IN ('starting', 'running') ORDER BY recorded_at DESC, id DESC LIMIT ?)",
       )
       .run(scheduledJobId, scheduledJobId, SCHEDULED_JOB_RUN_RETENTION);
   }

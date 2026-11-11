@@ -94,7 +94,7 @@ export class ScheduledJobService {
   ) {}
 
   start(): void {
-    this.tick();
+    this.fire();
   }
 
   async close(): Promise<void> {
@@ -149,7 +149,8 @@ export class ScheduledJobService {
       this.store.get(input.id),
       input.expectedRevision,
     );
-    if (current.active === input.active) return current;
+    if (current.active === input.active && (!input.active || current.nextRunAt))
+      return current;
     const now = this.clock.now();
     const job: ScheduledJob = {
       ...current,
@@ -245,14 +246,16 @@ export class ScheduledJobService {
 
   tick(now = this.clock.now()): void {
     if (this.closed) return;
+    let failure: unknown;
     for (const job of this.store.due(now)) {
       try {
         this.decide(job, now);
       } catch (error) {
-        if (!(error instanceof ScheduleError)) throw error;
-        this.suspend(job, now);
+        if (error instanceof ScheduleError) this.suspend(job, now);
+        else failure ??= error;
       }
     }
+    if (failure) throw failure;
     this.arm();
   }
 
@@ -400,7 +403,7 @@ export class ScheduledJobService {
   }
 
   private disarm(): void {
-    if (this.timer) this.clock.clearTimer(this.timer);
+    if (this.timer != null) this.clock.clearTimer(this.timer);
     this.timer = undefined;
   }
 
@@ -424,6 +427,7 @@ export class ScheduledJobService {
       this.tick();
     } catch {
       if (this.closed) return;
+      console.error('Scheduled jobs could not be checked. Retrying shortly.');
       this.disarm();
       this.timer = this.clock.setTimer(() => {
         this.timer = undefined;
