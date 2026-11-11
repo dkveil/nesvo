@@ -31,6 +31,7 @@
 !/apps/host/src/workspace/
 !/apps/host/src/skills/
 !/apps/host/src/mobile/
+!/apps/host/src/scheduled-jobs/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs
