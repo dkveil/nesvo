@@ -299,6 +299,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
+      capabilities: ['scheduled-jobs'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');
