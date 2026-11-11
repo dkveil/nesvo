@@ -78,9 +78,19 @@ export const openDatabase = (directory: string) =>
           database.exec(
             'CREATE INDEX IF NOT EXISTS scheduled_job_runs_recent ON scheduled_job_runs (scheduled_job_id, recorded_at DESC, id DESC)',
           );
-          if (version < 7)
+          const sessionColumns = new Set(
+            database
+              .prepare('PRAGMA table_info(sessions)')
+              .all()
+              .map(column => column.name),
+          );
+          if (!sessionColumns.has('scheduled_job_id'))
             database.exec(
-              'ALTER TABLE sessions ADD COLUMN scheduled_job_id TEXT REFERENCES scheduled_jobs(id) ON DELETE SET NULL; ALTER TABLE sessions ADD COLUMN scheduled_job_run_id TEXT REFERENCES scheduled_job_runs(id) ON DELETE SET NULL',
+              'ALTER TABLE sessions ADD COLUMN scheduled_job_id TEXT REFERENCES scheduled_jobs(id) ON DELETE SET NULL',
+            );
+          if (!sessionColumns.has('scheduled_job_run_id'))
+            database.exec(
+              'ALTER TABLE sessions ADD COLUMN scheduled_job_run_id TEXT REFERENCES scheduled_job_runs(id) ON DELETE SET NULL',
             );
           database.exec(
             'CREATE INDEX IF NOT EXISTS sessions_scheduled_job ON sessions (scheduled_job_id); CREATE INDEX IF NOT EXISTS sessions_scheduled_job_run ON sessions (scheduled_job_run_id)',
