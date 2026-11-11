@@ -160,6 +160,7 @@ export const scheduledJobRunReasonSchema = z.enum([
   'folder',
   'catalog',
   'timeout',
+  'restart',
 ]);
 
 export const scheduledJobRunSchema = z

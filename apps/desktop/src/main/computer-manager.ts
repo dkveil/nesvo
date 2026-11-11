@@ -337,7 +337,10 @@ export class ComputerManager {
   async execute(
     method: Exclude<
       HostRequest['method'],
-      'shutdown' | 'list-sessions' | 'list-reviews'
+      | 'shutdown'
+      | 'list-sessions'
+      | 'list-reviews'
+      | `${string}scheduled-job${string}`
     >,
     input: unknown,
     hostId = 'local',

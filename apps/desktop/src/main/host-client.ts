@@ -55,11 +55,7 @@ export function startHost(directory: string) {
   child.on('message', (value: unknown) => {
     const parsed = hostMessageSchema.safeParse(value);
     if (!parsed.success) return;
-    if (
-      parsed.data.type === 'session-changed' ||
-      parsed.data.type === 'review-changed' ||
-      parsed.data.type === 'host-disconnected'
-    ) {
+    if (!('id' in parsed.data)) {
       for (const listener of listeners) listener(parsed.data);
       return;
     }

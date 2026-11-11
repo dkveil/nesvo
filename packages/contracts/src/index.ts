@@ -51,6 +51,18 @@ import {
   type WorkspaceFile,
 } from './workspace';
 import {
+  deleteScheduledJobSchema,
+  listScheduledJobRunsSchema,
+  listScheduledJobsSchema,
+  runScheduledJobNowSchema,
+  saveScheduledJobSchema,
+  scheduledJobListSchema,
+  scheduledJobRunPageSchema,
+  scheduledJobRunSchema,
+  scheduledJobSchema,
+  setScheduledJobActiveSchema,
+} from './scheduled-jobs';
+import {
   discoverSkillsSchema,
   skillCatalogSchema,
   type DiscoverSkillsInput,
@@ -74,6 +86,19 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('review-changed'), review: reviewSchema }),
   z.strictObject({ type: z.literal('host-disconnected') }),
+  z.strictObject({
+    type: z.literal('scheduled-job-changed'),
+    scheduledJob: scheduledJobSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-removed'),
+    scheduledJobId: z.uuid(),
+    revision: z.number().int().positive(),
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-run-changed'),
+    run: scheduledJobRunSchema,
+  }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
@@ -139,12 +164,45 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     method: z.literal('decide-delegation'),
     input: decideDelegationSchema,
   }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-scheduled-jobs'),
+    input: listScheduledJobsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-scheduled-job'),
+    input: saveScheduledJobSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-scheduled-job-active'),
+    input: setScheduledJobActiveSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-scheduled-job'),
+    input: deleteScheduledJobSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-scheduled-job-runs'),
+    input: listScheduledJobRunsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('run-scheduled-job-now'),
+    input: runScheduledJobNowSchema,
+  }),
 ]);
+
+export const hostCapabilitySchema = z.enum(['scheduled-jobs']);
 
 export const hostHealthSchema = z.strictObject({
   status: z.literal('ready'),
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
+  capabilities: z.array(hostCapabilitySchema).max(16).optional(),
 });
 
 export const hostConnectSchema = z.strictObject({
@@ -236,6 +294,31 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     session: sessionSchema,
   }),
   z.strictObject({
+    type: z.literal('scheduled-jobs'),
+    id: z.uuid(),
+    list: scheduledJobListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job'),
+    id: z.uuid(),
+    scheduledJob: scheduledJobSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-deleted'),
+    id: z.uuid(),
+    scheduledJobId: z.uuid(),
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-runs'),
+    id: z.uuid(),
+    page: scheduledJobRunPageSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-run'),
+    id: z.uuid(),
+    run: scheduledJobRunSchema,
+  }),
+  z.strictObject({
     type: z.literal('error'),
     id: z.uuid().nullable(),
     code: z.enum([
@@ -251,6 +334,7 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
 
 export type HostRequest = z.infer<typeof hostRequestSchema>;
 export type HostHealth = z.infer<typeof hostHealthSchema>;
+export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 export type HostResponse = z.infer<typeof hostResponseSchema>;
 export const hostMessageSchema = z.union([
   hostResponseSchema,
