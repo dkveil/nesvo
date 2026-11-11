@@ -1149,7 +1149,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 7);
     migrated.close();
     const reopened = open();
     assert.equal(
