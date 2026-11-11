@@ -853,7 +853,12 @@ export class MobileGateway {
   }
 
   private publish(event: WorkspaceEvent) {
-    if (!this.accepting || event.type === 'review-changed') return;
+    if (
+      !this.accepting ||
+      event.type === 'review-changed' ||
+      event.type.startsWith('scheduled-job')
+    )
+      return;
     try {
       const sequence = ++this.sequence;
       const value =

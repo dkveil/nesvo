@@ -19,6 +19,12 @@ import {
   sshComputerInputSchema,
   providerUsageInputSchema,
   mobileDeviceSchema,
+  deleteScheduledJobSchema,
+  listScheduledJobRunsSchema,
+  listScheduledJobsSchema,
+  runScheduledJobNowSchema,
+  saveScheduledJobSchema,
+  setScheduledJobActiveSchema,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -235,6 +241,69 @@ void app.whenReady().then(async () => {
         'decide-review',
         decideReviewSchema.parse(input),
         route(hostId),
+      );
+    },
+  );
+  ipcMain.handle('nesvo:list-scheduled-jobs', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.executeScheduledJob(
+      'list-scheduled-jobs',
+      listScheduledJobsSchema.parse({}),
+      hostIdSchema.parse(hostId),
+    );
+  });
+  ipcMain.handle(
+    'nesvo:save-scheduled-job',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'save-scheduled-job',
+        saveScheduledJobSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:set-scheduled-job-active',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'set-scheduled-job-active',
+        setScheduledJobActiveSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:delete-scheduled-job',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'delete-scheduled-job',
+        deleteScheduledJobSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:run-scheduled-job-now',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'run-scheduled-job-now',
+        runScheduledJobNowSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:list-scheduled-job-runs',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'list-scheduled-job-runs',
+        listScheduledJobRunsSchema.parse(input),
+        hostIdSchema.parse(hostId),
       );
     },
   );

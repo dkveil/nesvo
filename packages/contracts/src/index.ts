@@ -7,8 +7,12 @@ import {
   type ProviderUsage,
 } from './provider-usage';
 import {
+  hostCapabilitySchema,
   type Computer,
   type DesktopReview,
+  type DesktopScheduledJob,
+  type DesktopScheduledJobRun,
+  type DesktopScheduledJobRunPage,
   type DesktopSession,
   type HostId,
   type SshComputerInput,
@@ -61,6 +65,7 @@ import {
   scheduledJobRunSchema,
   scheduledJobSchema,
   setScheduledJobActiveSchema,
+  type SaveScheduledJobInput,
 } from './scheduled-jobs';
 import {
   discoverSkillsSchema,
@@ -195,8 +200,6 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: runScheduledJobNowSchema,
   }),
 ]);
-
-export const hostCapabilitySchema = z.enum(['scheduled-jobs']);
 
 export const hostHealthSchema = z.strictObject({
   status: z.literal('ready'),
@@ -334,14 +337,43 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
 
 export type HostRequest = z.infer<typeof hostRequestSchema>;
 export type HostHealth = z.infer<typeof hostHealthSchema>;
-export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 export type HostResponse = z.infer<typeof hostResponseSchema>;
 export const hostMessageSchema = z.union([
   hostResponseSchema,
   desktopEventSchema,
 ]);
 export type HostMessage = z.infer<typeof hostMessageSchema>;
+export type ScheduledJobsApi = {
+  list: (hostId: HostId) => Promise<DesktopScheduledJob[]>;
+  save: (
+    hostId: HostId,
+    input: Omit<SaveScheduledJobInput, 'expectedRevision'>,
+    expectedRevision: number | null,
+  ) => Promise<DesktopScheduledJob>;
+  setActive: (
+    hostId: HostId,
+    id: string,
+    active: boolean,
+    expectedRevision: number,
+  ) => Promise<DesktopScheduledJob>;
+  delete: (
+    hostId: HostId,
+    id: string,
+    expectedRevision: number,
+  ) => Promise<void>;
+  runNow: (
+    hostId: HostId,
+    id: string,
+    requestId: string,
+  ) => Promise<DesktopScheduledJobRun>;
+  listRuns: (
+    hostId: HostId,
+    id: string,
+    cursor: string | null,
+  ) => Promise<DesktopScheduledJobRunPage>;
+};
 export type DesktopApi = {
+  scheduledJobs: ScheduledJobsApi;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;

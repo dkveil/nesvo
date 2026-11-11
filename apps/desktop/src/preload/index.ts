@@ -28,12 +28,71 @@ import {
   mobileDeviceSchema,
   mobileGatewayStatusSchema,
   mobilePairingSchema,
+  desktopScheduledJobSchema,
+  desktopScheduledJobRunSchema,
+  desktopScheduledJobRunPageSchema,
+  deleteScheduledJobSchema,
+  listScheduledJobRunsSchema,
+  runScheduledJobNowSchema,
+  saveScheduledJobSchema,
+  setScheduledJobActiveSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
 const route = (hostId: string | undefined) =>
   hostIdSchema.parse(hostId ?? 'local');
+const scheduledJobs: DesktopApi['scheduledJobs'] = {
+  list: async hostId =>
+    desktopScheduledJobSchema
+      .array()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-scheduled-jobs',
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+  save: async (hostId, input, expectedRevision) =>
+    desktopScheduledJobSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-scheduled-job',
+        saveScheduledJobSchema.parse({ ...input, expectedRevision }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  setActive: async (hostId, id, active, expectedRevision) =>
+    desktopScheduledJobSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-scheduled-job-active',
+        setScheduledJobActiveSchema.parse({ id, active, expectedRevision }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  delete: async (hostId, id, expectedRevision) => {
+    await ipcRenderer.invoke(
+      'nesvo:delete-scheduled-job',
+      deleteScheduledJobSchema.parse({ id, expectedRevision }),
+      hostIdSchema.parse(hostId),
+    );
+  },
+  runNow: async (hostId, id, requestId) =>
+    desktopScheduledJobRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:run-scheduled-job-now',
+        runScheduledJobNowSchema.parse({ id, requestId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  listRuns: async (hostId, id, cursor) =>
+    desktopScheduledJobRunPageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-scheduled-job-runs',
+        listScheduledJobRunsSchema.parse({ scheduledJobId: id, cursor }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+};
 const api: DesktopApi = {
+  scheduledJobs,
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),

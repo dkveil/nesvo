@@ -2,13 +2,18 @@ import { randomUUID } from 'node:crypto';
 import {
   type Computer,
   type DesktopEvent,
+  type DesktopScheduledJob,
+  type DesktopScheduledJobRun,
+  type DesktopScheduledJobRunPage,
   type DesktopSession,
   type DesktopReview,
+  type HostCapability,
   type HostHealth,
   type HostRequest,
   type HostResponse,
   type Session,
   type Review,
+  type ScheduledJob,
   type SshComputerInput,
   type WorkspaceEvent,
   sshComputerInputSchema,
@@ -22,6 +27,14 @@ import {
   type CachedComputer,
 } from './computer-store';
 
+type ScheduledJobMethod = Extract<
+  HostRequest['method'],
+  `${string}scheduled-job${string}`
+>;
+type ExecutableMethod = Exclude<
+  HostRequest['method'],
+  'shutdown' | 'list-sessions' | 'list-reviews' | ScheduledJobMethod
+>;
 type Connection = {
   request: (
     method: HostRequest['method'],
@@ -34,6 +47,7 @@ type Entry = {
   computer: Computer;
   sessions: Map<string, Session>;
   reviews: Map<string, Review>;
+  scheduledJobRevisions: Map<string, number>;
   generation: number;
   connection?: Connection;
   unsubscribe?: () => void;
@@ -64,9 +78,11 @@ export class ComputerManager {
         instanceId: null,
         lastSyncedAt: null,
         error: null,
+        capabilities: [],
       },
       sessions: new Map(),
       reviews: new Map(),
+      scheduledJobRevisions: new Map(),
       generation: 0,
     });
   }
@@ -89,9 +105,11 @@ export class ComputerManager {
             status: 'disconnected',
             lastSyncedAt: null,
             error: null,
+            capabilities: [],
           },
           sessions: new Map(),
           reviews: new Map(),
+          scheduledJobRevisions: new Map(),
           generation: 0,
         });
     } catch {
@@ -186,9 +204,11 @@ export class ComputerManager {
         instanceId: null,
         lastSyncedAt: null,
         error: null,
+        capabilities: [],
       },
       sessions: new Map(),
       reviews: new Map(),
+      scheduledJobRevisions: new Map(),
       generation: 0,
     };
     this.entries.set(id, entry);
@@ -334,16 +354,11 @@ export class ComputerManager {
     await this.saveOfflineCache();
   }
 
-  async execute(
-    method: Exclude<
-      HostRequest['method'],
-      | 'shutdown'
-      | 'list-sessions'
-      | 'list-reviews'
-      | `${string}scheduled-job${string}`
-    >,
+  private async dispatch(
+    method: ExecutableMethod | ScheduledJobMethod,
     input: unknown,
-    hostId = 'local',
+    hostId: string,
+    requires?: HostCapability,
   ) {
     const entry = this.get(hostId);
     if (
@@ -354,6 +369,10 @@ export class ComputerManager {
       throw new Error(
         'This computer is offline or still synchronizing. Connect before sending a command.',
       );
+    if (requires && !entry.computer.capabilities.includes(requires))
+      throw new Error(
+        'This computer runs an older Nesvo host without scheduled jobs. Update it, then reconnect.',
+      );
     const generation = entry.generation;
     const response = await entry.connection.request(method, input);
     if (
@@ -363,6 +382,64 @@ export class ComputerManager {
       throw new Error(
         'The connection changed before the response arrived. Refresh its state before retrying.',
       );
+    return { entry, response };
+  }
+
+  async executeScheduledJob(
+    method: ScheduledJobMethod,
+    input: unknown,
+    hostId: string,
+  ) {
+    const { entry, response } = await this.dispatch(
+      method,
+      input,
+      hostId,
+      'scheduled-jobs',
+    );
+    const expected = {
+      'list-scheduled-jobs': 'scheduled-jobs',
+      'save-scheduled-job': 'scheduled-job',
+      'set-scheduled-job-active': 'scheduled-job',
+      'delete-scheduled-job': 'scheduled-job-deleted',
+      'list-scheduled-job-runs': 'scheduled-job-runs',
+      'run-scheduled-job-now': 'scheduled-job-run',
+    }[method];
+    if (response.type !== expected)
+      throw new Error('Unexpected host response.');
+    switch (response.type) {
+      case 'scheduled-jobs':
+        return response.list.scheduledJobs.map(
+          (scheduledJob): DesktopScheduledJob => {
+            this.rememberScheduledJob(entry, scheduledJob);
+            return { ...scheduledJob, hostId };
+          },
+        );
+      case 'scheduled-job':
+        this.apply(entry, {
+          type: 'scheduled-job-changed',
+          scheduledJob: response.scheduledJob,
+        });
+        return { ...response.scheduledJob, hostId };
+      case 'scheduled-job-deleted':
+        entry.scheduledJobRevisions.delete(response.scheduledJobId);
+        return undefined;
+      case 'scheduled-job-runs':
+        return {
+          ...response.page,
+          runs: response.page.runs.map((run): DesktopScheduledJobRun => ({
+            ...run,
+            hostId,
+          })),
+        } satisfies DesktopScheduledJobRunPage;
+      case 'scheduled-job-run':
+        return { ...response.run, hostId };
+      default:
+        throw new Error('Unexpected host response.');
+    }
+  }
+
+  async execute(method: ExecutableMethod, input: unknown, hostId = 'local') {
+    const { entry, response } = await this.dispatch(method, input, hostId);
     const expected = {
       health: 'health',
       'claude-status': 'claude-status',
@@ -512,9 +589,11 @@ export class ComputerManager {
       sessions.sessions.map(session => [session.id, session]),
     );
     entry.reviews = new Map(reviews.reviews.map(review => [review.id, review]));
+    entry.scheduledJobRevisions = new Map();
     for (const event of entry.buffered ?? []) this.apply(entry, event, false);
     entry.buffered = undefined;
     entry.computer.instanceId = health.instanceId;
+    entry.computer.capabilities = health.capabilities ?? [];
     entry.computer.lastSyncedAt = new Date().toISOString();
     entry.computer.error = null;
     this.publish({
@@ -528,7 +607,44 @@ export class ComputerManager {
     this.scheduleCache();
   }
 
+  private rememberScheduledJob(entry: Entry, scheduledJob: ScheduledJob) {
+    const seen = entry.scheduledJobRevisions.get(scheduledJob.id);
+    if (seen === undefined || seen < scheduledJob.revision)
+      entry.scheduledJobRevisions.set(scheduledJob.id, scheduledJob.revision);
+  }
+
   private apply(entry: Entry, event: DesktopEvent, publish = true) {
+    const hostId = entry.computer.id;
+    if (event.type === 'scheduled-job-changed') {
+      const seen = entry.scheduledJobRevisions.get(event.scheduledJob.id);
+      if (seen !== undefined && seen >= event.scheduledJob.revision) return;
+      this.rememberScheduledJob(entry, event.scheduledJob);
+      if (publish)
+        this.publish({
+          type: 'scheduled-job-changed',
+          scheduledJob: { ...event.scheduledJob, hostId },
+        });
+      return;
+    }
+    if (event.type === 'scheduled-job-removed') {
+      entry.scheduledJobRevisions.delete(event.scheduledJobId);
+      if (publish)
+        this.publish({
+          type: 'scheduled-job-removed',
+          hostId,
+          scheduledJobId: event.scheduledJobId,
+          revision: event.revision,
+        });
+      return;
+    }
+    if (event.type === 'scheduled-job-run-changed') {
+      if (publish)
+        this.publish({
+          type: 'scheduled-job-run-changed',
+          run: { ...event.run, hostId },
+        });
+      return;
+    }
     if (event.type === 'session-changed') {
       const old = entry.sessions.get(event.session.id);
       if (old && old.revision >= event.session.revision) return;
@@ -536,7 +652,7 @@ export class ComputerManager {
       if (publish)
         this.publish({
           type: 'session-changed',
-          session: { ...event.session, hostId: entry.computer.id },
+          session: { ...event.session, hostId },
         });
     } else if (event.type === 'review-changed') {
       const old = entry.reviews.get(event.review.id);
@@ -545,7 +661,7 @@ export class ComputerManager {
       if (publish)
         this.publish({
           type: 'review-changed',
-          review: { ...event.review, hostId: entry.computer.id },
+          review: { ...event.review, hostId },
         });
     }
     entry.computer.lastSyncedAt = new Date().toISOString();

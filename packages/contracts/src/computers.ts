@@ -1,9 +1,17 @@
 import { z } from 'zod';
 import { sessionSchema } from './sessions';
 import { reviewSchema } from './reviews';
+import {
+  scheduledJobRunPageSchema,
+  scheduledJobRunSchema,
+  scheduledJobSchema,
+} from './scheduled-jobs';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
+
+export const hostCapabilitySchema = z.enum(['scheduled-jobs']);
+export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
 const pathSchema = z
   .string()
@@ -69,6 +77,7 @@ export const computerSchema = z.strictObject({
   instanceId: z.uuid().nullable(),
   lastSyncedAt: z.iso.datetime().nullable(),
   error: z.string().max(2000).nullable(),
+  capabilities: z.array(hostCapabilitySchema).max(16),
   ssh: sshComputerInputSchema.optional(),
 });
 export type Computer = z.infer<typeof computerSchema>;
@@ -79,8 +88,25 @@ export const desktopSessionSchema = sessionSchema.extend({
 export const desktopReviewSchema = reviewSchema.extend({
   hostId: hostIdSchema,
 });
+export const desktopScheduledJobSchema = scheduledJobSchema.safeExtend({
+  hostId: hostIdSchema,
+});
+export const desktopScheduledJobRunSchema = scheduledJobRunSchema.safeExtend({
+  hostId: hostIdSchema,
+});
+export const desktopScheduledJobRunPageSchema =
+  scheduledJobRunPageSchema.extend({
+    runs: z.array(desktopScheduledJobRunSchema),
+  });
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
 export type DesktopReview = z.infer<typeof desktopReviewSchema>;
+export type DesktopScheduledJob = z.infer<typeof desktopScheduledJobSchema>;
+export type DesktopScheduledJobRun = z.infer<
+  typeof desktopScheduledJobRunSchema
+>;
+export type DesktopScheduledJobRunPage = z.infer<
+  typeof desktopScheduledJobRunPageSchema
+>;
 
 export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -94,6 +120,20 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('host-disconnected'),
     hostId: hostIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-changed'),
+    scheduledJob: desktopScheduledJobSchema,
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-removed'),
+    hostId: hostIdSchema,
+    scheduledJobId: z.uuid(),
+    revision: z.number().int().positive(),
+  }),
+  z.strictObject({
+    type: z.literal('scheduled-job-run-changed'),
+    run: desktopScheduledJobRunSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),
