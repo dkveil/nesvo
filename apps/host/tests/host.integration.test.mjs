@@ -44,25 +44,29 @@ function bounded(promise, description, timeout = 10_000) {
   ]).finally(() => clearTimeout(timer));
 }
 
+const fixtureEnvironment = (directory, pidFile) => ({
+  NESVO_CLAUDE_EXECUTABLE: fixturePath,
+  NESVO_FIXTURE_PID_FILE: pidFile,
+  NESVO_FIXTURE_SKILL_LOG: pidFile + '.shared',
+  NESVO_FIXTURE_USAGE_LOG: pidFile + '.usage',
+  NESVO_FIXTURE_USAGE_CONTROL: join(directory, 'usage-control.json'),
+  NESVO_CODEX_EXECUTABLE: codexFixturePath,
+  NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
+  NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
+  NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
+  NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
+  NESVO_CODEX_FIXTURE_RUN_LOG: pidFile + '.turns',
+  CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
+  CODEX_HOME: join(directory, 'codex-config'),
+  NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
+});
+
 function launch(directory, pidFile) {
   const child = spawn(process.execPath, ['apps/host/dist/main.js'], {
     env: {
       ...process.env,
       NESVO_DATA_DIR: directory,
-      NESVO_CLAUDE_EXECUTABLE: fixturePath,
-      NESVO_FIXTURE_PID_FILE: pidFile,
-      NESVO_FIXTURE_SKILL_LOG: pidFile + '.shared',
-      NESVO_FIXTURE_USAGE_LOG: pidFile + '.usage',
-      NESVO_FIXTURE_USAGE_CONTROL: join(directory, 'usage-control.json'),
-      NESVO_CODEX_EXECUTABLE: codexFixturePath,
-      NESVO_CODEX_FIXTURE_PID_FILE: pidFile + '.codex',
-      NESVO_CODEX_FIXTURE_PID_DIR: pidFile + '.workers',
-      NESVO_CODEX_FIXTURE_STATE_DIR: pidFile + '.state',
-      NESVO_CODEX_FIXTURE_SKILLS_LOG: pidFile + '.skills',
-      NESVO_CODEX_FIXTURE_RUN_LOG: pidFile + '.turns',
-      CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
-      CODEX_HOME: join(directory, 'codex-config'),
-      NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
+      ...fixtureEnvironment(directory, pidFile),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -75,6 +79,7 @@ function launch(directory, pidFile) {
   const reviewEvents = [];
   const reviewWaiters = new Set();
   const observedReviews = [];
+  const scheduledEvents = [];
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -105,6 +110,8 @@ function launch(directory, pidFile) {
           reviewWaiters.delete(waiter);
           waiter.resolve(message.review);
         } else reviewEvents.push(message.review);
+      } else if (message.type.startsWith('scheduled-job-') && !message.id) {
+        scheduledEvents.push(message);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -145,6 +152,7 @@ function launch(directory, pidFile) {
     exited,
     observed,
     observedReviews,
+    scheduledEvents,
     request,
     send,
     error: () => stderr,
@@ -3840,3 +3848,702 @@ test('scheduled job contracts compute time-zone aware schedules and bounds', asy
     },
   );
 });
+
+const loadScheduledJobHost = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'host-modules');
+  const entries = [
+    'scheduled-jobs/service.ts',
+    'scheduled-jobs/store.ts',
+    'sessions/service.ts',
+    'sessions/store.ts',
+    'review/store.ts',
+  ];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+const createFakeClock = (start, log) => {
+  let time = Date.parse(start);
+  const timers = new Set();
+  return {
+    now: () => new Date(time),
+    set: value => {
+      time = Date.parse(value);
+    },
+    setTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, at: time + delayMs };
+      timers.add(timer);
+      log(`timer armed for ${delayMs} ms`);
+      return timer;
+    },
+    clearTimer: timer => timers.delete(timer),
+    pending: () => [...timers],
+    fire: () => {
+      const [timer] = timers;
+      assert.ok(timer, 'No timer is armed');
+      timers.delete(timer);
+      time = Math.max(time, timer.at);
+      log('timer fired');
+      timer.callback();
+    },
+  };
+};
+
+const waitUntil = async (check, description) => {
+  const deadline = Date.now() + 15_000;
+  while (!check()) {
+    assert.ok(Date.now() < deadline, description);
+    await delay(20);
+  }
+};
+
+test(
+  'scheduled jobs follow a fake clock without replay, catch-up or busy starts',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-scheduler-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const previousEnvironment = { ...process.env };
+    let database;
+    t.after(async () => {
+      database?.close();
+      for (const key of Object.keys(process.env))
+        if (!(key in previousEnvironment)) delete process.env[key];
+      Object.assign(process.env, previousEnvironment);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const modules = await loadScheduledJobHost(directory);
+    const migrated = launch(directory, pidFile);
+    assert.equal((await migrated.request('health')).type, 'health');
+    await migrated.stop();
+    Object.assign(process.env, fixtureEnvironment(directory, pidFile));
+    database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
+
+    const log = [];
+    const clock = createFakeClock('2026-11-16T08:00:00.000Z', line =>
+      log.push(`${clock.now().toISOString()} ${line}`),
+    );
+    const jobs = new modules.ScheduledJobStore(database);
+    const sessions = new modules.SessionService(
+      new modules.SessionStore(database),
+      directory,
+      () => undefined,
+      new modules.ReviewStore(database),
+      () => jobs.interruptActiveRuns(clock.now().toISOString()),
+    );
+    const launcher = {
+      calls: [],
+      failure: null,
+      launch: async ({ scheduledJob, run }) => {
+        launcher.calls.push({ scheduledJobId: scheduledJob.id, runId: run.id });
+        log.push(
+          `${clock.now().toISOString()} launcher called for ${scheduledJob.name}`,
+        );
+        if (launcher.failure) throw launcher.failure;
+      },
+    };
+    const describeRun = run =>
+      `${jobs.get(run.scheduledJobId)?.name} ${run.trigger} run ${run.status}${run.reason ? `/${run.reason}` : ''}${run.scheduledFor ? ` for ${run.scheduledFor}` : ''} missed=${run.missedCount}`;
+    const createScheduler = () =>
+      new modules.ScheduledJobService(
+        jobs,
+        sessions,
+        launcher,
+        event => {
+          if (event.type === 'scheduled-job-run-changed')
+            log.push(`${clock.now().toISOString()} ${describeRun(event.run)}`);
+        },
+        clock,
+      );
+    const runs = id =>
+      database
+        .prepare(
+          'SELECT trigger_kind AS trigger, status, reason, scheduled_for AS scheduledFor, missed_count AS missedCount FROM scheduled_job_runs WHERE scheduled_job_id = ? ORDER BY recorded_at, id',
+        )
+        .all(id)
+        .map(row => ({ ...row }));
+    const lastRun = id => runs(id).at(-1);
+    const settle = () => delay(20);
+    const definition = (name, schedule, overrides = {}) => ({
+      id: randomUUID(),
+      expectedRevision: null,
+      name,
+      prompt: 'Summarize open tasks.',
+      directory: '',
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      schedule,
+      timeZone: 'UTC',
+      active: true,
+      timeoutMinutes: 30,
+      ...overrides,
+    });
+    const completeStartingRuns = () =>
+      database
+        .prepare(
+          "UPDATE scheduled_job_runs SET status = 'completed', finished_at = ? WHERE status = 'starting'",
+        )
+        .run(clock.now().toISOString());
+
+    let scheduler = createScheduler();
+    scheduler.start();
+    const daily = scheduler.save(
+      definition('Daily digest', { kind: 'daily', time: '09:00' }),
+    );
+    assert.equal(daily.nextRunAt, '2026-11-16T09:00:00.000Z');
+    assert.deepEqual(
+      clock.pending().map(timer => timer.delayMs),
+      [3_600_000],
+    );
+    await scheduler.close();
+    assert.equal(clock.pending().length, 0);
+
+    clock.set('2026-11-23T10:00:00.000Z');
+    log.push(`${clock.now().toISOString()} host restarted after a week`);
+    scheduler = createScheduler();
+    scheduler.start();
+    assert.deepEqual(runs(daily.id), [
+      {
+        trigger: 'schedule',
+        status: 'skipped',
+        reason: 'missed',
+        scheduledFor: '2026-11-23T09:00:00.000Z',
+        missedCount: 8,
+      },
+    ]);
+    assert.equal(launcher.calls.length, 0);
+    assert.equal(jobs.get(daily.id).nextRunAt, '2026-11-24T09:00:00.000Z');
+
+    clock.fire();
+    await settle();
+    assert.deepEqual(lastRun(daily.id), {
+      trigger: 'schedule',
+      status: 'starting',
+      reason: null,
+      scheduledFor: '2026-11-24T09:00:00.000Z',
+      missedCount: 0,
+    });
+    assert.equal(launcher.calls.length, 1);
+    scheduler.tick(clock.now());
+    scheduler.tick(clock.now());
+    assert.equal(runs(daily.id).length, 2);
+    const at = clock.now().toISOString();
+    assert.equal(
+      jobs.insertRun({
+        id: randomUUID(),
+        scheduledJobId: daily.id,
+        scheduledFor: '2026-11-24T09:00:00.000Z',
+        trigger: 'schedule',
+        status: 'skipped',
+        reason: 'missed',
+        missedCount: 0,
+        sessionId: null,
+        runId: null,
+        reviewId: null,
+        resetAt: null,
+        startedAt: null,
+        finishedAt: at,
+        requestId: null,
+        recordedAt: at,
+      }),
+      false,
+    );
+
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).reason, 'overlap');
+    assert.equal(launcher.calls.length, 1);
+    completeStartingRuns();
+
+    launcher.failure = new modules.SessionError('busy', 'Operator was first.');
+    clock.fire();
+    await settle();
+    assert.deepEqual(
+      [lastRun(daily.id).status, lastRun(daily.id).reason],
+      ['skipped', 'busy'],
+    );
+    launcher.failure = new Error('Launch failed.');
+    clock.fire();
+    await settle();
+    assert.deepEqual(
+      [lastRun(daily.id).status, lastRun(daily.id).reason],
+      ['failed', null],
+    );
+    launcher.failure = null;
+    assert.equal(launcher.calls.length, 3);
+
+    sessions.recordOperatorActivity(new Date('2026-11-28T08:55:00.000Z'));
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).reason, 'busy');
+    sessions.recordOperatorActivity(new Date('2026-11-29T08:49:00.000Z'));
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).status, 'starting');
+    assert.equal(launcher.calls.length, 4);
+    completeStartingRuns();
+
+    const paused = scheduler.setActive({
+      id: daily.id,
+      expectedRevision: jobs.get(daily.id).revision,
+      active: false,
+    });
+    assert.equal(paused.nextRunAt, null);
+    assert.equal(clock.pending().length, 0);
+    const yearly = scheduler.save(
+      definition(
+        'Yearly review',
+        {
+          kind: 'interval',
+          minutes: 525_600,
+          anchorAt: '2027-12-01T09:00:00.000Z',
+        },
+        {},
+      ),
+    );
+    assert.deepEqual(
+      clock.pending().map(timer => timer.delayMs),
+      [modules.MAX_TIMER_DELAY_MS],
+    );
+    clock.fire();
+    assert.equal(runs(yearly.id).length, 0);
+    assert.deepEqual(
+      clock.pending().map(timer => timer.delayMs),
+      [modules.MAX_TIMER_DELAY_MS],
+    );
+    scheduler.setActive({
+      id: yearly.id,
+      expectedRevision: jobs.get(yearly.id).revision,
+      active: false,
+    });
+    clock.set('2026-12-26T10:00:00.000Z');
+    scheduler.tick();
+    const resumed = scheduler.setActive({
+      id: daily.id,
+      expectedRevision: paused.revision,
+      active: true,
+    });
+    assert.equal(resumed.nextRunAt, '2026-12-27T09:00:00.000Z');
+    assert.equal(runs(daily.id).length, 7);
+    assert.throws(
+      () =>
+        scheduler.save({
+          ...definition('Daily digest', { kind: 'daily', time: '10:00' }),
+          id: daily.id,
+          expectedRevision: paused.revision,
+        }),
+      error =>
+        error instanceof modules.ScheduledJobError &&
+        error.code === 'invalid-request' &&
+        /changed elsewhere/.test(error.message),
+    );
+    assert.equal(jobs.get(daily.id).schedule.time, '09:00');
+
+    const workspace = join(directory, 'workspace');
+    await mkdir(workspace);
+    await Promise.all([
+      writeFile(join(workspace, 'tracked.txt'), 'baseline\n'),
+      writeFile(join(workspace, 'deleted.txt'), 'delete this baseline\n'),
+    ]);
+    const held = sessions.create({
+      title: 'Operator work',
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'read-only',
+      directory: workspace,
+    });
+    const holding = sessions.send({
+      sessionId: held.id,
+      messageId: randomUUID(),
+      text: 'fixture:hold',
+    });
+    assert.equal(sessions.isBusy(), true);
+    clock.set('2026-12-27T08:59:00.000Z');
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).reason, 'busy');
+    const manualRuns = () =>
+      database
+        .prepare(
+          "SELECT count(*) AS total FROM scheduled_job_runs WHERE trigger_kind = 'manual'",
+        )
+        .get().total;
+    assert.throws(
+      () => scheduler.runNow({ id: daily.id, requestId: randomUUID() }),
+      error =>
+        error instanceof modules.ScheduledJobError && error.code === 'busy',
+    );
+    assert.equal(manualRuns(), 0);
+    sessions.stop({ sessionId: held.id, runId: holding.runId });
+    await waitUntil(
+      () => !sessions.isBusy(),
+      'The held fixture run did not stop',
+    );
+
+    const writer = sessions.create({
+      title: 'Supervised work',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+      directory: workspace,
+    });
+    const writing = sessions.send({
+      sessionId: writer.id,
+      messageId: randomUUID(),
+      text: 'fixture:review-write',
+    });
+    await waitUntil(
+      () =>
+        sessions
+          .listReviews()
+          .some(
+            review =>
+              review.runId === writing.runId && review.status === 'pending',
+          ),
+      'The supervised fixture run produced no review',
+    );
+    const review = sessions
+      .listReviews()
+      .find(item => item.runId === writing.runId);
+    assert.equal(review.diff.status, 'complete', review.diff.detail);
+    const deciding = sessions.decideReview({
+      reviewId: review.id,
+      version: review.version,
+      decisionId: randomUUID(),
+      decision: 'accept',
+      feedback: '',
+    });
+    assert.equal(sessions.isBusy(), true);
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).reason, 'busy');
+    assert.equal((await deciding).status, 'accepted');
+    assert.equal(sessions.isBusy(), false);
+
+    const closing = sessions.close();
+    assert.equal(sessions.isBusy(), true);
+    clock.fire();
+    await settle();
+    assert.equal(lastRun(daily.id).reason, 'busy');
+    await closing;
+    assert.equal(launcher.calls.length, 4);
+
+    let created = jobs.count();
+    while (created < modules.MAX_SCHEDULED_JOBS_PER_HOST) {
+      scheduler.save(
+        definition(
+          `Paused job ${created}`,
+          { kind: 'daily', time: '12:00' },
+          { active: false },
+        ),
+      );
+      created += 1;
+    }
+    assert.throws(
+      () =>
+        scheduler.save(
+          definition('One too many', { kind: 'daily', time: '12:00' }),
+        ),
+      error =>
+        error instanceof modules.ScheduledJobError &&
+        /already has 20 scheduled jobs/.test(error.message),
+    );
+
+    const insertHistory = database.prepare(
+      "INSERT INTO scheduled_job_runs (id, scheduled_job_id, scheduled_for, trigger_kind, status, reason, missed_count, recorded_at, finished_at) VALUES (?, ?, ?, 'schedule', 'skipped', 'missed', 1, ?, ?)",
+    );
+    for (let index = 0; index < 110; index += 1) {
+      const recorded = new Date(
+        Date.parse('2025-01-01T09:00:00.000Z') + index * 86_400_000,
+      ).toISOString();
+      insertHistory.run(randomUUID(), daily.id, recorded, recorded, recorded);
+    }
+    jobs.prune(daily.id);
+    assert.equal(runs(daily.id).length, modules.SCHEDULED_JOB_RUN_RETENTION);
+    assert.equal(lastRun(daily.id).reason, 'busy');
+
+    await scheduler.close();
+    assert.equal(clock.pending().length, 0);
+    for (const line of log) t.diagnostic(line);
+  },
+);
+
+test(
+  'host serves scheduled job commands, interrupts claimed runs and keeps sessions on delete',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-scheduled-host-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    let host = launch(directory, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const health = (await host.request('health')).health;
+    assert.deepEqual(health.capabilities, ['scheduled-jobs']);
+    const id = randomUUID();
+    const jobInput = {
+      id,
+      expectedRevision: null,
+      name: 'Morning summary',
+      prompt: 'Summarize yesterday.',
+      directory: '',
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      schedule: { kind: 'daily', time: '09:00' },
+      timeZone: 'Europe/Warsaw',
+      active: true,
+    };
+    const saved = await host.request('save-scheduled-job', jobInput);
+    assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+    assert.equal(saved.scheduledJob.revision, 1);
+    assert.equal(saved.scheduledJob.timeoutMinutes, 30);
+    assert.ok(Date.parse(saved.scheduledJob.nextRunAt) > Date.now());
+    await waitUntil(
+      () =>
+        host.scheduledEvents.some(
+          event =>
+            event.type === 'scheduled-job-changed' &&
+            event.scheduledJob.id === id &&
+            event.scheduledJob.revision === 1,
+        ),
+      'The saved scheduled job was not published',
+    );
+    assert.equal(
+      (await host.request('save-scheduled-job', jobInput)).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (
+        await host.request('set-scheduled-job-active', {
+          id,
+          expectedRevision: 2,
+          active: false,
+        })
+      ).code,
+      'invalid-request',
+    );
+
+    const workspace = join(directory, 'workspace');
+    await mkdir(workspace);
+    const session = (
+      await host.request('create-session', {
+        title: 'Operator work',
+        model: 'sonnet',
+        directory: workspace,
+      })
+    ).session;
+    const held = (
+      await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'fixture:hold',
+      })
+    ).session;
+    const busy = await host.request('run-scheduled-job-now', {
+      id,
+      requestId: randomUUID(),
+    });
+    assert.equal(busy.code, 'busy', JSON.stringify(busy));
+    assert.deepEqual(
+      (
+        await host.request('list-scheduled-job-runs', {
+          scheduledJobId: id,
+        })
+      ).page,
+      { runs: [], nextCursor: null },
+    );
+    await host.request('stop-run', {
+      sessionId: session.id,
+      runId: held.runId,
+    });
+    await host.event(
+      value => value.id === session.id && value.status === 'stopped',
+    );
+    const requestId = randomUUID();
+    const manual = await bounded(
+      (async () => {
+        while (true) {
+          const response = await host.request('run-scheduled-job-now', {
+            id,
+            requestId,
+          });
+          if (response.code !== 'busy') return response;
+          await delay(20);
+        }
+      })(),
+      'The host stayed busy after Stop',
+    );
+    assert.equal(manual.type, 'scheduled-job-run', JSON.stringify(manual));
+    assert.deepEqual(
+      [manual.run.trigger, manual.run.status, manual.run.scheduledFor],
+      ['manual', 'starting', null],
+    );
+    assert.equal(
+      (await host.request('run-scheduled-job-now', { id, requestId })).run.id,
+      manual.run.id,
+    );
+    const finished = await bounded(
+      (async () => {
+        while (true) {
+          const [run] = (
+            await host.request('list-scheduled-job-runs', {
+              scheduledJobId: id,
+            })
+          ).page.runs;
+          if (run.status !== 'starting') return run;
+          await delay(20);
+        }
+      })(),
+      'The manual run stayed in starting',
+    );
+    assert.equal(finished.status, 'failed');
+    const answered = (
+      await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'Summarize the workspace.',
+      })
+    ).session;
+    await host.review(
+      value => value.runId === answered.runId && value.status === 'pending',
+    );
+    const revision = (await host.request('list-scheduled-jobs', {})).list
+      .scheduledJobs[0].revision;
+    await host.stop();
+
+    const seeded = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    const claimed = randomUUID();
+    try {
+      seeded
+        .prepare(
+          "INSERT INTO scheduled_job_runs (id, scheduled_job_id, scheduled_for, trigger_kind, status, missed_count, recorded_at, started_at) VALUES (?, ?, '2026-01-01T08:00:00.000Z', 'schedule', 'starting', 0, ?, ?)",
+        )
+        .run(claimed, id, new Date().toISOString(), new Date().toISOString());
+      seeded
+        .prepare(
+          'UPDATE sessions SET scheduled_job_id = ?, scheduled_job_run_id = ? WHERE id = ?',
+        )
+        .run(id, manual.run.id, session.id);
+    } finally {
+      seeded.close();
+    }
+
+    host = launch(directory, pidFile);
+    const recovered = (
+      await host.request('list-scheduled-job-runs', { scheduledJobId: id })
+    ).page.runs;
+    assert.deepEqual(
+      recovered.map(run => [run.id, run.status, run.reason]),
+      [
+        [claimed, 'interrupted', 'restart'],
+        [manual.run.id, 'failed', null],
+      ],
+    );
+    assert.equal((await host.request('list-sessions')).sessions.length, 1);
+    const deleted = await host.request('delete-scheduled-job', {
+      id,
+      expectedRevision: revision,
+    });
+    assert.equal(
+      deleted.type,
+      'scheduled-job-deleted',
+      JSON.stringify(deleted),
+    );
+    assert.deepEqual(
+      (await host.request('list-scheduled-jobs', {})).list.scheduledJobs,
+      [],
+    );
+    assert.equal(
+      (await host.request('list-scheduled-job-runs', { scheduledJobId: id }))
+        .code,
+      'not-found',
+    );
+    assert.equal((await host.request('list-reviews')).reviews.length, 1);
+    await host.stop();
+
+    const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      assert.equal(
+        check.prepare('SELECT count(*) AS total FROM scheduled_job_runs').get()
+          .total,
+        0,
+      );
+      assert.deepEqual(
+        {
+          ...check
+            .prepare(
+              'SELECT scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS runId FROM sessions WHERE id = ?',
+            )
+            .get(session.id),
+        },
+        { scheduledJobId: null, runId: null },
+      );
+    } finally {
+      check.close();
+    }
+  },
+);
+
+test(
+  'host rolls back a failed version 7 migration',
+  { timeout: 15000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-migration-'));
+    const path = join(directory, 'nesvo.sqlite');
+    const database = new DatabaseSync(path);
+    database.exec(
+      'CREATE TABLE scheduled_job_runs (id TEXT PRIMARY KEY); PRAGMA user_version = 6',
+    );
+    database.close();
+    const host = launch(directory, join(directory, 'unused-pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited;
+      await rm(directory, { recursive: true, force: true });
+    });
+    assert.equal(
+      (await bounded(host.exited, 'Host startup timed out')).code,
+      1,
+      host.error(),
+    );
+    const check = new DatabaseSync(path);
+    try {
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 6);
+      assert.deepEqual(
+        check
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all()
+          .map(row => row.name),
+        ['scheduled_job_runs'],
+      );
+    } finally {
+      check.close();
+    }
+  },
+);
