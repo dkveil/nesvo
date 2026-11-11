@@ -470,6 +470,27 @@ try {
     ),
     true,
   );
+  const appliedScheme = () =>
+    page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      background: getComputedStyle(document.body).backgroundColor,
+    }));
+  assert.deepEqual(await appliedScheme(), {
+    dark: true,
+    background: 'rgb(0, 0, 0)',
+  });
+  await page.evaluate(() => window.nesvo.setColorScheme('light'));
+  await page.waitForFunction(
+    () => !document.documentElement.classList.contains('dark'),
+  );
+  assert.deepEqual(await appliedScheme(), {
+    dark: false,
+    background: 'rgb(252, 252, 252)',
+  });
+  await page.evaluate(() => window.nesvo.setColorScheme('dark'));
+  await page.waitForFunction(() =>
+    document.documentElement.classList.contains('dark'),
+  );
   const versions = await application.evaluate(() => process.versions);
   hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
   assert.equal(typeof hostPid, 'number');
