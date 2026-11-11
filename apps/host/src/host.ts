@@ -4,6 +4,7 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   type HostMessage,
+  type HostRequest,
   type HostResponse,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
@@ -16,6 +17,21 @@ import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { discoverSessionSkills } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
+import { ScheduledJobStore } from './scheduled-jobs/store';
+import {
+  ScheduledJobError,
+  ScheduledJobService,
+  unavailableLauncher,
+} from './scheduled-jobs/service';
+
+const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
+  'create-session',
+  'send-message',
+  'stop-run',
+  'respond-approval',
+  'decide-delegation',
+  'decide-review',
+]);
 
 type HostTransport = {
   directory: string;
@@ -29,6 +45,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       yield* ownDataDirectory(directory);
       const database = yield* openDatabase(directory);
       const store = new SessionStore(database);
+      const scheduledJobStore = new ScheduledJobStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
       const emit = (message: HostMessage) => {
@@ -42,6 +59,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               directory,
               emit,
               new ReviewStore(database),
+              () =>
+                scheduledJobStore.interruptActiveRuns(new Date().toISOString()),
             ),
         ),
         service =>
@@ -61,6 +80,19 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             state.controller.abort();
             await Promise.all(state.pending);
           }),
+      );
+      const scheduledJobs = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const service = new ScheduledJobService(
+            scheduledJobStore,
+            sessions,
+            unavailableLauncher,
+            emit,
+          );
+          service.start();
+          return service;
+        }),
+        service => Effect.promise(() => service.close()),
       );
       let workspaceRequests = 0;
       const usage = new ProviderUsageService(probes.controller.signal);
@@ -83,7 +115,10 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         const request = parsed.data;
+        if (OPERATOR_ACTIVITY_METHODS.has(request.method))
+          sessions.recordOperatorActivity();
         if (request.method === 'shutdown') {
+          yield* Effect.promise(() => scheduledJobs.close());
           yield* Effect.promise(() => sessions.close());
           probes.controller.abort();
           yield* Effect.promise(() => Promise.all(probes.pending));
@@ -319,6 +354,44 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 session: sessions.decideDelegation(request.input),
               };
+            if (request.method === 'list-scheduled-jobs')
+              return {
+                type: 'scheduled-jobs',
+                id: request.id,
+                list: { scheduledJobs: scheduledJobs.list() },
+              };
+            if (request.method === 'save-scheduled-job')
+              return {
+                type: 'scheduled-job',
+                id: request.id,
+                scheduledJob: scheduledJobs.save(request.input),
+              };
+            if (request.method === 'set-scheduled-job-active')
+              return {
+                type: 'scheduled-job',
+                id: request.id,
+                scheduledJob: scheduledJobs.setActive(request.input),
+              };
+            if (request.method === 'delete-scheduled-job') {
+              scheduledJobs.delete(request.input);
+              return {
+                type: 'scheduled-job-deleted',
+                id: request.id,
+                scheduledJobId: request.input.id,
+              };
+            }
+            if (request.method === 'list-scheduled-job-runs')
+              return {
+                type: 'scheduled-job-runs',
+                id: request.id,
+                page: scheduledJobs.listRuns(request.input),
+              };
+            if (request.method === 'run-scheduled-job-now')
+              return {
+                type: 'scheduled-job-run',
+                id: request.id,
+                run: scheduledJobs.runNow(request.input),
+              };
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
               .get('instance_id');
@@ -329,17 +402,20 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 status: 'ready',
                 instanceId: row?.value,
                 protocolVersion: 1,
+                capabilities: ['scheduled-jobs'],
               }),
             };
           } catch (error) {
+            const known =
+              error instanceof SessionError ||
+              error instanceof ScheduledJobError;
             return {
               type: 'error',
               id: request.id,
-              code: error instanceof SessionError ? error.code : 'unavailable',
-              message:
-                error instanceof SessionError
-                  ? error.message
-                  : 'The host could not complete this operation. Refresh and try again.',
+              code: known ? error.code : 'unavailable',
+              message: known
+                ? error.message
+                : 'The host could not complete this operation. Refresh and try again.',
             };
           }
         });
