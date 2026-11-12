@@ -25,7 +25,7 @@ The model picker has a Reasoning column. Provider status reports effort support:
 
 The new-thread screen shows no Git branch. A host-only reader module (`apps/host/src/workspace/git-branch.ts`) reads the current branch in a short-lived Node child process with non-blocking, regular-file-only reads capped at 4 KiB, killed after two seconds or on cancellation. No request, preload method or renderer path reaches it: the folder validation and `realpath` it would need still run synchronously in the host before the child starts, so a hung network filesystem could block the host. The branch chip moves to its own stage, UI1f, which moves that validation and resolution into the child process before the read is exposed again.
 
-Host health lists the capability `reasoning-effort`. Electron records it per computer at synchronization and refuses an effort request locally for a host that does not list it, because an older host rejects unknown fields without a request ID and the SSH client treats that as a protocol failure. Status from such a host defaults to Claude-style `unsupported` effort with an update reason and models without efforts, so the picker offers no effort.
+Host health lists the capabilities `scheduled-jobs` and `reasoning-effort`. Electron records them per computer at synchronization and refuses a scheduled job command or an effort request locally for a host that does not list the matching capability, because an older host rejects unknown fields without a request ID and the SSH client treats that as a protocol failure. Status from such a host defaults to Claude-style `unsupported` effort with an update reason and models without efforts, so the picker offers no effort.
 
 ## Mobile companion
 
