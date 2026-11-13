@@ -5,6 +5,7 @@ import {
   desktopSessionSchema,
   getPipelineRunSchema,
   readPipelineEvidenceSchema,
+  skipPipelineStepSchema,
   type DesktopPipelineRun,
   type DesktopPipelineStepRecord,
   type DesktopSession,
@@ -49,6 +50,7 @@ const DEMO_METHODS = new Set<PipelineMethod>([
   'read-pipeline-evidence',
   'stop-pipeline-run',
   'resume-pipeline-run',
+  'skip-pipeline-step',
 ]);
 
 const HASH = 'a'.repeat(64);
@@ -641,6 +643,27 @@ export const createPipelineDemo = ({
     return update(run, { status: 'checking', attention: null });
   };
 
+  const skip = (runId: string, stepId: string, reason: string) => {
+    const run = owned(runId);
+    const record = (steps.get(runId) ?? []).find(item => item.id === stepId);
+    if (!record) throw new Error('This demo step does not exist.');
+    const at = new Date().toISOString();
+    updateStep(record, { state: 'skipped', skip: { reason, at } });
+    const latest = new Map<number, DesktopPipelineStepRecord>();
+    for (const item of steps.get(runId) ?? [])
+      if ((latest.get(item.index)?.attempt ?? -1) < item.attempt)
+        latest.set(item.index, item);
+    const finished = run.pipeline.steps.every((_, index) =>
+      ['passed', 'done', 'skipped'].includes(latest.get(index)?.state ?? ''),
+    );
+    return update(run, {
+      status: finished ? 'passed' : 'checking',
+      attention: null,
+      currentStepIndex: finished ? null : run.currentStepIndex,
+      finishedAt: finished ? at : null,
+    });
+  };
+
   return {
     sessions: () => sessions,
     serves: (method: PipelineMethod, input: unknown, hostId: string) => {
@@ -681,6 +704,10 @@ export const createPipelineDemo = ({
           return stop(getPipelineRunSchema.parse(input).runId);
         case 'resume-pipeline-run':
           return resume(getPipelineRunSchema.parse(input).runId);
+        case 'skip-pipeline-step': {
+          const request = skipPipelineStepSchema.parse(input);
+          return skip(request.runId, request.stepId, request.reason);
+        }
         default:
           throw new Error('This demo does not serve that pipeline command.');
       }
