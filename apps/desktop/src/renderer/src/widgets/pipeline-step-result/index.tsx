@@ -7,8 +7,6 @@ import {
   Link,
   MessageSquare,
   ScrollText,
-  Workflow,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -29,8 +27,6 @@ import { StepStateIcon } from '@/entities/pipeline/step-state-icon';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
-import { PanelAction, PanelHeader } from '@/shared/ui/panel';
-import { panelSurface } from '@/shared/ui/panel-styles';
 
 export type InboxTarget = {
   hostId: string;
@@ -44,7 +40,6 @@ type Props = {
   steps: PipelineStepRecord[];
   index: number;
   api: Pick<PipelinesApi, 'readEvidence'>;
-  onClose: () => void;
   onInbox: (target: InboxTarget) => void;
   onSession: (key: string) => void;
 };
@@ -111,14 +106,14 @@ function EvidencePreview({ state }: { state: PreviewState }) {
   );
 }
 
-function StepResult({
+export function StepResult({
   run,
   steps,
   index,
   api,
   onInbox,
   onSession,
-}: Omit<Props, 'onClose'>) {
+}: Props) {
   const now = useNow(SECOND_MS);
   const view = pipelineSteps(run, steps)[index];
   const attempts = steps
@@ -187,7 +182,7 @@ function StepResult({
   const outputs = Object.entries(result?.outputs ?? {});
   const evidence = result?.evidence ?? [];
   return (
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 text-xs">
+    <div className="space-y-4 text-xs">
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span
@@ -242,11 +237,6 @@ function StepResult({
             </button>
           ))}
         </div>
-      )}
-      {run.attention && run.currentStepIndex === index && (
-        <p className="rounded-md border px-2.5 py-2 text-warning-foreground [overflow-wrap:anywhere]">
-          {run.attention}
-        </p>
       )}
       {result ? (
         <p className="leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
@@ -386,31 +376,5 @@ function StepResult({
         </p>
       )}
     </div>
-  );
-}
-
-export default function PipelineStepResult({ onClose, ...props }: Props) {
-  const definition = props.run.pipeline.steps[props.index];
-  return (
-    <section
-      aria-label="Step result"
-      data-run-id={props.run.id}
-      data-step-index={props.index}
-      className={cn(
-        panelSurface,
-        'min-[1200px]:w-[380px] min-[1600px]:w-[440px]',
-      )}
-    >
-      <PanelHeader
-        icon={Workflow}
-        title={definition?.name ?? 'Step'}
-        meta={props.run.specTitle}
-      >
-        <PanelAction aria-label="Close step result" onClick={onClose}>
-          <X className="size-4" />
-        </PanelAction>
-      </PanelHeader>
-      <StepResult key={`${props.run.id}:${props.index}`} {...props} />
-    </section>
   );
 }

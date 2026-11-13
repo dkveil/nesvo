@@ -33,7 +33,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { runStatusLabel, showsRunStatus } from '@/entities/pipeline';
+import { showsRunStatus } from '@/entities/pipeline';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
@@ -52,7 +52,7 @@ import {
 } from '@/shared/ui/sheet';
 import { Conversation } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
-import { PipelineStrip } from '@/widgets/pipeline-strip';
+import { PipelineStatus } from '@/widgets/pipeline-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
@@ -84,7 +84,11 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
-const PipelineStepResult = lazy(() => import('@/widgets/pipeline-step-result'));
+const PipelinePanel = lazy(() => import('@/widgets/pipeline-panel'));
+
+const PipelineDefinitions = lazy(
+  () => import('@/widgets/pipeline-definitions'),
+);
 
 export function Workspace() {
   const store = useSessions();
@@ -93,9 +97,12 @@ export function Workspace() {
   const [inbox, setInbox] = useState(location.inbox);
   const [sessionTarget, setSessionTarget] = useState('');
   const [panel, setPanel] = useState<
-    'diff' | 'files' | 'skills' | 'step' | null
+    'diff' | 'files' | 'skills' | 'pipeline' | null
   >(location.diff ? 'diff' : null);
   const [stepIndex, setStepIndex] = useState<number | null>(null);
+  const [pipelinesView, setPipelinesView] = useState(false);
+  const browsing = inbox || pipelinesView;
+  const pipelineStatusButton = useRef<HTMLButtonElement | null>(null);
   const [pipelinePending, setPipelinePending] = useState<
     Record<string, boolean>
   >({});
@@ -216,7 +223,7 @@ export function Workspace() {
       (session.status === 'running' || session.status === 'stopping'),
   );
   const diffReview =
-    !inbox && diffTarget
+    !browsing && diffTarget
       ? store.reviews.find(
           review =>
             review.id === diffTarget.reviewId &&
@@ -236,8 +243,7 @@ export function Workspace() {
       )
     : [];
   const visiblePanel =
-    (panel === 'diff' && !diffReview) ||
-    (panel === 'step' && (!selectedRun || stepIndex === null))
+    (panel === 'diff' && !diffReview) || (panel === 'pipeline' && !selectedRun)
       ? null
       : panel;
   useEffect(() => {
@@ -328,13 +334,14 @@ export function Workspace() {
     }
     setPanel('files');
   };
-  const openStep = (index: number) => {
-    diffTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setStepIndex(index);
-    setPanel('step');
+  const togglePipeline = () => {
+    if (panel === 'pipeline') {
+      closeDiff();
+      return;
+    }
+    diffTrigger.current = pipelineStatusButton.current;
+    setStepIndex(null);
+    setPanel('pipeline');
   };
   const closeDiff = () => {
     setPanel(null);
@@ -353,6 +360,7 @@ export function Workspace() {
     setSelectedId(id);
     setSessionTarget(targetId);
     setInbox(false);
+    setPipelinesView(false);
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
@@ -362,6 +370,16 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(true);
+    setPipelinesView(false);
+    setNavigationOpen(false);
+  };
+  const openPipelines = () => {
+    navigationVersion.current += 1;
+    setPanel(null);
+    setDiffTarget(null);
+    setCreating(false);
+    setInbox(false);
+    setPipelinesView(true);
     setNavigationOpen(false);
   };
   const openCreate = () => {
@@ -371,6 +389,7 @@ export function Workspace() {
     setPanel(null);
     setDiffTarget(null);
     setInbox(false);
+    setPipelinesView(false);
     setCreating(true);
   };
   const changeDraft = (id: string, value: string) => {
@@ -523,7 +542,10 @@ export function Workspace() {
       return 'started';
     }
   };
-  const controlPipeline = async (action: 'stop' | 'resume') => {
+  const controlPipeline = async (
+    action: 'stop' | 'resume' | 'confirm',
+    stepId = '',
+  ) => {
     if (!selectedRun || !store.hostReady(selectedRun.hostId)) return;
     const run = selectedRun;
     const key = entityKey(run);
@@ -535,12 +557,18 @@ export function Workspace() {
       store.mergePipelineRuns([
         action === 'stop'
           ? await window.nesvo.pipelines.stopRun(run.hostId, run.id)
-          : await window.nesvo.pipelines.resumeRun(run.hostId, run.id),
+          : action === 'resume'
+            ? await window.nesvo.pipelines.resumeRun(run.hostId, run.id)
+            : await window.nesvo.pipelines.skipStep(run.hostId, {
+                runId: run.id,
+                stepId,
+                reason: 'The operator confirmed that the action already ran.',
+              }),
       ]);
     } catch (failure) {
       setPipelineErrors(previous => ({
         ...previous,
-        [key]: `Could not ${action === 'stop' ? 'stop' : 'resume'} the pipeline. ${errorDetail(failure)}`,
+        [key]: `Could not ${action === 'stop' ? 'stop the pipeline' : action === 'resume' ? 'resume the pipeline' : 'record the decision'}. ${errorDetail(failure)}`,
       }));
     } finally {
       pipelineRequests.current.delete(key);
@@ -828,21 +856,23 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: creating ? '' : selectedKey,
+    selectedId: creating || pipelinesView ? '' : selectedKey,
     inbox,
+    pipelines: pipelinesView,
     onSelect: select,
     onInbox: openInbox,
+    onPipelines: openPipelines,
     onCreate: openCreate,
   };
   const showingNewThread =
-    creating || (!inbox && !selected && !store.loading && !store.error);
+    creating || (!browsing && !selected && !store.loading && !store.error);
   const breadcrumbDirectory = showingNewThread
     ? threadSetup.directory.trim()
-    : !inbox && selected
+    : !browsing && selected
       ? selected.directory
       : null;
   const providerIssue =
-    !inbox &&
+    !browsing &&
     !creating &&
     selectedProviderState &&
     (selectedProviderState.error ||
@@ -939,7 +969,7 @@ export function Workspace() {
               Nesvo
             </span>
           )}
-          {parentSession && !inbox && !creating && (
+          {parentSession && !browsing && !creating && (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -989,11 +1019,13 @@ export function Workspace() {
                 <h1 className="truncate text-[13px] font-semibold">
                   {creating
                     ? 'New thread'
-                    : inbox
-                      ? 'Inbox'
-                      : (selected?.title ?? 'New thread')}
+                    : pipelinesView
+                      ? 'Pipelines'
+                      : inbox
+                        ? 'Inbox'
+                        : (selected?.title ?? 'New thread')}
                 </h1>
-                {!inbox &&
+                {!browsing &&
                   !creating &&
                   selected &&
                   sessionRoleLabel(selected) && (
@@ -1004,7 +1036,7 @@ export function Workspace() {
               </li>
             </ol>
           </nav>
-          {!inbox && !creating && selected && (
+          {!browsing && !creating && selected && (
             <span
               className="max-w-32 truncate text-[11px] text-muted-foreground"
               title={selectedComputer?.name}
@@ -1015,15 +1047,13 @@ export function Workspace() {
               {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
             </span>
           )}
-          {!inbox &&
+          {!browsing &&
             !creating &&
             selected &&
-            (showsRunStatus(selected, selectedRun) ||
-              selected.status !== 'ready') && (
+            selected.status !== 'ready' &&
+            !showsRunStatus(selected, selectedRun) && (
               <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                {showsRunStatus(selected, selectedRun)
-                  ? `Pipeline ${runStatusLabel(selectedRun.status).toLowerCase()}`
-                  : sessionStatusLabel(selected)}
+                {sessionStatusLabel(selected)}
               </span>
             )}
           <Button
@@ -1035,6 +1065,14 @@ export function Workspace() {
           >
             <Plus />
           </Button>
+          {!browsing && !creating && selectedRun && (
+            <PipelineStatus
+              run={selectedRun}
+              open={panel === 'pipeline'}
+              buttonRef={pipelineStatusButton}
+              onToggle={togglePipeline}
+            />
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -1048,7 +1086,7 @@ export function Workspace() {
           >
             <Gauge className="size-4" />
           </Button>
-          {!inbox && !creating && selected && (
+          {!browsing && !creating && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -1068,7 +1106,7 @@ export function Workspace() {
               <BookOpen className="size-4" />
             </Button>
           )}
-          {!inbox && !creating && selected && (
+          {!browsing && !creating && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -1082,7 +1120,7 @@ export function Workspace() {
               <FolderOpen className="size-4" />
             </Button>
           )}
-          {!inbox && !creating && selected && (
+          {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
                 <Button
@@ -1152,7 +1190,7 @@ export function Workspace() {
                 id="thread-details"
                 computer={selectedComputer}
                 connection={connection}
-                session={!inbox && !creating && selected ? selected : null}
+                session={!browsing && !creating && selected ? selected : null}
                 onComputers={() => setSettingsPage('computers')}
                 onFiles={openFiles}
                 usage={
@@ -1180,6 +1218,21 @@ export function Workspace() {
               onStart={startThread}
               onStartPipeline={startPipelineTask}
             />
+          ) : pipelinesView ? (
+            <Suspense
+              fallback={
+                <p role="status" className="p-6 text-xs text-muted-foreground">
+                  Loading pipelines…
+                </p>
+              }
+            >
+              <PipelineDefinitions
+                computers={store.computers}
+                hostId={selected?.hostId ?? threadSetup.hostId}
+                directory={selected?.directory ?? threadSetup.directory}
+                api={window.nesvo.pipelines}
+              />
+            </Suspense>
           ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
@@ -1225,21 +1278,6 @@ export function Workspace() {
                 )}
                 focusTarget={sessionTarget}
                 workers={workers}
-                pipeline={
-                  selectedRun && (
-                    <PipelineStrip
-                      run={selectedRun}
-                      steps={selectedRunSteps}
-                      selectedIndex={panel === 'step' ? stepIndex : null}
-                      connected={store.hostReady(selectedHostId)}
-                      pending={!!pipelinePending[entityKey(selectedRun)]}
-                      error={pipelineErrors[entityKey(selectedRun)] ?? ''}
-                      onSelectStep={openStep}
-                      onStop={() => void controlPipeline('stop')}
-                      onResume={() => void controlPipeline('resume')}
-                    />
-                  )
-                }
                 results={
                   <SessionReviews
                     {...reviewDecisionProps}
@@ -1338,7 +1376,7 @@ export function Workspace() {
             </section>
           )}
           {(panel === 'files' || panel === 'skills') &&
-            !inbox &&
+            !browsing &&
             !creating &&
             selected &&
             !store.hostReady(selectedHostId) && (
@@ -1377,7 +1415,7 @@ export function Workspace() {
             </Suspense>
           )}
           {panel === 'files' &&
-            !inbox &&
+            !browsing &&
             !creating &&
             selected &&
             store.hostReady(selectedHostId) && (
@@ -1401,26 +1439,35 @@ export function Workspace() {
                 />
               </Suspense>
             )}
-          {visiblePanel === 'step' &&
-            !inbox &&
+          {visiblePanel === 'pipeline' &&
+            !browsing &&
             !creating &&
-            selectedRun &&
-            stepIndex !== null && (
+            selectedRun && (
               <Suspense
                 fallback={
                   <aside
                     role="status"
                     className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
                   >
-                    Loading step result…
+                    Loading pipeline…
                   </aside>
                 }
               >
-                <PipelineStepResult
+                <PipelinePanel
+                  key={entityKey(selectedRun)}
                   run={selectedRun}
                   steps={selectedRunSteps}
-                  index={stepIndex}
+                  selectedIndex={stepIndex}
+                  connected={store.hostReady(selectedHostId)}
+                  pending={!!pipelinePending[entityKey(selectedRun)]}
+                  error={pipelineErrors[entityKey(selectedRun)] ?? ''}
                   api={window.nesvo.pipelines}
+                  onSelectStep={setStepIndex}
+                  onStop={() => void controlPipeline('stop')}
+                  onResume={() => void controlPipeline('resume')}
+                  onConfirmAction={stepId =>
+                    void controlPipeline('confirm', stepId)
+                  }
                   onClose={closeDiff}
                   onInbox={openInbox}
                   onSession={select}
@@ -1428,7 +1475,7 @@ export function Workspace() {
               </Suspense>
             )}
           {panel === 'skills' &&
-            !inbox &&
+            !browsing &&
             !creating &&
             selected &&
             store.hostReady(selectedHostId) && (
