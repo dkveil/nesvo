@@ -783,11 +783,16 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               const bound = store.get(request.input.sessionId);
               if (
                 bound?.pipelineRunId &&
-                bound.runId === request.input.runId &&
+                sessions.isPipelineTurnActive(bound.id, request.input.runId) &&
                 pipelineRunStore.getRun(bound.pipelineRunId)?.sessionId ===
                   bound.id
-              )
-                pipelines.stop(bound.pipelineRunId);
+              ) {
+                try {
+                  pipelines.stop(bound.pipelineRunId);
+                } catch {
+                  sessions.stopActive(bound.id);
+                }
+              }
               return {
                 type: 'session',
                 id: request.id,

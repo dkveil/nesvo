@@ -212,8 +212,17 @@ export class SessionService {
         'invalid-request',
         'This session is not part of a pipeline task.',
       );
-    if (session.messages.some(message => message.id === turn.messageId))
+    const existing = session.messages.find(
+      message => message.id === turn.messageId,
+    );
+    if (existing) {
+      if (existing.author !== 'operator' || existing.origin !== 'pipeline')
+        throw new SessionError(
+          'invalid-request',
+          'This message ID is already in use.',
+        );
       return 'sent';
+    }
     if (this.isBusy() || this.unsaved.size) return 'busy';
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
@@ -240,6 +249,21 @@ export class SessionService {
     messageId: string,
   ): 'sent' | 'busy' {
     return this.sendPipelineTurn({ sessionId, messageId, text });
+  }
+
+  isPipelineTurnActive(sessionId: string, runId: string): boolean {
+    const active = this.active.get(sessionId);
+    return (
+      !!active &&
+      !active.finalizing &&
+      active.session.runId === runId &&
+      active.session.messages.some(
+        message =>
+          message.runId === runId &&
+          message.author === 'operator' &&
+          message.origin === 'pipeline',
+      )
+    );
   }
 
   stopActive(sessionId: string): void {

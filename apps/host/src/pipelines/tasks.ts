@@ -28,6 +28,7 @@ import {
 import {
   WorkspaceIsolationError,
   createTaskWorktree,
+  removeTaskWorktree,
 } from '../workspace/isolation';
 import {
   DefinitionError,
@@ -68,7 +69,15 @@ type TaskStore = Pick<
 
 type TaskRunner = Pick<PipelineRunner, 'advanceRun' | 'waitingForIdle'>;
 
-export type TaskWorktrees = typeof createTaskWorktree;
+export type TaskWorktrees = {
+  create: typeof createTaskWorktree;
+  remove: typeof removeTaskWorktree;
+};
+
+const gitWorktrees: TaskWorktrees = {
+  create: createTaskWorktree,
+  remove: removeTaskWorktree,
+};
 
 export class SpecSnapshots {
   private readonly root: string;
@@ -184,10 +193,12 @@ export const bindRunEvents = (
 ): { idle: () => void; release: () => void } => {
   const idle = () => {
     if (sessions.isBusy()) return;
-    for (const runId of runner.waitingForIdle()) void runner.advanceRun(runId);
+    for (const runId of runner.waitingForIdle())
+      void runner.advanceRun(runId).catch(() => undefined);
   };
   const release = sessions.onRunFinished((finished: RunFinished) => {
-    if (finished.pipelineRunId) void runner.advanceRun(finished.pipelineRunId);
+    if (finished.pipelineRunId)
+      void runner.advanceRun(finished.pipelineRunId).catch(() => undefined);
     idle();
   });
   return { idle, release };
@@ -308,7 +319,7 @@ export class PipelineTasks {
     let isolation: PipelineIsolation | null = null;
     if (input.isolation === 'worktree') {
       try {
-        isolation = await (this.ports.worktrees ?? createTaskWorktree)({
+        isolation = await this.worktrees.create({
           projectDirectory: projectRoot,
           dataDirectory: this.ports.dataDirectory,
           slug: taskSlug(title),
@@ -322,8 +333,53 @@ export class PipelineTasks {
           'The task worktree could not be created. Try again.',
         );
       }
-      this.ensureIdle(projectRoot);
     }
+    try {
+      return this.record(input, {
+        runId,
+        title,
+        projectRoot,
+        loaded,
+        pipeline,
+        isolation,
+      });
+    } catch (error) {
+      if (isolation && !this.ports.store.getRun(runId))
+        await this.worktrees
+          .remove({
+            projectDirectory: projectRoot,
+            dataDirectory: this.ports.dataDirectory,
+            worktree: isolation.worktree,
+            signal: new AbortController().signal,
+          })
+          .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private get worktrees(): TaskWorktrees {
+    return this.ports.worktrees ?? gitWorktrees;
+  }
+
+  private record(
+    input: StartPipelineTaskInput,
+    {
+      runId,
+      title,
+      projectRoot,
+      loaded,
+      pipeline,
+      isolation,
+    }: {
+      runId: string;
+      title: string;
+      projectRoot: string;
+      loaded: LoadedSpec;
+      pipeline: ResolvedPipeline;
+      isolation: PipelineIsolation | null;
+    },
+  ): PipelineRun {
+    this.ensureIdle(projectRoot);
     const runDirectory = isolation
       ? this.resolveDirectory(isolation.worktree)
       : projectRoot;

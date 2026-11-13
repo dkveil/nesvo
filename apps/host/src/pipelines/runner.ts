@@ -577,7 +577,7 @@ export class PipelineRunner {
     if (awaited && DEAD_TURN_STATES.includes(turn(awaited)))
       throw new PipelineRunError(
         'invalid-request',
-        `The ${TURN_LABELS[awaited]} turn ended before it finished. Continue in the session; the run does not repeat a turn.`,
+        `The ${TURN_LABELS[awaited]} turn did not finish, and a run never repeats a turn. Start a new task.`,
       );
     const now = this.timestamp();
     const next: PipelineRun = {
@@ -714,7 +714,7 @@ export class PipelineRunner {
   }
 
   private setTimer(callback: () => void, delayMs: number): unknown {
-    return this.clock.setTimer
+    return this.clock.setTimer && this.clock.clearTimer
       ? this.clock.setTimer(callback, delayMs)
       : setTimeout(callback, delayMs);
   }
@@ -723,7 +723,8 @@ export class PipelineRunner {
     const entry = this.busy.get(runId);
     if (!entry) return;
     this.busy.delete(runId);
-    if (this.clock.setTimer) this.clock.clearTimer?.(entry.timer);
+    if (this.clock.setTimer && this.clock.clearTimer)
+      this.clock.clearTimer(entry.timer);
     else clearTimeout(entry.timer as ReturnType<typeof setTimeout>);
   }
 
