@@ -4,6 +4,8 @@ import type { GitBranch } from '@nesvo/contracts';
 
 const BRANCH_READ_TIMEOUT_MS = 2000;
 const MAX_READER_OUTPUT_BYTES = 16 * 1024;
+const MAX_LIVE_READERS = 4;
+let liveReaders = 0;
 const noBranch: GitBranch = { kind: 'none' };
 
 export class GitBranchError extends Error {
@@ -21,10 +23,13 @@ function readGitHeadInChild(): void {
   const maxBytes = 4096;
   const flags =
     fs.constants.O_RDONLY |
-    (process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK);
+    (process.platform === 'win32'
+      ? 0
+      : fs.constants.O_NONBLOCK | fs.constants.O_NOCTTY);
   const readSmallFile = (file: string): string | null => {
     let descriptor: number | null = null;
     try {
+      if (!fs.statSync(file).isFile()) return null;
       descriptor = fs.openSync(file, flags);
       const info = fs.fstatSync(descriptor);
       if (!info.isFile() || info.size > maxBytes) return null;
@@ -81,7 +86,7 @@ function readGitHeadInChild(): void {
 
 function parseGitHead(content: string): GitBranch {
   const head = content.trim();
-  const name = /^ref:[ \t]*refs\/heads\/(\S+)$/.exec(head)?.[1];
+  const name = /^ref:[ \t]*refs\/heads\/([^\s\p{Cc}\p{Cf}]+)$/u.exec(head)?.[1];
   if (name && name.length <= 255) return { kind: 'branch', name };
   if (/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(head))
     return { kind: 'detached', sha: head.slice(0, 7) };
@@ -109,12 +114,25 @@ export function readGitBranch(
   signal: AbortSignal,
 ): Promise<GitBranch> {
   signal.throwIfAborted();
+  if (liveReaders >= MAX_LIVE_READERS)
+    return Promise.reject(
+      new GitBranchError('unavailable', 'Too many Git branch reads are stuck.'),
+    );
   const child = spawn(process.execPath, readerArguments(directory), {
     env: readerEnvironment(),
     shell: false,
     stdio: ['ignore', 'pipe', 'ignore'],
     windowsHide: true,
   });
+  liveReaders++;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    liveReaders--;
+  };
+  child.once('exit', release);
+  child.once('error', release);
   return new Promise<GitBranch>((resolve, reject) => {
     let output = '';
     let settled = false;

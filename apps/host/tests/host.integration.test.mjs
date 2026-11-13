@@ -4915,6 +4915,10 @@ test(
       'gitdir: ../linked-git/worktree\n',
     );
     await seedHead(join(directory, 'malformed', '.git'), 'ref: refs/heads/\n');
+    await seedHead(
+      join(directory, 'bidirectional', '.git'),
+      'ref: refs/heads/main\u202egpj\n',
+    );
     await mkdir(join(directory, 'plain'), { recursive: true });
     const idle = new AbortController().signal;
     for (const [target, expected] of [
@@ -4923,6 +4927,7 @@ test(
       ['detached', { kind: 'detached', sha: 'ab12cd3' }],
       ['linked', { kind: 'branch', name: 'linked' }],
       ['malformed', { kind: 'none' }],
+      ['bidirectional', { kind: 'none' }],
       ['plain', { kind: 'none' }],
     ])
       assert.deepEqual(
@@ -4959,6 +4964,17 @@ test(
     await assert.rejects(pending, /in time/);
     assert.ok(Date.now() - aborting < 500, String(Date.now() - aborting));
     await processesGone([hung], tracked);
+    await rm(pidFile);
+    const stuck = Array.from({ length: 4 }, () =>
+      readGitBranch(directory, idle),
+    );
+    await assert.rejects(readGitBranch(directory, idle), /stuck/);
+    await readerPid();
+    const settled = await Promise.allSettled(stuck);
+    assert.equal(
+      settled.every(result => result.status === 'rejected'),
+      true,
+    );
   },
 );
 
