@@ -1,6 +1,7 @@
 export type WorkspaceLocation = {
   selectedId: string;
   inbox: boolean;
+  automation: string;
   diff: { reviewId: string; path?: string } | null;
 };
 
@@ -10,7 +11,17 @@ const entityIdentifier = (value: string) =>
   identifier.test(value) ||
   (value.split('/').length === 2 &&
     value.split('/').every(part => identifier.test(part)));
-const initial: WorkspaceLocation = { selectedId: '', inbox: false, diff: null };
+const initial: WorkspaceLocation = {
+  selectedId: '',
+  inbox: false,
+  automation: '',
+  diff: null,
+};
+const automationTarget = (value: unknown) =>
+  typeof value === 'string' &&
+  (value === '' || value === 'list' || entityIdentifier(value))
+    ? value
+    : '';
 
 export function readWorkspaceLocation(): WorkspaceLocation {
   try {
@@ -40,7 +51,12 @@ export function readWorkspaceLocation(): WorkspaceLocation {
           ...(typeof target.path === 'string' ? { path: target.path } : {}),
         };
     }
-    return { selectedId: saved.selectedId, inbox: saved.inbox, diff };
+    return {
+      selectedId: saved.selectedId,
+      inbox: saved.inbox,
+      automation: saved.inbox ? '' : automationTarget(saved.automation),
+      diff,
+    };
   } catch {
     return initial;
   }
