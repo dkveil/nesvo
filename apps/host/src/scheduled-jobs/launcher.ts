@@ -102,6 +102,13 @@ const toRunOutcome = (
     };
   if (timedOut && (outcome.state === 'stopped' || outcome.state === 'failed'))
     return { status: 'failed', reason: 'timeout', reviewId: null, resetAt: null };
+  if (outcome.state === 'failed' && outcome.limit)
+    return {
+      status: 'unavailable',
+      reason: 'limit',
+      reviewId: null,
+      resetAt: outcome.limit.resetsAt,
+    };
   if (outcome.state === 'stopped')
     return { status: 'stopped', reason: null, reviewId: null, resetAt: null };
   if (outcome.state === 'interrupted')
@@ -239,7 +246,12 @@ export class SessionLauncher implements ScheduledJobLauncher {
     void this.sessions
       .finished(sessionId, runId)
       .then(
-        outcome => toRunOutcome(outcome, timedOut),
+        outcome => {
+          const result = toRunOutcome(outcome, timedOut);
+          if (result.resetAt)
+            this.limits.remember(scheduledJob.provider, result.resetAt);
+          return result;
+        },
         (): ScheduledJobRunOutcome => ({
           status: 'failed',
           reason: null,

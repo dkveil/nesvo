@@ -18,7 +18,11 @@ import {
   type SkillReference,
   type SessionInterruption,
 } from '@nesvo/contracts';
-import { startClaude, type ClaudeEvent } from '../providers/claude';
+import {
+  startClaude,
+  type ClaudeEvent,
+  type ClaudeResult,
+} from '../providers/claude';
 import {
   inspectCodex,
   startCodex,
@@ -87,7 +91,10 @@ export type RunOutcome = {
   state: Session['status'];
   interruption: SessionInterruption['reason'] | null;
   reviewId: string | null;
+  limit: { resetsAt: string | null } | null;
 };
+
+const MAX_REMEMBERED_LIMITS = 100;
 
 type WorkerResult = {
   delegationId: string;
@@ -101,6 +108,7 @@ export class SessionService {
   private readonly active = new Map<string, ActiveRun>();
   private readonly waiters = new Map<string, (result: WorkerResult) => void>();
   private readonly unsaved = new Map<string, Session>();
+  private readonly limits = new Map<string, { resetsAt: string | null }>();
   private closing = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
@@ -320,7 +328,18 @@ export class SessionService {
         message.state === 'completed' && review?.runId === runId
           ? review.id
           : null,
+      limit:
+        message.state === 'failed' ? (this.limits.get(runId) ?? null) : null,
     };
+  }
+
+  private rememberLimit(
+    runId: string,
+    limit: { resetsAt: string | null },
+  ): void {
+    this.limits.set(runId, limit);
+    if (this.limits.size > MAX_REMEMBERED_LIMITS)
+      this.limits.delete(this.limits.keys().next().value!);
   }
 
   async createWithEffort(
@@ -834,6 +853,8 @@ export class SessionService {
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
+        const { limit } = result as ClaudeResult;
+        if (limit && session.runId) this.rememberLimit(session.runId, limit);
         if (result.status === 'completed' || result.status === 'failed') {
           session.interruption = null;
           session.messages.at(-1)!.interruption = null;

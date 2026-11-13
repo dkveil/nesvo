@@ -31,6 +31,7 @@ export type ClaudeResult = {
   error: string | null;
   interruption?: 'provider-disconnected';
   usage?: TurnUsage;
+  limit?: { resetsAt: string | null };
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -703,6 +704,7 @@ export function startClaude(options: {
       let initialized = false;
       let providerFailure: string | null = null;
       let rateLimitFailure: string | null = null;
+      let rateLimitResetsAt: string | null = null;
       const fail = (message: string) => {
         failure ??= safeMessage(message);
         void running.stop();
@@ -932,10 +934,13 @@ export function startClaude(options: {
                 : typeof reset === 'string'
                   ? new Date(reset)
                   : null;
-            rateLimitFailure =
+            rateLimitResetsAt =
               date && Number.isFinite(date.getTime())
-                ? `Claude usage limit reached. Resets at ${date.toISOString()}.`
-                : 'Claude usage limit reached. Check Claude Code for the reset time.';
+                ? date.toISOString()
+                : null;
+            rateLimitFailure = rateLimitResetsAt
+              ? `Claude usage limit reached. Resets at ${rateLimitResetsAt}.`
+              : 'Claude usage limit reached. Check Claude Code for the reset time.';
           }
         } else if (value.type === 'error') {
           const error = object(value.error);
@@ -1003,6 +1008,9 @@ export function startClaude(options: {
           status: 'failed',
           error: providerFailure ?? rateLimitFailure,
           ...reported,
+          ...(rateLimitFailure
+            ? { limit: { resetsAt: rateLimitResetsAt } }
+            : {}),
         };
       if (stopped && resultSeen && successful && lastText)
         return { status: 'completed', error: null, ...reported };
