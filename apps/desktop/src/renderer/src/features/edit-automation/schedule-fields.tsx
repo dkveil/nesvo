@@ -106,6 +106,7 @@ export function ScheduleFields({
           </Label>
           <Input
             id="automation-minutes"
+            data-field="minutes"
             inputMode="numeric"
             value={values.minutes}
             aria-invalid={!!errors.minutes}
@@ -152,6 +153,7 @@ export function ScheduleFields({
             </Label>
             <Input
               id="automation-time"
+              data-field="time"
               type="time"
               value={values.time}
               aria-invalid={!!errors.time}
@@ -179,6 +181,10 @@ export function ScheduleFields({
         >
           <SelectTrigger
             id="automation-time-zone"
+            data-field="timeZone"
+            aria-describedby={
+              errors.timeZone ? 'automation-time-zone-error' : undefined
+            }
             size="sm"
             aria-invalid={!!errors.timeZone}
             className="w-full max-w-64 text-[13px]"
