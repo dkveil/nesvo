@@ -8049,12 +8049,19 @@ test(
       new modules.ReviewStore(database),
       () => jobs.interruptActiveRuns(clock.now().toISOString()),
     );
-    const shortTimeoutMs = 400;
+    const heldDeadlines = new Set();
     const deadlines = {
       now: () => new Date(),
-      setTimer: (callback, delayMs) =>
-        setTimeout(callback, delayMs <= 5 * 60_000 ? shortTimeoutMs : delayMs),
-      clearTimer: timer => clearTimeout(timer),
+      setTimer: (callback, delayMs) => {
+        if (delayMs > 5 * 60_000) return setTimeout(callback, delayMs);
+        const deadline = { callback };
+        heldDeadlines.add(deadline);
+        return deadline;
+      },
+      clearTimer: timer => {
+        if (heldDeadlines.delete(timer)) return;
+        clearTimeout(timer);
+      },
     };
     scheduler = new modules.ScheduledJobService(
       jobs,
@@ -8316,12 +8323,12 @@ test(
         const turns = (await lines(turnLog)).length;
         await writeFile(
           pidFile + '.catalog',
-          JSON.stringify({ efforts: ['low', 'high'] }),
+          JSON.stringify({ efforts: ['low', 'medium'] }),
         );
         const codex = save('Withdrawn effort', {
           provider: 'codex',
           model: 'fixture-codex',
-          effort: 'medium',
+          effort: 'high',
         });
         assert.deepEqual(
           (({ status, reason, sessionId }) => [status, reason, sessionId])(
@@ -8388,10 +8395,36 @@ test(
         const held = await holdUntilRunning(
           save('Slow digest', { prompt: 'fixture:hold', timeoutMinutes: 5 }),
         );
+        const [deadline] = heldDeadlines;
+        assert.equal(heldDeadlines.size, 1);
+        log.push(`${new Date().toISOString()} run deadline reached`);
+        deadline.callback();
         const run = await finishedRun(held.id);
+        assert.equal(heldDeadlines.size, 0);
         assert.deepEqual([run.status, run.reason], ['failed', 'timeout']);
         assert.equal(sessionById(held.sessionId).status, 'stopped');
         await processesGone(held.pids, tracked);
+      },
+    );
+
+    await t.test(
+      'closing the host interrupts a running scheduled job without a retry',
+      async () => {
+        const held = await holdUntilRunning(
+          save('Interrupted digest', { prompt: 'fixture:hold' }),
+        );
+        await scheduler.close();
+        await sessions.close();
+        const run = await finishedRun(held.id);
+        assert.deepEqual([run.status, run.reason], ['interrupted', 'restart']);
+        assert.equal(sessionById(held.sessionId).status, 'interrupted');
+        await processesGone(held.pids, tracked);
+        assert.equal(
+          sessionById(held.sessionId).messages.filter(
+            message => message.author === 'operator',
+          ).length,
+          1,
+        );
       },
     );
 
