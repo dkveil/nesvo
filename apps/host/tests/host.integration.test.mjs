@@ -8745,6 +8745,12 @@ test(
       `---\n${Object.entries(fields)
         .map(([key, value]) => `${key}: ${value}`)
         .join('\n')}\n---\n${body}\n`;
+    const onWindows = process.platform === 'win32';
+    const shellBody = (posix, windows) => (onWindows ? windows : posix);
+    const holdStep = (pidPath, seconds) =>
+      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
+    const samePath = (left, right) =>
+      onWindows ? left.toLowerCase() === right.toLowerCase() : left === right;
     const repository = join(directory, 'repository');
     const markers = join(directory, 'markers');
     const marker = name => join(markers, name);
@@ -8756,13 +8762,19 @@ test(
         name: 'where',
         type: 'command',
         phase: 'pre-done',
-        body: `test "$NESVO_PROJECT_ROOT" = "${repository}"\npwd > "${markers}/where-$NESVO_RUN_ID"`,
+        body: shellBody(
+          `test "$NESVO_PROJECT_ROOT" = "${repository}"\npwd > "${markers}/where-$NESVO_RUN_ID"`,
+          `if not "%NESVO_PROJECT_ROOT%"=="${repository}" exit /b 1\ncd > "${markers}\\where-%NESVO_RUN_ID%"`,
+        ),
       },
       {
         name: 'publish',
         type: 'action',
         phase: 'pre-push',
-        body: `echo '{"url":"https://example.test/change/1"}'`,
+        body: shellBody(
+          `echo '{"url":"https://example.test/change/1"}'`,
+          'echo {"url":"https://example.test/change/1"}',
+        ),
       },
       {
         name: 'approve',
@@ -8775,28 +8787,40 @@ test(
         type: 'command',
         phase: 'pre-done',
         on_fail: 'stop',
-        body: 'echo broken >&2\nexit 3',
+        body: shellBody(
+          'echo broken >&2\nexit 3',
+          'echo broken 1>&2\nexit /b 3',
+        ),
       },
       {
         name: 'gate',
         type: 'command',
         phase: 'plan',
         timeout: '1m',
-        body: `while [ ! -f "${marker('go')}" ]; do sleep 0.05; done`,
+        body: shellBody(
+          `while [ ! -f "${marker('go')}" ]; do sleep 0.05; done`,
+          `:wait\nif exist "${marker('go')}" exit /b 0\nping -n 2 127.0.0.1 >nul\ngoto wait`,
+        ),
       },
       {
         name: 'blocker',
         type: 'command',
         phase: 'pre-done',
         timeout: '10m',
-        body: `echo run >> "${marker('blocker-count')}"\nif [ -f "${marker('resume')}" ]; then echo resumed; else echo $$ > "${marker('blocker.pid')}"; sleep 60; fi`,
+        body: shellBody(
+          `echo run >> "${marker('blocker-count')}"\nif [ -f "${marker('resume')}" ]; then echo resumed; else echo $$ > "${marker('blocker.pid')}"; sleep 60; fi`,
+          `echo run>>"${marker('blocker-count')}"\nif exist "${marker('resume')}" exit /b 0\n${holdStep(marker('blocker.pid'), 60)}`,
+        ),
       },
       {
         name: 'push',
         type: 'action',
         phase: 'pre-done',
         timeout: '10m',
-        body: `echo $$ > "${marker('push.pid')}"\nsleep 60`,
+        body: shellBody(
+          `echo $$ > "${marker('push.pid')}"\nsleep 60`,
+          holdStep(marker('push.pid'), 60),
+        ),
       },
     ];
     const pipelines = {
@@ -8996,9 +9020,11 @@ test(
           item => item.sessionId === session.id,
         );
         assert.equal(review?.status, 'pending');
-        assert.equal(
-          (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
-          run.directory,
+        assert.ok(
+          samePath(
+            (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
+            run.directory,
+          ),
         );
         const where = stepNamed(finished, 'where');
         assert.ok(
@@ -9049,9 +9075,11 @@ test(
           NESVO_RUN_ID: run.id,
           NESVO_PROJECT_ROOT: repository,
         });
-        assert.equal(
-          (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
-          repository,
+        assert.ok(
+          samePath(
+            (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
+            repository,
+          ),
         );
       },
     );
@@ -9209,6 +9237,7 @@ test(
         const pid = Number((await waitForFile(marker('blocker.pid'))).trim());
         owned.add(pid);
         await restart();
+        if (onWindows) process.kill(pid);
         await processesGone([pid], owned);
         const interrupted = await detail(run.id);
         assert.equal(interrupted.run.status, 'interrupted');
@@ -9229,9 +9258,12 @@ test(
             ['blocker', 2, 'passed'],
           ],
         );
-        assert.equal(
-          (await readFile(marker('blocker-count'), 'utf8')).trim(),
-          'run\nrun',
+        assert.deepEqual(
+          (await readFile(marker('blocker-count'), 'utf8'))
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(Boolean),
+          ['run', 'run'],
         );
         const session = await sessionOf(run.sessionId);
         assert.equal(operatorMessages(session).length, 1);
@@ -9251,6 +9283,7 @@ test(
         const pid = Number((await waitForFile(marker('push.pid'))).trim());
         owned.add(pid);
         await restart();
+        if (onWindows) process.kill(pid);
         await processesGone([pid], owned);
         const current = await detail(run.id);
         assert.equal(current.run.status, 'needs-attention');
