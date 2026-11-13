@@ -6584,6 +6584,50 @@ test(
       [],
     );
 
+    const redirected = await create({ slug: 'review-notes' });
+    const foreign = join(directory, 'foreign');
+    await git(directory, 'init', '--quiet', foreign);
+    const marker = join(directory, 'fsmonitor-ran');
+    const hook = join(directory, 'fsmonitor-hook.mjs');
+    await writeFile(
+      hook,
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\n`,
+    );
+    const slashed = path => path.replaceAll('\\', '/');
+    await git(
+      foreign,
+      'config',
+      'core.fsmonitor',
+      `"${slashed(process.execPath)}" "${slashed(hook)}"`,
+    );
+    const pointerFile = join(redirected.worktree, '.git');
+    const pointer = await readFile(pointerFile, 'utf8');
+    await writeFile(pointerFile, `gitdir: ${join(foreign, '.git')}\n`);
+    await git(redirected.worktree, 'status', '--porcelain').catch(() => '');
+    const probed = await readFile(marker, 'utf8').catch(() => null);
+    if (process.platform !== 'win32') assert.equal(probed, 'ran');
+    await rm(marker, { force: true });
+    for (const force of [false, true])
+      await assert.rejects(
+        modules.removeTaskWorktree({
+          projectDirectory: project,
+          dataDirectory,
+          worktree: redirected.worktree,
+          force,
+          signal: idle,
+        }),
+        rejection('git-failed'),
+      );
+    await assert.rejects(readFile(marker), { code: 'ENOENT' });
+    await writeFile(pointerFile, pointer);
+    await modules.removeTaskWorktree({
+      projectDirectory: project,
+      dataDirectory,
+      worktree: redirected.worktree,
+      signal: idle,
+    });
+    await assert.rejects(readFile(marker), { code: 'ENOENT' });
+
     const standInRecord = join(project, 'git-stand-in.json');
     const standIn = async () => {
       const deadline = Date.now() + 5000;
@@ -6628,6 +6672,13 @@ test(
     await processesGone([cancelled.pid, cancelled.descendant], tracked);
     await rm(standInRecord);
     delete process.env.NESVO_GIT_EXECUTABLE;
+    const searchPath = process.env.PATH;
+    process.env.PATH = join(directory, 'no-tools');
+    try {
+      await assert.rejects(create({}), rejection('git-unavailable'));
+    } finally {
+      process.env.PATH = searchPath;
+    }
 
     const chatty = await modules.runOwnedProcess({
       command: process.execPath,

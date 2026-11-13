@@ -99,6 +99,7 @@ type GitCall = {
   cwd: string;
   timeoutMs: number;
   signal: AbortSignal;
+  untranslated?: boolean;
 };
 
 function fail(code: WorkspaceIsolationErrorCode, message: string): never {
@@ -181,10 +182,15 @@ async function runGit({
   cwd,
   timeoutMs,
   signal,
+  untranslated = false,
 }: GitCall): Promise<OwnedProcessResult> {
   const executable = gitExecutable();
   const environment = gitEnvironment();
   if (executable.prefix.length > 0) environment.ELECTRON_RUN_AS_NODE = '1';
+  if (untranslated) {
+    environment.LC_ALL = 'C';
+    delete environment.LANGUAGE;
+  }
   let result: OwnedProcessResult;
   try {
     result = await runOwnedProcess({
@@ -200,7 +206,11 @@ async function runGit({
     if (!(error instanceof OwnedProcessError)) throw error;
     if (error.code === 'cancelled')
       return fail('cancelled', 'The Git operation was cancelled.');
-    if (error.code === 'spawn-failed' && error.systemCode === 'ENOENT')
+    if (
+      error.code === 'spawn-failed' &&
+      error.systemCode === 'ENOENT' &&
+      !pathExists(executable.command)
+    )
       return fail('git-unavailable', 'Git could not be started.');
     return fail('git-failed', 'The Git process did not finish cleanly.');
   }
@@ -365,12 +375,25 @@ export async function createTaskWorktree({
     fail('worktree-exists', 'A worktree for this task already exists.');
   if (await branchExists(repository, branch, signal))
     fail('branch-exists', `The branch ${branch} already exists.`);
-  const result = await runGit({
-    args: ['worktree', 'add', worktree, '-b', branch, base],
-    cwd: repository,
-    timeoutMs: GIT_CHANGE_TIMEOUT_MS,
-    signal,
-  });
+  let result: OwnedProcessResult;
+  try {
+    result = await runGit({
+      args: ['worktree', 'add', worktree, '-b', branch, base],
+      cwd: repository,
+      timeoutMs: GIT_CHANGE_TIMEOUT_MS,
+      signal,
+    });
+  } catch (error) {
+    if (
+      error instanceof WorkspaceIsolationError &&
+      (error.code === 'timed-out' || error.code === 'cancelled')
+    )
+      fail(
+        error.code,
+        `${error.message} The worktree ${worktree} and branch ${branch} may be partly created; remove them explicitly.`,
+      );
+    throw error;
+  }
   if (result.code !== 0) fail('git-failed', gitMessage(result));
   return { worktree: realPathOf(worktree), branch, base };
 }
@@ -407,20 +430,6 @@ export async function removeTaskWorktree({
       'not-a-task-worktree',
       'This directory is not a task worktree of the project.',
     );
-  if (!force && realDirectory(target.worktree)) {
-    const status = await runGit({
-      args: ['status', '--porcelain'],
-      cwd: target.worktree,
-      timeoutMs: GIT_CHANGE_TIMEOUT_MS,
-      signal,
-    });
-    if (status.code !== 0) fail('git-failed', gitMessage(status));
-    if (status.stdout.trim())
-      fail(
-        'dirty-worktree',
-        'The worktree has uncommitted changes. Commit them or remove it with force.',
-      );
-  }
   const result = await runGit({
     args: [
       'worktree',
@@ -431,7 +440,17 @@ export async function removeTaskWorktree({
     cwd: projectPath(projectDirectory),
     timeoutMs: GIT_CHANGE_TIMEOUT_MS,
     signal,
+    untranslated: true,
   });
+  if (
+    result.code !== 0 &&
+    !force &&
+    /contains modified or untracked files/.test(result.stderr)
+  )
+    fail(
+      'dirty-worktree',
+      'The worktree has uncommitted changes. Commit them or remove it with force.',
+    );
   if (result.code !== 0) fail('git-failed', gitMessage(result));
   return target;
 }
