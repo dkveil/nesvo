@@ -646,6 +646,7 @@ try {
   assert.deepEqual(localComputer.capabilities, [
     'scheduled-jobs',
     'reasoning-effort',
+    'pipelines',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -2441,11 +2442,7 @@ try {
   const pipelineComputer = (
     await restartedPage.evaluate(() => window.nesvo.listComputers())
   ).find(computer => computer.id === 'local');
-  assert.equal(pipelineComputer.capabilities.includes('pipelines'), false);
-  await assert.rejects(
-    pipelineCall('listDefinitions', 'local', { directory }),
-    /Pipelines are not available on this computer yet/,
-  );
+  assert.equal(pipelineComputer.capabilities.includes('pipelines'), true);
   await assert.rejects(
     pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
   );
@@ -2453,11 +2450,71 @@ try {
     pipelineCall('listDefinitions', 'not-a-host', { directory }),
     /Invalid UUID/,
   );
+  const pipelineProject = join(directory, 'pipeline-project');
+  const pipelineRoot = join(pipelineProject, '.agents', 'pipelines');
+  for (const folder of [
+    join(pipelineProject, '.git'),
+    join(pipelineRoot, 'steps'),
+    join(pipelineRoot, 'pipelines'),
+    join(pipelineProject, '.agents', 'tasks'),
+  ])
+    await mkdir(folder, { recursive: true });
+  await writeFile(
+    join(pipelineRoot, 'steps', 'smoke-check.md'),
+    '---\nname: smoke-check\ntype: command\nphase: pre-done\n---\necho ok\n',
+  );
+  await writeFile(
+    join(pipelineRoot, 'pipelines', 'smoke.md'),
+    '---\nname: smoke\nsteps: [smoke-check]\n---\n',
+  );
+  await writeFile(
+    join(pipelineProject, '.agents', 'tasks', 'smoke.md'),
+    '---\npipeline: smoke\ntitle: Smoke pipeline task\n---\nCheck the pipeline path.\n',
+  );
+  await restartedPage.evaluate(() => {
+    window.smokePipelineRuns = [];
+    window.nesvo.subscribe(event => {
+      if (event.type === 'pipeline-run-changed')
+        window.smokePipelineRuns.push(event.run);
+    });
+  });
+  const pipelineRun = await pipelineCall('startTask', 'local', {
+    specPath: join('.agents', 'tasks', 'smoke.md'),
+    pipelineName: 'smoke',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'read-only',
+    directory: pipelineProject,
+    isolation: 'none',
+    gateProvider: 'Claude Code',
+    gateModel: 'sonnet',
+  });
+  assert.equal(pipelineRun.hostId, 'local');
+  assert.ok(pipelineRun.sessionId);
+  await restartedPage.waitForFunction(
+    id =>
+      window.smokePipelineRuns.some(
+        run => run.id === id && run.status === 'passed',
+      ),
+    pipelineRun.id,
+    { timeout: 30_000 },
+  );
+  const pipelineDetail = await pipelineCall('getRun', 'local', pipelineRun.id);
+  assert.equal(pipelineDetail.run.status, 'passed');
+  assert.deepEqual(
+    pipelineDetail.steps.map(step => [step.name, step.state]),
+    [['smoke-check', 'passed']],
+  );
   console.log(
     JSON.stringify({
       pipelines: {
         capabilities: pipelineComputer.capabilities,
-        refusedLocally: true,
+        runId: pipelineRun.id,
+        status: pipelineDetail.run.status,
+        rendererEvents: await restartedPage.evaluate(
+          id => window.smokePipelineRuns.filter(run => run.id === id).length,
+          pipelineRun.id,
+        ),
       },
     }),
   );
