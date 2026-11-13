@@ -770,6 +770,7 @@ export function Workspace() {
     connection === 'ready' && !store.loading && !store.error;
   const sidebarProps = {
     sessions: store.sessions,
+    pipelineRuns: store.pipelineRuns,
     computers: store.computers,
     hostName: selectedComputer?.name ?? 'Local',
     onComputers: () => {
