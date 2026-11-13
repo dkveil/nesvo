@@ -4816,9 +4816,17 @@ test(
 test('Skill YAML limits are enforced on the event stream before construction', async () => {
   const { loadBoundedYaml, YamlLimitError, yamlLimits } =
     await import('../src/skills/yaml-limits.ts');
-  const flowNesting = depth => `${'['.repeat(depth)}${']'.repeat(depth)}`;
-  const blockNesting = depth =>
-    `${Array.from({ length: depth }, (_, level) => `${'  '.repeat(level)}k:`).join('\n')} 1`;
+  const indented = (depth, line) => ' '.repeat(depth * 2) + line;
+  const nestings = {
+    flowSequence: depth => `${'['.repeat(depth)}1${']'.repeat(depth)}`,
+    flowMapping: depth => `${'{a: '.repeat(depth)}1${'}'.repeat(depth)}`,
+    emptyFlow: depth => `${'['.repeat(depth)}${']'.repeat(depth)}`,
+    blockSequence: depth =>
+      `${Array.from({ length: depth }, (_, level) => indented(level, '-')).join('\n')} 1`,
+    compactSequence: depth => `${'- '.repeat(depth)}1`,
+    blockMapping: depth =>
+      `${Array.from({ length: depth }, (_, level) => indented(level, 'k:')).join('\n')} 1`,
+  };
   const sequenceOfScalars = count =>
     Array.from({ length: count }, (_, index) => `- v${index}`).join('\n');
   const rejectsWith = (source, kind) =>
@@ -4833,25 +4841,36 @@ test('Skill YAML limits are enforced on the event stream before construction', a
     tags: ['a', 'b'],
   });
   assert.equal(loadBoundedYaml(''), undefined);
+  assert.deepEqual(loadBoundedYaml('a:\nb: ~\nc: True\nd: 0x1F'), {
+    a: null,
+    b: null,
+    c: true,
+    d: 31,
+  });
 
-  assert.doesNotThrow(() => loadBoundedYaml(flowNesting(12)));
-  assert.doesNotThrow(() => loadBoundedYaml(blockNesting(12)));
-  rejectsWith(flowNesting(13), 'depth');
-  rejectsWith(blockNesting(13), 'depth');
+  for (const [name, nest] of Object.entries(nestings)) {
+    assert.doesNotThrow(() => loadBoundedYaml(nest(12)), name);
+    assert.throws(
+      () => loadBoundedYaml(nest(13)),
+      error => error instanceof YamlLimitError && error.kind === 'depth',
+      name,
+    );
+  }
 
   assert.equal(loadBoundedYaml(sequenceOfScalars(511)).length, 511);
   rejectsWith(sequenceOfScalars(512), 'nodes');
 
-  const duplicateKeyAfterBudget = `a: 1\na: 2\n${sequenceOfScalars(600)}`;
+  const duplicateKeys = 'a: 1\na: 2\n';
   assert.throws(
-    () => loadBoundedYaml(`${duplicateKeyAfterBudget}`),
-    error => !(error instanceof YamlLimitError),
+    () => loadBoundedYaml(duplicateKeys),
+    error =>
+      !(error instanceof YamlLimitError) && /duplicat/i.test(error.message),
   );
   rejectsWith(
-    `a: 1\na: 2\nb:\n${sequenceOfScalars(600).replace(/^/gm, '  ')}`,
+    `${duplicateKeys}b:\n${sequenceOfScalars(600).replace(/^/gm, '  ')}`,
     'nodes',
   );
-  rejectsWith(`a: 1\na: 2\nb: ${flowNesting(13)}`, 'depth');
+  rejectsWith(`${duplicateKeys}b: ${nestings.flowSequence(13)}`, 'depth');
 
   rejectsWith('a: 1\n---\nb: 2', 'documents');
   assert.throws(() => loadBoundedYaml('a: &x 1\nb: *x'), /alias/i);

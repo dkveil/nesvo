@@ -1,10 +1,7 @@
 import {
+  CORE_SCHEMA,
   constructFromEvents,
-  EVENT_DOCUMENT,
-  EVENT_MAPPING,
-  EVENT_POP,
-  EVENT_SEQUENCE,
-  JSON_SCHEMA,
+  EVENT_ID,
   parseEvents,
   type Event,
 } from 'js-yaml';
@@ -13,7 +10,7 @@ export const yamlLimits = { depth: 12, nodes: 512 } as const;
 
 export type YamlLimitKind = 'depth' | 'nodes' | 'documents';
 
-const parserDepthIncludingDocument = yamlLimits.depth + 1;
+const parserDepthWithDocumentAndLeaf = yamlLimits.depth + 2;
 
 export class YamlLimitError extends Error {
   readonly kind: YamlLimitKind;
@@ -33,7 +30,7 @@ const limitMessages: Record<YamlLimitKind, string> = {
 
 function parseBoundedEvents(source: string): Event[] {
   try {
-    return parseEvents(source, { maxDepth: parserDepthIncludingDocument });
+    return parseEvents(source, { maxDepth: parserDepthWithDocumentAndLeaf });
   } catch (error) {
     if (/nesting exceeded maxDepth/.test((error as Error).message))
       throw new YamlLimitError('depth');
@@ -46,16 +43,16 @@ function assertWithinLimits(events: Event[]): void {
   let nodes = 0;
   let documents = 0;
   for (const event of events) {
-    if (event.type === EVENT_DOCUMENT) {
+    if (event.type === EVENT_ID.DOCUMENT) {
       if (++documents > 1) throw new YamlLimitError('documents');
       continue;
     }
-    if (event.type === EVENT_POP) {
+    if (event.type === EVENT_ID.POP) {
       if (depth > 0) depth--;
       continue;
     }
     if (++nodes > yamlLimits.nodes) throw new YamlLimitError('nodes');
-    if (event.type === EVENT_SEQUENCE || event.type === EVENT_MAPPING) {
+    if (event.type === EVENT_ID.SEQUENCE || event.type === EVENT_ID.MAPPING) {
       if (++depth > yamlLimits.depth) throw new YamlLimitError('depth');
     }
   }
@@ -66,7 +63,7 @@ export function loadBoundedYaml(source: string): unknown {
   assertWithinLimits(events);
   const [document] = constructFromEvents(events, {
     source,
-    schema: JSON_SCHEMA,
+    schema: CORE_SCHEMA,
     maxAliases: 0,
   });
   return document;
