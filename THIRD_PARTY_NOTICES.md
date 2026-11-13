@@ -58,7 +58,7 @@ SOFTWARE.
 
 ## Skill metadata parser
 
-The host uses js-yaml 4.3.2 to read bounded skill frontmatter. Its MIT license is reproduced below and included in desktop distributions.
+The host uses js-yaml 5.5.0 to read bounded skill frontmatter. Its MIT license is reproduced below and included in desktop distributions.
 
 (The MIT License)
 

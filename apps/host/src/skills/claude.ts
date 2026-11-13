@@ -3,12 +3,12 @@ import { constants } from 'node:fs';
 import { lstat, open, opendir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { JSON_SCHEMA, load } from 'js-yaml';
 import {
   skillLimits,
   type SkillDiscovery,
   type SkillEntry,
 } from '@nesvo/contracts';
+import { loadBoundedYaml } from './yaml-limits';
 
 type Source = SkillEntry['source'];
 type Root = { path: string; source: Source; projectRoot: string | null };
@@ -104,16 +104,7 @@ function parseMetadata(prefix: string): Metadata {
     };
   }
   try {
-    let depth = 0;
-    let nodes = 0;
-    const fields = load(yaml, {
-      schema: JSON_SCHEMA,
-      listener: event => {
-        if (event === 'open' && (++depth > 12 || ++nodes > 512))
-          throw new Error('YAML budget exceeded.');
-        if (event === 'close') depth--;
-      },
-    });
+    const fields = loadBoundedYaml(yaml);
     if (fields !== undefined && fields !== null && !record(fields)) {
       return {
         fields: null,

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants, type BigIntStats } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { JSON_SCHEMA, load } from 'js-yaml';
+import { loadBoundedYaml, YamlLimitError } from './yaml-limits';
 
 export type SkillSnapshot = {
   path: string;
@@ -110,19 +110,11 @@ function yamlMapping(yaml: string): Record<string, unknown> {
       'Skill YAML anchors, aliases and explicit tags are not supported.',
     );
   }
-  let depth = 0;
-  let nodes = 0;
   let parsed: unknown;
   try {
-    parsed = load(yaml, {
-      schema: JSON_SCHEMA,
-      listener: event => {
-        if (event === 'open' && (++depth > 12 || ++nodes > 512))
-          throw new Error('YAML limit.');
-        if (event === 'close') depth--;
-      },
-    });
-  } catch {
+    parsed = loadBoundedYaml(yaml);
+  } catch (error) {
+    if (error instanceof YamlLimitError) throw error;
     throw new Error(
       'Skill YAML could not be parsed within the supported limits.',
     );
