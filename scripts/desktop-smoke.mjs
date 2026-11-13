@@ -2491,7 +2491,7 @@ try {
   await automationEditor.getByRole('button', { name: 'Save' }).click();
   await automationEditor.waitFor({ state: 'hidden' });
   await restartedPage
-    .getByRole('heading', { name: 'Smoke automation', exact: true })
+    .getByRole('region', { name: 'Automation: Smoke automation' })
     .waitFor();
   await automationShell
     .getByRole('button', { name: 'Automations', exact: true })
