@@ -6,6 +6,15 @@ const BRANCH_READ_TIMEOUT_MS = 2000;
 const MAX_READER_OUTPUT_BYTES = 16 * 1024;
 const noBranch: GitBranch = { kind: 'none' };
 
+export class GitBranchError extends Error {
+  code: 'invalid-directory' | 'unavailable';
+
+  constructor(code: 'invalid-directory' | 'unavailable', message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 function readGitHeadInChild(): void {
   const fs = process.getBuiltinModule('node:fs');
   const path = process.getBuiltinModule('node:path');
@@ -46,9 +55,23 @@ function readGitHeadInChild(): void {
     }
     return null;
   };
+  const resolveFolder = (requested: string): string | null => {
+    try {
+      if (!path.isAbsolute(requested) || !fs.statSync(requested).isDirectory())
+        return null;
+      return fs.realpathSync(requested);
+    } catch {
+      return null;
+    }
+  };
+  const folder = resolveFolder(process.argv[1] ?? '');
+  if (folder === null) {
+    process.stdout.write(JSON.stringify({ invalid: true }));
+    return;
+  }
   let head: string | null = null;
   try {
-    const gitDirectory = findGitDirectory(process.argv[1] ?? '');
+    const gitDirectory = findGitDirectory(folder);
     head = gitDirectory ? readSmallFile(path.join(gitDirectory, 'HEAD')) : null;
   } catch {
     head = null;
@@ -71,7 +94,7 @@ function readerArguments(directory: string): string[] {
     throw new Error('NESVO_GIT_HEAD_READER must be an absolute path.');
   return override
     ? [override, directory]
-    : ['-e', `(${readGitHeadInChild.toString()})()`, directory];
+    : ['-e', `(${readGitHeadInChild.toString()})()`, '--', directory];
 }
 
 function readerEnvironment(): NodeJS.ProcessEnv {
@@ -107,7 +130,12 @@ export function readGitBranch(
       child.kill('SIGKILL');
       child.stdout.destroy();
       child.unref();
-      finish(new Error('The Git branch could not be read in time.'));
+      finish(
+        new GitBranchError(
+          'unavailable',
+          'The Git branch could not be read in time.',
+        ),
+      );
     };
     const timer = setTimeout(cutOff, BRANCH_READ_TIMEOUT_MS);
     signal.addEventListener('abort', cutOff, { once: true });
@@ -117,28 +145,41 @@ export function readGitBranch(
       if (output.length > MAX_READER_OUTPUT_BYTES) cutOff();
     });
     child.once('error', () =>
-      finish(new Error('The Git branch could not be read.')),
+      finish(
+        new GitBranchError('unavailable', 'The Git branch could not be read.'),
+      ),
     );
     child.once('close', code => {
-      const head = code === 0 ? parsedHead(output) : undefined;
-      finish(
-        head === undefined
-          ? new Error('The Git branch could not be read.')
-          : head === null
-            ? noBranch
-            : parseGitHead(head),
-      );
+      const report = code === 0 ? parsedReport(output) : undefined;
+      if (report === undefined)
+        finish(
+          new GitBranchError(
+            'unavailable',
+            'The Git branch could not be read.',
+          ),
+        );
+      else if ('invalid' in report)
+        finish(
+          new GitBranchError(
+            'invalid-directory',
+            'The directory does not exist or cannot be accessed.',
+          ),
+        );
+      else finish(report.head === null ? noBranch : parseGitHead(report.head));
     });
   });
 }
 
-function parsedHead(output: string): string | null | undefined {
+function parsedReport(
+  output: string,
+): { invalid: true } | { head: string | null } | undefined {
   try {
     const value: unknown = JSON.parse(output);
-    if (value === null || typeof value !== 'object' || !('head' in value))
-      return undefined;
+    if (value === null || typeof value !== 'object') return undefined;
+    if ('invalid' in value && value.invalid === true) return { invalid: true };
+    if (!('head' in value)) return undefined;
     return typeof value.head === 'string' || value.head === null
-      ? value.head
+      ? { head: value.head }
       : undefined;
   } catch {
     return undefined;
