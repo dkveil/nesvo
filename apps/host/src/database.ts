@@ -35,7 +35,7 @@ export const openDatabase = (directory: string) =>
         const version = database
           .prepare('PRAGMA user_version')
           .get()?.user_version;
-        if (typeof version !== 'number' || version > 7) {
+        if (typeof version !== 'number' || version > 8) {
           throw new Error('Unsupported database version');
         }
         database.exec(
@@ -95,7 +95,27 @@ export const openDatabase = (directory: string) =>
           database.exec(
             'CREATE INDEX IF NOT EXISTS sessions_scheduled_job ON sessions (scheduled_job_id); CREATE INDEX IF NOT EXISTS sessions_scheduled_job_run ON sessions (scheduled_job_run_id)',
           );
-          database.exec('PRAGMA user_version = 7; COMMIT');
+          database.exec(
+            'CREATE TABLE IF NOT EXISTS pipeline_runs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (revision > 0), directory TEXT NOT NULL, project_root TEXT NOT NULL, pipeline_name TEXT NOT NULL, spec_path TEXT NOT NULL, spec_hash TEXT NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), status TEXT NOT NULL, phase TEXT, current_step_index INTEGER, session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)',
+          );
+          database.exec(
+            'CREATE INDEX IF NOT EXISTS pipeline_runs_project ON pipeline_runs (project_root, created_at DESC); CREATE INDEX IF NOT EXISTS pipeline_runs_status ON pipeline_runs (status); CREATE INDEX IF NOT EXISTS pipeline_runs_recent ON pipeline_runs (updated_at DESC, id DESC)',
+          );
+          database.exec(
+            'CREATE TABLE IF NOT EXISTS pipeline_steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE, revision INTEGER NOT NULL CHECK (revision > 0), step_index INTEGER NOT NULL CHECK (step_index >= 0), name TEXT NOT NULL, type TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, attempt INTEGER NOT NULL CHECK (attempt >= 0), document TEXT NOT NULL CHECK (json_valid(document)), session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL, review_version INTEGER, started_at TEXT, updated_at TEXT NOT NULL, UNIQUE (run_id, step_index, attempt))',
+          );
+          if (!sessionColumns.has('pipeline_run_id'))
+            database.exec(
+              'ALTER TABLE sessions ADD COLUMN pipeline_run_id TEXT REFERENCES pipeline_runs(id) ON DELETE SET NULL',
+            );
+          if (!sessionColumns.has('pipeline_step_id'))
+            database.exec(
+              'ALTER TABLE sessions ADD COLUMN pipeline_step_id TEXT REFERENCES pipeline_steps(id) ON DELETE SET NULL',
+            );
+          database.exec(
+            'CREATE INDEX IF NOT EXISTS sessions_pipeline_run ON sessions (pipeline_run_id); CREATE INDEX IF NOT EXISTS sessions_pipeline_step ON sessions (pipeline_step_id)',
+          );
+          database.exec('PRAGMA user_version = 8; COMMIT');
         } catch (error) {
           database.exec('ROLLBACK');
           throw error;
