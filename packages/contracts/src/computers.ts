@@ -6,6 +6,12 @@ import {
   scheduledJobRunSchema,
   scheduledJobSchema,
 } from './scheduled-jobs';
+import {
+  pipelineRunDetailSchema,
+  pipelineRunPageSchema,
+  pipelineRunSchema,
+  pipelineStepRecordSchema,
+} from './pipelines';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
@@ -13,6 +19,7 @@ export type HostId = z.infer<typeof hostIdSchema>;
 export const hostCapabilitySchema = z.enum([
   'scheduled-jobs',
   'reasoning-effort',
+  'pipelines',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -101,6 +108,19 @@ export const desktopScheduledJobRunPageSchema =
   scheduledJobRunPageSchema.extend({
     runs: z.array(desktopScheduledJobRunSchema),
   });
+export const desktopPipelineRunSchema = pipelineRunSchema.extend({
+  hostId: hostIdSchema,
+});
+export const desktopPipelineStepRecordSchema = pipelineStepRecordSchema.extend({
+  hostId: hostIdSchema,
+});
+export const desktopPipelineRunPageSchema = pipelineRunPageSchema.extend({
+  runs: z.array(desktopPipelineRunSchema),
+});
+export const desktopPipelineRunDetailSchema = pipelineRunDetailSchema.extend({
+  run: desktopPipelineRunSchema,
+  steps: z.array(desktopPipelineStepRecordSchema),
+});
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
 export type DesktopReview = z.infer<typeof desktopReviewSchema>;
 export type DesktopScheduledJob = z.infer<typeof desktopScheduledJobSchema>;
@@ -109,6 +129,17 @@ export type DesktopScheduledJobRun = z.infer<
 >;
 export type DesktopScheduledJobRunPage = z.infer<
   typeof desktopScheduledJobRunPageSchema
+>;
+
+export type DesktopPipelineRun = z.infer<typeof desktopPipelineRunSchema>;
+export type DesktopPipelineStepRecord = z.infer<
+  typeof desktopPipelineStepRecordSchema
+>;
+export type DesktopPipelineRunPage = z.infer<
+  typeof desktopPipelineRunPageSchema
+>;
+export type DesktopPipelineRunDetail = z.infer<
+  typeof desktopPipelineRunDetailSchema
 >;
 
 export const workspaceEventSchema = z.discriminatedUnion('type', [
@@ -137,6 +168,14 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('scheduled-job-run-changed'),
     run: desktopScheduledJobRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-run-changed'),
+    run: desktopPipelineRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-step-changed'),
+    step: desktopPipelineStepRecordSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

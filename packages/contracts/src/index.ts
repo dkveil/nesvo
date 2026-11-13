@@ -14,6 +14,9 @@ import {
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
   type DesktopScheduledJobRunPage,
+  type DesktopPipelineRun,
+  type DesktopPipelineRunDetail,
+  type DesktopPipelineRunPage,
   type DesktopSession,
   type HostId,
   type SshComputerInput,
@@ -74,6 +77,44 @@ import {
   type DiscoverSkillsInput,
   type SkillCatalog,
 } from './skills';
+import {
+  decidePipelineGateSchema,
+  definitionCatalogSchema,
+  deletePipelineDefinitionSchema,
+  getPipelineRunSchema,
+  listPipelineDefinitionsSchema,
+  listPipelineRunsSchema,
+  pipelineEvidenceSchema,
+  pipelineMetricsInputSchema,
+  pipelineMetricsSchema,
+  pipelineRunDetailSchema,
+  pipelineRunPageSchema,
+  pipelineRunSchema,
+  pipelineStepRecordSchema,
+  readPipelineEvidenceSchema,
+  removePipelineWorktreeSchema,
+  resumePipelineRunSchema,
+  runPipelineStepsSchema,
+  savePipelineDefinitionSchema,
+  skipPipelineStepSchema,
+  startPipelineTaskSchema,
+  stopPipelineRunSchema,
+  validatePipelineDefinitionsSchema,
+  type DecidePipelineGateInput,
+  type DefinitionCatalog,
+  type DeletePipelineDefinitionInput,
+  type ListPipelineDefinitionsInput,
+  type ListPipelineRunsInput,
+  type PipelineEvidence,
+  type PipelineMetrics,
+  type PipelineMetricsInput,
+  type ReadPipelineEvidenceInput,
+  type RunPipelineStepsInput,
+  type SavePipelineDefinitionInput,
+  type SkipPipelineStepInput,
+  type StartPipelineTaskInput,
+  type ValidatePipelineDefinitionsInput,
+} from './pipelines';
 
 export * from './sessions';
 export * from './reasoning-effort';
@@ -86,6 +127,7 @@ export * from './provider-usage';
 export * from './mobile';
 export * from './scheduled-jobs';
 export * from './appearance';
+export * from './pipelines';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -106,6 +148,14 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('scheduled-job-run-changed'),
     run: scheduledJobRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-run-changed'),
+    run: pipelineRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-step-changed'),
+    step: pipelineStepRecordSchema,
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -201,6 +251,81 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('run-scheduled-job-now'),
     input: runScheduledJobNowSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-pipeline-definitions'),
+    input: listPipelineDefinitionsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('validate-pipeline-definitions'),
+    input: validatePipelineDefinitionsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('start-pipeline-task'),
+    input: startPipelineTaskSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('run-pipeline-steps'),
+    input: runPipelineStepsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-pipeline-runs'),
+    input: listPipelineRunsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('get-pipeline-run'),
+    input: getPipelineRunSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-pipeline-gate'),
+    input: decidePipelineGateSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('skip-pipeline-step'),
+    input: skipPipelineStepSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('resume-pipeline-run'),
+    input: resumePipelineRunSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('stop-pipeline-run'),
+    input: stopPipelineRunSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-pipeline-definition'),
+    input: savePipelineDefinitionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-pipeline-definition'),
+    input: deletePipelineDefinitionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('remove-pipeline-worktree'),
+    input: removePipelineWorktreeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-pipeline-evidence'),
+    input: readPipelineEvidenceSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('pipeline-metrics'),
+    input: pipelineMetricsInputSchema,
   }),
 ]);
 
@@ -325,6 +450,36 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     run: scheduledJobRunSchema,
   }),
   z.strictObject({
+    type: z.literal('pipeline-definitions'),
+    id: z.uuid(),
+    catalog: definitionCatalogSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-run'),
+    id: z.uuid(),
+    run: pipelineRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-runs'),
+    id: z.uuid(),
+    page: pipelineRunPageSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-run-detail'),
+    id: z.uuid(),
+    detail: pipelineRunDetailSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-evidence'),
+    id: z.uuid(),
+    evidence: pipelineEvidenceSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pipeline-metrics'),
+    id: z.uuid(),
+    metrics: pipelineMetricsSchema,
+  }),
+  z.strictObject({
     type: z.literal('error'),
     id: z.uuid().nullable(),
     code: z.enum([
@@ -375,8 +530,69 @@ export type ScheduledJobsApi = {
     cursor: string | null,
   ) => Promise<DesktopScheduledJobRunPage>;
 };
+export type PipelineMethod = Extract<
+  HostRequest['method'],
+  `${string}pipeline${string}`
+>;
+export const isPipelineMethod = (
+  method: HostRequest['method'],
+): method is PipelineMethod => method.includes('pipeline');
+export type PipelinesApi = {
+  listDefinitions: (
+    hostId: HostId,
+    input: ListPipelineDefinitionsInput,
+  ) => Promise<DefinitionCatalog>;
+  validateDefinitions: (
+    hostId: HostId,
+    input: ValidatePipelineDefinitionsInput,
+  ) => Promise<DefinitionCatalog>;
+  startTask: (
+    hostId: HostId,
+    input: StartPipelineTaskInput,
+  ) => Promise<DesktopPipelineRun>;
+  runSteps: (
+    hostId: HostId,
+    input: RunPipelineStepsInput,
+  ) => Promise<DesktopPipelineRun>;
+  listRuns: (
+    hostId: HostId,
+    input: ListPipelineRunsInput,
+  ) => Promise<DesktopPipelineRunPage>;
+  getRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRunDetail>;
+  decideGate: (
+    hostId: HostId,
+    input: DecidePipelineGateInput,
+  ) => Promise<DesktopPipelineRun>;
+  skipStep: (
+    hostId: HostId,
+    input: SkipPipelineStepInput,
+  ) => Promise<DesktopPipelineRun>;
+  resumeRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;
+  stopRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;
+  saveDefinition: (
+    hostId: HostId,
+    input: SavePipelineDefinitionInput,
+  ) => Promise<DefinitionCatalog>;
+  deleteDefinition: (
+    hostId: HostId,
+    input: DeletePipelineDefinitionInput,
+  ) => Promise<DefinitionCatalog>;
+  removeWorktree: (
+    hostId: HostId,
+    runId: string,
+  ) => Promise<DesktopPipelineRun>;
+  readEvidence: (
+    hostId: HostId,
+    input: ReadPipelineEvidenceInput,
+  ) => Promise<PipelineEvidence>;
+  metrics: (
+    hostId: HostId,
+    input: PipelineMetricsInput,
+  ) => Promise<PipelineMetrics>;
+};
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
+  pipelines: PipelinesApi;
   colorScheme: () => Promise<ColorScheme>;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
   onAppliedColorScheme: (

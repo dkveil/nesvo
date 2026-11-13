@@ -27,7 +27,23 @@ import {
   runScheduledJobNowSchema,
   saveScheduledJobSchema,
   setScheduledJobActiveSchema,
+  decidePipelineGateSchema,
+  deletePipelineDefinitionSchema,
+  getPipelineRunSchema,
+  listPipelineDefinitionsSchema,
+  listPipelineRunsSchema,
+  pipelineMetricsInputSchema,
+  readPipelineEvidenceSchema,
+  removePipelineWorktreeSchema,
+  resumePipelineRunSchema,
+  runPipelineStepsSchema,
+  savePipelineDefinitionSchema,
+  skipPipelineStepSchema,
+  startPipelineTaskSchema,
+  stopPipelineRunSchema,
+  validatePipelineDefinitionsSchema,
   type AppliedColorScheme,
+  type PipelineMethod,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -53,6 +69,23 @@ const titleBarOptions = (
         trafficLightPosition: { x: 16, y: TITLE_BAR_HEIGHT / 2 - 7 },
       }
     : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() };
+const pipelineInputs = {
+  'list-pipeline-definitions': listPipelineDefinitionsSchema,
+  'validate-pipeline-definitions': validatePipelineDefinitionsSchema,
+  'start-pipeline-task': startPipelineTaskSchema,
+  'run-pipeline-steps': runPipelineStepsSchema,
+  'list-pipeline-runs': listPipelineRunsSchema,
+  'get-pipeline-run': getPipelineRunSchema,
+  'decide-pipeline-gate': decidePipelineGateSchema,
+  'skip-pipeline-step': skipPipelineStepSchema,
+  'resume-pipeline-run': resumePipelineRunSchema,
+  'stop-pipeline-run': stopPipelineRunSchema,
+  'save-pipeline-definition': savePipelineDefinitionSchema,
+  'delete-pipeline-definition': deletePipelineDefinitionSchema,
+  'remove-pipeline-worktree': removePipelineWorktreeSchema,
+  'read-pipeline-evidence': readPipelineEvidenceSchema,
+  'pipeline-metrics': pipelineMetricsInputSchema,
+} satisfies Record<PipelineMethod, { parse: (input: unknown) => unknown }>;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -362,6 +395,18 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  for (const method of Object.keys(pipelineInputs) as PipelineMethod[])
+    ipcMain.handle(
+      `nesvo:${method}`,
+      (event, input: unknown, hostId: unknown) => {
+        authorize(event);
+        return computers.executePipeline(
+          method,
+          pipelineInputs[method].parse(input),
+          hostIdSchema.parse(hostId),
+        );
+      },
+    );
   ipcMain.handle(
     'nesvo:create-session',
     async (event, input: unknown, hostId: unknown) => {

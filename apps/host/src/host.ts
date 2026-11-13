@@ -4,6 +4,7 @@ import {
   hostRequestSchema,
   claudeStatusSchema,
   codexStatusSchema,
+  isPipelineMethod,
   type HostMessage,
   type HostRequest,
   type HostResponse,
@@ -36,7 +37,19 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'respond-approval',
   'decide-delegation',
   'decide-review',
+  'start-pipeline-task',
+  'run-pipeline-steps',
+  'decide-pipeline-gate',
+  'skip-pipeline-step',
+  'resume-pipeline-run',
+  'stop-pipeline-run',
+  'save-pipeline-definition',
+  'delete-pipeline-definition',
+  'remove-pipeline-worktree',
 ]);
+const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
+  'pipelines',
+]).options;
 
 type HostTransport = {
   directory: string;
@@ -374,6 +387,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         const response = yield* Effect.sync((): HostResponse => {
           try {
+            if (isPipelineMethod(request.method))
+              return {
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message: 'Pipelines are not available on this host yet.',
+              };
             if (request.method === 'list-reviews')
               return {
                 type: 'reviews',
@@ -385,6 +405,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'sessions',
                 id: request.id,
                 sessions: sessions.list(),
+              };
+            if (request.method === 'create-session' && request.input.isolation)
+              return {
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message:
+                  'Workspace isolation is not available on this host yet.',
               };
             if (request.method === 'create-session')
               return {
@@ -464,7 +492,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 status: 'ready',
                 instanceId: row?.value,
                 protocolVersion: 1,
-                capabilities: [...hostCapabilitySchema.options],
+                capabilities: [...ADVERTISED_CAPABILITIES],
               }),
             };
           } catch (error) {

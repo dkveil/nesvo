@@ -4916,3 +4916,346 @@ test('Skill YAML limits are enforced on the event stream before construction', a
   rejectsWith('a: 1\n---\nb: 2', 'documents');
   assert.throws(() => loadBoundedYaml('a: &x 1\nb: *x'), /alias/i);
 });
+
+test(
+  'pipeline contracts bound definitions and the host refuses pipeline commands until the engine lands',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipelines-')),
+    );
+    const host = launch(directory, join(directory, 'pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    });
+
+    await t.test('the host does not advertise pipelines', async () => {
+      const { health } = await host.request('health');
+      assert.equal(health.capabilities.includes('pipelines'), false);
+    });
+
+    await t.test('every pipeline command answers unavailable', async () => {
+      const runId = randomUUID();
+      const requests = [
+        ['list-pipeline-definitions', { directory }],
+        ['validate-pipeline-definitions', { directory }],
+        [
+          'start-pipeline-task',
+          {
+            specPath: join(directory, 'task.md'),
+            pipelineName: 'default',
+            provider: 'Claude Code',
+            model: 'sonnet',
+            mode: 'read-only',
+            directory,
+            isolation: 'none',
+            gateProvider: 'Claude Code',
+            gateModel: 'sonnet',
+          },
+        ],
+        ['run-pipeline-steps', { specPath: 'task.md', directory }],
+        ['list-pipeline-runs', { cursor: null, limit: 20 }],
+        ['get-pipeline-run', { runId }],
+        [
+          'decide-pipeline-gate',
+          {
+            runId,
+            stepId: randomUUID(),
+            reviewId: randomUUID(),
+            version: 1,
+            decisionId: randomUUID(),
+            decision: 'accept',
+            comment: '',
+          },
+        ],
+        [
+          'skip-pipeline-step',
+          { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
+        ],
+        ['resume-pipeline-run', { runId }],
+        ['stop-pipeline-run', { runId }],
+        [
+          'save-pipeline-definition',
+          {
+            directory,
+            scope: 'project',
+            kind: 'step',
+            name: 'unit-tests',
+            document: '---\nname: unit-tests\n---\nbun test\n',
+          },
+        ],
+        [
+          'delete-pipeline-definition',
+          { directory, scope: 'project', kind: 'step', name: 'unit-tests' },
+        ],
+        ['remove-pipeline-worktree', { runId }],
+        [
+          'read-pipeline-evidence',
+          { runId, stepId: randomUUID(), path: 'log.txt' },
+        ],
+        [
+          'pipeline-metrics',
+          { directory: null, since: '2026-11-01T00:00:00.000Z' },
+        ],
+      ];
+      for (const [method, input] of requests) {
+        const response = await host.request(method, input);
+        assert.deepEqual(
+          response,
+          {
+            type: 'error',
+            id: response.id,
+            code: 'unavailable',
+            message: 'Pipelines are not available on this host yet.',
+          },
+          method,
+        );
+      }
+    });
+
+    await t.test('isolated sessions answer unavailable', async () => {
+      const response = await host.request('create-session', {
+        title: 'Isolated',
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'read-only',
+        directory,
+        isolation: { kind: 'worktree' },
+      });
+      assert.equal(response.code, 'unavailable');
+      assert.deepEqual((await host.request('list-sessions')).sessions, []);
+    });
+
+    await t.test('unknown pipeline request fields are invalid', async () => {
+      for (const input of [{ directory, recursive: true }, { directory: 42 }])
+        assert.deepEqual(
+          await host.send(
+            JSON.stringify({
+              id: randomUUID(),
+              method: 'list-pipeline-definitions',
+              input,
+            }),
+          ),
+          { type: 'error', id: null, code: 'invalid-request' },
+        );
+    });
+
+    await host.stop();
+    const {
+      agentVerdictJsonSchema,
+      agentVerdictSchema,
+      decidePipelineGateSchema,
+      evidenceSchema,
+      parseDurationMs,
+      pipelineDefinitionSchema,
+      sessionSchema,
+      startPipelineTaskSchema,
+      stepDefinitionSchema,
+      stepResultSchema,
+      taskSpecSchema,
+    } = await loadScheduledJobContracts(directory);
+    const step = {
+      name: 'unit-tests',
+      type: 'command',
+      phase: 'pre-done',
+      body: 'bun test',
+    };
+    const rejects = (schema, value) =>
+      assert.equal(
+        schema.safeParse(value).success,
+        false,
+        JSON.stringify(value),
+      );
+
+    await t.test('step definitions apply defaults', () => {
+      assert.deepEqual(stepDefinitionSchema.parse(step), {
+        ...step,
+        skill: null,
+        timeout: '15m',
+        retries: 0,
+        on_fail: 'stop',
+        needs: [],
+      });
+      assert.deepEqual(
+        stepDefinitionSchema.parse({
+          name: 'code-review',
+          type: 'agent',
+          phase: 'pre-done',
+          skill: 'code-review',
+          body: '',
+          needs: ['browser', 'env:TEST_ACCOUNT'],
+        }).needs,
+        ['browser', 'env:TEST_ACCOUNT'],
+      );
+      assert.deepEqual(
+        pipelineDefinitionSchema.parse({ name: 'default', steps: ['a'] }),
+        { name: 'default', description: '', body: '', steps: ['a'] },
+      );
+      assert.equal(
+        taskSpecSchema.parse({ pipeline: 'default', body: 'Fix it.' }).title,
+        undefined,
+      );
+    });
+
+    await t.test('step refinements reject invalid definitions', () => {
+      for (const value of [
+        { ...step, type: 'human', retries: 1 },
+        { ...step, type: 'human', skill: 'code-review' },
+        { ...step, skill: 'code-review' },
+        { ...step, type: 'action', skill: 'code-review' },
+        { ...step, type: 'agent', body: ' ' },
+        { ...step, body: '' },
+        { ...step, name: 'Unit Tests' },
+        { ...step, timeout: '999ms' },
+        { ...step, timeout: '241m' },
+        { ...step, timeout: '15 m' },
+        { ...step, retries: 6 },
+        { ...step, needs: ['env:lower'] },
+        { ...step, needs: ['browser', 'browser'] },
+        { ...step, effect: 'external' },
+      ])
+        rejects(stepDefinitionSchema, value);
+      rejects(pipelineDefinitionSchema, { name: 'default', steps: [] });
+      rejects(pipelineDefinitionSchema, { name: 'default', steps: ['a', 'a'] });
+      rejects(taskSpecSchema, { pipeline: 'default', body: '  ' });
+    });
+
+    await t.test('durations stay between one second and four hours', () => {
+      assert.equal(parseDurationMs('1s'), 1000);
+      assert.equal(parseDurationMs('1000ms'), 1000);
+      assert.equal(parseDurationMs('15m'), 900_000);
+      assert.equal(parseDurationMs('4h'), 14_400_000);
+      for (const value of ['999ms', '0s', '5h', '241m', '1d', '-1s', '1.5h'])
+        assert.equal(parseDurationMs(value), null, value);
+    });
+
+    await t.test('results and verdicts need evidence', () => {
+      const result = {
+        name: 'unit-tests',
+        type: 'command',
+        phase: 'pre-done',
+        status: 'pass',
+        summary: 'All tests passed.',
+        evidence: [
+          {
+            kind: 'log',
+            label: 'Output',
+            path: 'log.txt',
+            text: null,
+            url: null,
+          },
+        ],
+        outputs: {},
+        startedAt: '2026-11-13T10:00:00.000Z',
+        finishedAt: '2026-11-13T10:00:01.000Z',
+        durationMs: 1000,
+        cost: {
+          usd: null,
+          inputTokens: null,
+          outputTokens: null,
+          provider: null,
+        },
+        attempt: 1,
+      };
+      assert.equal(stepResultSchema.safeParse(result).success, true);
+      rejects(stepResultSchema, { ...result, status: 'done' });
+      rejects(stepResultSchema, { ...result, type: 'action' });
+      rejects(evidenceSchema, {
+        kind: 'log',
+        label: 'Empty',
+        path: null,
+        text: null,
+        url: null,
+      });
+      const verdict = {
+        status: 'pass',
+        summary: 'No issues.',
+        evidence: [{ reference: 'src/index.ts:12', note: 'Checked.' }],
+      };
+      assert.equal(agentVerdictSchema.safeParse(verdict).success, true);
+      rejects(agentVerdictSchema, { ...verdict, evidence: [] });
+      rejects(agentVerdictSchema, { ...verdict, status: 'done' });
+      const json = agentVerdictJsonSchema();
+      assert.equal(JSON.stringify(json).includes('$ref'), false);
+      assert.equal(json.additionalProperties, false);
+      assert.deepEqual(json.required, ['status', 'summary', 'evidence']);
+      assert.equal(json.properties.evidence.minItems, 1);
+    });
+
+    await t.test('commands validate providers and decisions', () => {
+      const start = {
+        specPath: 'task.md',
+        pipelineName: 'default',
+        provider: 'Codex',
+        model: 'gpt-5.5',
+        effort: 'high',
+        mode: 'supervised',
+        directory,
+        isolation: 'worktree',
+        gateProvider: 'Claude Code',
+        gateModel: 'sonnet',
+      };
+      assert.equal(startPipelineTaskSchema.safeParse(start).success, true);
+      rejects(startPipelineTaskSchema, { ...start, gateModel: 'gpt-5.5' });
+      rejects(startPipelineTaskSchema, {
+        ...start,
+        provider: 'Claude Code',
+        model: 'sonnet',
+      });
+      const decision = {
+        runId: randomUUID(),
+        stepId: randomUUID(),
+        reviewId: randomUUID(),
+        version: 1,
+        decisionId: randomUUID(),
+      };
+      assert.equal(
+        decidePipelineGateSchema.parse({ ...decision, decision: 'accept' })
+          .comment,
+        '',
+      );
+      rejects(decidePipelineGateSchema, { ...decision, decision: 'reject' });
+      rejects(decidePipelineGateSchema, { ...decision, decision: 'fix' });
+    });
+
+    await t.test(
+      'stored sessions without pipeline fields stay readable',
+      () => {
+        const now = '2026-11-13T10:00:00.000Z';
+        const session = sessionSchema.parse({
+          id: randomUUID(),
+          provider: 'Claude Code',
+          providerSessionId: null,
+          providerInitialized: false,
+          title: 'Older session',
+          model: 'sonnet',
+          actualModel: null,
+          role: 'standalone',
+          directory,
+          status: 'completed',
+          error: null,
+          activity: null,
+          runId: null,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          messages: [
+            {
+              id: randomUUID(),
+              runId: randomUUID(),
+              author: 'operator',
+              body: 'Hello',
+              state: 'completed',
+              createdAt: now,
+            },
+          ],
+        });
+        assert.equal(session.pipelineRunId, null);
+        assert.equal(session.pipelineStepId, null);
+        assert.equal(session.messages[0].origin, null);
+      },
+    );
+  },
+);

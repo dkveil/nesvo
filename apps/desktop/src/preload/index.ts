@@ -38,6 +38,27 @@ import {
   runScheduledJobNowSchema,
   saveScheduledJobSchema,
   setScheduledJobActiveSchema,
+  decidePipelineGateSchema,
+  definitionCatalogSchema,
+  deletePipelineDefinitionSchema,
+  desktopPipelineRunDetailSchema,
+  desktopPipelineRunPageSchema,
+  desktopPipelineRunSchema,
+  getPipelineRunSchema,
+  listPipelineDefinitionsSchema,
+  listPipelineRunsSchema,
+  pipelineEvidenceSchema,
+  pipelineMetricsInputSchema,
+  pipelineMetricsSchema,
+  readPipelineEvidenceSchema,
+  removePipelineWorktreeSchema,
+  resumePipelineRunSchema,
+  runPipelineStepsSchema,
+  savePipelineDefinitionSchema,
+  skipPipelineStepSchema,
+  startPipelineTaskSchema,
+  stopPipelineRunSchema,
+  validatePipelineDefinitionsSchema,
   type DesktopApi,
 } from '@nesvo/contracts';
 
@@ -98,8 +119,131 @@ const scheduledJobs: DesktopApi['scheduledJobs'] = {
       ),
     ),
 };
+const pipelines: DesktopApi['pipelines'] = {
+  listDefinitions: async (hostId, input) =>
+    definitionCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-pipeline-definitions',
+        listPipelineDefinitionsSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  validateDefinitions: async (hostId, input) =>
+    definitionCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:validate-pipeline-definitions',
+        validatePipelineDefinitionsSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  startTask: async (hostId, input) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:start-pipeline-task',
+        startPipelineTaskSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  runSteps: async (hostId, input) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:run-pipeline-steps',
+        runPipelineStepsSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  listRuns: async (hostId, input) =>
+    desktopPipelineRunPageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-pipeline-runs',
+        listPipelineRunsSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  getRun: async (hostId, runId) =>
+    desktopPipelineRunDetailSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:get-pipeline-run',
+        getPipelineRunSchema.parse({ runId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  decideGate: async (hostId, input) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-pipeline-gate',
+        decidePipelineGateSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  skipStep: async (hostId, input) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:skip-pipeline-step',
+        skipPipelineStepSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  resumeRun: async (hostId, runId) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:resume-pipeline-run',
+        resumePipelineRunSchema.parse({ runId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  stopRun: async (hostId, runId) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:stop-pipeline-run',
+        stopPipelineRunSchema.parse({ runId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  saveDefinition: async (hostId, input) =>
+    definitionCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-pipeline-definition',
+        savePipelineDefinitionSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  deleteDefinition: async (hostId, input) =>
+    definitionCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-pipeline-definition',
+        deletePipelineDefinitionSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  removeWorktree: async (hostId, runId) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:remove-pipeline-worktree',
+        removePipelineWorktreeSchema.parse({ runId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  readEvidence: async (hostId, input) =>
+    pipelineEvidenceSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-pipeline-evidence',
+        readPipelineEvidenceSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  metrics: async (hostId, input) =>
+    pipelineMetricsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:pipeline-metrics',
+        pipelineMetricsInputSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+};
 const api: DesktopApi = {
   scheduledJobs,
+  pipelines,
   colorScheme: async () =>
     colorSchemeSchema.parse(await ipcRenderer.invoke('nesvo:color-scheme')),
   setColorScheme: async scheme =>

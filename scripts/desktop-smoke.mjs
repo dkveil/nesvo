@@ -2432,6 +2432,31 @@ try {
     byId(restored.sessions),
   );
   assert.deepEqual(await fixtureState(), stateAfterClose);
+  const pipelineCall = (method, ...args) =>
+    restartedPage.evaluate(
+      ([name, params]) => window.nesvo.pipelines[name](...params),
+      [method, args],
+    );
+  const pipelineComputer = (
+    await restartedPage.evaluate(() => window.nesvo.listComputers())
+  ).find(computer => computer.id === 'local');
+  assert.equal(pipelineComputer.capabilities.includes('pipelines'), false);
+  await assert.rejects(
+    pipelineCall('listDefinitions', 'local', { directory }),
+    /Pipelines are not available on this computer yet/,
+  );
+  await assert.rejects(
+    pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
+  );
+  await assert.rejects(pipelineCall('listDefinitions', 'not-a-host', {}));
+  console.log(
+    JSON.stringify({
+      pipelines: {
+        capabilities: pipelineComputer.capabilities,
+        refusedLocally: true,
+      },
+    }),
+  );
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;

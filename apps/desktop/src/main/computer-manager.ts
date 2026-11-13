@@ -5,6 +5,8 @@ import {
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
   type DesktopScheduledJobRunPage,
+  type DesktopPipelineRun,
+  type DesktopPipelineRunPage,
   type DesktopSession,
   type DesktopReview,
   type HostCapability,
@@ -14,8 +16,10 @@ import {
   type Session,
   type Review,
   type ScheduledJob,
+  type PipelineMethod,
   type SshComputerInput,
   type WorkspaceEvent,
+  isPipelineMethod,
   sshComputerInputSchema,
 } from '@nesvo/contracts';
 import { type startHost } from './host-client';
@@ -33,7 +37,11 @@ type ScheduledJobMethod = Extract<
 >;
 type ExecutableMethod = Exclude<
   HostRequest['method'],
-  'shutdown' | 'list-sessions' | 'list-reviews' | ScheduledJobMethod
+  | 'shutdown'
+  | 'list-sessions'
+  | 'list-reviews'
+  | ScheduledJobMethod
+  | PipelineMethod
 >;
 type Connection = {
   request: (
@@ -48,6 +56,8 @@ type Entry = {
   sessions: Map<string, Session>;
   reviews: Map<string, Review>;
   scheduledJobRevisions: Map<string, number>;
+  pipelineRunRevisions: Map<string, number>;
+  pipelineStepRevisions: Map<string, number>;
   generation: number;
   connection?: Connection;
   unsubscribe?: () => void;
@@ -61,12 +71,23 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without scheduled jobs. Update it, then reconnect.',
   'reasoning-effort':
     'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
+  pipelines:
+    'Pipelines are not available on this computer yet. Update its Nesvo host, then reconnect.',
 };
 
 function requiredCapability(
   method: HostRequest['method'],
   input: unknown,
 ): HostCapability | null {
+  if (isPipelineMethod(method)) return 'pipelines';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'isolation' in input &&
+    input.isolation
+  )
+    return 'pipelines';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -105,6 +126,8 @@ export class ComputerManager {
       sessions: new Map(),
       reviews: new Map(),
       scheduledJobRevisions: new Map(),
+      pipelineRunRevisions: new Map(),
+      pipelineStepRevisions: new Map(),
       generation: 0,
     });
   }
@@ -132,6 +155,8 @@ export class ComputerManager {
           sessions: new Map(),
           reviews: new Map(),
           scheduledJobRevisions: new Map(),
+          pipelineRunRevisions: new Map(),
+          pipelineStepRevisions: new Map(),
           generation: 0,
         });
     } catch {
@@ -231,6 +256,8 @@ export class ComputerManager {
       sessions: new Map(),
       reviews: new Map(),
       scheduledJobRevisions: new Map(),
+      pipelineRunRevisions: new Map(),
+      pipelineStepRevisions: new Map(),
       generation: 0,
     };
     this.entries.set(id, entry);
@@ -377,7 +404,7 @@ export class ComputerManager {
   }
 
   private async dispatch(
-    method: ExecutableMethod | ScheduledJobMethod,
+    method: ExecutableMethod | ScheduledJobMethod | PipelineMethod,
     input: unknown,
     hostId: string,
     requires?: HostCapability,
@@ -454,6 +481,56 @@ export class ComputerManager {
         } satisfies DesktopScheduledJobRunPage;
       case 'scheduled-job-run':
         return { ...response.run, hostId };
+      default:
+        throw new Error('Unexpected host response.');
+    }
+  }
+
+  async executePipeline(
+    method: PipelineMethod,
+    input: unknown,
+    hostId: string,
+  ) {
+    const { entry, response } = await this.dispatch(method, input, hostId);
+    const expected = {
+      'list-pipeline-definitions': 'pipeline-definitions',
+      'validate-pipeline-definitions': 'pipeline-definitions',
+      'save-pipeline-definition': 'pipeline-definitions',
+      'delete-pipeline-definition': 'pipeline-definitions',
+      'start-pipeline-task': 'pipeline-run',
+      'run-pipeline-steps': 'pipeline-run',
+      'decide-pipeline-gate': 'pipeline-run',
+      'skip-pipeline-step': 'pipeline-run',
+      'resume-pipeline-run': 'pipeline-run',
+      'stop-pipeline-run': 'pipeline-run',
+      'remove-pipeline-worktree': 'pipeline-run',
+      'list-pipeline-runs': 'pipeline-runs',
+      'get-pipeline-run': 'pipeline-run-detail',
+      'read-pipeline-evidence': 'pipeline-evidence',
+      'pipeline-metrics': 'pipeline-metrics',
+    }[method];
+    if (response.type !== expected)
+      throw new Error('Unexpected host response.');
+    switch (response.type) {
+      case 'pipeline-definitions':
+        return response.catalog;
+      case 'pipeline-run':
+        this.apply(entry, { type: 'pipeline-run-changed', run: response.run });
+        return { ...response.run, hostId } satisfies DesktopPipelineRun;
+      case 'pipeline-runs':
+        return {
+          ...response.page,
+          runs: response.page.runs.map(run => ({ ...run, hostId })),
+        } satisfies DesktopPipelineRunPage;
+      case 'pipeline-run-detail':
+        return {
+          run: { ...response.detail.run, hostId },
+          steps: response.detail.steps.map(step => ({ ...step, hostId })),
+        };
+      case 'pipeline-evidence':
+        return response.evidence;
+      case 'pipeline-metrics':
+        return response.metrics;
       default:
         throw new Error('Unexpected host response.');
     }
@@ -611,6 +688,8 @@ export class ComputerManager {
     );
     entry.reviews = new Map(reviews.reviews.map(review => [review.id, review]));
     entry.scheduledJobRevisions = new Map();
+    entry.pipelineRunRevisions = new Map();
+    entry.pipelineStepRevisions = new Map();
     for (const event of entry.buffered ?? []) this.apply(entry, event, false);
     entry.buffered = undefined;
     entry.computer.instanceId = health.instanceId;
@@ -632,6 +711,16 @@ export class ComputerManager {
     const seen = entry.scheduledJobRevisions.get(scheduledJob.id);
     if (seen === undefined || seen < scheduledJob.revision)
       entry.scheduledJobRevisions.set(scheduledJob.id, scheduledJob.revision);
+  }
+
+  private advance(
+    revisions: Map<string, number>,
+    record: { id: string; revision: number },
+  ) {
+    const seen = revisions.get(record.id);
+    if (seen !== undefined && seen >= record.revision) return false;
+    revisions.set(record.id, record.revision);
+    return true;
   }
 
   private apply(entry: Entry, event: DesktopEvent, publish = true) {
@@ -663,6 +752,24 @@ export class ComputerManager {
         this.publish({
           type: 'scheduled-job-run-changed',
           run: { ...event.run, hostId },
+        });
+      return;
+    }
+    if (event.type === 'pipeline-run-changed') {
+      if (!this.advance(entry.pipelineRunRevisions, event.run)) return;
+      if (publish)
+        this.publish({
+          type: 'pipeline-run-changed',
+          run: { ...event.run, hostId },
+        });
+      return;
+    }
+    if (event.type === 'pipeline-step-changed') {
+      if (!this.advance(entry.pipelineStepRevisions, event.step)) return;
+      if (publish)
+        this.publish({
+          type: 'pipeline-step-changed',
+          step: { ...event.step, hostId },
         });
       return;
     }
