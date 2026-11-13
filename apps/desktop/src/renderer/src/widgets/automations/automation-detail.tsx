@@ -68,7 +68,7 @@ const reviewStates: Record<Review['status'], string> = {
   accepted: 'Accepted',
   'changes-requested': 'Corrected',
   rejected: 'Rejected',
-  superseded: 'Outdated',
+  superseded: 'Corrected',
 };
 
 const nextRuns = (job: ScheduledJob, now: number) => {
