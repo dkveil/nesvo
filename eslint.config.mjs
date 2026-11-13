@@ -21,7 +21,11 @@ export default tseslint.config(
         'error',
         {
           allowConstantExport: true,
-          allowExportNames: ['buttonVariants', 'badgeVariants'],
+          allowExportNames: [
+            'buttonVariants',
+            'badgeVariants',
+            'toggleVariants',
+          ],
         },
       ],
       'no-restricted-imports': [
