@@ -282,8 +282,11 @@ export class SessionService {
     ];
   }
 
-  create(input: CreateSessionInput): Session {
-    let directory = input.directory;
+  create(
+    input: CreateSessionInput,
+    options: { isolatedDirectory?: string } = {},
+  ): Session {
+    let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
       directory = join(this.directory, 'workspaces', randomUUID());
       mkdirSync(directory, { recursive: true });
