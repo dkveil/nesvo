@@ -107,7 +107,7 @@ export function Workspace() {
   const [automationErrors, setAutomationErrors] = useState<
     Record<string, string>
   >({});
-  const runRequests = useRef<Record<string, string>>({});
+  const runRequests = useRef<Record<string, { id: string; at: string }>>({});
   const [sessionTarget, setSessionTarget] = useState('');
   const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
     location.diff ? 'diff' : null,
@@ -179,8 +179,10 @@ export function Workspace() {
             job.id === session.scheduledJobId && job.hostId === session.hostId,
         )
       : undefined;
-  const automationName = (session: Session) =>
-    jobOf(session)?.name ?? 'Automation';
+  const automationLabel = (session: Session) => {
+    const name = jobOf(session)?.name;
+    return name ? `Automation ${name}` : 'An automation';
+  };
   const selected =
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
@@ -514,7 +516,7 @@ export function Workspace() {
     store.loading || store.error
       ? 'Session history is still loading.'
       : hostRun?.scheduledJobId
-        ? `Automation ${automationName(hostRun)} is running on this computer.`
+        ? `${automationLabel(hostRun)} is running on this computer.`
         : hostRun
           ? 'Another session is working on this computer.'
           : '';
@@ -525,7 +527,7 @@ export function Workspace() {
       target.status !== 'running' ||
       stopping.current.has(hostKey(target.runId, target.hostId))
     )
-      return;
+      return '';
     const { id: sessionId, runId } = target;
     const key = entityKey(target);
     const runKey = hostKey(runId, target.hostId);
@@ -536,10 +538,8 @@ export function Workspace() {
         await desktopApi(target.hostId).stopRun({ sessionId, runId }),
       ]);
     } catch (failure) {
-      setErrors(previous => ({
-        ...previous,
-        [key]: `Could not stop the run. ${errorDetail(failure)}`,
-      }));
+      const message = `Could not stop the run. ${errorDetail(failure)}`;
+      setErrors(previous => ({ ...previous, [key]: message }));
       try {
         await store.recover(target.hostId);
       } catch (recoveryFailure) {
@@ -548,9 +548,11 @@ export function Workspace() {
           [key]: `${previous[key] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
         }));
       }
+      return message;
     } finally {
       stopping.current.delete(runKey);
     }
+    return '';
   };
   const respondApproval = async (
     input: RespondApprovalInput,
@@ -762,16 +764,25 @@ export function Workspace() {
   const runningAutomations = runningSessions.filter(
     session => session.scheduledJobId,
   );
-  const automationBusy = (session: Session) => (
+  const stopAutomation = async (session: Session, reportKey = '') => {
+    const error = await stop(session);
+    if (!error || !session.scheduledJobId) return;
+    setAutomationErrors(previous => ({
+      ...previous,
+      [hostKey(session.scheduledJobId ?? '', session.hostId)]: error,
+    }));
+    if (reportKey) setErrors(previous => ({ ...previous, [reportKey]: error }));
+  };
+  const automationBusy = (session: Session, reportKey = '') => (
     <>
-      Automation {automationName(session)} is running ·{' '}
+      {automationLabel(session)} is running ·{' '}
       <button
         type="button"
         className="font-medium text-foreground underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         disabled={
           session.status !== 'running' || !store.hostReady(session.hostId)
         }
-        onClick={() => void stop(session)}
+        onClick={() => void stopAutomation(session, reportKey)}
       >
         {session.status === 'stopping' ? 'Stopping…' : 'Stop'}
       </button>
@@ -805,27 +816,36 @@ export function Workspace() {
     );
     if (!running) return '';
     return running.scheduledJobId
-      ? `Automation ${automationName(running)} is running.`
+      ? `${automationLabel(running)} is running.`
       : 'Another session is working on this computer.';
   };
   const runAutomationNow = async (job: ScheduledJob) => {
     const key = entityKey(job);
     if (automationPending[key] || runBlockedReason(job)) return;
-    const requestId = runRequests.current[key] ?? crypto.randomUUID();
-    runRequests.current[key] = requestId;
+    const prior = runRequests.current[key];
+    const settled =
+      !prior ||
+      automations
+        .runs(job)
+        .runs.some(
+          run => run.trigger === 'manual' && (run.startedAt ?? '') >= prior.at,
+        );
+    const request = settled
+      ? { id: crypto.randomUUID(), at: new Date().toISOString() }
+      : prior;
+    runRequests.current[key] = request;
     setAutomationState(key, true);
     try {
       automations.mergeRuns([
-        await window.nesvo.scheduledJobs.runNow(job.hostId, job.id, requestId),
+        await window.nesvo.scheduledJobs.runNow(job.hostId, job.id, request.id),
       ]);
       delete runRequests.current[key];
       setAutomationState(key, false);
     } catch (failure) {
-      setAutomationState(
-        key,
-        false,
-        `Could not start the run. ${errorDetail(failure)}`,
-      );
+      const detail = errorDetail(failure);
+      if (/busy|not found|already in use/i.test(detail))
+        delete runRequests.current[key];
+      setAutomationState(key, false, `Could not start the run. ${detail}`);
     }
   };
   const setAutomationActive = async (job: ScheduledJob, active: boolean) => {
@@ -1323,8 +1343,11 @@ export function Workspace() {
                     item.id === review.sessionId &&
                     item.hostId === review.hostId,
                 );
+                const name = session && jobOf(session)?.name;
                 return session?.scheduledJobId
-                  ? `Automation · ${automationName(session)}`
+                  ? name
+                    ? `Automation · ${name}`
+                    : 'Automation'
                   : '';
               }}
               notice={runningAutomations.map(session => (
@@ -1334,6 +1357,17 @@ export function Workspace() {
                   className="mb-3 px-3 text-2xs text-muted-foreground"
                 >
                   {automationBusy(session)}
+                  {automationErrors[
+                    hostKey(session.scheduledJobId ?? '', session.hostId)
+                  ] && (
+                    <span role="alert" className="block text-destructive">
+                      {
+                        automationErrors[
+                          hostKey(session.scheduledJobId ?? '', session.hostId)
+                        ]
+                      }
+                    </span>
+                  )}
                 </p>
               ))}
             />
@@ -1372,7 +1406,7 @@ export function Workspace() {
                   item =>
                     item.id === run.sessionId && item.hostId === run.hostId,
                 );
-                if (session) void stop(session);
+                if (session) void stopAutomation(session);
               }}
               onSession={select}
               onLoadMore={() =>
@@ -1502,7 +1536,7 @@ export function Workspace() {
                 }
                 otherRunLabel={
                   activeRun?.scheduledJobId
-                    ? automationBusy(activeRun)
+                    ? automationBusy(activeRun, selectedKey)
                     : undefined
                 }
                 otherRun={
@@ -1623,6 +1657,7 @@ export function Workspace() {
           key={editor.initial.id}
           initial={editor.initial}
           job={editorJob}
+          editing={!!editor.jobKey}
           computers={automationComputers}
           statuses={hostId => store.providerStates(hostId)}
           onRefreshProvider={(provider, hostId) =>

@@ -114,7 +114,7 @@ export function SessionSidebar({
 }: Props) {
   const [search, setSearch] = useState('');
   const [closedHosts, setClosedHosts] = useState<string[]>([]);
-  const [openJobs, setOpenJobs] = useState<string[]>([]);
+  const [jobToggles, setJobToggles] = useState<Record<string, boolean>>({});
   const now = useNow(60_000);
   const computerOf = (session: Session) =>
     computers.find(item => item.id === session.hostId);
@@ -165,7 +165,7 @@ export function SessionSidebar({
         const job = scheduledJobs.find(
           item => `${item.hostId}/${item.id}` === key,
         );
-        return { key, name: job?.name ?? 'Automation', runs };
+        return { key, name: job?.name ?? '', runs };
       }),
     }))
     .filter(group => group.roots.length > 0 || group.automations.length > 0);
@@ -399,12 +399,12 @@ export function SessionSidebar({
                     ])}
                     {jobGroups.map(group => {
                       const expanded =
-                        openJobs.includes(group.key) ||
-                        !!search.trim() ||
-                        group.runs.some(
-                          session =>
-                            !inbox && selectedId === entityKey(session),
-                        );
+                        jobToggles[group.key] ??
+                        (!!search.trim() ||
+                          group.runs.some(
+                            session =>
+                              !inbox && selectedId === entityKey(session),
+                          ));
                       return (
                         <li key={`automation/${group.key}`}>
                           <button
@@ -413,11 +413,10 @@ export function SessionSidebar({
                             data-automation-group={group.key}
                             className="flex h-8 w-full items-center gap-2 rounded-lg px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
                             onClick={() =>
-                              setOpenJobs(previous =>
-                                previous.includes(group.key)
-                                  ? previous.filter(key => key !== group.key)
-                                  : [...previous, group.key],
-                              )
+                              setJobToggles(previous => ({
+                                ...previous,
+                                [group.key]: !expanded,
+                              }))
                             }
                           >
                             <CalendarClock
@@ -425,7 +424,9 @@ export function SessionSidebar({
                               aria-hidden="true"
                             />
                             <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                              Automation · {group.name}
+                              {group.name
+                                ? `Automation · ${group.name}`
+                                : 'Automation'}
                             </span>
                             {group.runs.some(
                               session =>
