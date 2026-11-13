@@ -84,8 +84,12 @@ async function taskkill(pid: number): Promise<void> {
 
 function capture(output: BoundedOutput, chunk: Buffer, limit: number): Buffer {
   const room = Math.max(0, limit - output.bytes);
-  const kept = chunk.length > room ? chunk.subarray(0, room) : chunk;
-  if (kept.length < chunk.length) output.truncated = true;
+  let end = Math.min(room, chunk.length);
+  if (end < chunk.length) {
+    output.truncated = true;
+    while (end > 0 && (chunk[end]! & 0xc0) === 0x80) end--;
+  }
+  const kept = end < chunk.length ? chunk.subarray(0, end) : chunk;
   if (kept.length > 0) {
     output.chunks.push(kept);
     output.bytes += kept.length;
@@ -210,10 +214,12 @@ export function runOwnedProcess(
       });
     };
     const cancel = () => {
+      if (hasExited || hasClosed) return;
       cancelled = true;
       void stop();
     };
     const timer = setTimeout(() => {
+      if (hasExited || hasClosed) return;
       timedOut = true;
       void stop();
     }, options.timeoutMs);
@@ -249,6 +255,8 @@ export function runOwnedProcess(
     });
     child.once('close', (code, exitSignal) => {
       hasClosed = true;
+      const rest = decoder.end();
+      if (rest && options.onStdout) options.onStdout(rest);
       closeResolve({ code, signal: exitSignal });
       if (child.pid !== undefined) void finish();
     });
