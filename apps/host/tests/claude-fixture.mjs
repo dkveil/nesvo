@@ -152,6 +152,13 @@ if (args.length === 1 && args[0] === '--version') {
   ])
     assert.equal(values.get(flag), expected, flag);
   assert.notEqual(values.has('--session-id'), values.has('--resume'));
+  if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_LAUNCH_LOG,
+      JSON.stringify({ provider: 'Claude Code', cwd: process.cwd(), args }) +
+        '\n',
+      { flag: 'a' },
+    );
   const resumed = values.has('--resume');
   const sessionId = values.get(resumed ? '--resume' : '--session-id');
   assert.match(sessionId, /^[0-9a-f-]{36}$/);

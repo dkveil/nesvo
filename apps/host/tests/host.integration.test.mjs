@@ -7945,3 +7945,456 @@ test(
     );
   },
 );
+
+const loadScheduledJobLauncher = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'launcher-modules');
+  const entries = [
+    'scheduled-jobs/launcher.ts',
+    'scheduled-jobs/service.ts',
+    'scheduled-jobs/store.ts',
+    'sessions/service.ts',
+    'sessions/store.ts',
+    'review/store.ts',
+  ];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+test(
+  'scheduled job runs become ordinary sessions with their result in the inbox',
+  { timeout: 180_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-scheduled-launch-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const launchLog = join(directory, 'launches.jsonl');
+    const turnLog = pidFile + '.turns';
+    const workspace = join(directory, 'workspace');
+    await mkdir(workspace);
+    const previousEnvironment = { ...process.env };
+    const tracked = new Set();
+    let database;
+    let scheduler;
+    let sessions;
+    t.after(async () => {
+      await scheduler?.close();
+      await sessions?.close();
+      database?.close();
+      for (const key of Object.keys(process.env))
+        if (!(key in previousEnvironment)) delete process.env[key];
+      Object.assign(process.env, previousEnvironment);
+      for (const pid of tracked) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          continue;
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const modules = await loadScheduledJobLauncher(directory);
+
+    const host = launch(directory, pidFile);
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'create-session',
+          input: {
+            title: 'Origin',
+            model: 'sonnet',
+            directory: '',
+            origin: {
+              kind: 'scheduled-job',
+              scheduledJobId: randomUUID(),
+              runId: randomUUID(),
+            },
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
+    assert.deepEqual((await host.request('list-sessions')).sessions, []);
+    await host.stop();
+
+    Object.assign(process.env, fixtureEnvironment(directory, pidFile), {
+      NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+    });
+    database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
+    const log = [];
+    const clock = createFakeClock('2026-11-16T07:30:00.000Z', () => undefined);
+    const events = [];
+    const jobs = new modules.ScheduledJobStore(database);
+    sessions = new modules.SessionService(
+      new modules.SessionStore(database),
+      directory,
+      event => events.push(event),
+      new modules.ReviewStore(database),
+      () => jobs.interruptActiveRuns(clock.now().toISOString()),
+    );
+    const shortTimeoutMs = 400;
+    const deadlines = {
+      now: () => new Date(),
+      setTimer: (callback, delayMs) =>
+        setTimeout(callback, delayMs <= 5 * 60_000 ? shortTimeoutMs : delayMs),
+      clearTimer: timer => clearTimeout(timer),
+    };
+    scheduler = new modules.ScheduledJobService(
+      jobs,
+      sessions,
+      new modules.SessionLauncher(sessions, deadlines),
+      event => {
+        events.push(event);
+        if (event.type === 'scheduled-job-run-changed')
+          log.push(
+            `${new Date().toISOString()} run ${event.run.id.slice(0, 8)} ${event.run.trigger} ${event.run.status}${event.run.reason ? `/${event.run.reason}` : ''} session=${event.run.sessionId?.slice(0, 8) ?? '-'} review=${event.run.reviewId?.slice(0, 8) ?? '-'}`,
+          );
+      },
+      clock,
+    );
+    scheduler.start();
+
+    const runRow = id => ({
+      ...database
+        .prepare(
+          'SELECT trigger_kind AS trigger, status, reason, session_id AS sessionId, session_run_id AS runId, review_id AS reviewId FROM scheduled_job_runs WHERE id = ?',
+        )
+        .get(id),
+    });
+    const finishedRun = async id => {
+      await waitUntil(
+        () => !['starting', 'running'].includes(runRow(id).status),
+        `Scheduled job run ${id} did not finish`,
+      );
+      return runRow(id);
+    };
+    const lines = async path =>
+      (await readFile(path, 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    const sessionById = id => sessions.list().find(item => item.id === id);
+    const save = (name, overrides = {}) =>
+      scheduler.save({
+        id: randomUUID(),
+        expectedRevision: null,
+        name,
+        prompt: 'fixture:stream',
+        directory: workspace,
+        provider: 'claude',
+        model: 'sonnet',
+        effort: null,
+        mode: 'read-only',
+        schedule: { kind: 'daily', time: '09:00' },
+        timeZone: 'Europe/Warsaw',
+        active: false,
+        timeoutMinutes: 120,
+        ...overrides,
+      });
+    const runNow = job =>
+      scheduler.runNow({ id: job.id, requestId: randomUUID() }).id;
+    const interactive = async ({ prompt, ...input }) => {
+      const session = sessions.create({
+        mode: 'read-only',
+        directory: workspace,
+        ...input,
+      });
+      const started = sessions.send({
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: prompt,
+      });
+      assert.equal(
+        (await sessions.finished(session.id, started.runId)).state,
+        'completed',
+      );
+      return sessionById(session.id);
+    };
+
+    await t.test(
+      'a scheduled Claude run streams into a session and leaves a pending review',
+      async () => {
+        const job = save('Morning digest', { active: true });
+        assert.equal(job.nextRunAt, '2026-11-16T08:00:00.000Z');
+        clock.set('2026-11-16T08:00:30.000Z');
+        log.push(`${new Date().toISOString()} tick at 2026-11-16T08:00:30Z`);
+        scheduler.tick();
+        const [{ id }] = database
+          .prepare(
+            'SELECT id FROM scheduled_job_runs WHERE scheduled_job_id = ?',
+          )
+          .all(job.id);
+        const run = await finishedRun(id);
+        assert.equal(run.trigger, 'schedule');
+        assert.equal(run.status, 'completed', JSON.stringify(run));
+        assert.equal(run.reason, null);
+        const session = sessionById(run.sessionId);
+        assert.deepEqual(
+          {
+            provider: session.provider,
+            model: session.model,
+            effort: session.effort,
+            mode: session.mode,
+            title: session.title,
+            directory: session.directory,
+            scheduledJobId: session.scheduledJobId,
+            scheduledJobRunId: session.scheduledJobRunId,
+            delegationEnabled: session.delegationEnabled,
+            status: session.status,
+            runId: session.runId,
+          },
+          {
+            provider: 'Claude Code',
+            model: 'sonnet',
+            effort: null,
+            mode: 'read-only',
+            title: 'Morning digest · 2026-11-16 09:00',
+            directory: workspace,
+            scheduledJobId: job.id,
+            scheduledJobRunId: id,
+            delegationEnabled: false,
+            status: 'completed',
+            runId: run.runId,
+          },
+        );
+        assert.deepEqual(
+          session.messages.map(message => [message.author, message.body]),
+          [
+            ['operator', 'fixture:stream'],
+            ['agent', 'Fixture streamed reply.'],
+          ],
+        );
+        assert.equal(session.messages[0].id, modules.firstMessageId(id));
+        assert.ok(
+          events.some(
+            event =>
+              event.type === 'session-changed' &&
+              event.session.id === session.id &&
+              event.session.status === 'running' &&
+              agent(event.session).body === 'Fixture streamed ',
+          ),
+          'Partial fixture text was not published before completion',
+        );
+        const review = sessions
+          .listReviews()
+          .find(item => item.id === run.reviewId);
+        assert.deepEqual(
+          [review.sessionId, review.runId, review.status, review.diff.status],
+          [session.id, run.runId, 'pending', 'not-applicable'],
+        );
+        log.push(
+          `${new Date().toISOString()} review ${review.id.slice(0, 8)} ${review.status} v${review.version} in the inbox`,
+        );
+        const repeated = sessions.send({
+          sessionId: session.id,
+          messageId: modules.firstMessageId(id),
+          text: 'fixture:stream',
+        });
+        assert.equal(repeated.runId, run.runId);
+        assert.equal(repeated.messages.length, 2);
+
+        const normal = await interactive({
+          title: 'Interactive',
+          provider: 'Claude Code',
+          model: 'sonnet',
+          prompt: 'fixture:stream',
+        });
+        const normalize = entry => ({
+          ...entry,
+          args: entry.args.map((value, index) =>
+            entry.args[index - 1] === '--session-id' ? 'session' : value,
+          ),
+        });
+        const claudeLaunches = (await lines(launchLog)).filter(
+          entry => entry.provider === 'Claude Code',
+        );
+        assert.equal(claudeLaunches.length, 2);
+        assert.deepEqual(
+          normalize(claudeLaunches[0]),
+          normalize(claudeLaunches[1]),
+        );
+        assert.ok(claudeLaunches[0].args.includes(session.providerSessionId));
+        assert.ok(claudeLaunches[1].args.includes(normal.providerSessionId));
+      },
+    );
+
+    await t.test(
+      'a Codex run keeps read-only mode, its effort and no delegation tool',
+      async () => {
+        const job = save('Codex review', {
+          provider: 'codex',
+          model: 'fixture-codex',
+          effort: 'medium',
+          prompt: 'Summarize the workspace.',
+        });
+        const id = runNow(job);
+        const run = await finishedRun(id);
+        assert.equal(run.trigger, 'manual');
+        assert.equal(run.status, 'completed', JSON.stringify(run));
+        const session = sessionById(run.sessionId);
+        assert.deepEqual(
+          [
+            session.provider,
+            session.model,
+            session.effort,
+            session.mode,
+            session.delegationEnabled,
+            session.scheduledJobRunId,
+            agent(session).body,
+          ],
+          [
+            'Codex',
+            'fixture-codex',
+            'medium',
+            'read-only',
+            false,
+            id,
+            'Codex fixture initial reply.',
+          ],
+        );
+        assert.match(
+          session.title,
+          /^Codex review · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+        );
+        assert.equal(
+          sessions.listReviews().find(item => item.id === run.reviewId)?.status,
+          'pending',
+        );
+        const normal = await interactive({
+          title: 'Interactive Codex',
+          provider: 'Codex',
+          model: 'fixture-codex',
+          effort: 'medium',
+          prompt: 'Summarize the workspace.',
+        });
+        assert.equal(normal.delegationEnabled, true);
+        const [scheduled, operator] = (await lines(launchLog)).filter(
+          entry => entry.provider === 'Codex',
+        );
+        assert.deepEqual(
+          [scheduled.experimentalApi, scheduled.dynamicTools],
+          [false, []],
+        );
+        assert.deepEqual(
+          [operator.experimentalApi, operator.dynamicTools],
+          [true, ['nesvo_delegate']],
+        );
+        const permissions = entry => ({
+          cwd: entry.cwd,
+          args: entry.args,
+          sandbox: entry.sandbox,
+          approvalPolicy: entry.approvalPolicy,
+          approvalsReviewer: entry.approvalsReviewer,
+        });
+        assert.deepEqual(permissions(scheduled), permissions(operator));
+        assert.equal(scheduled.sandbox, 'read-only');
+        assert.equal(scheduled.approvalPolicy, 'never');
+      },
+    );
+
+    await t.test(
+      'a withdrawn effort or a missing folder fails before any provider turn',
+      async () => {
+        const launches = (await lines(launchLog)).length;
+        const turns = (await lines(turnLog)).length;
+        await writeFile(
+          pidFile + '.catalog',
+          JSON.stringify({ efforts: ['low', 'high'] }),
+        );
+        const codex = save('Withdrawn effort', {
+          provider: 'codex',
+          model: 'fixture-codex',
+          effort: 'medium',
+        });
+        assert.deepEqual(
+          (({ status, reason, sessionId }) => [status, reason, sessionId])(
+            await finishedRun(runNow(codex)),
+          ),
+          ['failed', 'catalog', null],
+        );
+        await rm(pidFile + '.catalog');
+        const missing = save('Missing folder', {
+          directory: join(directory, 'missing'),
+        });
+        assert.deepEqual(
+          (({ status, reason, sessionId }) => [status, reason, sessionId])(
+            await finishedRun(runNow(missing)),
+          ),
+          ['failed', 'folder', null],
+        );
+        assert.equal((await lines(launchLog)).length, launches);
+        assert.equal((await lines(turnLog)).length, turns);
+        assert.equal(
+          sessions.list().filter(item => item.scheduledJobId !== null).length,
+          2,
+        );
+      },
+    );
+
+    const holdUntilRunning = async job => {
+      await rm(pidFile, { force: true });
+      const id = runNow(job);
+      await waitUntil(
+        () => runRow(id).status === 'running',
+        'The held run did not start',
+      );
+      const { sessionId, runId } = runRow(id);
+      const owned = await bounded(
+        (async () => {
+          while (true) {
+            const recorded = await readFile(pidFile, 'utf8').catch(() => '');
+            if (recorded) return JSON.parse(recorded);
+            await delay(20);
+          }
+        })(),
+        'The held fixture did not record its processes',
+      );
+      tracked.add(owned.pid);
+      tracked.add(owned.childPid);
+      return { id, sessionId, runId, pids: [owned.pid, owned.childPid] };
+    };
+
+    await t.test('operator Stop ends the run as stopped', async () => {
+      const held = await holdUntilRunning(
+        save('Held digest', { prompt: 'fixture:hold' }),
+      );
+      sessions.stop({ sessionId: held.sessionId, runId: held.runId });
+      const run = await finishedRun(held.id);
+      assert.deepEqual([run.status, run.reason], ['stopped', null]);
+      assert.equal(sessionById(held.sessionId).status, 'stopped');
+      await processesGone(held.pids, tracked);
+    });
+
+    await t.test(
+      'the run deadline stops the session and cleans its processes',
+      async () => {
+        const held = await holdUntilRunning(
+          save('Slow digest', { prompt: 'fixture:hold', timeoutMinutes: 5 }),
+        );
+        const run = await finishedRun(held.id);
+        assert.deepEqual([run.status, run.reason], ['failed', 'timeout']);
+        assert.equal(sessionById(held.sessionId).status, 'stopped');
+        await processesGone(held.pids, tracked);
+      },
+    );
+
+    for (const line of log) t.diagnostic(line);
+  },
+);

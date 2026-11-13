@@ -588,6 +588,21 @@ if (args.length === 1 && args[0] === '--version') {
         effort === null || ['low', 'medium', 'high'].includes(effort),
         'Reasoning effort must come from the reported catalog',
       );
+      if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_LAUNCH_LOG,
+          JSON.stringify({
+            provider: 'Codex',
+            cwd: params.cwd,
+            args,
+            experimentalApi,
+            sandbox: params.sandbox,
+            approvalPolicy: params.approvalPolicy,
+            approvalsReviewer: params.approvalsReviewer,
+            dynamicTools: (params.dynamicTools ?? []).map(tool => tool.name),
+          }) + '\n',
+          { flag: 'a' },
+        );
       thread = {
         id: resumed ? params.threadId : randomUUID(),
         cwd: params.cwd,
