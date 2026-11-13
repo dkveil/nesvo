@@ -6353,3 +6353,316 @@ test(
     );
   },
 );
+
+const gitHangFixturePath = fileURLToPath(
+  new URL('./git-hang-fixture.mjs', import.meta.url),
+);
+
+const loadIsolationModules = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'isolation-modules');
+  const entries = ['workspace/isolation.ts', 'process/owned-process.ts'];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+test(
+  'task worktrees are created, bounded, cancelled and removed only on request',
+  { timeout: 120_000 },
+  async t => {
+    const gitEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    );
+    const git = async (cwd, ...args) =>
+      (
+        await promisify(execFile)(
+          'git',
+          [
+            '-c',
+            'user.name=Nesvo Test',
+            '-c',
+            'user.email=test@example.invalid',
+            ...args,
+          ],
+          { cwd, env: gitEnvironment },
+        )
+      ).stdout.trim();
+    try {
+      await git(tmpdir(), '--version');
+    } catch {
+      t.diagnostic('git is not on PATH; task worktree cases are skipped.');
+      t.skip('git is not on PATH');
+      return;
+    }
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-isolation-')),
+    );
+    const tracked = new Set();
+    const previousEnvironment = {
+      GIT_DIR: process.env.GIT_DIR,
+      GIT_WORK_TREE: process.env.GIT_WORK_TREE,
+      NESVO_GIT_EXECUTABLE: process.env.NESVO_GIT_EXECUTABLE,
+    };
+    t.after(async () => {
+      for (const [name, value] of Object.entries(previousEnvironment))
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      for (const pid of tracked) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          tracked.delete(pid);
+        }
+      }
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    const modules = await loadIsolationModules(directory);
+    const idle = new AbortController().signal;
+    const project = join(directory, 'project');
+    const dataDirectory = join(directory, 'data');
+    await mkdir(project, { recursive: true });
+    await mkdir(dataDirectory, { recursive: true });
+    await git(project, 'init', '--quiet');
+    await writeFile(join(project, 'README.md'), 'Task project\n');
+    await writeFile(join(project, '.gitignore'), '.env\n');
+    await writeFile(join(project, '.env'), 'TOKEN=local\n');
+    await git(project, 'add', 'README.md', '.gitignore');
+    await git(project, 'commit', '--quiet', '-m', 'Initial commit');
+    const head = await git(project, 'rev-parse', 'HEAD');
+    const operatorBranch = await git(
+      project,
+      'symbolic-ref',
+      '--short',
+      'HEAD',
+    );
+    process.env.GIT_DIR = join(directory, 'inherited-git-dir');
+    process.env.GIT_WORK_TREE = join(directory, 'inherited-work-tree');
+
+    const runId = randomUUID();
+    const created = await modules.createTaskWorktree({
+      projectDirectory: project,
+      dataDirectory,
+      slug: 'fix-login',
+      runId,
+      signal: idle,
+    });
+    const shortId = runId.slice(0, 8);
+    t.diagnostic(`created worktree ${created.worktree} on ${created.branch}`);
+    assert.deepEqual(created, {
+      worktree: join(dataDirectory, 'worktrees', `${shortId}-fix-login`),
+      branch: `nesvo/fix-login-${shortId}`,
+      base: head,
+    });
+    assert.equal(
+      await git(created.worktree, 'rev-parse', '--abbrev-ref', 'HEAD'),
+      created.branch,
+    );
+    assert.equal(await git(created.worktree, 'rev-parse', 'HEAD'), head);
+    assert.equal(
+      await readFile(join(created.worktree, 'README.md'), 'utf8'),
+      'Task project\n',
+    );
+    await assert.rejects(readFile(join(created.worktree, '.env')), {
+      code: 'ENOENT',
+    });
+    assert.equal(
+      await git(project, 'symbolic-ref', '--short', 'HEAD'),
+      operatorBranch,
+    );
+    assert.deepEqual(
+      (
+        await modules.listTaskWorktrees({
+          projectDirectory: project,
+          dataDirectory,
+          signal: idle,
+        })
+      ).map(entry => [entry.worktree, entry.branch]),
+      [[created.worktree, created.branch]],
+    );
+
+    const rejection = code => error =>
+      error instanceof modules.WorkspaceIsolationError && error.code === code;
+    const create = overrides =>
+      modules.createTaskWorktree({
+        projectDirectory: project,
+        dataDirectory,
+        slug: 'fix-login',
+        runId: randomUUID(),
+        signal: idle,
+        ...overrides,
+      });
+    await assert.rejects(create({ runId }), rejection('worktree-exists'));
+    const takenRunId = randomUUID();
+    await git(project, 'branch', `nesvo/fix-login-${takenRunId.slice(0, 8)}`);
+    await assert.rejects(
+      create({ runId: takenRunId }),
+      rejection('branch-exists'),
+    );
+    await assert.rejects(
+      create({ projectDirectory: created.worktree }),
+      rejection('nested-worktree'),
+    );
+    await assert.rejects(
+      create({ dataDirectory: join(directory, 'missing-data') }),
+      rejection('invalid-data-directory'),
+    );
+    await mkdir(join(project, 'data'));
+    await assert.rejects(
+      create({ dataDirectory: join(project, 'data') }),
+      rejection('data-inside-project'),
+    );
+    await rm(join(project, 'data'), { recursive: true });
+    const plain = join(directory, 'plain');
+    await mkdir(plain);
+    await assert.rejects(
+      create({ projectDirectory: plain }),
+      rejection('not-a-repository'),
+    );
+    await mkdir(join(project, 'nested'));
+    await assert.rejects(
+      create({ projectDirectory: join(project, 'nested') }),
+      rejection('not-repository-root'),
+    );
+    await assert.rejects(
+      create({ slug: '../main' }),
+      rejection('invalid-task'),
+    );
+
+    await writeFile(join(created.worktree, 'README.md'), 'Edited by a task\n');
+    const remove = force =>
+      modules.removeTaskWorktree({
+        projectDirectory: project,
+        dataDirectory,
+        worktree: created.worktree,
+        force,
+        signal: idle,
+      });
+    await assert.rejects(remove(false), rejection('dirty-worktree'));
+    await assert.rejects(
+      modules.removeTaskWorktree({
+        projectDirectory: project,
+        dataDirectory,
+        worktree: project,
+        signal: idle,
+      }),
+      rejection('not-a-task-worktree'),
+    );
+    await git(created.worktree, 'checkout', '--', 'README.md');
+    assert.equal((await remove(false)).branch, created.branch);
+    await assert.rejects(readFile(join(created.worktree, 'README.md')), {
+      code: 'ENOENT',
+    });
+    assert.equal(
+      await git(project, 'rev-parse', '--verify', created.branch),
+      head,
+    );
+    assert.deepEqual(
+      await modules.listTaskWorktrees({
+        projectDirectory: project,
+        dataDirectory,
+        signal: idle,
+      }),
+      [],
+    );
+
+    const standInRecord = join(project, 'git-stand-in.json');
+    const standIn = async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const value = await readFile(standInRecord, 'utf8').catch(() => '');
+        if (value) {
+          const record = JSON.parse(value);
+          tracked.add(record.pid);
+          tracked.add(record.descendant);
+          return record;
+        }
+        await delay(20);
+      }
+      assert.fail('The Git stand-in did not start.');
+    };
+    process.env.NESVO_GIT_EXECUTABLE = gitHangFixturePath;
+    const started = Date.now();
+    const hung = create({});
+    const record = await standIn();
+    assert.deepEqual(record.args, ['rev-parse', '--show-toplevel']);
+    assert.equal(record.terminalPrompt, '0');
+    assert.equal(record.environment.includes('GIT_DIR'), false);
+    assert.equal(record.environment.includes('GIT_WORK_TREE'), false);
+    assert.equal(
+      record.environment.some(name => name.startsWith('NESVO_')),
+      false,
+    );
+    await assert.rejects(hung, rejection('timed-out'));
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 9_900 && elapsed < 16_000, String(elapsed));
+    await processesGone([record.pid, record.descendant], tracked);
+    await rm(standInRecord);
+
+    const controller = new AbortController();
+    const pending = create({ signal: controller.signal });
+    const cancelled = await standIn();
+    assert.equal(alive(cancelled.pid), true);
+    const aborting = Date.now();
+    controller.abort();
+    await assert.rejects(pending, rejection('cancelled'));
+    assert.ok(Date.now() - aborting < 2_000, String(Date.now() - aborting));
+    await processesGone([cancelled.pid, cancelled.descendant], tracked);
+    await rm(standInRecord);
+    delete process.env.NESVO_GIT_EXECUTABLE;
+
+    const chatty = await modules.runOwnedProcess({
+      command: process.execPath,
+      args: ['-e', "process.stdout.write('x'.repeat(100000))"],
+      cwd: directory,
+      env: { PATH: process.env.PATH ?? '' },
+      timeoutMs: 10_000,
+      maxOutputBytes: 1024,
+    });
+    assert.equal(chatty.code, 0);
+    assert.equal(chatty.stdout.length, 1024);
+    assert.equal(chatty.outputTruncated, true);
+    assert.equal(chatty.timedOut, false);
+    const slow = await modules.runOwnedProcess({
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => undefined, 60_000)'],
+      cwd: directory,
+      env: { PATH: process.env.PATH ?? '' },
+      timeoutMs: 300,
+      maxOutputBytes: 1024,
+    });
+    assert.equal(slow.timedOut, true);
+    assert.equal(slow.code === 0, false);
+    await assert.rejects(
+      modules.runOwnedProcess({
+        command: join(directory, 'missing-executable'),
+        args: [],
+        cwd: directory,
+        env: {},
+        timeoutMs: 1_000,
+        maxOutputBytes: 1024,
+      }),
+      error =>
+        error instanceof modules.OwnedProcessError &&
+        error.code === 'spawn-failed',
+    );
+  },
+);

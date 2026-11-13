@@ -38,6 +38,7 @@
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs
 !/apps/host/tests/git-head-hang-fixture.mjs
+!/apps/host/tests/git-hang-fixture.mjs
 !/apps/host/tests/daemon.integration.test.mjs
 !/apps/host/tests/mobile.integration.test.mjs
 !/apps/host/tests/claude-fixture.mjs
