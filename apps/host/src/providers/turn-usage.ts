@@ -24,16 +24,6 @@ function finish(usage: Omit<TurnUsage, 'source'>): TurnUsage {
   return { ...usage, source: reported ? 'provider-report' : null };
 }
 
-export function unreportedUsage(): TurnUsage {
-  return finish({
-    inputTokens: null,
-    outputTokens: null,
-    cachedInputTokens: null,
-    costUsd: null,
-    durationMs: null,
-  });
-}
-
 export function claudeTurnUsage(frame: RecordValue): TurnUsage {
   const usage = object(frame.usage);
   const cacheRead = count(usage?.cache_read_input_tokens);
