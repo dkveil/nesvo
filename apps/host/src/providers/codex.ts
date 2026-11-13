@@ -14,6 +14,7 @@ import {
   type SkillDiscovery,
   type SkillReference,
   type ProviderUsage,
+  type TurnUsage,
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
@@ -22,6 +23,11 @@ import {
   recordDescendants,
   signalRecorded,
 } from './process-tree';
+import {
+  codexTokenSnapshot,
+  codexTurnUsage,
+  type CodexTokenSnapshot,
+} from './turn-usage';
 
 export type CodexEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -44,6 +50,7 @@ export type CodexResult = {
   status: 'completed' | 'stopped' | 'failed' | 'interrupted';
   error: string | null;
   interruption?: 'provider-disconnected';
+  usage?: TurnUsage;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -1296,6 +1303,8 @@ export function startCodex(options: {
   const toolOutput = new Map<string, string>();
   const ignoredItems = new Set<string>();
   let lastText = '';
+  let firstTokens: CodexTokenSnapshot | null = null;
+  let latestTokens: CodexTokenSnapshot | null = null;
   let resolveTurn: (result: CodexResult) => void;
   const turnDone = new Promise<CodexResult>(resolve => {
     resolveTurn = resolve;
@@ -1701,29 +1710,33 @@ export function startCodex(options: {
       delegationController.abort();
       pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
+      const usage = codexTurnUsage(firstTokens, latestTokens, turn);
       if (turn.status === 'completed')
         confirmTurn(
           lastText
-            ? { status: 'completed', error: null }
+            ? { status: 'completed', error: null, usage }
             : {
                 status: 'failed',
                 error: 'Codex completed without an assistant response.',
+                usage,
               },
         );
       else if (turn.status === 'interrupted')
         confirmTurn(
           stopped
-            ? { status: 'stopped', error: null }
+            ? { status: 'stopped', error: null, usage }
             : {
                 status: 'interrupted',
                 interruption: 'provider-disconnected',
                 error:
                   'Codex interrupted the turn before confirming its outcome. Inspect the workspace before continuing.',
+                usage,
               },
         );
       else {
         const error = object(turn.error);
         confirmTurn({
+          usage,
           status: 'failed',
           error: safeMessage(
             typeof error?.message === 'string'
@@ -1735,6 +1748,14 @@ export function startCodex(options: {
       return;
     }
     if (params.turnId !== turnId) return;
+    if (message.method === 'thread/tokenUsage/updated') {
+      const snapshot = codexTokenSnapshot(params);
+      if (snapshot) {
+        firstTokens ??= snapshot;
+        latestTokens = snapshot;
+      }
+      return;
+    }
     if (
       message.method === 'item/started' ||
       message.method === 'item/completed'

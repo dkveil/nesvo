@@ -262,7 +262,7 @@ if (args.length === 1 && args[0] === '--version') {
       delta: { type: 'text_delta', text },
     });
   };
-  const finish = (text, isError = false) => {
+  const finish = (text, isError = false, reported = {}) => {
     stream({ type: 'content_block_stop', index: 0 });
     stream({ type: 'message_stop' });
     emit({
@@ -279,6 +279,7 @@ if (args.length === 1 && args[0] === '--version') {
       is_error: isError,
       result: text,
       session_id: sessionId,
+      ...reported,
     });
   };
   const command = prompt.split('\n')[0].trim();
@@ -346,7 +347,16 @@ if (args.length === 1 && args[0] === '--version') {
       delta: { type: 'text_delta', text: 'reply.' },
     });
     finishRead(false);
-    finish('Fixture streamed reply.');
+    finish('Fixture streamed reply.', false, {
+      duration_ms: 2310,
+      total_cost_usd: 0.0421,
+      usage: {
+        input_tokens: 1200,
+        cache_creation_input_tokens: 300,
+        cache_read_input_tokens: 4000,
+        output_tokens: 350,
+      },
+    });
   } else {
     const text = `Fixture ${resumed ? 'resumed' : 'initial'} reply.`;
     start(text);

@@ -5,7 +5,11 @@ import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { type ClaudeStatus, type ProviderUsage } from '@nesvo/contracts';
+import {
+  type ClaudeStatus,
+  type ProviderUsage,
+  type TurnUsage,
+} from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
 import { claudeUsageResult } from './claude-usage';
@@ -14,6 +18,7 @@ import {
   recordDescendants,
   signalRecorded,
 } from './process-tree';
+import { claudeTurnUsage } from './turn-usage';
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -25,6 +30,7 @@ export type ClaudeResult = {
   status: 'completed' | 'stopped' | 'failed' | 'interrupted';
   error: string | null;
   interruption?: 'provider-disconnected';
+  usage?: TurnUsage;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -692,6 +698,7 @@ export function startClaude(options: {
       let stderrBytes = 0;
       let stderr = '';
       let resultSeen = false;
+      let usage: TurnUsage | null = null;
       let successful = false;
       let initialized = false;
       let providerFailure: string | null = null;
@@ -886,6 +893,7 @@ export function startClaude(options: {
           }
         } else if (value.type === 'result') {
           resultSeen = true;
+          usage = claudeTurnUsage(value);
           successful = value.is_error === false && value.subtype === 'success';
           if (!successful) {
             const errors = Array.isArray(value.errors)
@@ -983,6 +991,7 @@ export function startClaude(options: {
         clearTimeout(timer);
         await running.stop();
       }
+      const reported = usage ? { usage } : {};
       if (failure) return { status: 'failed', error: failure };
       if (!exit.confirmed)
         return {
@@ -990,10 +999,14 @@ export function startClaude(options: {
           error: 'Claude process closure could not be confirmed after cleanup.',
         };
       if (providerFailure || rateLimitFailure)
-        return { status: 'failed', error: providerFailure ?? rateLimitFailure };
+        return {
+          status: 'failed',
+          error: providerFailure ?? rateLimitFailure,
+          ...reported,
+        };
       if (stopped && resultSeen && successful && lastText)
-        return { status: 'completed', error: null };
-      if (stopped) return { status: 'stopped', error: null };
+        return { status: 'completed', error: null, ...reported };
+      if (stopped) return { status: 'stopped', error: null, ...reported };
       if (!resultSeen && initialized)
         return {
           status: 'interrupted',
@@ -1015,7 +1028,7 @@ export function startClaude(options: {
         throw new Error('Claude Code exited without a successful result.');
       if (!lastText)
         throw new Error('Claude Code completed without an assistant response.');
-      return { status: 'completed', error: null };
+      return { status: 'completed', error: null, ...reported };
     } catch (error) {
       await owned?.stop();
       return failure

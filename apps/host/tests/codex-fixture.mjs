@@ -92,7 +92,18 @@ if (args.length === 1 && args[0] === '--version') {
     turnId: current.id,
     ...extra,
   });
-  const complete = text => {
+  const tokenUsage = (last, total) =>
+    notify(
+      'thread/tokenUsage/updated',
+      scoped({
+        tokenUsage: {
+          modelContextWindow: 200000,
+          last: { reasoningOutputTokens: 0, totalTokens: 0, ...last },
+          total: { reasoningOutputTokens: 0, totalTokens: 0, ...total },
+        },
+      }),
+    );
+  const complete = (text, durationMs = null) => {
     if (!current || current.completed) return;
     current.completed = true;
     notify(
@@ -111,7 +122,13 @@ if (args.length === 1 && args[0] === '--version') {
     );
     notify('turn/completed', {
       threadId: thread.id,
-      turn: { id: current.id, status: 'completed', items: [], error: null },
+      turn: {
+        id: current.id,
+        status: 'completed',
+        items: [],
+        error: null,
+        durationMs,
+      },
     });
   };
   const delta = text =>
@@ -771,8 +788,16 @@ if (args.length === 1 && args[0] === '--version') {
               '\u001b[32mcount=5\u001b[0m\nAPI_TOKEN=fixture-secret\n',
           });
           tool('started', command);
+          tokenUsage(
+            { inputTokens: 1000, cachedInputTokens: 200, outputTokens: 50 },
+            { inputTokens: 5000, cachedInputTokens: 1200, outputTokens: 400 },
+          );
           delta('reply.');
-          complete('Codex fixture streamed reply.');
+          tokenUsage(
+            { inputTokens: 1500, cachedInputTokens: 600, outputTokens: 80 },
+            { inputTokens: 6500, cachedInputTokens: 1800, outputTokens: 480 },
+          );
+          complete('Codex fixture streamed reply.', 1800);
         }, 300);
       } else if (command === 'fixture:activities') {
         for (let index = 0; index < 105; index++) {

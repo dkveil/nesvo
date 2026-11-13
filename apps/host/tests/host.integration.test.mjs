@@ -222,6 +222,30 @@ async function processesGone(pids, tracked) {
 }
 
 const agent = session => session.messages.at(-1);
+const unreportedUsage = {
+  inputTokens: null,
+  outputTokens: null,
+  cachedInputTokens: null,
+  costUsd: null,
+  source: null,
+  durationMs: null,
+};
+const claudeFixtureUsage = {
+  inputTokens: 5500,
+  outputTokens: 350,
+  cachedInputTokens: 4000,
+  costUsd: 0.0421,
+  source: 'provider-report',
+  durationMs: 2310,
+};
+const codexFixtureUsage = {
+  inputTokens: 2500,
+  outputTokens: 130,
+  cachedInputTokens: 800,
+  costUsd: null,
+  source: 'provider-report',
+  durationMs: 1800,
+};
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const assertInterruption = (session, reason) => {
@@ -1053,6 +1077,7 @@ test(
       value => value.runId === running.runId && value.status === 'completed',
     );
     assert.equal(agent(completed).body, 'Fixture streamed reply.');
+    assert.deepEqual(agent(completed).usage, claudeFixtureUsage);
     assert.equal(agent(completed).state, 'completed');
     assert.equal(completed.error, null);
     assert.ok(agent(completed).completedAt);
@@ -1244,6 +1269,8 @@ test(
         value.runId === continuation.runId && value.status === 'completed',
     );
     assert.equal(agent(resumed).body, 'Fixture resumed reply.');
+    assert.deepEqual(agent(resumed).usage, unreportedUsage);
+    assert.equal(resumed.messages[0].usage, null);
     assert.equal(resumed.providerSessionId, session.providerSessionId);
     assert.equal(resumed.messages.length, 6);
     await reopened.stop();
@@ -1311,6 +1338,19 @@ test(
     assert.equal(recoveredSession.activitiesTruncated, false);
     assert.deepEqual(recoveredSession.activityTruncatedRunIds, []);
     assert.equal(recoveredSession.messages[0].completedAt, null);
+    assert.deepEqual(
+      recoveredSession.messages.find(
+        message =>
+          message.runId === running.runId && message.author === 'agent',
+      ).usage,
+      claudeFixtureUsage,
+    );
+    assert.deepEqual(
+      recoveredSession.messages.find(
+        message => message.id === agent(resumed).id,
+      ).usage,
+      unreportedUsage,
+    );
     const legacySession = (
       await recovered.request('list-sessions')
     ).sessions.find(value => value.id === legacyCodexId);
@@ -1641,6 +1681,7 @@ test(
       value => value.runId === codexRun.runId && value.status === 'completed',
     );
     assert.equal(agent(codexCompleted).body, 'Codex fixture streamed reply.');
+    assert.deepEqual(agent(codexCompleted).usage, codexFixtureUsage);
     assert.equal(codexCompleted.actualModel, 'fixture-codex');
     assert.ok(codexCompleted.providerSessionId);
     assert.deepEqual(
