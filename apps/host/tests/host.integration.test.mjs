@@ -8657,14 +8657,6 @@ test(
   },
 );
 
-const pipelineTurnId = (runId, kind, attempt = 1) => {
-  const hex = createHash('sha256')
-    .update(`pipeline-turn:${runId}:${kind}:${attempt}`)
-    .digest('hex');
-  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-};
-
 const loadPipelineTaskModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
   const outdir = join(directory, 'pipeline-task-modules');
@@ -8727,6 +8719,9 @@ test(
     process.env.NESVO_TEST_MODE = '1';
     process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
     process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
+    const taskModules = await loadPipelineTaskModules(directory);
+    const pipelineTurnId = (runId, kind) =>
+      taskModules.turnMessageId(runId, kind, 1);
     const gitEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
     );
@@ -9273,6 +9268,24 @@ test(
         });
         await delay(300);
         assert.deepEqual(await detail(run.id), current);
+        const message = await host.request('send-message', {
+          sessionId: run.sessionId,
+          messageId: randomUUID(),
+          text: 'fixture:hold',
+        });
+        assert.equal(message.type, 'session', JSON.stringify(message));
+        const held = JSON.parse(await waitForFile(pidFile));
+        for (const item of [held.pid, held.childPid]) owned.add(item);
+        const stop = await host.request('stop-run', {
+          sessionId: run.sessionId,
+          runId: message.session.runId,
+        });
+        assert.equal(stop.type, 'session');
+        await processesGone([held.pid, held.childPid], owned);
+        await host.event(
+          item => item.id === run.sessionId && item.status === 'stopped',
+        );
+        assert.deepEqual(await detail(run.id), current);
         await host.stop();
       },
     );
@@ -9294,7 +9307,7 @@ test(
           bindRunEvents,
           AUTHOR_BUSY_ATTENTION,
           AUTHOR_BUSY_MS,
-        } = await loadPipelineTaskModules(directory);
+        } = taskModules;
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
         t.after(() => database.close());
         const store = new PipelineRunStore(database);
