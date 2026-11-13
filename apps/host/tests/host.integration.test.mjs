@@ -9902,6 +9902,99 @@ test(
       },
     );
 
+    await t.test(
+      'a stale expected hash on a pipeline edit is a conflict',
+      async () => {
+        const before = '---\nname: guarded\nsteps: [lint]\n---\nBody\n';
+        await writeFile(pipelinePath('guarded'), before);
+        const stale = await run([
+          'add-to-pipeline',
+          '--scope',
+          'project',
+          '--pipeline',
+          'guarded',
+          '--step',
+          'test',
+          '--expected-hash',
+          sha('older version'),
+        ]);
+        assert.equal(stale.code, 2, stale.stderr);
+        assert.match(stale.stderr, new RegExp(sha(before)));
+        assert.equal(await readFile(pipelinePath('guarded'), 'utf8'), before);
+        const current = await run([
+          'add-to-pipeline',
+          '--scope',
+          'project',
+          '--pipeline',
+          'guarded',
+          '--step',
+          'test',
+          '--expected-hash',
+          sha(before),
+        ]);
+        assert.equal(current.code, 0, current.stderr);
+      },
+    );
+
+    await t.test(
+      'comments and blank lines inside a block list keep the order',
+      async () => {
+        const before =
+          '---\nname: spaced\nsteps:\n  - lint\n  # gate\n\n  - test\n---\n';
+        await writeFile(pipelinePath('spaced'), before);
+        const added = await run([
+          'add-to-pipeline',
+          '--scope',
+          'project',
+          '--pipeline',
+          'spaced',
+          '--step',
+          'review',
+        ]);
+        assert.equal(added.code, 0, added.stderr);
+        assert.equal(
+          await readFile(pipelinePath('spaced'), 'utf8'),
+          before.replace('  - test\n', '  - test\n  - review\n'),
+        );
+      },
+    );
+
+    await t.test(
+      'failures are readable as JSON and unknown commands are usage errors',
+      async () => {
+        const missing = await run([
+          'add-to-pipeline',
+          '--scope',
+          'project',
+          '--pipeline',
+          'nope',
+          '--step',
+          'lint',
+          '--json',
+        ]);
+        assert.equal(missing.code, 1);
+        assert.equal(
+          JSON.parse(missing.stdout).type,
+          'pipeline-definition-refused',
+        );
+        const refused = await run(
+          [
+            'add-step',
+            '--scope',
+            'project',
+            '--file',
+            join(directory, 'lint.md'),
+            '--json',
+          ],
+          { NESVO_RUN_ID: 'run-1' },
+        );
+        assert.equal(refused.code, 3);
+        assert.match(JSON.parse(refused.stdout).issues[0].message, /run-1/);
+        for (const command of ['toString', 'constructor', '__proto__'])
+          assert.equal((await run([command])).code, 64);
+      },
+    );
+
     await t.test('no database is created', async () => {
       const files = await readdir(directory, { recursive: true });
       assert.equal(
