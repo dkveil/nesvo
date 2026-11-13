@@ -4812,3 +4812,47 @@ test(
     await processesGone([hung], tracked);
   },
 );
+
+test('Skill YAML limits are enforced on the event stream before construction', async () => {
+  const { loadBoundedYaml, YamlLimitError, yamlLimits } =
+    await import('../src/skills/yaml-limits.ts');
+  const flowNesting = depth => `${'['.repeat(depth)}${']'.repeat(depth)}`;
+  const blockNesting = depth =>
+    `${Array.from({ length: depth }, (_, level) => `${'  '.repeat(level)}k:`).join('\n')} 1`;
+  const sequenceOfScalars = count =>
+    Array.from({ length: count }, (_, index) => `- v${index}`).join('\n');
+  const rejectsWith = (source, kind) =>
+    assert.throws(
+      () => loadBoundedYaml(source),
+      error => error instanceof YamlLimitError && error.kind === kind,
+    );
+
+  assert.deepEqual(yamlLimits, { depth: 12, nodes: 512 });
+  assert.deepEqual(loadBoundedYaml('name: demo\ntags: [a, b]'), {
+    name: 'demo',
+    tags: ['a', 'b'],
+  });
+  assert.equal(loadBoundedYaml(''), undefined);
+
+  assert.doesNotThrow(() => loadBoundedYaml(flowNesting(12)));
+  assert.doesNotThrow(() => loadBoundedYaml(blockNesting(12)));
+  rejectsWith(flowNesting(13), 'depth');
+  rejectsWith(blockNesting(13), 'depth');
+
+  assert.equal(loadBoundedYaml(sequenceOfScalars(511)).length, 511);
+  rejectsWith(sequenceOfScalars(512), 'nodes');
+
+  const duplicateKeyAfterBudget = `a: 1\na: 2\n${sequenceOfScalars(600)}`;
+  assert.throws(
+    () => loadBoundedYaml(`${duplicateKeyAfterBudget}`),
+    error => !(error instanceof YamlLimitError),
+  );
+  rejectsWith(
+    `a: 1\na: 2\nb:\n${sequenceOfScalars(600).replace(/^/gm, '  ')}`,
+    'nodes',
+  );
+  rejectsWith(`a: 1\na: 2\nb: ${flowNesting(13)}`, 'depth');
+
+  rejectsWith('a: 1\n---\nb: 2', 'documents');
+  assert.throws(() => loadBoundedYaml('a: &x 1\nb: *x'), /alias/i);
+});
