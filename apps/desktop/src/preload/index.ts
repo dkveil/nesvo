@@ -40,6 +40,7 @@ import {
   setScheduledJobActiveSchema,
   decidePipelineGateSchema,
   definitionCatalogSchema,
+  definitionWriteResultSchema,
   deletePipelineDefinitionSchema,
   desktopPipelineRunDetailSchema,
   desktopPipelineRunPageSchema,
@@ -201,7 +202,7 @@ const pipelines: DesktopApi['pipelines'] = {
       ),
     ),
   saveDefinition: async (hostId, input) =>
-    definitionCatalogSchema.parse(
+    definitionWriteResultSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:save-pipeline-definition',
         savePipelineDefinitionSchema.parse(input),
@@ -209,7 +210,7 @@ const pipelines: DesktopApi['pipelines'] = {
       ),
     ),
   deleteDefinition: async (hostId, input) =>
-    definitionCatalogSchema.parse(
+    definitionWriteResultSchema.parse(
       await ipcRenderer.invoke(
         'nesvo:delete-pipeline-definition',
         deletePipelineDefinitionSchema.parse(input),

@@ -6,6 +6,9 @@ import {
   sessionModeSchema,
 } from '../sessions';
 import {
+  definitionHashSchema,
+  definitionIssueSchema,
+  definitionCatalogSchema,
   definitionKindSchema,
   definitionScopeSchema,
   pipelineDefinitionLimits,
@@ -142,11 +145,37 @@ const definitionTargetShape = {
 export const savePipelineDefinitionSchema = z.strictObject({
   ...definitionTargetShape,
   document: z.string().min(1).max(pipelineCommandLimits.document),
+  expectedHash: definitionHashSchema.nullable(),
 });
 
-export const deletePipelineDefinitionSchema = z.strictObject(
-  definitionTargetShape,
-);
+export const deletePipelineDefinitionSchema = z.strictObject({
+  ...definitionTargetShape,
+  expectedHash: definitionHashSchema,
+});
+
+export const pipelineDefinitionConflictSchema = z.strictObject({
+  type: z.literal('pipeline-definition-conflict'),
+  scope: definitionScopeSchema,
+  kind: definitionKindSchema,
+  name: stepNameSchema,
+  path: z.string().min(1).max(pipelineDefinitionLimits.path),
+  currentHash: definitionHashSchema.nullable(),
+  document: z.string().max(pipelineCommandLimits.document).nullable(),
+});
+
+export const pipelineDefinitionRefusedSchema = z.strictObject({
+  type: z.literal('pipeline-definition-refused'),
+  issues: z
+    .array(definitionIssueSchema)
+    .min(1)
+    .max(pipelineDefinitionLimits.issues),
+});
+
+export const definitionWriteResultSchema = z.union([
+  definitionCatalogSchema,
+  pipelineDefinitionConflictSchema,
+  pipelineDefinitionRefusedSchema,
+]);
 
 export const readPipelineEvidenceSchema = z.strictObject({
   runId: idSchema,
@@ -178,6 +207,13 @@ export type SavePipelineDefinitionInput = z.infer<
 export type DeletePipelineDefinitionInput = z.infer<
   typeof deletePipelineDefinitionSchema
 >;
+export type PipelineDefinitionConflict = z.infer<
+  typeof pipelineDefinitionConflictSchema
+>;
+export type PipelineDefinitionRefused = z.infer<
+  typeof pipelineDefinitionRefusedSchema
+>;
+export type DefinitionWriteResult = z.infer<typeof definitionWriteResultSchema>;
 export type ReadPipelineEvidenceInput = z.infer<
   typeof readPipelineEvidenceSchema
 >;

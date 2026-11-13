@@ -43,6 +43,7 @@ export const parseDurationMs = (value: string): number | null => {
 export const stepTypeSchema = z.enum(['command', 'agent', 'human', 'action']);
 export const stepPhaseSchema = z.enum(['plan', 'pre-done', 'pre-push']);
 export const stepOnFailSchema = z.enum(['fix', 'stop']);
+export const stepEffectSchema = z.enum(['local', 'external']);
 export const stepNameSchema = z
   .string()
   .min(1)
@@ -83,6 +84,7 @@ const stepDefinitionShape = {
     .max(pipelineDefinitionLimits.retries)
     .default(0),
   on_fail: stepOnFailSchema.default('stop'),
+  effect: stepEffectSchema.default('local'),
   needs: z
     .array(stepNeedSchema)
     .max(pipelineDefinitionLimits.needs)
@@ -95,6 +97,7 @@ type StepRuleSubject = {
   type: z.infer<typeof stepTypeSchema>;
   skill: string | null;
   retries: number;
+  effect: z.infer<typeof stepEffectSchema>;
   body: string;
 };
 
@@ -104,6 +107,16 @@ const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
       code: 'custom',
       path: ['retries'],
       message: 'Human steps do not retry.',
+    });
+  if (
+    value.effect === 'external' &&
+    value.type !== 'command' &&
+    value.type !== 'action'
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['effect'],
+      message: 'Only command and action steps declare an external effect.',
     });
   if (value.type !== 'agent' && value.skill !== null)
     context.addIssue({
@@ -228,6 +241,7 @@ export const definitionCatalogSchema = z.strictObject({
 export type StepType = z.infer<typeof stepTypeSchema>;
 export type StepPhase = z.infer<typeof stepPhaseSchema>;
 export type StepOnFail = z.infer<typeof stepOnFailSchema>;
+export type StepEffect = z.infer<typeof stepEffectSchema>;
 export type StepDefinition = z.infer<typeof stepDefinitionSchema>;
 export type StepDefinitionInput = z.input<typeof stepDefinitionSchema>;
 export type PipelineDefinition = z.infer<typeof pipelineDefinitionSchema>;

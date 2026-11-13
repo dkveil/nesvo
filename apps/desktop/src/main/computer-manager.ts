@@ -509,11 +509,21 @@ export class ComputerManager {
       'read-pipeline-evidence': 'pipeline-evidence',
       'pipeline-metrics': 'pipeline-metrics',
     }[method];
-    if (response.type !== expected)
+    const definitionWrite =
+      (method === 'save-pipeline-definition' ||
+        method === 'delete-pipeline-definition') &&
+      (response.type === 'pipeline-definition-conflict' ||
+        response.type === 'pipeline-definition-refused');
+    if (response.type !== expected && !definitionWrite)
       throw new Error('Unexpected host response.');
     switch (response.type) {
       case 'pipeline-definitions':
         return response.catalog;
+      case 'pipeline-definition-conflict':
+      case 'pipeline-definition-refused':
+        return Object.fromEntries(
+          Object.entries(response).filter(([key]) => key !== 'id'),
+        );
       case 'pipeline-run':
         this.apply(entry, { type: 'pipeline-run-changed', run: response.run });
         return { ...response.run, hostId } satisfies DesktopPipelineRun;

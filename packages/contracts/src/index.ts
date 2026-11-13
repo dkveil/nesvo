@@ -80,10 +80,13 @@ import {
 import {
   decidePipelineGateSchema,
   definitionCatalogSchema,
+  definitionWriteResultSchema,
   deletePipelineDefinitionSchema,
   getPipelineRunSchema,
   listPipelineDefinitionsSchema,
   listPipelineRunsSchema,
+  pipelineDefinitionConflictSchema,
+  pipelineDefinitionRefusedSchema,
   pipelineEvidenceSchema,
   pipelineMetricsInputSchema,
   pipelineMetricsSchema,
@@ -102,6 +105,7 @@ import {
   validatePipelineDefinitionsSchema,
   type DecidePipelineGateInput,
   type DefinitionCatalog,
+  type DefinitionWriteResult,
   type DeletePipelineDefinitionInput,
   type ListPipelineDefinitionsInput,
   type ListPipelineRunsInput,
@@ -454,6 +458,8 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     id: z.uuid(),
     catalog: definitionCatalogSchema,
   }),
+  pipelineDefinitionConflictSchema.extend({ id: z.uuid() }),
+  pipelineDefinitionRefusedSchema.extend({ id: z.uuid() }),
   z.strictObject({
     type: z.literal('pipeline-run'),
     id: z.uuid(),
@@ -572,11 +578,11 @@ export type PipelinesApi = {
   saveDefinition: (
     hostId: HostId,
     input: SavePipelineDefinitionInput,
-  ) => Promise<DefinitionCatalog>;
+  ) => Promise<DefinitionWriteResult>;
   deleteDefinition: (
     hostId: HostId,
     input: DeletePipelineDefinitionInput,
-  ) => Promise<DefinitionCatalog>;
+  ) => Promise<DefinitionWriteResult>;
   removeWorktree: (
     hostId: HostId,
     runId: string,
