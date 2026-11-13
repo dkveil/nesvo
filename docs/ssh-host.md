@@ -70,7 +70,7 @@ node "$HOME/.local/lib/nesvo/main.mjs" pipelines validate --directory /path/to/p
 node "$HOME/.local/lib/nesvo/main.mjs" pipelines list --directory /path/to/project --json
 ```
 
-`list` shows each definition's `contentHash`; `add-step`, `add-to-pipeline` and `remove-from-pipeline` accept `--expected-hash` or read the current file and refuse with exit 2 when it changed. Inside a pipeline run, which sets `NESVO_RUN_ID`, the writing commands exit 3 and the operator changes definitions instead. The commands read and write only this host's `~/.agents/pipelines` and the given project; they open no database and copy no definitions between computers.
+`list` shows each definition's `contentHash`; `add-step`, `add-to-pipeline` and `remove-from-pipeline` accept `--expected-hash` and refuse with exit 2 when the file differs from that version. Inside a pipeline run, which sets `NESVO_RUN_ID`, the writing commands exit 3 and the operator changes definitions instead. The commands read and write only this host's `~/.agents/pipelines` and the given project; they open no database and copy no definitions between computers.
 
 ## Verify SSH identity and add the computer
 
