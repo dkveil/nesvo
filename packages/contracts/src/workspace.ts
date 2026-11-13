@@ -63,7 +63,11 @@ export type WorkspaceSearch = z.infer<typeof workspaceSearchSchema>;
 export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
 
 export const readGitBranchSchema = z.strictObject({
-  directory: z.string().trim().max(4096),
+  directory: z
+    .string()
+    .trim()
+    .max(4096)
+    .regex(/^[^\u0000-\u001f\u007f]*$/),
 });
 export const gitBranchSchema = z.discriminatedUnion('kind', [
   z.strictObject({
