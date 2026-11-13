@@ -135,7 +135,7 @@ export async function runShellStep(
       signal: execution.signal,
       onSpawn: pid => {
         recording = execution.evidence
-          .recordProcess(execution.step, pid)
+          .recordProcess(execution.step, pid, Date.now())
           .catch(() => undefined);
       },
       onStdout: chunk => combined.push(chunk),

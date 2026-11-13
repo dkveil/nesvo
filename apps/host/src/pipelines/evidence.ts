@@ -16,9 +16,27 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { processCreatedAt } from '../process/process-created-at';
 import { processStartTime } from '../providers/process-tree';
 
 const PROCESS_FILE = 'process.json';
+const SPAWN_MATCH_TOLERANCE_MS = 3_000;
+
+const isRecordedProcess = async (
+  pid: number,
+  startTime: unknown,
+  spawnedAt: unknown,
+): Promise<boolean> => {
+  if (process.platform === 'linux')
+    return typeof startTime === 'number' && processStartTime(pid) === startTime;
+  if (process.platform === 'win32' || typeof spawnedAt !== 'number')
+    return false;
+  const createdAt = await processCreatedAt(pid);
+  return (
+    createdAt != null &&
+    Math.abs(createdAt - spawnedAt) <= SPAWN_MATCH_TOLERANCE_MS
+  );
+};
 
 export const EVIDENCE_FILE_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9]+)?$/;
 
@@ -113,12 +131,14 @@ export class EvidenceStore {
   async recordProcess(
     step: Pick<PipelineStepRecord, 'runId' | 'index' | 'name'>,
     pid: number,
+    spawnedAt: number = Date.now(),
   ): Promise<void> {
+    const startTime = processStartTime(pid);
     const directory = this.stepDirectory(step);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(
       join(directory, PROCESS_FILE),
-      JSON.stringify({ pid, startTime: processStartTime(pid) }),
+      JSON.stringify({ pid, startTime, spawnedAt }),
       { mode: 0o600 },
     );
   }
@@ -146,19 +166,18 @@ export class EvidenceStore {
       }
       for (const step of steps) {
         const path = join(this.root, run, step, PROCESS_FILE);
-        let record: { pid?: unknown; startTime?: unknown };
+        let record: { pid?: unknown; startTime?: unknown; spawnedAt?: unknown };
         try {
           record = JSON.parse(await readFile(path, 'utf8'));
         } catch {
           continue;
         }
-        const { pid, startTime } = record;
+        const { pid, startTime, spawnedAt } = record;
         if (
           typeof pid === 'number' &&
           Number.isInteger(pid) &&
           pid > 1 &&
-          typeof startTime === 'number' &&
-          processStartTime(pid) === startTime
+          (await isRecordedProcess(pid, startTime, spawnedAt))
         )
           try {
             process.kill(-pid, 'SIGKILL');
