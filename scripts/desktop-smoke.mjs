@@ -1722,6 +1722,7 @@ try {
   await waitState(writingSession.id, 'completed');
   const introReview = await waitReview(writingSession.id);
   await send('fixture:review-write');
+  await message('Codex fixture initial files.').waitFor();
   const initialFiles = await waitState(writingSession.id, 'completed');
   assert.equal(
     initialFiles.messages.at(-1).body,
