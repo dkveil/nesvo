@@ -47,6 +47,8 @@ Install the native Claude Code or Codex CLI and sign in using `claude auth login
 
 Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can read files and run read commands without write or elevation grants. Codex supervised mode allows workspace changes and displays the operation approvals requested by Codex; it does not ask before every edit. Decisions apply once to a particular request and run. One group runs per host at a time: a parent with up to two approved workers, or a single session. Account limits and authentication failures remain visible; Stop preserves partial text and never means successful completion. The inbox brings operation approvals, worker proposals and successful results into compact rows with distinct inline actions. Accepting a result is separate from allowing a provider operation and performs no commit or merge.
 
+A pipeline task runs a task spec from your project through the steps of a pipeline defined in files. Starting a task creates one ordinary session, optionally in its own Git worktree and branch. The session plans first when the pipeline asks for a plan check, then implements the task; when the turn ends, the computer runs the checks and actions of the pipeline in order and records their results. A run never repeats work by itself: after Stop or a restart it waits for an explicit resume, and an action that may already have run needs your decision. One task runs per project at a time.
+
 ## P2 acceptance walkthrough
 
 1. Confirm that Claude Code is detected and logged in, then create a session in a small known directory.
