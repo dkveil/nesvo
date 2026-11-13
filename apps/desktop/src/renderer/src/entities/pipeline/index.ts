@@ -1,0 +1,185 @@
+import type {
+  DesktopPipelineRun,
+  DesktopPipelineStepRecord,
+  PipelineRunStatus,
+  PipelineStepState,
+  ResolvedStep,
+  StepPhase,
+} from '@nesvo/contracts';
+
+export type {
+  DefinitionCatalog,
+  DefinitionIssue,
+  DesktopPipelineRun as PipelineRun,
+  DesktopPipelineStepRecord as PipelineStepRecord,
+  Evidence,
+  PipelineEvidence,
+  PipelineRunStatus,
+  PipelineStepState,
+  ResolvedPipeline,
+  StepPhase,
+  StepResult,
+  TaskSpecSummary,
+} from '@nesvo/contracts';
+
+export type PipelineTone = 'success' | 'error' | 'warning' | 'info' | 'muted';
+
+export const toneText: Record<PipelineTone, string> = {
+  success: 'text-success-foreground',
+  error: 'text-error-foreground',
+  warning: 'text-warning-foreground',
+  info: 'text-info-foreground',
+  muted: 'text-muted-foreground',
+};
+
+export const phaseLabels: Record<StepPhase, string> = {
+  plan: 'Plan',
+  'pre-done': 'Before done',
+  'pre-push': 'Before push',
+};
+
+export const phaseOrder: StepPhase[] = ['plan', 'pre-done', 'pre-push'];
+
+export const stepStateLabels: Record<PipelineStepState, string> = {
+  pending: 'Pending',
+  running: 'Running',
+  'awaiting-human': 'Waiting for you',
+  passed: 'Passed',
+  failed: 'Failed',
+  blocked: 'Blocked',
+  done: 'Done',
+  error: 'Error',
+  skipped: 'Skipped',
+  interrupted: 'Interrupted',
+  uncertain: 'Uncertain',
+};
+
+export const stepStateTones: Record<PipelineStepState, PipelineTone> = {
+  pending: 'muted',
+  running: 'info',
+  'awaiting-human': 'warning',
+  passed: 'success',
+  failed: 'error',
+  blocked: 'warning',
+  done: 'success',
+  error: 'error',
+  skipped: 'muted',
+  interrupted: 'muted',
+  uncertain: 'warning',
+};
+
+const runStatusLabels: Record<PipelineRunStatus, string> = {
+  pending: 'Queued',
+  planning: 'Planning',
+  implementing: 'Implementing',
+  checking: 'Checking',
+  'awaiting-human': 'Waiting for you',
+  fixing: 'Fixing',
+  passed: 'Passed',
+  failed: 'Failed',
+  rejected: 'Rejected',
+  'needs-attention': 'Needs attention',
+  stopped: 'Stopped',
+  interrupted: 'Interrupted',
+};
+
+export const runStatusTones: Record<PipelineRunStatus, PipelineTone> = {
+  pending: 'muted',
+  planning: 'info',
+  implementing: 'info',
+  checking: 'info',
+  'awaiting-human': 'warning',
+  fixing: 'info',
+  passed: 'success',
+  failed: 'error',
+  rejected: 'error',
+  'needs-attention': 'warning',
+  stopped: 'muted',
+  interrupted: 'muted',
+};
+
+export const runStatusLabel = (status: PipelineRunStatus) =>
+  runStatusLabels[status];
+
+const activeRunStatuses: PipelineRunStatus[] = [
+  'pending',
+  'planning',
+  'implementing',
+  'checking',
+  'awaiting-human',
+  'fixing',
+];
+
+export const isRunActive = (run: DesktopPipelineRun) =>
+  activeRunStatuses.includes(run.status);
+
+export const canResumeRun = (run: DesktopPipelineRun) =>
+  run.status === 'needs-attention' || run.status === 'interrupted';
+
+export type PipelineStepView = {
+  index: number;
+  definition: ResolvedStep;
+  record: DesktopPipelineStepRecord | null;
+  state: PipelineStepState;
+  attempts: number;
+};
+
+export type PipelinePhaseView = {
+  phase: StepPhase;
+  steps: PipelineStepView[];
+};
+
+export const latestAttempts = (records: DesktopPipelineStepRecord[]) => {
+  const latest = new Map<number, DesktopPipelineStepRecord>();
+  for (const record of records) {
+    const current = latest.get(record.index);
+    if (!current || record.attempt > current.attempt)
+      latest.set(record.index, record);
+  }
+  return latest;
+};
+
+export const pipelineSteps = (
+  run: DesktopPipelineRun,
+  records: DesktopPipelineStepRecord[],
+): PipelineStepView[] => {
+  const latest = latestAttempts(records);
+  return run.pipeline.steps.map((definition, index) => {
+    const record = latest.get(index) ?? null;
+    return {
+      index,
+      definition,
+      record,
+      state: record?.state ?? 'pending',
+      attempts: record ? Math.max(record.attempt, 1) : 0,
+    };
+  });
+};
+
+export const pipelinePhases = (steps: PipelineStepView[]) =>
+  phaseOrder
+    .map(phase => ({
+      phase,
+      steps: steps.filter(step => step.definition.phase === phase),
+    }))
+    .filter(group => group.steps.length > 0);
+
+const SECOND_MS = 1000;
+const MINUTE_MS = 60_000;
+
+export const formatDuration = (milliseconds: number) => {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '';
+  if (milliseconds < SECOND_MS) return `${Math.round(milliseconds)}ms`;
+  if (milliseconds < MINUTE_MS)
+    return `${Math.round(milliseconds / SECOND_MS)}s`;
+  const minutes = Math.floor(milliseconds / MINUTE_MS);
+  const seconds = Math.round((milliseconds % MINUTE_MS) / SECOND_MS);
+  return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+};
+
+export const stepDuration = (step: PipelineStepView, now: number) => {
+  if (step.record?.result) return formatDuration(step.record.result.durationMs);
+  if (step.state === 'running' && step.record?.startedAt)
+    return formatDuration(now - Date.parse(step.record.startedAt));
+  return '';
+};
