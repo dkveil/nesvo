@@ -186,6 +186,8 @@ export const sessionSchema = z.strictObject({
   delegations: z.array(delegationSchema).max(100).default([]),
   pipelineRunId: z.uuid().nullable().default(null),
   pipelineStepId: z.uuid().nullable().default(null),
+  scheduledJobId: z.uuid().nullable().default(null),
+  scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),
   status: sessionStateSchema,
   error: z.string().nullable(),

@@ -25,7 +25,7 @@ import {
   type CodexEvent,
   type CodexResult,
 } from '../providers/codex';
-import { SessionStore } from './store';
+import { SessionStore, type SessionOrigin } from './store';
 import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
 import { resolveSessionSkill } from '../skills/service';
@@ -284,7 +284,7 @@ export class SessionService {
 
   create(
     input: CreateSessionInput,
-    options: { isolatedDirectory?: string } = {},
+    options: { isolatedDirectory?: string; origin?: SessionOrigin } = {},
   ): Session {
     let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
@@ -292,7 +292,7 @@ export class SessionService {
       mkdirSync(directory, { recursive: true });
     }
     directory = this.resolveDirectory(directory);
-    const session = this.store.create(input, directory);
+    const session = this.store.create(input, directory, options.origin);
     this.emitSession(session);
     return session;
   }

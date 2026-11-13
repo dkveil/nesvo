@@ -1,32 +1,74 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
   sessionSchema,
   type CreateSessionInput,
+  type ScheduledJobSessionOrigin,
   type Session,
   type Delegation,
 } from '@nesvo/contracts';
+
+export type SessionOrigin = { kind: 'operator' } | ScheduledJobSessionOrigin;
+
+type SessionLinks = Pick<
+  Session,
+  'scheduledJobId' | 'scheduledJobRunId' | 'delegationEnabled'
+>;
+
+const originLinks = (
+  origin: SessionOrigin,
+  input: CreateSessionInput,
+): SessionLinks => {
+  switch (origin.kind) {
+    case 'operator':
+      return {
+        scheduledJobId: null,
+        scheduledJobRunId: null,
+        delegationEnabled: input.provider === 'Codex',
+      };
+    case 'scheduled-job':
+      return {
+        scheduledJobId: origin.scheduledJobId,
+        scheduledJobRunId: origin.runId,
+        delegationEnabled: false,
+      };
+  }
+};
+
+const SESSION_COLUMNS =
+  'document, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId';
+
+const toSession = (row: Record<string, SQLOutputValue>): Session =>
+  sessionSchema.parse({
+    ...JSON.parse(String(row.document)),
+    scheduledJobId: row.scheduledJobId ?? null,
+    scheduledJobRunId: row.scheduledJobRunId ?? null,
+  });
 
 export class SessionStore {
   constructor(private readonly database: DatabaseSync) {}
 
   list(): Session[] {
     return this.database
-      .prepare('SELECT document FROM sessions ORDER BY updated_at DESC, id')
+      .prepare(
+        `SELECT ${SESSION_COLUMNS} FROM sessions ORDER BY updated_at DESC, id`,
+      )
       .all()
-      .map(row => sessionSchema.parse(JSON.parse(String(row.document))));
+      .map(toSession);
   }
 
   get(id: string): Session | undefined {
     const row = this.database
-      .prepare('SELECT document FROM sessions WHERE id = ?')
+      .prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`)
       .get(id);
-    return row
-      ? sessionSchema.parse(JSON.parse(String(row.document)))
-      : undefined;
+    return row ? toSession(row) : undefined;
   }
 
-  create(input: CreateSessionInput, directory: string): Session {
+  create(
+    input: CreateSessionInput,
+    directory: string,
+    origin: SessionOrigin = { kind: 'operator' },
+  ): Session {
     const now = new Date().toISOString();
     const session: Session = {
       ...input,
@@ -52,10 +94,10 @@ export class SessionStore {
       parentId: null,
       parentRunId: null,
       scope: null,
-      delegationEnabled: input.provider === 'Codex',
       delegations: [],
       pipelineRunId: null,
       pipelineStepId: null,
+      ...originLinks(origin, input),
     };
     this.save(session);
     return session;
@@ -76,7 +118,7 @@ export class SessionStore {
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const statement = this.database.prepare(
-        'INSERT INTO sessions (id, document, updated_at, pipeline_run_id, pipeline_step_id) VALUES (?, ?, ?, (SELECT id FROM pipeline_runs WHERE id = ?), (SELECT id FROM pipeline_steps WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, pipeline_run_id = excluded.pipeline_run_id, pipeline_step_id = excluded.pipeline_step_id',
+        'INSERT INTO sessions (id, document, updated_at, pipeline_run_id, pipeline_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, (SELECT id FROM pipeline_runs WHERE id = ?), (SELECT id FROM pipeline_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, pipeline_run_id = excluded.pipeline_run_id, pipeline_step_id = excluded.pipeline_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
       );
       for (const session of next)
         statement.run(
@@ -85,6 +127,8 @@ export class SessionStore {
           session.updatedAt,
           session.pipelineRunId,
           session.pipelineStepId,
+          session.scheduledJobId,
+          session.scheduledJobRunId,
         );
       writeRelated?.();
       this.database.exec('COMMIT');
@@ -112,6 +156,8 @@ export class SessionStore {
       delegations: [],
       pipelineRunId: null,
       pipelineStepId: null,
+      scheduledJobId: null,
+      scheduledJobRunId: null,
       providerSessionId:
         proposal.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,
