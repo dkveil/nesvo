@@ -6749,6 +6749,10 @@ const loadPipelineRunnerModules = async directory => {
   return Object.assign({}, ...modules);
 };
 
+const pipelineHoldFixturePath = fileURLToPath(
+  new URL('./pipeline-hold-fixture.mjs', import.meta.url),
+);
+
 test(
   'pipeline runner executes command and action steps through one serialized entry point',
   { timeout: 240_000 },
@@ -6761,6 +6765,7 @@ test(
       NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
       MY_TOKEN: process.env.MY_TOKEN,
     };
+    const onWindows = process.platform === 'win32';
     const owned = new Set();
     const hosts = [];
     t.after(async () => {
@@ -6770,7 +6775,7 @@ test(
       }
       for (const pid of owned)
         try {
-          process.kill(-pid, 'SIGKILL');
+          process.kill(onWindows ? pid : -pid, 'SIGKILL');
         } catch {}
       for (const [key, value] of Object.entries(environment))
         if (value == null) delete process.env[key];
@@ -6780,6 +6785,9 @@ test(
     process.env.NESVO_TEST_MODE = '1';
     process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
     process.env.MY_TOKEN = 'token-value-1234';
+    const shellBody = (posix, windows) => (onWindows ? windows : posix);
+    const holdStep = (pidPath, seconds) =>
+      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
     const write = async (path, content) => {
       await mkdir(join(path, '..'), { recursive: true });
       await writeFile(path, content);
@@ -6855,28 +6863,43 @@ test(
         {
           name: 'emit',
           type: 'action',
-          body: 'echo preparing\necho \'{"url":"https://example.test/change/1","label":"ready"}\'',
+          body: shellBody(
+            'echo preparing\necho \'{"url":"https://example.test/change/1","label":"ready"}\'',
+            'echo preparing\necho {"url":"https://example.test/change/1","label":"ready"}',
+          ),
         },
         {
           name: 'consume',
           type: 'command',
-          body: `test "$NESVO_OUTPUT_EMIT_URL" = "https://example.test/change/1"\ntest "$NESVO_OUTPUT_EMIT_LABEL" = "ready"\ntest "$NESVO_PROJECT_ROOT" = "${project}"\ntest "$CI" = "1"\necho "root=$NESVO_PROJECT_ROOT step=$NESVO_STEP_NAME"`,
+          body: shellBody(
+            `test "$NESVO_OUTPUT_EMIT_URL" = "https://example.test/change/1"\ntest "$NESVO_OUTPUT_EMIT_LABEL" = "ready"\ntest "$NESVO_PROJECT_ROOT" = "${project}"\ntest "$CI" = "1"\necho "root=$NESVO_PROJECT_ROOT step=$NESVO_STEP_NAME"`,
+            `if not "%NESVO_OUTPUT_EMIT_URL%"=="https://example.test/change/1" exit /b 1\nif not "%NESVO_OUTPUT_EMIT_LABEL%"=="ready" exit /b 1\nif not "%NESVO_PROJECT_ROOT%"=="${project}" exit /b 1\nif not "%CI%"=="1" exit /b 1\necho root=%NESVO_PROJECT_ROOT% step=%NESVO_STEP_NAME%`,
+          ),
         },
         {
           name: 'leak',
           type: 'command',
-          body: 'echo "key sk-abcdefghijklmnopqrstuv"\necho "inherited=${MY_TOKEN:-absent}"',
+          body: shellBody(
+            'echo "key sk-abcdefghijklmnopqrstuv"\necho "inherited=${MY_TOKEN:-absent}"',
+            'echo key sk-abcdefghijklmnopqrstuv\nif defined MY_TOKEN (echo inherited=%MY_TOKEN%) else (echo inherited=absent)',
+          ),
         },
         {
           name: 'listed',
           type: 'command',
           needs: '[env:MY_TOKEN]',
-          body: 'echo "length=${#MY_TOKEN}"\necho "value=$MY_TOKEN"',
+          body: shellBody(
+            'echo "length=${#MY_TOKEN}"\necho "value=$MY_TOKEN"',
+            'setlocal enabledelayedexpansion\nset "rest=%MY_TOKEN%"\nset length=0\n:count\nif defined rest (set "rest=!rest:~1!" & set /a length+=1 & goto count)\necho length=!length!\necho value=%MY_TOKEN%',
+          ),
         },
         {
           name: 'secret-key',
           type: 'action',
-          body: 'echo \'{"ghp_ABCDEFGHIJKLMNOPQRST1234":"1"}\'',
+          body: shellBody(
+            'echo \'{"ghp_ABCDEFGHIJKLMNOPQRST1234":"1"}\'',
+            'echo {"ghp_ABCDEFGHIJKLMNOPQRST1234":"1"}',
+          ),
         },
         { name: 'review', type: 'agent', body: 'Review the change.' },
         { name: 'approve', type: 'human', body: 'Approve the change.' },
@@ -6890,13 +6913,19 @@ test(
           name: 'slow',
           type: 'command',
           timeout: '2s',
-          body: `echo $$ > "${pidFile('slow')}"\nsleep 30`,
+          body: shellBody(
+            `echo $$ > "${pidFile('slow')}"\nsleep 30`,
+            holdStep(pidFile('slow'), 30),
+          ),
         },
         {
           name: 'block',
           type: 'command',
           timeout: '10m',
-          body: `echo $$ > "${pidFile('block')}"\nsleep 60`,
+          body: shellBody(
+            `echo $$ > "${pidFile('block')}"\nsleep 60`,
+            holdStep(pidFile('block'), 60),
+          ),
         },
       ],
       {
@@ -7046,7 +7075,7 @@ test(
         assert.equal(consume.state, 'passed', consume.result?.summary);
         assert.match(
           await evidenceText(run.id, consume),
-          new RegExp(`root=${project} step=consume`),
+          new RegExp(`root=${RegExp.escape(project)} step=consume`),
         );
         const leak = await evidenceText(run.id, stepNamed(current, 'leak'));
         assert.match(leak, /key \[redacted\]/);
@@ -7256,7 +7285,7 @@ test(
 
     await t.test(
       'a restart interrupts a running command and leaves a running action uncertain',
-      async () => {
+      async subtest => {
         const marks = join(directory, 'marks');
         await mkdir(marks);
         const commandProject = await createProject(
@@ -7266,7 +7295,10 @@ test(
               name: 'hold',
               type: 'command',
               timeout: '10m',
-              body: `echo run >> "${join(marks, 'command-count')}"\necho $$ > "${join(marks, 'command.pid')}"\nsleep 60`,
+              body: shellBody(
+                `echo run >> "${join(marks, 'command-count')}"\necho $$ > "${join(marks, 'command.pid')}"\nsleep 60`,
+                `echo run>>"${join(marks, 'command-count')}"\n${holdStep(join(marks, 'command.pid'), 60)}`,
+              ),
             },
           ],
           { hold: ['hold'] },
@@ -7278,7 +7310,10 @@ test(
               name: 'publish',
               type: 'action',
               timeout: '10m',
-              body: `if [ -f "${join(marks, 'started')}" ]; then touch "${join(marks, 'replayed')}"; fi\ntouch "${join(marks, 'started')}"\necho $$ > "${join(marks, 'action.pid')}"\nsleep 60`,
+              body: shellBody(
+                `if [ -f "${join(marks, 'started')}" ]; then touch "${join(marks, 'replayed')}"; fi\ntouch "${join(marks, 'started')}"\necho $$ > "${join(marks, 'action.pid')}"\nsleep 60`,
+                `if exist "${join(marks, 'started')}" type nul > "${join(marks, 'replayed')}"\ntype nul > "${join(marks, 'started')}"\n${holdStep(join(marks, 'action.pid'), 60)}`,
+              ),
             },
           ],
           { publish: ['publish'] },
@@ -7296,7 +7331,21 @@ test(
         assert.deepEqual(pids.map(alivePid), [true, true]);
         host = launch(dataDirectory, join(directory, 'pids-restart.json'));
         hosts.push(host);
-        for (const pid of pids) await gone(pid);
+        await subtest.test(
+          'the restarted host stops the orphaned step processes',
+          {
+            skip:
+              onWindows &&
+              'the killed host takes its step shell with it, and the processes that shell started leave the host job, so no record reaches them after a crash without a native job object',
+          },
+          async () => {
+            for (const pid of pids) await gone(pid);
+          },
+        );
+        if (onWindows) {
+          for (const pid of pids) process.kill(pid);
+          for (const pid of pids) await gone(pid);
+        }
         const command = await detail(commandRun.id);
         assert.equal(command.run.status, 'interrupted');
         assert.equal(command.steps[0].state, 'interrupted');

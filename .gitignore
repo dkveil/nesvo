@@ -43,6 +43,7 @@
 !/apps/host/tests/mobile.integration.test.mjs
 !/apps/host/tests/claude-fixture.mjs
 !/apps/host/tests/codex-fixture.mjs
+!/apps/host/tests/pipeline-hold-fixture.mjs
 !/packages/
 /packages/*
 !/packages/contracts/
