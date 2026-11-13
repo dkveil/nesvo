@@ -33,6 +33,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
+import { runStatusLabel } from '@/entities/pipeline';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
@@ -1004,11 +1005,16 @@ export function Workspace() {
               {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
             </span>
           )}
-          {!inbox && !creating && selected && selected.status !== 'ready' && (
-            <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-              {sessionStatusLabel(selected)}
-            </span>
-          )}
+          {!inbox &&
+            !creating &&
+            selected &&
+            (selectedRun || selected.status !== 'ready') && (
+              <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+                {selectedRun && !selected.pipelineStepId
+                  ? `Pipeline ${runStatusLabel(selectedRun.status).toLowerCase()}`
+                  : sessionStatusLabel(selected)}
+              </span>
+            )}
           <Button
             variant="ghost"
             size="icon-sm"
