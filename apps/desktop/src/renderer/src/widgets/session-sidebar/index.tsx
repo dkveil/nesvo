@@ -427,6 +427,15 @@ export function SessionSidebar({
                             <span className="min-w-0 flex-1 truncate text-xs font-medium">
                               Automation · {group.name}
                             </span>
+                            {group.runs.some(
+                              session =>
+                                session.status === 'running' ||
+                                session.status === 'stopping',
+                            ) && (
+                              <span className="text-xs font-medium text-info-foreground">
+                                Working
+                              </span>
+                            )}
                             <span className="text-xs tabular-nums">
                               {group.runs.length}
                             </span>
