@@ -47,6 +47,14 @@ Only reported windows become percentages. Native durations, reset timestamps, ac
 
 Electron validates and routes the request to Local or the selected connected computer. An offline request fails without reconnecting automatically. Renderer observations are keyed by host, with generation checks against late responses. The visible application refreshes the selected computer every two minutes, after a finished turn and on demand, subject to the host cache. The rail shows remaining allowance in the most-used reported window. Details show every window, last check and reset time; observations become stale after five minutes, disconnection or a passed reset. Expiry never fabricates a refreshed allowance. The account icon opens both providers and remains available in compact layouts.
 
+## Turn usage
+
+Each agent message carries `usage`, a `turnUsage` record with input, output and cached input tokens, cost in US dollars, `durationMs` and `source`. Every field is `null` when the provider did not report it and `source` is `provider-report` only when at least one field was reported; nothing is estimated and an unreported value is never zero. Messages saved before this record existed read back as `null`. The host copies the value from the adapter result onto the agent message when the run is finalized, so it is stored in the session document and survives restarts. Failed and stopped runs keep whatever the provider reported before it ended; a run that ended without a provider result keeps `null`.
+
+`inputTokens` counts all input tokens of the turn and `cachedInputTokens` the part served from cache. Claude Code reports cache reads and cache writes separately from `input_tokens`, so the adapter adds them to form `inputTokens`. Claude's final `result` frame supplies `usage`, `total_cost_usd` and `duration_ms`; the dollar amount is the provider's own estimate of API-equivalent cost and is not a billed amount on a subscription account.
+
+Codex app-server 0.167.0 sends `thread/tokenUsage/updated` notifications during a turn with a `last` and a cumulative `total` breakdown, and `turn/completed` carries the turn's `durationMs`. The adapter takes the change in `total` from just before the turn's first update to its last update, which is the turn's own consumption even on a resumed thread. The protocol reports no dollar cost for a turn, so Codex `costUsd` stays `null`; a separate thread usage request with credit and dollar estimates exists but is not used.
+
 ## Process boundaries
 
 ```text
