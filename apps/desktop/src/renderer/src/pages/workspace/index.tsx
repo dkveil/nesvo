@@ -57,6 +57,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { BranchChip } from '@/features/git-branch/branch-chip';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -1241,6 +1242,15 @@ export function Workspace() {
     : !browsing && selected
       ? selected.directory
       : null;
+  const breadcrumbHostId = showingNewThread
+    ? threadSetup.hostId
+    : selectedHostId;
+  const branchReadable =
+    !!window.nesvo &&
+    store.hostReady(breadcrumbHostId) &&
+    !!store.computers
+      .find(computer => computer.id === breadcrumbHostId)
+      ?.capabilities.includes('git-branch');
   const providerIssue =
     !browsing &&
     !creating &&
@@ -1355,7 +1365,7 @@ export function Workspace() {
               {breadcrumbDirectory !== null && (
                 <>
                   <li
-                    className="hidden max-w-48 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex"
+                    className="hidden max-w-80 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex"
                     title={breadcrumbDirectory || 'Isolated folder'}
                   >
                     {breadcrumbDirectory ? (
@@ -1373,6 +1383,12 @@ export function Workspace() {
                         ? directoryLabel(breadcrumbDirectory)
                         : 'No project'}
                     </span>
+                    <BranchChip
+                      hostId={breadcrumbHostId}
+                      directory={breadcrumbDirectory}
+                      enabled={branchReadable}
+                      api={desktopApi(breadcrumbHostId)}
+                    />
                   </li>
                   <li
                     aria-hidden="true"
