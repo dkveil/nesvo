@@ -48,6 +48,7 @@ const IN_PROGRESS_SQL = quoted(IN_PROGRESS_STATUSES);
 const RUNNING_SQL = quoted(RUNNING_STATUSES);
 const RECOVERABLE_SQL = quoted(['pending', ...RUNNING_STATUSES]);
 const FINISHED_SQL = quoted(FINISHED_STATUSES);
+const TERMINAL_SQL = quoted([...FINISHED_STATUSES, 'interrupted']);
 
 const runValues = (run: PipelineRun) => [
   run.revision,
@@ -269,6 +270,15 @@ export class PipelineRunStore {
         )
         .run(EXTERNAL_ACTION_ATTENTION, at, at, JSON.stringify(uncertainRunIds));
     });
+  }
+
+  unfinishedRunIds(): string[] {
+    return this.database
+      .prepare(
+        `SELECT id FROM pipeline_runs WHERE status NOT IN (${TERMINAL_SQL}) ORDER BY created_at, id`,
+      )
+      .all()
+      .map(row => String(row.id));
   }
 
   linkSession(
