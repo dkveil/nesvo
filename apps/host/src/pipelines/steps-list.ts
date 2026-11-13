@@ -86,7 +86,9 @@ function editBlock(
 ): StepsListResult {
   const itemLines: { position: number; indent: string; name: string }[] = [];
   for (let position = index + 1; position < closing; position++) {
-    const match = blockItem.exec(withoutEnd(lines[position]!));
+    const line = withoutEnd(lines[position]!);
+    if (/^\s*(#.*)?$/.test(line)) continue;
+    const match = blockItem.exec(line);
     if (!match) break;
     itemLines.push({
       position,

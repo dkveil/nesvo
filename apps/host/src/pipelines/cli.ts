@@ -137,7 +137,8 @@ function printJson(context: Context, value: unknown) {
 }
 
 function printIssues(context: Context, issues: DefinitionIssue[]) {
-  if (context.options.json) return printJson(context, { issues });
+  if (context.options.json)
+    return printJson(context, { type: 'pipeline-definition-refused', issues });
   for (const issue of issues) context.output.stderr(`${renderIssue(issue)}\n`);
 }
 
@@ -324,7 +325,7 @@ async function editPipeline(
       kind: 'pipeline',
       name: pipeline,
       document: edited.text,
-      expectedHash: current.contentHash,
+      expectedHash: options.expectedHash ?? current.contentHash,
     },
     context.signal,
   );
@@ -363,11 +364,31 @@ function runSessionRefusal(env: NodeJS.ProcessEnv): string | null {
     : null;
 }
 
+function reportFailure(
+  output: CliOutput,
+  json: boolean,
+  message: string,
+  issues: DefinitionIssue[],
+) {
+  if (json) {
+    const reported = issues.length
+      ? issues
+      : [{ severity: 'error' as const, path: '', line: null, message }];
+    output.stdout(
+      `${JSON.stringify({ type: 'pipeline-definition-refused', issues: reported }, null, 2)}\n`,
+    );
+    return;
+  }
+  output.stderr(`${message}\n`);
+  for (const issue of issues) output.stderr(`${renderIssue(issue)}\n`);
+}
+
 export async function runPipelinesCli(
   args: string[],
   env: NodeJS.ProcessEnv,
   output: CliOutput,
 ): Promise<number> {
+  const json = args.includes('--json');
   try {
     const { command, options } = parseOptions(args);
     const context: Context = {
@@ -376,28 +397,29 @@ export async function runPipelinesCli(
       output,
       signal: AbortSignal.timeout(commandTimeoutMilliseconds),
     };
-    if (command in readCommands)
+    if (Object.hasOwn(readCommands, command))
       return await readCommands[command as keyof typeof readCommands](context);
-    if (!(command in writeCommands)) throw new UsageError(usage);
+    if (!Object.hasOwn(writeCommands, command)) throw new UsageError(usage);
     const refusal = runSessionRefusal(env);
     if (refusal) {
-      output.stderr(`${refusal}\n`);
+      reportFailure(output, json, refusal, []);
       return cliExitCodes.runSession;
     }
     return await writeCommands[command as keyof typeof writeCommands](context);
   } catch (error) {
     if (error instanceof UsageError) {
-      output.stderr(`${error.message}\n`);
+      reportFailure(output, json, error.message, []);
       return cliExitCodes.usage;
     }
     if (error instanceof DefinitionError) {
-      output.stderr(`${error.message}\n`);
-      for (const issue of error.issues)
-        output.stderr(`${renderIssue(issue)}\n`);
+      reportFailure(output, json, error.message, error.issues);
       return cliExitCodes.invalid;
     }
-    output.stderr(
-      `${error instanceof Error ? error.message : 'The command failed.'}\n`,
+    reportFailure(
+      output,
+      json,
+      error instanceof Error ? error.message : 'The command failed.',
+      [],
     );
     return cliExitCodes.invalid;
   }
