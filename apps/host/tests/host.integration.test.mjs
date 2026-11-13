@@ -6860,6 +6860,11 @@ test(
           needs: '[env:MY_TOKEN]',
           body: 'echo "length=${#MY_TOKEN}"\necho "value=$MY_TOKEN"',
         },
+        {
+          name: 'secret-key',
+          type: 'action',
+          body: 'echo \'{"ghp_ABCDEFGHIJKLMNOPQRST1234":"1"}\'',
+        },
         { name: 'review', type: 'agent', body: 'Review the change.' },
         { name: 'approve', type: 'human', body: 'Approve the change.' },
         {
@@ -6883,7 +6888,15 @@ test(
       ],
       {
         failing: ['greet', 'broken', 'later'],
-        full: ['emit', 'consume', 'leak', 'listed', 'review', 'approve'],
+        full: [
+          'emit',
+          'consume',
+          'leak',
+          'listed',
+          'secret-key',
+          'review',
+          'approve',
+        ],
         missing: ['missing'],
         slow: ['slow'],
         blocking: ['block'],
@@ -7030,6 +7043,14 @@ test(
         assert.match(listed, /length=16/);
         assert.match(listed, /value=\[redacted\]/);
         assert.doesNotMatch(listed, /token-value-1234/);
+        const secretKey = stepNamed(current, 'secret-key');
+        assert.equal(secretKey.state, 'done');
+        assert.deepEqual(secretKey.result.outputs, {});
+        assert.match(secretKey.result.summary, /looks like a secret/);
+        assert.doesNotMatch(
+          JSON.stringify(secretKey.result),
+          /ghp_ABCDEFGHIJKLMNOPQRST1234/,
+        );
         for (const name of ['review', 'approve']) {
           const skipped = stepNamed(current, name);
           assert.equal(skipped.state, 'skipped');
@@ -7259,14 +7280,10 @@ test(
         ];
         host.child.kill('SIGKILL');
         await host.exited;
-        for (const pid of pids) {
-          try {
-            process.kill(-pid, 'SIGKILL');
-          } catch {}
-          await gone(pid);
-        }
+        assert.deepEqual(pids.map(alivePid), [true, true]);
         host = launch(dataDirectory, join(directory, 'pids-restart.json'));
         hosts.push(host);
+        for (const pid of pids) await gone(pid);
         const command = await detail(commandRun.id);
         assert.equal(command.run.status, 'interrupted');
         assert.equal(command.steps[0].state, 'interrupted');

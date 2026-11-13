@@ -5,8 +5,20 @@ import {
   type PipelineStepRecord,
 } from '@nesvo/contracts';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { processStartTime } from '../providers/process-tree';
+
+const PROCESS_FILE = 'process.json';
 
 export const EVIDENCE_FILE_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9]+)?$/;
 
@@ -79,11 +91,7 @@ export class EvidenceStore {
       throw new EvidenceError('invalid-request', 'Invalid evidence file name.');
     const directory = this.stepDirectory(step);
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    let used = 0;
-    for (const entry of await readdir(directory, { withFileTypes: true }))
-      if (entry.isFile() && entry.name !== file)
-        used += (await lstat(join(directory, entry.name))).size;
-    const budget = Math.max(0, pipelineLimits.evidenceBytesPerStep - used);
+    const budget = pipelineLimits.evidenceBytesPerStep;
     let bytes = Buffer.from(text, 'utf8');
     if (bytes.length > budget) bytes = bytes.subarray(bytes.length - budget);
     const handle = await open(
@@ -102,6 +110,66 @@ export class EvidenceStore {
     return file;
   }
 
+  async recordProcess(
+    step: Pick<PipelineStepRecord, 'runId' | 'index' | 'name'>,
+    pid: number,
+  ): Promise<void> {
+    const directory = this.stepDirectory(step);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(directory, PROCESS_FILE),
+      JSON.stringify({ pid, startTime: processStartTime(pid) }),
+      { mode: 0o600 },
+    );
+  }
+
+  async clearProcess(
+    step: Pick<PipelineStepRecord, 'runId' | 'index' | 'name'>,
+  ): Promise<void> {
+    await rm(join(this.stepDirectory(step), PROCESS_FILE), { force: true });
+  }
+
+  async stopOrphans(): Promise<number> {
+    let stopped = 0;
+    let runs: string[];
+    try {
+      runs = await readdir(this.root);
+    } catch {
+      return stopped;
+    }
+    for (const run of runs) {
+      let steps: string[];
+      try {
+        steps = await readdir(join(this.root, run));
+      } catch {
+        continue;
+      }
+      for (const step of steps) {
+        const path = join(this.root, run, step, PROCESS_FILE);
+        let record: { pid?: unknown; startTime?: unknown };
+        try {
+          record = JSON.parse(await readFile(path, 'utf8'));
+        } catch {
+          continue;
+        }
+        const { pid, startTime } = record;
+        if (
+          typeof pid === 'number' &&
+          Number.isInteger(pid) &&
+          pid > 1 &&
+          typeof startTime === 'number' &&
+          processStartTime(pid) === startTime
+        )
+          try {
+            process.kill(-pid, 'SIGKILL');
+            stopped++;
+          } catch {}
+        await rm(path, { force: true });
+      }
+    }
+    return stopped;
+  }
+
   async read(
     runId: string,
     stepId: string,
@@ -110,7 +178,7 @@ export class EvidenceStore {
     const step = this.steps(stepId);
     if (!step || step.runId !== runId)
       throw new EvidenceError('not-found', 'Pipeline step not found.');
-    if (!EVIDENCE_FILE_PATTERN.test(path))
+    if (!EVIDENCE_FILE_PATTERN.test(path) || path === PROCESS_FILE)
       throw new EvidenceError(
         'invalid-request',
         'Use the evidence file name recorded in the step result.',

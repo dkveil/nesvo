@@ -32,10 +32,11 @@ export type ShellRun = {
 const envName = (value: string) =>
   value.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
 
-export function stepEnvironment(
-  execution: StepExecution,
-  inherited: NodeJS.ProcessEnv = process.env,
-): { env: NodeJS.ProcessEnv; secrets: string[] } {
+export function stepEnvironment(execution: StepExecution): {
+  env: NodeJS.ProcessEnv;
+  secrets: string[];
+} {
+  const inherited = execution.environment;
   const allowed = new Set(
     execution.definition.needs
       .filter(need => need.startsWith('env:'))
@@ -54,9 +55,10 @@ export function stepEnvironment(
     env[name] = value;
   }
   for (const [step, outputs] of execution.outputs)
-    for (const [key, value] of Object.entries(outputs))
-      env[`NESVO_OUTPUT_${envName(step)}_${envName(key)}`] =
-        filterResultText(value, secrets);
+    for (const [key, value] of Object.entries(outputs)) {
+      const name = `NESVO_OUTPUT_${envName(step)}_${envName(key)}`;
+      env[name] ??= filterResultText(value, secrets);
+    }
   return {
     env: {
       ...env,
@@ -88,23 +90,33 @@ export async function runShellStep(
   const combined = new TailBuffer(STEP_OUTPUT_BYTES);
   let result: OwnedProcessResult | null = null;
   let failure: string | null = null;
+  let recording: Promise<void> = Promise.resolve();
   try {
     result = await runOwnedProcess({
       ...shell(execution.definition.body),
       cwd: execution.run.directory,
       env,
-      timeoutMs: parseDurationMs(execution.definition.timeout) ?? DEFAULT_TIMEOUT_MS,
+      timeoutMs:
+        parseDurationMs(execution.definition.timeout) ?? DEFAULT_TIMEOUT_MS,
       maxOutputBytes: STEP_OUTPUT_BYTES,
       signal: execution.signal,
+      onSpawn: pid => {
+        recording = execution.evidence
+          .recordProcess(execution.step, pid)
+          .catch(() => undefined);
+      },
       onStdout: chunk => combined.push(chunk),
       onStderr: chunk => combined.push(chunk),
     });
   } catch (error) {
-    if (execution.signal.aborted) return null;
-    failure =
-      error instanceof OwnedProcessError
-        ? error.message
-        : 'The command could not start.';
+    if (!execution.signal.aborted)
+      failure =
+        error instanceof OwnedProcessError
+          ? error.message
+          : 'The command could not start.';
+  } finally {
+    await recording;
+    await execution.evidence.clearProcess(execution.step).catch(() => undefined);
   }
   if (execution.signal.aborted) return null;
   const log = filterResultText(combined.text(), secrets);

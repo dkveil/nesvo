@@ -40,12 +40,13 @@ export function parseActionOutputs(
   for (const [key, item] of entries) {
     if (
       key.length > stepResultLimits.outputKey ||
-      !STEP_OUTPUT_KEY_PATTERN.test(key)
+      !STEP_OUTPUT_KEY_PATTERN.test(key) ||
+      filterResultText(key, secrets) !== key
     )
-      return ignored(`the key "${key.slice(0, 64)}" is not a valid output name.`);
+      return ignored('an output name is not valid or looks like a secret.');
     if (typeof item !== 'string' || item.length > stepResultLimits.outputValue)
       return ignored(
-        `the value of "${key}" must be text of at most ${stepResultLimits.outputValue} characters.`,
+        `every value must be text of at most ${stepResultLimits.outputValue} characters.`,
       );
     outputs[key] = filterResultText(item, secrets).slice(
       0,

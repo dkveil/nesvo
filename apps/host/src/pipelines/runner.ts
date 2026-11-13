@@ -57,9 +57,15 @@ export type StepExecution = {
   definition: ResolvedStep;
   outputs: ReadonlyMap<string, Readonly<Record<string, string>>>;
   signal: AbortSignal;
-  evidence: Pick<EvidenceStore, 'write'>;
+  evidence: StepEvidence;
+  environment: NodeJS.ProcessEnv;
   now: () => Date;
 };
+
+export type StepEvidence = Pick<
+  EvidenceStore,
+  'write' | 'recordProcess' | 'clearProcess'
+>;
 
 export type StepOutcome =
   | { kind: 'result'; result: StepResult }
@@ -108,7 +114,7 @@ export type RunnerPorts = {
   definitions?: RunnerDefinitions;
   clock?: RunnerClock;
   emit: (event: DesktopEvent) => void;
-  evidence: Pick<EvidenceStore, 'write'>;
+  evidence: StepEvidence & Partial<Pick<EvidenceStore, 'stopOrphans'>>;
   stepExecutors: Record<StepType, StepExecutor>;
   author?: AuthorPort;
   environment?: NodeJS.ProcessEnv;
@@ -273,7 +279,7 @@ export class PipelineRunner {
   private readonly definitions: RunnerDefinitions;
   private readonly clock: RunnerClock;
   private readonly emit: (event: DesktopEvent) => void;
-  private readonly evidence: Pick<EvidenceStore, 'write'>;
+  private readonly evidence: RunnerPorts['evidence'];
   private readonly executors: Record<StepType, StepExecutor>;
   private readonly author: AuthorPort | undefined;
   private readonly environment: NodeJS.ProcessEnv;
@@ -414,9 +420,10 @@ export class PipelineRunner {
       if (run && run.status === 'pending' && !run.sessionId)
         this.writeRun(run, { status: 'interrupted', finishedAt: this.timestamp() });
     }
-    const passes = Promise.all(ids.map(id => this.advanceRun(id))).then(
-      () => undefined,
-    );
+    const passes = Promise.resolve(this.evidence.stopOrphans?.())
+      .catch(() => undefined)
+      .then(() => Promise.all(ids.map(id => this.advanceRun(id))))
+      .then(() => undefined);
     this.track(passes);
     return passes;
   }
@@ -544,6 +551,7 @@ export class PipelineRunner {
       outputs: earlierOutputs(steps, step.index),
       signal: controller.signal,
       evidence: this.evidence,
+      environment: this.environment,
       now: () => this.clock.now(),
     };
     const executor = this.executors[definition.type] ?? unavailableExecutor;
@@ -595,7 +603,7 @@ export class PipelineRunner {
       });
       return;
     }
-    const parsed = stepResultSchema.safeParse(outcome.result);
+    const parsed = stepResultSchema.safeParse(filteredResult(outcome.result));
     const result = parsed.success
       ? parsed.data
       : this.verdict(
@@ -720,6 +728,24 @@ function earlierOutputs(
     if (step.index < index && step.result && Object.keys(step.result.outputs).length > 0)
       outputs.set(step.name, step.result.outputs);
   return outputs;
+}
+
+function filteredResult(result: StepResult): StepResult {
+  return {
+    ...result,
+    summary: filterResultText(result.summary).slice(0, 4000),
+    evidence: result.evidence.map(item => ({
+      ...item,
+      label: filterResultText(item.label).slice(0, 120),
+      text: item.text === null ? null : filterResultText(item.text).slice(0, 4000),
+    })),
+    outputs: Object.fromEntries(
+      Object.entries(result.outputs).map(([key, value]) => [
+        key,
+        filterResultText(value).slice(0, 4000),
+      ]),
+    ),
+  };
 }
 
 function definitionFailure(error: unknown): PipelineRunError {

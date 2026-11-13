@@ -15,6 +15,7 @@ export type OwnedProcessOptions = {
   maxOutputBytes: number;
   signal: AbortSignal;
   windowsVerbatimArguments?: boolean;
+  onSpawn?: (pid: number) => void;
   onStdout?: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
 };
@@ -105,6 +106,7 @@ export const runOwnedProcess = (
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    if (child.pid) options.onSpawn?.(child.pid);
     const stdout = new TailBuffer(options.maxOutputBytes);
     const stderr = new TailBuffer(options.maxOutputBytes);
     const descendants = new Map<number, number>();

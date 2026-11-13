@@ -65,3 +65,7 @@ export function signalRecorded(
     } catch {}
   }
 }
+
+export function processStartTime(pid: number): number | null {
+  return readStat(pid)?.startTime ?? null;
+}
