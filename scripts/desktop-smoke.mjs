@@ -2443,6 +2443,11 @@ try {
     await restartedPage.evaluate(() => window.nesvo.listComputers())
   ).find(computer => computer.id === 'local');
   assert.equal(pipelineComputer.capabilities.includes('pipelines'), true);
+  const definitionCatalog = await pipelineCall('listDefinitions', 'local', {
+    directory,
+  });
+  assert.ok(Array.isArray(definitionCatalog.pipelines));
+  assert.ok(Array.isArray(definitionCatalog.issues));
   await assert.rejects(
     pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
   );
