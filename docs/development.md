@@ -43,6 +43,20 @@ Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run ho
 Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, list-reviews, create-session, send-message, stop-run, respond-approval, decide-delegation, decide-review or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings. Review decisions carry reviewId, version, decisionId, accept or request-changes, and required feedback for corrections.
 Responses, session-changed and review-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
 
+### Pipeline definition commands
+
+The same bundle validates and changes pipeline definitions without a running host or a database:
+
+```sh
+node apps/host/dist/main.js pipelines validate --directory <project>
+node apps/host/dist/main.js pipelines list --directory <project> --json
+node apps/host/dist/main.js pipelines add-step --directory <project> --scope project --file step.md [--expected-hash <hash>]
+node apps/host/dist/main.js pipelines add-to-pipeline --directory <project> --scope project --pipeline <name> --step <name> [--after <name>]
+node apps/host/dist/main.js pipelines remove-from-pipeline --directory <project> --scope project --pipeline <name> --step <name>
+```
+
+`list` prints the `contentHash` of every definition. Replacing an existing step requires the hash that was read as `--expected-hash`; a changed file answers with its current hash, exits 2 and writes nothing, so read it again. Validation errors exit 1. When `NESVO_RUN_ID` is set, the three writing commands exit 3 without touching a file; `validate` and `list` still work. Details are in the architecture notes on definition commands.
+
 ## Local data
 
 The desktop stores its host database under Electron's userData directory, in host/nesvo.sqlite.

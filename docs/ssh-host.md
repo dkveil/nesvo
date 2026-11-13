@@ -61,6 +61,17 @@ If the host must continue after the final login session ends, an administrator m
 
 `systemctl --user stop nesvo-host.service` deliberately stops this host and its work. The unit sends SIGTERM to the host first and allows up to 30 seconds for graceful cleanup. After that, systemd terminates remaining processes in this service's group. This boundary affects only processes owned by that service.
 
+## Pipeline definition commands on the host
+
+The installed bundle also checks and edits pipeline definitions of the account it runs under, with no service running:
+
+```sh
+node "$HOME/.local/lib/nesvo/main.mjs" pipelines validate --directory /path/to/project
+node "$HOME/.local/lib/nesvo/main.mjs" pipelines list --directory /path/to/project --json
+```
+
+`list` shows each definition's `contentHash`; `add-step`, `add-to-pipeline` and `remove-from-pipeline` accept `--expected-hash` or read the current file and refuse with exit 2 when it changed. Inside a pipeline run, which sets `NESVO_RUN_ID`, the writing commands exit 3 and the operator changes definitions instead. The commands read and write only this host's `~/.agents/pipelines` and the given project; they open no database and copy no definitions between computers.
+
 ## Verify SSH identity and add the computer
 
 Before using Nesvo, establish the server's SSH host key through your normal OpenSSH workflow. Compare its SHA256 fingerprint with a trusted independent source, such as the VPS console or your administrator, before accepting it. A key returned by a network scan alone does not establish identity. If a previously trusted key changes, investigate it instead of deleting the saved key automatically.
