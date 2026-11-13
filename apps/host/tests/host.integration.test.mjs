@@ -1246,7 +1246,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 7);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 8);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -5284,6 +5284,504 @@ test(
         assert.equal(session.pipelineRunId, null);
         assert.equal(session.pipelineStepId, null);
         assert.equal(session.messages[0].origin, null);
+      },
+    );
+  },
+);
+
+const loadPipelineStoreModules = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'pipeline-store-modules');
+  const entries = ['pipelines/store.ts', 'sessions/store.ts'];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+const createVersion7Database = (path, extra = '') => {
+  const database = new DatabaseSync(path);
+  database.exec(
+    `CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+     CREATE TABLE sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL);
+     CREATE TABLE reviews (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), run_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL, UNIQUE(session_id, version));
+     ${extra}
+     PRAGMA user_version = 7`,
+  );
+  return database;
+};
+
+test(
+  'schema version 8 upgrades, rolls back and stores pipeline runs durably',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-store-')),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const contracts = await loadScheduledJobContracts(directory);
+    const { PipelineRunStore, EXTERNAL_ACTION_ATTENTION, SessionStore } =
+      await loadPipelineStoreModules(directory);
+    const now = '2026-11-13T10:00:00.000Z';
+    const at = minute =>
+      new Date(Date.parse(now) + minute * 60_000).toISOString();
+    const sessionDocument = (id, extra = {}) =>
+      contracts.sessionSchema.parse({
+        id,
+        provider: 'Claude Code',
+        providerSessionId: null,
+        providerInitialized: false,
+        title: 'Pipeline session',
+        model: 'sonnet',
+        actualModel: null,
+        role: 'standalone',
+        directory,
+        status: 'completed',
+        error: null,
+        activity: null,
+        runId: null,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        messages: [],
+        ...extra,
+      });
+    const stepDefinition = (name, type) => ({
+      name,
+      type,
+      phase: 'pre-done',
+      body: 'Run it.',
+      source: {
+        scope: 'project',
+        path: join(directory, `${name}.md`),
+        contentHash: 'a'.repeat(64),
+      },
+    });
+    const makeRun = (overrides = {}) =>
+      contracts.pipelineRunSchema.parse({
+        id: randomUUID(),
+        revision: 1,
+        pipeline: {
+          name: 'default',
+          description: '',
+          body: '',
+          source: {
+            scope: 'project',
+            path: join(directory, 'default.md'),
+            contentHash: 'b'.repeat(64),
+          },
+          steps: [
+            stepDefinition('checks', 'command'),
+            stepDefinition('publish', 'action'),
+          ],
+        },
+        specPath: join(directory, 'task.md'),
+        specHash: 'c'.repeat(64),
+        specTitle: 'Task',
+        sessionId: null,
+        directory,
+        projectRoot: directory,
+        isolation: null,
+        gateProvider: 'Claude Code',
+        gateModel: 'sonnet',
+        status: 'implementing',
+        phase: 'pre-done',
+        currentStepIndex: 0,
+        attention: null,
+        createdAt: now,
+        updatedAt: now,
+        finishedAt: null,
+        ...overrides,
+      });
+    const makeStep = (run, index, type, overrides = {}) =>
+      contracts.pipelineStepRecordSchema.parse({
+        id: randomUUID(),
+        runId: run.id,
+        revision: 1,
+        index,
+        name: `step-${index}`,
+        type,
+        phase: 'pre-done',
+        state: 'pending',
+        attempt: 0,
+        result: null,
+        sessionId: null,
+        reviewId: null,
+        reviewVersion: null,
+        skip: null,
+        updatedAt: now,
+        startedAt: null,
+        ...overrides,
+      });
+
+    const upgradePath = join(directory, 'upgrade');
+    const sessionId = randomUUID();
+    const reviewId = randomUUID();
+    await mkdir(upgradePath);
+    const legacy = createVersion7Database(join(upgradePath, 'nesvo.sqlite'));
+    legacy
+      .prepare(
+        'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?)',
+      )
+      .run(sessionId, JSON.stringify(sessionDocument(sessionId)), now);
+    legacy
+      .prepare(
+        'INSERT INTO reviews (id, session_id, run_id, version, document, updated_at) VALUES (?, ?, ?, 1, ?, ?)',
+      )
+      .run(reviewId, sessionId, randomUUID(), '{}', now);
+    legacy.close();
+
+    await t.test(
+      'a version 7 database upgrades and keeps sessions and reviews',
+      async () => {
+        const host = launch(upgradePath, join(upgradePath, 'pids.json'));
+        assert.equal((await host.request('health')).type, 'health');
+        await host.stop();
+        const upgraded = new DatabaseSync(join(upgradePath, 'nesvo.sqlite'));
+        try {
+          assert.equal(
+            upgraded.prepare('PRAGMA user_version').get().user_version,
+            8,
+          );
+          const tables = upgraded
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .all()
+            .map(row => row.name);
+          assert.ok(tables.includes('pipeline_runs'));
+          assert.ok(tables.includes('pipeline_steps'));
+          const columns = upgraded
+            .prepare('PRAGMA table_info(sessions)')
+            .all()
+            .map(column => column.name);
+          assert.ok(columns.includes('pipeline_run_id'));
+          assert.ok(columns.includes('pipeline_step_id'));
+          assert.equal(
+            upgraded
+              .prepare('SELECT count(*) AS total FROM sessions WHERE id = ?')
+              .get(sessionId).total,
+            1,
+          );
+          assert.equal(
+            upgraded
+              .prepare('SELECT count(*) AS total FROM reviews WHERE id = ?')
+              .get(reviewId).total,
+            1,
+          );
+        } finally {
+          upgraded.close();
+        }
+      },
+    );
+
+    await t.test('a failed version 8 migration rolls back', async () => {
+      const failingPath = join(directory, 'failing');
+      await mkdir(failingPath);
+      createVersion7Database(
+        join(failingPath, 'nesvo.sqlite'),
+        'CREATE TABLE pipeline_runs (id TEXT PRIMARY KEY);',
+      ).close();
+      const host = launch(failingPath, join(failingPath, 'pids.json'));
+      assert.equal(
+        (await bounded(host.exited, 'Host startup timed out')).code,
+        1,
+        host.error(),
+      );
+      const check = new DatabaseSync(join(failingPath, 'nesvo.sqlite'));
+      try {
+        assert.equal(
+          check.prepare('PRAGMA user_version').get().user_version,
+          7,
+        );
+        assert.deepEqual(
+          check
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            )
+            .all()
+            .map(row => row.name),
+          ['metadata', 'pipeline_runs', 'reviews', 'sessions'],
+        );
+        assert.equal(
+          check
+            .prepare('PRAGMA table_info(sessions)')
+            .all()
+            .some(column => column.name === 'pipeline_run_id'),
+          false,
+        );
+      } finally {
+        check.close();
+      }
+    });
+
+    await t.test('a version 9 database is refused', async () => {
+      const newerPath = join(directory, 'newer');
+      await mkdir(newerPath);
+      const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
+      newer.exec('PRAGMA user_version = 9');
+      newer.close();
+      const host = launch(newerPath, join(newerPath, 'pids.json'));
+      assert.equal(
+        (await bounded(host.exited, 'Host startup timed out')).code,
+        1,
+        host.error(),
+      );
+      const check = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
+      try {
+        assert.equal(
+          check.prepare('PRAGMA user_version').get().user_version,
+          9,
+        );
+      } finally {
+        check.close();
+      }
+    });
+
+    const database = new DatabaseSync(join(upgradePath, 'nesvo.sqlite'));
+    database.exec('PRAGMA foreign_keys = ON');
+    t.after(() => database.close());
+    const store = new PipelineRunStore(database);
+    const sessions = new SessionStore(database);
+
+    await t.test('replaceRun rejects a stale revision', () => {
+      const run = makeRun();
+      assert.equal(store.insertRun(run), true);
+      assert.equal(store.insertRun(run), false);
+      const next = { ...run, revision: 2, updatedAt: at(1) };
+      assert.equal(store.replaceRun(next, 1), true);
+      assert.equal(store.replaceRun({ ...next, revision: 3 }, 1), false);
+      assert.equal(store.getRun(run.id).revision, 2);
+    });
+
+    await t.test('an attempt row is unique per run and step', () => {
+      const run = makeRun();
+      store.insertRun(run);
+      const first = makeStep(run, 0, 'command', { attempt: 1 });
+      assert.equal(store.insertStep(first), true);
+      assert.equal(
+        store.insertStep(makeStep(run, 0, 'command', { attempt: 1 })),
+        false,
+      );
+      assert.equal(
+        store.insertStep(makeStep(run, 0, 'command', { attempt: 2 })),
+        true,
+      );
+      assert.deepEqual(
+        store.stepsForRun(run.id).map(step => [step.index, step.attempt]),
+        [
+          [0, 1],
+          [0, 2],
+        ],
+      );
+    });
+
+    await t.test('runs page by update time with a stable cursor', () => {
+      const own = [3, 1, 2].map(minute =>
+        makeRun({ status: 'passed', updatedAt: at(1000 + minute) }),
+      );
+      for (const run of own) store.insertRun(run);
+      const first = store.listRuns(null, 2);
+      assert.deepEqual(
+        first.runs.map(run => run.updatedAt),
+        [at(1003), at(1002)],
+      );
+      assert.ok(first.nextCursor);
+      const second = store.listRuns(first.nextCursor, 1);
+      assert.equal(second.runs[0].updatedAt, at(1001));
+      assert.equal(store.listRuns('garbage', 5), undefined);
+    });
+
+    await t.test('prune keeps active and resumable runs', () => {
+      const root = join(directory, 'prune-project');
+      const finished = [1, 2, 3, 4].map(minute =>
+        makeRun({
+          projectRoot: root,
+          status: 'passed',
+          createdAt: at(2000 + minute),
+          updatedAt: at(2000 + minute),
+        }),
+      );
+      const kept = [
+        'planning',
+        'awaiting-human',
+        'interrupted',
+        'needs-attention',
+      ].map((status, minute) =>
+        makeRun({ projectRoot: root, status, createdAt: at(minute) }),
+      );
+      for (const run of [...finished, ...kept]) store.insertRun(run);
+      const step = makeStep(finished[0], 0, 'command', { attempt: 1 });
+      store.insertStep(step);
+      store.prune(root, 2);
+      const remaining = new Set(
+        database
+          .prepare('SELECT id FROM pipeline_runs WHERE project_root = ?')
+          .all(root)
+          .map(row => row.id),
+      );
+      assert.deepEqual(
+        [...remaining].sort(),
+        [finished[2].id, finished[3].id, ...kept.map(run => run.id)].sort(),
+      );
+      assert.equal(store.getStep(step.id), undefined);
+      assert.equal(store.activeRunForDirectory(root).status, 'awaiting-human');
+    });
+
+    await t.test(
+      'interrupt marks active runs and flags external actions',
+      () => {
+        const statuses = [
+          'pending',
+          'planning',
+          'implementing',
+          'checking',
+          'fixing',
+          'awaiting-human',
+          'passed',
+          'failed',
+        ];
+        const runs = Object.fromEntries(
+          statuses.map(status => [
+            status,
+            makeRun({ projectRoot: join(directory, 'interrupt'), status }),
+          ]),
+        );
+        for (const run of Object.values(runs)) {
+          store.insertRun(run);
+          store.insertStep(
+            makeStep(run, 0, 'command', { attempt: 1, state: 'running' }),
+          );
+        }
+        const withAction = makeRun({
+          projectRoot: join(directory, 'interrupt'),
+          status: 'fixing',
+        });
+        store.insertRun(withAction);
+        store.insertStep(
+          makeStep(withAction, 0, 'command', { attempt: 1, state: 'passed' }),
+        );
+        store.insertStep(
+          makeStep(withAction, 1, 'action', { attempt: 1, state: 'running' }),
+        );
+        const awaiting = makeRun({ status: 'awaiting-human' });
+        store.insertRun(awaiting);
+        store.insertStep(
+          makeStep(awaiting, 0, 'human', {
+            attempt: 1,
+            state: 'awaiting-human',
+          }),
+        );
+        const interruptedAt = at(5000);
+        store.interruptActiveRuns(interruptedAt);
+        const statusOf = run => store.getRun(run.id).status;
+        assert.deepEqual(
+          ['planning', 'implementing', 'checking', 'fixing'].map(status =>
+            statusOf(runs[status]),
+          ),
+          ['interrupted', 'interrupted', 'interrupted', 'interrupted'],
+        );
+        for (const status of ['pending', 'awaiting-human', 'passed', 'failed'])
+          assert.equal(statusOf(runs[status]), status);
+        assert.equal(store.getRun(runs.planning.id).revision, 2);
+        assert.equal(store.getRun(runs.pending.id).revision, 1);
+        assert.equal(
+          store.stepsForRun(runs.planning.id)[0].state,
+          'interrupted',
+        );
+        assert.equal(store.stepsForRun(runs.pending.id)[0].state, 'running');
+        assert.equal(statusOf(withAction), 'needs-attention');
+        assert.equal(
+          store.getRun(withAction.id).attention,
+          EXTERNAL_ACTION_ATTENTION,
+        );
+        assert.deepEqual(
+          store.stepsForRun(withAction.id).map(step => step.state),
+          ['passed', 'uncertain'],
+        );
+        assert.equal(statusOf(awaiting), 'awaiting-human');
+        assert.equal(store.stepsForRun(awaiting.id)[0].state, 'awaiting-human');
+      },
+    );
+
+    await t.test(
+      'startup interrupt joins the session recovery transaction',
+      () => {
+        const run = makeRun({ projectRoot: join(directory, 'recovery') });
+        store.insertRun(run);
+        store.insertStep(
+          makeStep(run, 0, 'command', { attempt: 1, state: 'running' }),
+        );
+        assert.throws(() =>
+          sessions.recover(() => {
+            store.interruptActiveRuns(at(6000));
+            throw new Error('abort recovery');
+          }),
+        );
+        assert.equal(store.getRun(run.id).status, 'implementing');
+        sessions.recover(() => store.interruptActiveRuns(at(6000)));
+        assert.equal(store.getRun(run.id).status, 'interrupted');
+        assert.equal(store.stepsForRun(run.id)[0].state, 'interrupted');
+      },
+    );
+
+    await t.test('beginStep records intent with its start time', () => {
+      const run = makeRun();
+      store.insertRun(run);
+      const step = makeStep(run, 0, 'action');
+      store.insertStep(step);
+      assert.equal(store.beginStep(step.id, 7, at(10)), undefined);
+      const started = store.beginStep(step.id, 1, at(10));
+      assert.equal(started.state, 'running');
+      assert.equal(started.attempt, 1);
+      assert.equal(started.startedAt, at(10));
+      assert.equal(started.revision, 2);
+      assert.equal(store.getStep(step.id).startedAt, at(10));
+      assert.equal(store.beginStep(step.id, 2, at(11)), undefined);
+      assert.equal(
+        database
+          .prepare('SELECT started_at FROM pipeline_steps WHERE id = ?')
+          .get(step.id).started_at,
+        at(10),
+      );
+    });
+
+    await t.test(
+      'deleting a run nulls the session link and keeps the session',
+      () => {
+        const run = makeRun();
+        store.insertRun(run);
+        const step = makeStep(run, 0, 'command', { attempt: 1 });
+        store.insertStep(step);
+        const session = sessionDocument(randomUUID(), {
+          pipelineRunId: run.id,
+          pipelineStepId: step.id,
+        });
+        sessions.save(session);
+        const link = () =>
+          database
+            .prepare(
+              'SELECT pipeline_run_id AS runId, pipeline_step_id AS stepId FROM sessions WHERE id = ?',
+            )
+            .get(session.id);
+        assert.deepEqual({ ...link() }, { runId: run.id, stepId: step.id });
+        assert.equal(store.linkSession(session.id, run.id, null), true);
+        assert.deepEqual({ ...link() }, { runId: run.id, stepId: null });
+        database.prepare('DELETE FROM pipeline_runs WHERE id = ?').run(run.id);
+        assert.deepEqual({ ...link() }, { runId: null, stepId: null });
+        assert.equal(sessions.get(session.id).id, session.id);
+        sessions.save(session);
+        assert.deepEqual({ ...link() }, { runId: null, stepId: null });
       },
     );
   },

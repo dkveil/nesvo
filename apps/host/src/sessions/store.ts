@@ -76,10 +76,16 @@ export class SessionStore {
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const statement = this.database.prepare(
-        'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at',
+        'INSERT INTO sessions (id, document, updated_at, pipeline_run_id, pipeline_step_id) VALUES (?, ?, ?, (SELECT id FROM pipeline_runs WHERE id = ?), (SELECT id FROM pipeline_steps WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, pipeline_run_id = excluded.pipeline_run_id, pipeline_step_id = excluded.pipeline_step_id',
       );
       for (const session of next)
-        statement.run(session.id, JSON.stringify(session), session.updatedAt);
+        statement.run(
+          session.id,
+          JSON.stringify(session),
+          session.updatedAt,
+          session.pipelineRunId,
+          session.pipelineStepId,
+        );
       writeRelated?.();
       this.database.exec('COMMIT');
     } catch (error) {

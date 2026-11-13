@@ -23,6 +23,7 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
+import { PipelineRunStore } from './pipelines/store';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -64,6 +65,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const database = yield* openDatabase(directory);
       const store = new SessionStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
+      const pipelineRunStore = new PipelineRunStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
       const emit = (message: HostMessage) => {
@@ -77,8 +79,11 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               directory,
               emit,
               new ReviewStore(database),
-              () =>
-                scheduledJobStore.interruptActiveRuns(new Date().toISOString()),
+              () => {
+                const at = new Date().toISOString();
+                scheduledJobStore.interruptActiveRuns(at);
+                pipelineRunStore.interruptActiveRuns(at);
+              },
             ),
         ),
         service =>
