@@ -26,7 +26,11 @@ import {
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
 import { PipelineRunStore } from './pipelines/store';
-import { DefinitionError, loadCatalog } from './pipelines/definitions';
+import {
+  DefinitionError,
+  inside as insideFolder,
+  loadCatalog,
+} from './pipelines/definitions';
 import { EvidenceError, EvidenceStore } from './pipelines/evidence';
 import {
   PipelineRunError,
@@ -497,9 +501,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             projectRoot: string;
           }) =>
             pipelineRunStore
-              .activeRunsForPipeline(
-                target.name,
-                target.scope === 'project' ? target.projectRoot : null,
+              .activeRunsForPipeline(target.name, null)
+              .filter(
+                run =>
+                  target.scope === 'global' ||
+                  [run.projectRoot, run.directory].some(path =>
+                    insideFolder(target.projectRoot, path),
+                  ),
               )
               .map(run => run.id);
           definitionWrites++;
