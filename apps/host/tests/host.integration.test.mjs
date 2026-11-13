@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -10,6 +10,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -4976,20 +4977,6 @@ test(
             { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
           ],
           ['resume-pipeline-run', { runId }],
-          [
-            'save-pipeline-definition',
-            {
-              directory,
-              scope: 'project',
-              kind: 'step',
-              name: 'unit-tests',
-              document: '---\nname: unit-tests\n---\nbun test\n',
-            },
-          ],
-          [
-            'delete-pipeline-definition',
-            { directory, scope: 'project', kind: 'step', name: 'unit-tests' },
-          ],
           ['remove-pipeline-worktree', { runId }],
           [
             'pipeline-metrics',
@@ -7481,6 +7468,445 @@ test(
         );
         await runner.close();
         assert.equal(spawned.filter(([id]) => id === holding.id).length, 1);
+      },
+    );
+  },
+);
+
+test(
+  'definition writes validate like the loader, write atomically and refuse stale versions',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-definition-writes-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    const hosts = [];
+    t.after(async () => {
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const home = join(directory, 'home', '.agents', 'pipelines');
+    const project = join(directory, 'project');
+    const definitions = join(project, '.agents', 'pipelines');
+    await mkdir(join(project, '.git'), { recursive: true });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = home;
+    const start = () => {
+      const host = launch(directory, join(directory, 'pids.json'));
+      hosts.push(host);
+      return host;
+    };
+    let host = start();
+    const hashOf = content =>
+      createHash('sha256').update(content).digest('hex');
+    const stepDocument = (name, fields = {}) =>
+      `---\n${Object.entries({
+        name,
+        type: 'command',
+        phase: 'pre-done',
+        ...fields,
+      })
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\nbun test\n`;
+    const pipelineDocument = (name, steps) =>
+      `---\nname: ${name}\nsteps: [${steps.join(', ')}]\n---\n`;
+    const save = (kind, name, document, expectedHash, scope = 'project') =>
+      host.request('save-pipeline-definition', {
+        directory: project,
+        scope,
+        kind,
+        name,
+        document,
+        expectedHash,
+      });
+    const remove = (kind, name, expectedHash, scope = 'project') =>
+      host.request('delete-pipeline-definition', {
+        directory: project,
+        scope,
+        kind,
+        name,
+        expectedHash,
+      });
+    const stepPath = name => join(definitions, 'steps', `${name}.md`);
+    const pipelinePath = name => join(definitions, 'pipelines', `${name}.md`);
+    const listing = async folder => readdir(join(definitions, folder));
+
+    await t.test(
+      'a new step is written exactly and listed with its hash',
+      async () => {
+        const document = stepDocument('unit-tests');
+        const saved = await save('step', 'unit-tests', document, null);
+        assert.equal(saved.type, 'pipeline-definitions');
+        assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), document);
+        const listed = saved.catalog.steps.find(
+          item => item.name === 'unit-tests',
+        );
+        assert.equal(listed.source.scope, 'project');
+        assert.equal(listed.source.contentHash, hashOf(document));
+        assert.deepEqual(await listing('steps'), ['unit-tests.md']);
+        if (process.platform !== 'win32')
+          assert.equal(
+            (await stat(stepPath('unit-tests'))).mode & 0o777,
+            0o600,
+          );
+      },
+    );
+
+    await t.test('a save with the current hash replaces the file', async () => {
+      const previous = hashOf(stepDocument('unit-tests'));
+      const document = stepDocument('unit-tests', { timeout: '5m' });
+      const saved = await save('step', 'unit-tests', document, previous);
+      assert.equal(saved.type, 'pipeline-definitions');
+      assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), document);
+      assert.deepEqual(await listing('steps'), ['unit-tests.md']);
+    });
+
+    await t.test(
+      'a stale hash returns the current file and writes nothing',
+      async () => {
+        const current = stepDocument('unit-tests', { timeout: '5m' });
+        const stale = hashOf(stepDocument('unit-tests'));
+        const conflict = await save(
+          'step',
+          'unit-tests',
+          stepDocument('unit-tests', { timeout: '9m' }),
+          stale,
+        );
+        assert.deepEqual(
+          { ...conflict, id: undefined },
+          {
+            type: 'pipeline-definition-conflict',
+            id: undefined,
+            scope: 'project',
+            kind: 'step',
+            name: 'unit-tests',
+            path: stepPath('unit-tests'),
+            currentHash: hashOf(current),
+            document: current,
+          },
+        );
+        assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
+        assert.deepEqual(await listing('steps'), ['unit-tests.md']);
+      },
+    );
+
+    await t.test(
+      'a null hash over an existing file is a conflict',
+      async () => {
+        const current = stepDocument('unit-tests', { timeout: '5m' });
+        const conflict = await save(
+          'step',
+          'unit-tests',
+          stepDocument('unit-tests'),
+          null,
+        );
+        assert.equal(conflict.type, 'pipeline-definition-conflict');
+        assert.equal(conflict.currentHash, hashOf(current));
+        assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
+      },
+    );
+
+    await t.test(
+      'invalid documents are refused with issues and leave no file',
+      async () => {
+        const unknownField = await save(
+          'step',
+          'bogus',
+          stepDocument('bogus', { retry: 2 }),
+          null,
+        );
+        assert.equal(unknownField.type, 'pipeline-definition-refused');
+        assert.match(unknownField.issues[0].message, /Unknown field "retry"/);
+        const mismatch = await save(
+          'step',
+          'other',
+          stepDocument('another'),
+          null,
+        );
+        assert.equal(mismatch.type, 'pipeline-definition-refused');
+        assert.match(mismatch.issues.at(-1).message, /must be "other"/);
+        const human = await save(
+          'step',
+          'approve',
+          stepDocument('approve', { type: 'human', retries: 1 }),
+          null,
+        );
+        assert.equal(human.type, 'pipeline-definition-refused');
+        assert.match(human.issues[0].message, /Human steps do not retry/);
+        const agent = await save(
+          'step',
+          'review',
+          stepDocument('review', { type: 'agent', effect: 'external' }),
+          null,
+        );
+        assert.equal(agent.type, 'pipeline-definition-refused');
+        const binary = await save(
+          'step',
+          'binary',
+          '---\nname: binary\n---\n\0',
+          null,
+        );
+        assert.equal(binary.type, 'pipeline-definition-refused');
+        assert.deepEqual(await listing('steps'), ['unit-tests.md']);
+      },
+    );
+
+    await t.test('unsafe names are invalid requests', async () => {
+      for (const name of ['../escape', 'a/b', 'Upper', ''])
+        for (const [method, extra] of [
+          ['save-pipeline-definition', { document: stepDocument('x') }],
+          ['delete-pipeline-definition', {}],
+        ])
+          assert.deepEqual(
+            await host.send(
+              JSON.stringify({
+                id: randomUUID(),
+                method,
+                input: {
+                  directory: project,
+                  scope: 'project',
+                  kind: 'step',
+                  name,
+                  expectedHash: method.startsWith('save')
+                    ? null
+                    : 'a'.repeat(64),
+                  ...extra,
+                },
+              }),
+            ),
+            { type: 'error', id: null, code: 'invalid-request' },
+            `${method} ${name}`,
+          );
+      assert.deepEqual(await listing('steps'), ['unit-tests.md']);
+    });
+
+    await t.test('a pipeline must reference existing steps', async () => {
+      const missing = await save(
+        'pipeline',
+        'default',
+        pipelineDocument('default', ['unit-tests', 'ghost']),
+        null,
+      );
+      assert.equal(missing.type, 'pipeline-definition-refused');
+      assert.match(missing.issues[0].message, /Step "ghost" does not exist/);
+      const document = pipelineDocument('default', ['unit-tests']);
+      const saved = await save('pipeline', 'default', document, null);
+      assert.equal(saved.type, 'pipeline-definitions');
+      assert.deepEqual(
+        saved.catalog.pipelines.map(item => item.name),
+        ['default'],
+      );
+      assert.deepEqual(await listing('pipelines'), ['default.md']);
+    });
+
+    await t.test(
+      'an external step without an earlier human step warns but saves',
+      async () => {
+        const publish = stepDocument('publish', {
+          type: 'action',
+          phase: 'pre-push',
+          effect: 'external',
+        });
+        assert.equal(
+          (await save('step', 'publish', publish, null)).type,
+          'pipeline-definitions',
+        );
+        const saved = await save(
+          'pipeline',
+          'release',
+          pipelineDocument('release', ['publish']),
+          null,
+        );
+        assert.equal(saved.type, 'pipeline-definitions');
+        assert.ok(
+          saved.catalog.issues.some(
+            item =>
+              item.severity === 'warning' &&
+              /"publish" in pipeline "release" is declared external/.test(
+                item.message,
+              ),
+          ),
+        );
+      },
+    );
+
+    await t.test(
+      'deleting honours the hash and referencing pipelines',
+      async () => {
+        const current = stepDocument('unit-tests', { timeout: '5m' });
+        const stale = await remove(
+          'step',
+          'unit-tests',
+          hashOf(stepDocument('unit-tests')),
+        );
+        assert.equal(stale.type, 'pipeline-definition-conflict');
+        assert.equal(stale.document, current);
+        assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
+        const used = await remove('step', 'unit-tests', hashOf(current));
+        assert.equal(used.type, 'pipeline-definition-refused');
+        assert.match(used.issues[0].message, /used by pipeline "default"/);
+        assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
+        const lone = stepDocument('lone');
+        await save('step', 'lone', lone, null);
+        const removed = await remove('step', 'lone', hashOf(lone));
+        assert.equal(removed.type, 'pipeline-definitions');
+        assert.equal(
+          removed.catalog.steps.some(item => item.name === 'lone'),
+          false,
+        );
+        await assert.rejects(readFile(stepPath('lone'), 'utf8'), {
+          code: 'ENOENT',
+        });
+        const again = await remove('step', 'lone', hashOf(lone));
+        assert.equal(again.type, 'pipeline-definition-conflict');
+        assert.equal(again.currentHash, null);
+        assert.equal(again.document, null);
+      },
+    );
+
+    await t.test(
+      'two concurrent saves with one hash leave exactly one winner',
+      async () => {
+        const base = stepDocument('race');
+        await save('step', 'race', base, null);
+        const results = await Promise.all(
+          ['1m', '2m'].map(timeout =>
+            save(
+              'step',
+              'race',
+              stepDocument('race', { timeout }),
+              hashOf(base),
+            ),
+          ),
+        );
+        assert.deepEqual(results.map(item => item.type).sort(), [
+          'pipeline-definition-conflict',
+          'pipeline-definitions',
+        ]);
+        const winner = results.find(
+          item => item.type === 'pipeline-definitions',
+        );
+        const written = await readFile(stepPath('race'), 'utf8');
+        assert.equal(
+          winner.catalog.steps.find(item => item.name === 'race').source
+            .contentHash,
+          hashOf(written),
+        );
+        assert.deepEqual(
+          (await listing('steps')).filter(name => !name.endsWith('.md')),
+          [],
+        );
+      },
+    );
+
+    await t.test('the first global save creates a private root', async () => {
+      await assert.rejects(stat(home), { code: 'ENOENT' });
+      const document = stepDocument('shared-check');
+      const saved = await save(
+        'step',
+        'shared-check',
+        document,
+        null,
+        'global',
+      );
+      assert.equal(saved.type, 'pipeline-definitions');
+      const listed = saved.catalog.steps.find(
+        item => item.name === 'shared-check',
+      );
+      assert.equal(listed.source.scope, 'global');
+      assert.equal(
+        await readFile(join(home, 'steps', 'shared-check.md'), 'utf8'),
+        document,
+      );
+      if (process.platform !== 'win32') {
+        assert.equal((await stat(home)).mode & 0o777, 0o700);
+        assert.equal((await stat(join(home, 'steps'))).mode & 0o777, 0o700);
+      }
+    });
+
+    await t.test(
+      'a pipeline with an active run cannot be changed',
+      async () => {
+        const contracts = await loadScheduledJobContracts(directory);
+        const { PipelineRunStore } = await loadPipelineStoreModules(directory);
+        const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+        database.exec('PRAGMA busy_timeout = 5000');
+        const now = '2026-11-13T10:00:00.000Z';
+        const run = contracts.pipelineRunSchema.parse({
+          id: randomUUID(),
+          revision: 1,
+          pipeline: {
+            name: 'default',
+            description: '',
+            body: '',
+            source: {
+              scope: 'project',
+              path: pipelinePath('default'),
+              contentHash: 'b'.repeat(64),
+            },
+            steps: [
+              {
+                name: 'unit-tests',
+                type: 'command',
+                phase: 'pre-done',
+                body: 'bun test',
+                source: {
+                  scope: 'project',
+                  path: stepPath('unit-tests'),
+                  contentHash: 'a'.repeat(64),
+                },
+              },
+            ],
+          },
+          specPath: join(project, 'task.md'),
+          specHash: 'c'.repeat(64),
+          specTitle: 'Task',
+          sessionId: null,
+          directory: project,
+          projectRoot: project,
+          isolation: null,
+          gateProvider: 'Claude Code',
+          gateModel: 'sonnet',
+          status: 'implementing',
+          phase: 'pre-done',
+          currentStepIndex: 0,
+          attention: null,
+          createdAt: now,
+          updatedAt: now,
+          finishedAt: null,
+        });
+        assert.equal(new PipelineRunStore(database).insertRun(run), true);
+        database.close();
+        const current = pipelineDocument('default', ['unit-tests']);
+        const changed = await save(
+          'pipeline',
+          'default',
+          pipelineDocument('default', ['unit-tests', 'publish']),
+          hashOf(current),
+        );
+        assert.equal(changed.type, 'error');
+        assert.equal(changed.code, 'busy');
+        assert.ok(changed.message.includes(run.id));
+        const removed = await remove('pipeline', 'default', hashOf(current));
+        assert.equal(removed.code, 'busy');
+        assert.equal(await readFile(pipelinePath('default'), 'utf8'), current);
+        const other = await save(
+          'pipeline',
+          'nightly',
+          pipelineDocument('nightly', ['unit-tests']),
+          null,
+        );
+        assert.equal(other.type, 'pipeline-definitions');
       },
     );
   },

@@ -6,6 +6,7 @@ import {
   codexStatusSchema,
   isPipelineMethod,
   type DefinitionCatalog,
+  type DefinitionWriteResult,
   type HostMessage,
   type HostRequest,
   type HostResponse,
@@ -34,6 +35,7 @@ import {
 } from './pipelines/runner';
 import { actionExecutor } from './pipelines/steps/action';
 import { commandExecutor } from './pipelines/steps/command';
+import { deleteDefinition, saveDefinition } from './pipelines/writer';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -66,10 +68,20 @@ const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'get-pipeline-run',
   'stop-pipeline-run',
   'read-pipeline-evidence',
+  'save-pipeline-definition',
+  'delete-pipeline-definition',
 ]);
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
   'pipelines',
 ]).options;
+
+const definitionErrorCode = (error: unknown) => {
+  if (!(error instanceof DefinitionError)) return 'unavailable' as const;
+  if (error.kind === 'not-found') return 'invalid-directory' as const;
+  if (error.kind === 'invalid') return 'invalid-request' as const;
+  if (error.kind === 'busy') return 'busy' as const;
+  return 'unavailable' as const;
+};
 
 type HostTransport = {
   directory: string;
@@ -162,6 +174,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const usage = new ProviderUsageService(probes.controller.signal);
       let skillRequests = 0;
       let definitionRequests = 0;
+      let definitionWrites = 0;
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
         iterator =>
@@ -439,6 +452,97 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               probes.pending.delete(reading);
             });
           probes.pending.add(reading);
+          continue;
+        }
+        if (
+          request.method === 'save-pipeline-definition' ||
+          request.method === 'delete-pipeline-definition'
+        ) {
+          if (definitionWrites >= 4) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message:
+                  'Pipeline definitions are already being written. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          let directory: string;
+          try {
+            directory = sessions.draftDirectory(request.input.directory);
+          } catch (error) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError
+                    ? error.code
+                    : 'invalid-directory',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The folder cannot be accessed.',
+              }),
+            );
+            continue;
+          }
+          const activeRuns = (target: {
+            scope: string;
+            name: string;
+            projectRoot: string;
+          }) =>
+            pipelineRunStore
+              .activeRunsForPipeline(
+                target.name,
+                target.scope === 'project' ? target.projectRoot : null,
+              )
+              .map(run => run.id);
+          definitionWrites++;
+          const writing: Promise<DefinitionWriteResult> =
+            request.method === 'save-pipeline-definition'
+              ? saveDefinition(
+                  { ...request.input, directory },
+                  probes.controller.signal,
+                  activeRuns,
+                )
+              : deleteDefinition(
+                  { ...request.input, directory },
+                  probes.controller.signal,
+                  activeRuns,
+                );
+          const change = writing
+            .then(result =>
+              send(
+                'type' in result
+                  ? { ...result, id: request.id }
+                  : {
+                      type: 'pipeline-definitions',
+                      id: request.id,
+                      catalog: result,
+                    },
+              ),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: definitionErrorCode(error),
+                message:
+                  error instanceof DefinitionError
+                    ? error.message
+                    : 'The definition could not be written. Verify the folder and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(change);
+          void change.finally(() => {
+            definitionWrites--;
+            probes.pending.delete(change);
+          });
           continue;
         }
         if (request.method === 'discover-skills') {

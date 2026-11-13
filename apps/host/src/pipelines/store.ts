@@ -166,6 +166,18 @@ export class PipelineRunStore {
     return row ? toRun(row) : undefined;
   }
 
+  activeRunsForPipeline(
+    name: string,
+    projectRoot: string | null,
+  ): PipelineRun[] {
+    const rows = this.database
+      .prepare(
+        `SELECT document FROM pipeline_runs WHERE pipeline_name = ? AND (? IS NULL OR project_root = ?) AND status IN (${IN_PROGRESS_SQL}) ORDER BY created_at DESC, id DESC`,
+      )
+      .all(name, projectRoot, projectRoot);
+    return rows.map(toRun);
+  }
+
   insertStep(step: PipelineStepRecord): boolean {
     return this.transact(
       () =>
