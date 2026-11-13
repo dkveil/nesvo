@@ -4630,13 +4630,14 @@ test(
               scheduledJobId: id,
             })
           ).page.runs;
-          if (run.status !== 'starting') return run;
+          if (!['starting', 'running'].includes(run.status)) return run;
           await delay(20);
         }
       })(),
-      'The manual run stayed in starting',
+      'The manual run did not finish',
     );
-    assert.equal(finished.status, 'failed');
+    assert.equal(finished.status, 'completed', JSON.stringify(finished));
+    assert.ok(finished.sessionId && finished.reviewId);
     const answered = (
       await host.request('send-message', {
         sessionId: session.id,
@@ -4676,10 +4677,10 @@ test(
       recovered.map(run => [run.id, run.status, run.reason]),
       [
         [claimed, 'interrupted', 'restart'],
-        [manual.run.id, 'failed', null],
+        [manual.run.id, 'completed', null],
       ],
     );
-    assert.equal((await host.request('list-sessions')).sessions.length, 1);
+    assert.equal((await host.request('list-sessions')).sessions.length, 2);
     const deleted = await host.request('delete-scheduled-job', {
       id,
       expectedRevision: revision,
@@ -4698,7 +4699,17 @@ test(
         .code,
       'not-found',
     );
-    assert.equal((await host.request('list-reviews')).reviews.length, 1);
+    assert.equal((await host.request('list-reviews')).reviews.length, 2);
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions.map(item => [
+        item.scheduledJobId,
+        item.scheduledJobRunId,
+      ]),
+      [
+        [null, null],
+        [null, null],
+      ],
+    );
     await host.stop();
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));

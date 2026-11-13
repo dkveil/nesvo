@@ -40,8 +40,24 @@ export type ScheduledJobLaunch = {
   run: ScheduledJobRun;
 };
 
+export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'>;
+
+export type ScheduledJobRunOutcome = Pick<
+  ScheduledJobRun,
+  'status' | 'reason' | 'reviewId'
+>;
+
+export type ScheduledJobRunProgress = {
+  started: (link: ScheduledJobRunLink) => void;
+  finished: (outcome: ScheduledJobRunOutcome) => void;
+};
+
 export type ScheduledJobLauncher = {
-  launch: (launch: ScheduledJobLaunch) => Promise<void>;
+  launch: (
+    launch: ScheduledJobLaunch,
+    progress: ScheduledJobRunProgress,
+  ) => Promise<void>;
+  close?: () => void;
 };
 
 export type SchedulerClock = {
@@ -58,12 +74,14 @@ export const systemClock: SchedulerClock = {
   clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
 };
 
-export const unavailableLauncher: ScheduledJobLauncher = {
-  launch: () =>
-    Promise.reject(
-      new Error('Scheduled job runs cannot start on this host yet.'),
-    ),
-};
+export class ScheduledJobLaunchError extends Error {
+  constructor(
+    readonly reason: Extract<ScheduledJobRun['reason'], 'folder' | 'catalog'>,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 export class ScheduledJobError extends Error {
   constructor(
@@ -100,6 +118,7 @@ export class ScheduledJobService {
   async close(): Promise<void> {
     this.closed = true;
     this.disarm();
+    this.launcher.close?.();
     await Promise.all(this.launches);
   }
 
@@ -334,7 +353,13 @@ export class ScheduledJobService {
   private launch(scheduledJob: ScheduledJob, run: StoredRun): void {
     const launching = Promise.resolve()
       .then(() =>
-        this.launcher.launch({ scheduledJob, run: publicRun(run) }),
+        this.launcher.launch(
+          { scheduledJob, run: publicRun(run) },
+          {
+            started: link => this.markStarted(run.id, link),
+            finished: outcome => this.markFinished(run.id, outcome),
+          },
+        ),
       )
       .catch(error => this.abandon(run.id, error))
       .catch(() => undefined)
@@ -348,13 +373,43 @@ export class ScheduledJobService {
     const busy = error instanceof SessionError && error.code === 'busy';
     const abandoned: StoredRun = {
       ...run,
-      status: busy ? 'skipped' : 'failed',
-      reason: busy ? 'busy' : null,
+      ...this.abandonedOutcome(error),
       startedAt: busy ? null : run.startedAt,
       finishedAt: this.clock.now().toISOString(),
     };
     this.store.updateRun(abandoned);
     this.emitRun(abandoned);
+  }
+
+  private abandonedOutcome(
+    error: unknown,
+  ): Pick<ScheduledJobRun, 'status' | 'reason'> {
+    if (this.closed) return { status: 'interrupted', reason: 'restart' };
+    if (error instanceof SessionError && error.code === 'busy')
+      return { status: 'skipped', reason: 'busy' };
+    if (error instanceof ScheduledJobLaunchError)
+      return { status: 'failed', reason: error.reason };
+    return { status: 'failed', reason: null };
+  }
+
+  private markStarted(runId: string, link: ScheduledJobRunLink): void {
+    const run = this.store.run(runId);
+    if (run?.status !== 'starting') return;
+    const running: StoredRun = { ...run, ...link, status: 'running' };
+    this.store.updateRun(running);
+    this.emitRun(running);
+  }
+
+  private markFinished(runId: string, outcome: ScheduledJobRunOutcome): void {
+    const run = this.store.run(runId);
+    if (run?.status !== 'running' && run?.status !== 'starting') return;
+    const finished: StoredRun = {
+      ...run,
+      ...outcome,
+      finishedAt: this.clock.now().toISOString(),
+    };
+    this.store.updateRun(finished);
+    this.emitRun(finished);
   }
 
   private current(

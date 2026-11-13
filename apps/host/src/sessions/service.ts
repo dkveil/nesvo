@@ -40,7 +40,7 @@ import {
   type WorkspaceSnapshot,
 } from '../review/workspace';
 
-async function confirmCodexEffort(
+export async function confirmCodexEffort(
   model: string,
   effort: string,
   signal: AbortSignal,
@@ -81,6 +81,12 @@ type ActiveRun = {
   timer?: ReturnType<typeof setTimeout>;
   persistenceError?: boolean;
   finalizing?: boolean;
+};
+
+export type RunOutcome = {
+  state: Session['status'];
+  interruption: SessionInterruption['reason'] | null;
+  reviewId: string | null;
 };
 
 type WorkerResult = {
@@ -295,6 +301,26 @@ export class SessionService {
     const session = this.store.create(input, directory, options.origin);
     this.emitSession(session);
     return session;
+  }
+
+  async finished(sessionId: string, runId: string): Promise<RunOutcome> {
+    const active = this.active.get(sessionId);
+    if (active?.session.runId === runId) await active.finished;
+    const session = this.unsaved.get(sessionId) ?? this.store.get(sessionId);
+    const message = session?.messages.find(
+      item => item.runId === runId && item.author === 'agent',
+    );
+    if (!message)
+      throw new SessionError('not-found', 'This run is not in the session.');
+    const review = this.reviews.latest(sessionId);
+    return {
+      state: message.state,
+      interruption: message.interruption?.reason ?? null,
+      reviewId:
+        message.state === 'completed' && review?.runId === runId
+          ? review.id
+          : null,
+    };
   }
 
   async createWithEffort(

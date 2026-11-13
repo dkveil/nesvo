@@ -44,8 +44,8 @@ import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
   ScheduledJobService,
-  unavailableLauncher,
 } from './scheduled-jobs/service';
+import { SessionLauncher } from './scheduled-jobs/launcher';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
@@ -145,7 +145,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           const service = new ScheduledJobService(
             scheduledJobStore,
             sessions,
-            unavailableLauncher,
+            new SessionLauncher(sessions),
             emit,
           );
           service.start();
