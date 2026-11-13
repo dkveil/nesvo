@@ -92,22 +92,25 @@ function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
   );
 }
 
-function text(bytes: Buffer): string {
+export function text(bytes: Buffer, subject = 'The selected skill'): string {
   let value: string;
   try {
     value = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new Error('The selected skill must be valid UTF-8 text.');
+    throw new Error(`${subject} must be valid UTF-8 text.`);
   }
   if (value.includes('\0'))
-    throw new Error('The selected skill contains binary or NUL data.');
+    throw new Error(`${subject} contains binary or NUL data.`);
   return value;
 }
 
-function yamlMapping(yaml: string): Record<string, unknown> {
+export function yamlMapping(
+  yaml: string,
+  subject = 'Skill',
+): Record<string, unknown> {
   if (/(?:^|[\s,[{])(?:[&*][\w-]+|!!?[^\s]+)/m.test(yaml)) {
     throw new Error(
-      'Skill YAML anchors, aliases and explicit tags are not supported.',
+      `${subject} YAML anchors, aliases and explicit tags are not supported.`,
     );
   }
   let parsed: unknown;
@@ -116,32 +119,40 @@ function yamlMapping(yaml: string): Record<string, unknown> {
   } catch (error) {
     if (error instanceof YamlLimitError) throw error;
     throw new Error(
-      'Skill YAML could not be parsed within the supported limits.',
+      `${subject} YAML could not be parsed within the supported limits.`,
+      { cause: error },
     );
   }
   if (parsed === null || parsed === undefined) return {};
   const fields = object(parsed);
-  if (!fields) throw new Error('Skill YAML metadata must be a mapping.');
+  if (!fields) throw new Error(`${subject} YAML metadata must be a mapping.`);
   return fields;
 }
 
-function document(value: string): {
+export function document(
+  value: string,
+  subject = 'Skill',
+): {
   fields: Record<string, unknown>;
   body: string;
+  yaml: string | null;
 } {
-  if (!/^---(?:\r?\n|$)/.test(value)) return { fields: {}, body: value };
+  if (!/^---(?:\r?\n|$)/.test(value))
+    return { fields: {}, body: value, yaml: null };
   const firstNewline = value.indexOf('\n');
   if (firstNewline < 0)
-    throw new Error('Skill frontmatter has no closing delimiter.');
+    throw new Error(`${subject} frontmatter has no closing delimiter.`);
   const header = value.slice(firstNewline + 1);
   const closing = /(?:^|\r?\n)---(?:\r?\n|$)/.exec(header);
-  if (!closing) throw new Error('Skill frontmatter has no closing delimiter.');
+  if (!closing)
+    throw new Error(`${subject} frontmatter has no closing delimiter.`);
   const yaml = header.slice(0, closing.index);
   if (Buffer.byteLength(yaml) > maxFrontmatterBytes)
-    throw new Error('Skill frontmatter exceeds the 32 KiB limit.');
+    throw new Error(`${subject} frontmatter exceeds the 32 KiB limit.`);
   return {
-    fields: yamlMapping(yaml),
+    fields: yamlMapping(yaml, subject),
     body: header.slice(closing.index + closing[0].length),
+    yaml,
   };
 }
 
