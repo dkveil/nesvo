@@ -1,4 +1,4 @@
-import { type KeyboardEvent } from 'react';
+import { useEffect, useEffectEvent, useRef, type KeyboardEvent } from 'react';
 import type { PipelinesApi } from '@nesvo/contracts';
 import { Check, Play, RotateCcw, Square, Workflow, X } from 'lucide-react';
 import { cn } from 'cn';
@@ -86,13 +86,34 @@ export default function PipelinePanel({
   onSession,
 }: Props) {
   const now = useNow(SECOND_MS);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const close = useEffectEvent(onClose);
+  useEffect(() => {
+    closeButton.current?.focus();
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest('[role="dialog"]')
+        )
+      ) {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, []);
   const views = pipelineSteps(run, steps);
   const phases = pipelinePhases(views);
   const index = selectedIndex ?? currentStepIndex(run, steps);
   const selected = views[index];
   const current =
     run.currentStepIndex === null ? undefined : views[run.currentStepIndex];
-  const uncertain = current?.state === 'uncertain' ? current : undefined;
+  const uncertain =
+    current?.state === 'uncertain' && canResumeRun(run) ? current : undefined;
   const actionsDisabled = !connected || pending;
   const chip = (step: PipelineStepView) => {
     const duration = stepDuration(step, now);
@@ -143,11 +164,6 @@ export default function PipelinePanel({
       aria-label="Pipeline"
       data-run-id={run.id}
       data-run-status={run.status}
-      onKeyDown={event => {
-        if (event.key !== 'Escape' || event.defaultPrevented) return;
-        event.preventDefault();
-        onClose();
-      }}
       className={cn(
         panelSurface,
         'min-[1200px]:w-[380px] min-[1600px]:w-[440px]',
@@ -158,7 +174,11 @@ export default function PipelinePanel({
         title={run.pipeline.name}
         meta={runStatusLabel(run.status)}
       >
-        <PanelAction aria-label="Close pipeline" onClick={onClose}>
+        <PanelAction
+          ref={closeButton}
+          aria-label="Close pipeline"
+          onClick={onClose}
+        >
           <X className="size-4" />
         </PanelAction>
       </PanelHeader>
@@ -189,7 +209,7 @@ export default function PipelinePanel({
             <div className="space-y-2">
               <p className="text-xs leading-5 text-muted-foreground">
                 {uncertain.definition.name} may already have run. Check its
-                effect, then run it again or mark it as done.
+                effect, then run it again or skip it as already done.
               </p>
               <div className="flex flex-wrap gap-1.5">
                 <Button
