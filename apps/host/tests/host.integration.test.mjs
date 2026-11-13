@@ -8656,3 +8656,849 @@ test(
     for (const line of log) t.diagnostic(line);
   },
 );
+
+const pipelineTurnId = (runId, kind, attempt = 1) => {
+  const hex = createHash('sha256')
+    .update(`pipeline-turn:${runId}:${kind}:${attempt}`)
+    .digest('hex');
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+const loadPipelineTaskModules = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'pipeline-task-modules');
+  const entries = [
+    'pipelines/runner.ts',
+    'pipelines/store.ts',
+    'pipelines/tasks.ts',
+  ];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+test(
+  'pipeline tasks run on a bound session and move only through the runner',
+  { timeout: 360_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-tasks-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_FIXTURE_LAUNCH_LOG: process.env.NESVO_FIXTURE_LAUNCH_LOG,
+    };
+    const hosts = [];
+    const owned = new Set();
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      for (const pid of owned)
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
+    const gitEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    );
+    const git = (cwd, ...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.test',
+          ...args,
+        ],
+        { cwd, env: gitEnvironment },
+      );
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    const stepFile = ({ body, ...fields }) =>
+      `---\n${Object.entries(fields)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\n${body}\n`;
+    const repository = join(directory, 'repository');
+    const markers = join(directory, 'markers');
+    const marker = name => join(markers, name);
+    await mkdir(markers);
+    await mkdir(repository);
+    const steps = [
+      { name: 'setup', type: 'command', phase: 'plan', body: 'echo setup' },
+      {
+        name: 'where',
+        type: 'command',
+        phase: 'pre-done',
+        body: `test "$NESVO_PROJECT_ROOT" = "${repository}"\npwd > "${markers}/where-$NESVO_RUN_ID"`,
+      },
+      {
+        name: 'publish',
+        type: 'action',
+        phase: 'pre-push',
+        body: `echo '{"url":"https://example.test/change/1"}'`,
+      },
+      {
+        name: 'approve',
+        type: 'human',
+        phase: 'plan',
+        body: 'Approve the plan.',
+      },
+      {
+        name: 'broken',
+        type: 'command',
+        phase: 'pre-done',
+        on_fail: 'stop',
+        body: 'echo broken >&2\nexit 3',
+      },
+      {
+        name: 'gate',
+        type: 'command',
+        phase: 'plan',
+        timeout: '1m',
+        body: `while [ ! -f "${marker('go')}" ]; do sleep 0.05; done`,
+      },
+      {
+        name: 'blocker',
+        type: 'command',
+        phase: 'pre-done',
+        timeout: '10m',
+        body: `echo run >> "${marker('blocker-count')}"\nif [ -f "${marker('resume')}" ]; then echo resumed; else echo $$ > "${marker('blocker.pid')}"; sleep 60; fi`,
+      },
+      {
+        name: 'push',
+        type: 'action',
+        phase: 'pre-done',
+        timeout: '10m',
+        body: `echo $$ > "${marker('push.pid')}"\nsleep 60`,
+      },
+    ];
+    const pipelines = {
+      isolated: ['setup', 'where', 'publish'],
+      readonly: ['where'],
+      planned: ['approve', 'where'],
+      failing: ['broken', 'where'],
+      holding: ['where'],
+      waiting: ['gate', 'where'],
+      restart: ['blocker'],
+      uncertain: ['push'],
+    };
+    for (const item of steps)
+      await write(
+        join(repository, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+        stepFile(item),
+      );
+    for (const [name, names] of Object.entries(pipelines)) {
+      await write(
+        join(repository, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        `---\nname: ${name}\nsteps: [${names.join(', ')}]\n---\n`,
+      );
+      await write(
+        join(repository, '.agents', 'tasks', `${name}.md`),
+        `---\npipeline: ${name}\ntitle: Run ${name}\n---\n${name === 'holding' ? 'fixture:hold\n' : ''}## Goal\nRun the ${name} steps.\n`,
+      );
+    }
+    await git(repository, 'init', '-q', '-b', 'main');
+    await git(repository, 'add', '-A');
+    await git(repository, 'commit', '-q', '-m', 'Initial commit');
+    const dataDirectory = join(directory, 'data');
+    const pidFile = join(directory, 'pids.json');
+    let host = launch(dataDirectory, pidFile);
+    hosts.push(host);
+    const restart = async () => {
+      host.child.kill('SIGKILL');
+      await host.exited;
+      host = launch(dataDirectory, pidFile);
+      hosts.push(host);
+    };
+    const codex = {
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+    };
+    const start = (name, extra = {}) =>
+      host.request('start-pipeline-task', {
+        specPath: join('.agents', 'tasks', `${name}.md`),
+        pipelineName: name,
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'read-only',
+        directory: repository,
+        isolation: 'none',
+        gateProvider: 'Claude Code',
+        gateModel: 'sonnet',
+        ...extra,
+      });
+    const started = async (name, extra) => {
+      const response = await start(name, extra);
+      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      return response.run;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-pipeline-run', { runId });
+      assert.equal(
+        response.type,
+        'pipeline-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const waitFor = async (runId, check, description, timeout = 30_000) => {
+      const deadline = Date.now() + timeout;
+      while (true) {
+        const current = await detail(runId);
+        if (check(current)) return current;
+        assert.ok(
+          Date.now() < deadline,
+          `${description}: ${JSON.stringify({ run: current.run.status, attention: current.run.attention, steps: current.steps.map(step => [step.name, step.state, step.attempt]) })}`,
+        );
+        await delay(50);
+      }
+    };
+    const settled = runId =>
+      waitFor(
+        runId,
+        ({ run }) =>
+          [
+            'passed',
+            'failed',
+            'needs-attention',
+            'stopped',
+            'interrupted',
+          ].includes(run.status),
+        'Run did not settle',
+      );
+    const sessionOf = async id =>
+      (await host.request('list-sessions')).sessions.find(
+        session => session.id === id,
+      );
+    const operatorMessages = session =>
+      session.messages.filter(message => message.author === 'operator');
+    const lines = async path =>
+      (await readFile(path, 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    const codexTurns = async session =>
+      (await lines(pidFile + '.turns')).filter(
+        turn => turn.sessionId === session.providerSessionId,
+      );
+    const launchesFor = async run =>
+      (await lines(process.env.NESVO_FIXTURE_LAUNCH_LOG)).filter(
+        entry => entry.environment?.NESVO_RUN_ID === run.id,
+      );
+    const waitForFile = async path => {
+      const deadline = Date.now() + 15_000;
+      while (true) {
+        try {
+          return await readFile(path, 'utf8');
+        } catch {
+          assert.ok(Date.now() < deadline, `Missing ${path}`);
+          await delay(25);
+        }
+      }
+    };
+    const stepNamed = (current, name) =>
+      current.steps.filter(step => step.name === name).at(-1);
+
+    await t.test(
+      'health lists pipelines and a public session request cannot carry an origin',
+      async () => {
+        const { health } = await host.request('health');
+        assert.equal(health.capabilities.includes('pipelines'), true);
+        assert.deepEqual(
+          await host.send(
+            JSON.stringify({
+              id: randomUUID(),
+              method: 'create-session',
+              input: {
+                title: 'Origin',
+                provider: 'Codex',
+                model: 'fixture-codex',
+                mode: 'read-only',
+                directory: repository,
+                origin: { kind: 'pipeline', runId: randomUUID() },
+              },
+            }),
+          ),
+          { type: 'error', id: null, code: 'invalid-request' },
+        );
+      },
+    );
+
+    await t.test(
+      'a supervised Codex task runs in its worktree, checks after the turn and passes',
+      async () => {
+        const run = await started('isolated', {
+          ...codex,
+          isolation: 'worktree',
+        });
+        assert.equal(run.projectRoot, repository);
+        assert.ok(run.isolation);
+        assert.equal(run.directory, run.isolation.worktree);
+        assert.notEqual(run.directory, repository);
+        assert.match(run.isolation.branch, /^nesvo\/run-isolated-[0-9a-f]{8}$/);
+        assert.ok(run.sessionId);
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
+        const session = await sessionOf(run.sessionId);
+        assert.equal(session.directory, run.directory);
+        assert.equal(session.pipelineRunId, run.id);
+        assert.equal(session.delegationEnabled, false);
+        assert.equal(session.status, 'completed');
+        const requests = operatorMessages(session);
+        assert.deepEqual(
+          requests.map(message => [message.id, message.origin]),
+          [[pipelineTurnId(run.id, 'implement'), 'pipeline']],
+        );
+        assert.match(requests[0].body, /Run the isolated steps\./);
+        assert.match(requests[0].body, /Implement the task as planned\.$/);
+        const turns = await codexTurns(session);
+        assert.equal(turns.length, 1);
+        assert.equal(turns[0].sandbox, 'workspaceWrite');
+        assert.deepEqual(turns[0].environment, {
+          NESVO_RUN_ID: run.id,
+          NESVO_PROJECT_ROOT: repository,
+        });
+        const launched = await launchesFor(run);
+        assert.ok(launched.length > 0);
+        for (const entry of launched) {
+          assert.equal(entry.cwd, run.directory);
+          assert.deepEqual(entry.dynamicTools, []);
+        }
+        const review = (await host.request('list-reviews')).reviews.find(
+          item => item.sessionId === session.id,
+        );
+        assert.equal(review?.status, 'pending');
+        assert.equal(
+          (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
+          run.directory,
+        );
+        const where = stepNamed(finished, 'where');
+        assert.ok(
+          Date.parse(where.startedAt) >=
+            Date.parse(session.messages.at(-1).completedAt),
+        );
+        assert.equal(stepNamed(finished, 'setup').state, 'passed');
+        const publish = stepNamed(finished, 'publish');
+        assert.equal(publish.state, 'done');
+        assert.equal(
+          publish.result.outputs.url,
+          'https://example.test/change/1',
+        );
+        const listed = await host.request('list-pipeline-runs', {});
+        assert.ok(
+          listed.page.runs.some(
+            item => item.id === run.id && item.sessionId === session.id,
+          ),
+        );
+        assert.ok(
+          host.pipelineEvents.some(
+            event =>
+              event.type === 'pipeline-run-changed' &&
+              event.run.id === run.id &&
+              event.run.status === 'passed',
+          ),
+        );
+      },
+    );
+
+    await t.test(
+      'a read-only Claude task without isolation runs in the project',
+      async () => {
+        const run = await started('readonly');
+        assert.equal(run.directory, repository);
+        assert.equal(run.projectRoot, repository);
+        assert.equal(run.isolation, null);
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
+        const session = await sessionOf(run.sessionId);
+        assert.equal(session.provider, 'Claude Code');
+        assert.equal(session.directory, repository);
+        const launched = await launchesFor(run);
+        assert.equal(launched.length, 1);
+        assert.equal(launched[0].provider, 'Claude Code');
+        assert.equal(launched[0].cwd, repository);
+        assert.deepEqual(launched[0].environment, {
+          NESVO_RUN_ID: run.id,
+          NESVO_PROJECT_ROOT: repository,
+        });
+        assert.equal(
+          (await readFile(marker(`where-${run.id}`), 'utf8')).trim(),
+          repository,
+        );
+      },
+    );
+
+    await t.test(
+      'a planning turn runs first in a read-only sandbox and the implementation turn carries the plan',
+      async () => {
+        const run = await started('planned', codex);
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
+        assert.equal(stepNamed(finished, 'approve').state, 'skipped');
+        const session = await sessionOf(run.sessionId);
+        const requests = operatorMessages(session);
+        assert.deepEqual(
+          requests.map(message => message.id),
+          [pipelineTurnId(run.id, 'plan'), pipelineTurnId(run.id, 'implement')],
+        );
+        const plan = session.messages.find(
+          message =>
+            message.author === 'agent' && message.runId === requests[0].runId,
+        );
+        assert.ok(plan.body);
+        assert.match(
+          requests[0].body,
+          /Produce a plan for this task\. Do not change files\.$/,
+        );
+        assert.ok(requests[1].body.includes(`Plan:\n${plan.body}`));
+        const turns = await codexTurns(session);
+        assert.deepEqual(
+          turns.map(turn => turn.sandbox),
+          ['readOnly', 'workspaceWrite'],
+        );
+        assert.ok(turns[1].prompt.includes(plan.body));
+        const reviews = (await host.request('list-reviews')).reviews.filter(
+          item => item.sessionId === session.id,
+        );
+        assert.deepEqual(
+          reviews.map(item => [item.version, item.status]).sort(),
+          [
+            [1, 'superseded'],
+            [2, 'pending'],
+          ],
+        );
+      },
+    );
+
+    await t.test(
+      'a failing check with on_fail stop fails the run without another turn',
+      async () => {
+        const run = await started('failing');
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'failed');
+        assert.equal(stepNamed(finished, 'broken').state, 'failed');
+        assert.equal(stepNamed(finished, 'where').state, 'pending');
+        await delay(300);
+        const session = await sessionOf(run.sessionId);
+        assert.equal(operatorMessages(session).length, 1);
+        assert.equal((await launchesFor(run)).length, 1);
+      },
+    );
+
+    await t.test(
+      'a second task for the project is busy and Stop ends the turn and the run',
+      async () => {
+        const run = await started('holding', codex);
+        const session = await host.event(
+          item => item.id === run.sessionId && item.status === 'running',
+        );
+        const pids = JSON.parse(await waitForFile(pidFile + '.codex'));
+        for (const pid of [pids.pid, pids.childPid]) owned.add(pid);
+        const second = await start('readonly');
+        assert.equal(second.type, 'error');
+        assert.equal(second.code, 'busy');
+        const stopped = await host.request('stop-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(stopped.type, 'pipeline-run');
+        assert.equal(stopped.run.status, 'stopped');
+        await host.event(
+          item => item.id === session.id && item.status === 'stopped',
+        );
+        await processesGone([pids.pid, pids.childPid], owned);
+        await delay(300);
+        const current = await detail(run.id);
+        assert.equal(current.run.status, 'stopped');
+        assert.equal(stepNamed(current, 'where'), undefined);
+        await rm(pidFile + '.codex', { force: true });
+      },
+    );
+
+    await t.test(
+      'a turn due while another session runs waits for the idle event and is sent once',
+      async () => {
+        const run = await started('waiting');
+        await waitFor(
+          run.id,
+          current => stepNamed(current, 'gate')?.state === 'running',
+          'Gate did not start',
+        );
+        const otherDirectory = join(directory, 'other');
+        await mkdir(otherDirectory);
+        const created = await host.request('create-session', {
+          title: 'Other work',
+          provider: 'Codex',
+          model: 'fixture-codex',
+          mode: 'read-only',
+          directory: otherDirectory,
+        });
+        assert.equal(created.type, 'session', JSON.stringify(created));
+        const other = await host.request('send-message', {
+          sessionId: created.session.id,
+          messageId: randomUUID(),
+          text: 'fixture:hold',
+        });
+        assert.equal(other.type, 'session', JSON.stringify(other));
+        const pids = JSON.parse(await waitForFile(pidFile + '.codex'));
+        for (const pid of [pids.pid, pids.childPid]) owned.add(pid);
+        await writeFile(marker('go'), '');
+        await waitFor(
+          run.id,
+          current =>
+            current.run.status === 'implementing' &&
+            stepNamed(current, 'gate')?.state === 'passed',
+          'The run did not reach the implementation turn',
+        );
+        await delay(500);
+        assert.equal(
+          operatorMessages(await sessionOf(run.sessionId)).length,
+          0,
+        );
+        assert.equal((await launchesFor(run)).length, 0);
+        const stop = await host.request('stop-run', {
+          sessionId: other.session.id,
+          runId: other.session.runId,
+        });
+        assert.equal(stop.type, 'session');
+        await processesGone([pids.pid, pids.childPid], owned);
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
+        const session = await sessionOf(run.sessionId);
+        assert.deepEqual(
+          operatorMessages(session).map(message => message.id),
+          [pipelineTurnId(run.id, 'implement')],
+        );
+        assert.equal((await launchesFor(run)).length, 1);
+        assert.equal((await sessionOf(other.session.id)).status, 'stopped');
+        await rm(pidFile + '.codex', { force: true });
+      },
+    );
+
+    await t.test(
+      'a restart during checks interrupts the run and resume re-runs the step without a turn',
+      async () => {
+        const run = await started('restart');
+        const pid = Number((await waitForFile(marker('blocker.pid'))).trim());
+        owned.add(pid);
+        await restart();
+        await processesGone([pid], owned);
+        const interrupted = await detail(run.id);
+        assert.equal(interrupted.run.status, 'interrupted');
+        assert.equal(stepNamed(interrupted, 'blocker').state, 'interrupted');
+        await writeFile(marker('resume'), '');
+        const resumed = await host.request('resume-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        assert.equal(resumed.run.status, 'checking');
+        assert.equal(resumed.run.attention, null);
+        const finished = await settled(run.id);
+        assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
+        assert.deepEqual(
+          finished.steps.map(step => [step.name, step.attempt, step.state]),
+          [
+            ['blocker', 1, 'interrupted'],
+            ['blocker', 2, 'passed'],
+          ],
+        );
+        assert.equal(
+          (await readFile(marker('blocker-count'), 'utf8')).trim(),
+          'run\nrun',
+        );
+        const session = await sessionOf(run.sessionId);
+        assert.equal(operatorMessages(session).length, 1);
+        assert.equal((await launchesFor(run)).length, 1);
+        const again = await host.request('resume-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(again.type, 'error');
+        assert.equal(again.code, 'invalid-request');
+      },
+    );
+
+    await t.test(
+      'a restart with a running action leaves it uncertain and resume is refused',
+      async () => {
+        const run = await started('uncertain');
+        const pid = Number((await waitForFile(marker('push.pid'))).trim());
+        owned.add(pid);
+        await restart();
+        await processesGone([pid], owned);
+        const current = await detail(run.id);
+        assert.equal(current.run.status, 'needs-attention');
+        assert.equal(current.run.attention, 'External action may have run.');
+        assert.equal(stepNamed(current, 'push').state, 'uncertain');
+        const refused = await host.request('resume-pipeline-run', {
+          runId: run.id,
+        });
+        assert.deepEqual(refused, {
+          type: 'error',
+          id: refused.id,
+          code: 'invalid-request',
+          message:
+            'Step `push` may already have run. Mark it done or run it again.',
+        });
+        await delay(300);
+        assert.deepEqual(await detail(run.id), current);
+        await host.stop();
+      },
+    );
+
+    await t.test(
+      'a busy host arms one timer, the idle event sends the turn once and an expired timer needs attention',
+      async () => {
+        const isolated = join(directory, 'in-process');
+        const bootstrap = launch(
+          isolated,
+          join(directory, 'pids-bootstrap.json'),
+        );
+        hosts.push(bootstrap);
+        assert.equal((await bootstrap.request('health')).type, 'health');
+        await bootstrap.stop();
+        const {
+          PipelineRunner,
+          PipelineRunStore,
+          bindRunEvents,
+          AUTHOR_BUSY_ATTENTION,
+          AUTHOR_BUSY_MS,
+        } = await loadPipelineTaskModules(directory);
+        const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
+        t.after(() => database.close());
+        const store = new PipelineRunStore(database);
+        const clock = createFakeClock('2026-11-13T10:00:00.000Z', () => {});
+        let busy = true;
+        const sent = [];
+        const completed = new Set();
+        const spawned = [];
+        const listeners = new Set();
+        const sessions = {
+          isBusy: () => busy,
+          onRunFinished: listener => {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        };
+        const author = {
+          turnState: (_run, messageId) =>
+            completed.has(messageId)
+              ? 'completed'
+              : sent.includes(messageId)
+                ? 'running'
+                : 'none',
+          sendTurn: turn => {
+            if (busy) return 'busy';
+            sent.push(turn.messageId);
+            return 'sent';
+          },
+          stop: () => undefined,
+        };
+        const command = ({ run, step }) => {
+          spawned.push(run.id);
+          return Promise.resolve({
+            kind: 'result',
+            result: {
+              name: step.name,
+              type: step.type,
+              phase: step.phase,
+              status: 'pass',
+              summary: 'Fixture result.',
+              evidence: [],
+              outputs: {},
+              startedAt: step.startedAt,
+              finishedAt: new Date().toISOString(),
+              durationMs: 0,
+              cost: {
+                usd: null,
+                inputTokens: null,
+                outputTokens: null,
+                provider: null,
+              },
+              attempt: step.attempt,
+            },
+          });
+        };
+        const skip = () =>
+          Promise.resolve({
+            kind: 'skipped',
+            reason: 'Executor not available',
+          });
+        const runner = new PipelineRunner({
+          store,
+          clock,
+          emit: () => undefined,
+          evidence: { write: () => Promise.resolve('attempt-1.log') },
+          stepExecutors: { command, action: command, human: skip, agent: skip },
+          author,
+        });
+        t.after(() => runner.close());
+        const events = bindRunEvents(sessions, runner);
+        const now = new Date().toISOString();
+        const insert = (title, status) => {
+          const sessionId = randomUUID();
+          database
+            .prepare(
+              'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?)',
+            )
+            .run(sessionId, '{}', now);
+          const run = {
+            id: randomUUID(),
+            revision: 1,
+            pipeline: {
+              name: 'checks',
+              description: '',
+              body: '',
+              source: {
+                scope: 'project',
+                path: join(isolated, 'checks.md'),
+                contentHash: 'b'.repeat(64),
+              },
+              notes: [],
+              steps: [
+                {
+                  name: 'check',
+                  type: 'command',
+                  phase: 'pre-done',
+                  skill: null,
+                  timeout: '15m',
+                  retries: 0,
+                  on_fail: 'stop',
+                  needs: [],
+                  body: 'true',
+                  source: {
+                    scope: 'project',
+                    path: join(isolated, 'check.md'),
+                    contentHash: 'a'.repeat(64),
+                  },
+                  notes: [],
+                },
+              ],
+            },
+            specPath: join(isolated, 'task.md'),
+            specHash: 'c'.repeat(64),
+            specTitle: title,
+            sessionId,
+            directory: isolated,
+            projectRoot: join(isolated, title),
+            isolation: null,
+            gateProvider: 'Claude Code',
+            gateModel: 'default',
+            status,
+            phase: null,
+            currentStepIndex: null,
+            attention: null,
+            createdAt: now,
+            updatedAt: now,
+            finishedAt: null,
+          };
+          assert.equal(store.insertRun(run), true);
+          return run;
+        };
+        const waiting = insert('waiting', 'pending');
+        await runner.advanceRun(waiting.id);
+        assert.equal(store.getRun(waiting.id).status, 'implementing');
+        assert.deepEqual(sent, []);
+        assert.deepEqual(
+          clock.pending().map(timer => timer.delayMs),
+          [AUTHOR_BUSY_MS],
+        );
+        assert.equal(AUTHOR_BUSY_MS, 60_000);
+        assert.deepEqual(runner.waitingForIdle(), [waiting.id]);
+        await runner.advanceRun(waiting.id);
+        assert.equal(clock.pending().length, 1);
+        events.idle();
+        await delay(20);
+        assert.deepEqual(sent, []);
+        busy = false;
+        for (let index = 0; index < 3; index++) events.idle();
+        await waitUntil(() => sent.length === 1, 'The turn was not sent');
+        await delay(20);
+        events.idle();
+        await delay(20);
+        assert.deepEqual(sent, [pipelineTurnId(waiting.id, 'implement')]);
+        assert.deepEqual(clock.pending(), []);
+        assert.deepEqual(runner.waitingForIdle(), []);
+
+        completed.add(sent[0]);
+        await Promise.all(
+          Array.from({ length: 20 }, () =>
+            Promise.resolve().then(() => {
+              for (const listener of listeners)
+                listener({
+                  sessionId: waiting.sessionId,
+                  runId: randomUUID(),
+                  pipelineRunId: waiting.id,
+                  status: 'completed',
+                  reviewId: null,
+                });
+            }),
+          ),
+        );
+        await waitUntil(
+          () => store.getRun(waiting.id).status === 'passed',
+          'The run did not pass after the turn ended',
+        );
+        assert.deepEqual(spawned, [waiting.id]);
+        assert.deepEqual(
+          store
+            .stepsForRun(waiting.id)
+            .map(step => [step.name, step.attempt, step.state]),
+          [['check', 1, 'passed']],
+        );
+
+        busy = true;
+        const expiring = insert('expiring', 'implementing');
+        await runner.advanceRun(expiring.id);
+        assert.equal(clock.pending().length, 1);
+        clock.fire();
+        await waitUntil(
+          () => store.getRun(expiring.id).status === 'needs-attention',
+          'The expired timer did not need attention',
+        );
+        assert.equal(
+          store.getRun(expiring.id).attention,
+          AUTHOR_BUSY_ATTENTION,
+        );
+        assert.equal(
+          AUTHOR_BUSY_ATTENTION,
+          'The computer was busy with another session',
+        );
+        assert.deepEqual(sent, [pipelineTurnId(waiting.id, 'implement')]);
+        assert.deepEqual(runner.waitingForIdle(), []);
+        events.release();
+      },
+    );
+  },
+);
