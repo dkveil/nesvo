@@ -98,7 +98,13 @@ export function PipelineStrip({
           type="button"
           data-step-chip
           data-step-state={step.state}
-          aria-label={label}
+          aria-label={[
+            label,
+            step.attempts > 1 ? `attempt ${step.attempts}` : '',
+            duration,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
           aria-pressed={selectedIndex === step.index}
           title={[
             label,
@@ -149,7 +155,7 @@ export function PipelineStrip({
         <RunStatusBadge run={run} />
         {run.attention && (
           <span
-            className="hidden min-w-0 truncate text-2xs text-muted-foreground @min-[34rem]:inline"
+            className="hidden min-w-0 truncate text-2xs text-muted-foreground md:@min-[34rem]:inline"
             title={run.attention}
           >
             {run.attention}
@@ -161,7 +167,7 @@ export function PipelineStrip({
             type="button"
             aria-label={`Open ${current.definition.name} result`}
             onClick={() => onSelectStep(current.index)}
-            className="inline-flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 text-2xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset @min-[34rem]:hidden"
+            className="inline-flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 text-2xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset md:@min-[34rem]:hidden"
           >
             <StepStateIcon state={current.state} className="size-3" />
             <span className="truncate">{current.definition.name}</span>
@@ -193,11 +199,11 @@ export function PipelineStrip({
             title="Stop pipeline"
           >
             <Square className="fill-current" />
-            <span className="hidden @min-[34rem]:inline">Stop pipeline</span>
+            <span className="hidden md:@min-[34rem]:inline">Stop pipeline</span>
           </Button>
         )}
       </div>
-      <div className="mt-1 hidden space-y-0.5 @min-[34rem]:block">
+      <div className="mt-1 hidden space-y-0.5 md:@min-[34rem]:block">
         {phases.map(group => (
           <div key={group.phase} className="flex min-w-0 items-center gap-2">
             <span className="w-20 shrink-0 pl-0.5 text-2xs text-muted-foreground">

@@ -28,6 +28,7 @@ import {
 import {
   runStatusLabel,
   runStatusTones,
+  showsRunStatus,
   toneText,
   type PipelineRun,
 } from '@/entities/pipeline';
@@ -72,7 +73,7 @@ function SessionStatus({
 }) {
   if (offline)
     return <span className="text-sidebar-muted-foreground">Offline</span>;
-  if (run && !session.pipelineStepId)
+  if (showsRunStatus(session, run))
     return (
       <span
         className={cn(
@@ -146,7 +147,7 @@ export function SessionSidebar({
     (session.pipelineStepId ? (runOf(session)?.sessionId ?? null) : null);
   const statusText = (session: Session) => {
     const run = runOf(session);
-    return run && !session.pipelineStepId
+    return showsRunStatus(session, run)
       ? `Pipeline ${runStatusLabel(run.status)}`
       : sessionStatusLabel(session);
   };

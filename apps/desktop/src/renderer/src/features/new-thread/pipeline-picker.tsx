@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { Check, RefreshCw, Workflow } from 'lucide-react';
 import { cn } from 'cn';
 import type { DefinitionCatalog, PipelinesApi } from '@nesvo/contracts';
@@ -23,7 +23,12 @@ import {
 } from '@/shared/ui/select';
 import { Switch } from '@/shared/ui/switch';
 import { ComposerChip } from './composer-chip';
-import { pipelineIssues, type PipelineChoice } from './pipeline-choice';
+import {
+  gateModels,
+  pipelineIssues,
+  resolveGate,
+  type PipelineChoice,
+} from './pipeline-choice';
 
 type Props = {
   hostId: string;
@@ -43,14 +48,21 @@ type CatalogState =
   | { status: 'error'; message: string }
   | { status: 'loaded'; catalog: DefinitionCatalog };
 
-const otherProvider = (provider: Provider): Provider =>
-  provider === 'Codex' ? 'Claude Code' : 'Codex';
-
-const gateModels = (statuses: ProviderStates, provider: Provider) => {
-  const models = statuses[provider].status?.models ?? [];
-  return models.length > 0
-    ? models.map(model => ({ id: model.id, label: model.label }))
-    : [{ id: 'default', label: 'Default' }];
+const moveRadio = (event: KeyboardEvent<HTMLDivElement>) => {
+  const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+  if (!forward && event.key !== 'ArrowUp' && event.key !== 'ArrowLeft') return;
+  const radios = [
+    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+      ':scope > [role="radio"]',
+    ),
+  ];
+  const index = radios.findIndex(radio => radio === document.activeElement);
+  const next =
+    radios[(index + (forward ? 1 : -1) + radios.length) % radios.length];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+  next.click();
 };
 
 const specName = (path: string) =>
@@ -93,15 +105,16 @@ export function PipelinePicker({
     );
   };
   const catalog = state.status === 'loaded' ? state.catalog : null;
-  const defaultGate = otherProvider(authorProvider);
+  const gate = resolveGate(value, authorProvider, statuses);
   const choose = (changes: Partial<PipelineChoice>) => {
     const base: PipelineChoice = value ?? {
       pipelineName: '',
       specPath: '',
       specTitle: null,
       isolation: !!trimmed,
-      gateProvider: defaultGate,
-      gateModel: gateModels(statuses, defaultGate)[0]!.id,
+      gateProvider: gate.provider,
+      gateModel: gate.model,
+      gateEdited: false,
     };
     onChange({ ...base, ...changes });
   };
@@ -111,8 +124,8 @@ export function PipelinePicker({
   const isolationReason = !trimmed
     ? 'Choose a project folder to isolate the task.'
     : '';
-  const gateProvider = value?.gateProvider ?? defaultGate;
-  const models = gateModels(statuses, gateProvider);
+  const gateProvider = gate.provider;
+  const models = gate.models;
   return (
     <Popover
       open={open}
@@ -124,7 +137,9 @@ export function PipelinePicker({
       <PopoverTrigger asChild>
         <ComposerChip
           disabled={disabled}
-          aria-label="Pipeline"
+          aria-label={
+            value?.pipelineName ? `Pipeline: ${value.pipelineName}` : 'Pipeline'
+          }
           data-pipeline={value?.pipelineName || undefined}
           title={
             value?.pipelineName
@@ -185,86 +200,95 @@ export function PipelinePicker({
           </p>
         )}
         {catalog && (
-          <div role="radiogroup" aria-label="Pipelines" className="space-y-0.5">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!value?.pipelineName}
-              className={optionRow}
-              onClick={() => onChange(null)}
+          <div className="space-y-0.5">
+            <div
+              role="radiogroup"
+              aria-label="Pipelines"
+              className="space-y-0.5"
+              onKeyDown={moveRadio}
             >
-              <Check
-                className={cn(
-                  'mt-0.5 size-3.5 shrink-0',
-                  value?.pipelineName && 'invisible',
-                )}
-                aria-hidden="true"
-              />
-              <span className="flex-1 text-[13px]">No pipeline</span>
-            </button>
-            {catalog.pipelines.map(pipeline => {
-              const issues = pipelineIssues(catalog, pipeline.name, '');
-              const checked = value?.pipelineName === pipeline.name;
-              return (
-                <button
-                  key={pipeline.name}
-                  type="button"
-                  role="radio"
-                  aria-checked={checked}
-                  data-pipeline-option={pipeline.name}
-                  className={optionRow}
-                  onClick={() => {
-                    const spec = catalog.specs.find(
-                      item => item.source.path === value?.specPath,
-                    );
-                    const firstSpec = catalog.specs.find(
-                      item => item.pipeline === pipeline.name,
-                    );
-                    const keep =
-                      !!value?.specPath &&
-                      (!spec || spec.pipeline === pipeline.name);
-                    choose({
-                      pipelineName: pipeline.name,
-                      specPath: keep
-                        ? value!.specPath
-                        : (firstSpec?.source.path ?? ''),
-                      specTitle: keep
-                        ? value!.specTitle
-                        : (firstSpec?.title ?? null),
-                    });
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      'mt-0.5 size-3.5 shrink-0',
-                      !checked && 'invisible',
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-[13px] font-medium">
-                        {pipeline.name}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!value?.pipelineName}
+                tabIndex={value?.pipelineName ? -1 : 0}
+                className={optionRow}
+                onClick={() => onChange(null)}
+              >
+                <Check
+                  className={cn(
+                    'mt-0.5 size-3.5 shrink-0',
+                    value?.pipelineName && 'invisible',
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="flex-1 text-[13px]">No pipeline</span>
+              </button>
+              {catalog.pipelines.map(pipeline => {
+                const issues = pipelineIssues(catalog, pipeline.name, '');
+                const checked = value?.pipelineName === pipeline.name;
+                return (
+                  <button
+                    key={pipeline.name}
+                    type="button"
+                    role="radio"
+                    aria-checked={checked}
+                    tabIndex={checked ? 0 : -1}
+                    data-pipeline-option={pipeline.name}
+                    className={optionRow}
+                    onClick={() => {
+                      const spec = catalog.specs.find(
+                        item => item.source.path === value?.specPath,
+                      );
+                      const firstSpec = catalog.specs.find(
+                        item => item.pipeline === pipeline.name,
+                      );
+                      const keep =
+                        !!value?.specPath &&
+                        (!spec || spec.pipeline === pipeline.name);
+                      choose({
+                        pipelineName: pipeline.name,
+                        specPath: keep
+                          ? value!.specPath
+                          : (firstSpec?.source.path ?? ''),
+                        specTitle: keep
+                          ? value!.specTitle
+                          : (firstSpec?.title ?? null),
+                      });
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        'mt-0.5 size-3.5 shrink-0',
+                        !checked && 'invisible',
+                      )}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-[13px] font-medium">
+                          {pipeline.name}
+                        </span>
+                        <span className="shrink-0 text-2xs text-muted-foreground">
+                          {pipeline.steps.length} steps
+                        </span>
+                        {issues.length > 0 && (
+                          <span className="shrink-0 text-2xs text-warning-foreground">
+                            {issues.length}{' '}
+                            {issues.length === 1 ? 'issue' : 'issues'}
+                          </span>
+                        )}
                       </span>
-                      <span className="shrink-0 text-2xs text-muted-foreground">
-                        {pipeline.steps.length} steps
-                      </span>
-                      {issues.length > 0 && (
-                        <span className="shrink-0 text-2xs text-warning-foreground">
-                          {issues.length}{' '}
-                          {issues.length === 1 ? 'issue' : 'issues'}
+                      {pipeline.description && (
+                        <span className="mt-0.5 line-clamp-2 block text-2xs leading-4 text-muted-foreground">
+                          {pipeline.description}
                         </span>
                       )}
                     </span>
-                    {pipeline.description && (
-                      <span className="mt-0.5 line-clamp-2 block text-2xs leading-4 text-muted-foreground">
-                        {pipeline.description}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
+            </div>
             {catalog.pipelines.length === 0 && (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
                 No pipelines in .agents/pipelines for this folder.
@@ -311,15 +335,23 @@ export function PipelinePicker({
                   role="radiogroup"
                   aria-label="Task specs"
                   className="space-y-0.5"
+                  onKeyDown={moveRadio}
                 >
-                  {catalog.specs.map(spec => {
+                  {catalog.specs.map((spec, index) => {
                     const checked = value.specPath === spec.source.path;
+                    const focusable =
+                      checked ||
+                      (index === 0 &&
+                        !catalog.specs.some(
+                          item => item.source.path === value.specPath,
+                        ));
                     return (
                       <button
                         key={spec.source.path}
                         type="button"
                         role="radio"
                         aria-checked={checked}
+                        tabIndex={focusable ? 0 : -1}
                         className={optionRow}
                         onClick={() =>
                           choose({
@@ -388,6 +420,7 @@ export function PipelinePicker({
                 <div
                   role="radiogroup"
                   aria-label="Gate provider"
+                  onKeyDown={moveRadio}
                   className="grid shrink-0 grid-cols-2 gap-0.5 rounded-lg bg-segment-track p-0.5"
                 >
                   {providers.map(provider => (
@@ -396,11 +429,13 @@ export function PipelinePicker({
                       type="button"
                       role="radio"
                       aria-checked={gateProvider === provider}
+                      tabIndex={gateProvider === provider ? 0 : -1}
                       title={provider}
                       onClick={() =>
                         choose({
                           gateProvider: provider,
                           gateModel: gateModels(statuses, provider)[0]!.id,
+                          gateEdited: true,
                         })
                       }
                       className="inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-checked:bg-segment-active aria-checked:text-foreground"
@@ -411,8 +446,14 @@ export function PipelinePicker({
                   ))}
                 </div>
                 <Select
-                  value={value.gateModel}
-                  onValueChange={gateModel => choose({ gateModel })}
+                  value={gate.model}
+                  onValueChange={gateModel =>
+                    choose({
+                      gateProvider,
+                      gateModel,
+                      gateEdited: true,
+                    })
+                  }
                 >
                   <SelectTrigger
                     size="sm"

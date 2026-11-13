@@ -164,19 +164,24 @@ function StepResult({
         path: item.path,
       });
       if (request === requests.current)
-        setPreviews(previous => ({
-          ...previous,
-          [key]: { status: 'loaded', evidence },
-        }));
+        setPreviews(previous =>
+          previous[key]
+            ? { ...previous, [key]: { status: 'loaded', evidence } }
+            : previous,
+        );
     } catch (failure) {
       if (request === requests.current)
-        setPreviews(previous => ({
-          ...previous,
-          [key]: {
-            status: 'error',
-            message: `Could not read the evidence. ${errorDetail(failure)}`,
-          },
-        }));
+        setPreviews(previous =>
+          previous[key]
+            ? {
+                ...previous,
+                [key]: {
+                  status: 'error',
+                  message: `Could not read the evidence. ${errorDetail(failure)}`,
+                },
+              }
+            : previous,
+        );
     }
   };
   const outputs = Object.entries(result?.outputs ?? {});

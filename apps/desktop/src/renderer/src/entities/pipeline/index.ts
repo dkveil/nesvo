@@ -6,6 +6,7 @@ import type {
   ResolvedStep,
   StepPhase,
 } from '@nesvo/contracts';
+import { sessionStatusLabel, type Session } from '@/entities/session';
 
 export type {
   DefinitionCatalog,
@@ -110,6 +111,15 @@ const activeRunStatuses: PipelineRunStatus[] = [
   'fixing',
 ];
 
+export const showsRunStatus = (
+  session: Session,
+  run: DesktopPipelineRun | undefined,
+): run is DesktopPipelineRun =>
+  !!run &&
+  !session.pipelineStepId &&
+  session.status !== 'failed' &&
+  sessionStatusLabel(session) !== 'Needs approval';
+
 export const isRunActive = (run: DesktopPipelineRun) =>
   activeRunStatuses.includes(run.status);
 
@@ -165,15 +175,15 @@ export const pipelinePhases = (steps: PipelineStepView[]) =>
     .filter(group => group.steps.length > 0);
 
 const SECOND_MS = 1000;
-const MINUTE_MS = 60_000;
+const SECONDS_PER_MINUTE = 60;
 
 export const formatDuration = (milliseconds: number) => {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return '';
   if (milliseconds < SECOND_MS) return `${Math.round(milliseconds)}ms`;
-  if (milliseconds < MINUTE_MS)
-    return `${Math.round(milliseconds / SECOND_MS)}s`;
-  const minutes = Math.floor(milliseconds / MINUTE_MS);
-  const seconds = Math.round((milliseconds % MINUTE_MS) / SECOND_MS);
+  const totalSeconds = Math.round(milliseconds / SECOND_MS);
+  if (totalSeconds < SECONDS_PER_MINUTE) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const seconds = totalSeconds % SECONDS_PER_MINUTE;
   return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
 };
 
