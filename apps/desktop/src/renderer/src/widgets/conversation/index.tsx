@@ -43,6 +43,7 @@ type Props = {
   workers: Session[];
   delegations: ReactNode;
   results: ReactNode;
+  pipeline?: ReactNode;
   activity: (
     runId: string,
     startedAt: string | null,
@@ -77,6 +78,7 @@ export function Conversation({
   workers,
   delegations,
   results,
+  pipeline,
   activity,
   draft,
   selectedSkill,
@@ -557,6 +559,7 @@ export function Conversation({
       <div
         className={cn('shrink-0 px-5', empty ? 'mb-auto pb-16' : 'pt-2 pb-4')}
       >
+        {pipeline}
         {composer}
       </div>
     </section>
