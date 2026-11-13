@@ -332,7 +332,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
-      capabilities: ['scheduled-jobs', 'reasoning-effort'],
+      capabilities: ['scheduled-jobs', 'reasoning-effort', 'pipelines'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');
@@ -4517,6 +4517,7 @@ test(
     assert.deepEqual(health.capabilities, [
       'scheduled-jobs',
       'reasoning-effort',
+      'pipelines',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -4947,9 +4948,9 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
 
-    await t.test('the host does not advertise pipelines', async () => {
+    await t.test('the host advertises pipelines', async () => {
       const { health } = await host.request('health');
-      assert.equal(health.capabilities.includes('pipelines'), false);
+      assert.equal(health.capabilities.includes('pipelines'), true);
     });
 
     await t.test(
@@ -4957,20 +4958,6 @@ test(
       async () => {
         const runId = randomUUID();
         const requests = [
-          [
-            'start-pipeline-task',
-            {
-              specPath: join(directory, 'task.md'),
-              pipelineName: 'default',
-              provider: 'Claude Code',
-              model: 'sonnet',
-              mode: 'read-only',
-              directory,
-              isolation: 'none',
-              gateProvider: 'Claude Code',
-              gateModel: 'sonnet',
-            },
-          ],
           [
             'decide-pipeline-gate',
             {
@@ -4987,7 +4974,6 @@ test(
             'skip-pipeline-step',
             { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
           ],
-          ['resume-pipeline-run', { runId }],
           ['remove-pipeline-worktree', { runId }],
           [
             'pipeline-metrics',
@@ -6342,7 +6328,7 @@ test(
         assert.equal(missingFolder.type, 'error');
         assert.equal(missingFolder.code, 'invalid-directory');
         const { health } = await host.request('health');
-        assert.equal(health.capabilities.includes('pipelines'), false);
+        assert.equal(health.capabilities.includes('pipelines'), true);
         const pending = host.request('list-pipeline-definitions', {
           directory: project,
         });

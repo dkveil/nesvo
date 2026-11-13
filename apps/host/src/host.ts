@@ -39,6 +39,13 @@ import {
 } from './pipelines/runner';
 import { actionExecutor } from './pipelines/steps/action';
 import { commandExecutor } from './pipelines/steps/command';
+import {
+  PipelineTasks,
+  SpecSnapshots,
+  bindRunEvents,
+  createSessionAuthor,
+  runEnvironment,
+} from './pipelines/tasks';
 import { deleteDefinition, saveDefinition } from './pipelines/writer';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
@@ -67,7 +74,9 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
 const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'list-pipeline-definitions',
   'validate-pipeline-definitions',
+  'start-pipeline-task',
   'run-pipeline-steps',
+  'resume-pipeline-run',
   'list-pipeline-runs',
   'get-pipeline-run',
   'stop-pipeline-run',
@@ -76,9 +85,7 @@ const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'delete-pipeline-definition',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
-const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
-  'pipelines',
-]).options;
+const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
 
 const definitionErrorCode = (error: unknown) => {
   if (!(error instanceof DefinitionError)) return 'unavailable' as const;
@@ -107,18 +114,31 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const emit = (message: HostMessage) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
       };
+      let wakeIdleRuns = () => {};
+      const emitSessionEvent = (message: HostMessage) => {
+        emit(message);
+        if (message.type === 'session-changed') wakeIdleRuns();
+      };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
             new SessionService(
               store,
               directory,
-              emit,
+              emitSessionEvent,
               new ReviewStore(database),
               () => {
                 const at = new Date().toISOString();
                 scheduledJobStore.interruptActiveRuns(at);
                 pipelineRunStore.interruptActiveRuns(at);
+              },
+              {
+                environment: session => {
+                  const run = session.pipelineRunId
+                    ? pipelineRunStore.getRun(session.pipelineRunId)
+                    : undefined;
+                  return run ? runEnvironment(run) : undefined;
+                },
               },
             ),
         ),
@@ -157,6 +177,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const evidence = new EvidenceStore(directory, id =>
         pipelineRunStore.getStep(id),
       );
+      const snapshots = new SpecSnapshots(directory);
       const pipelines = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const runner = new PipelineRunner({
@@ -169,11 +190,37 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               human: unavailableExecutor,
               agent: unavailableExecutor,
             },
+            author: createSessionAuthor({
+              sessions,
+              store: pipelineRunStore,
+              snapshots,
+            }),
           });
+          const events = bindRunEvents(sessions, runner);
+          wakeIdleRuns = events.idle;
           void runner.recover();
-          return runner;
+          return { runner, events };
         }),
-        runner => Effect.promise(() => runner.close()),
+        ({ runner, events }) =>
+          Effect.promise(async () => {
+            events.release();
+            wakeIdleRuns = () => {};
+            await runner.close();
+          }),
+      ).pipe(Effect.map(({ runner }) => runner));
+      const tasks = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new PipelineTasks({
+              store: pipelineRunStore,
+              runner: pipelines,
+              sessions,
+              snapshots,
+              dataDirectory: directory,
+              emit,
+            }),
+        ),
+        service => Effect.promise(() => service.close()),
       );
       let evidenceRequests = 0;
       let workspaceRequests = 0;
@@ -394,20 +441,31 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           });
           continue;
         }
-        if (request.method === 'run-pipeline-steps') {
-          const start = pipelines
-            .startManualRun(request.input, probes.controller.signal)
+        if (
+          request.method === 'run-pipeline-steps' ||
+          request.method === 'start-pipeline-task'
+        ) {
+          const start = (
+            request.method === 'start-pipeline-task'
+              ? tasks.start(request.input, probes.controller.signal)
+              : pipelines.startManualRun(
+                  request.input,
+                  probes.controller.signal,
+                )
+          )
             .then(run => send({ type: 'pipeline-run', id: request.id, run }))
             .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
                 code:
-                  error instanceof PipelineRunError
+                  error instanceof PipelineRunError ||
+                  error instanceof SessionError
                     ? error.code
                     : 'unavailable',
                 message:
-                  error instanceof PipelineRunError
+                  error instanceof PipelineRunError ||
+                  error instanceof SessionError
                     ? error.message
                     : 'The pipeline run could not start. Try again.',
               }),
@@ -721,12 +779,21 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 session: sessions.send(request.input),
               };
-            if (request.method === 'stop-run')
+            if (request.method === 'stop-run') {
+              const bound = store.get(request.input.sessionId);
+              if (
+                bound?.pipelineRunId &&
+                bound.runId === request.input.runId &&
+                pipelineRunStore.getRun(bound.pipelineRunId)?.sessionId ===
+                  bound.id
+              )
+                pipelines.stop(bound.pipelineRunId);
               return {
                 type: 'session',
                 id: request.id,
                 session: sessions.stop(request.input),
               };
+            }
             if (request.method === 'respond-approval')
               return {
                 type: 'session',
@@ -805,6 +872,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 );
               return { type: 'pipeline-runs', id: request.id, page };
             }
+            if (request.method === 'resume-pipeline-run')
+              return {
+                type: 'pipeline-run',
+                id: request.id,
+                run: pipelines.resume(request.input.runId),
+              };
             if (request.method === 'stop-pipeline-run')
               return {
                 type: 'pipeline-run',
