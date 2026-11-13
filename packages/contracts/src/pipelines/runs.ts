@@ -86,7 +86,7 @@ export const pipelineRunSchema = z.strictObject({
     .nullable(),
   attention: z.string().max(pipelineLimits.attention).nullable(),
   createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime({ precision: 3 }),
   finishedAt: z.iso.datetime().nullable(),
 });
 

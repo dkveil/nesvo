@@ -29,18 +29,11 @@ const FINISHED_STATUSES: readonly PipelineRunStatus[] = [
   'rejected',
   'stopped',
 ];
-const STARTABLE_STEP_STATES: readonly PipelineStepRecord['state'][] = [
-  'pending',
-  'blocked',
-  'failed',
-  'error',
-  'interrupted',
-];
 
 type Row = Record<string, SQLOutputValue>;
 
 const CURSOR_PATTERN =
-  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\|([0-9a-f-]{36})$/;
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\|([0-9a-fA-F-]{36})$/;
 
 const toRun = (row: Row): PipelineRun =>
   pipelineRunSchema.parse(JSON.parse(String(row.document)));
@@ -53,6 +46,7 @@ const quoted = (values: readonly string[]) =>
 
 const IN_PROGRESS_SQL = quoted(IN_PROGRESS_STATUSES);
 const RUNNING_SQL = quoted(RUNNING_STATUSES);
+const RECOVERABLE_SQL = quoted(['pending', ...RUNNING_STATUSES]);
 const FINISHED_SQL = quoted(FINISHED_STATUSES);
 
 const runValues = (run: PipelineRun) => [
@@ -86,9 +80,6 @@ const stepValues = (step: PipelineStepRecord) => [
   step.startedAt,
   step.updatedAt,
 ];
-
-const interruptedStepState = (step: PipelineStepRecord) =>
-  step.type === 'action' ? 'uncertain' : 'interrupted';
 
 export class PipelineRunStore {
   constructor(private readonly database: DatabaseSync) {}
@@ -221,21 +212,23 @@ export class PipelineRunStore {
     expectedRevision: number,
     startedAt: string,
   ): PipelineStepRecord | undefined {
+    if (this.database.isTransaction)
+      throw new Error('A step must be recorded as running in its own transaction.');
     return this.transact(() => {
       const current = this.getStep(stepId);
       if (
         !current ||
         current.revision !== expectedRevision ||
-        !STARTABLE_STEP_STATES.includes(current.state)
+        current.state !== 'pending'
       )
         return undefined;
+      const run = this.getRun(current.runId);
+      if (!run || FINISHED_STATUSES.includes(run.status)) return undefined;
       const running: PipelineStepRecord = {
         ...current,
         revision: current.revision + 1,
         state: 'running',
         attempt: Math.max(current.attempt, 1),
-        result: null,
-        skip: null,
         startedAt,
         updatedAt: startedAt,
       };
@@ -255,39 +248,26 @@ export class PipelineRunStore {
 
   interruptActiveRuns(at: string): void {
     this.transact(() => {
-      const runs = this.database
+      const uncertainRunIds = this.database
         .prepare(
-          `SELECT document FROM pipeline_runs WHERE status IN (${RUNNING_SQL})`,
+          "SELECT DISTINCT run_id FROM pipeline_steps WHERE state = 'running' AND type = 'action'",
         )
         .all()
-        .map(toRun);
-      for (const run of runs) {
-        let uncertain = false;
-        for (const step of this.stepsForRun(run.id)) {
-          if (step.state !== 'running') continue;
-          const state = interruptedStepState(step);
-          uncertain ||= state === 'uncertain';
-          this.replaceStep(
-            {
-              ...step,
-              revision: step.revision + 1,
-              state,
-              updatedAt: at,
-            },
-            step.revision,
-          );
-        }
-        this.replaceRun(
-          {
-            ...run,
-            revision: run.revision + 1,
-            status: uncertain ? 'needs-attention' : 'interrupted',
-            attention: uncertain ? EXTERNAL_ACTION_ATTENTION : run.attention,
-            updatedAt: at,
-          },
-          run.revision,
-        );
-      }
+        .map(row => String(row.run_id));
+      this.database
+        .prepare(
+          "UPDATE pipeline_steps SET document = json_set(document, '$.state', CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, '$.revision', revision + 1, '$.updatedAt', ?), state = CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, revision = revision + 1, updated_at = ? WHERE state = 'running'",
+        )
+        .run(at, at);
+      const interrupt = this.database.prepare(
+        `UPDATE pipeline_runs SET document = json_set(document, '$.status', 'interrupted', '$.revision', revision + 1, '$.updatedAt', ?), status = 'interrupted', revision = revision + 1, updated_at = ? WHERE status IN (${RUNNING_SQL}) AND id NOT IN (SELECT value FROM json_each(?))`,
+      );
+      interrupt.run(at, at, JSON.stringify(uncertainRunIds));
+      this.database
+        .prepare(
+          `UPDATE pipeline_runs SET document = json_set(document, '$.status', 'needs-attention', '$.attention', ?, '$.revision', revision + 1, '$.updatedAt', ?), status = 'needs-attention', revision = revision + 1, updated_at = ? WHERE status IN (${RECOVERABLE_SQL}) AND id IN (SELECT value FROM json_each(?))`,
+        )
+        .run(EXTERNAL_ACTION_ATTENTION, at, at, JSON.stringify(uncertainRunIds));
     });
   }
 
@@ -301,9 +281,9 @@ export class PipelineRunStore {
         Number(
           this.database
             .prepare(
-              'UPDATE sessions SET pipeline_run_id = ?, pipeline_step_id = ? WHERE id = ?',
+              "UPDATE sessions SET document = json_set(document, '$.pipelineRunId', ?, '$.pipelineStepId', ?), pipeline_run_id = (SELECT id FROM pipeline_runs WHERE id = ?), pipeline_step_id = (SELECT id FROM pipeline_steps WHERE id = ?) WHERE id = ?",
             )
-            .run(runId, stepId, sessionId).changes,
+            .run(runId, stepId, runId, stepId, sessionId).changes,
         ) === 1,
     );
   }

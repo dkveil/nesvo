@@ -5600,6 +5600,26 @@ test(
       const second = store.listRuns(first.nextCursor, 1);
       assert.equal(second.runs[0].updatedAt, at(1001));
       assert.equal(store.listRuns('garbage', 5), undefined);
+      const tied = [1, 2, 3].map(() =>
+        makeRun({ status: 'passed', updatedAt: at(1500) }),
+      );
+      for (const run of tied) store.insertRun(run);
+      const walked = [];
+      let cursor = null;
+      do {
+        const page = store.listRuns(cursor, 2);
+        walked.push(...page.runs.map(run => run.id));
+        cursor = page.nextCursor;
+      } while (cursor);
+      const tiedIds = tied
+        .map(run => run.id)
+        .sort()
+        .reverse();
+      assert.deepEqual(
+        walked.filter(id => tiedIds.includes(id)),
+        tiedIds,
+      );
+      assert.equal(new Set(walked).size, walked.length);
     });
 
     await t.test('prune keeps active and resumable runs', () => {
@@ -5699,7 +5719,11 @@ test(
           store.stepsForRun(runs.planning.id)[0].state,
           'interrupted',
         );
-        assert.equal(store.stepsForRun(runs.pending.id)[0].state, 'running');
+        for (const status of ['pending', 'passed', 'failed'])
+          assert.equal(
+            store.stepsForRun(runs[status].id)[0].state,
+            'interrupted',
+          );
         assert.equal(statusOf(withAction), 'needs-attention');
         assert.equal(
           store.getRun(withAction.id).attention,
@@ -5735,6 +5759,22 @@ test(
       },
     );
 
+    await t.test('a restarted host interrupts a run left active', async () => {
+      const run = makeRun({ projectRoot: join(directory, 'restart') });
+      store.insertRun(run);
+      const action = makeStep(run, 0, 'action');
+      store.insertStep(action);
+      assert.ok(store.beginStep(action.id, 1, at(7000)));
+      const host = launch(upgradePath, join(upgradePath, 'pids.json'));
+      assert.equal((await host.request('health')).type, 'health');
+      await host.stop();
+      const recovered = store.getRun(run.id);
+      assert.equal(recovered.status, 'needs-attention');
+      assert.equal(recovered.attention, EXTERNAL_ACTION_ATTENTION);
+      assert.equal(store.getStep(action.id).state, 'uncertain');
+      assert.equal(store.getStep(action.id).startedAt, at(7000));
+    });
+
     await t.test('beginStep records intent with its start time', () => {
       const run = makeRun();
       store.insertRun(run);
@@ -5748,6 +5788,29 @@ test(
       assert.equal(started.revision, 2);
       assert.equal(store.getStep(step.id).startedAt, at(10));
       assert.equal(store.beginStep(step.id, 2, at(11)), undefined);
+      const failed = makeStep(run, 1, 'command', {
+        state: 'failed',
+        attempt: 1,
+      });
+      store.insertStep(failed);
+      assert.equal(store.beginStep(failed.id, 1, at(12)), undefined);
+      const finishedRun = makeRun({ status: 'stopped' });
+      store.insertRun(finishedRun);
+      const orphan = makeStep(finishedRun, 0, 'command');
+      store.insertStep(orphan);
+      assert.equal(store.beginStep(orphan.id, 1, at(13)), undefined);
+      const queued = makeStep(run, 2, 'command');
+      store.insertStep(queued);
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        assert.throws(
+          () => store.beginStep(queued.id, 1, at(14)),
+          /own transaction/,
+        );
+      } finally {
+        database.exec('ROLLBACK');
+      }
+      assert.equal(store.getStep(queued.id).state, 'pending');
       assert.equal(
         database
           .prepare('SELECT started_at FROM pipeline_steps WHERE id = ?')
@@ -5776,6 +5839,11 @@ test(
             .get(session.id);
         assert.deepEqual({ ...link() }, { runId: run.id, stepId: step.id });
         assert.equal(store.linkSession(session.id, run.id, null), true);
+        assert.deepEqual({ ...link() }, { runId: run.id, stepId: null });
+        const reloaded = sessions.get(session.id);
+        assert.equal(reloaded.pipelineRunId, run.id);
+        assert.equal(reloaded.pipelineStepId, null);
+        sessions.save(reloaded);
         assert.deepEqual({ ...link() }, { runId: run.id, stepId: null });
         database.prepare('DELETE FROM pipeline_runs WHERE id = ?').run(run.id);
         assert.deepEqual({ ...link() }, { runId: null, stepId: null });
