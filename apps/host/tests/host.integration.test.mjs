@@ -5082,8 +5082,13 @@ test(
         timeout: '15m',
         retries: 0,
         on_fail: 'stop',
+        effect: 'local',
         needs: [],
       });
+      assert.equal(
+        stepDefinitionSchema.parse({ ...step, effect: 'external' }).effect,
+        'external',
+      );
       assert.deepEqual(
         stepDefinitionSchema.parse({
           name: 'code-review',
@@ -5120,7 +5125,9 @@ test(
         { ...step, retries: 6 },
         { ...step, needs: ['env:lower'] },
         { ...step, needs: ['browser', 'browser'] },
-        { ...step, effect: 'external' },
+        { ...step, type: 'agent', effect: 'external' },
+        { ...step, type: 'human', effect: 'external' },
+        { ...step, effect: 'remote' },
       ])
         rejects(stepDefinitionSchema, value);
       rejects(pipelineDefinitionSchema, { name: 'default', steps: [] });
