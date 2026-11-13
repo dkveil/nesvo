@@ -13,6 +13,7 @@ import type {
   DesktopReview as Review,
   DesktopSession as Session,
   RespondApprovalInput,
+  StartPipelineTaskInput,
 } from '@nesvo/contracts';
 import {
   ArrowLeft,
@@ -488,6 +489,27 @@ export function Workspace() {
           setSelectedSkills(previous => ({ ...previous, [key]: null }));
         }
       });
+    } finally {
+      threadRequest.current = false;
+    }
+  };
+  const startPipelineTask = async (input: StartPipelineTaskInput) => {
+    const hostId = threadSetup.hostId;
+    if (threadRequest.current || sendingRef.current)
+      throw new Error('Another thread is still starting.');
+    if (!store.hostReady(hostId))
+      throw new Error('Connect this computer before starting a task.');
+    threadRequest.current = true;
+    const origin = navigationVersion.current;
+    try {
+      const run = await window.nesvo.pipelines.startTask(hostId, input);
+      store.mergePipelineRuns([run]);
+      if (run.sessionId) {
+        const history = await store.recover(hostId);
+        const session = history.find(item => item.id === run.sessionId);
+        if (session && navigationVersion.current === origin)
+          select(entityKey(session));
+      }
     } finally {
       threadRequest.current = false;
     }
@@ -1139,6 +1161,7 @@ export function Workspace() {
               busyReason={threadBusyReason}
               hostApi={desktopApi(threadSetup.hostId)}
               onStart={startThread}
+              onStartPipeline={startPipelineTask}
             />
           ) : inbox ? (
             <ReviewInbox
