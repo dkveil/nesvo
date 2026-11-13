@@ -5,6 +5,7 @@ import { runDaemon } from './daemon';
 import { connectDaemon } from './daemon-bridge';
 import { resolve } from 'node:path';
 import { renderServiceUnit } from './service-unit';
+import { runPipelinesCli } from './pipelines/cli';
 
 async function main() {
   const command = process.argv[2];
@@ -25,6 +26,17 @@ async function main() {
         runtimeDirectory,
         path: process.env.PATH ?? '',
       }),
+    );
+    return;
+  }
+  if (command === 'pipelines') {
+    process.exitCode = await runPipelinesCli(
+      process.argv.slice(3),
+      process.env,
+      {
+        stdout: text => void process.stdout.write(text),
+        stderr: text => void process.stderr.write(text),
+      },
     );
     return;
   }
@@ -49,7 +61,7 @@ async function main() {
   }
   if (command)
     throw new Error(
-      'Supported commands: daemon, connect, service-unit, or no command for an owned stdio host.',
+      'Supported commands: daemon, connect, service-unit, pipelines, or no command for an owned stdio host.',
     );
   const directory = process.env.NESVO_DATA_DIR;
   if (!directory)
