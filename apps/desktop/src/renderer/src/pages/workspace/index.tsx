@@ -33,7 +33,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { runStatusLabel } from '@/entities/pipeline';
+import { runStatusLabel, showsRunStatus } from '@/entities/pipeline';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
@@ -102,6 +102,7 @@ export function Workspace() {
   const [pipelineErrors, setPipelineErrors] = useState<Record<string, string>>(
     {},
   );
+  const pipelineRequests = useRef(new Set<string>());
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
     path?: string;
@@ -494,7 +495,9 @@ export function Workspace() {
       threadRequest.current = false;
     }
   };
-  const startPipelineTask = async (input: StartPipelineTaskInput) => {
+  const startPipelineTask = async (
+    input: StartPipelineTaskInput,
+  ): Promise<'opened' | 'started'> => {
     const hostId = threadSetup.hostId;
     if (threadRequest.current || sendingRef.current)
       throw new Error('Another thread is still starting.');
@@ -502,24 +505,30 @@ export function Workspace() {
       throw new Error('Connect this computer before starting a task.');
     threadRequest.current = true;
     const origin = navigationVersion.current;
+    let run: Awaited<ReturnType<typeof window.nesvo.pipelines.startTask>>;
     try {
-      const run = await window.nesvo.pipelines.startTask(hostId, input);
-      store.mergePipelineRuns([run]);
-      if (run.sessionId) {
-        const history = await store.recover(hostId);
-        const session = history.find(item => item.id === run.sessionId);
-        if (session && navigationVersion.current === origin)
-          select(entityKey(session));
-      }
+      run = await window.nesvo.pipelines.startTask(hostId, input);
     } finally {
       threadRequest.current = false;
+    }
+    store.mergePipelineRuns([run]);
+    if (!run.sessionId) return 'started';
+    try {
+      const history = await store.recover(hostId);
+      const session = history.find(item => item.id === run.sessionId);
+      if (!session || navigationVersion.current !== origin) return 'started';
+      select(entityKey(session));
+      return 'opened';
+    } catch {
+      return 'started';
     }
   };
   const controlPipeline = async (action: 'stop' | 'resume') => {
     if (!selectedRun || !store.hostReady(selectedRun.hostId)) return;
     const run = selectedRun;
     const key = entityKey(run);
-    if (pipelinePending[key]) return;
+    if (pipelineRequests.current.has(key)) return;
+    pipelineRequests.current.add(key);
     setPipelinePending(previous => ({ ...previous, [key]: true }));
     setPipelineErrors(previous => ({ ...previous, [key]: '' }));
     try {
@@ -534,6 +543,7 @@ export function Workspace() {
         [key]: `Could not ${action === 'stop' ? 'stop' : 'resume'} the pipeline. ${errorDetail(failure)}`,
       }));
     } finally {
+      pipelineRequests.current.delete(key);
       setPipelinePending(previous => {
         const next = { ...previous };
         delete next[key];
@@ -1008,9 +1018,10 @@ export function Workspace() {
           {!inbox &&
             !creating &&
             selected &&
-            (selectedRun || selected.status !== 'ready') && (
+            (showsRunStatus(selected, selectedRun) ||
+              selected.status !== 'ready') && (
               <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                {selectedRun && !selected.pipelineStepId
+                {showsRunStatus(selected, selectedRun)
                   ? `Pipeline ${runStatusLabel(selectedRun.status).toLowerCase()}`
                   : sessionStatusLabel(selected)}
               </span>

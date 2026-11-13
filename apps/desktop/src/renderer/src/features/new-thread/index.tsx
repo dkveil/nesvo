@@ -25,7 +25,11 @@ import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
 import { PermissionPicker } from './permission-picker';
-import { pipelineIssues, type PipelineChoice } from './pipeline-choice';
+import {
+  pipelineIssues,
+  resolveGate,
+  type PipelineChoice,
+} from './pipeline-choice';
 import { PipelinePicker } from './pipeline-picker';
 import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
@@ -53,7 +57,9 @@ type Props = {
     text: string,
     skill: SelectedSkill | null,
   ) => Promise<void>;
-  onStartPipeline: (input: StartPipelineTaskInput) => Promise<void>;
+  onStartPipeline: (
+    input: StartPipelineTaskInput,
+  ) => Promise<'opened' | 'started'>;
 };
 
 const MAX_MESSAGE_LENGTH = 32000;
@@ -77,6 +83,7 @@ export function NewThread({
   const [locationOpen, setLocationOpen] = useState(false);
   const [pipeline, setPipeline] = useState<PipelineChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
+  const [startNotice, setStartNotice] = useState('');
   const piped = !!pipeline?.pipelineName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
@@ -126,13 +133,16 @@ export function NewThread({
     setPipeline(next);
     setIssues([]);
     setError('');
+    setStartNotice('');
   };
   const startPipeline = async (choice: PipelineChoice) => {
+    const gate = resolveGate(choice, setup.provider, statuses);
     const title = text.trim()
       ? deriveThreadTitle(text.trim())
       : choice.specTitle;
+    let outcome: 'opened' | 'started';
     try {
-      await onStartPipeline({
+      outcome = await onStartPipeline({
         specPath: choice.specPath.trim(),
         pipelineName: choice.pipelineName,
         ...(title ? { title: title.slice(0, 100) } : {}),
@@ -143,8 +153,8 @@ export function NewThread({
         directory: setup.directory.trim(),
         isolation:
           choice.isolation && setup.directory.trim() ? 'worktree' : 'none',
-        gateProvider: choice.gateProvider,
-        gateModel: choice.gateModel,
+        gateProvider: gate.provider,
+        gateModel: gate.model,
       });
     } catch (failure) {
       setError(`Could not start the pipeline task. ${errorDetail(failure)}`);
@@ -160,7 +170,14 @@ export function NewThread({
       } catch {
         return;
       }
+      return;
     }
+    if (!mounted.current || outcome === 'opened') return;
+    setPipeline(null);
+    setText('');
+    setStartNotice(
+      'The task started. Its session appears in the sidebar once this computer reports it.',
+    );
   };
   const submit = async (
     resolveTyped: (draft: string) => Promise<TypedSubmission>,
@@ -171,6 +188,7 @@ export function NewThread({
       setPending(true);
       setError('');
       setIssues([]);
+      setStartNotice('');
       try {
         await startPipeline(pipeline);
       } finally {
@@ -410,6 +428,14 @@ export function NewThread({
                   className="px-1 text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
                 >
                   {error}
+                </p>
+              )}
+              {startNotice && (
+                <p
+                  role="status"
+                  className="px-1 text-sm leading-relaxed text-muted-foreground"
+                >
+                  {startNotice}
                 </p>
               )}
               {issues.length > 0 && (
