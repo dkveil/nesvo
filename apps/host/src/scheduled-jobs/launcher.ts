@@ -244,7 +244,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     )
       throw new SessionError(
         'busy',
-        'The host became busy before the scheduled job started.',
+        'The host became busy before the automation started.',
       );
   }
 

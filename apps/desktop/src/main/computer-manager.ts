@@ -68,7 +68,7 @@ type Entry = {
 
 const capabilityUpdates: Record<HostCapability, string> = {
   'scheduled-jobs':
-    'This computer runs an older Nesvo host without scheduled jobs. Update it, then reconnect.',
+    'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
   'reasoning-effort':
     'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
   pipelines:
