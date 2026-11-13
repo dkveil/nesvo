@@ -2442,9 +2442,14 @@ try {
   ).find(computer => computer.id === 'local');
   assert.equal(pipelineComputer.capabilities.includes('pipelines'), false);
   await assert.rejects(
-    pipelineCall('listDefinitions', 'local', { directory }),
+    pipelineCall('listRuns', 'local', {}),
     /Pipelines are not available on this computer yet/,
   );
+  const definitionCatalog = await pipelineCall('listDefinitions', 'local', {
+    directory,
+  });
+  assert.ok(Array.isArray(definitionCatalog.pipelines));
+  assert.ok(Array.isArray(definitionCatalog.issues));
   await assert.rejects(
     pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
   );
@@ -2457,6 +2462,7 @@ try {
       pipelines: {
         capabilities: pipelineComputer.capabilities,
         refusedLocally: true,
+        definitionsRead: true,
       },
     }),
   );

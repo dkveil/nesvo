@@ -261,7 +261,7 @@ Schema version 8 adds `pipeline_runs` and `pipeline_steps` in the same bootstrap
 
 A pending step moves to `running` through a store helper that commits the state and its start time in its own transaction, and refuses to run inside another transaction or for a finished run, before the runner starts the process, so a crash leaves a record of the intent. A retry is a new attempt row, never a rewrite of an earlier attempt. At startup, inside the session recovery transaction and with plain SQL updates that do not parse stored documents, every `running` step is closed and runs in `planning`, `implementing`, `checking` or `fixing` become `interrupted`. A `running` action step becomes `uncertain` instead of `interrupted`, because its external effect may have happened, and its run becomes `needs-attention` with the reason "External action may have run." Runs waiting for a human keep their state. Nothing is replayed.
 
-Until the engine lands, the host answers every pipeline command except the two definition reads, and any isolated `create-session`, with `unavailable` and does not advertise the `pipelines` capability. Main refuses the same calls locally for computers without it. The mobile gateway ignores pipeline events.
+Until the engine lands, the host answers every pipeline command except the two definition reads, and any isolated `create-session`, with `unavailable` and does not advertise the `pipelines` capability. Main refuses the same calls locally for computers without it, except the two definition reads, which every host with the definition loader answers, so the new-thread screen can list pipelines before the engine lands. The mobile gateway ignores pipeline events.
 
 ### Pipeline definitions
 

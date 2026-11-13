@@ -79,6 +79,11 @@ function requiredCapability(
   method: HostRequest['method'],
   input: unknown,
 ): HostCapability | null {
+  if (
+    method === 'list-pipeline-definitions' ||
+    method === 'validate-pipeline-definitions'
+  )
+    return null;
   if (isPipelineMethod(method)) return 'pipelines';
   if (
     method === 'create-session' &&
