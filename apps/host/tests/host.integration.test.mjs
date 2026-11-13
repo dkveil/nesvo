@@ -8374,6 +8374,10 @@ test(
       );
       const reads = [];
       const previous = launcher;
+      const gateClock = {
+        ...deadlines,
+        now: () => new Date(gate.at ?? Date.now()),
+      };
       launcher = new modules.SessionLauncher(
         sessions,
         {
@@ -8382,15 +8386,17 @@ test(
             return service.read(input);
           },
         },
-        deadlines,
+        gateClock,
       );
-      return {
+      const gate = {
+        at: null,
         reads,
         restore: () => {
           launcher.close();
           launcher = previous;
         },
       };
+      return gate;
     };
     const providerWork = async () => ({
       launches: (await lines(launchLog)).length,
@@ -8431,7 +8437,7 @@ test(
               'unavailable',
               'limit',
               null,
-              '2030-01-02T03:04:05.000Z',
+              '2099-01-02T03:04:05.000Z',
             ];
             assert.deepEqual(held(await finishedRun(runNow(job))), expected);
             const afterFirst = await providerWork();
@@ -8474,7 +8480,7 @@ test(
           const run = await finishedRun(runNow(job));
           assert.deepEqual(
             [run.status, run.reason, run.reviewId, run.resetAt],
-            ['unavailable', 'limit', null, '2030-01-02T03:04:05.000Z'],
+            ['unavailable', 'limit', null, '2099-01-02T03:04:05.000Z'],
           );
           const session = sessionById(run.sessionId);
           assert.deepEqual(
@@ -8492,10 +8498,39 @@ test(
           const next = await finishedRun(runNow(job));
           assert.deepEqual(
             [next.status, next.reason, next.sessionId, next.resetAt],
-            ['unavailable', 'limit', null, '2030-01-02T03:04:05.000Z'],
+            ['unavailable', 'limit', null, '2099-01-02T03:04:05.000Z'],
           );
           assert.deepEqual(await providerWork(), before);
           assert.equal(gate.reads.length, 1);
+        } finally {
+          gate.restore();
+        }
+      },
+    );
+
+    await t.test(
+      'a reset time that already passed or is reached later does not hold a run',
+      async () => {
+        const past = await limitGate({ 'Claude Code': 'exhausted-past' });
+        try {
+          const run = await finishedRun(runNow(save('Past reset')));
+          assert.equal(run.status, 'completed', JSON.stringify(run));
+          assert.deepEqual(past.reads, ['Claude Code']);
+        } finally {
+          past.restore();
+        }
+        const gate = await limitGate({ 'Claude Code': 'exhausted' });
+        try {
+          const job = save('Reset reached');
+          const held = await finishedRun(runNow(job));
+          assert.deepEqual(
+            [held.status, held.reason],
+            ['unavailable', 'limit'],
+          );
+          gate.at = Date.parse('2099-01-03T00:00:00.000Z');
+          const run = await finishedRun(runNow(job));
+          assert.equal(run.status, 'completed', JSON.stringify(run));
+          assert.equal(gate.reads.length, 2);
         } finally {
           gate.restore();
         }

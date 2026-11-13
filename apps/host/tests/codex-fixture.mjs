@@ -418,7 +418,12 @@ if (args.length === 1 && args[0] === '--version') {
               : {
                   usedPercent: control.Codex === 'exhausted' ? 100 : 25,
                   windowDurationMins: 300,
-                  resetsAt: Date.parse('2030-01-02T03:04:05.000Z') / 1000,
+                  resetsAt:
+                    Date.parse(
+                      control.Codex === 'exhausted'
+                        ? '2099-01-02T03:04:05.000Z'
+                        : '2030-01-02T03:04:05.000Z',
+                    ) / 1000,
                 },
           secondary:
             control.Codex === 'unavailable'
@@ -430,7 +435,7 @@ if (args.length === 1 && args[0] === '--version') {
                 },
         },
         rateLimitsByLimitId: null,
-        ordinaryUsageAllowed: true,
+        ordinaryUsageAllowed: control.Codex === 'exhausted' ? false : true,
       });
     } else if (method === 'config/read') {
       assert.equal(params.includeLayers, false);

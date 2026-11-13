@@ -109,9 +109,15 @@ if (args.length === 1 && args[0] === '--version') {
               rate_limits_available: true,
               rate_limits: {
                 five_hour: {
-                  utilization:
-                    control['Claude Code'] === 'exhausted' ? 100 : 23.5,
-                  resets_at: '2030-01-02T03:04:05.000Z',
+                  utilization: control['Claude Code']?.startsWith('exhausted')
+                    ? 100
+                    : 23.5,
+                  resets_at:
+                    control['Claude Code'] === 'exhausted'
+                      ? '2099-01-02T03:04:05.000Z'
+                      : control['Claude Code'] === 'exhausted-past'
+                        ? '2020-01-02T03:04:05.000Z'
+                        : '2030-01-02T03:04:05.000Z',
                 },
                 seven_day: {
                   utilization: 61.25,
@@ -346,7 +352,7 @@ if (args.length === 1 && args[0] === '--version') {
       rate_limit_info: {
         status: 'rejected',
         rateLimitType: 'five_hour',
-        resetsAt: Date.parse('2030-01-02T03:04:05.000Z') / 1000,
+        resetsAt: Date.parse('2099-01-02T03:04:05.000Z') / 1000,
       },
     });
     emit({
