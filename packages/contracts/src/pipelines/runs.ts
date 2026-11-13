@@ -50,6 +50,7 @@ export const pipelineStepStateSchema = z.enum([
   'error',
   'skipped',
   'interrupted',
+  'uncertain',
 ]);
 
 const idSchema = z.uuid();
@@ -71,6 +72,7 @@ export const pipelineRunSchema = z.strictObject({
   specTitle: z.string().min(1).max(pipelineDefinitionLimits.specTitle),
   sessionId: idSchema.nullable(),
   directory: directorySchema,
+  projectRoot: z.string().min(1).max(pipelineLimits.directory),
   isolation: pipelineIsolationSchema.nullable(),
   gateProvider: providerSchema,
   gateModel: z.string().min(1).max(pipelineLimits.gateModel),
@@ -113,6 +115,7 @@ export const pipelineStepRecordSchema = z.strictObject({
     })
     .nullable(),
   updatedAt: z.iso.datetime(),
+  startedAt: z.iso.datetime().nullable(),
 });
 
 export const pipelineRunPageSchema = z.strictObject({
