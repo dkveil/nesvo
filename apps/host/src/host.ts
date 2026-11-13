@@ -20,6 +20,7 @@ import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
+import { GitBranchError, readGitBranch } from './workspace/git-branch';
 import {
   discoverDirectorySkills,
   discoverSessionSkills,
@@ -798,7 +799,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         if (
           request.method === 'list-workspace-directory' ||
           request.method === 'search-workspace-files' ||
-          request.method === 'read-workspace-file'
+          request.method === 'read-workspace-file' ||
+          request.method === 'read-git-branch'
         ) {
           if (workspaceRequests >= 8) {
             yield* Effect.tryPromise(() =>
@@ -821,6 +823,17 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                   request.input,
                   probes.controller.signal,
                 ),
+              };
+            if (request.method === 'read-git-branch')
+              return {
+                type: 'git-branch',
+                id: request.id,
+                branch: request.input.directory
+                  ? await readGitBranch(
+                      request.input.directory,
+                      probes.controller.signal,
+                    )
+                  : { kind: 'none' },
               };
             if (request.method === 'search-workspace-files')
               return {
@@ -848,12 +861,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 code:
                   error instanceof WorkspaceError ||
-                  error instanceof SessionError
+                  error instanceof SessionError ||
+                  error instanceof GitBranchError
                     ? error.code
                     : 'unavailable',
                 message:
                   error instanceof WorkspaceError ||
-                  error instanceof SessionError
+                  error instanceof SessionError ||
+                  error instanceof GitBranchError
                     ? error.message
                     : 'The workspace could not be read. Refresh and try again.',
               }),

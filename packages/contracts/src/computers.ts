@@ -21,6 +21,7 @@ export const hostCapabilitySchema = z.enum([
   'scheduled-jobs',
   'reasoning-effort',
   'workflows',
+  'git-branch',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

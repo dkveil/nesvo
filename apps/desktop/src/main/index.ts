@@ -21,6 +21,7 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  readGitBranchSchema,
   discoverSkillsSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -319,6 +320,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'discover-skills',
         discoverSkillsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-git-branch',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-git-branch',
+        readGitBranchSchema.parse(input),
         route(hostId),
       );
     },

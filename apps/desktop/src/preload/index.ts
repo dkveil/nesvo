@@ -14,6 +14,8 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  readGitBranchSchema,
+  gitBranchSchema,
   workspaceDirectorySchema,
   workspaceSearchSchema,
   workspaceFileSchema,
@@ -429,6 +431,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:discover-skills',
         discoverSkillsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readGitBranch: async (input, hostId) =>
+    gitBranchSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-git-branch',
+        readGitBranchSchema.parse(input),
         route(hostId),
       ),
     ),
