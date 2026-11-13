@@ -12,6 +12,8 @@ export const pipelineDefinitionLimits = {
   path: 4096,
   catalogSteps: 200,
   catalogPipelines: 100,
+  catalogSpecs: 100,
+  notes: 4,
   issues: 200,
   issueMessage: 800,
   minTimeoutMs: 1000,
@@ -169,14 +171,21 @@ export const definitionSourceSchema = z.strictObject({
   contentHash: definitionHashSchema,
 });
 
+const definitionNotesSchema = z
+  .array(z.string().min(1).max(pipelineDefinitionLimits.issueMessage))
+  .max(pipelineDefinitionLimits.notes)
+  .default([]);
+
 export const resolvedStepSchema = stepDefinitionSchema.safeExtend({
   source: definitionSourceSchema,
+  notes: definitionNotesSchema,
 });
 
 export const resolvedPipelineSchema = z
   .strictObject({
     ...pipelineDefinitionShape,
     source: definitionSourceSchema,
+    notes: definitionNotesSchema,
     steps: z
       .array(resolvedStepSchema)
       .min(1)
@@ -194,6 +203,12 @@ export const definitionIssueSchema = z.strictObject({
   message: z.string().min(1).max(pipelineDefinitionLimits.issueMessage),
 });
 
+export const taskSpecSummarySchema = z.strictObject({
+  pipeline: stepNameSchema,
+  title: z.string().max(pipelineDefinitionLimits.specTitle).nullable(),
+  source: definitionSourceSchema,
+});
+
 export const definitionCatalogSchema = z.strictObject({
   roots: z.strictObject({
     global: definitionPathSchema.nullable(),
@@ -203,6 +218,10 @@ export const definitionCatalogSchema = z.strictObject({
   pipelines: z
     .array(resolvedPipelineSchema)
     .max(pipelineDefinitionLimits.catalogPipelines),
+  specs: z
+    .array(taskSpecSummarySchema)
+    .max(pipelineDefinitionLimits.catalogSpecs)
+    .default([]),
   issues: z.array(definitionIssueSchema).max(pipelineDefinitionLimits.issues),
 });
 
@@ -218,5 +237,6 @@ export type DefinitionKind = z.infer<typeof definitionKindSchema>;
 export type DefinitionSource = z.infer<typeof definitionSourceSchema>;
 export type ResolvedStep = z.infer<typeof resolvedStepSchema>;
 export type ResolvedPipeline = z.infer<typeof resolvedPipelineSchema>;
+export type TaskSpecSummary = z.infer<typeof taskSpecSummarySchema>;
 export type DefinitionIssue = z.infer<typeof definitionIssueSchema>;
 export type DefinitionCatalog = z.infer<typeof definitionCatalogSchema>;
