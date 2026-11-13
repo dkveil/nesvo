@@ -647,6 +647,17 @@ export const createPipelineDemo = ({
     const run = owned(runId);
     const record = (steps.get(runId) ?? []).find(item => item.id === stepId);
     if (!record) throw new Error('This demo step does not exist.');
+    const latestAttempt = Math.max(
+      ...(steps.get(runId) ?? [])
+        .filter(item => item.index === record.index)
+        .map(item => item.attempt),
+    );
+    if (
+      record.state !== 'uncertain' ||
+      record.attempt !== latestAttempt ||
+      !['needs-attention', 'interrupted'].includes(run.status)
+    )
+      throw new Error('Only the latest uncertain action can be skipped.');
     const at = new Date().toISOString();
     updateStep(record, { state: 'skipped', skip: { reason, at } });
     const latest = new Map<number, DesktopPipelineStepRecord>();

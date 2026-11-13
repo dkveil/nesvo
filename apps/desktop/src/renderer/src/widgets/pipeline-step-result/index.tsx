@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { PipelinesApi } from '@nesvo/contracts';
 import {
   ExternalLink,
@@ -54,6 +54,23 @@ const evidenceIcons: Record<Evidence['kind'], LucideIcon> = {
 };
 
 const SECOND_MS = 1000;
+
+const moveRadio = (event: KeyboardEvent<HTMLDivElement>) => {
+  const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+  if (!forward && event.key !== 'ArrowUp' && event.key !== 'ArrowLeft') return;
+  const radios = [
+    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+      ':scope > [role="radio"]',
+    ),
+  ];
+  const index = radios.findIndex(radio => radio === document.activeElement);
+  const next =
+    radios[(index + (forward ? 1 : -1) + radios.length) % radios.length];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+  next.click();
+};
 
 const stateNotes: Partial<Record<PipelineStepRecord['state'], string>> = {
   pending: 'This step has not started.',
@@ -220,6 +237,7 @@ export function StepResult({
         <div
           role="radiogroup"
           aria-label="Attempt"
+          onKeyDown={moveRadio}
           className="flex w-fit gap-0.5 rounded-lg bg-segment-track p-0.5"
         >
           {attempts.map(item => (
@@ -228,6 +246,7 @@ export function StepResult({
               type="button"
               role="radio"
               aria-checked={item.id === record?.id}
+              tabIndex={item.id === record?.id ? 0 : -1}
               aria-label={`Attempt ${item.attempt} · ${stepStateLabels[item.state]}`}
               onClick={() => setAttempt(item.attempt)}
               className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-checked:bg-segment-active aria-checked:text-foreground"
@@ -238,7 +257,11 @@ export function StepResult({
           ))}
         </div>
       )}
-      {result ? (
+      {record?.skip ? (
+        <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+          Skipped: {record.skip.reason}
+        </p>
+      ) : result ? (
         <p className="leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
           {result.summary || 'No summary was reported.'}
         </p>

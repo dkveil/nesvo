@@ -101,6 +101,10 @@ export function Workspace() {
   >(location.diff ? 'diff' : null);
   const [stepIndex, setStepIndex] = useState<number | null>(null);
   const [pipelinesView, setPipelinesView] = useState(false);
+  const [pipelinesSource, setPipelinesSource] = useState({
+    hostId: 'local',
+    directory: '',
+  });
   const browsing = inbox || pipelinesView;
   const pipelineStatusButton = useRef<HTMLButtonElement | null>(null);
   const [pipelinePending, setPipelinePending] = useState<
@@ -340,6 +344,11 @@ export function Workspace() {
       return;
     }
     diffTrigger.current = pipelineStatusButton.current;
+    if (selectedRun)
+      setPipelineErrors(previous => ({
+        ...previous,
+        [entityKey(selectedRun)]: '',
+      }));
     setStepIndex(null);
     setPanel('pipeline');
   };
@@ -375,6 +384,11 @@ export function Workspace() {
   };
   const openPipelines = () => {
     navigationVersion.current += 1;
+    setPipelinesSource(
+      creating || !selected
+        ? { hostId: threadSetup.hostId, directory: threadSetup.directory }
+        : { hostId: selected.hostId, directory: selected.directory },
+    );
     setPanel(null);
     setDiffTarget(null);
     setCreating(false);
@@ -1228,8 +1242,8 @@ export function Workspace() {
             >
               <PipelineDefinitions
                 computers={store.computers}
-                hostId={selected?.hostId ?? threadSetup.hostId}
-                directory={selected?.directory ?? threadSetup.directory}
+                hostId={pipelinesSource.hostId}
+                directory={pipelinesSource.directory}
                 api={window.nesvo.pipelines}
               />
             </Suspense>

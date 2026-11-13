@@ -29,6 +29,7 @@ type Props = {
 };
 
 type CatalogState =
+  | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'loaded'; catalog: DefinitionCatalog };
@@ -153,13 +154,23 @@ export default function PipelineDefinitions({
 }: Props) {
   const [hostId, setHostId] = useState(initialHostId);
   const [directory, setDirectory] = useState(initialDirectory);
-  const [state, setState] = useState<CatalogState>({ status: 'loading' });
+  const initialConnected =
+    computers.find(item => item.id === initialHostId)?.status === 'connected';
+  const [state, setState] = useState<CatalogState>(
+    initialConnected ? { status: 'loading' } : { status: 'idle' },
+  );
   const [selectedName, setSelectedName] = useState('');
   const request = useRef(0);
   const computer = computers.find(item => item.id === hostId);
   const connected = computer?.status === 'connected';
   const load = (targetHost: string, targetDirectory: string) => {
     const current = ++request.current;
+    if (
+      computers.find(item => item.id === targetHost)?.status !== 'connected'
+    ) {
+      setState({ status: 'idle' });
+      return;
+    }
     setState({ status: 'loading' });
     api.listDefinitions(targetHost, { directory: targetDirectory.trim() }).then(
       catalog => {
@@ -178,8 +189,10 @@ export default function PipelineDefinitions({
   const initial = useRef({
     hostId: initialHostId,
     directory: initialDirectory,
+    connected: initialConnected,
   });
   useEffect(() => {
+    if (!initial.current.connected) return;
     const current = ++request.current;
     api
       .listDefinitions(initial.current.hostId, {
