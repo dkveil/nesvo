@@ -10,6 +10,7 @@ import {
   Search,
   Settings,
   SquarePen,
+  Workflow,
   X,
 } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
@@ -24,11 +25,18 @@ import {
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
+import {
+  runStatusLabel,
+  runStatusTones,
+  toneText,
+  type PipelineRun,
+} from '@/entities/pipeline';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 
 type Props = {
   sessions: Session[];
+  pipelineRuns: PipelineRun[];
   computers: Computer[];
   hostName: string;
   onComputers: () => void;
@@ -53,15 +61,29 @@ const statusTone: Partial<Record<Session['status'], string>> = {
 
 function SessionStatus({
   session,
+  run,
   offline,
   now,
 }: {
   session: Session;
+  run: PipelineRun | undefined;
   offline: boolean;
   now: number;
 }) {
   if (offline)
     return <span className="text-sidebar-muted-foreground">Offline</span>;
+  if (run && !session.pipelineStepId)
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1 font-medium',
+          toneText[runStatusTones[run.status]],
+        )}
+      >
+        <Workflow className="size-3" aria-hidden="true" />
+        {runStatusLabel(run.status)}
+      </span>
+    );
   if (session.status === 'ready')
     return (
       <time
@@ -88,6 +110,7 @@ function SessionStatus({
 
 export function SessionSidebar({
   sessions,
+  pipelineRuns,
   computers,
   hostName,
   onComputers,
@@ -111,23 +134,44 @@ export function SessionSidebar({
     `${session.title} ${directoryLabel(session.directory)} ${computerOf(session)?.name ?? ''}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
+  const runOf = (session: Session) =>
+    session.pipelineRunId
+      ? pipelineRuns.find(
+          run =>
+            run.id === session.pipelineRunId && run.hostId === session.hostId,
+        )
+      : undefined;
+  const parentIdOf = (session: Session) =>
+    session.parentId ??
+    (session.pipelineStepId ? (runOf(session)?.sessionId ?? null) : null);
+  const statusText = (session: Session) => {
+    const run = runOf(session);
+    return run && !session.pipelineStepId
+      ? `Pipeline ${runStatusLabel(run.status)}`
+      : sessionStatusLabel(session);
+  };
   const childrenOf = (root: Session) =>
     sessions
       .filter(
-        child => child.parentId === root.id && child.hostId === root.hostId,
+        child =>
+          child.id !== root.id &&
+          parentIdOf(child) === root.id &&
+          child.hostId === root.hostId,
       )
       .sort(
         (a, b) =>
           a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
       );
-  const roots = sessions.filter(
-    session =>
-      !session.parentId ||
+  const roots = sessions.filter(session => {
+    const parentId = parentIdOf(session);
+    return (
+      !parentId ||
+      parentId === session.id ||
       !sessions.some(
-        parent =>
-          parent.id === session.parentId && parent.hostId === session.hostId,
-      ),
-  );
+        parent => parent.id === parentId && parent.hostId === session.hostId,
+      )
+    );
+  });
   const filtered = roots.filter(
     root => matches(root) || childrenOf(root).some(matches),
   );
@@ -152,8 +196,8 @@ export function SessionSidebar({
           data-host-id={session.hostId}
           data-session-id={session.id}
           aria-current={selected ? 'page' : undefined}
-          aria-label={`${session.title} · ${directory} · ${offline ? 'Offline' : sessionStatusLabel(session)}`}
-          title={`${computer?.name ?? session.hostId} · ${session.provider} · ${role || 'Session'} · ${sessionStatusLabel(session)}`}
+          aria-label={`${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}`}
+          title={`${computer?.name ?? session.hostId} · ${session.provider} · ${role || 'Session'} · ${statusText(session)}`}
           onClick={() => onSelect(entityKey(session))}
           className={cn(
             'flex w-full flex-col rounded-lg py-2 pr-(--sidebar-row-inset) text-left transition-colors duration-100 outline-none',
@@ -174,7 +218,12 @@ export function SessionSidebar({
             )}
             <span className="min-w-0 flex-1 truncate">{directory}</span>
             <span className="shrink-0 text-xs tabular-nums">
-              <SessionStatus session={session} offline={offline} now={now} />
+              <SessionStatus
+                session={session}
+                run={runOf(session)}
+                offline={offline}
+                now={now}
+              />
             </span>
           </span>
           <span className="mt-1 flex min-w-0 items-center gap-1.5">
