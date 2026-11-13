@@ -9548,3 +9548,367 @@ test(
     );
   },
 );
+
+test(
+  'the pipelines command validates and writes definitions with versions and refuses run sessions',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipelines-cli-')),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const entry = fileURLToPath(new URL('../dist/main.js', import.meta.url));
+    const project = join(directory, 'project');
+    const home = join(directory, 'home');
+    const dataDirectory = join(directory, 'data');
+    const definitions = join(project, '.agents', 'pipelines');
+    await mkdir(join(project, '.git'), { recursive: true });
+    await mkdir(join(definitions, 'pipelines'), { recursive: true });
+    await mkdir(home, { recursive: true });
+    await mkdir(dataDirectory, { recursive: true });
+    const environment = {
+      PATH: process.env.PATH,
+      TMPDIR: process.env.TMPDIR,
+      NESVO_TEST_MODE: '1',
+      NESVO_PIPELINES_HOME: home,
+    };
+    const run = (args, extra = {}) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          [entry, 'pipelines', ...args, '--directory', project],
+          {
+            env: { ...environment, ...extra },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        );
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', chunk => (stdout += chunk));
+        child.stderr.on('data', chunk => (stderr += chunk));
+        child.on('error', reject);
+        child.on('close', code => resolve({ code, stdout, stderr }));
+      });
+    const sha = text => createHash('sha256').update(text).digest('hex');
+    const stepPath = name => join(definitions, 'steps', `${name}.md`);
+    const pipelinePath = name => join(definitions, 'pipelines', `${name}.md`);
+    const stepText = (name, command) =>
+      `---\nname: ${name}\ntype: command\nphase: pre-done\n---\n${command}\n`;
+    const stepFile = async (name, command) => {
+      const path = join(directory, `${name}.md`);
+      await writeFile(path, stepText(name, command));
+      return path;
+    };
+    const listed = async () =>
+      JSON.parse((await run(['list', '--json'])).stdout);
+    const snapshot = async () => ({
+      project: await readdir(project, { recursive: true }),
+      data: await readdir(dataDirectory),
+    });
+
+    await t.test(
+      'add-step writes the file and list shows its hash',
+      async () => {
+        const file = await stepFile('lint', 'bun run lint');
+        const added = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          file,
+        ]);
+        assert.equal(added.code, 0, added.stderr);
+        assert.equal(
+          await readFile(stepPath('lint'), 'utf8'),
+          stepText('lint', 'bun run lint'),
+        );
+        const catalog = await listed();
+        const lint = catalog.steps.find(step => step.name === 'lint');
+        assert.equal(
+          lint.source.contentHash,
+          sha(stepText('lint', 'bun run lint')),
+        );
+        assert.match(added.stdout, new RegExp(lint.source.contentHash));
+        const text = await run(['list']);
+        assert.match(
+          text.stdout,
+          new RegExp(`step lint project ${lint.source.contentHash}`),
+        );
+      },
+    );
+
+    await t.test(
+      'replacing a step needs the version that was read',
+      async () => {
+        const original = stepText('lint', 'bun run lint');
+        const replacement = await stepFile('lint', 'bun run lint:strict');
+        const conflict = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          replacement,
+        ]);
+        assert.equal(conflict.code, 2);
+        assert.match(
+          conflict.stderr,
+          /The file changed since it was read\. Read it again\./,
+        );
+        assert.match(conflict.stderr, new RegExp(sha(original)));
+        assert.equal(await readFile(stepPath('lint'), 'utf8'), original);
+        const json = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          replacement,
+          '--json',
+        ]);
+        assert.equal(json.code, 2);
+        assert.equal(JSON.parse(json.stdout).currentHash, sha(original));
+        const stale = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          replacement,
+          '--expected-hash',
+          sha('something else'),
+        ]);
+        assert.equal(stale.code, 2);
+        assert.equal(await readFile(stepPath('lint'), 'utf8'), original);
+        const replaced = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          replacement,
+          '--expected-hash',
+          sha(original),
+        ]);
+        assert.equal(replaced.code, 0, replaced.stderr);
+        assert.equal(
+          await readFile(stepPath('lint'), 'utf8'),
+          stepText('lint', 'bun run lint:strict'),
+        );
+      },
+    );
+
+    await t.test(
+      'an invalid step is refused with a readable issue',
+      async () => {
+        const broken = join(directory, 'broken.md');
+        await writeFile(
+          broken,
+          '---\nname: broken\ntype: command\nphase: later\n---\nbun test\n',
+        );
+        const refused = await run([
+          'add-step',
+          '--scope',
+          'project',
+          '--file',
+          broken,
+        ]);
+        assert.equal(refused.code, 1);
+        assert.match(refused.stderr, /error .*broken\.md:\d+: /);
+        await assert.rejects(stat(stepPath('broken')));
+      },
+    );
+
+    await t.test('add-to-pipeline edits only the steps list', async () => {
+      await writeFile(
+        join(directory, 'review.md'),
+        '---\nname: review\ntype: command\nphase: pre-done\n---\nbun run review\n',
+      );
+      await run([
+        'add-step',
+        '--scope',
+        'project',
+        '--file',
+        join(directory, 'review.md'),
+      ]);
+      await run([
+        'add-step',
+        '--scope',
+        'project',
+        '--file',
+        await stepFile('test', 'bun run test'),
+      ]);
+      const before =
+        '---\r\nname: default\r\ndescription: Checks\r\nsteps:\r\n  - lint # first\r\n  - test\r\n---\r\nBody stays\r\n\r\n- not a step\r\n';
+      await writeFile(pipelinePath('default'), before);
+      const added = await run([
+        'add-to-pipeline',
+        '--scope',
+        'project',
+        '--pipeline',
+        'default',
+        '--step',
+        'review',
+        '--after',
+        'lint',
+      ]);
+      assert.equal(added.code, 0, added.stderr);
+      assert.equal(
+        await readFile(pipelinePath('default'), 'utf8'),
+        before.replace(
+          '  - lint # first\r\n',
+          '  - lint # first\r\n  - review\r\n',
+        ),
+      );
+      const removed = await run([
+        'remove-from-pipeline',
+        '--scope',
+        'project',
+        '--pipeline',
+        'default',
+        '--step',
+        'review',
+      ]);
+      assert.equal(removed.code, 0, removed.stderr);
+      assert.equal(await readFile(pipelinePath('default'), 'utf8'), before);
+      const flow =
+        '---\nname: quick\nsteps: [lint, test] # order\n---\nNotes\n';
+      await writeFile(pipelinePath('quick'), flow);
+      const appended = await run([
+        'add-to-pipeline',
+        '--scope',
+        'project',
+        '--pipeline',
+        'quick',
+        '--step',
+        'review',
+      ]);
+      assert.equal(appended.code, 0, appended.stderr);
+      assert.equal(
+        await readFile(pipelinePath('quick'), 'utf8'),
+        flow.replace('[lint, test]', '[lint, test, review]'),
+      );
+      const unknown = await run([
+        'add-to-pipeline',
+        '--scope',
+        'project',
+        '--pipeline',
+        'quick',
+        '--step',
+        'missing',
+      ]);
+      assert.equal(unknown.code, 1);
+      assert.match(unknown.stderr, /Step "missing" does not exist/);
+      assert.equal(
+        await readFile(pipelinePath('quick'), 'utf8'),
+        flow.replace('[lint, test]', '[lint, test, review]'),
+      );
+    });
+
+    await t.test('a pipeline edited after the read is a conflict', async () => {
+      const before = '---\nname: raced\nsteps: [lint]\n---\nOriginal\n';
+      await writeFile(pipelinePath('raced'), before);
+      const hold = join(directory, 'hold');
+      const pending = run(
+        [
+          'add-to-pipeline',
+          '--scope',
+          'project',
+          '--pipeline',
+          'raced',
+          '--step',
+          'test',
+        ],
+        { NESVO_PIPELINES_CLI_HOLD: hold },
+      );
+      for (let attempt = 0; attempt < 250; attempt++) {
+        if (
+          await stat(`${hold}.ready`).then(
+            () => true,
+            () => false,
+          )
+        )
+          break;
+        await delay(20);
+      }
+      const edited =
+        '---\nname: raced\nsteps: [lint]\n---\nOriginal\nEdited elsewhere\n';
+      await writeFile(pipelinePath('raced'), edited);
+      await writeFile(`${hold}.release`, '');
+      const result = await pending;
+      assert.equal(result.code, 2, result.stderr);
+      assert.match(result.stderr, new RegExp(sha(edited)));
+      assert.equal(await readFile(pipelinePath('raced'), 'utf8'), edited);
+    });
+
+    await t.test('validate reports issues through its exit code', async () => {
+      const clean = await run(['validate']);
+      assert.equal(clean.code, 0, clean.stderr);
+      await writeFile(
+        stepPath('broken'),
+        '---\nname: broken\ntype: command\nphase: later\n---\nbun test\n',
+      );
+      const failed = await run(['validate']);
+      assert.equal(failed.code, 1);
+      assert.match(
+        failed.stderr,
+        /error .*broken\.md:\d+: Phase must be one of/,
+      );
+      const json = await run(['validate', '--json']);
+      assert.equal(json.code, 1);
+      assert.ok(JSON.parse(json.stdout).issues.length > 0);
+      await rm(stepPath('broken'));
+    });
+
+    await t.test(
+      'a pipeline run session cannot change definitions',
+      async () => {
+        const before = await readFile(stepPath('lint'), 'utf8');
+        const file = await stepFile('lint', 'bun run lint:other');
+        const entries = await snapshot();
+        const refused = await run(
+          ['add-step', '--scope', 'project', '--file', file],
+          { NESVO_RUN_ID: 'run-1' },
+        );
+        assert.equal(refused.code, 3);
+        assert.equal(
+          refused.stderr,
+          'Pipeline definitions cannot be changed from inside pipeline run run-1. Ask the operator.\n',
+        );
+        for (const args of [
+          [
+            'add-to-pipeline',
+            '--scope',
+            'project',
+            '--pipeline',
+            'quick',
+            '--step',
+            'test',
+          ],
+          [
+            'remove-from-pipeline',
+            '--scope',
+            'project',
+            '--pipeline',
+            'quick',
+            '--step',
+            'lint',
+          ],
+        ])
+          assert.equal((await run(args, { NESVO_RUN_ID: 'run-1' })).code, 3);
+        assert.equal(await readFile(stepPath('lint'), 'utf8'), before);
+        assert.deepEqual(await snapshot(), entries);
+        assert.equal(
+          (await run(['validate'], { NESVO_RUN_ID: 'run-1' })).code,
+          0,
+        );
+        assert.equal((await run(['list'], { NESVO_RUN_ID: 'run-1' })).code, 0);
+      },
+    );
+
+    await t.test('no database is created', async () => {
+      const files = await readdir(directory, { recursive: true });
+      assert.equal(
+        files.some(name => /\.(db|sqlite)(-wal|-shm)?$/.test(name)),
+        false,
+      );
+      assert.deepEqual(await readdir(dataDirectory), []);
+    });
+  },
+);
