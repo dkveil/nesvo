@@ -5,6 +5,9 @@ import {
   type Evidence,
   type StepResult,
 } from '@nesvo/contracts';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { filterResultText } from '../evidence';
 import type { StepExecution, StepExecutor, StepOutcome } from '../runner';
 import {
@@ -74,14 +77,40 @@ export function stepEnvironment(execution: StepExecution): {
   };
 }
 
-const shell = (body: string) =>
-  process.platform === 'win32'
-    ? {
-        command: process.env.ComSpec ?? 'cmd.exe',
-        args: ['/d', '/s', '/c', `"${body}"`],
-        windowsVerbatimArguments: true,
-      }
-    : { command: '/bin/sh', args: ['-c', body], windowsVerbatimArguments: false };
+type StepShell = {
+  command: string;
+  args: string[];
+  windowsVerbatimArguments: boolean;
+  dispose: () => Promise<void>;
+};
+
+const windowsScript = (body: string) =>
+  ['@echo off', 'chcp 65001 >nul', ...body.split(/\r?\n/), ''].join('\r\n');
+
+const prepareShell = async (body: string): Promise<StepShell> => {
+  if (process.platform !== 'win32')
+    return {
+      command: '/bin/sh',
+      args: ['-c', body],
+      windowsVerbatimArguments: false,
+      dispose: () => Promise.resolve(),
+    };
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-step-'));
+  const dispose = () => rm(directory, { recursive: true, force: true });
+  const script = join(directory, 'step.cmd');
+  try {
+    await writeFile(script, windowsScript(body), { mode: 0o600 });
+  } catch (error) {
+    await dispose().catch(() => undefined);
+    throw error;
+  }
+  return {
+    command: process.env.ComSpec ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', `""${script}""`],
+    windowsVerbatimArguments: true,
+    dispose,
+  };
+};
 
 export async function runShellStep(
   execution: StepExecution,
@@ -91,9 +120,13 @@ export async function runShellStep(
   let result: OwnedProcessResult | null = null;
   let failure: string | null = null;
   let recording: Promise<void> = Promise.resolve();
+  let shell: StepShell | null = null;
   try {
+    shell = await prepareShell(execution.definition.body);
     result = await runOwnedProcess({
-      ...shell(execution.definition.body),
+      command: shell.command,
+      args: shell.args,
+      windowsVerbatimArguments: shell.windowsVerbatimArguments,
       cwd: execution.run.directory,
       env,
       timeoutMs:
@@ -117,6 +150,7 @@ export async function runShellStep(
   } finally {
     await recording;
     await execution.evidence.clearProcess(execution.step).catch(() => undefined);
+    await shell?.dispose().catch(() => undefined);
   }
   if (execution.signal.aborted) return null;
   const log = filterResultText(combined.text(), secrets);
