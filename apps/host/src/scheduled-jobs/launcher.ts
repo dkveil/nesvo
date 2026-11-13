@@ -14,6 +14,7 @@ import {
 } from '../sessions/service';
 import { FolderError, resolveFolder } from '../workspace/folder';
 import {
+  OPERATOR_IDLE_MS,
   ScheduledJobLaunchError,
   systemClock,
   type ScheduledJobLaunch,
@@ -31,7 +32,7 @@ const SESSION_PROVIDERS = {
 
 type LauncherSessions = Pick<
   SessionService,
-  'create' | 'send' | 'stop' | 'finished' | 'isBusy'
+  'create' | 'send' | 'stop' | 'finished' | 'isBusy' | 'isIdleFor'
 >;
 
 type DeadlineClock = Pick<SchedulerClock, 'now' | 'setTimer' | 'clearTimer'>;
@@ -125,14 +126,22 @@ export class SessionLauncher implements ScheduledJobLauncher {
     const input = sessionInput(scheduledJob, directory, this.runTime(run));
     if (input.effort) await this.confirmEffort(input, signal);
     signal.throwIfAborted();
-    if (this.sessions.isBusy())
+    if (
+      this.sessions.isBusy() ||
+      (run.trigger === 'schedule' &&
+        !this.sessions.isIdleFor(OPERATOR_IDLE_MS))
+    )
       throw new SessionError(
         'busy',
         'The host became busy before the scheduled job started.',
       );
     const { sessionId, runId } = this.start(input, scheduledJob, run);
-    progress.started({ sessionId, runId });
     this.watch(scheduledJob, sessionId, runId, progress);
+    try {
+      progress.started({ sessionId, runId });
+    } catch {
+      return;
+    }
   }
 
   close(): void {
@@ -163,7 +172,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     try {
       await confirmCodexEffort(input.model, input.effort!, signal);
     } catch (error) {
-      if (error instanceof SessionError)
+      if (error instanceof SessionError && error.code === 'invalid-request')
         throw new ScheduledJobLaunchError('catalog', error.message);
       throw error;
     }
