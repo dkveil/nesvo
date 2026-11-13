@@ -129,6 +129,16 @@ export const decideDelegationSchema = z.strictObject({
   delegationId: z.uuid(),
   decision: z.enum(['accept', 'decline']),
 });
+const tokenCountSchema = z.number().int().nonnegative().nullable();
+export const turnUsageSchema = z.strictObject({
+  inputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  cachedInputTokens: tokenCountSchema,
+  costUsd: z.number().nonnegative().nullable(),
+  source: z.literal('provider-report').nullable(),
+  durationMs: tokenCountSchema,
+});
+export type TurnUsage = z.infer<typeof turnUsageSchema>;
 export const sessionMessageSchema = z.strictObject({
   id: z.uuid(),
   runId: z.uuid(),
@@ -141,6 +151,7 @@ export const sessionMessageSchema = z.strictObject({
   skillHash: skillHashSchema.optional(),
   skill: skillReferenceSchema.optional(),
   interruption: sessionInterruptionSchema.nullable().optional(),
+  usage: turnUsageSchema.nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),

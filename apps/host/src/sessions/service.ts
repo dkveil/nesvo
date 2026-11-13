@@ -578,6 +578,7 @@ export class SessionService {
         state: 'completed',
         createdAt,
         completedAt: createdAt,
+        usage: null,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -589,6 +590,7 @@ export class SessionService {
         state: 'running',
         createdAt,
         completedAt: null,
+        usage: null,
       },
     );
   }
@@ -833,6 +835,7 @@ export class SessionService {
         session.pendingApprovals = [];
         session.messages.at(-1)!.state = session.status;
         session.messages.at(-1)!.completedAt = new Date().toISOString();
+        session.messages.at(-1)!.usage = result.usage ?? null;
         finishActivities(session, session.status);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'
