@@ -1,5 +1,6 @@
 import { useState, type ReactNode, type RefObject } from 'react';
 import {
+  CalendarClock,
   ChevronDown,
   CircleCheck,
   Cloud,
@@ -24,6 +25,7 @@ import {
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
+import type { ScheduledJob } from '@/entities/scheduled-job';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 
@@ -42,6 +44,10 @@ type Props = {
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
   footerStart?: ReactNode;
+  scheduledJobs?: ScheduledJob[];
+  automations?: boolean;
+  automationsAvailable?: boolean;
+  onAutomations?: () => void;
 };
 
 const statusTone: Partial<Record<Session['status'], string>> = {
@@ -101,9 +107,14 @@ export function SessionSidebar({
   onCollapse,
   collapseToggleRef,
   footerStart,
+  scheduledJobs = [],
+  automations = false,
+  automationsAvailable = false,
+  onAutomations,
 }: Props) {
   const [search, setSearch] = useState('');
   const [closedHosts, setClosedHosts] = useState<string[]>([]);
+  const [openJobs, setOpenJobs] = useState<string[]>([]);
   const now = useNow(60_000);
   const computerOf = (session: Session) =>
     computers.find(item => item.id === session.hostId);
@@ -120,13 +131,19 @@ export function SessionSidebar({
         (a, b) =>
           a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
       );
+  const automationKey = (session: Session) =>
+    session.scheduledJobId ? `${session.hostId}/${session.scheduledJobId}` : '';
   const roots = sessions.filter(
     session =>
-      !session.parentId ||
-      !sessions.some(
-        parent =>
-          parent.id === session.parentId && parent.hostId === session.hostId,
-      ),
+      !session.scheduledJobId &&
+      (!session.parentId ||
+        !sessions.some(
+          parent =>
+            parent.id === session.parentId && parent.hostId === session.hostId,
+        )),
+  );
+  const automationSessions = sessions.filter(
+    session => session.scheduledJobId && (!search.trim() || matches(session)),
   );
   const filtered = roots.filter(
     root => matches(root) || childrenOf(root).some(matches),
@@ -135,8 +152,23 @@ export function SessionSidebar({
     .map(computer => ({
       computer,
       roots: filtered.filter(root => root.hostId === computer.id),
+      automations: [
+        ...new Set(
+          automationSessions
+            .filter(session => session.hostId === computer.id)
+            .map(automationKey),
+        ),
+      ].map(key => {
+        const runs = automationSessions.filter(
+          session => automationKey(session) === key,
+        );
+        const job = scheduledJobs.find(
+          item => `${item.hostId}/${item.id}` === key,
+        );
+        return { key, name: job?.name ?? 'Automation', runs };
+      }),
     }))
-    .filter(group => group.roots.length > 0);
+    .filter(group => group.roots.length > 0 || group.automations.length > 0);
   const grouped = computers.length > 1;
   const row = (session: Session, child = false) => {
     const computer = computerOf(session);
@@ -285,13 +317,31 @@ export function SessionSidebar({
             </span>
           )}
         </button>
+        {automationsAvailable && onAutomations && (
+          <button
+            type="button"
+            className={cn(
+              'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 outline-none',
+              'hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
+              automations && 'bg-sidebar-row-selected text-sidebar-foreground',
+            )}
+            onClick={onAutomations}
+            aria-current={automations ? 'page' : undefined}
+          >
+            <CalendarClock
+              className="size-4 text-sidebar-icon"
+              aria-hidden="true"
+            />
+            Automations
+          </button>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <nav
           aria-label="Sessions"
           className="space-y-1 px-(--sidebar-inset) pb-3"
         >
-          {groups.map(({ computer, roots }) => {
+          {groups.map(({ computer, roots, automations: jobGroups }) => {
             const closed = grouped && closedHosts.includes(computer.id);
             return (
               <section key={computer.id} aria-label={computer.name}>
@@ -347,6 +397,55 @@ export function SessionSidebar({
                         .filter(child => matches(root) || matches(child))
                         .map(child => row(child, true)),
                     ])}
+                    {jobGroups.map(group => {
+                      const expanded =
+                        openJobs.includes(group.key) ||
+                        !!search.trim() ||
+                        group.runs.some(
+                          session =>
+                            !inbox && selectedId === entityKey(session),
+                        );
+                      return (
+                        <li key={`automation/${group.key}`}>
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            data-automation-group={group.key}
+                            className="flex h-8 w-full items-center gap-2 rounded-lg px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+                            onClick={() =>
+                              setOpenJobs(previous =>
+                                previous.includes(group.key)
+                                  ? previous.filter(key => key !== group.key)
+                                  : [...previous, group.key],
+                              )
+                            }
+                          >
+                            <CalendarClock
+                              className="size-3.5 shrink-0 text-sidebar-icon"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              Automation · {group.name}
+                            </span>
+                            <span className="text-xs tabular-nums">
+                              {group.runs.length}
+                            </span>
+                            <ChevronDown
+                              aria-hidden="true"
+                              className={cn(
+                                'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
+                                !expanded && '-rotate-90',
+                              )}
+                            />
+                          </button>
+                          {expanded && (
+                            <ul className="flex flex-col gap-0.5">
+                              {group.runs.map(session => row(session, true))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>

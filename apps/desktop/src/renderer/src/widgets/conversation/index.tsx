@@ -59,6 +59,7 @@ type Props = {
   sending: boolean;
   canSend: boolean;
   otherRun: boolean;
+  otherRunLabel?: ReactNode;
   approvalsEnabled: boolean;
   approvalPending: Record<string, boolean>;
   onApproval: (
@@ -87,6 +88,7 @@ export function Conversation({
   sending,
   canSend,
   otherRun,
+  otherRunLabel,
   approvalsEnabled,
   approvalPending,
   onApproval,
@@ -205,7 +207,7 @@ export function Conversation({
                   {trigger}
                   <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
                     {otherRun
-                      ? 'Another session is working'
+                      ? (otherRunLabel ?? 'Another session is working')
                       : sending
                         ? 'Sending…'
                         : session.delegations.some(

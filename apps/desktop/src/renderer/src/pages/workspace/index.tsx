@@ -33,6 +33,13 @@ import {
   sessionStatusLabel,
 } from '@/entities/session';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
+import {
+  AutomationEditor,
+  automationValues,
+  duplicateValues,
+  newAutomationValues,
+  type AutomationValues,
+} from '@/features/edit-automation';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
@@ -63,8 +70,11 @@ import {
   Settings,
   type SettingsPage,
 } from '@/widgets/settings';
+import { AutomationDetail, AutomationList } from '@/widgets/automations';
+import type { ScheduledJob, ScheduledJobRun } from '@/entities/scheduled-job';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
+import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -86,6 +96,18 @@ export function Workspace() {
   const [location] = useState(readWorkspaceLocation);
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
+  const [automation, setAutomation] = useState(location.automation);
+  const [editor, setEditor] = useState<{
+    initial: AutomationValues;
+    jobKey: string;
+  } | null>(null);
+  const [automationPending, setAutomationPending] = useState<
+    Record<string, boolean>
+  >({});
+  const [automationErrors, setAutomationErrors] = useState<
+    Record<string, string>
+  >({});
+  const runRequests = useRef<Record<string, string>>({});
   const [sessionTarget, setSessionTarget] = useState('');
   const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
     location.diff ? 'diff' : null,
@@ -149,6 +171,16 @@ export function Workspace() {
     >
   >({});
   const stopping = useRef(new Set<string>());
+  const automations = useScheduledJobs(store.computers);
+  const jobOf = (session: Pick<Session, 'scheduledJobId' | 'hostId'>) =>
+    session.scheduledJobId
+      ? automations.jobs.find(
+          job =>
+            job.id === session.scheduledJobId && job.hostId === session.hostId,
+        )
+      : undefined;
+  const automationName = (session: Session) =>
+    jobOf(session)?.name ?? 'Automation';
   const selected =
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
@@ -203,7 +235,7 @@ export function Workspace() {
       (session.status === 'running' || session.status === 'stopping'),
   );
   const diffReview =
-    !inbox && diffTarget
+    !inbox && !automation && diffTarget
       ? store.reviews.find(
           review =>
             review.id === diffTarget.reviewId &&
@@ -223,11 +255,13 @@ export function Workspace() {
     saveWorkspaceLocation({
       selectedId: selectedKey,
       inbox,
+      automation,
       diff: !inbox && panel === 'diff' && diffReview ? diffTarget : null,
     });
   }, [
     selectedKey,
     inbox,
+    automation,
     panel,
     diffReview,
     diffTarget,
@@ -316,6 +350,7 @@ export function Workspace() {
     setSelectedId(id);
     setSessionTarget(targetId);
     setInbox(false);
+    setAutomation('');
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
@@ -325,7 +360,18 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(true);
+    setAutomation('');
     setNavigationOpen(false);
+  };
+  const openAutomations = (target = 'list') => {
+    navigationVersion.current += 1;
+    setPanel(null);
+    setDiffTarget(null);
+    setCreating(false);
+    setInbox(false);
+    setAutomation(target);
+    setNavigationOpen(false);
+    setDetailsOpen(false);
   };
   const openCreate = () => {
     navigationVersion.current += 1;
@@ -334,6 +380,7 @@ export function Workspace() {
     setPanel(null);
     setDiffTarget(null);
     setInbox(false);
+    setAutomation('');
     setCreating(true);
   };
   const changeDraft = (id: string, value: string) => {
@@ -458,32 +505,35 @@ export function Workspace() {
       threadRequest.current = false;
     }
   };
+  const hostRun = store.sessions.find(
+    session =>
+      session.hostId === threadSetup.hostId &&
+      (session.status === 'running' || session.status === 'stopping'),
+  );
   const threadBusyReason =
     store.loading || store.error
       ? 'Session history is still loading.'
-      : store.sessions.some(
-            session =>
-              session.hostId === threadSetup.hostId &&
-              (session.status === 'running' || session.status === 'stopping'),
-          )
-        ? 'Another session is working on this computer.'
-        : '';
-  const stop = async () => {
+      : hostRun?.scheduledJobId
+        ? `Automation ${automationName(hostRun)} is running on this computer.`
+        : hostRun
+          ? 'Another session is working on this computer.'
+          : '';
+  const stop = async (target: Session | undefined = selected) => {
     if (
-      !selected?.runId ||
-      !store.hostReady(selected.hostId) ||
-      selected.status !== 'running' ||
-      stopping.current.has(hostKey(selected.runId, selected.hostId))
+      !target?.runId ||
+      !store.hostReady(target.hostId) ||
+      target.status !== 'running' ||
+      stopping.current.has(hostKey(target.runId, target.hostId))
     )
       return;
-    const { id: sessionId, runId } = selected;
-    const key = entityKey(selected);
-    const runKey = hostKey(runId, selected.hostId);
+    const { id: sessionId, runId } = target;
+    const key = entityKey(target);
+    const runKey = hostKey(runId, target.hostId);
     stopping.current.add(runKey);
     setErrors(previous => ({ ...previous, [key]: '' }));
     try {
       store.merge([
-        await desktopApi(selected.hostId).stopRun({ sessionId, runId }),
+        await desktopApi(target.hostId).stopRun({ sessionId, runId }),
       ]);
     } catch (failure) {
       setErrors(previous => ({
@@ -491,7 +541,7 @@ export function Workspace() {
         [key]: `Could not stop the run. ${errorDetail(failure)}`,
       }));
       try {
-        await store.recover(selected.hostId);
+        await store.recover(target.hostId);
       } catch (recoveryFailure) {
         setErrors(previous => ({
           ...previous,
@@ -706,6 +756,151 @@ export function Workspace() {
       feedback: string,
     ) => void decideReview(review, decision, feedback),
   };
+  const runningSessions = store.sessions.filter(
+    session => session.status === 'running' || session.status === 'stopping',
+  );
+  const runningAutomations = runningSessions.filter(
+    session => session.scheduledJobId,
+  );
+  const automationBusy = (session: Session) => (
+    <>
+      Automation {automationName(session)} is running ·{' '}
+      <button
+        type="button"
+        className="font-medium text-foreground underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={
+          session.status !== 'running' || !store.hostReady(session.hostId)
+        }
+        onClick={() => void stop(session)}
+      >
+        {session.status === 'stopping' ? 'Stopping…' : 'Stop'}
+      </button>
+    </>
+  );
+  const automationComputers = store.computers.filter(supportsScheduledJobs);
+  const automationJob =
+    automation && automation !== 'list'
+      ? automations.jobs.find(job => entityKey(job) === automation)
+      : undefined;
+  const automationView = automation
+    ? automationJob
+      ? 'detail'
+      : 'list'
+    : null;
+  const setAutomationState = (key: string, pending: boolean, error = '') => {
+    setAutomationPending(previous => ({ ...previous, [key]: pending }));
+    setAutomationErrors(previous => ({ ...previous, [key]: error }));
+  };
+  const hostOffline = (hostId: string) => {
+    const computer = store.computers.find(item => item.id === hostId);
+    return store.hostReady(hostId)
+      ? ''
+      : `${computer?.name ?? 'This computer'} is offline. Connect it to manage this automation.`;
+  };
+  const runBlockedReason = (job: ScheduledJob) => {
+    const offline = hostOffline(job.hostId);
+    if (offline) return offline;
+    const running = runningSessions.find(
+      session => session.hostId === job.hostId,
+    );
+    if (!running) return '';
+    return running.scheduledJobId
+      ? `Automation ${automationName(running)} is running.`
+      : 'Another session is working on this computer.';
+  };
+  const runAutomationNow = async (job: ScheduledJob) => {
+    const key = entityKey(job);
+    if (automationPending[key] || runBlockedReason(job)) return;
+    const requestId = runRequests.current[key] ?? crypto.randomUUID();
+    runRequests.current[key] = requestId;
+    setAutomationState(key, true);
+    try {
+      automations.mergeRuns([
+        await window.nesvo.scheduledJobs.runNow(job.hostId, job.id, requestId),
+      ]);
+      delete runRequests.current[key];
+      setAutomationState(key, false);
+    } catch (failure) {
+      setAutomationState(
+        key,
+        false,
+        `Could not start the run. ${errorDetail(failure)}`,
+      );
+    }
+  };
+  const setAutomationActive = async (job: ScheduledJob, active: boolean) => {
+    const key = entityKey(job);
+    if (automationPending[key]) return;
+    setAutomationState(key, true);
+    try {
+      automations.mergeJobs([
+        await window.nesvo.scheduledJobs.setActive(
+          job.hostId,
+          job.id,
+          active,
+          job.revision,
+        ),
+      ]);
+      setAutomationState(key, false);
+    } catch (failure) {
+      setAutomationState(
+        key,
+        false,
+        `Could not ${active ? 'resume' : 'pause'} the automation. ${errorDetail(failure)}`,
+      );
+      void automations.reload(job.hostId);
+    }
+  };
+  const deleteAutomation = async (job: ScheduledJob) => {
+    const key = entityKey(job);
+    setAutomationState(key, true);
+    try {
+      await window.nesvo.scheduledJobs.delete(job.hostId, job.id, job.revision);
+      automations.removeJob(job);
+      setAutomationState(key, false);
+      openAutomations();
+      return true;
+    } catch (failure) {
+      setAutomationState(
+        key,
+        false,
+        `Could not delete the automation. ${errorDetail(failure)}`,
+      );
+      return false;
+    }
+  };
+  const defaultAutomationHost =
+    automationComputers.find(computer => store.hostReady(computer.id))?.id ??
+    'local';
+  const openAutomationEditor = (initial: AutomationValues, jobKey = '') =>
+    setEditor({ initial, jobKey });
+  const createAutomation = () => {
+    const states = store.providerStates(defaultAutomationHost);
+    openAutomationEditor(
+      newAutomationValues(
+        defaultAutomationHost,
+        'Claude Code',
+        states['Claude Code'].status?.models[0]?.id ?? 'default',
+      ),
+    );
+  };
+  const editorJob = editor?.jobKey
+    ? (automations.jobs.find(job => entityKey(job) === editor.jobKey) ?? null)
+    : null;
+  const automationNotices = [
+    ...store.computers
+      .filter(
+        computer =>
+          computer.status === 'connected' && !supportsScheduledJobs(computer),
+      )
+      .map(
+        computer =>
+          `${computer.name} runs an older Nesvo host. Update it to use automations there.`,
+      ),
+    ...Object.values(automations.hostErrors).filter(Boolean),
+  ];
+  const latestRun = (job: ScheduledJob): ScheduledJobRun | undefined =>
+    automations.runs(job).runs[0];
   const operationEnabled =
     connection === 'ready' && !store.loading && !store.error;
   const sidebarProps = {
@@ -734,22 +929,27 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: creating ? '' : selectedKey,
+    selectedId: creating || automation ? '' : selectedKey,
     inbox,
     onSelect: select,
     onInbox: openInbox,
     onCreate: openCreate,
+    scheduledJobs: automations.jobs,
+    automations: !!automation,
+    automationsAvailable: automationComputers.length > 0,
+    onAutomations: () => openAutomations(),
   };
   const showingNewThread =
-    creating || (!inbox && !selected && !store.loading && !store.error);
+    creating ||
+    (!inbox && !automation && !selected && !store.loading && !store.error);
+  const sessionView = !inbox && !creating && !automation;
   const breadcrumbDirectory = showingNewThread
     ? threadSetup.directory.trim()
-    : !inbox && selected
+    : sessionView && selected
       ? selected.directory
       : null;
   const providerIssue =
-    !inbox &&
-    !creating &&
+    sessionView &&
     selectedProviderState &&
     (selectedProviderState.error ||
       selectedProviderState.status?.status !== 'ready')
@@ -845,7 +1045,7 @@ export function Workspace() {
               Nesvo
             </span>
           )}
-          {parentSession && !inbox && !creating && (
+          {parentSession && sessionView && (
             <Button
               variant="ghost"
               size="icon-sm"
@@ -888,6 +1088,22 @@ export function Workspace() {
                   </li>
                 </>
               )}
+              {automationView === 'detail' && (
+                <>
+                  <li className="shrink-0">
+                    <button
+                      type="button"
+                      className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => openAutomations()}
+                    >
+                      Automations
+                    </button>
+                  </li>
+                  <li aria-hidden="true" className="text-muted-foreground/60">
+                    /
+                  </li>
+                </>
+              )}
               <li
                 aria-current="page"
                 className="flex min-w-0 items-center gap-3"
@@ -897,20 +1113,21 @@ export function Workspace() {
                     ? 'New thread'
                     : inbox
                       ? 'Inbox'
-                      : (selected?.title ?? 'New thread')}
+                      : automationView === 'detail'
+                        ? automationJob?.name
+                        : automationView === 'list'
+                          ? 'Automations'
+                          : (selected?.title ?? 'New thread')}
                 </h1>
-                {!inbox &&
-                  !creating &&
-                  selected &&
-                  sessionRoleLabel(selected) && (
-                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
-                      {sessionRoleLabel(selected)}
-                    </span>
-                  )}
+                {sessionView && selected && sessionRoleLabel(selected) && (
+                  <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                    {sessionRoleLabel(selected)}
+                  </span>
+                )}
               </li>
             </ol>
           </nav>
-          {!inbox && !creating && selected && (
+          {sessionView && selected && (
             <span
               className="max-w-32 truncate text-[11px] text-muted-foreground"
               title={selectedComputer?.name}
@@ -921,7 +1138,7 @@ export function Workspace() {
               {!store.hostReady(selectedHostId) ? ' · Offline' : ''}
             </span>
           )}
-          {!inbox && !creating && selected && selected.status !== 'ready' && (
+          {sessionView && selected && selected.status !== 'ready' && (
             <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
               {sessionStatusLabel(selected)}
             </span>
@@ -948,7 +1165,7 @@ export function Workspace() {
           >
             <Gauge className="size-4" />
           </Button>
-          {!inbox && !creating && selected && (
+          {sessionView && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -968,7 +1185,7 @@ export function Workspace() {
               <BookOpen className="size-4" />
             </Button>
           )}
-          {!inbox && !creating && selected && (
+          {sessionView && selected && (
             <Button
               type="button"
               variant="ghost"
@@ -982,7 +1199,7 @@ export function Workspace() {
               <FolderOpen className="size-4" />
             </Button>
           )}
-          {!inbox && !creating && selected && (
+          {sessionView && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
                 <Button
@@ -1052,7 +1269,7 @@ export function Workspace() {
                 id="thread-details"
                 computer={selectedComputer}
                 connection={connection}
-                session={!inbox && !creating && selected ? selected : null}
+                session={sessionView && selected ? selected : null}
                 onComputers={() => setSettingsPage('computers')}
                 onFiles={openFiles}
                 usage={
@@ -1100,6 +1317,95 @@ export function Workspace() {
               }
               onSession={select}
               onRefresh={store.reload}
+              originLabel={review => {
+                const session = store.sessions.find(
+                  item =>
+                    item.id === review.sessionId &&
+                    item.hostId === review.hostId,
+                );
+                return session?.scheduledJobId
+                  ? `Automation · ${automationName(session)}`
+                  : '';
+              }}
+              notice={runningAutomations.map(session => (
+                <p
+                  key={entityKey(session)}
+                  role="status"
+                  className="mb-3 px-3 text-2xs text-muted-foreground"
+                >
+                  {automationBusy(session)}
+                </p>
+              ))}
+            />
+          ) : automationView === 'detail' && automationJob ? (
+            <AutomationDetail
+              key={automation}
+              job={automationJob}
+              computer={store.computers.find(
+                computer => computer.id === automationJob.hostId,
+              )}
+              runs={automations.runs(automationJob).runs}
+              runsLoading={automations.runs(automationJob).loading}
+              runsError={automations.runs(automationJob).error}
+              hasMoreRuns={!!automations.runs(automationJob).nextCursor}
+              reviews={store.reviews}
+              pending={!!automationPending[automation]}
+              error={automationErrors[automation] ?? ''}
+              runBlockedReason={runBlockedReason(automationJob)}
+              editBlockedReason={hostOffline(automationJob.hostId)}
+              onRunNow={() => void runAutomationNow(automationJob)}
+              onSetActive={active =>
+                void setAutomationActive(automationJob, active)
+              }
+              onEdit={() =>
+                openAutomationEditor(
+                  automationValues(automationJob),
+                  entityKey(automationJob),
+                )
+              }
+              onDuplicate={() =>
+                openAutomationEditor(duplicateValues(automationJob))
+              }
+              onDelete={() => deleteAutomation(automationJob)}
+              onStop={run => {
+                const session = store.sessions.find(
+                  item =>
+                    item.id === run.sessionId && item.hostId === run.hostId,
+                );
+                if (session) void stop(session);
+              }}
+              onSession={select}
+              onLoadMore={() =>
+                void automations.loadRuns(
+                  automationJob,
+                  automations.runs(automationJob).nextCursor,
+                )
+              }
+              onRetryRuns={() => void automations.loadRuns(automationJob)}
+            />
+          ) : automationView === 'list' ? (
+            <AutomationList
+              jobs={automations.jobs}
+              computers={store.computers}
+              latestRun={latestRun}
+              loading={automations.loading}
+              notices={automationNotices}
+              pending={automationPending}
+              errors={automationErrors}
+              createBlockedReason={
+                automationComputers.some(computer =>
+                  store.hostReady(computer.id),
+                )
+                  ? ''
+                  : 'Connect a computer that supports automations.'
+              }
+              runBlockedReason={runBlockedReason}
+              onCreate={createAutomation}
+              onOpen={job => openAutomations(entityKey(job))}
+              onRunNow={job => void runAutomationNow(job)}
+              onSetActive={(job, active) =>
+                void setAutomationActive(job, active)
+              }
             />
           ) : selected ? (
             <div
@@ -1194,6 +1500,11 @@ export function Workspace() {
                     selectedHostId,
                   )
                 }
+                otherRunLabel={
+                  activeRun?.scheduledJobId
+                    ? automationBusy(activeRun)
+                    : undefined
+                }
                 otherRun={
                   !!activeRun &&
                   activeRun.id !== selected.id &&
@@ -1222,8 +1533,7 @@ export function Workspace() {
             </section>
           )}
           {(panel === 'files' || panel === 'skills') &&
-            !inbox &&
-            !creating &&
+            sessionView &&
             selected &&
             !store.hostReady(selectedHostId) && (
               <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-background p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
@@ -1261,8 +1571,7 @@ export function Workspace() {
             </Suspense>
           )}
           {panel === 'files' &&
-            !inbox &&
-            !creating &&
+            sessionView &&
             selected &&
             store.hostReady(selectedHostId) && (
               <Suspense
@@ -1286,8 +1595,7 @@ export function Workspace() {
               </Suspense>
             )}
           {panel === 'skills' &&
-            !inbox &&
-            !creating &&
+            sessionView &&
             selected &&
             store.hostReady(selectedHostId) && (
               <Suspense
@@ -1310,6 +1618,34 @@ export function Workspace() {
             )}
         </main>
       </div>
+      {editor && (
+        <AutomationEditor
+          key={editor.initial.id}
+          initial={editor.initial}
+          job={editorJob}
+          computers={automationComputers}
+          statuses={hostId => store.providerStates(hostId)}
+          onRefreshProvider={(provider, hostId) =>
+            void store.refreshProvider(provider, hostId)
+          }
+          onManageComputers={() => setSettingsPage('computers')}
+          onSave={(hostId, input, expectedRevision) =>
+            window.nesvo.scheduledJobs.save(hostId, input, expectedRevision)
+          }
+          onRecover={async (hostId, id) => {
+            await automations.reload(hostId);
+            return (await window.nesvo.scheduledJobs.list(hostId)).find(
+              job => job.id === id,
+            );
+          }}
+          onSaved={job => {
+            automations.mergeJobs([job]);
+            setEditor(null);
+            openAutomations(entityKey(job));
+          }}
+          onClose={() => setEditor(null)}
+        />
+      )}
       {settingsPage && (
         <Settings
           page={settingsPage}

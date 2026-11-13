@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type {
   DecideDelegationInput,
   RespondApprovalInput,
@@ -49,6 +49,8 @@ type Props = ReviewDecisionProps & {
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
   onRefresh: () => void;
+  originLabel?: (review: Review) => string;
+  notice?: ReactNode;
 };
 
 type Filter = 'pending' | 'history' | 'all';
@@ -133,6 +135,8 @@ export function ReviewInbox({
   onDelegation,
   onSession,
   onRefresh,
+  originLabel,
+  notice,
   ...decisionProps
 }: Props) {
   const [filter, setFilter] = useState<Filter>('pending');
@@ -246,6 +250,7 @@ export function ReviewInbox({
             </Select>
           </div>
         </div>
+        {notice}
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3 px-3">
             <p
@@ -283,6 +288,7 @@ export function ReviewInbox({
             {rows.map(row => {
               if (row.type === 'review') {
                 const { review } = row;
+                const origin = originLabel?.(review) ?? '';
                 const title =
                   sessions.find(
                     session =>
@@ -317,6 +323,14 @@ export function ReviewInbox({
                         {reviewPreview(review)}
                       </p>
                       <p className="flex flex-wrap gap-x-2 gap-y-1 text-2xs leading-4 text-muted-foreground">
+                        {origin && (
+                          <span
+                            data-origin="automation"
+                            className="font-medium text-foreground/80"
+                          >
+                            {origin} ·
+                          </span>
+                        )}
                         <span>
                           Result · v{review.version} ·{' '}
                           {reviewStatusLabels[review.status]}
