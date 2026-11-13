@@ -57,6 +57,10 @@ node apps/host/dist/main.js pipelines remove-from-pipeline --directory <project>
 
 `list` prints the `contentHash` of every definition. Replacing an existing step requires the hash that was read as `--expected-hash`; a changed file answers with its current hash, exits 2 and writes nothing, so read it again. Validation errors exit 1. When `NESVO_RUN_ID` is set, the three writing commands exit 3 without touching a file; `validate` and `list` still work. Details are in the architecture notes on definition commands.
 
+## Pipeline demo runs
+
+Until the pipeline engine lands, the step strip and the step result panel can be previewed with demo runs. Set NESVO_PIPELINE_DEMO=1 before starting an unpackaged desktop build; optional NESVO_PIPELINE_DEMO_DIRECTORY sets the folder the demo sessions point at. Main then adds five read-only demo sessions to Local with runs that are checking, passed, need attention after a failed command step, wait for a human gate, and stop on an uncertain action, plus one nested agent step session. Run lists, run detail, evidence reads, Stop and Resume for those runs are answered in memory by `apps/desktop/src/main/pipeline-demo.ts`; nothing reaches the host or the database, and every other command, including starting a task, still goes to the real host. A packaged build ignores the flag, and production code paths never read the module. Use a dedicated NESVO_DATA_DIR, because the demo sessions appear next to real ones.
+
 ## Local data
 
 The desktop stores its host database under Electron's userData directory, in host/nesvo.sqlite.
