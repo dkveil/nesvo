@@ -4477,7 +4477,7 @@ test(
         ),
       error =>
         error instanceof modules.ScheduledJobError &&
-        /already has 20 scheduled jobs/.test(error.message),
+        /already has 20 automations/.test(error.message),
     );
 
     const insertHistory = database.prepare(

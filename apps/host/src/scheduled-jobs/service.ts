@@ -95,7 +95,7 @@ export class ScheduledJobError extends Error {
 const staleRevision = () =>
   new ScheduledJobError(
     'invalid-request',
-    'This scheduled job changed elsewhere. Refresh and try again.',
+    'This automation changed elsewhere. Refresh and try again.',
   );
 
 export class ScheduledJobService {
@@ -133,12 +133,12 @@ export class ScheduledJobService {
       if (current)
         throw new ScheduledJobError(
           'invalid-request',
-          'This scheduled job already exists. Refresh and try again.',
+          'This automation already exists. Refresh and try again.',
         );
       if (this.store.count() >= MAX_SCHEDULED_JOBS_PER_HOST)
         throw new ScheduledJobError(
           'invalid-request',
-          `This host already has ${MAX_SCHEDULED_JOBS_PER_HOST} scheduled jobs. Delete one before adding another.`,
+          `This host already has ${MAX_SCHEDULED_JOBS_PER_HOST} automations. Delete one before adding another.`,
         );
     } else this.current(current, expectedRevision);
     const now = this.clock.now();
@@ -190,7 +190,7 @@ export class ScheduledJobService {
     if (this.store.hasActiveRun(current.id))
       throw new ScheduledJobError(
         'busy',
-        'Wait for the current run of this scheduled job to finish.',
+        'Wait for the current run of this automation to finish.',
       );
     if (!this.store.delete(current.id, input.expectedRevision))
       throw staleRevision();
@@ -204,7 +204,7 @@ export class ScheduledJobService {
 
   listRuns(input: ListScheduledJobRunsInput): ScheduledJobRunPage {
     if (!this.store.get(input.scheduledJobId))
-      throw new ScheduledJobError('not-found', 'Scheduled job not found.');
+      throw new ScheduledJobError('not-found', 'Automation not found.');
     const page = this.store.listRuns(
       input.scheduledJobId,
       input.cursor ?? null,
@@ -230,7 +230,7 @@ export class ScheduledJobService {
     }
     const job = this.store.get(input.id);
     if (!job)
-      throw new ScheduledJobError('not-found', 'Scheduled job not found.');
+      throw new ScheduledJobError('not-found', 'Automation not found.');
     if (this.closed || this.sessions.isBusy() || this.store.hasActiveRun(job.id))
       throw new ScheduledJobError(
         'busy',
@@ -417,7 +417,7 @@ export class ScheduledJobService {
     expectedRevision: number,
   ): ScheduledJob {
     if (!job)
-      throw new ScheduledJobError('not-found', 'Scheduled job not found.');
+      throw new ScheduledJobError('not-found', 'Automation not found.');
     if (job.revision !== expectedRevision) throw staleRevision();
     return job;
   }
@@ -482,7 +482,7 @@ export class ScheduledJobService {
       this.tick();
     } catch {
       if (this.closed) return;
-      console.error('Scheduled jobs could not be checked. Retrying shortly.');
+      console.error('Automations could not be checked. Retrying shortly.');
       this.disarm();
       this.timer = this.clock.setTimer(() => {
         this.timer = undefined;

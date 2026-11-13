@@ -133,7 +133,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     )
       throw new SessionError(
         'busy',
-        'The host became busy before the scheduled job started.',
+        'The host became busy before the automation started.',
       );
     const { sessionId, runId } = this.start(input, scheduledJob, run);
     this.watch(scheduledJob, sessionId, runId, progress);
