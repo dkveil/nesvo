@@ -44,7 +44,7 @@ export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'>;
 
 export type ScheduledJobRunOutcome = Pick<
   ScheduledJobRun,
-  'status' | 'reason' | 'reviewId'
+  'status' | 'reason' | 'reviewId' | 'resetAt'
 >;
 
 export type ScheduledJobRunProgress = {
@@ -80,6 +80,12 @@ export class ScheduledJobLaunchError extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+export class ScheduledJobLimitError extends Error {
+  constructor(readonly resetAt: string) {
+    super('The provider account limit is reached.');
   }
 }
 
@@ -370,11 +376,14 @@ export class ScheduledJobService {
   private abandon(runId: string, error: unknown): void {
     const run = this.store.run(runId);
     if (run?.status !== 'starting') return;
-    const busy = error instanceof SessionError && error.code === 'busy';
+    const abandonedOutcome = this.abandonedOutcome(error);
+    const unstarted =
+      abandonedOutcome.status === 'skipped' ||
+      abandonedOutcome.status === 'unavailable';
     const abandoned: StoredRun = {
       ...run,
-      ...this.abandonedOutcome(error),
-      startedAt: busy ? null : run.startedAt,
+      ...abandonedOutcome,
+      startedAt: unstarted ? null : run.startedAt,
       finishedAt: this.clock.now().toISOString(),
     };
     this.store.updateRun(abandoned);
@@ -383,13 +392,16 @@ export class ScheduledJobService {
 
   private abandonedOutcome(
     error: unknown,
-  ): Pick<ScheduledJobRun, 'status' | 'reason'> {
-    if (this.closed) return { status: 'interrupted', reason: 'restart' };
+  ): Pick<ScheduledJobRun, 'status' | 'reason' | 'resetAt'> {
+    if (this.closed)
+      return { status: 'interrupted', reason: 'restart', resetAt: null };
     if (error instanceof SessionError && error.code === 'busy')
-      return { status: 'skipped', reason: 'busy' };
+      return { status: 'skipped', reason: 'busy', resetAt: null };
+    if (error instanceof ScheduledJobLimitError)
+      return { status: 'unavailable', reason: 'limit', resetAt: error.resetAt };
     if (error instanceof ScheduledJobLaunchError)
-      return { status: 'failed', reason: error.reason };
-    return { status: 'failed', reason: null };
+      return { status: 'failed', reason: error.reason, resetAt: null };
+    return { status: 'failed', reason: null, resetAt: null };
   }
 
   private markStarted(runId: string, link: ScheduledJobRunLink): void {

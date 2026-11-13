@@ -140,12 +140,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             await Promise.all(state.pending);
           }),
       );
+      const usage = new ProviderUsageService(probes.controller.signal);
       const scheduledJobs = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const service = new ScheduledJobService(
             scheduledJobStore,
             sessions,
-            new SessionLauncher(sessions),
+            new SessionLauncher(sessions, usage),
             emit,
           );
           service.start();
@@ -176,7 +177,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       let evidenceRequests = 0;
       let workspaceRequests = 0;
-      const usage = new ProviderUsageService(probes.controller.signal);
       let skillRequests = 0;
       let definitionRequests = 0;
       let definitionWrites = 0;

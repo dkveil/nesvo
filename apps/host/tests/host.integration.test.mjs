@@ -7951,6 +7951,7 @@ const loadScheduledJobLauncher = async directory => {
   const outdir = join(directory, 'launcher-modules');
   const entries = [
     'scheduled-jobs/launcher.ts',
+    'providers/usage-service.ts',
     'scheduled-jobs/service.ts',
     'scheduled-jobs/store.ts',
     'sessions/service.ts',
@@ -8063,10 +8064,13 @@ test(
         clearTimeout(timer);
       },
     };
+    const usage = new modules.ProviderUsageService(
+      new AbortController().signal,
+    );
     scheduler = new modules.ScheduledJobService(
       jobs,
       sessions,
-      new modules.SessionLauncher(sessions, deadlines),
+      new modules.SessionLauncher(sessions, usage, deadlines),
       event => {
         events.push(event);
         if (event.type === 'scheduled-job-run-changed')

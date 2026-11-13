@@ -13,9 +13,12 @@ import {
   type SessionService,
 } from '../sessions/service';
 import { FolderError, resolveFolder } from '../workspace/folder';
+import { type ProviderUsageService } from '../providers/usage-service';
+import { ProviderLimitGate } from './limit-gate';
 import {
   OPERATOR_IDLE_MS,
   ScheduledJobLaunchError,
+  ScheduledJobLimitError,
   systemClock,
   type ScheduledJobLaunch,
   type ScheduledJobLauncher,
@@ -91,35 +94,48 @@ const toRunOutcome = (
   timedOut: boolean,
 ): ScheduledJobRunOutcome => {
   if (outcome.state === 'completed')
-    return { status: 'completed', reason: null, reviewId: outcome.reviewId };
+    return {
+      status: 'completed',
+      reason: null,
+      reviewId: outcome.reviewId,
+      resetAt: null,
+    };
   if (timedOut && (outcome.state === 'stopped' || outcome.state === 'failed'))
-    return { status: 'failed', reason: 'timeout', reviewId: null };
+    return { status: 'failed', reason: 'timeout', reviewId: null, resetAt: null };
   if (outcome.state === 'stopped')
-    return { status: 'stopped', reason: null, reviewId: null };
+    return { status: 'stopped', reason: null, reviewId: null, resetAt: null };
   if (outcome.state === 'interrupted')
     return {
       status: 'interrupted',
       reason: outcome.interruption === 'provider-disconnected' ? null : 'restart',
       reviewId: null,
+      resetAt: null,
     };
-  return { status: 'failed', reason: null, reviewId: null };
+  return { status: 'failed', reason: null, reviewId: null, resetAt: null };
 };
 
 export class SessionLauncher implements ScheduledJobLauncher {
   private readonly controller = new AbortController();
   private readonly deadlines = new Set<unknown>();
+  private readonly limits: ProviderLimitGate;
 
   constructor(
     private readonly sessions: LauncherSessions,
+    usage: Pick<ProviderUsageService, 'read'>,
     private readonly clock: DeadlineClock = systemClock,
     private readonly folders: typeof resolveFolder = resolveFolder,
-  ) {}
+  ) {
+    this.limits = new ProviderLimitGate(usage, () => this.clock.now());
+  }
 
   async launch(
     { scheduledJob, run }: ScheduledJobLaunch,
     progress: ScheduledJobRunProgress,
   ): Promise<void> {
     const signal = this.controller.signal;
+    const limitedUntil = await this.limits.limitedUntil(scheduledJob.provider);
+    if (limitedUntil) throw new ScheduledJobLimitError(limitedUntil);
+    signal.throwIfAborted();
     const directory = scheduledJob.directory
       ? await this.folder(scheduledJob.directory, signal)
       : '';
@@ -228,6 +244,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
           status: 'failed',
           reason: null,
           reviewId: null,
+          resetAt: null,
         }),
       )
       .then(outcome => {
