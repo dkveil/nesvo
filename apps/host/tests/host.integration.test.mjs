@@ -5332,7 +5332,11 @@ test(
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-pipeline-store-')),
     );
-    t.after(() => rm(directory, { recursive: true, force: true }));
+    let database = null;
+    t.after(async () => {
+      if (database?.isOpen) database.close();
+      await rm(directory, { recursive: true, force: true });
+    });
     const contracts = await loadScheduledJobContracts(directory);
     const { PipelineRunStore, EXTERNAL_ACTION_ATTENTION, SessionStore } =
       await loadPipelineStoreModules(directory);
@@ -5550,9 +5554,8 @@ test(
       }
     });
 
-    const database = new DatabaseSync(join(upgradePath, 'nesvo.sqlite'));
+    database = new DatabaseSync(join(upgradePath, 'nesvo.sqlite'));
     database.exec('PRAGMA foreign_keys = ON');
-    t.after(() => database.close());
     const store = new PipelineRunStore(database);
     const sessions = new SessionStore(database);
 
@@ -6443,6 +6446,7 @@ test(
     await mkdir(project, { recursive: true });
     await mkdir(dataDirectory, { recursive: true });
     await git(project, 'init', '--quiet');
+    await git(project, 'config', 'core.autocrlf', 'false');
     await writeFile(join(project, 'README.md'), 'Task project\n');
     await writeFile(join(project, '.gitignore'), '.env\n');
     await writeFile(join(project, '.env'), 'TOKEN=local\n');
@@ -6603,7 +6607,11 @@ test(
     );
     const pointerFile = join(redirected.worktree, '.git');
     const pointer = await readFile(pointerFile, 'utf8');
-    await writeFile(pointerFile, `gitdir: ${join(foreign, '.git')}\n`);
+    const replacePointer = async text => {
+      await rm(pointerFile);
+      await writeFile(pointerFile, text);
+    };
+    await replacePointer(`gitdir: ${join(foreign, '.git')}\n`);
     await git(redirected.worktree, 'status', '--porcelain').catch(() => '');
     const probed = await readFile(marker, 'utf8').catch(() => null);
     if (process.platform !== 'win32') assert.equal(probed, 'ran');
@@ -6620,7 +6628,7 @@ test(
         rejection('git-failed'),
       );
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
-    await writeFile(pointerFile, pointer);
+    await replacePointer(pointer);
     await modules.removeTaskWorktree({
       projectDirectory: project,
       dataDirectory,
@@ -7310,7 +7318,7 @@ test(
 
     await t.test(
       'concurrent advance calls start each step once, in order, and collapse into one more pass',
-      async () => {
+      async subtest => {
         const isolated = join(directory, 'in-process');
         const bootstrap = launch(
           isolated,
@@ -7322,7 +7330,7 @@ test(
         const { PipelineRunner, PipelineRunStore } =
           await loadPipelineRunnerModules(directory);
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
-        t.after(() => database.close());
+        subtest.after(() => database.close());
         const base = new PipelineRunStore(database);
         let getRunCalls = 0;
         let onGetRun = null;
