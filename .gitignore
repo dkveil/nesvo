@@ -32,6 +32,8 @@
 !/apps/host/src/skills/
 !/apps/host/src/mobile/
 !/apps/host/src/scheduled-jobs/
+!/apps/host/src/pipelines/
+!/apps/host/src/process/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs
@@ -60,6 +62,7 @@
 !/docs/independent-host.md
 !/docs/ssh-host.md
 !/docs/mobile.md
+!/docs/pipelines.md
 !/.github/
 /.github/*
 !/.github/dependabot.yml
