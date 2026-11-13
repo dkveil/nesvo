@@ -44,6 +44,7 @@ type SaveInput = Omit<SaveScheduledJobInput, 'expectedRevision'>;
 type Props = {
   initial: AutomationValues;
   job: ScheduledJob | null;
+  editing: boolean;
   computers: Computer[];
   statuses: (hostId: string) => ProviderStates;
   onRefreshProvider: (provider: Provider, hostId: string) => void;
@@ -76,6 +77,7 @@ const accessDetail: Record<Provider, string> = {
 export function AutomationEditor({
   initial,
   job,
+  editing,
   computers,
   statuses,
   onRefreshProvider,
@@ -94,20 +96,29 @@ export function AutomationEditor({
   const [stale, setStale] = useState(false);
   const [locationOpen, setLocationOpen] = useState(false);
   const form = useRef<HTMLFormElement>(null);
-  const editing = !!job;
   const computer = computers.find(item => item.id === values.hostId);
   const connected = computer?.status === 'connected';
   const providerStates = statuses(values.hostId);
   const providerState = providerStates[values.provider];
   const models = providerState.status?.models ?? [];
+  const modelListed = models.some(option => option.id === values.model);
   const model =
-    models.length === 0 || models.some(option => option.id === values.model)
+    editing || models.length === 0 || modelListed
       ? values.model
       : (models[0]?.id ?? '');
+  const catalogReady = !!providerState.status && modelListed;
   const effort =
-    values.provider === 'Codex'
-      ? resolveEffort(modelEfforts(providerState, model), values.effort)
-      : '';
+    values.provider !== 'Codex'
+      ? ''
+      : catalogReady
+        ? resolveEffort(modelEfforts(providerState, model), values.effort)
+        : values.effort;
+  const catalogNotice =
+    !providerState.status || providerState.loading
+      ? `${values.provider} has not reported its models on ${computer?.name ?? 'this computer'} yet. The chosen model and effort are kept.`
+      : models.length > 0 && !modelListed
+        ? `${values.provider} no longer reports this model. Choose another one or runs may fail.`
+        : '';
   const resolved = { ...values, model, effort };
   const errors = validateAutomation(resolved);
   const visible = (field: AutomationField) =>
@@ -116,11 +127,14 @@ export function AutomationEditor({
     (field === 'prompt' && errors.prompt === SKILL_PROMPT_MESSAGE)
       ? errors[field]
       : undefined;
-  const blockedReason = !computer
-    ? 'Choose a computer that supports automations.'
-    : !connected
-      ? `${computer.name} is offline. Connect it to save this automation.`
-      : '';
+  const blockedReason =
+    editing && !job
+      ? 'This automation was deleted on its computer.'
+      : !computer
+        ? 'Choose a computer that supports automations.'
+        : !connected
+          ? `${computer.name} is offline. Connect it to save this automation.`
+          : '';
   const touch = (field: AutomationField) =>
     setTouched(previous =>
       previous.includes(field) ? previous : [...previous, field],
@@ -287,6 +301,9 @@ export function AutomationEditor({
                   className="flex min-w-0 flex-wrap items-center gap-2"
                   data-field="model"
                   tabIndex={-1}
+                  aria-describedby={
+                    visible('model') ? 'automation-model-error' : undefined
+                  }
                 >
                   <ModelPicker
                     provider={values.provider}
@@ -316,6 +333,11 @@ export function AutomationEditor({
                 <p className="text-2xs leading-4 text-muted-foreground">
                   {accessDetail[values.provider]}
                 </p>
+                {catalogNotice && (
+                  <p className="text-2xs leading-4 text-warning-foreground">
+                    {catalogNotice}
+                  </p>
+                )}
                 <FieldError
                   id="automation-model-error"
                   message={visible('model')}
