@@ -71,6 +71,7 @@ const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'save-pipeline-definition',
   'delete-pipeline-definition',
 ]);
+const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
   'pipelines',
 ]).options;
@@ -458,7 +459,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           request.method === 'save-pipeline-definition' ||
           request.method === 'delete-pipeline-definition'
         ) {
-          if (definitionWrites >= 4) {
+          if (definitionWrites >= CONCURRENT_DEFINITION_WRITES) {
             yield* Effect.tryPromise(() =>
               send({
                 type: 'error',

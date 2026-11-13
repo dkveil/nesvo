@@ -743,7 +743,7 @@ function pipelineWarnings(pipeline: ResolvedPipeline): DefinitionIssue[] {
   return warnings;
 }
 
-function capIssues(issues: DefinitionIssue[]): DefinitionIssue[] {
+export function capIssues(issues: DefinitionIssue[]): DefinitionIssue[] {
   const limit = pipelineDefinitionLimits.issues;
   if (issues.length <= limit) return issues;
   const hidden = issues.slice(limit - 1);

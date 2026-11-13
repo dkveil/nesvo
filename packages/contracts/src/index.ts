@@ -80,7 +80,6 @@ import {
 import {
   decidePipelineGateSchema,
   definitionCatalogSchema,
-  definitionWriteResultSchema,
   deletePipelineDefinitionSchema,
   getPipelineRunSchema,
   listPipelineDefinitionsSchema,

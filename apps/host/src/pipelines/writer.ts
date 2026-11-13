@@ -18,9 +18,10 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { text } from '../skills/portable';
 import {
+  capIssues,
   checkDocument,
   DefinitionError,
   definitionReadLimits,
@@ -94,7 +95,7 @@ function refusal(path: string, message: string): PipelineDefinitionRefused {
 }
 
 function refusedIssues(issues: DefinitionIssue[]): PipelineDefinitionRefused {
-  return { type: 'pipeline-definition-refused', issues };
+  return { type: 'pipeline-definition-refused', issues: capIssues(issues) };
 }
 
 function conflict(
@@ -129,6 +130,19 @@ function unavailable(error: unknown): never {
   );
 }
 
+async function deepestExisting(path: string): Promise<string> {
+  let current = path;
+  while (true) {
+    try {
+      return await realpath(current);
+    } catch (error) {
+      const parent = dirname(current);
+      if (!missing(error) || parent === current) throw error;
+      current = parent;
+    }
+  }
+}
+
 async function prepareFolder(
   target: DefinitionTarget,
   roots: Awaited<ReturnType<typeof resolveWriteRoots>>,
@@ -138,6 +152,14 @@ async function prepareFolder(
   const folderMode = target.scope === 'global' ? privateFolderMode : undefined;
   let root: string;
   try {
+    if (create && target.scope === 'project') {
+      const ancestor = await deepestExisting(requested);
+      if (!inside(await realpath(roots.projectRoot), ancestor))
+        return refusal(
+          requested,
+          'The project pipelines folder resolves outside the project.',
+        );
+    }
     if (create) await mkdir(requested, { recursive: true, mode: folderMode });
     root = await realpath(requested);
   } catch (error) {
@@ -216,7 +238,7 @@ function isRefusal(
 
 function checkActiveRuns(
   target: DefinitionTarget,
-  location: Location,
+  projectRoot: string,
   activeRuns: ActiveRunLookup | undefined,
 ) {
   if (target.kind !== 'pipeline' || !activeRuns) return;
@@ -224,7 +246,7 @@ function checkActiveRuns(
     scope: target.scope,
     kind: target.kind,
     name: target.name,
-    projectRoot: location.projectRoot,
+    projectRoot,
   });
   if (runId)
     throw new DefinitionError(
@@ -335,34 +357,40 @@ export async function saveDefinition(
   const requested = input.scope === 'global' ? roots.global : roots.project;
   const textIssues = checkFileText(input.document, requested);
   if (textIssues.length) return refusedIssues(textIssues);
+  const plannedPath = join(requested, `${input.kind}s`, `${input.name}.md`);
+  const checked = checkDocument(input.kind, plannedPath, input.document);
+  const issues = [...checked.issues];
+  if (checked.name !== null && checked.name !== input.name)
+    issues.push(
+      issueAt(
+        plannedPath,
+        `Field "name" must be "${input.name}" to match the file name`,
+      ),
+    );
+  if (issues.some(item => item.severity === 'error'))
+    return refusedIssues(issues);
   return exclusive(pathKey(requested), async () => {
-    const location = await prepareFolder(input, roots, true);
-    if (!location || 'type' in location)
-      return location ?? refusal(requested, 'The folder cannot be created.');
-    const checked = checkDocument(input.kind, location.path, input.document);
-    const issues = [...checked.issues];
-    if (checked.name !== null && checked.name !== input.name)
-      issues.push(
-        issueAt(
-          location.path,
-          `Field "name" must be "${input.name}" to match the file name`,
-        ),
-      );
-    if (issues.some(item => item.severity === 'error'))
-      return refusedIssues(issues);
-    const current = await readCurrent(location.path, signal);
+    const existing = await prepareFolder(input, roots, false);
+    if (existing && 'type' in existing) return existing;
+    const path = existing?.path ?? plannedPath;
+    const current = existing
+      ? await readCurrent(path, signal)
+      : { file: null };
     if (isRefusal(current)) return current;
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
-      return conflict(input, location.path, current.file);
-    checkActiveRuns(input, location, activeRuns);
+      return conflict(input, path, current.file);
+    checkActiveRuns(input, roots.projectRoot, activeRuns);
     if (input.kind === 'pipeline') {
       const unresolved = missingSteps(
         checked.steps,
         await loadCatalog(input.directory, signal),
-        location.path,
+        path,
       );
       if (unresolved.length) return refusedIssues(unresolved);
     }
+    const location = await prepareFolder(input, roots, true);
+    if (!location || 'type' in location)
+      return location ?? refusal(requested, 'The folder cannot be created.');
     const outcome = await publish(input, location, signal);
     if (outcome !== 'written') return outcome;
     return loadCatalog(input.directory, signal);
@@ -389,7 +417,7 @@ export async function deleteDefinition(
     if (isRefusal(current)) return current;
     if (current.file?.contentHash !== input.expectedHash)
       return conflict(input, location.path, current.file);
-    checkActiveRuns(input, location, activeRuns);
+    checkActiveRuns(input, roots.projectRoot, activeRuns);
     if (input.kind === 'step') {
       const users = stepUsers(
         input.name,

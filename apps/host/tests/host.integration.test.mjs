@@ -7650,6 +7650,14 @@ test(
           null,
         );
         assert.equal(agent.type, 'pipeline-definition-refused');
+        const flood = await save(
+          'step',
+          'flood',
+          `---\nname: flood\ntype: command\nphase: pre-done\n${Array.from({ length: 240 }, (_, index) => `extra${index}: 1`).join('\n')}\n---\nbun test\n`,
+          null,
+        );
+        assert.equal(flood.type, 'pipeline-definition-refused');
+        assert.equal(flood.issues.length, 200);
         const binary = await save(
           'step',
           'binary',
@@ -7810,6 +7818,14 @@ test(
     );
 
     await t.test('the first global save creates a private root', async () => {
+      const refused = await save(
+        'step',
+        'shared-check',
+        stepDocument('shared-check', { retry: 1 }),
+        null,
+        'global',
+      );
+      assert.equal(refused.type, 'pipeline-definition-refused');
       await assert.rejects(stat(home), { code: 'ENOENT' });
       const document = stepDocument('shared-check');
       const saved = await save(
