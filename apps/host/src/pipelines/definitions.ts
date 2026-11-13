@@ -451,26 +451,28 @@ async function listMarkdown(
         `The folder has ${markdown.length} ${kindLabels[kind]} files; only the first ${limit} are read.`,
       ),
     );
-  const files = await mapBounded(markdown.slice(0, limit), async entry => {
-    const path = join(folder, entry.name);
-    if (entry.isSymbolicLink()) {
-      issues.push(
-        issue(path, 'Symbolic links are not read. Use a regular file.'),
-      );
-      return null;
-    }
-    if (!entry.isFile()) return null;
-    try {
-      return await readFile(path, read);
-    } catch (error) {
-      if (error instanceof FileIssue) {
-        issues.push(issue(path, error.message));
-        return null;
+  const results = await mapBounded(
+    markdown.slice(0, limit),
+    async (entry): Promise<DefinitionFile | DefinitionIssue | null> => {
+      const path = join(folder, entry.name);
+      if (entry.isSymbolicLink())
+        return issue(path, 'Symbolic links are not read. Use a regular file.');
+      if (!entry.isFile()) return null;
+      try {
+        return await readFile(path, read);
+      } catch (error) {
+        if (error instanceof FileIssue) return issue(path, error.message);
+        throw error;
       }
-      throw error;
-    }
-  });
-  return files.filter((file): file is DefinitionFile => !!file);
+    },
+  );
+  const files: DefinitionFile[] = [];
+  for (const result of results) {
+    if (!result) continue;
+    if ('contentHash' in result) files.push(result);
+    else issues.push(result);
+  }
+  return files;
 }
 
 function distance(left: string, right: string): number {
@@ -732,9 +734,15 @@ function pipelineWarnings(pipeline: ResolvedPipeline): DefinitionIssue[] {
 function capIssues(issues: DefinitionIssue[]): DefinitionIssue[] {
   const limit = pipelineDefinitionLimits.issues;
   if (issues.length <= limit) return issues;
+  const hidden = issues.slice(limit - 1);
   return [
     ...issues.slice(0, limit - 1),
-    issue('', `${issues.length - limit + 1} more issues are not shown.`),
+    issue(
+      '',
+      `${hidden.length} more issues are not shown.`,
+      null,
+      hidden.some(item => item.severity === 'error') ? 'error' : 'warning',
+    ),
   ];
 }
 
@@ -929,6 +937,23 @@ export async function loadSpec(
 ): Promise<LoadedSpec> {
   const read = context(signal);
   const root = await projectRoot(await canonicalDirectory(directory, read), read);
+  const outside = new DefinitionError(
+    'invalid',
+    'The task spec must be inside the project.',
+    [issue(path, `The task spec must be inside the project ${root}`)],
+  );
+  if (isAbsolute(path)) {
+    let canonical: string | null = null;
+    try {
+      canonical = join(
+        await io(read, realpath(dirname(path))),
+        basename(path),
+      );
+    } catch (error) {
+      if (error instanceof DefinitionError) throw error;
+    }
+    if (canonical && !inside(root, canonical)) throw outside;
+  }
   let file: DefinitionFile;
   try {
     file = await readFile(path, read);
@@ -939,12 +964,7 @@ export async function loadSpec(
       ]);
     throw error;
   }
-  if (!inside(root, file.path))
-    throw new DefinitionError(
-      'invalid',
-      'The task spec must be inside the project.',
-      [issue(file.path, `The task spec must be inside the project ${root}`)],
-    );
+  if (!inside(root, file.path)) throw outside;
   const issues: DefinitionIssue[] = [];
   const parsed = parseDocument(file, 'spec', taskSpecSchema, issues);
   if (!parsed.value)
