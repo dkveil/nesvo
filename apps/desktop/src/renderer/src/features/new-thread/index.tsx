@@ -3,7 +3,9 @@ import { ArrowUp } from 'lucide-react';
 import type {
   Computer,
   CreateSessionInput,
+  DefinitionIssue,
   DesktopApi,
+  StartPipelineTaskInput,
 } from '@nesvo/contracts';
 import {
   directoryLabel,
@@ -23,6 +25,8 @@ import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
 import { PermissionPicker } from './permission-picker';
+import { pipelineIssues, type PipelineChoice } from './pipeline-choice';
+import { PipelinePicker } from './pipeline-picker';
 import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
 
@@ -43,12 +47,13 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   onManageComputers: () => void;
   busyReason: string;
-  hostApi: Pick<DesktopApi, 'discoverSkills'>;
+  hostApi: Pick<DesktopApi, 'discoverSkills' | 'pipelines'>;
   onStart: (
     input: CreateSessionInput,
     text: string,
     skill: SelectedSkill | null,
   ) => Promise<void>;
+  onStartPipeline: (input: StartPipelineTaskInput) => Promise<void>;
 };
 
 const MAX_MESSAGE_LENGTH = 32000;
@@ -63,12 +68,16 @@ export function NewThread({
   busyReason,
   hostApi,
   onStart,
+  onStartPipeline,
 }: Props) {
   const [text, setText] = useState('');
   const [skill, setSkill] = useState<SelectedSkill | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
+  const [pipeline, setPipeline] = useState<PipelineChoice | null>(null);
+  const [issues, setIssues] = useState<DefinitionIssue[]>([]);
+  const piped = !!pipeline?.pipelineName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
   const mounted = useRef(true);
@@ -109,11 +118,67 @@ export function NewThread({
         : !model
           ? 'No model is available for this provider yet.'
           : '';
-  const canSend = !pending && !blockedReason && !!text.trim();
+  const canSend =
+    !pending &&
+    !blockedReason &&
+    (pipeline?.pipelineName ? !!pipeline.specPath.trim() : !!text.trim());
+  const changePipeline = (next: PipelineChoice | null) => {
+    setPipeline(next);
+    setIssues([]);
+    setError('');
+  };
+  const startPipeline = async (choice: PipelineChoice) => {
+    const title = text.trim()
+      ? deriveThreadTitle(text.trim())
+      : choice.specTitle;
+    try {
+      await onStartPipeline({
+        specPath: choice.specPath.trim(),
+        pipelineName: choice.pipelineName,
+        ...(title ? { title: title.slice(0, 100) } : {}),
+        provider: setup.provider,
+        model,
+        ...(effort ? { effort } : {}),
+        mode: setup.mode,
+        directory: setup.directory.trim(),
+        isolation:
+          choice.isolation && setup.directory.trim() ? 'worktree' : 'none',
+        gateProvider: choice.gateProvider,
+        gateModel: choice.gateModel,
+      });
+    } catch (failure) {
+      setError(`Could not start the pipeline task. ${errorDetail(failure)}`);
+      try {
+        const catalog = await hostApi.pipelines.validateDefinitions(
+          setup.hostId,
+          { directory: setup.directory.trim() },
+        );
+        if (mounted.current)
+          setIssues(
+            pipelineIssues(catalog, choice.pipelineName, choice.specPath),
+          );
+      } catch {
+        return;
+      }
+    }
+  };
   const submit = async (
     resolveTyped: (draft: string) => Promise<TypedSubmission>,
   ) => {
     if (!canSend || submitting.current) return;
+    if (pipeline?.pipelineName) {
+      submitting.current = true;
+      setPending(true);
+      setError('');
+      setIssues([]);
+      try {
+        await startPipeline(pipeline);
+      } finally {
+        submitting.current = false;
+        if (mounted.current) setPending(false);
+      }
+      return;
+    }
     submitting.current = true;
     setPending(true);
     setError('');
@@ -177,7 +242,7 @@ export function NewThread({
             },
           }}
           api={hostApi}
-          enabled={connected && !pending}
+          enabled={connected && !pending && !piped}
           draft={text}
           onSelect={next => {
             setSkill(next);
@@ -216,7 +281,11 @@ export function NewThread({
                     ref={input}
                     id="thread-input"
                     autoFocus
-                    placeholder="Ask anything. / for skills"
+                    placeholder={
+                      piped
+                        ? 'Task title (optional). The spec starts the task.'
+                        : 'Ask anything. / for skills'
+                    }
                     value={text}
                     {...inputAria}
                     onInput={onInput}
@@ -271,8 +340,14 @@ export function NewThread({
                         size="icon-sm"
                         className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
                         disabled={!canSend}
-                        aria-label="Send message"
-                        title="Send message (Enter)"
+                        aria-label={
+                          piped ? 'Start pipeline task' : 'Send message'
+                        }
+                        title={
+                          piped
+                            ? 'Start pipeline task (Enter)'
+                            : 'Send message (Enter)'
+                        }
                       >
                         <ArrowUp />
                       </Button>
@@ -287,7 +362,10 @@ export function NewThread({
                   hostId={setup.hostId}
                   disabled={pending}
                   onChange={hostId => {
-                    if (hostId !== setup.hostId) setSkill(null);
+                    if (hostId !== setup.hostId) {
+                      setSkill(null);
+                      changePipeline(null);
+                    }
                     onSetupChange({ ...setup, hostId });
                   }}
                   onManageComputers={onManageComputers}
@@ -299,9 +377,24 @@ export function NewThread({
                   open={locationOpen && !pending}
                   onOpenChange={setLocationOpen}
                   onChange={directory => {
-                    if (directory !== setup.directory) setSkill(null);
+                    if (directory !== setup.directory) {
+                      setSkill(null);
+                      changePipeline(null);
+                    }
                     onSetupChange({ ...setup, directory });
                   }}
+                />
+                <PipelinePicker
+                  key={`${setup.hostId}:${setup.directory.trim()}`}
+                  hostId={setup.hostId}
+                  directory={setup.directory}
+                  connected={connected}
+                  authorProvider={setup.provider}
+                  statuses={statuses}
+                  api={hostApi.pipelines}
+                  value={pipeline}
+                  disabled={pending}
+                  onChange={changePipeline}
                 />
                 <div className="flex-1" />
                 <PermissionPicker
@@ -318,6 +411,28 @@ export function NewThread({
                 >
                   {error}
                 </p>
+              )}
+              {issues.length > 0 && (
+                <ul
+                  aria-label="Pipeline issues"
+                  className="space-y-1 px-1 text-xs leading-5 text-muted-foreground"
+                >
+                  {issues.map((issue, index) => (
+                    <li key={index} className="[overflow-wrap:anywhere]">
+                      <span
+                        className={
+                          issue.severity === 'error'
+                            ? 'text-error-foreground'
+                            : 'text-warning-foreground'
+                        }
+                      >
+                        {issue.severity === 'error' ? 'Error' : 'Warning'}
+                      </span>{' '}
+                      {issue.message}
+                      {issue.line ? ` (line ${issue.line})` : ''}
+                    </li>
+                  ))}
+                </ul>
               )}
             </form>
           )}
