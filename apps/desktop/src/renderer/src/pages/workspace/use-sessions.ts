@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   Computer,
   DesktopApi,
+  DesktopPipelineRun,
+  DesktopPipelineStepRecord,
   DesktopReview,
   DesktopSession,
   WorkspaceEvent,
@@ -12,7 +14,7 @@ import {
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
-import { entityKey } from '@/shared/lib/host-key';
+import { entityKey, hostKey } from '@/shared/lib/host-key';
 
 const boundApis = new Map<string, DesktopApi>();
 
@@ -47,6 +49,21 @@ export function desktopApi(hostId = 'local'): DesktopApi {
   return bound;
 }
 
+type Revisioned = { id: string; hostId: string; revision: number };
+
+function mergeByRevision<T extends Revisioned>(previous: T[], updates: T[]) {
+  const merged = new Map(previous.map(item => [entityKey(item), item]));
+  let changed = false;
+  for (const item of updates) {
+    const current = merged.get(entityKey(item));
+    if (!current || item.revision > current.revision) {
+      merged.set(entityKey(item), item);
+      changed = true;
+    }
+  }
+  return changed ? [...merged.values()] : previous;
+}
+
 const emptyProviders: ProviderStates = {
   'Claude Code': { status: null, loading: false, error: '' },
   Codex: { status: null, loading: false, error: '' },
@@ -55,6 +72,11 @@ const emptyProviders: ProviderStates = {
 export function useSessions() {
   const [sessions, setSessions] = useState<DesktopSession[]>([]);
   const [reviews, setReviews] = useState<DesktopReview[]>([]);
+  const [pipelineRuns, setPipelineRuns] = useState<DesktopPipelineRun[]>([]);
+  const [pipelineSteps, setPipelineSteps] = useState<
+    DesktopPipelineStepRecord[]
+  >([]);
+  const runRequests = useRef(new Set<string>());
   const [computers, setComputers] = useState<Computer[]>([]);
   const computersRef = useRef<Computer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +121,38 @@ export function useSessions() {
       );
     });
   }, []);
+  const mergePipelineRuns = useCallback((updates: DesktopPipelineRun[]) => {
+    const known = updates.filter(item =>
+      computersRef.current.some(computer => computer.id === item.hostId),
+    );
+    if (known.length > 0)
+      setPipelineRuns(previous => mergeByRevision(previous, known));
+  }, []);
+  const mergePipelineSteps = useCallback(
+    (updates: DesktopPipelineStepRecord[]) => {
+      const known = updates.filter(item =>
+        computersRef.current.some(computer => computer.id === item.hostId),
+      );
+      if (known.length > 0)
+        setPipelineSteps(previous => mergeByRevision(previous, known));
+    },
+    [],
+  );
+  const loadPipelineRun = useCallback(
+    async (hostId: string, runId: string) => {
+      const key = hostKey(runId, hostId);
+      if (runRequests.current.has(key)) return;
+      runRequests.current.add(key);
+      try {
+        const detail = await window.nesvo.pipelines.getRun(hostId, runId);
+        mergePipelineRuns([detail.run]);
+        mergePipelineSteps(detail.steps);
+      } catch {
+        runRequests.current.delete(key);
+      }
+    },
+    [mergePipelineRuns, mergePipelineSteps],
+  );
   const inspectProvider = useCallback(
     async (provider: Provider, hostId = 'local') => {
       const key = `${hostId}/${provider}`;
@@ -158,7 +212,20 @@ export function useSessions() {
       const ids = new Set(updates.map(item => item.id));
       setSessions(current => current.filter(item => ids.has(item.hostId)));
       setReviews(current => current.filter(item => ids.has(item.hostId)));
+      setPipelineRuns(current => current.filter(item => ids.has(item.hostId)));
+      setPipelineSteps(current => current.filter(item => ids.has(item.hostId)));
       for (const computer of updates) {
+        if (
+          computer.status === 'connected' &&
+          computer.capabilities.includes('pipelines') &&
+          !previous.some(
+            item => item.id === computer.id && item.status === 'connected',
+          )
+        )
+          void window.nesvo.pipelines.listRuns(computer.id, {}).then(
+            page => mergePipelineRuns(page.runs),
+            () => undefined,
+          );
         if (
           computer.status === 'connected' &&
           (inspect ||
@@ -179,7 +246,18 @@ export function useSessions() {
     const apply = (event: WorkspaceEvent) => {
       if (event.type === 'session-changed') merge([event.session]);
       else if (event.type === 'review-changed') mergeReviews([event.review]);
+      else if (event.type === 'pipeline-run-changed')
+        mergePipelineRuns([event.run]);
+      else if (event.type === 'pipeline-step-changed')
+        mergePipelineSteps([event.step]);
       else if (event.type === 'host-snapshot') {
+        for (const key of [...runRequests.current])
+          if (
+            event.hostId === 'local'
+              ? !key.includes('/')
+              : key.startsWith(`${event.hostId}/`)
+          )
+            runRequests.current.delete(key);
         setSessions(previous => [
           ...previous.filter(item => item.hostId !== event.hostId),
           ...event.sessions,
@@ -247,7 +325,26 @@ export function useSessions() {
         counters[key] = (counters[key] ?? 0) + 1;
       unsubscribe();
     };
-  }, [attempt, inspectProvider, merge, mergeReviews]);
+  }, [
+    attempt,
+    inspectProvider,
+    merge,
+    mergeReviews,
+    mergePipelineRuns,
+    mergePipelineSteps,
+  ]);
+  useEffect(() => {
+    if (loading) return;
+    for (const session of sessions)
+      if (
+        session.pipelineRunId &&
+        computers.some(
+          computer =>
+            computer.id === session.hostId && computer.status === 'connected',
+        )
+      )
+        void loadPipelineRun(session.hostId, session.pipelineRunId);
+  }, [sessions, computers, loading, loadPipelineRun]);
   const reload = () => {
     setLoading(true);
     setAttempt(value => value + 1);
@@ -279,6 +376,9 @@ export function useSessions() {
   return {
     sessions,
     reviews,
+    pipelineRuns,
+    pipelineSteps,
+    mergePipelineRuns,
     computers,
     loading,
     error,
