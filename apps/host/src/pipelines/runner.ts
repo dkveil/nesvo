@@ -14,7 +14,7 @@ import {
   type StepResult,
   type StepType,
 } from '@nesvo/contracts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import {
@@ -31,6 +31,11 @@ export const NO_AUTHOR_ATTENTION = 'No author session on this host';
 export const EXECUTOR_UNAVAILABLE = 'Executor not available';
 export const MANUAL_GATE_PROVIDER = 'Claude Code';
 export const MANUAL_GATE_MODEL = 'default';
+export const AUTHOR_BUSY_MS = 60_000;
+export const AUTHOR_BUSY_ATTENTION =
+  'The computer was busy with another session';
+export const AUTHOR_UNAVAILABLE_ATTENTION =
+  'The task session is not available on this host.';
 
 export type TurnState =
   | 'none'
@@ -40,15 +45,28 @@ export type TurnState =
   | 'stopped'
   | 'interrupted';
 
+export type TurnKind = 'plan' | 'implement' | 'correction';
+
+export type AuthorTurn =
+  | { runId: string; kind: 'plan' | 'implement'; messageId: string }
+  | { runId: string; kind: 'correction'; prompt: string; messageId: string };
+
 export type AuthorPort = {
-  turnState: (run: PipelineRun) => TurnState;
-  sendTurn: (turn: {
-    runId: string;
-    kind: 'plan' | 'implement' | 'correction';
-    prompt: string;
-    messageId: string;
-  }) => 'sent' | 'busy';
+  turnState: (run: PipelineRun, messageId: string) => TurnState;
+  sendTurn: (turn: AuthorTurn) => 'sent' | 'busy' | 'unavailable';
   stop: (runId: string) => void;
+};
+
+export const turnMessageId = (
+  runId: string,
+  kind: TurnKind,
+  attempt: number,
+): string => {
+  const hex = createHash('sha256')
+    .update(`pipeline-turn:${runId}:${kind}:${attempt}`)
+    .digest('hex');
+  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 
 export type StepExecution = {
@@ -107,7 +125,11 @@ export type RunnerDefinitions = {
   ) => ResolvedPipeline;
 };
 
-export type RunnerClock = { now: () => Date };
+export type RunnerClock = {
+  now: () => Date;
+  setTimer?: (callback: () => void, delayMs: number) => unknown;
+  clearTimer?: (timer: unknown) => void;
+};
 
 export type RunnerPorts = {
   store: RunnerStore;
@@ -138,7 +160,11 @@ export const fileDefinitions: RunnerDefinitions = {
   resolvePipeline,
 };
 
-const systemClock: RunnerClock = { now: () => new Date() };
+const systemClock: RunnerClock = {
+  now: () => new Date(),
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
 
 const TERMINAL_STATUSES: readonly PipelineRunStatus[] = [
   'passed',
@@ -186,10 +212,23 @@ type Move =
   | { kind: 'begin-phase'; phase: StepPhase }
   | { kind: 'status'; status: PipelineRunStatus }
   | { kind: 'attention'; message: string }
-  | { kind: 'finish'; status: 'passed' | 'failed' }
-  | { kind: 'start-step'; step: PipelineStepRecord };
+  | {
+      kind: 'finish';
+      status: 'passed' | 'failed' | 'stopped' | 'interrupted';
+      message?: string;
+    }
+  | { kind: 'start-step'; step: PipelineStepRecord }
+  | { kind: 'send-turn'; turn: 'plan' | 'implement' };
 
-type MoveContext = { turnState: TurnState; hasAuthor: boolean };
+type MoveContext = {
+  turnState: (kind: 'plan' | 'implement') => TurnState;
+  hasAuthor: boolean;
+};
+
+const TURN_LABELS = {
+  plan: 'planning',
+  implement: 'implementation',
+} as const satisfies Record<'plan' | 'implement', string>;
 
 const WAIT: Move = { kind: 'wait' };
 
@@ -216,6 +255,66 @@ const failureAttention = (step: PipelineStepRecord) =>
     pipelineLimits.attention,
   );
 
+const needsPlanningTurn = (pipeline: ResolvedPipeline) =>
+  pipeline.steps.some(
+    step =>
+      step.phase === 'plan' && (step.type === 'agent' || step.type === 'human'),
+  );
+
+const afterImplementation = (run: PipelineRun): Move => {
+  for (const phase of ['pre-done', 'pre-push'] as const)
+    if (phaseIndices(run.pipeline, phase).length > 0)
+      return { kind: 'begin-phase', phase };
+  return { kind: 'finish', status: 'passed' };
+};
+
+const afterPlanning = (run: PipelineRun): Move =>
+  phaseIndices(run.pipeline, 'plan').length > 0
+    ? { kind: 'begin-phase', phase: 'plan' }
+    : { kind: 'status', status: 'implementing' };
+
+const turnMove = (
+  state: TurnState,
+  turn: 'plan' | 'implement',
+  completed: () => Move,
+): Move => {
+  const label = TURN_LABELS[turn];
+  if (state === 'none') return { kind: 'send-turn', turn };
+  if (state === 'completed') return completed();
+  if (state === 'failed')
+    return {
+      kind: 'attention',
+      message: `The ${label} turn failed. Open the session for details.`,
+    };
+  if (state === 'stopped')
+    return {
+      kind: 'finish',
+      status: 'stopped',
+      message: `The ${label} turn was stopped.`,
+    };
+  if (state === 'interrupted')
+    return {
+      kind: 'finish',
+      status: 'interrupted',
+      message: `The ${label} turn was interrupted before it finished.`,
+    };
+  return WAIT;
+};
+
+const authorMove = (run: PipelineRun, context: MoveContext): Move => {
+  if (run.status === 'pending')
+    return needsPlanningTurn(run.pipeline)
+      ? { kind: 'status', status: 'planning' }
+      : afterPlanning(run);
+  if (run.status === 'planning')
+    return turnMove(context.turnState('plan'), 'plan', () => afterPlanning(run));
+  if (run.status === 'implementing')
+    return turnMove(context.turnState('implement'), 'implement', () =>
+      afterImplementation(run),
+    );
+  return WAIT;
+};
+
 const completedPhase = (run: PipelineRun, context: MoveContext): Move => {
   if (!run.sessionId) return { kind: 'finish', status: 'passed' };
   if (!context.hasAuthor)
@@ -235,7 +334,7 @@ function nextMove(
   if (WAITING_STATUSES.includes(run.status)) return WAIT;
   if (run.sessionId && AUTHOR_STATUSES.includes(run.status))
     return context.hasAuthor
-      ? WAIT
+      ? authorMove(run, context)
       : { kind: 'attention', message: NO_AUTHOR_ATTENTION };
   if (run.status === 'pending')
     return run.phase && phaseIndices(run.pipeline, run.phase).length > 0
@@ -269,6 +368,7 @@ function nextMove(
 }
 
 type PassState = { again: boolean; done: Promise<void> };
+type BusyTurn = { timer: unknown; expired: boolean };
 type ActiveStep = {
   controller: AbortController;
   done: Promise<void>;
@@ -285,6 +385,7 @@ export class PipelineRunner {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
+  private readonly busy = new Map<string, BusyTurn>();
   private readonly pending = new Set<Promise<unknown>>();
   private closed = false;
 
@@ -401,6 +502,7 @@ export class PipelineRunner {
         finishedAt: now,
       };
       if (!this.store.replaceRun(stopped, run.revision)) continue;
+      this.clearBusy(runId);
       this.emit({ type: 'pipeline-run-changed', run: stopped });
       if (run.sessionId) this.author?.stop(runId);
       this.active.get(runId)?.controller.abort('stop');
@@ -417,7 +519,7 @@ export class PipelineRunner {
     const ids = this.store.unfinishedRunIds();
     for (const id of ids) {
       const run = this.store.getRun(id);
-      if (run && run.status === 'pending' && !run.sessionId)
+      if (run && run.status === 'pending')
         this.writeRun(run, { status: 'interrupted', finishedAt: this.timestamp() });
     }
     const passes = Promise.resolve(this.evidence.stopOrphans?.())
@@ -428,8 +530,100 @@ export class PipelineRunner {
     return passes;
   }
 
+  waitingForIdle(): string[] {
+    return [...this.busy.entries()]
+      .filter(([, turn]) => !turn.expired)
+      .map(([runId]) => runId);
+  }
+
+  resume(runId: string): PipelineRun {
+    const run = this.store.getRun(runId);
+    if (!run) throw new PipelineRunError('not-found', 'Pipeline run not found.');
+    if (run.status !== 'interrupted' && run.status !== 'needs-attention')
+      throw new PipelineRunError(
+        'invalid-request',
+        'Only an interrupted run or a run that needs attention can be resumed.',
+      );
+    const latest = latestAttempts(this.store.stepsForRun(runId));
+    const uncertain = [...latest.values()].find(
+      step => step.state === 'uncertain',
+    );
+    if (uncertain)
+      throw new PipelineRunError(
+        'invalid-request',
+        `Step \`${uncertain.name}\` may already have run. Mark it done or run it again.`,
+      );
+    const active = this.store.activeRunForDirectory(run.projectRoot);
+    if (active && active.id !== run.id)
+      throw new PipelineRunError(
+        'busy',
+        'A pipeline run is already active for this project. Stop it or wait until it ends.',
+      );
+    if (this.closed)
+      throw new PipelineRunError('unavailable', 'The host is shutting down.');
+    const turn = (kind: 'plan' | 'implement'): TurnState =>
+      run.sessionId && this.author
+        ? this.author.turnState(run, turnMessageId(run.id, kind, 1))
+        : 'none';
+    const retried = run.phase
+      ? phaseIndices(run.pipeline, run.phase).flatMap(index => {
+          const step = latest.get(index);
+          return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
+        })
+      : [];
+    const status = resumeStatus(run, latest, retried.length > 0, turn);
+    const awaited =
+      status === 'planning' ? 'plan' : status === 'implementing' ? 'implement' : null;
+    if (awaited && DEAD_TURN_STATES.includes(turn(awaited)))
+      throw new PipelineRunError(
+        'invalid-request',
+        `The ${TURN_LABELS[awaited]} turn ended before it finished. Continue in the session; the run does not repeat a turn.`,
+      );
+    const now = this.timestamp();
+    const next: PipelineRun = {
+      ...run,
+      revision: run.revision + 1,
+      status,
+      attention: null,
+      finishedAt: null,
+      updatedAt: now,
+    };
+    const created = retried.map(
+      (step): PipelineStepRecord => ({
+        ...step,
+        id: randomUUID(),
+        revision: 1,
+        state: 'pending',
+        attempt: step.attempt + 1,
+        result: null,
+        sessionId: null,
+        reviewId: null,
+        reviewVersion: null,
+        skip: null,
+        updatedAt: now,
+        startedAt: null,
+      }),
+    );
+    const written = this.store.transact(() => {
+      if (!this.store.replaceRun(next, run.revision)) return false;
+      for (const step of created)
+        if (!this.store.insertStep(step)) throw new Error('Step row exists.');
+      return true;
+    });
+    if (!written)
+      throw new PipelineRunError(
+        'busy',
+        'The run changed while it was being resumed. Try again.',
+      );
+    this.emit({ type: 'pipeline-run-changed', run: next });
+    for (const step of created) this.emit({ type: 'pipeline-step-changed', step });
+    this.track(this.advanceRun(runId));
+    return next;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
+    for (const runId of [...this.busy.keys()]) this.clearBusy(runId);
     for (const step of this.active.values()) step.controller.abort('shutdown');
     while (this.pending.size > 0 || this.active.size > 0)
       await Promise.all([
@@ -444,13 +638,16 @@ export class PipelineRunner {
       const run = this.store.getRun(runId);
       if (!run) return;
       const steps = this.store.stepsForRun(runId);
+      const author = this.author;
       const move = nextMove(run, steps, {
-        turnState:
-          run.sessionId && this.author ? this.author.turnState(run) : 'none',
-        hasAuthor: Boolean(this.author),
+        turnState: kind =>
+          run.sessionId && author
+            ? author.turnState(run, turnMessageId(run.id, kind, 1))
+            : 'none',
+        hasAuthor: Boolean(author),
       });
       if (move.kind === 'wait' || this.closed) return;
-      this.perform(run, steps, move);
+      if (!this.perform(run, steps, move)) return;
     }
   }
 
@@ -458,20 +655,76 @@ export class PipelineRunner {
     run: PipelineRun,
     steps: readonly PipelineStepRecord[],
     move: Exclude<Move, { kind: 'wait' }>,
-  ): void {
-    if (move.kind === 'begin-phase') return this.beginPhase(run, move.phase);
-    if (move.kind === 'status') return void this.writeRun(run, { status: move.status });
-    if (move.kind === 'attention')
-      return void this.writeRun(run, {
+  ): boolean {
+    if (move.kind === 'begin-phase') this.beginPhase(run, move.phase);
+    else if (move.kind === 'status') this.writeRun(run, { status: move.status });
+    else if (move.kind === 'attention')
+      this.writeRun(run, {
         status: 'needs-attention',
         attention: move.message,
       });
-    if (move.kind === 'finish')
-      return void this.writeRun(run, {
+    else if (move.kind === 'finish')
+      this.writeRun(run, {
         status: move.status,
         finishedAt: this.timestamp(),
+        ...(move.message ? { attention: move.message } : {}),
       });
-    this.startStep(run, steps, move.step);
+    else if (move.kind === 'send-turn') return this.sendTurn(run, move.turn);
+    else this.startStep(run, steps, move.step);
+    return true;
+  }
+
+  private sendTurn(run: PipelineRun, turn: 'plan' | 'implement'): boolean {
+    const result = this.author!.sendTurn({
+      runId: run.id,
+      kind: turn,
+      messageId: turnMessageId(run.id, turn, 1),
+    });
+    if (result === 'sent') {
+      this.clearBusy(run.id);
+      return true;
+    }
+    if (result === 'unavailable') {
+      this.clearBusy(run.id);
+      this.writeRun(run, {
+        status: 'needs-attention',
+        attention: AUTHOR_UNAVAILABLE_ATTENTION,
+      });
+      return true;
+    }
+    const waiting = this.busy.get(run.id);
+    if (waiting?.expired) {
+      this.clearBusy(run.id);
+      this.writeRun(run, {
+        status: 'needs-attention',
+        attention: AUTHOR_BUSY_ATTENTION,
+      });
+      return true;
+    }
+    if (!waiting) {
+      const entry: BusyTurn = { timer: null, expired: false };
+      this.busy.set(run.id, entry);
+      entry.timer = this.setTimer(() => {
+        if (this.busy.get(run.id) !== entry) return;
+        entry.expired = true;
+        this.track(this.advanceRun(run.id));
+      }, AUTHOR_BUSY_MS);
+    }
+    return false;
+  }
+
+  private setTimer(callback: () => void, delayMs: number): unknown {
+    return this.clock.setTimer
+      ? this.clock.setTimer(callback, delayMs)
+      : setTimeout(callback, delayMs);
+  }
+
+  private clearBusy(runId: string): void {
+    const entry = this.busy.get(runId);
+    if (!entry) return;
+    this.busy.delete(runId);
+    if (this.clock.setTimer) this.clock.clearTimer?.(entry.timer);
+    else clearTimeout(entry.timer as ReturnType<typeof setTimeout>);
   }
 
   private beginPhase(run: PipelineRun, phase: StepPhase): void {
@@ -715,6 +968,42 @@ export class PipelineRunner {
     this.pending.add(settled);
     void settled.finally(() => this.pending.delete(settled));
   }
+}
+
+const RESUMABLE_STEP_STATES: readonly PipelineStepState[] = [
+  'interrupted',
+  'failed',
+  'error',
+  'blocked',
+];
+const DEAD_TURN_STATES: readonly TurnState[] = [
+  'failed',
+  'stopped',
+  'interrupted',
+];
+
+function resumeStatus(
+  run: PipelineRun,
+  latest: ReadonlyMap<number, PipelineStepRecord>,
+  retrying: boolean,
+  turn: (kind: 'plan' | 'implement') => TurnState,
+): PipelineRunStatus {
+  const begun = (phase: StepPhase) =>
+    phaseIndices(run.pipeline, phase).some(index => latest.has(index));
+  if (run.phase === 'pre-done' || run.phase === 'pre-push') return 'checking';
+  if (!run.sessionId)
+    return run.phase && begun(run.phase) ? 'checking' : 'pending';
+  if (turn('implement') !== 'none') return 'implementing';
+  if (run.phase === 'plan' && begun('plan'))
+    return retrying ||
+      phaseIndices(run.pipeline, 'plan').some(index => {
+        const step = latest.get(index);
+        return !step || !COMPLETE_STEP_STATES.includes(step.state);
+      })
+      ? 'checking'
+      : 'implementing';
+  if (turn('plan') !== 'none') return 'planning';
+  return 'pending';
 }
 
 function earlierOutputs(
