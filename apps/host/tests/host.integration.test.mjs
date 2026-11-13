@@ -84,6 +84,7 @@ function launch(directory, pidFile) {
   const reviewWaiters = new Set();
   const observedReviews = [];
   const scheduledEvents = [];
+  const pipelineEvents = [];
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -116,6 +117,8 @@ function launch(directory, pidFile) {
         } else reviewEvents.push(message.review);
       } else if (message.type.startsWith('scheduled-job-') && !message.id) {
         scheduledEvents.push(message);
+      } else if (message.type.startsWith('pipeline-') && !message.id) {
+        pipelineEvents.push(message);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -157,6 +160,7 @@ function launch(directory, pidFile) {
     observed,
     observedReviews,
     scheduledEvents,
+    pipelineEvents,
     request,
     send,
     error: () => stderr,
@@ -4937,7 +4941,7 @@ test(
     });
 
     await t.test(
-      'every pipeline command except definition reads answers unavailable',
+      'every pipeline command the host does not serve yet answers unavailable',
       async () => {
         const runId = randomUUID();
         const requests = [
@@ -4955,9 +4959,6 @@ test(
               gateModel: 'sonnet',
             },
           ],
-          ['run-pipeline-steps', { specPath: 'task.md', directory }],
-          ['list-pipeline-runs', { cursor: null, limit: 20 }],
-          ['get-pipeline-run', { runId }],
           [
             'decide-pipeline-gate',
             {
@@ -4975,7 +4976,6 @@ test(
             { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
           ],
           ['resume-pipeline-run', { runId }],
-          ['stop-pipeline-run', { runId }],
           [
             'save-pipeline-definition',
             {
@@ -4991,10 +4991,6 @@ test(
             { directory, scope: 'project', kind: 'step', name: 'unit-tests' },
           ],
           ['remove-pipeline-worktree', { runId }],
-          [
-            'read-pipeline-evidence',
-            { runId, stepId: randomUUID(), path: 'log.txt' },
-          ],
           [
             'pipeline-metrics',
             { directory: null, since: '2026-11-01T00:00:00.000Z' },
@@ -6714,6 +6710,761 @@ test(
       error =>
         error instanceof modules.OwnedProcessError &&
         error.code === 'spawn-failed',
+    );
+  },
+);
+
+const loadPipelineRunnerModules = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'pipeline-runner-modules');
+  const entries = ['pipelines/runner.ts', 'pipelines/store.ts'];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+test(
+  'pipeline runner executes command and action steps through one serialized entry point',
+  { timeout: 240_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-runner-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      MY_TOKEN: process.env.MY_TOKEN,
+    };
+    const owned = new Set();
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      for (const pid of owned)
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {}
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, { recursive: true, force: true });
+    });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.MY_TOKEN = 'token-value-1234';
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    const stepFile = ({ body, ...fields }) =>
+      `---\n${Object.entries(fields)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\n${body}\n`;
+    const createProject = async (name, steps, pipelines) => {
+      const project = join(directory, name);
+      await mkdir(join(project, '.git'), { recursive: true });
+      for (const item of steps)
+        await write(
+          join(project, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+          stepFile({ phase: 'pre-done', ...item }),
+        );
+      for (const [pipeline, names] of Object.entries(pipelines)) {
+        await write(
+          join(project, '.agents', 'pipelines', 'pipelines', `${pipeline}.md`),
+          `---\nname: ${pipeline}\nsteps: [${names.join(', ')}]\n---\n`,
+        );
+        await write(
+          join(project, '.agents', 'tasks', `${pipeline}.md`),
+          `---\npipeline: ${pipeline}\ntitle: Run ${pipeline}\n---\n## Goal\nRun the ${pipeline} steps.\n`,
+        );
+      }
+      return project;
+    };
+    const alivePid = pid => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const readPid = async path => {
+      const pid = Number((await readFile(path, 'utf8')).trim());
+      owned.add(pid);
+      return pid;
+    };
+    const waitForFile = async path => {
+      const deadline = Date.now() + 15_000;
+      while (true) {
+        try {
+          return await readFile(path, 'utf8');
+        } catch {
+          assert.ok(Date.now() < deadline, `Missing ${path}`);
+          await delay(25);
+        }
+      }
+    };
+    const gone = async pid => {
+      const deadline = Date.now() + 8_000;
+      while (alivePid(pid) && Date.now() < deadline) await delay(30);
+      assert.equal(alivePid(pid), false, `Step process ${pid} leaked`);
+      owned.delete(pid);
+    };
+
+    const project = join(directory, 'main');
+    const pidFile = name => join(directory, `${name}.pid`);
+    await createProject(
+      'main',
+      [
+        { name: 'greet', type: 'command', body: 'echo ok' },
+        {
+          name: 'broken',
+          type: 'command',
+          on_fail: 'stop',
+          body: 'echo boom >&2\nexit 3',
+        },
+        { name: 'later', type: 'command', body: 'echo later' },
+        {
+          name: 'emit',
+          type: 'action',
+          body: 'echo preparing\necho \'{"url":"https://example.test/change/1","label":"ready"}\'',
+        },
+        {
+          name: 'consume',
+          type: 'command',
+          body: `test "$NESVO_OUTPUT_EMIT_URL" = "https://example.test/change/1"\ntest "$NESVO_OUTPUT_EMIT_LABEL" = "ready"\ntest "$NESVO_PROJECT_ROOT" = "${project}"\ntest "$CI" = "1"\necho "root=$NESVO_PROJECT_ROOT step=$NESVO_STEP_NAME"`,
+        },
+        {
+          name: 'leak',
+          type: 'command',
+          body: 'echo "key sk-abcdefghijklmnopqrstuv"\necho "inherited=${MY_TOKEN:-absent}"',
+        },
+        {
+          name: 'listed',
+          type: 'command',
+          needs: '[env:MY_TOKEN]',
+          body: 'echo "length=${#MY_TOKEN}"\necho "value=$MY_TOKEN"',
+        },
+        { name: 'review', type: 'agent', body: 'Review the change.' },
+        { name: 'approve', type: 'human', body: 'Approve the change.' },
+        {
+          name: 'missing',
+          type: 'command',
+          needs: '[env:MISSING_RUNNER_VALUE]',
+          body: 'echo never',
+        },
+        {
+          name: 'slow',
+          type: 'command',
+          timeout: '2s',
+          body: `echo $$ > "${pidFile('slow')}"\nsleep 30`,
+        },
+        {
+          name: 'block',
+          type: 'command',
+          timeout: '10m',
+          body: `echo $$ > "${pidFile('block')}"\nsleep 60`,
+        },
+      ],
+      {
+        failing: ['greet', 'broken', 'later'],
+        full: ['emit', 'consume', 'leak', 'listed', 'review', 'approve'],
+        missing: ['missing'],
+        slow: ['slow'],
+        blocking: ['block'],
+      },
+    );
+    const dataDirectory = join(directory, 'data');
+    let host = launch(dataDirectory, join(directory, 'pids.json'));
+    hosts.push(host);
+    const start = async (root, name, phase) => {
+      const response = await host.request('run-pipeline-steps', {
+        directory: root,
+        specPath: join('.agents', 'tasks', `${name}.md`),
+        ...(phase ? { phase } : {}),
+      });
+      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      return response.run;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-pipeline-run', { runId });
+      assert.equal(
+        response.type,
+        'pipeline-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const waitFor = async (runId, check, description) => {
+      const deadline = Date.now() + 20_000;
+      while (true) {
+        const current = await detail(runId);
+        if (check(current)) return current;
+        assert.ok(
+          Date.now() < deadline,
+          `${description}: ${JSON.stringify({ run: current.run.status, attention: current.run.attention, steps: current.steps.map(step => [step.name, step.state]) })}`,
+        );
+        await delay(50);
+      }
+    };
+    const settled = runId =>
+      waitFor(
+        runId,
+        ({ run }) => !['pending', 'checking'].includes(run.status),
+        'Run did not settle',
+      );
+    const stepNamed = (current, name) =>
+      current.steps.find(step => step.name === name);
+    const evidenceText = async (runId, step) => {
+      const response = await host.request('read-pipeline-evidence', {
+        runId,
+        stepId: step.id,
+        path: step.result.evidence[0].path,
+      });
+      assert.equal(
+        response.type,
+        'pipeline-evidence',
+        JSON.stringify(response),
+      );
+      assert.equal(response.evidence.status, 'text');
+      return response.evidence.text;
+    };
+
+    await t.test(
+      'a failing command with on_fail stop fails the run',
+      async () => {
+        const run = await start(project, 'failing');
+        assert.equal(run.status, 'pending');
+        assert.equal(run.sessionId, null);
+        assert.equal(run.projectRoot, project);
+        assert.equal(run.phase, 'pre-done');
+        const current = await settled(run.id);
+        assert.equal(current.run.status, 'failed');
+        assert.ok(current.run.finishedAt);
+        assert.equal(current.run.currentStepIndex, 1);
+        assert.deepEqual(
+          current.steps.map(step => [step.name, step.state]),
+          [
+            ['greet', 'passed'],
+            ['broken', 'failed'],
+            ['later', 'pending'],
+          ],
+        );
+        const greet = stepNamed(current, 'greet');
+        assert.equal(greet.result.status, 'pass');
+        assert.deepEqual(
+          greet.result.evidence.map(item => item.kind),
+          ['log'],
+        );
+        assert.match(await evidenceText(run.id, greet), /^ok\n$/);
+        const broken = stepNamed(current, 'broken');
+        assert.equal(broken.result.status, 'fail');
+        assert.match(broken.result.summary, /^Exit code 3\./);
+        assert.match(broken.result.summary, /boom/);
+        const changes = host.pipelineEvents.filter(
+          event =>
+            event.type === 'pipeline-step-changed' &&
+            event.step.id === greet.id,
+        );
+        assert.deepEqual(
+          changes.map(event => [event.step.state, event.step.revision]),
+          [
+            ['pending', 1],
+            ['running', 2],
+            ['passed', 3],
+          ],
+        );
+        const runChanges = host.pipelineEvents
+          .filter(
+            event =>
+              event.type === 'pipeline-run-changed' && event.run.id === run.id,
+          )
+          .map(event => event.run.revision);
+        assert.deepEqual(
+          runChanges,
+          runChanges.toSorted((left, right) => left - right),
+        );
+        assert.equal(runChanges.at(-1), current.run.revision);
+      },
+    );
+
+    await t.test(
+      'actions pass outputs, secrets are filtered and missing executors skip',
+      async () => {
+        const run = await start(project, 'full');
+        const current = await settled(run.id);
+        assert.equal(current.run.status, 'passed', JSON.stringify(current));
+        const emit = stepNamed(current, 'emit');
+        assert.equal(emit.state, 'done');
+        assert.equal(emit.result.status, 'done');
+        assert.deepEqual(emit.result.outputs, {
+          url: 'https://example.test/change/1',
+          label: 'ready',
+        });
+        const consume = stepNamed(current, 'consume');
+        assert.equal(consume.state, 'passed', consume.result?.summary);
+        assert.match(
+          await evidenceText(run.id, consume),
+          new RegExp(`root=${project} step=consume`),
+        );
+        const leak = await evidenceText(run.id, stepNamed(current, 'leak'));
+        assert.match(leak, /key \[redacted\]/);
+        assert.doesNotMatch(leak, /sk-abcdef/);
+        assert.match(leak, /inherited=absent/);
+        const listed = await evidenceText(run.id, stepNamed(current, 'listed'));
+        assert.match(listed, /length=16/);
+        assert.match(listed, /value=\[redacted\]/);
+        assert.doesNotMatch(listed, /token-value-1234/);
+        for (const name of ['review', 'approve']) {
+          const skipped = stepNamed(current, name);
+          assert.equal(skipped.state, 'skipped');
+          assert.equal(skipped.result, null);
+          assert.equal(skipped.skip.reason, 'Executor not available');
+        }
+      },
+    );
+
+    await t.test('a missing environment variable blocks the step', async () => {
+      const run = await start(project, 'missing');
+      const current = await settled(run.id);
+      assert.equal(current.run.status, 'needs-attention');
+      assert.equal(
+        current.run.attention,
+        'Environment variable MISSING_RUNNER_VALUE is not set on this computer',
+      );
+      const missing = stepNamed(current, 'missing');
+      assert.equal(missing.state, 'blocked');
+      assert.equal(missing.result.status, 'blocked');
+      assert.equal(missing.startedAt, null);
+    });
+
+    await t.test(
+      'a timed out command fails and its process is gone',
+      async () => {
+        const run = await start(project, 'slow');
+        const pid = await readPid(
+          await waitForFile(pidFile('slow')).then(() => pidFile('slow')),
+        );
+        const current = await settled(run.id);
+        assert.equal(current.run.status, 'failed');
+        const slow = stepNamed(current, 'slow');
+        assert.equal(slow.state, 'failed');
+        assert.match(slow.result.summary, /^Timed out after 2s/);
+        await gone(pid);
+      },
+    );
+
+    await t.test(
+      'a running command is recorded before it exits, blocks a second run and stops',
+      async () => {
+        const run = await start(project, 'blocking');
+        await waitForFile(pidFile('block'));
+        const pid = await readPid(pidFile('block'));
+        const database = new DatabaseSync(join(dataDirectory, 'nesvo.sqlite'), {
+          readOnly: true,
+        });
+        try {
+          const row = database
+            .prepare(
+              'SELECT state, started_at FROM pipeline_steps WHERE run_id = ?',
+            )
+            .get(run.id);
+          assert.equal(row.state, 'running');
+          assert.ok(Date.parse(row.started_at) <= Date.now());
+        } finally {
+          database.close();
+        }
+        assert.equal(alivePid(pid), true);
+        const second = await host.request('run-pipeline-steps', {
+          directory: project,
+          specPath: join(project, '.agents', 'tasks', 'failing.md'),
+        });
+        assert.equal(second.type, 'error');
+        assert.equal(second.code, 'busy');
+        const stopped = await host.request('stop-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(stopped.type, 'pipeline-run');
+        assert.equal(stopped.run.status, 'stopped');
+        assert.ok(stopped.run.finishedAt);
+        const current = await waitFor(
+          run.id,
+          value => value.steps[0].state === 'interrupted',
+          'Step was not interrupted',
+        );
+        assert.equal(current.run.status, 'stopped');
+        assert.equal(current.steps[0].result, null);
+        await gone(pid);
+        const again = await host.request('stop-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(again.run.revision, current.run.revision);
+        const unknown = await host.request('stop-pipeline-run', {
+          runId: randomUUID(),
+        });
+        assert.equal(unknown.code, 'not-found');
+      },
+    );
+
+    await t.test('requests are validated and runs page', async () => {
+      const invalid = await host.request('run-pipeline-steps', {
+        directory: join(directory, 'absent'),
+        specPath: 'task.md',
+      });
+      assert.equal(invalid.code, 'invalid-directory');
+      const missingSpec = await host.request('run-pipeline-steps', {
+        directory: project,
+        specPath: '.agents/tasks/none.md',
+      });
+      assert.equal(missingSpec.code, 'invalid-request');
+      const noPhase = await host.request('run-pipeline-steps', {
+        directory: project,
+        specPath: '.agents/tasks/full.md',
+        phase: 'pre-push',
+      });
+      assert.equal(noPhase.code, 'invalid-request');
+      assert.match(noPhase.message, /no steps in phase pre-push/);
+      const first = await host.request('list-pipeline-runs', { limit: 2 });
+      assert.equal(first.type, 'pipeline-runs');
+      assert.equal(first.page.runs.length, 2);
+      assert.ok(first.page.nextCursor);
+      const second = await host.request('list-pipeline-runs', {
+        cursor: first.page.nextCursor,
+        limit: 100,
+      });
+      assert.equal(second.page.runs.length, 3);
+      assert.equal(second.page.nextCursor, null);
+      const runId = first.page.runs[0].id;
+      const { steps } = await detail(runId);
+      const traversal = await host.request('read-pipeline-evidence', {
+        runId,
+        stepId: steps[0].id,
+        path: '../attempt-1.log',
+      });
+      assert.equal(traversal.code, 'invalid-request');
+      const absent = await host.request('read-pipeline-evidence', {
+        runId,
+        stepId: randomUUID(),
+        path: 'attempt-1.log',
+      });
+      assert.equal(absent.code, 'not-found');
+      const unknownRun = await host.request('get-pipeline-run', {
+        runId: randomUUID(),
+      });
+      assert.equal(unknownRun.code, 'not-found');
+    });
+
+    await t.test(
+      'the portability fixture produces the expected results',
+      async () => {
+        const fixture = join(directory, 'portability');
+        const agents = join(fixture, '.agents');
+        await mkdir(join(fixture, '.git'), { recursive: true });
+        await write(
+          join(agents, 'pipelines', 'steps', 'check.md'),
+          '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
+        );
+        await write(
+          join(agents, 'pipelines', 'steps', 'approve.md'),
+          '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
+        );
+        await write(
+          join(agents, 'pipelines', 'pipelines', 'portability.md'),
+          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+        );
+        await write(
+          join(agents, 'tasks', 'portability-spec.md'),
+          '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+        );
+        const expected = {
+          'pre-done': [
+            { name: 'check', status: 'pass', evidenceKinds: ['log'] },
+          ],
+          'pre-push': [
+            { name: 'approve', status: 'skipped', evidenceKinds: [] },
+          ],
+        };
+        const actual = {};
+        for (const phase of Object.keys(expected)) {
+          const response = await host.request('run-pipeline-steps', {
+            directory: fixture,
+            specPath: '.agents/tasks/portability-spec.md',
+            phase,
+          });
+          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          const current = await settled(response.run.id);
+          assert.equal(current.run.status, 'passed');
+          actual[phase] = current.steps.map(step => ({
+            name: step.name,
+            status: step.result?.status ?? step.state,
+            evidenceKinds: step.result?.evidence.map(item => item.kind) ?? [],
+          }));
+        }
+        assert.deepEqual(actual, expected);
+        console.log(JSON.stringify({ portability: actual }));
+      },
+    );
+
+    await t.test(
+      'a restart interrupts a running command and leaves a running action uncertain',
+      async () => {
+        const marks = join(directory, 'marks');
+        await mkdir(marks);
+        const commandProject = await createProject(
+          'restart-command',
+          [
+            {
+              name: 'hold',
+              type: 'command',
+              timeout: '10m',
+              body: `echo run >> "${join(marks, 'command-count')}"\necho $$ > "${join(marks, 'command.pid')}"\nsleep 60`,
+            },
+          ],
+          { hold: ['hold'] },
+        );
+        const actionProject = await createProject(
+          'restart-action',
+          [
+            {
+              name: 'publish',
+              type: 'action',
+              timeout: '10m',
+              body: `if [ -f "${join(marks, 'started')}" ]; then touch "${join(marks, 'replayed')}"; fi\ntouch "${join(marks, 'started')}"\necho $$ > "${join(marks, 'action.pid')}"\nsleep 60`,
+            },
+          ],
+          { publish: ['publish'] },
+        );
+        const commandRun = await start(commandProject, 'hold');
+        const actionRun = await start(actionProject, 'publish');
+        await waitForFile(join(marks, 'command.pid'));
+        await waitForFile(join(marks, 'action.pid'));
+        const pids = [
+          await readPid(join(marks, 'command.pid')),
+          await readPid(join(marks, 'action.pid')),
+        ];
+        host.child.kill('SIGKILL');
+        await host.exited;
+        for (const pid of pids) {
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {}
+          await gone(pid);
+        }
+        host = launch(dataDirectory, join(directory, 'pids-restart.json'));
+        hosts.push(host);
+        const command = await detail(commandRun.id);
+        assert.equal(command.run.status, 'interrupted');
+        assert.equal(command.steps[0].state, 'interrupted');
+        const action = await detail(actionRun.id);
+        assert.equal(action.run.status, 'needs-attention');
+        assert.equal(action.run.attention, 'External action may have run.');
+        assert.equal(action.steps[0].state, 'uncertain');
+        await delay(1_500);
+        assert.equal(
+          (await readFile(join(marks, 'command-count'), 'utf8')).trim(),
+          'run',
+        );
+        await assert.rejects(readFile(join(marks, 'replayed')));
+        assert.deepEqual(await detail(actionRun.id), action);
+        assert.deepEqual(await detail(commandRun.id), command);
+        await host.stop();
+      },
+    );
+
+    await t.test(
+      'concurrent advance calls start each step once, in order, and collapse into one more pass',
+      async () => {
+        const isolated = join(directory, 'in-process');
+        const bootstrap = launch(
+          isolated,
+          join(directory, 'pids-bootstrap.json'),
+        );
+        hosts.push(bootstrap);
+        assert.equal((await bootstrap.request('health')).type, 'health');
+        await bootstrap.stop();
+        const { PipelineRunner, PipelineRunStore } =
+          await loadPipelineRunnerModules(directory);
+        const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
+        t.after(() => database.close());
+        const base = new PipelineRunStore(database);
+        let getRunCalls = 0;
+        let onGetRun = null;
+        const store = new Proxy(base, {
+          get(target, key) {
+            if (key === 'getRun')
+              return id => {
+                getRunCalls++;
+                onGetRun?.(id);
+                return target.getRun(id);
+              };
+            const value = target[key];
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+        const spawned = [];
+        const held = new Map();
+        let runner;
+        const result = (step, status) => ({
+          name: step.name,
+          type: step.type,
+          phase: step.phase,
+          status,
+          summary: 'Fixture result.',
+          evidence: [],
+          outputs: {},
+          startedAt: step.startedAt,
+          finishedAt: new Date().toISOString(),
+          durationMs: 0,
+          cost: {
+            usd: null,
+            inputTokens: null,
+            outputTokens: null,
+            provider: null,
+          },
+          attempt: step.attempt,
+        });
+        const command = async ({ run, step }) => {
+          spawned.push([run.id, step.index]);
+          for (let index = 0; index < 5; index++)
+            void runner.advanceRun(run.id);
+          if (run.specTitle === 'Held')
+            await new Promise(resolve => held.set(run.id, resolve));
+          else await delay(5);
+          return { kind: 'result', result: result(step, 'pass') };
+        };
+        const skip = () =>
+          Promise.resolve({
+            kind: 'skipped',
+            reason: 'Executor not available',
+          });
+        runner = new PipelineRunner({
+          store,
+          emit: () => undefined,
+          evidence: { write: () => Promise.resolve('attempt-1.log') },
+          stepExecutors: { command, action: command, human: skip, agent: skip },
+        });
+        const now = new Date().toISOString();
+        const definition = name => ({
+          name,
+          type: 'command',
+          phase: 'pre-done',
+          skill: null,
+          timeout: '15m',
+          retries: 0,
+          on_fail: 'stop',
+          needs: [],
+          body: 'true',
+          source: {
+            scope: 'project',
+            path: join(isolated, `${name}.md`),
+            contentHash: 'a'.repeat(64),
+          },
+          notes: [],
+        });
+        const insert = (title, names) => {
+          const run = {
+            id: randomUUID(),
+            revision: 1,
+            pipeline: {
+              name: 'ordered',
+              description: '',
+              body: '',
+              source: {
+                scope: 'project',
+                path: join(isolated, 'ordered.md'),
+                contentHash: 'b'.repeat(64),
+              },
+              notes: [],
+              steps: names.map(definition),
+            },
+            specPath: join(isolated, 'task.md'),
+            specHash: 'c'.repeat(64),
+            specTitle: title,
+            sessionId: null,
+            directory: isolated,
+            projectRoot: join(isolated, title),
+            isolation: null,
+            gateProvider: 'Claude Code',
+            gateModel: 'default',
+            status: 'pending',
+            phase: 'pre-done',
+            currentStepIndex: null,
+            attention: null,
+            createdAt: now,
+            updatedAt: now,
+            finishedAt: null,
+          };
+          assert.equal(base.insertRun(run), true);
+          return run;
+        };
+        const ordered = insert('Ordered', ['first', 'second', 'third']);
+        await Promise.all(
+          Array.from({ length: 20 }, () => runner.advanceRun(ordered.id)),
+        );
+        await waitUntil(
+          () => base.getRun(ordered.id).status === 'passed',
+          'The ordered run did not pass',
+        );
+        assert.deepEqual(
+          spawned.filter(([id]) => id === ordered.id).map(([, index]) => index),
+          [0, 1, 2],
+        );
+        assert.deepEqual(
+          base
+            .stepsForRun(ordered.id)
+            .map(step => [step.index, step.attempt, step.state]),
+          [
+            [0, 1, 'passed'],
+            [1, 1, 'passed'],
+            [2, 1, 'passed'],
+          ],
+        );
+        const holding = insert('Held', ['only']);
+        void runner.advanceRun(holding.id);
+        await waitUntil(
+          () => held.has(holding.id),
+          'The held step did not start',
+        );
+        await delay(20);
+        getRunCalls = 0;
+        await Promise.all(
+          Array.from({ length: 20 }, () => runner.advanceRun(holding.id)),
+        );
+        assert.equal(getRunCalls, 1);
+        getRunCalls = 0;
+        let nested = false;
+        onGetRun = id => {
+          if (nested || id !== holding.id) return;
+          nested = true;
+          void runner.advanceRun(holding.id);
+        };
+        await runner.advanceRun(holding.id);
+        onGetRun = null;
+        assert.equal(getRunCalls, 2);
+        assert.equal(spawned.filter(([id]) => id === holding.id).length, 1);
+        held.get(holding.id)();
+        await waitUntil(
+          () => base.getRun(holding.id).status === 'passed',
+          'The held run did not pass',
+        );
+        await runner.close();
+        assert.equal(spawned.filter(([id]) => id === holding.id).length, 1);
+      },
     );
   },
 );

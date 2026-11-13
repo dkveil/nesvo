@@ -26,6 +26,14 @@ import {
 import { ProviderUsageService } from './providers/usage-service';
 import { PipelineRunStore } from './pipelines/store';
 import { DefinitionError, loadCatalog } from './pipelines/definitions';
+import { EvidenceError, EvidenceStore } from './pipelines/evidence';
+import {
+  PipelineRunError,
+  PipelineRunner,
+  unavailableExecutor,
+} from './pipelines/runner';
+import { actionExecutor } from './pipelines/steps/action';
+import { commandExecutor } from './pipelines/steps/command';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -50,9 +58,14 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'delete-pipeline-definition',
   'remove-pipeline-worktree',
 ]);
-const PIPELINE_DEFINITION_METHODS = new Set<HostRequest['method']>([
+const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'list-pipeline-definitions',
   'validate-pipeline-definitions',
+  'run-pipeline-steps',
+  'list-pipeline-runs',
+  'get-pipeline-run',
+  'stop-pipeline-run',
+  'read-pipeline-evidence',
 ]);
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
   'pipelines',
@@ -123,6 +136,28 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }),
         service => Effect.promise(() => service.close()),
       );
+      const evidence = new EvidenceStore(directory, id =>
+        pipelineRunStore.getStep(id),
+      );
+      const pipelines = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const runner = new PipelineRunner({
+            store: pipelineRunStore,
+            emit,
+            evidence,
+            stepExecutors: {
+              command: commandExecutor,
+              action: actionExecutor,
+              human: unavailableExecutor,
+              agent: unavailableExecutor,
+            },
+          });
+          void runner.recover();
+          return runner;
+        }),
+        runner => Effect.promise(() => runner.close()),
+      );
+      let evidenceRequests = 0;
       let workspaceRequests = 0;
       const usage = new ProviderUsageService(probes.controller.signal);
       let skillRequests = 0;
@@ -149,7 +184,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           sessions.recordOperatorActivity();
         const unavailable =
           isPipelineMethod(request.method) &&
-          !PIPELINE_DEFINITION_METHODS.has(request.method)
+          !SERVED_PIPELINE_METHODS.has(request.method)
             ? 'Pipelines are not available on this host yet.'
             : request.method === 'create-session' && request.input.isolation
               ? 'Workspace isolation is not available on this host yet.'
@@ -167,6 +202,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         if (request.method === 'shutdown') {
           yield* Effect.promise(() => scheduledJobs.close());
+          yield* Effect.promise(() => pipelines.close());
           yield* Effect.promise(() => sessions.close());
           probes.controller.abort();
           yield* Effect.promise(() => Promise.all(probes.pending));
@@ -338,6 +374,71 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             definitionRequests--;
             probes.pending.delete(inspection);
           });
+          continue;
+        }
+        if (request.method === 'run-pipeline-steps') {
+          const start = pipelines
+            .startManualRun(request.input, probes.controller.signal)
+            .then(run => send({ type: 'pipeline-run', id: request.id, run }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof PipelineRunError
+                    ? error.code
+                    : 'unavailable',
+                message:
+                  error instanceof PipelineRunError
+                    ? error.message
+                    : 'The pipeline run could not start. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(start);
+          void start.finally(() => probes.pending.delete(start));
+          continue;
+        }
+        if (request.method === 'read-pipeline-evidence') {
+          if (evidenceRequests >= 8) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: 'Too many evidence requests. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          evidenceRequests++;
+          const reading = evidence
+            .read(request.input.runId, request.input.stepId, request.input.path)
+            .then(item =>
+              send({
+                type: 'pipeline-evidence',
+                id: request.id,
+                evidence: item,
+              }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof EvidenceError ? error.code : 'unavailable',
+                message:
+                  error instanceof EvidenceError
+                    ? error.message
+                    : 'The evidence could not be read. Try again.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              evidenceRequests--;
+              probes.pending.delete(reading);
+            });
+          probes.pending.add(reading);
           continue;
         }
         if (request.method === 'discover-skills') {
@@ -563,6 +664,40 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 run: scheduledJobs.runNow(request.input),
               };
+            if (request.method === 'get-pipeline-run') {
+              const run = pipelineRunStore.getRun(request.input.runId);
+              if (!run)
+                throw new PipelineRunError(
+                  'not-found',
+                  'Pipeline run not found.',
+                );
+              return {
+                type: 'pipeline-run-detail',
+                id: request.id,
+                detail: {
+                  run,
+                  steps: pipelineRunStore.stepsForRun(run.id),
+                },
+              };
+            }
+            if (request.method === 'list-pipeline-runs') {
+              const page = pipelineRunStore.listRuns(
+                request.input.cursor,
+                request.input.limit,
+              );
+              if (!page)
+                throw new PipelineRunError(
+                  'invalid-request',
+                  'The run list cursor is invalid. Refresh the list.',
+                );
+              return { type: 'pipeline-runs', id: request.id, page };
+            }
+            if (request.method === 'stop-pipeline-run')
+              return {
+                type: 'pipeline-run',
+                id: request.id,
+                run: pipelines.stop(request.input.runId),
+              };
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
               .get('instance_id');
@@ -579,7 +714,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           } catch (error) {
             const known =
               error instanceof SessionError ||
-              error instanceof ScheduledJobError;
+              error instanceof ScheduledJobError ||
+              error instanceof PipelineRunError;
             return {
               type: 'error',
               id: request.id,
