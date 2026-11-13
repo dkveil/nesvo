@@ -416,7 +416,7 @@ if (args.length === 1 && args[0] === '--version') {
             control.Codex === 'unavailable'
               ? null
               : {
-                  usedPercent: 25,
+                  usedPercent: control.Codex === 'exhausted' ? 100 : 25,
                   windowDurationMins: 300,
                   resetsAt: Date.parse('2030-01-02T03:04:05.000Z') / 1000,
                 },

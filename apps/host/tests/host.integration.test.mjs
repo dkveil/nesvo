@@ -8067,10 +8067,15 @@ test(
     const usage = new modules.ProviderUsageService(
       new AbortController().signal,
     );
+    let launcher = new modules.SessionLauncher(sessions, usage, deadlines);
+    const activeLauncher = {
+      launch: (request, progress) => launcher.launch(request, progress),
+      close: () => launcher.close(),
+    };
     scheduler = new modules.ScheduledJobService(
       jobs,
       sessions,
-      new modules.SessionLauncher(sessions, usage, deadlines),
+      activeLauncher,
       event => {
         events.push(event);
         if (event.type === 'scheduled-job-run-changed')
@@ -8085,7 +8090,7 @@ test(
     const runRow = id => ({
       ...database
         .prepare(
-          'SELECT trigger_kind AS trigger, status, reason, session_id AS sessionId, session_run_id AS runId, review_id AS reviewId FROM scheduled_job_runs WHERE id = ?',
+          'SELECT trigger_kind AS trigger, status, reason, session_id AS sessionId, session_run_id AS runId, review_id AS reviewId, reset_at AS resetAt FROM scheduled_job_runs WHERE id = ?',
         )
         .get(id),
     });
@@ -8356,6 +8361,144 @@ test(
           sessions.list().filter(item => item.scheduledJobId !== null).length,
           2,
         );
+      },
+    );
+
+    const limitGate = async control => {
+      await writeFile(
+        join(directory, 'usage-control.json'),
+        JSON.stringify(control),
+      );
+      const service = new modules.ProviderUsageService(
+        new AbortController().signal,
+      );
+      const reads = [];
+      const previous = launcher;
+      launcher = new modules.SessionLauncher(
+        sessions,
+        {
+          read: input => {
+            reads.push(input.provider);
+            return service.read(input);
+          },
+        },
+        deadlines,
+      );
+      return {
+        reads,
+        restore: () => {
+          launcher.close();
+          launcher = previous;
+        },
+      };
+    };
+    const providerWork = async () => ({
+      launches: (await lines(launchLog)).length,
+      turns: (await lines(turnLog)).length,
+      usageReads: (await lines(pidFile + '.usage')).length,
+      sessions: sessions.list().filter(item => item.scheduledJobId !== null)
+        .length,
+    });
+
+    for (const { name, provider, model, exhausted } of [
+      {
+        name: 'Claude Code',
+        provider: 'claude',
+        model: 'sonnet',
+        exhausted: { 'Claude Code': 'exhausted' },
+      },
+      {
+        name: 'Codex',
+        provider: 'codex',
+        model: 'fixture-codex',
+        exhausted: { Codex: 'exhausted' },
+      },
+    ])
+      await t.test(
+        `an exhausted ${name} window holds the run without a session or usage spent`,
+        async () => {
+          const gate = await limitGate(exhausted);
+          try {
+            const before = await providerWork();
+            const job = save(`Limited ${name}`, { provider, model });
+            const held = run => [
+              run.status,
+              run.reason,
+              run.sessionId,
+              run.resetAt,
+            ];
+            const expected = [
+              'unavailable',
+              'limit',
+              null,
+              '2030-01-02T03:04:05.000Z',
+            ];
+            assert.deepEqual(held(await finishedRun(runNow(job))), expected);
+            const afterFirst = await providerWork();
+            assert.deepEqual(afterFirst, {
+              ...before,
+              usageReads: before.usageReads + 1,
+            });
+            assert.deepEqual(gate.reads, [name]);
+            assert.deepEqual(held(await finishedRun(runNow(job))), expected);
+            assert.deepEqual(await providerWork(), afterFirst);
+            assert.equal(gate.reads.length, 1);
+          } finally {
+            gate.restore();
+          }
+        },
+      );
+
+    await t.test('unavailable usage does not stop a run', async () => {
+      const gate = await limitGate({ 'Claude Code': 'unavailable' });
+      try {
+        const before = await providerWork();
+        const run = await finishedRun(runNow(save('Unknown allowance')));
+        assert.equal(run.status, 'completed', JSON.stringify(run));
+        assert.equal(run.resetAt, null);
+        assert.deepEqual(gate.reads, ['Claude Code']);
+        const after = await providerWork();
+        assert.equal(after.sessions, before.sessions + 1);
+        assert.equal(after.launches, before.launches + 1);
+      } finally {
+        gate.restore();
+      }
+    });
+
+    await t.test(
+      'a Claude limit rejection during a run is unavailable, reviewless and remembered',
+      async () => {
+        const gate = await limitGate({});
+        try {
+          const job = save('Rejected digest', { prompt: 'fixture:limit' });
+          const run = await finishedRun(runNow(job));
+          assert.deepEqual(
+            [run.status, run.reason, run.reviewId, run.resetAt],
+            ['unavailable', 'limit', null, '2030-01-02T03:04:05.000Z'],
+          );
+          const session = sessionById(run.sessionId);
+          assert.deepEqual(
+            [session.status, session.error, agent(session).state],
+            ['failed', 'Fixture account limit reached.', 'failed'],
+          );
+          assert.equal(
+            sessions
+              .listReviews()
+              .some(review => review.sessionId === session.id),
+            false,
+          );
+          assert.deepEqual(gate.reads, ['Claude Code']);
+          const before = await providerWork();
+          const next = await finishedRun(runNow(job));
+          assert.deepEqual(
+            [next.status, next.reason, next.sessionId, next.resetAt],
+            ['unavailable', 'limit', null, '2030-01-02T03:04:05.000Z'],
+          );
+          assert.deepEqual(await providerWork(), before);
+          assert.equal(gate.reads.length, 1);
+        } finally {
+          gate.restore();
+        }
       },
     );
 

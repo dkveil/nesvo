@@ -109,7 +109,8 @@ if (args.length === 1 && args[0] === '--version') {
               rate_limits_available: true,
               rate_limits: {
                 five_hour: {
-                  utilization: 23.5,
+                  utilization:
+                    control['Claude Code'] === 'exhausted' ? 100 : 23.5,
                   resets_at: '2030-01-02T03:04:05.000Z',
                 },
                 seven_day: {
@@ -323,6 +324,29 @@ if (args.length === 1 && args[0] === '--version') {
       rate_limit_info: {
         status: 'allowed_warning',
         rateLimitType: 'five_hour',
+      },
+    });
+    emit({
+      type: 'assistant',
+      error: 'rate_limit',
+      message: {
+        id: messageId,
+        content: [{ type: 'text', text: 'Fixture account limit reached.' }],
+      },
+    });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Fixture account limit reached.',
+    });
+  } else if (command === 'fixture:limit') {
+    emit({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+        resetsAt: Date.parse('2030-01-02T03:04:05.000Z') / 1000,
       },
     });
     emit({
