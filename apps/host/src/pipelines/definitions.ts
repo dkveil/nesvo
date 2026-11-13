@@ -46,7 +46,9 @@ export type DefinitionErrorKind =
   | 'invalid'
   | 'not-found'
   | 'cancelled'
-  | 'timeout';
+  | 'timeout'
+  | 'busy'
+  | 'unavailable';
 
 export class DefinitionError extends Error {
   readonly kind: DefinitionErrorKind;
@@ -124,6 +126,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'timeout',
     'retries',
     'on_fail',
+    'effect',
     'needs',
   ],
   pipeline: ['name', 'description', 'steps'],
@@ -140,7 +143,7 @@ const fileLimits = {
   spec: pipelineDefinitionLimits.catalogSpecs,
 } as const;
 
-function missing(error: unknown): boolean {
+export function missing(error: unknown): boolean {
   return ['ENOENT', 'ENOTDIR'].includes(
     (error as NodeJS.ErrnoException).code ?? '',
   );
@@ -156,11 +159,11 @@ function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
   );
 }
 
-function pathKey(path: string): string {
+export function pathKey(path: string): string {
   return process.platform === 'win32' ? path.toLowerCase() : path;
 }
 
-function inside(parent: string, child: string): boolean {
+export function inside(parent: string, child: string): boolean {
   const path = relative(parent, child);
   return !isAbsolute(path) && path !== '..' && !path.startsWith('..' + sep);
 }
@@ -714,8 +717,17 @@ function pipelineWarnings(pipeline: ResolvedPipeline): DefinitionIssue[] {
   let human = false;
   for (const step of executionOrder(pipeline.steps)) {
     if (step.type === 'human') human = true;
-    if (
-      !human &&
+    if (human) continue;
+    if (step.effect === 'external')
+      warnings.push(
+        issue(
+          path,
+          `Step "${step.name}" in pipeline "${pipeline.name}" is declared external without a human step before it`,
+          null,
+          'warning',
+        ),
+      );
+    else if (
       (step.type === 'action' || step.type === 'command') &&
       externalEffectPattern.test(step.body)
     )
@@ -915,6 +927,53 @@ export async function loadCatalog(
     specs,
     issues: capIssues(issues),
   });
+}
+
+export type DocumentCheck = {
+  name: string | null;
+  steps: string[];
+  issues: DefinitionIssue[];
+};
+
+export function checkDocument(
+  kind: 'step' | 'pipeline',
+  path: string,
+  content: string,
+): DocumentCheck {
+  const issues: DefinitionIssue[] = [];
+  const file: DefinitionFile = {
+    path,
+    text: content,
+    contentHash: createHash('sha256').update(content).digest('hex'),
+  };
+  if (kind === 'step') {
+    const parsed = parseDocument(file, 'step', stepDefinitionSchema, issues);
+    return { name: parsed.name, steps: [], issues };
+  }
+  const parsed = parseDocument(file, 'pipeline', pipelineDefinitionSchema, issues);
+  return { name: parsed.name, steps: parsed.value?.steps ?? [], issues };
+}
+
+export type WriteRoots = {
+  projectRoot: string;
+  project: string;
+  global: string;
+};
+
+export async function resolveWriteRoots(
+  directory: string,
+  signal: AbortSignal,
+): Promise<WriteRoots> {
+  const read = context(signal);
+  const projectRootPath = await projectRoot(
+    await canonicalDirectory(directory, read),
+    read,
+  );
+  return {
+    projectRoot: projectRootPath,
+    project: join(projectRootPath, '.agents', 'pipelines'),
+    global: globalRoot(),
+  };
 }
 
 export function resolvePipeline(
