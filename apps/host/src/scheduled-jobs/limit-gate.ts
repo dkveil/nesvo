@@ -14,7 +14,8 @@ export const exhaustedUntil = (
   usage: ProviderUsage,
   now: Date,
 ): string | null => {
-  if (usage.status !== 'ready') return null;
+  if (usage.status !== 'ready' || usage.ordinaryUsageAllowed === true)
+    return null;
   let latest: number | null = null;
   for (const window of usage.windows) {
     if (window.usedPercent < EXHAUSTED_PERCENT || !window.resetsAt) continue;
@@ -52,6 +53,7 @@ export class ProviderLimitGate {
 
   remember(provider: ScheduledJob['provider'], resetAt: string): void {
     const at = Date.parse(resetAt);
-    if (at > this.now().getTime()) this.known.set(provider, at);
+    if (at > this.now().getTime())
+      this.known.set(provider, Math.max(at, this.known.get(provider) ?? 0));
   }
 }

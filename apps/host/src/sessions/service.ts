@@ -854,7 +854,8 @@ export class SessionService {
       .then(async result => {
         active.finalizing = true;
         const { limit } = result as ClaudeResult;
-        if (limit && session.runId) this.rememberLimit(session.runId, limit);
+        if (limit && session.runId && !active.persistenceError)
+          this.rememberLimit(session.runId, limit);
         if (result.status === 'completed' || result.status === 'failed') {
           session.interruption = null;
           session.messages.at(-1)!.interruption = null;
