@@ -8,11 +8,22 @@ import {
   type Delegation,
 } from '@nesvo/contracts';
 
-export type SessionOrigin = { kind: 'operator' } | ScheduledJobSessionOrigin;
+export type PipelineSessionOrigin = {
+  kind: 'pipeline';
+  runId: string;
+  stepId?: string;
+};
+
+export type SessionOrigin =
+  { kind: 'operator' } | ScheduledJobSessionOrigin | PipelineSessionOrigin;
 
 type SessionLinks = Pick<
   Session,
-  'scheduledJobId' | 'scheduledJobRunId' | 'delegationEnabled'
+  | 'scheduledJobId'
+  | 'scheduledJobRunId'
+  | 'pipelineRunId'
+  | 'pipelineStepId'
+  | 'delegationEnabled'
 >;
 
 const originLinks = (
@@ -24,12 +35,24 @@ const originLinks = (
       return {
         scheduledJobId: null,
         scheduledJobRunId: null,
+        pipelineRunId: null,
+        pipelineStepId: null,
         delegationEnabled: input.provider === 'Codex',
       };
     case 'scheduled-job':
       return {
         scheduledJobId: origin.scheduledJobId,
         scheduledJobRunId: origin.runId,
+        pipelineRunId: null,
+        pipelineStepId: null,
+        delegationEnabled: false,
+      };
+    case 'pipeline':
+      return {
+        scheduledJobId: null,
+        scheduledJobRunId: null,
+        pipelineRunId: origin.runId,
+        pipelineStepId: origin.stepId ?? null,
         delegationEnabled: false,
       };
   }
@@ -95,8 +118,6 @@ export class SessionStore {
       parentRunId: null,
       scope: null,
       delegations: [],
-      pipelineRunId: null,
-      pipelineStepId: null,
       ...originLinks(origin, input),
     };
     this.save(session);

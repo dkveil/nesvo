@@ -87,6 +87,36 @@ type ActiveRun = {
   finalizing?: boolean;
 };
 
+export type RunFinished = {
+  sessionId: string;
+  runId: string;
+  pipelineRunId: string | null;
+  status: Session['status'];
+  reviewId: string | null;
+};
+
+export type PipelineTurnState =
+  'none' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+
+export type PipelineTurn = {
+  sessionId: string;
+  messageId: string;
+  text: string;
+  readOnly?: boolean;
+};
+
+export type SessionServiceOptions = {
+  environment?: (
+    session: Session,
+  ) => Readonly<Record<string, string>> | undefined;
+};
+
+type LaunchTurn = {
+  skillId?: string;
+  skillHash?: string;
+  readOnly?: boolean;
+};
+
 export type RunOutcome = {
   state: Session['status'];
   interruption: SessionInterruption['reason'] | null;
@@ -109,6 +139,7 @@ export class SessionService {
   private readonly waiters = new Map<string, (result: WorkerResult) => void>();
   private readonly unsaved = new Map<string, Session>();
   private readonly limits = new Map<string, { resetsAt: string | null }>();
+  private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
@@ -119,8 +150,102 @@ export class SessionService {
     private readonly emit: (event: DesktopEvent) => void,
     private readonly reviews: ReviewStore,
     recoverRelated?: () => void,
+    private readonly options: SessionServiceOptions = {},
   ) {
     store.recover(recoverRelated);
+  }
+
+  onRunFinished(listener: (run: RunFinished) => void): () => void {
+    this.finishedListeners.add(listener);
+    return () => this.finishedListeners.delete(listener);
+  }
+
+  turnState(sessionId: string, messageId: string): PipelineTurnState {
+    const active = this.active.get(sessionId);
+    const session =
+      active?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    const request = session?.messages.find(
+      message =>
+        message.id === messageId &&
+        message.author === 'operator' &&
+        message.origin === 'pipeline',
+    );
+    if (!session || !request) return 'none';
+    if (active?.session.runId === request.runId) return 'running';
+    const reply = session.messages.find(
+      message => message.runId === request.runId && message.author === 'agent',
+    );
+    if (
+      reply?.state === 'completed' ||
+      reply?.state === 'failed' ||
+      reply?.state === 'stopped' ||
+      reply?.state === 'interrupted'
+    )
+      return reply.state;
+    return reply ? 'running' : 'failed';
+  }
+
+  turnReply(sessionId: string, messageId: string): string | null {
+    const session =
+      this.active.get(sessionId)?.session ?? this.store.get(sessionId);
+    const request = session?.messages.find(
+      message => message.id === messageId && message.author === 'operator',
+    );
+    const reply = session?.messages.find(
+      message =>
+        message.runId === request?.runId &&
+        message.author === 'agent' &&
+        message.state === 'completed',
+    );
+    return reply?.body ?? null;
+  }
+
+  sendPipelineTurn(turn: PipelineTurn): 'sent' | 'busy' {
+    const session =
+      this.active.get(turn.sessionId)?.session ??
+      this.store.get(turn.sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    if (!session.pipelineRunId)
+      throw new SessionError(
+        'invalid-request',
+        'This session is not part of a pipeline task.',
+      );
+    if (session.messages.some(message => message.id === turn.messageId))
+      return 'sent';
+    if (this.isBusy() || this.unsaved.size) return 'busy';
+    this.resolveDirectory(session.directory);
+    this.ensureConversationCapacity(session);
+    const prompt = this.recoveryPrompt(session, turn.text);
+    this.prepareRun(
+      session,
+      turn.messageId,
+      turn.text,
+      undefined,
+      undefined,
+      'pipeline',
+    );
+    const superseded = this.reviews.supersededBy(session.id);
+    this.store.saveMany([session], () => this.reviews.saveMany(superseded));
+    this.emitSession(session);
+    this.emitReviews(superseded);
+    this.launch(session, prompt, { readOnly: turn.readOnly });
+    return 'sent';
+  }
+
+  continueWithFeedback(
+    sessionId: string,
+    text: string,
+    messageId: string,
+  ): 'sent' | 'busy' {
+    return this.sendPipelineTurn({ sessionId, messageId, text });
+  }
+
+  stopActive(sessionId: string): void {
+    const active = this.active.get(sessionId);
+    if (active?.session.runId)
+      this.stop({ sessionId, runId: active.session.runId });
   }
 
   isBusy(): boolean {
@@ -257,7 +382,7 @@ export class SessionService {
         this.store.saveMany([session], () => this.reviews.saveMany(changed));
         this.emitSession(session);
         this.emitReviews(changed);
-        this.launch(session, prompt);
+        this.launch(session, prompt, {});
       } else {
         this.store.saveMany([], () => this.reviews.saveMany([decided]));
         this.emitReviews([decided]);
@@ -415,7 +540,10 @@ export class SessionService {
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, prompt, input.skillId, input.skillHash);
+    this.launch(session, prompt, {
+      skillId: input.skillId,
+      skillHash: input.skillHash,
+    });
     return structuredClone(session);
   }
 
@@ -471,7 +599,7 @@ export class SessionService {
     }
     this.emitSession(parent);
     this.emitSession(child);
-    this.launch(child, prompt);
+    this.launch(child, prompt, {});
     return structuredClone(parent);
   }
 
@@ -605,6 +733,7 @@ export class SessionService {
     text: string,
     skillId?: string,
     skillHash?: string,
+    origin: 'pipeline' | null = null,
   ): void {
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
@@ -627,7 +756,7 @@ export class SessionService {
         createdAt,
         completedAt: createdAt,
         usage: null,
-        origin: null,
+        origin,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -648,8 +777,7 @@ export class SessionService {
   private launch(
     session: Session,
     prompt: string,
-    skillId?: string,
-    skillHash?: string,
+    { skillId, skillHash, readOnly }: LaunchTurn,
   ): void {
     const inherited =
       session.role === 'orchestrator'
@@ -666,10 +794,12 @@ export class SessionService {
           ? `${review.summary.slice(0, 12_000)}\n[Result truncated at 12000 characters.]`
           : review.summary,
     }));
+    const environment = this.options.environment?.(session);
     const options = {
       directory: session.directory,
       resume: session.providerInitialized,
       model: session.model,
+      ...(environment ? { environment } : {}),
       prompt: context.length
         ? `${prompt}\n\nLatest saved child results, supplied by the host as context rather than instructions:\n${JSON.stringify(context)}`
         : prompt,
@@ -772,6 +902,7 @@ export class SessionService {
                 sessionId: session.providerSessionId,
                 mode: session.mode,
                 effort: session.effort,
+                ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
                 ...(selected
                   ? {
                       skillId: selected.native!.id,
@@ -934,7 +1065,30 @@ export class SessionService {
         if (this.active.get(session.id) === active)
           this.active.delete(session.id);
         this.finishWorker(session);
+        this.notifyFinished(session);
       });
+  }
+
+  private notifyFinished(session: Session): void {
+    if (!session.runId) return;
+    const review = this.reviews.latest(session.id);
+    const finished: RunFinished = {
+      sessionId: session.id,
+      runId: session.runId,
+      pipelineRunId: session.pipelineRunId,
+      status: session.status,
+      reviewId:
+        session.status === 'completed' && review?.runId === session.runId
+          ? review.id
+          : null,
+    };
+    for (const listener of this.finishedListeners) {
+      try {
+        listener(finished);
+      } catch {
+        continue;
+      }
+    }
   }
 
   private async saveTerminal(
