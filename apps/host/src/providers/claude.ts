@@ -119,13 +119,15 @@ function ownProcess(
   executable: Executable,
   args: string[],
   cwd?: string,
+  environment?: Readonly<Record<string, string>>,
 ): OwnedProcess {
   const child = spawn(executable.command, [...executable.prefix, ...args], {
     cwd,
-    env:
-      executable.prefix.length > 0
-        ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-        : process.env,
+    env: {
+      ...process.env,
+      ...environment,
+      ...(executable.prefix.length > 0 ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    },
     shell: false,
     windowsHide: true,
     detached: process.platform !== 'win32',
@@ -633,6 +635,7 @@ export function startClaude(options: {
   resume: boolean;
   model: string;
   prompt: string;
+  environment?: Readonly<Record<string, string>>;
   onEvent: (event: ClaudeEvent) => void;
 }): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
   let stopped = false;
@@ -684,7 +687,12 @@ export function startClaude(options: {
       ];
       if (options.model !== 'default') args.push('--model', options.model);
       if (stopped) return { status: 'stopped', error: null };
-      owned = ownProcess(inspection.executable, args, options.directory);
+      owned = ownProcess(
+        inspection.executable,
+        args,
+        options.directory,
+        options.environment,
+      );
       const running = owned;
       const messages = new Map<
         string,

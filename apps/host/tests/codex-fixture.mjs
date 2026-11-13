@@ -15,6 +15,10 @@ import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const runEnvironment = () => ({
+  NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,
+  NESVO_PROJECT_ROOT: process.env.NESVO_PROJECT_ROOT ?? null,
+});
 const isolatedConfig = {
   mcp_servers: {},
   features: {
@@ -605,6 +609,7 @@ if (args.length === 1 && args[0] === '--version') {
             approvalPolicy: params.approvalPolicy,
             approvalsReviewer: params.approvalsReviewer,
             dynamicTools: (params.dynamicTools ?? []).map(tool => tool.name),
+            environment: runEnvironment(),
           }) + '\n',
           { flag: 'a' },
         );
@@ -656,12 +661,17 @@ if (args.length === 1 && args[0] === '--version') {
     } else if (method === 'turn/start') {
       assert.equal(params.threadId, thread.id);
       assert.equal(params.cwd, thread.cwd);
+      const readOnlyTurn =
+        thread.supervised && params.sandboxPolicy?.type === 'readOnly';
       assert.equal(
         params.approvalPolicy,
-        thread.supervised ? 'untrusted' : 'never',
+        thread.supervised && !readOnlyTurn ? 'untrusted' : 'never',
       );
       assert.equal(params.approvalsReviewer, 'user');
-      assert.deepEqual(params.sandboxPolicy, policy());
+      assert.deepEqual(
+        params.sandboxPolicy,
+        readOnlyTurn ? { type: 'readOnly', networkAccess: false } : policy(),
+      );
       assert.equal(params.effort ?? null, thread.effort);
       assert.equal(params.input.length, selectedSkills ? 2 : 1);
       assert.equal(params.input[0].type, 'text');
@@ -708,6 +718,8 @@ if (args.length === 1 && args[0] === '--version') {
             sessionId: thread.id,
             prompt,
             effort: params.effort ?? null,
+            sandbox: params.sandboxPolicy.type,
+            environment: runEnvironment(),
           }) + '\n',
           { flag: 'a' },
         );

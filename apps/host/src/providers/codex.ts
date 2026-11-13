@@ -139,13 +139,15 @@ function ownProcess(
   executable: Executable,
   args: string[],
   cwd?: string,
+  environment?: Readonly<Record<string, string>>,
 ): OwnedProcess {
   const child = spawn(executable.command, [...executable.prefix, ...args], {
     cwd,
-    env:
-      executable.prefix.length > 0
-        ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-        : process.env,
+    env: {
+      ...process.env,
+      ...environment,
+      ...(executable.prefix.length > 0 ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    },
     shell: false,
     windowsHide: true,
     detached: process.platform !== 'win32',
@@ -363,6 +365,7 @@ function rpcPeer(
   cwd: string | undefined,
   onMessage: (message: RecordValue) => void,
   disabledServers: string[] = [],
+  environment?: Readonly<Record<string, string>>,
 ): RpcPeer {
   const args = [
     'app-server',
@@ -382,7 +385,7 @@ function rpcPeer(
     ]),
     ...isolatedFeatures.flatMap(feature => ['--disable', feature]),
   ];
-  const owned = ownProcess(executable, args, cwd);
+  const owned = ownProcess(executable, args, cwd, environment);
   const pending = new Map<
     RpcId,
     {
@@ -1265,7 +1268,9 @@ export function startCodex(options: {
   model: string;
   effort?: string | null;
   mode: 'read-only' | 'supervised';
+  turnSandbox?: 'read-only';
   prompt: string;
+  environment?: Readonly<Record<string, string>>;
   skillId?: string;
   skillRoots?: string[];
   onSkillResolved?: (skill: SkillReference) => void | Promise<void>;
@@ -1870,7 +1875,13 @@ export function startCodex(options: {
         throw new Error(
           'Install the native Codex CLI and sign in with codex login.',
         );
-      peer = rpcPeer(executable, options.directory, consume);
+      peer = rpcPeer(
+        executable,
+        options.directory,
+        consume,
+        [],
+        options.environment,
+      );
       await initialize(peer);
       const status = await readAccountAndModels(peer);
       if (status.status !== 'ready')
@@ -1907,6 +1918,7 @@ export function startCodex(options: {
         options.directory,
         consume,
         Object.keys(disabledServers),
+        options.environment,
       );
       await initialize(peer, Boolean(options.onDelegate));
       const isolated = await peer.request('config/read', {
@@ -1969,6 +1981,11 @@ export function startCodex(options: {
               excludeTmpdirEnvVar: true,
               excludeSlashTmp: true,
             };
+      const readOnlyTurn = options.turnSandbox === 'read-only';
+      const turnApprovalPolicy = readOnlyTurn ? 'never' : approvalPolicy;
+      const turnSandboxPolicy = readOnlyTurn
+        ? { type: 'readOnly', networkAccess: false }
+        : sandboxPolicy;
       const model = options.model === 'default' ? {} : { model: options.model };
       const effort = options.effort ? { effort: options.effort } : {};
       const response = await peer.request(
@@ -2048,9 +2065,9 @@ export function startCodex(options: {
             : []),
         ],
         cwd: options.directory,
-        approvalPolicy,
+        approvalPolicy: turnApprovalPolicy,
         approvalsReviewer: 'user',
-        sandboxPolicy,
+        sandboxPolicy: turnSandboxPolicy,
         ...model,
         ...effort,
       });

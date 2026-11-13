@@ -26,6 +26,10 @@ const flags = [
   '--no-session-persistence',
 ];
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const runEnvironment = () => ({
+  NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,
+  NESVO_PROJECT_ROOT: process.env.NESVO_PROJECT_ROOT ?? null,
+});
 
 if (args.length === 1 && args[0] === '--version') {
   console.log('2.1.0 (Claude Code fixture)');
@@ -162,8 +166,12 @@ if (args.length === 1 && args[0] === '--version') {
   if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
     writeFileSync(
       process.env.NESVO_FIXTURE_LAUNCH_LOG,
-      JSON.stringify({ provider: 'Claude Code', cwd: process.cwd(), args }) +
-        '\n',
+      JSON.stringify({
+        provider: 'Claude Code',
+        cwd: process.cwd(),
+        args,
+        environment: runEnvironment(),
+      }) + '\n',
       { flag: 'a' },
     );
   const resumed = values.has('--resume');
