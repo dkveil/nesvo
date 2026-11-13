@@ -29,11 +29,17 @@ export const reviewSchema = z.strictObject({
   scope: z.string().nullable(),
   task: z.string().max(32_000),
   summary: z.string().max(2_000_000),
-  status: z.enum(['pending', 'accepted', 'changes-requested', 'superseded']),
+  status: z.enum([
+    'pending',
+    'accepted',
+    'changes-requested',
+    'rejected',
+    'superseded',
+  ]),
   decision: z
     .strictObject({
       id: z.uuid(),
-      decision: z.enum(['accept', 'request-changes']),
+      decision: z.enum(['accept', 'request-changes', 'reject']),
       feedback: z.string().max(8000),
       at: z.iso.datetime(),
     })

@@ -73,6 +73,18 @@ export const sessionInterruptionSchema = z.strictObject({
   at: z.iso.datetime(),
 });
 export type SessionInterruption = z.infer<typeof sessionInterruptionSchema>;
+export const SESSION_BRANCH_PATTERN =
+  /^(?!-)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]+(?<![./])(?<!\.lock)$/;
+export const sessionIsolationSchema = z.strictObject({
+  kind: z.literal('worktree'),
+  branch: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(SESSION_BRANCH_PATTERN, 'Use a valid Git branch name.')
+    .optional(),
+});
 export const createSessionSchema = z
   .strictObject({
     title: z.string().trim().min(1).max(100),
@@ -82,6 +94,7 @@ export const createSessionSchema = z
     role: z.enum(['orchestrator', 'standalone']).optional(),
     directory: z.string().trim().max(4096),
     effort: reasoningEffortSchema.optional(),
+    isolation: sessionIsolationSchema.optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -152,6 +165,7 @@ export const sessionMessageSchema = z.strictObject({
   skill: skillReferenceSchema.optional(),
   interruption: sessionInterruptionSchema.nullable().optional(),
   usage: turnUsageSchema.nullable().default(null),
+  origin: z.literal('pipeline').nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -170,6 +184,8 @@ export const sessionSchema = z.strictObject({
   scope: z.string().max(1000).nullable().default(null),
   delegationEnabled: z.boolean().default(false),
   delegations: z.array(delegationSchema).max(100).default([]),
+  pipelineRunId: z.uuid().nullable().default(null),
+  pipelineStepId: z.uuid().nullable().default(null),
   directory: z.string(),
   status: sessionStateSchema,
   error: z.string().nullable(),
@@ -217,6 +233,7 @@ export const codexStatusSchema = claudeStatusSchema.extend({
   ),
 });
 
+export type SessionIsolation = z.infer<typeof sessionIsolationSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;

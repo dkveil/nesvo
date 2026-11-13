@@ -9,6 +9,7 @@ export const reviewStatusLabels: Record<Review['status'], string> = {
   pending: 'Pending',
   accepted: 'Accepted',
   'changes-requested': 'Changes requested',
+  rejected: 'Rejected',
   superseded: 'Outdated',
 };
 

@@ -54,6 +54,8 @@ export class SessionStore {
       scope: null,
       delegationEnabled: input.provider === 'Codex',
       delegations: [],
+      pipelineRunId: null,
+      pipelineStepId: null,
     };
     this.save(session);
     return session;
@@ -102,6 +104,8 @@ export class SessionStore {
       scope: proposal.scope,
       delegationEnabled: false,
       delegations: [],
+      pipelineRunId: null,
+      pipelineStepId: null,
       providerSessionId:
         proposal.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,

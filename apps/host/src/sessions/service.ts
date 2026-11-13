@@ -579,6 +579,7 @@ export class SessionService {
         createdAt,
         completedAt: createdAt,
         usage: null,
+        origin: null,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -591,6 +592,7 @@ export class SessionService {
         createdAt,
         completedAt: null,
         usage: null,
+        origin: null,
       },
     );
   }
