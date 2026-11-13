@@ -37,7 +37,7 @@ export const evidenceSchema = z
     kind: z.enum(['log', 'text', 'file', 'screenshot', 'link', 'steps']),
     label: z.string().min(1).max(stepResultLimits.evidenceLabel),
     path: z.string().min(1).max(stepResultLimits.evidencePath).nullable(),
-    text: z.string().max(stepResultLimits.evidenceText).nullable(),
+    text: z.string().min(1).max(stepResultLimits.evidenceText).nullable(),
     url: z.string().min(1).max(stepResultLimits.evidenceUrl).nullable(),
   })
   .refine(

@@ -2448,7 +2448,10 @@ try {
   await assert.rejects(
     pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
   );
-  await assert.rejects(pipelineCall('listDefinitions', 'not-a-host', {}));
+  await assert.rejects(
+    pipelineCall('listDefinitions', 'not-a-host', { directory }),
+    /Invalid UUID/,
+  );
   console.log(
     JSON.stringify({
       pipelines: {

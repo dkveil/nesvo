@@ -5016,15 +5016,37 @@ test(
     });
 
     await t.test('isolated sessions answer unavailable', async () => {
-      const response = await host.request('create-session', {
-        title: 'Isolated',
-        provider: 'Claude Code',
-        model: 'sonnet',
-        mode: 'read-only',
-        directory,
-        isolation: { kind: 'worktree' },
-      });
-      assert.equal(response.code, 'unavailable');
+      for (const input of [
+        {
+          title: 'Isolated',
+          provider: 'Claude Code',
+          model: 'sonnet',
+          mode: 'read-only',
+          directory,
+          isolation: { kind: 'worktree' },
+        },
+        {
+          title: 'Isolated with effort',
+          provider: 'Codex',
+          model: 'gpt-5.5',
+          mode: 'supervised',
+          effort: 'high',
+          directory,
+          isolation: { kind: 'worktree', branch: 'nesvo/isolated' },
+        },
+      ]) {
+        const response = await host.request('create-session', input);
+        assert.deepEqual(
+          response,
+          {
+            type: 'error',
+            id: response.id,
+            code: 'unavailable',
+            message: 'Workspace isolation is not available on this host yet.',
+          },
+          input.title,
+        );
+      }
       assert.deepEqual((await host.request('list-sessions')).sessions, []);
     });
 
@@ -5167,6 +5189,13 @@ test(
         label: 'Empty',
         path: null,
         text: null,
+        url: null,
+      });
+      rejects(evidenceSchema, {
+        kind: 'text',
+        label: 'Blank',
+        path: null,
+        text: '',
         url: null,
       });
       const verdict = {

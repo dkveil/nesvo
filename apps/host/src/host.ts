@@ -135,6 +135,22 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         const request = parsed.data;
         if (OPERATOR_ACTIVITY_METHODS.has(request.method))
           sessions.recordOperatorActivity();
+        const unavailable = isPipelineMethod(request.method)
+          ? 'Pipelines are not available on this host yet.'
+          : request.method === 'create-session' && request.input.isolation
+            ? 'Workspace isolation is not available on this host yet.'
+            : null;
+        if (unavailable) {
+          yield* Effect.tryPromise(() =>
+            send({
+              type: 'error',
+              id: request.id,
+              code: 'unavailable',
+              message: unavailable,
+            }),
+          );
+          continue;
+        }
         if (request.method === 'shutdown') {
           yield* Effect.promise(() => scheduledJobs.close());
           yield* Effect.promise(() => sessions.close());
@@ -387,13 +403,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         const response = yield* Effect.sync((): HostResponse => {
           try {
-            if (isPipelineMethod(request.method))
-              return {
-                type: 'error',
-                id: request.id,
-                code: 'unavailable',
-                message: 'Pipelines are not available on this host yet.',
-              };
             if (request.method === 'list-reviews')
               return {
                 type: 'reviews',
@@ -405,14 +414,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'sessions',
                 id: request.id,
                 sessions: sessions.list(),
-              };
-            if (request.method === 'create-session' && request.input.isolation)
-              return {
-                type: 'error',
-                id: request.id,
-                code: 'unavailable',
-                message:
-                  'Workspace isolation is not available on this host yet.',
               };
             if (request.method === 'create-session')
               return {

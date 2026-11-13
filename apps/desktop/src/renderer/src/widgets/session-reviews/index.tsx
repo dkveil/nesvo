@@ -209,7 +209,9 @@ function ReviewVersion({
             <p className="text-sm">
               {review.decision.decision === 'accept'
                 ? 'This version was accepted.'
-                : 'Changes were requested for this version.'}
+                : review.decision.decision === 'reject'
+                  ? 'This version was rejected.'
+                  : 'Changes were requested for this version.'}
             </p>
             <time
               className="text-xs text-muted-foreground"
