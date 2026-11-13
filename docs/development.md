@@ -53,6 +53,21 @@ Empty working-directory input creates a dedicated folder under the host's worksp
 
 NESVO_CLAUDE_EXECUTABLE and NESVO_CODEX_EXECUTABLE optionally select absolute native executable paths. A JavaScript CLI entry is launched using the existing Node runtime. The test suite uses these overrides for its local fixtures. Production discovery checks PATH and common native installation locations; shell wrappers are not executed.
 
+Isolated pipeline tasks create their Git worktrees under the data directory, in `worktrees/`, on branches named `nesvo/<slug>-<runId8>`. They are removed only by an explicit removal request, which refuses a worktree with uncommitted changes unless forced and keeps the branch. A worktree holds only tracked files, so `.env`, local state and installed dependencies are absent. Nesvo copies nothing and has no file list for it; a `plan` phase step prepares the worktree from the operator's project, which every step receives as `NESVO_PROJECT_ROOT`:
+
+```md
+---
+name: setup
+type: command
+phase: plan
+---
+
+cp "$NESVO_PROJECT_ROOT/.env" .env
+bun install --frozen-lockfile
+```
+
+NESVO_GIT_EXECUTABLE optionally replaces Git with an absolute path, as the test suite does for a stand-in that never exits.
+
 P0 has no migration from historical application data. Existing private directories and worktrees remain untouched.
 Do not run git clean or delete ignored files as part of setup.
 
