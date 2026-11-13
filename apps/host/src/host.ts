@@ -5,6 +5,7 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   isPipelineMethod,
+  type DefinitionCatalog,
   type HostMessage,
   type HostRequest,
   type HostResponse,
@@ -24,6 +25,7 @@ import {
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
 import { PipelineRunStore } from './pipelines/store';
+import { DefinitionError, loadCatalog } from './pipelines/definitions';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -47,6 +49,10 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'save-pipeline-definition',
   'delete-pipeline-definition',
   'remove-pipeline-worktree',
+]);
+const PIPELINE_DEFINITION_METHODS = new Set<HostRequest['method']>([
+  'list-pipeline-definitions',
+  'validate-pipeline-definitions',
 ]);
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.exclude([
   'pipelines',
@@ -120,6 +126,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       let workspaceRequests = 0;
       const usage = new ProviderUsageService(probes.controller.signal);
       let skillRequests = 0;
+      let definitionRequests = 0;
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
         iterator =>
@@ -140,11 +147,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         const request = parsed.data;
         if (OPERATOR_ACTIVITY_METHODS.has(request.method))
           sessions.recordOperatorActivity();
-        const unavailable = isPipelineMethod(request.method)
-          ? 'Pipelines are not available on this host yet.'
-          : request.method === 'create-session' && request.input.isolation
-            ? 'Workspace isolation is not available on this host yet.'
-            : null;
+        const unavailable =
+          isPipelineMethod(request.method) &&
+          !PIPELINE_DEFINITION_METHODS.has(request.method)
+            ? 'Pipelines are not available on this host yet.'
+            : request.method === 'create-session' && request.input.isolation
+              ? 'Workspace isolation is not available on this host yet.'
+              : null;
         if (unavailable) {
           yield* Effect.tryPromise(() =>
             send({
@@ -263,6 +272,72 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(decision);
           void decision.finally(() => probes.pending.delete(decision));
+          continue;
+        }
+        if (
+          request.method === 'list-pipeline-definitions' ||
+          request.method === 'validate-pipeline-definitions'
+        ) {
+          if (definitionRequests >= 2) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message:
+                  'Pipeline definitions are already being read. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          let loading: Promise<DefinitionCatalog>;
+          try {
+            loading = loadCatalog(
+              sessions.draftDirectory(request.input.directory),
+              probes.controller.signal,
+            );
+          } catch (error) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError
+                    ? error.code
+                    : 'invalid-directory',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The folder cannot be accessed.',
+              }),
+            );
+            continue;
+          }
+          definitionRequests++;
+          const inspection = loading
+            .then(catalog =>
+              send({ type: 'pipeline-definitions', id: request.id, catalog }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof DefinitionError && error.kind === 'not-found'
+                    ? 'invalid-directory'
+                    : 'unavailable',
+                message:
+                  error instanceof DefinitionError
+                    ? error.message
+                    : 'Pipeline definitions could not be read. Verify the folder and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(inspection);
+          void inspection.finally(() => {
+            definitionRequests--;
+            probes.pending.delete(inspection);
+          });
           continue;
         }
         if (request.method === 'discover-skills') {

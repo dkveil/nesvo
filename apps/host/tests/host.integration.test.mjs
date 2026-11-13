@@ -4936,84 +4936,85 @@ test(
       assert.equal(health.capabilities.includes('pipelines'), false);
     });
 
-    await t.test('every pipeline command answers unavailable', async () => {
-      const runId = randomUUID();
-      const requests = [
-        ['list-pipeline-definitions', { directory }],
-        ['validate-pipeline-definitions', { directory }],
-        [
-          'start-pipeline-task',
-          {
-            specPath: join(directory, 'task.md'),
-            pipelineName: 'default',
-            provider: 'Claude Code',
-            model: 'sonnet',
-            mode: 'read-only',
-            directory,
-            isolation: 'none',
-            gateProvider: 'Claude Code',
-            gateModel: 'sonnet',
-          },
-        ],
-        ['run-pipeline-steps', { specPath: 'task.md', directory }],
-        ['list-pipeline-runs', { cursor: null, limit: 20 }],
-        ['get-pipeline-run', { runId }],
-        [
-          'decide-pipeline-gate',
-          {
-            runId,
-            stepId: randomUUID(),
-            reviewId: randomUUID(),
-            version: 1,
-            decisionId: randomUUID(),
-            decision: 'accept',
-            comment: '',
-          },
-        ],
-        [
-          'skip-pipeline-step',
-          { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
-        ],
-        ['resume-pipeline-run', { runId }],
-        ['stop-pipeline-run', { runId }],
-        [
-          'save-pipeline-definition',
-          {
-            directory,
-            scope: 'project',
-            kind: 'step',
-            name: 'unit-tests',
-            document: '---\nname: unit-tests\n---\nbun test\n',
-          },
-        ],
-        [
-          'delete-pipeline-definition',
-          { directory, scope: 'project', kind: 'step', name: 'unit-tests' },
-        ],
-        ['remove-pipeline-worktree', { runId }],
-        [
-          'read-pipeline-evidence',
-          { runId, stepId: randomUUID(), path: 'log.txt' },
-        ],
-        [
-          'pipeline-metrics',
-          { directory: null, since: '2026-11-01T00:00:00.000Z' },
-        ],
-      ];
-      for (const [method, input] of requests) {
-        const response = await host.request(method, input);
-        assert.deepEqual(
-          response,
-          {
-            type: 'error',
-            id: response.id,
-            code: 'unavailable',
-            message: 'Pipelines are not available on this host yet.',
-          },
-          method,
-        );
-      }
-    });
+    await t.test(
+      'every pipeline command except definition reads answers unavailable',
+      async () => {
+        const runId = randomUUID();
+        const requests = [
+          [
+            'start-pipeline-task',
+            {
+              specPath: join(directory, 'task.md'),
+              pipelineName: 'default',
+              provider: 'Claude Code',
+              model: 'sonnet',
+              mode: 'read-only',
+              directory,
+              isolation: 'none',
+              gateProvider: 'Claude Code',
+              gateModel: 'sonnet',
+            },
+          ],
+          ['run-pipeline-steps', { specPath: 'task.md', directory }],
+          ['list-pipeline-runs', { cursor: null, limit: 20 }],
+          ['get-pipeline-run', { runId }],
+          [
+            'decide-pipeline-gate',
+            {
+              runId,
+              stepId: randomUUID(),
+              reviewId: randomUUID(),
+              version: 1,
+              decisionId: randomUUID(),
+              decision: 'accept',
+              comment: '',
+            },
+          ],
+          [
+            'skip-pipeline-step',
+            { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
+          ],
+          ['resume-pipeline-run', { runId }],
+          ['stop-pipeline-run', { runId }],
+          [
+            'save-pipeline-definition',
+            {
+              directory,
+              scope: 'project',
+              kind: 'step',
+              name: 'unit-tests',
+              document: '---\nname: unit-tests\n---\nbun test\n',
+            },
+          ],
+          [
+            'delete-pipeline-definition',
+            { directory, scope: 'project', kind: 'step', name: 'unit-tests' },
+          ],
+          ['remove-pipeline-worktree', { runId }],
+          [
+            'read-pipeline-evidence',
+            { runId, stepId: randomUUID(), path: 'log.txt' },
+          ],
+          [
+            'pipeline-metrics',
+            { directory: null, since: '2026-11-01T00:00:00.000Z' },
+          ],
+        ];
+        for (const [method, input] of requests) {
+          const response = await host.request(method, input);
+          assert.deepEqual(
+            response,
+            {
+              type: 'error',
+              id: response.id,
+              code: 'unavailable',
+              message: 'Pipelines are not available on this host yet.',
+            },
+            method,
+          );
+        }
+      },
+    );
 
     await t.test('isolated sessions answer unavailable', async () => {
       for (const input of [
@@ -5850,6 +5851,504 @@ test(
         assert.equal(sessions.get(session.id).id, session.id);
         sessions.save(session);
         assert.deepEqual({ ...link() }, { runId: null, stepId: null });
+      },
+    );
+  },
+);
+
+test(
+  'pipeline definitions load from global and project roots with readable issues',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-definitions-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    const restore = () => {
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+    };
+    t.after(async () => {
+      restore();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const outfile = join(directory, 'definitions.mjs');
+    await promisify(execFile)('bun', [
+      'build',
+      fileURLToPath(
+        new URL('../src/pipelines/definitions.ts', import.meta.url),
+      ),
+      '--target=node',
+      '--format=esm',
+      `--outfile=${outfile}`,
+    ]);
+    const {
+      DefinitionError,
+      loadCatalog,
+      loadSpec,
+      readDefinitionFile,
+      resolvePipeline,
+    } = await import(pathToFileURL(outfile).href);
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+      return path;
+    };
+    const step = fields =>
+      `---\n${Object.entries(fields)
+        .filter(([key]) => key !== 'body')
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\n${fields.body ?? ''}\n`;
+    const home = join(directory, 'home', '.agents', 'pipelines');
+    const project = join(directory, 'project');
+    const definitions = join(project, '.agents', 'pipelines');
+    await mkdir(join(project, '.git'), { recursive: true });
+    const globalLint = await write(
+      join(home, 'steps', 'lint.md'),
+      step({
+        name: 'lint',
+        type: 'command',
+        phase: 'pre-done',
+        body: 'bun run lint',
+      }),
+    );
+    await write(
+      join(home, 'steps', 'review.md'),
+      step({
+        name: 'review',
+        type: 'agent',
+        phase: 'pre-done',
+        skill: 'code-review',
+      }),
+    );
+    await write(
+      join(home, 'steps', 'approve.md'),
+      step({
+        name: 'approve',
+        type: 'human',
+        phase: 'pre-push',
+        body: 'Approve the change.',
+      }),
+    );
+    await write(
+      join(home, 'steps', 'publish.md'),
+      step({
+        name: 'publish',
+        type: 'action',
+        phase: 'pre-push',
+        body: 'git push origin HEAD',
+      }),
+    );
+    const badStep = await write(
+      join(home, 'steps', 'bad.md'),
+      '---\nname: bad\ntype: command\nphase: later\nretry: 2\n---\nbun test\n',
+    );
+    const oversized = await write(
+      join(home, 'steps', 'oversized.md'),
+      `---\nname: oversized\ndescription: "${'x'.repeat(33 * 1024)}"\n---\nbody\n`,
+    );
+    const anchored = await write(
+      join(home, 'steps', 'anchored.md'),
+      '---\nname: &anchor anchored\ntype: command\nphase: pre-done\n---\nbun test\n',
+    );
+    await write(
+      join(home, 'pipelines', 'default.md'),
+      '---\nname: default\ndescription: Lint, review, approve, publish\nsteps: [lint, review, approve, publish]\n---\n',
+    );
+    const release = await write(
+      join(home, 'pipelines', 'release.md'),
+      '---\nname: release\nsteps: [publish, approve]\n---\n',
+    );
+    const projectLint = await write(
+      join(definitions, 'steps', 'lint.md'),
+      step({
+        name: 'lint',
+        type: 'command',
+        phase: 'pre-done',
+        body: 'bun run lint:project',
+      }),
+    );
+    const fixer = await write(
+      join(definitions, 'steps', 'fixer.md'),
+      step({
+        name: 'fixer',
+        type: 'command',
+        phase: 'pre-done',
+        on_fail: 'fix',
+        retries: 0,
+        body: 'bun test',
+      }),
+    );
+    const broken = await write(
+      join(definitions, 'pipelines', 'broken.md'),
+      '---\nname: broken\nsteps:\n  - lint\n  - missing-step\n---\n',
+    );
+    const linked = join(definitions, 'steps', 'linked.md');
+    await symlink(globalLint, linked);
+    const withPipeline = await write(
+      join(project, '.agents', 'tasks', 'with-pipeline.md'),
+      '---\npipeline: default\ntitle: Fix the parser\n---\n## Goal\nFix it.\n',
+    );
+    const withoutPipeline = await write(
+      join(project, '.agents', 'tasks', 'without-pipeline.md'),
+      '---\ntitle: No pipeline\n---\n## Goal\nFix it.\n',
+    );
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = home;
+    const signal = new AbortController().signal;
+    const nested = join(project, 'src', 'deep');
+    await mkdir(nested, { recursive: true });
+    const catalog = await loadCatalog(nested, signal);
+    const issuesFor = path => catalog.issues.filter(item => item.path === path);
+    const messages = path => issuesFor(path).map(item => item.message);
+    t.diagnostic(
+      catalog.issues
+        .map(
+          item =>
+            `${item.severity} ${item.path.slice(directory.length + 1)}:${item.line ?? '-'} ${item.message}`,
+        )
+        .join('\n'),
+    );
+
+    await t.test(
+      'roots resolve to the git project and the guarded home',
+      () => {
+        assert.deepEqual(catalog.roots, { global: home, project: definitions });
+        assert.deepEqual(
+          catalog.steps.map(item => item.name),
+          ['approve', 'fixer', 'lint', 'publish', 'review'],
+        );
+        assert.deepEqual(
+          catalog.pipelines.map(item => item.name),
+          ['default', 'release'],
+        );
+      },
+    );
+
+    await t.test('a project step overrides the global step by name', () => {
+      const lint = catalog.steps.find(item => item.name === 'lint');
+      assert.equal(lint.source.scope, 'project');
+      assert.equal(lint.source.path, projectLint);
+      assert.equal(lint.body, 'bun run lint:project\n');
+      assert.deepEqual(lint.notes, [`Overrides the global step ${globalLint}`]);
+      const resolved = resolvePipeline('default', catalog);
+      assert.equal(resolved.source.scope, 'global');
+      assert.deepEqual(
+        resolved.steps.map(item => [item.name, item.source.scope]),
+        [
+          ['lint', 'project'],
+          ['review', 'global'],
+          ['approve', 'global'],
+          ['publish', 'global'],
+        ],
+      );
+      assert.equal(
+        catalog.issues.some(item => item.message.includes('Overrides')),
+        false,
+      );
+    });
+
+    await t.test('invalid files report the path, line and field', () => {
+      assert.deepEqual(issuesFor(badStep), [
+        {
+          severity: 'error',
+          path: badStep,
+          line: 5,
+          message: 'Unknown field "retry" (did you mean "retries"?)',
+        },
+        {
+          severity: 'error',
+          path: badStep,
+          line: 4,
+          message: 'Phase must be one of plan, pre-done, pre-push',
+        },
+      ]);
+      assert.deepEqual(messages(oversized), [
+        'Definition frontmatter exceeds the 32 KiB limit.',
+      ]);
+      assert.deepEqual(messages(anchored), [
+        'Definition YAML anchors, aliases and explicit tags are not supported.',
+      ]);
+      assert.deepEqual(issuesFor(broken), [
+        {
+          severity: 'error',
+          path: broken,
+          line: 3,
+          message:
+            'Step "missing-step" referenced by pipeline "broken" does not exist',
+        },
+      ]);
+      assert.deepEqual(messages(linked), [
+        'Symbolic links are not read. Use a regular file.',
+      ]);
+      assert.equal(
+        catalog.steps.some(item => item.source.path === linked),
+        false,
+      );
+    });
+
+    await t.test(
+      'validation warns about external actions and fix steps',
+      () => {
+        assert.deepEqual(
+          issuesFor(release).map(item => [item.severity, item.message]),
+          [
+            [
+              'warning',
+              'Step "publish" in pipeline "release" looks like an external action (git push, gh pr, curl or wget) without a human step before it',
+            ],
+          ],
+        );
+        assert.deepEqual(issuesFor(join(home, 'pipelines', 'default.md')), []);
+        assert.deepEqual(
+          issuesFor(fixer).map(item => [item.severity, item.message]),
+          [
+            [
+              'warning',
+              'Step "fixer" uses on_fail fix with retries 0, so a failure stops without a fix attempt',
+            ],
+          ],
+        );
+      },
+    );
+
+    await t.test(
+      'task specs are listed and loaded inside the project',
+      async () => {
+        assert.deepEqual(catalog.specs, [
+          {
+            pipeline: 'default',
+            title: 'Fix the parser',
+            source: {
+              scope: 'project',
+              path: withPipeline,
+              contentHash: catalog.specs[0].source.contentHash,
+            },
+          },
+        ]);
+        assert.deepEqual(issuesFor(withoutPipeline), [
+          {
+            severity: 'error',
+            path: withoutPipeline,
+            line: null,
+            message: 'Missing required field "pipeline"',
+          },
+        ]);
+        const loaded = await loadSpec(withPipeline, project, signal);
+        assert.equal(loaded.spec.pipeline, 'default');
+        assert.equal(loaded.spec.body, '## Goal\nFix it.\n');
+        assert.deepEqual(loaded.source, catalog.specs[0].source);
+        await assert.rejects(
+          loadSpec(withoutPipeline, project, signal),
+          error =>
+            error instanceof DefinitionError &&
+            error.issues.some(
+              item =>
+                item.path === withoutPipeline &&
+                item.message.includes('"pipeline"'),
+            ),
+        );
+        const outside = await write(
+          join(directory, 'outside', 'spec.md'),
+          '---\npipeline: default\n---\nFix it.\n',
+        );
+        await assert.rejects(
+          loadSpec(outside, project, signal),
+          /must be inside the project/,
+        );
+      },
+    );
+
+    await t.test(
+      'content hashes are stable until the raw bytes change',
+      async () => {
+        const first = await readDefinitionFile(projectLint, signal);
+        const second = await readDefinitionFile(projectLint, signal);
+        assert.match(first.contentHash, /^[a-f0-9]{64}$/);
+        assert.equal(first.contentHash, second.contentHash);
+        assert.equal(
+          catalog.steps.find(item => item.name === 'lint').source.contentHash,
+          first.contentHash,
+        );
+        await writeFile(
+          projectLint,
+          step({
+            name: 'lint',
+            type: 'command',
+            phase: 'pre-done',
+            body: 'bun run lint:strict',
+          }),
+        );
+        const edited = await readDefinitionFile(projectLint, signal);
+        assert.notEqual(edited.contentHash, first.contentHash);
+        const reloaded = await loadCatalog(project, signal);
+        assert.equal(
+          resolvePipeline('default', reloaded).steps[0].source.contentHash,
+          edited.contentHash,
+        );
+        await assert.rejects(
+          readDefinitionFile(linked, signal),
+          /Symbolic links are not read/,
+        );
+      },
+    );
+
+    await t.test('a folder without git does not read its parent', async () => {
+      const loose = join(directory, 'loose');
+      await write(
+        join(loose, '.agents', 'pipelines', 'steps', 'parent-only.md'),
+        step({
+          name: 'parent-only',
+          type: 'command',
+          phase: 'pre-done',
+          body: 'true',
+        }),
+      );
+      const child = join(loose, 'child');
+      await mkdir(child, { recursive: true });
+      const isolated = await loadCatalog(child, signal);
+      assert.equal(isolated.roots.project, null);
+      assert.equal(
+        isolated.steps.some(item => item.name === 'parent-only'),
+        false,
+      );
+    });
+
+    await t.test(
+      'the catalog respects the step and pipeline file caps',
+      async () => {
+        const crowded = join(directory, 'crowded', '.agents', 'pipelines');
+        process.env.NESVO_PIPELINES_HOME = crowded;
+        await mkdir(join(crowded, 'steps'), { recursive: true });
+        await mkdir(join(crowded, 'pipelines'), { recursive: true });
+        await Promise.all([
+          ...Array.from({ length: 201 }, (_, item) =>
+            writeFile(
+              join(crowded, 'steps', `s${String(item).padStart(3, '0')}.md`),
+              step({
+                name: `s${item}`,
+                type: 'command',
+                phase: 'pre-done',
+                body: 'true',
+              }),
+            ),
+          ),
+          ...Array.from({ length: 101 }, (_, item) =>
+            writeFile(
+              join(
+                crowded,
+                'pipelines',
+                `p${String(item).padStart(3, '0')}.md`,
+              ),
+              `---\nname: p${item}\nsteps: [s0]\n---\n`,
+            ),
+          ),
+        ]);
+        const empty = join(directory, 'empty-project');
+        await mkdir(join(empty, '.git'), { recursive: true });
+        const capped = await loadCatalog(empty, signal);
+        assert.equal(capped.steps.length, 200);
+        assert.equal(capped.pipelines.length, 100);
+        assert.deepEqual(
+          capped.issues.map(item => item.message),
+          [
+            'The folder has 201 step files; only the first 200 are read.',
+            'The folder has 101 pipeline files; only the first 100 are read.',
+          ],
+        );
+      },
+    );
+
+    await t.test('the portability fixture loads without issues', async () => {
+      const fixture = join(directory, 'portability');
+      const agents = join(fixture, '.agents');
+      await mkdir(join(fixture, '.git'), { recursive: true });
+      await write(
+        join(agents, 'pipelines', 'steps', 'check.md'),
+        '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
+      );
+      await write(
+        join(agents, 'pipelines', 'steps', 'approve.md'),
+        '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
+      );
+      await write(
+        join(agents, 'pipelines', 'pipelines', 'portability.md'),
+        '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+      );
+      await write(
+        join(agents, 'tasks', 'portability-spec.md'),
+        '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+      );
+      process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+      const portable = await loadCatalog(fixture, signal);
+      assert.deepEqual(portable.issues, []);
+      assert.equal(portable.roots.global, null);
+      const pipeline = resolvePipeline('portability', portable);
+      assert.deepEqual(
+        pipeline.steps.map(item => [
+          item.name,
+          item.type,
+          item.phase,
+          item.timeout,
+        ]),
+        [
+          ['check', 'command', 'pre-done', '1m'],
+          ['approve', 'human', 'pre-push', '15m'],
+        ],
+      );
+      assert.equal(portable.specs[0].pipeline, 'portability');
+    });
+
+    await t.test('the override is ignored outside test mode', async () => {
+      delete process.env.NESVO_TEST_MODE;
+      process.env.NESVO_PIPELINES_HOME = home;
+      const production = await loadCatalog(project, signal);
+      assert.notEqual(production.roots.global, home);
+      process.env.NESVO_TEST_MODE = '1';
+    });
+
+    await t.test(
+      'the host serves definition reads and stops cleanly while one is pending',
+      async () => {
+        process.env.NESVO_PIPELINES_HOME = home;
+        const host = launch(directory, join(directory, 'pids.json'));
+        t.after(async () => {
+          if (host.child.exitCode === null) host.child.kill();
+          await host.exited.catch(() => undefined);
+        });
+        const listed = await host.request('list-pipeline-definitions', {
+          directory: project,
+        });
+        assert.equal(listed.type, 'pipeline-definitions');
+        assert.deepEqual(
+          listed.catalog.pipelines.map(item => item.name),
+          ['default', 'release'],
+        );
+        const validated = await host.request('validate-pipeline-definitions', {
+          directory: project,
+        });
+        assert.deepEqual(validated.catalog.issues, listed.catalog.issues);
+        const missingFolder = await host.request('list-pipeline-definitions', {
+          directory: join(directory, 'missing'),
+        });
+        assert.equal(missingFolder.type, 'error');
+        assert.equal(missingFolder.code, 'invalid-directory');
+        const { health } = await host.request('health');
+        assert.equal(health.capabilities.includes('pipelines'), false);
+        const pending = host.request('list-pipeline-definitions', {
+          directory: project,
+        });
+        await host.stop();
+        const settled = await pending;
+        assert.ok(
+          settled.type === 'pipeline-definitions' ||
+            (settled.type === 'error' && settled.code === 'unavailable'),
+          JSON.stringify(settled),
+        );
       },
     );
   },
