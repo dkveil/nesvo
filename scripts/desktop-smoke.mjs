@@ -2460,6 +2460,85 @@ try {
       },
     }),
   );
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setSize(1280, 900),
+  );
+  const automationShell = restartedPage.locator('aside[aria-label="Sidebar"]');
+  await automationShell
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('button', { name: 'New automation' })
+    .first()
+    .click();
+  const automationEditor = restartedPage.locator('[data-slot="sheet-content"]');
+  await automationEditor.getByLabel('Name').fill('Smoke automation');
+  await automationEditor.getByLabel('Prompt').fill('/fixture-skill');
+  await automationEditor
+    .getByText(
+      'Automation prompts are plain text. Skills (/name) are not supported yet.',
+    )
+    .waitFor();
+  assert.equal(
+    await automationEditor.getByRole('button', { name: 'Save' }).isDisabled(),
+    true,
+  );
+  await automationEditor
+    .getByLabel('Prompt')
+    .fill('Summarize the fixture folder.');
+  await automationEditor.getByRole('radio', { name: 'Daily' }).click();
+  await automationEditor.getByLabel('Time', { exact: true }).fill('09:00');
+  await automationEditor.getByRole('button', { name: 'Save' }).click();
+  await automationEditor.waitFor({ state: 'hidden' });
+  await restartedPage
+    .getByRole('heading', { name: 'Smoke automation', exact: true })
+    .waitFor();
+  await automationShell
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  const automationRow = restartedPage
+    .locator('[data-automation-id]')
+    .filter({ hasText: 'Smoke automation' });
+  await automationRow.hover();
+  await automationRow
+    .getByRole('button', { name: 'Run Smoke automation now' })
+    .click();
+  await automationRow.getByText('Completed', { exact: true }).waitFor({
+    timeout: 20000,
+  });
+  await automationRow
+    .getByRole('button', { name: 'Open automation: Smoke automation' })
+    .click();
+  await restartedPage
+    .locator('[data-run-status="completed"]')
+    .getByText('Waiting for acceptance')
+    .waitFor();
+  await automationShell.getByRole('button', { name: /^Inbox/ }).click();
+  await restartedPage
+    .locator('article [data-origin="automation"]')
+    .filter({ hasText: 'Automation · Smoke automation' })
+    .waitFor();
+  const [smokeAutomation] = await restartedPage.evaluate(() =>
+    window.nesvo.scheduledJobs.list('local'),
+  );
+  const smokeRuns = await restartedPage.evaluate(
+    id => window.nesvo.scheduledJobs.listRuns('local', id, null),
+    smokeAutomation.id,
+  );
+  assert.equal(smokeRuns.runs.length, 1);
+  assert.equal(smokeRuns.runs[0].status, 'completed');
+  assert.equal(smokeRuns.runs[0].trigger, 'manual');
+  assert.ok(smokeRuns.runs[0].reviewId);
+  console.log(
+    JSON.stringify({
+      automations: {
+        name: smokeAutomation.name,
+        schedule: smokeAutomation.schedule,
+        run: smokeRuns.runs[0].status,
+        inboxOrigin: true,
+      },
+    }),
+  );
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
