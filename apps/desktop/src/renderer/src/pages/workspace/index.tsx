@@ -50,6 +50,7 @@ import {
 } from '@/shared/ui/sheet';
 import { Conversation } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
+import { PipelineStrip } from '@/widgets/pipeline-strip';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
@@ -81,14 +82,23 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
+const PipelineStepResult = lazy(() => import('@/widgets/pipeline-step-result'));
+
 export function Workspace() {
   const store = useSessions();
   const [location] = useState(readWorkspaceLocation);
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
   const [sessionTarget, setSessionTarget] = useState('');
-  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
-    location.diff ? 'diff' : null,
+  const [panel, setPanel] = useState<
+    'diff' | 'files' | 'skills' | 'step' | null
+  >(location.diff ? 'diff' : null);
+  const [stepIndex, setStepIndex] = useState<number | null>(null);
+  const [pipelinePending, setPipelinePending] = useState<
+    Record<string, boolean>
+  >({});
+  const [pipelineErrors, setPipelineErrors] = useState<Record<string, string>>(
+    {},
   );
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
@@ -211,7 +221,22 @@ export function Workspace() {
             review.hostId === selectedHostId,
         )
       : undefined;
-  const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
+  const selectedRun = selected?.pipelineRunId
+    ? store.pipelineRuns.find(
+        run =>
+          run.id === selected.pipelineRunId && run.hostId === selectedHostId,
+      )
+    : undefined;
+  const selectedRunSteps = selectedRun
+    ? store.pipelineSteps.filter(
+        step => step.runId === selectedRun.id && step.hostId === selectedHostId,
+      )
+    : [];
+  const visiblePanel =
+    (panel === 'diff' && !diffReview) ||
+    (panel === 'step' && (!selectedRun || stepIndex === null))
+      ? null
+      : panel;
   useEffect(() => {
     if (
       store.loading ||
@@ -300,9 +325,18 @@ export function Workspace() {
     }
     setPanel('files');
   };
+  const openStep = (index: number) => {
+    diffTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setStepIndex(index);
+    setPanel('step');
+  };
   const closeDiff = () => {
     setPanel(null);
     setDiffTarget(null);
+    setStepIndex(null);
     const trigger = diffTrigger.current;
     requestAnimationFrame(() => {
       if (trigger?.isConnected) trigger.focus();
@@ -456,6 +490,32 @@ export function Workspace() {
       });
     } finally {
       threadRequest.current = false;
+    }
+  };
+  const controlPipeline = async (action: 'stop' | 'resume') => {
+    if (!selectedRun || !store.hostReady(selectedRun.hostId)) return;
+    const run = selectedRun;
+    const key = entityKey(run);
+    if (pipelinePending[key]) return;
+    setPipelinePending(previous => ({ ...previous, [key]: true }));
+    setPipelineErrors(previous => ({ ...previous, [key]: '' }));
+    try {
+      store.mergePipelineRuns([
+        action === 'stop'
+          ? await window.nesvo.pipelines.stopRun(run.hostId, run.id)
+          : await window.nesvo.pipelines.resumeRun(run.hostId, run.id),
+      ]);
+    } catch (failure) {
+      setPipelineErrors(previous => ({
+        ...previous,
+        [key]: `Could not ${action === 'stop' ? 'stop' : 'resume'} the pipeline. ${errorDetail(failure)}`,
+      }));
+    } finally {
+      setPipelinePending(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
     }
   };
   const threadBusyReason =
@@ -1124,6 +1184,21 @@ export function Workspace() {
                 )}
                 focusTarget={sessionTarget}
                 workers={workers}
+                pipeline={
+                  selectedRun && (
+                    <PipelineStrip
+                      run={selectedRun}
+                      steps={selectedRunSteps}
+                      selectedIndex={panel === 'step' ? stepIndex : null}
+                      connected={store.hostReady(selectedHostId)}
+                      pending={!!pipelinePending[entityKey(selectedRun)]}
+                      error={pipelineErrors[entityKey(selectedRun)] ?? ''}
+                      onSelectStep={openStep}
+                      onStop={() => void controlPipeline('stop')}
+                      onResume={() => void controlPipeline('resume')}
+                    />
+                  )
+                }
                 results={
                   <SessionReviews
                     {...reviewDecisionProps}
@@ -1282,6 +1357,32 @@ export function Workspace() {
                   savedVersion={diffReview?.version}
                   onSavedDiff={() => setPanel('diff')}
                   onClose={closeDiff}
+                />
+              </Suspense>
+            )}
+          {visiblePanel === 'step' &&
+            !inbox &&
+            !creating &&
+            selectedRun &&
+            stepIndex !== null && (
+              <Suspense
+                fallback={
+                  <aside
+                    role="status"
+                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+                  >
+                    Loading step result…
+                  </aside>
+                }
+              >
+                <PipelineStepResult
+                  run={selectedRun}
+                  steps={selectedRunSteps}
+                  index={stepIndex}
+                  api={window.nesvo.pipelines}
+                  onClose={closeDiff}
+                  onInbox={openInbox}
+                  onSession={select}
                 />
               </Suspense>
             )}
