@@ -6,6 +6,11 @@ import { ComputerManager } from './computer-manager';
 import { mobileAccess } from './mobile-access';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
+  createPipelineDemo,
+  isPipelineDemoEnabled,
+  type PipelineDemo,
+} from './pipeline-demo';
+import {
   colorSchemeSchema,
   createSessionSchema,
   decideDelegationSchema,
@@ -43,7 +48,9 @@ import {
   stopPipelineRunSchema,
   validatePipelineDefinitionsSchema,
   type AppliedColorScheme,
+  type DesktopSession,
   type PipelineMethod,
+  type WorkspaceEvent,
 } from '@nesvo/contracts';
 
 app.setName('Nesvo');
@@ -160,10 +167,33 @@ void app.whenReady().then(async () => {
       throw new Error('Unauthorized caller');
     }
   };
-  computers.subscribe(event => {
+  const send = (event: WorkspaceEvent) => {
     if (window && !window.isDestroyed())
       window.webContents.send('nesvo:event', event);
-  });
+  };
+  const pipelineDemo: PipelineDemo | null = isPipelineDemoEnabled(
+    app.isPackaged,
+  )
+    ? createPipelineDemo({
+        directory:
+          process.env.NESVO_PIPELINE_DEMO_DIRECTORY || app.getPath('userData'),
+        publish: send,
+      })
+    : null;
+  const withDemoSessions = (
+    sessions: DesktopSession[],
+    hostId: string | undefined,
+  ) =>
+    pipelineDemo && (!hostId || hostId === 'local')
+      ? [...sessions, ...pipelineDemo.sessions()]
+      : sessions;
+  computers.subscribe(event =>
+    send(
+      event.type === 'host-snapshot'
+        ? { ...event, sessions: withDemoSessions(event.sessions, event.hostId) }
+        : event,
+    ),
+  );
   ipcMain.handle('nesvo:color-scheme', event => {
     authorize(event);
     return nativeTheme.themeSource;
@@ -271,7 +301,8 @@ void app.whenReady().then(async () => {
   );
   ipcMain.handle('nesvo:list-sessions', async (event, hostId: unknown) => {
     authorize(event);
-    return computers.listSessions(hostIdSchema.optional().parse(hostId));
+    const id = hostIdSchema.optional().parse(hostId);
+    return withDemoSessions(computers.listSessions(id), id);
   });
   ipcMain.handle('nesvo:list-reviews', async (event, hostId: unknown) => {
     authorize(event);
@@ -400,11 +431,11 @@ void app.whenReady().then(async () => {
       `nesvo:${method}`,
       (event, input: unknown, hostId: unknown) => {
         authorize(event);
-        return computers.executePipeline(
-          method,
-          pipelineInputs[method].parse(input),
-          hostIdSchema.parse(hostId),
-        );
+        const parsed = pipelineInputs[method].parse(input);
+        const target = hostIdSchema.parse(hostId);
+        return pipelineDemo?.serves(method, parsed, target)
+          ? pipelineDemo.execute(method, parsed)
+          : computers.executePipeline(method, parsed, target);
       },
     );
   ipcMain.handle(

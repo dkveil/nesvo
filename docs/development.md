@@ -43,6 +43,10 @@ Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run ho
 Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, list-reviews, create-session, send-message, stop-run, respond-approval, decide-delegation, decide-review or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings. Review decisions carry reviewId, version, decisionId, accept or request-changes, and required feedback for corrections.
 Responses, session-changed and review-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
 
+## Pipeline demo runs
+
+Until the pipeline engine lands, the step strip and the step result panel can be previewed with demo runs. Set NESVO_PIPELINE_DEMO=1 before starting an unpackaged desktop build; optional NESVO_PIPELINE_DEMO_DIRECTORY sets the folder the demo sessions point at. Main then adds five read-only demo sessions to Local with runs that are checking, passed, need attention after a failed command step, wait for a human gate, and stop on an uncertain action, plus one nested agent step session. Run lists, run detail, evidence reads, Stop and Resume for those runs are answered in memory by `apps/desktop/src/main/pipeline-demo.ts`; nothing reaches the host or the database, and every other command, including starting a task, still goes to the real host. A packaged build ignores the flag, and production code paths never read the module. Use a dedicated NESVO_DATA_DIR, because the demo sessions appear next to real ones.
+
 ## Local data
 
 The desktop stores its host database under Electron's userData directory, in host/nesvo.sqlite.
