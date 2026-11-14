@@ -2521,6 +2521,26 @@ try {
     }),
     /The pipeline assistant is not available on this host yet\./,
   );
+  const resolution = {
+    runId: pipelineRun.id,
+    stepId: pipelineDetail.steps[0].id,
+    decisionId: randomUUID(),
+  };
+  await assert.rejects(
+    pipelineCall('resolveStep', 'local', {
+      ...resolution,
+      resolution: 'mark-done',
+      comment: '',
+    }),
+    /Describe what you verified/,
+  );
+  await assert.rejects(
+    pipelineCall('resolveStep', 'local', {
+      ...resolution,
+      resolution: 'run-again',
+    }),
+    /Only a step that may already have run can be marked done or run again\./,
+  );
   console.log(
     JSON.stringify({
       pipelines: {
