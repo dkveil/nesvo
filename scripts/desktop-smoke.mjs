@@ -2742,6 +2742,13 @@ try {
       '[data-editor-edge-label="smoke-check -> smoke-report on failure"]',
     )
     .waitFor();
+  assert.equal(
+    await inspector
+      .getByRole('button', { name: 'On failure', exact: true })
+      .getAttribute('aria-pressed'),
+    'true',
+  );
+  await editorShot('inspector-edge-dark');
   await editor.getByRole('button', { name: 'Save', exact: true }).click();
   await restartedPage
     .locator('[data-editor-notice]')
@@ -2867,6 +2874,62 @@ try {
       .isDisabled(),
     true,
   );
+  await editorShot('inspector-pipeline-dark');
+  await editor.getByRole('button', { name: 'Add step', exact: true }).click();
+  await restartedPage
+    .getByRole('button', { name: 'New step', exact: true })
+    .click();
+  await editor.locator('[data-editor-inspector="draft"]').waitFor();
+  await inspector
+    .getByRole('textbox', { name: 'Name', exact: true })
+    .fill('smoke-timeout');
+  await inspector
+    .getByRole('textbox', { name: 'Command', exact: true })
+    .fill('echo timeout');
+  const timeoutField = inspector.getByRole('textbox', {
+    name: 'Timeout',
+    exact: true,
+  });
+  const durationMessage = inspector.getByText(
+    'Use a duration such as 90s, 15m or 2h.',
+    { exact: true },
+  );
+  const createStep = inspector.getByRole('button', {
+    name: 'Create step',
+    exact: true,
+  });
+  await timeoutField.fill('0');
+  await durationMessage.waitFor();
+  assert.equal(await timeoutField.getAttribute('aria-invalid'), 'true');
+  assert.equal(await createStep.isDisabled(), true);
+  await editorShot('inspector-step-error-dark');
+  await timeoutField.fill('90');
+  await durationMessage.waitFor({ state: 'hidden' });
+  await createStep.click();
+  await editor.locator('[data-editor-node="smoke-timeout"]').waitFor();
+  await editor.locator('[data-editor-inspector="node"]').waitFor();
+  await editorShot('inspector-step-dark');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await restartedPage
+    .locator('[data-editor-notice]')
+    .filter({ hasText: 'Saved smoke-graph.' })
+    .waitFor();
+  assert.match(
+    await readFile(join(pipelineRoot, 'steps', 'smoke-timeout.md'), 'utf8'),
+    /^timeout: 90m$/m,
+  );
+  await editor.locator('[data-editor-start]').click();
+  await editor.locator('[data-editor-inspector="start"]').waitFor();
+  await inspector
+    .locator('[data-start-row="new-thread"]')
+    .getByText('New thread', { exact: true })
+    .waitFor();
+  await editorShot('inspector-start-dark');
+  await inspector
+    .getByRole('button', { name: 'Add schedule', exact: true })
+    .click();
+  await inspector.getByRole('form', { name: 'Add schedule' }).waitFor();
+  await editorShot('inspector-start-schedule-dark');
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
