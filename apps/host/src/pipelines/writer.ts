@@ -396,8 +396,10 @@ export async function saveDefinition(
         checked.lines,
         new Map(catalog.steps.map(step => [step.name, step])),
       );
-      if (graph.issues.some(item => item.severity === 'error'))
-        return refusedIssues(graph.issues);
+      const graphErrors = graph.issues.filter(
+        item => item.severity === 'error',
+      );
+      if (graphErrors.length) return refusedIssues(graphErrors);
     }
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
