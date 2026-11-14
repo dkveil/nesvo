@@ -239,7 +239,10 @@ export class SessionService {
       this.active.get(turn.sessionId)?.session ??
       this.store.get(turn.sessionId);
     if (!session) throw new SessionError('not-found', 'Session not found.');
-    if (!session.pipelineRunId && !turn.assistant)
+    if (
+      !session.pipelineRunId &&
+      !(turn.assistant && session.mode === 'read-only' && !session.parentId)
+    )
       throw new SessionError(
         'invalid-request',
         'This session is not part of a pipeline task.',
@@ -255,7 +258,7 @@ export class SessionService {
         );
       return 'sent';
     }
-    if (this.isBusy() || this.unsaved.size) return 'busy';
+    if (!this.canStartPipelineTurn()) return 'busy';
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, turn.text);
@@ -316,6 +319,10 @@ export class SessionService {
     const active = this.active.get(sessionId);
     if (active?.session.runId)
       this.stop({ sessionId, runId: active.session.runId }, reason);
+  }
+
+  canStartPipelineTurn(): boolean {
+    return !this.isBusy() && !this.unsaved.size;
   }
 
   isBusy(): boolean {

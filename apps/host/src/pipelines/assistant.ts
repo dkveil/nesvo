@@ -42,7 +42,7 @@ export type AssistantSendInput = Extract<
 type AssistantSessions = Pick<
   SessionService,
   | 'create'
-  | 'isBusy'
+  | 'canStartPipelineTurn'
   | 'onRunFinished'
   | 'sendPipelineTurn'
   | 'turnState'
@@ -129,6 +129,7 @@ export class PipelineAssistant {
   private readonly pending = new Map<string, PendingTurn>();
   private readonly lastHash = new Map<string, string>();
   private readonly created = new Set<string>();
+  private starting = false;
   private readonly work = new Set<Promise<void>>();
   private readonly release: () => void;
 
@@ -145,24 +146,47 @@ export class PipelineAssistant {
   }
 
   async send(input: AssistantSendInput): Promise<PipelineAssistantTurn> {
+    if (this.starting)
+      throw new PipelineAssistantError(
+        'busy',
+        'The pipeline assistant is already starting a turn. Try again shortly.',
+      );
+    this.starting = true;
+    try {
+      return await this.begin(input);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.release();
+    await Promise.all(this.work);
+  }
+
+  private async begin(
+    input: AssistantSendInput,
+  ): Promise<PipelineAssistantTurn> {
     this.ensureIdle();
     const directory = this.resolveDirectory(input.context.directory);
     const { document, selection } = input.context;
-    if (input.sessionId) {
-      const session = this.continued(input.sessionId, directory);
+    const existing = input.sessionId
+      ? this.continued(input.sessionId, directory)
+      : null;
+    if (existing?.providerInitialized) {
       const changed =
-        document && this.lastHash.get(session.id) !== document.contentHash
+        document && this.lastHash.get(existing.id) !== document.contentHash
           ? document
           : null;
       return this.deliver(
-        session.id,
+        existing.id,
         directory,
         laterTurnText({ document: changed, selection, text: input.text }),
         changed,
       );
     }
-    const sessionInput = this.sessionInput(input, directory);
-    if (sessionInput.effort)
+    const sessionInput = existing ? null : this.sessionInput(input, directory);
+    if (sessionInput?.effort)
       await confirmCodexEffort(
         sessionInput.model,
         sessionInput.effort,
@@ -170,21 +194,18 @@ export class PipelineAssistant {
       );
     const catalog = await this.loadCatalog(directory);
     this.ensureIdle();
-    const session = this.ports.sessions.create(sessionInput, {
-      origin: { kind: 'pipeline-assistant' },
-    });
-    this.created.add(session.id);
+    const sessionId =
+      existing?.id ??
+      this.ports.sessions.create(sessionInput!, {
+        origin: { kind: 'pipeline-assistant' },
+      }).id;
+    this.created.add(sessionId);
     return this.deliver(
-      session.id,
+      sessionId,
       directory,
       firstTurnText({ catalog, document, selection, text: input.text }),
       document,
     );
-  }
-
-  async close(): Promise<void> {
-    this.release();
-    await Promise.all(this.work);
   }
 
   private deliver(
@@ -284,7 +305,7 @@ export class PipelineAssistant {
   }
 
   private ensureIdle(): void {
-    if (this.ports.sessions.isBusy()) throw this.busy();
+    if (!this.ports.sessions.canStartPipelineTurn()) throw this.busy();
   }
 
   private busy(): PipelineAssistantError {
