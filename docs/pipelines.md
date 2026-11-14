@@ -12,7 +12,9 @@ Everything lives in plain Markdown files on the computer that runs the task. A r
 | Project | `<project>/.agents/pipelines/` | `steps/*.md`, `pipelines/*.md` for this project |
 | Tasks | `<project>/.agents/tasks/*.md` | task specs; any Markdown file inside the project also works |
 
-The project is the nearest folder above the working directory that contains `.git`, or the folder itself when there is none. A project step or pipeline with the same name as a global one replaces it. Each file is at most 64 KiB; a root reads at most 200 steps and 100 pipelines.
+The project is the nearest folder, at or above the working directory, that contains `.git`, or the folder itself when there is none. A project step or pipeline with the same name as a global one replaces it. Each file is at most 64 KiB; a root reads at most 200 steps and 100 pipelines.
+
+Saving or deleting a pipeline that has a run in progress is refused as busy, in the editor and the dock alike.
 
 The files are the source of truth. Nesvo never keeps a second copy of a definition: a run pins the definitions it started with, so editing a file never changes a run in progress.
 
@@ -38,11 +40,11 @@ bun run lint
 | `type` | `command`, `agent`, `human`, `action` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
-| `retries` | 0 to 5 | Default 0. A `human` step never retries. |
-| `on_fail` | `stop`, `fix` | Default `stop`: a failure ends the run. `fix` sends the failure back to the author session for a correction. |
+| `retries` | 0 to 5 | Default 0. A `human` step never retries. The value is recorded and shown, but the runner does not retry a step by itself yet; Resume runs a failed step again. |
+| `on_fail` | `stop`, `fix` | Default `stop`: a failure ends the run. `fix`: the run needs your attention with the failure instead of failing, and Resume runs the step again. Only the Fix decision of a `human` gate sends a correction to the author. |
 | `effect` | `local`, `external` | Default `local`. Only `command` and `action` steps can be `external`; Nesvo warns when nothing asks a human first. |
 | `skill` | a skill name | Only `agent` steps. An agent step needs instructions or a skill. |
-| `needs` | `env:NAME`, `browser` | A missing variable or browser blocks the step with a readable reason instead of running it. |
+| `needs` | `env:NAME`, `browser` | A missing `env:NAME` variable blocks the step with a readable reason instead of running it. `browser` is not available on this host yet and always blocks the step. |
 
 Body by type: a `command` or `action` body is a shell script run in the task directory; an `agent` body holds the instructions for the verifying session; a `human` body is the question shown at the gate. Command and action steps do not inherit variables ending in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`; list them in `needs` when a step really needs one.
 
@@ -54,7 +56,7 @@ One file per pipeline, named `<name>.md`.
 ---
 name: release
 description: Lint and tests in parallel, one review, a human decision, then publish.
-steps: [lint, test, review, approve, publish]
+steps: [lint, test, review, collect-logs, approve, publish]
 edges:
   - lint -> review
   - test -> review
@@ -70,6 +72,8 @@ layout:
 ---
 Free text for people. Nesvo does not interpret it.
 ```
+
+Edges stay inside one phase, so in this example all six steps declare `phase: pre-done` in their step files; an edge from a `pre-done` step to a `pre-push` step is refused.
 
 | Field | Meaning |
 | -- | -- |
@@ -89,7 +93,7 @@ Free text for people. Nesvo does not interpret it.
 
 `on success` is the default and may be left out. Whitespace around the arrow is free. The editor shows the conditions as On success, On failure and Always.
 
-- **Without `edges`** the pipeline is a chain: inside each phase, each step follows the one before it in `steps` order. Every pipeline written before graphs keeps its meaning without an edit.
+- **Without `edges`** the pipeline is a chain: inside each phase, each step follows the one before it in `steps` order and runs on its own, one step at a time. Every pipeline written before graphs keeps its meaning without an edit.
 - **With `edges`**, even `edges: []`, the graph is explicit: a step with no incoming edge starts as soon as its phase begins, and a step with several incoming edges waits for all of them.
 
 ## Validation in plain words
@@ -117,7 +121,7 @@ Warnings are saved and shown next to the step:
 
 ## Phases and author turns
 
-A task is a spec run through one pipeline. Starting it creates one ordinary session, optionally in its own Git worktree and branch. The phases and the author's turns alternate:
+A task is a spec run through one pipeline. Starting it creates one ordinary session, optionally in its own Git worktree and branch (a worktree needs the folder to be the top level of a Git repository). The phases and the author's turns alternate:
 
 1. **Plan.** When the pipeline has an `agent` or `human` step in `plan`, the author first answers a planning turn without changing files. Then the `plan` steps run.
 2. **Implementation turn.** The author works from the spec and the plan.
@@ -135,14 +139,14 @@ The run passes when the last phase passes. A `human` gate binds to the latest sa
 - **Not reached.** A step cut off because a step it needed failed, or passed when only an `on failure` edge led to it, is recorded as Not reached with the reason, for example `Not reached: "unit" failed`. Its own outgoing edges then die in turn.
 - **Operator skip.** Skipping a step counts as success for routing, and the steps before it still have to finish.
 - **Outputs.** A step receives the outputs of the steps that precede it in its phase graph and of every step in earlier phases as `NESVO_OUTPUT_<STEP>_<KEY>` variables. Steps running in parallel never see each other, so results do not depend on timing. Treat outputs from agent steps as untrusted text.
-- **Stop and restart.** Stop ends every running step. When the computer restarts, a running `command` becomes interrupted and a running `action` becomes uncertain, because its effect may have happened: you choose between marking it done and running it again. Resume gives interrupted and failed steps a new attempt and lets Not reached steps be re-evaluated. A run never repeats work by itself.
-- **One task per project** runs at a time, and one session group per computer.
+- **Stop and restart.** Stop ends every running step. When the computer restarts, a running `command` becomes interrupted and a running `action` becomes uncertain, because its effect may have happened: you choose **It already ran** or **Run it again**. Resume gives interrupted and failed steps a new attempt and lets Not reached steps be re-evaluated. A run never repeats work by itself.
+- **One task per project** runs at a time, and a pipeline turn starts only while no other session works on the computer.
 
 ## The graph editor
 
 Open the Pipelines view from the sidebar. **Edit** on a row opens that pipeline on a canvas, and **New pipeline** starts an empty one.
 
-- **Lanes.** Three horizontal lanes are the phases, with the author turns between them. A step sits in the lane of its phase. It cannot be dragged to another lane, because `phase` lives in the shared step file; change it in the step inspector, which says how many other pipelines use the step.
+- **Lanes.** Three horizontal lanes are the phases, with the author's implementation turn drawn as a bar between the first two. A step sits in the lane of its phase. It cannot be dragged to another lane, because `phase` lives in the shared step file; change it in the step inspector, which says how many other pipelines use the step.
 - **Palette.** **Add step** lists the steps of the catalog with a search and the phase of each; **New step** creates a step. Delete removes the selection.
 - **Connect.** Drag from one step's handle to another's. A refused connection shows the validation message inline. Select an edge to switch it between On success, On failure and Always.
 - **Inspector.** The right panel edits what you select. A step form covers name, type, phase, skill, timeout, retries, failure behaviour, effect, needs and body, with the host's limits and messages. The pipeline form covers name, description and the free text. A pipeline that has no `edges` opens as its chain and is saved with explicit `edges` and `layout` the first time.
@@ -150,7 +154,7 @@ Open the Pipelines view from the sidebar. **Edit** on a row opens that pipeline 
 - **Validation.** The shared rules run while you edit: badges on steps, an issues list in the toolbar, and Save disabled while an error exists. The host checks again on save and its issues appear beside the field or step they name.
 - **Run colours.** **Show last run** colours the steps by their latest attempt and opens a step's result in the inspector. The editor starts no run.
 - **Save.** Ctrl+S or **Save** writes each new or changed step file and then the pipeline, each with the hash of the file you opened. Auto-layout places steps by lane and depth; Escape returns the selection to the pipeline.
-- **Conflicts.** When a file changed on disk, a dialog shows its current text. **Reload** takes the new version; **Keep mine on top of the new version** saves your edits against it. Nothing merges.
+- **Conflicts.** When a file changed on disk, a dialog shows its current text. **Reload** takes the new version; **Keep mine on top of the new version** saves your edits against it (when the file was deleted on disk, only **Keep mine** is offered). Nothing merges.
 - **Unsaved edits.** Leaving the editor with unsaved changes asks first.
 
 ## The assistant dock
@@ -159,9 +163,9 @@ A collapsible chat in the bottom-right corner of the editor. It has a provider a
 
 What it can do: read your question, the open document, the selected steps and a summary of the catalog, and answer with a proposal of complete file texts, one card per file, each with a diff against the file it would replace and the host's issues.
 
-What it cannot do: write files, run commands or change settings. Nothing is written when a proposal arrives. **Apply** saves one file through the same command as the editor, with the hash of the file the diff was shown against; a conflict offers **Reload** to compare with what is on disk. **Discard** drops the card. A proposal with errors cannot be applied. While another session works on the computer, sending answers that the computer is busy and creates nothing.
+What it cannot do: write files or change settings. The session is told not to write or run anything; Claude Code has only Read, Glob and Grep there, and Codex runs in its read-only sandbox. Nothing is written when a proposal arrives. **Apply** saves one file through the same command as the editor, with the hash of the file the diff was shown against; a conflict offers **Reload** to compare with what is on disk. **Discard** drops the card. A proposal with errors cannot be applied. While another session works on the computer, sending answers that the computer is busy and creates nothing.
 
-The assistant sends the open pipeline only while the editor has no unsaved edits. The answer's shape is a request to the model, not a guarantee, which is why the host validates every proposal before it reaches a card.
+Changing the provider or model starts a new conversation. The assistant sends the open pipeline only while the editor has no unsaved edits. The answer's shape is a request to the model, not a guarantee, which is why the host validates every proposal before it reaches a card.
 
 ## Automations as triggers
 
@@ -179,4 +183,4 @@ node apps/host/dist/main.js pipelines add-to-pipeline --directory <project> --sc
 node apps/host/dist/main.js pipelines remove-from-pipeline --directory <project> --scope project --pipeline <name> --step <name>
 ```
 
-`validate` prints `severity path:line: message` and exits 1 on an error. Edits keep the rest of the file byte for byte, check that every listed step exists and name the hash they read: a file that changed meanwhile is a conflict (exit 2) and nothing is written. `remove-from-pipeline` also removes the edges that name the step and reports them; `add-to-pipeline --after` rewires the chain. Exit codes: 0 success, 1 validation errors, 2 conflict, 3 inside a pipeline run, 64 usage. Inside a pipeline run session the commands that write refuse with exit 3, so a run cannot change its own definitions.
+`validate` prints `severity path:line: message` and exits 1 on an error. Edits keep the rest of the file byte for byte, check that every listed step exists and name the hash they read: a file that changed meanwhile is a conflict (exit 2) and nothing is written. `remove-from-pipeline` also removes the edges that name the step and reports them; `add-to-pipeline --after` moves only the `on success` edges that leave the named step to the new step. In a graph with explicit `edges`, a step added without `--after`, or into another phase, has no incoming edge and starts with its phase, possibly in parallel; removing a step does not reconnect its neighbours, so a step left without incoming edges becomes a phase start. The command prints each of these as a note. The CLI has no database, so it does not see runs in progress. Exit codes: 0 success, 1 validation errors, 2 conflict, 3 inside a pipeline run, 64 usage. Inside a pipeline run session the commands that write refuse with exit 3, so a run cannot change its own definitions.
