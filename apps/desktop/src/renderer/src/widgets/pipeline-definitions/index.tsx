@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Computer, PipelinesApi } from '@nesvo/contracts';
-import { RefreshCw, Workflow } from 'lucide-react';
+import {
+  ChevronDown,
+  CircleX,
+  RefreshCw,
+  TriangleAlert,
+  Workflow,
+} from 'lucide-react';
 import { cn } from 'cn';
 import {
   phaseLabels,
@@ -8,9 +14,18 @@ import {
   type DefinitionCatalog,
   type DefinitionIssue,
   type ResolvedPipeline,
+  type ResolvedStep,
 } from '@/entities/pipeline';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import {
+  cardIcon,
+  cardRowAction,
+  cardSection,
+  cardSectionHeader,
+  cardSurface,
+  cardValue,
+} from '@/shared/ui/card-row-styles';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import {
@@ -75,14 +90,93 @@ const pipelineIssueCount = (
     .length;
 };
 
+const stepMeta = (step: ResolvedStep) =>
+  [
+    step.type[0]!.toUpperCase() + step.type.slice(1),
+    step.skill ? `Skill ${step.skill}` : '',
+    `Timeout ${step.timeout}`,
+    step.retries ? `Retries ${step.retries}` : '',
+    step.on_fail === 'fix' ? 'Sends failures back for a fix' : '',
+    step.needs.length ? `Needs ${step.needs.join(', ')}` : '',
+    scopeLabels[step.source.scope],
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+function DefinitionStep({
+  step,
+  index,
+}: {
+  step: ResolvedStep;
+  index: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const details = !!step.body.trim() || step.notes.length > 0;
+  const meta = stepMeta(step);
+  return (
+    <li data-definition-step={step.name}>
+      <button
+        type="button"
+        aria-expanded={details ? open : undefined}
+        disabled={!details}
+        title={meta}
+        onClick={() => setOpen(value => !value)}
+        className={cn(
+          cardRowAction,
+          'disabled:cursor-default disabled:opacity-100',
+        )}
+      >
+        <span className="w-4 shrink-0 text-center text-2xs text-muted-foreground tabular-nums">
+          {index + 1}
+        </span>
+        <span className="min-w-0 shrink-0 truncate">{step.name}</span>
+        <span className="min-w-0 flex-1 truncate text-right text-2xs font-normal text-muted-foreground">
+          {meta}
+        </span>
+        {details && (
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150',
+              open && 'rotate-180',
+            )}
+          />
+        )}
+      </button>
+      {open && (
+        <div className="space-y-1.5 pt-1 pr-2.5 pb-2 pl-9">
+          {step.body.trim() && (
+            <pre className="max-h-40 overflow-auto rounded-md bg-code-background px-2.5 py-2 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {step.body.trim()}
+            </pre>
+          )}
+          {step.notes.map(note => (
+            <p key={note} className="text-2xs text-muted-foreground">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
 function PipelineDetail({ pipeline }: { pipeline: ResolvedPipeline }) {
+  const phases = phaseOrder
+    .map(phase => ({
+      phase,
+      steps: pipeline.steps
+        .map((step, index) => ({ step, index }))
+        .filter(item => item.step.phase === phase),
+    }))
+    .filter(group => group.steps.length > 0);
   return (
     <section
       aria-label={`${pipeline.name} steps`}
-      className="min-w-0 space-y-3"
+      className={cn(cardSurface, 'min-w-0 divide-y')}
     >
-      <div className="space-y-1">
-        <h3 className="text-sm font-semibold">{pipeline.name}</h3>
+      <div className="space-y-0.5 px-4 py-3">
+        <h3 className="text-[13px] font-semibold">{pipeline.name}</h3>
         {pipeline.description && (
           <p className="text-xs leading-5 text-muted-foreground">
             {pipeline.description}
@@ -100,48 +194,18 @@ function PipelineDetail({ pipeline }: { pipeline: ResolvedPipeline }) {
           </p>
         ))}
       </div>
-      <ol className="space-y-1.5">
-        {pipeline.steps.map((step, index) => (
-          <li
-            key={step.name}
-            data-definition-step={step.name}
-            className="space-y-1.5 rounded-lg border px-3 py-2.5"
-          >
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-2xs text-muted-foreground tabular-nums">
-                {index + 1}
-              </span>
-              <span className="text-[13px] font-medium">{step.name}</span>
-              <span className="text-2xs text-muted-foreground">
-                {[
-                  step.type[0]!.toUpperCase() + step.type.slice(1),
-                  phaseLabels[step.phase],
-                  step.skill ? `Skill ${step.skill}` : '',
-                  `Timeout ${step.timeout}`,
-                  step.retries ? `Retries ${step.retries}` : '',
-                  step.on_fail === 'fix' ? 'Sends failures back for a fix' : '',
-                  step.needs.length ? `Needs ${step.needs.join(', ')}` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-              <span className="ml-auto text-2xs text-muted-foreground">
-                {scopeLabels[step.source.scope]}
-              </span>
-            </div>
-            {step.body.trim() && (
-              <pre className="max-h-32 overflow-auto rounded-md bg-code-background px-2.5 py-2 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                {step.body.trim()}
-              </pre>
-            )}
-            {step.notes.map(note => (
-              <p key={note} className="text-2xs text-muted-foreground">
-                {note}
-              </p>
+      {phases.map(group => (
+        <div key={group.phase} className={cardSection}>
+          <h4 className={cardSectionHeader}>
+            {phaseLabels[group.phase]} · {group.steps.length}
+          </h4>
+          <ol className="space-y-px">
+            {group.steps.map(({ step, index }) => (
+              <DefinitionStep key={step.name} step={step} index={index} />
             ))}
-          </li>
-        ))}
-      </ol>
+          </ol>
+        </div>
+      ))}
     </section>
   );
 }
@@ -328,10 +392,10 @@ export default function PipelineDefinitions({
                 Project: {catalog.roots.project ?? 'none'}
               </span>
             </p>
-            <div className="grid gap-5 md:grid-cols-[17rem_minmax(0,1fr)]">
+            <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)]">
               <ul
                 aria-label="Pipeline definitions"
-                className="min-w-0 space-y-0.5"
+                className={cn(cardSurface, 'h-fit min-w-0 space-y-px p-1.5')}
               >
                 {catalog.pipelines.map(pipeline => {
                   const count = pipelineIssueCount(catalog, pipeline);
@@ -342,37 +406,34 @@ export default function PipelineDefinitions({
                         type="button"
                         aria-pressed={active}
                         data-definition={pipeline.name}
+                        title={[pipeline.description, phaseCounts(pipeline)]
+                          .filter(Boolean)
+                          .join(' · ')}
                         onClick={() => setSelectedName(pipeline.name)}
-                        className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors duration-100 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:bg-highlight"
+                        className={cn(
+                          cardRowAction,
+                          'aria-pressed:bg-highlight',
+                        )}
                       >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate text-[13px] font-medium">
-                            {pipeline.name}
-                          </span>
-                          <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
-                            {scopeLabels[pipeline.source.scope]}
-                          </span>
+                        <Workflow className={cardIcon} aria-hidden="true" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {pipeline.name}
                         </span>
-                        {pipeline.description && (
-                          <span className="line-clamp-2 text-2xs leading-4 text-muted-foreground">
-                            {pipeline.description}
+                        {count > 0 && (
+                          <span className="shrink-0 text-2xs font-normal text-warning-foreground tabular-nums">
+                            {count} {count === 1 ? 'issue' : 'issues'}
                           </span>
                         )}
-                        <span className="text-2xs text-muted-foreground">
-                          {phaseCounts(pipeline)}
-                          {count > 0 && (
-                            <span className="text-warning-foreground">
-                              {' '}
-                              · {count} {count === 1 ? 'issue' : 'issues'}
-                            </span>
-                          )}
+                        <span className={cardValue}>
+                          {pipeline.steps.length}{' '}
+                          {pipeline.steps.length === 1 ? 'step' : 'steps'}
                         </span>
                       </button>
                     </li>
                   );
                 })}
                 {catalog.pipelines.length === 0 && (
-                  <li className="px-3 py-2 text-xs text-muted-foreground">
+                  <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
                     No valid pipelines in this folder or the global folder.
                   </li>
                 )}
@@ -381,40 +442,42 @@ export default function PipelineDefinitions({
             </div>
             {catalog.issues.length > 0 && (
               <section aria-label="Validation issues" className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground">
+                <h3 className="px-1 text-2xs text-muted-foreground">
                   {catalog.issues.length} validation{' '}
                   {catalog.issues.length === 1 ? 'issue' : 'issues'}
                 </h3>
-                <ul className="divide-y rounded-lg border">
-                  {catalog.issues.map((issue, index) => (
-                    <li
-                      key={index}
-                      className="flex min-w-0 items-start gap-3 px-3 py-2 text-xs"
-                    >
-                      <span
-                        className={cn(
-                          'w-14 shrink-0 font-medium',
-                          issue.severity === 'error'
-                            ? 'text-error-foreground'
-                            : 'text-warning-foreground',
-                        )}
+                <ul className={cn(cardSurface, 'space-y-px p-1.5')}>
+                  {catalog.issues.map((issue, index) => {
+                    const error = issue.severity === 'error';
+                    const Icon = error ? CircleX : TriangleAlert;
+                    return (
+                      <li
+                        key={index}
+                        className="flex min-h-7 min-w-0 items-start gap-2.5 rounded-md px-2.5 py-1 text-xs"
                       >
-                        {issue.severity === 'error' ? 'Error' : 'Warning'}
-                      </span>
-                      <span className="min-w-0 flex-1 space-y-0.5">
-                        <span className="block leading-5 [overflow-wrap:anywhere]">
+                        <Icon
+                          role="img"
+                          aria-label={error ? 'Error' : 'Warning'}
+                          className={cn(
+                            'mt-0.5 size-4 shrink-0',
+                            error
+                              ? 'text-error-foreground'
+                              : 'text-warning-foreground',
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 leading-5 [overflow-wrap:anywhere]">
                           {issue.message}
                         </span>
                         <span
-                          className="block truncate font-mono text-2xs text-muted-foreground"
+                          className="max-w-48 shrink-0 truncate font-mono text-2xs leading-5 text-muted-foreground"
                           title={issue.path}
                         >
                           {issueScope(catalog, issue)} · {fileName(issue.path)}
                           {issue.line ? `:${issue.line}` : ''}
                         </span>
-                      </span>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             )}
