@@ -1,5 +1,9 @@
 # Platform verification
 
+## Agent step structured output
+
+On November 14 the structured-verdict capabilities of the installed providers on the Linux VPS were checked without a model turn on the real accounts. Claude Code 2.1.311 lists `--json-schema`, `--no-session-persistence`, `--setting-sources` and `--bare` in `--help`; with an empty configuration directory and an invalid API key the CLI accepted `--setting-sources ""` together with `--json-schema`, listed `StructuredOutput` beside Read, Glob and Grep in its init frame and ended with an API error, so no tokens were used and no `structured_output` was observed. `--bare` restricted authentication to an API key and is not used. Codex 0.167.0's generated app-server protocol schema documents `outputSchema` on `turn/start` as constraining the final assistant message. Every agent step check in the repository uses the provider fixtures; no successful real verdict from either provider is claimed, and the open real-Claude evidence of P2 is unchanged.
+
 ## D66 mobile over a temporary public HTTPS tunnel
 
 On November 9, the local Android development build on the dedicated `Nesvo_D66` AVD tried to reach the gateway of the built desktop on this Windows PC only through a temporary Cloudflare quick tunnel (`trycloudflare.com`, no account, no domain), with its publicly trusted certificate. The owner approved the tunnel for this test only. It ran from 21:08:36 to 21:19:57 UTC (22:08:36 to 22:19:57 Europe/Warsaw); after it was stopped, three requests to its URL returned HTTP 530 with Cloudflare's tunnel error page. The tunnel URL is kept outside this public repository.
