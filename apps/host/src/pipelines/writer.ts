@@ -330,7 +330,10 @@ async function publish(
   }
 }
 
-function checkFileText(document: string, path: string): DefinitionIssue[] {
+export function checkFileText(
+  document: string,
+  path: string,
+): DefinitionIssue[] {
   const bytes = Buffer.from(document, 'utf8');
   const limit = definitionReadLimits.fileBytes;
   try {
