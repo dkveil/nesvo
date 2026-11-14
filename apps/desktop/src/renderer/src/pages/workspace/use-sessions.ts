@@ -148,7 +148,7 @@ export function useSessions() {
         mergePipelineRuns([detail.run]);
         mergePipelineSteps(detail.steps);
       } catch {
-        return;
+        runRequests.current.delete(key);
       }
     },
     [mergePipelineRuns, mergePipelineSteps],
