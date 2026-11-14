@@ -10917,3 +10917,717 @@ test(
     );
   },
 );
+
+test(
+  'pipeline graphs resolve edges and layout through one shared module in the loader, the writer and the command',
+  { timeout: 180_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-graphs-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    const hosts = [];
+    t.after(async () => {
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const bundle = async (source, name) => {
+      const outfile = join(directory, `${name}.mjs`);
+      await promisify(execFile)('bun', [
+        'build',
+        fileURLToPath(new URL(source, import.meta.url)),
+        '--target=node',
+        '--format=esm',
+        `--outfile=${outfile}`,
+      ]);
+      return import(pathToFileURL(outfile).href);
+    };
+    const contracts = await bundle(
+      '../../../packages/contracts/src/index.ts',
+      'graph-contracts',
+    );
+    const { loadCatalog } = await bundle(
+      '../src/pipelines/definitions.ts',
+      'graph-definitions',
+    );
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+      return path;
+    };
+    const home = join(directory, 'home');
+    await mkdir(home, { recursive: true });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = home;
+    const stepKinds = {
+      lint: ['command', 'pre-done', 'echo lint'],
+      test: ['command', 'pre-done', 'echo test'],
+      fmt: ['command', 'pre-done', 'echo fmt'],
+      collect: ['command', 'pre-done', 'echo collect'],
+      report: ['command', 'pre-done', 'echo report'],
+      review: ['agent', 'pre-done', 'Review the change.'],
+      security: ['agent', 'pre-done', 'Check the change for security issues.'],
+      approve: ['human', 'pre-push', 'Approve the release.'],
+      publish: ['action', 'pre-push', 'git push origin HEAD'],
+      notify: ['action', 'pre-push', 'echo notify'],
+      verify: ['command', 'pre-push', 'echo verify'],
+      ship: ['action', 'pre-push', 'echo ship', 'external'],
+    };
+    const createProject = async name => {
+      const root = join(directory, name);
+      await mkdir(join(root, '.git'), { recursive: true });
+      for (const [step, [type, phase, body, effect]] of Object.entries(
+        stepKinds,
+      ))
+        await write(
+          join(root, '.agents', 'pipelines', 'steps', `${step}.md`),
+          `---\nname: ${step}\ntype: ${type}\nphase: ${phase}\n${effect ? `effect: ${effect}\n` : ''}---\n${body}\n`,
+        );
+      return root;
+    };
+    const project = await createProject('project');
+    const pipelineFile = (root, name, lines, body = 'Body stays.\n') =>
+      write(
+        join(root, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        `---\nname: ${name}\n${lines.join('\n')}\n---\n${body}`,
+      );
+    const edgeLines = edges => ['edges:', ...edges.map(edge => `  - ${edge}`)];
+    const linear = await pipelineFile(project, 'linear', [
+      'steps: [lint, test, review, approve, publish]',
+    ]);
+    const release = await pipelineFile(project, 'release', [
+      'steps: [lint, test, review, collect, report, approve, publish]',
+      ...edgeLines([
+        'lint -> review',
+        'test -> review',
+        'review -> report',
+        'review -> collect on failure',
+        'approve -> publish',
+      ]),
+      'layout:',
+      '  lint: [0, 0]',
+      '  test: [0, 140]',
+      '  review: [260, 70]',
+      '  collect: [520, 140]',
+      '  report: [520, 0]',
+      '  approve: [0, 300]',
+      '  publish: [260, 300]',
+    ]);
+    const errorCases = {
+      e1: [
+        ['lint', 'review'],
+        ['lint => review'],
+        'Edge "lint => review" must read "<step> -> <step>" with an optional "on success", "on failure" or "on any"',
+      ],
+      e2: [
+        ['lint', 'review'],
+        ['lint -> revew'],
+        'Edge "lint -> revew" names step "revew", which is not in this pipeline',
+      ],
+      e3: [
+        ['lint', 'review'],
+        ['lint -> lint'],
+        'Step "lint" cannot connect to itself',
+      ],
+      e4: [
+        ['lint', 'review'],
+        ['lint -> review', 'lint -> review on success'],
+        'Edge "lint -> review" is listed twice',
+      ],
+      e5: [
+        ['lint', 'notify'],
+        ['lint -> notify'],
+        'Edge "lint -> notify" crosses phases; "lint" is pre-done and "notify" is pre-push',
+      ],
+      e6: [
+        ['lint', 'test', 'review'],
+        ['lint -> test', 'test -> review', 'review -> lint'],
+        'Steps "lint", "test", "review" form a cycle',
+      ],
+      e7: [
+        ['approve', 'notify'],
+        ['approve -> notify on failure'],
+        'Edge "approve -> notify on failure" starts at a human step; human decisions are accept, reject or fix and are not routed',
+      ],
+      e8: [
+        ['test', 'collect', 'report'],
+        ['test -> report', 'test -> collect on failure', 'collect -> report'],
+        'Step "report" waits for both outcomes of "test" and can never start',
+      ],
+      e9: [
+        ['lint', 'review'],
+        Array.from({ length: 65 }, () => 'lint -> review'),
+        'A pipeline has at most 64 edges',
+      ],
+    };
+    const errorFiles = {};
+    for (const [name, [steps, edges]] of Object.entries(errorCases))
+      errorFiles[name] = await pipelineFile(project, name, [
+        `steps: [${steps.join(', ')}]`,
+        ...edgeLines(edges),
+      ]);
+    const edgesShape = await pipelineFile(project, 'edges-shape', [
+      'steps: [lint, review]',
+      'edges: lint -> review',
+    ]);
+    const layoutShape = await pipelineFile(project, 'layout-shape', [
+      'steps: [lint, review]',
+      'layout:',
+      '  lint: [0]',
+      '  review: [1.5, 2]',
+    ]);
+    const openPath = await pipelineFile(project, 'open-path', [
+      'steps: [verify, approve, ship]',
+      ...edgeLines(['verify -> ship', 'approve -> ship']),
+    ]);
+    const guarded = await pipelineFile(project, 'guarded', [
+      'steps: [verify, approve, ship]',
+      ...edgeLines(['verify -> approve', 'approve -> ship']),
+    ]);
+    const anyRoute = await pipelineFile(project, 'any-route', [
+      'steps: [approve, ship]',
+      ...edgeLines(['approve -> ship on any']),
+    ]);
+    const placed = await pipelineFile(project, 'placed', [
+      'steps: [lint, review]',
+      ...edgeLines(['lint -> review']),
+      'layout:',
+      '  lint: [0, 0]',
+      '  old: [10, 10]',
+    ]);
+    const parallel = await pipelineFile(project, 'parallel', [
+      'steps: [lint, review, security]',
+      ...edgeLines(['lint -> review', 'lint -> security']),
+    ]);
+    const exclusive = await pipelineFile(project, 'exclusive', [
+      'steps: [lint, review, security]',
+      ...edgeLines(['lint -> review', 'lint -> security on failure']),
+    ]);
+    const signal = new AbortController().signal;
+    const catalog = await loadCatalog(project, signal);
+    const issuesFor = path => catalog.issues.filter(item => item.path === path);
+    const listed = name =>
+      catalog.pipelines.find(pipeline => pipeline.name === name);
+    t.diagnostic(
+      Object.entries(errorFiles)
+        .flatMap(([name, path]) =>
+          issuesFor(path).map(
+            item => `${name.toUpperCase()} line ${item.line}: ${item.message}`,
+          ),
+        )
+        .join('\n'),
+    );
+
+    await t.test('a pipeline without edges keeps the implicit chain', () => {
+      const pipeline = listed('linear');
+      assert.deepEqual(issuesFor(linear), []);
+      assert.equal('edges' in pipeline, false);
+      assert.deepEqual(pipeline.graph, {
+        explicit: false,
+        edges: [
+          { from: 'lint', to: 'test', when: 'success' },
+          { from: 'test', to: 'review', when: 'success' },
+          { from: 'approve', to: 'publish', when: 'success' },
+        ],
+      });
+    });
+
+    await t.test(
+      'an explicit graph with a fan-out and an and-join resolves',
+      () => {
+        const pipeline = listed('release');
+        assert.deepEqual(issuesFor(release), []);
+        assert.deepEqual(pipeline.graph, {
+          explicit: true,
+          edges: [
+            { from: 'lint', to: 'review', when: 'success' },
+            { from: 'test', to: 'review', when: 'success' },
+            { from: 'review', to: 'report', when: 'success' },
+            { from: 'review', to: 'collect', when: 'failure' },
+            { from: 'approve', to: 'publish', when: 'success' },
+          ],
+        });
+        assert.equal(pipeline.edges.length, 5);
+        assert.deepEqual(pipeline.layout.review, [260, 70]);
+        assert.deepEqual(
+          contracts.incoming(pipeline.graph, 'review').map(edge => edge.from),
+          ['lint', 'test'],
+        );
+        assert.deepEqual(
+          contracts.outgoing(pipeline.graph, 'review').map(edge => edge.to),
+          ['report', 'collect'],
+        );
+        assert.deepEqual(contracts.ancestors(pipeline.graph, 'report').sort(), [
+          'lint',
+          'review',
+          'test',
+        ]);
+        assert.deepEqual(contracts.phaseSources(pipeline, 'pre-done'), [
+          'lint',
+          'test',
+        ]);
+        assert.deepEqual(contracts.topologicalOrder(pipeline, 'pre-done'), [
+          'lint',
+          'test',
+          'review',
+          'collect',
+          'report',
+        ]);
+      },
+    );
+
+    await t.test(
+      'each graph error names the edges line and excludes the pipeline',
+      () => {
+        for (const [name, [, , message]] of Object.entries(errorCases)) {
+          assert.deepEqual(
+            issuesFor(errorFiles[name]),
+            [{ severity: 'error', path: errorFiles[name], line: 4, message }],
+            name,
+          );
+          assert.equal(listed(name), undefined, name);
+        }
+        assert.deepEqual(issuesFor(edgesShape), [
+          {
+            severity: 'error',
+            path: edgesShape,
+            line: 4,
+            message: 'Field "edges" must be a list of text entries',
+          },
+        ]);
+        assert.deepEqual(issuesFor(layoutShape), [
+          {
+            severity: 'error',
+            path: layoutShape,
+            line: 4,
+            message: 'Field "layout" must be a mapping of step name to [x, y]',
+          },
+        ]);
+      },
+    );
+
+    await t.test(
+      'external steps warn when a path reaches them without a human step',
+      () => {
+        const warning = path =>
+          issuesFor(path).map(item => [item.severity, item.line, item.message]);
+        assert.deepEqual(warning(openPath), [
+          [
+            'warning',
+            null,
+            'Step "ship" has an external effect and a path reaches it without a human step',
+          ],
+        ]);
+        assert.deepEqual(warning(guarded), []);
+        assert.deepEqual(warning(anyRoute), [
+          [
+            'warning',
+            null,
+            'Step "ship" has an external effect and a path reaches it without a human step',
+          ],
+        ]);
+        assert.deepEqual(warning(placed), [
+          [
+            'warning',
+            6,
+            'Layout names step "old", which is not in this pipeline',
+          ],
+        ]);
+        assert.deepEqual(warning(parallel), [
+          [
+            'warning',
+            null,
+            'Steps "review" and "security" are agent steps that could start together; they run one at a time on this computer',
+          ],
+        ]);
+        assert.deepEqual(warning(exclusive), []);
+        for (const name of ['open-path', 'guarded', 'placed', 'parallel'])
+          assert.ok(listed(name), name);
+      },
+    );
+
+    await t.test(
+      'the shared module validates a live edit with the same rules',
+      () => {
+        const steps = new Map(catalog.steps.map(step => [step.name, step]));
+        const live = contracts.resolveGraph(
+          {
+            name: 'draft',
+            steps: ['lint', 'notify', 'review'],
+            edges: ['lint -> notify', ' lint->review   on any '],
+            layout: {},
+          },
+          steps,
+        );
+        assert.deepEqual(
+          live.issues.map(item => [
+            item.rule,
+            item.field,
+            item.edge,
+            item.steps,
+          ]),
+          [['E5', 'edges', 0, ['lint', 'notify']]],
+        );
+        assert.deepEqual(live.graph, {
+          explicit: true,
+          edges: [{ from: 'lint', to: 'review', when: 'any' }],
+        });
+        assert.deepEqual(contracts.parseEdge('a -> b on failure'), {
+          from: 'a',
+          to: 'b',
+          when: 'failure',
+        });
+        assert.equal(contracts.parseEdge('a -> b on later'), null);
+        assert.equal(
+          contracts.formatEdge({ from: 'a', to: 'b', when: 'success' }),
+          'a -> b',
+        );
+        assert.deepEqual(
+          contracts.implicitEdges([
+            { name: 'publish', phase: 'pre-push' },
+            { name: 'plan-check', phase: 'plan' },
+            { name: 'approve', phase: 'pre-push' },
+          ]),
+          [{ from: 'publish', to: 'approve', when: 'success' }],
+        );
+        assert.deepEqual(
+          contracts.resolveGraph(
+            { name: 'empty', steps: ['lint', 'test'], edges: [] },
+            steps,
+          ),
+          { graph: { explicit: true, edges: [] }, issues: [] },
+        );
+      },
+    );
+
+    await t.test(
+      'a stored run from before graphs parses with the implicit chain',
+      () => {
+        const hash = 'a'.repeat(64);
+        const step = (name, type, phase) => ({
+          name,
+          type,
+          phase,
+          skill: null,
+          timeout: '15m',
+          retries: 0,
+          on_fail: 'stop',
+          effect: 'local',
+          needs: [],
+          body: `echo ${name}\n`,
+          source: {
+            scope: 'project',
+            path: `/project/.agents/pipelines/steps/${name}.md`,
+            contentHash: hash,
+          },
+          notes: [],
+        });
+        const stored = {
+          id: randomUUID(),
+          revision: 4,
+          pipeline: {
+            name: 'legacy',
+            description: '',
+            body: '',
+            source: {
+              scope: 'project',
+              path: '/project/.agents/pipelines/pipelines/legacy.md',
+              contentHash: hash,
+            },
+            notes: [],
+            steps: [
+              step('lint', 'command', 'pre-done'),
+              step('test', 'command', 'pre-done'),
+              step('approve', 'human', 'pre-push'),
+              step('publish', 'action', 'pre-push'),
+            ],
+          },
+          specPath: '/project/.agents/tasks/legacy.md',
+          specHash: hash,
+          specTitle: 'Legacy task',
+          sessionId: null,
+          directory: '/project',
+          projectRoot: '/project',
+          isolation: null,
+          gateProvider: 'Codex',
+          gateModel: 'gpt-5.5',
+          status: 'checking',
+          phase: 'pre-done',
+          currentStepIndex: 1,
+          attention: null,
+          createdAt: '2026-11-13T20:00:00.000Z',
+          updatedAt: '2026-11-13T20:00:01.000Z',
+          finishedAt: null,
+        };
+        const parsed = contracts.pipelineRunSchema.parse(
+          JSON.parse(JSON.stringify(stored)),
+        );
+        assert.deepEqual(parsed.pipeline.graph, {
+          explicit: false,
+          edges: [
+            { from: 'lint', to: 'test', when: 'success' },
+            { from: 'approve', to: 'publish', when: 'success' },
+          ],
+        });
+        assert.deepEqual(
+          contracts.pipelineRunSchema.parse(JSON.parse(JSON.stringify(parsed))),
+          parsed,
+        );
+        assert.equal(
+          contracts.pipelineStepStateSchema.parse('unreached'),
+          'unreached',
+        );
+      },
+    );
+
+    await t.test(
+      'the host refuses a cross-phase save and keeps the portability fixture verdicts',
+      async () => {
+        const host = launch(directory, join(directory, 'pids.json'));
+        hosts.push(host);
+        const crossing =
+          '---\nname: crossing\nsteps: [lint, publish]\nedges:\n  - lint -> publish\n---\n';
+        const path = join(
+          project,
+          '.agents',
+          'pipelines',
+          'pipelines',
+          'crossing.md',
+        );
+        const refused = await host.request('save-pipeline-definition', {
+          directory: project,
+          scope: 'project',
+          kind: 'pipeline',
+          name: 'crossing',
+          document: crossing,
+          expectedHash: null,
+        });
+        assert.equal(refused.type, 'pipeline-definition-refused');
+        assert.deepEqual(refused.issues, [
+          {
+            severity: 'error',
+            path,
+            line: 4,
+            message:
+              'Edge "lint -> publish" crosses phases; "lint" is pre-done and "publish" is pre-push',
+          },
+        ]);
+        await assert.rejects(stat(path));
+        const saved = await host.request('save-pipeline-definition', {
+          directory: project,
+          scope: 'project',
+          kind: 'pipeline',
+          name: 'crossing',
+          document: crossing.replaceAll('lint', 'approve'),
+          expectedHash: null,
+        });
+        assert.equal(saved.type, 'pipeline-definitions', JSON.stringify(saved));
+        assert.deepEqual(
+          saved.catalog.pipelines.find(item => item.name === 'crossing').graph,
+          {
+            explicit: true,
+            edges: [{ from: 'approve', to: 'publish', when: 'success' }],
+          },
+        );
+        const fixture = join(directory, 'portability');
+        const agents = join(fixture, '.agents');
+        await mkdir(join(fixture, '.git'), { recursive: true });
+        await write(
+          join(agents, 'pipelines', 'steps', 'check.md'),
+          '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
+        );
+        await write(
+          join(agents, 'pipelines', 'steps', 'approve.md'),
+          '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
+        );
+        await write(
+          join(agents, 'pipelines', 'pipelines', 'portability.md'),
+          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+        );
+        await write(
+          join(agents, 'tasks', 'portability-spec.md'),
+          '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+        );
+        const definitions = await host.request('list-pipeline-definitions', {
+          directory: fixture,
+        });
+        assert.deepEqual(definitions.catalog.issues, []);
+        assert.deepEqual(definitions.catalog.pipelines[0].graph, {
+          explicit: false,
+          edges: [],
+        });
+        const expected = {
+          'pre-done': [
+            { name: 'check', status: 'pass', evidenceKinds: ['log'] },
+          ],
+          'pre-push': [
+            { name: 'approve', status: 'skipped', evidenceKinds: [] },
+          ],
+        };
+        const actual = {};
+        for (const phase of Object.keys(expected)) {
+          const started = await host.request('run-pipeline-steps', {
+            directory: fixture,
+            specPath: '.agents/tasks/portability-spec.md',
+            phase,
+          });
+          assert.equal(started.type, 'pipeline-run', JSON.stringify(started));
+          const deadline = Date.now() + 20_000;
+          let detail;
+          while (true) {
+            detail = (
+              await host.request('get-pipeline-run', { runId: started.run.id })
+            ).detail;
+            if (!['pending', 'checking'].includes(detail.run.status)) break;
+            assert.ok(Date.now() < deadline, JSON.stringify(detail.run));
+            await delay(50);
+          }
+          assert.equal(detail.run.status, 'passed');
+          assert.equal(detail.run.pipeline.graph.explicit, false);
+          actual[phase] = detail.steps.map(step => ({
+            name: step.name,
+            status: step.result?.status ?? step.state,
+            evidenceKinds: step.result?.evidence.map(item => item.kind) ?? [],
+          }));
+        }
+        assert.deepEqual(actual, expected);
+        await host.stop();
+      },
+    );
+
+    await t.test(
+      'the pipelines command keeps edges in step with the steps list',
+      async () => {
+        const root = await createProject('command-project');
+        const entry = fileURLToPath(
+          new URL('../dist/main.js', import.meta.url),
+        );
+        const run = args =>
+          new Promise((resolve, reject) => {
+            const child = spawn(
+              process.execPath,
+              [entry, 'pipelines', ...args, '--directory', root],
+              {
+                env: {
+                  PATH: process.env.PATH,
+                  TMPDIR: process.env.TMPDIR,
+                  NESVO_TEST_MODE: '1',
+                  NESVO_PIPELINES_HOME: home,
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+              },
+            );
+            let stdout = '';
+            let stderr = '';
+            child.stdout.on('data', chunk => (stdout += chunk));
+            child.stderr.on('data', chunk => (stderr += chunk));
+            child.on('error', reject);
+            child.on('close', code => resolve({ code, stdout, stderr }));
+          });
+        const edit = (command, pipeline, step, extra = []) =>
+          run([
+            command,
+            '--scope',
+            'project',
+            '--pipeline',
+            pipeline,
+            '--step',
+            step,
+            ...extra,
+          ]);
+        const body = 'Body line\n- lint -> review stays in the body\n';
+        const block =
+          '---\nname: block\nsteps:\n  - lint\n  - test\n  - review\nedges:\n  - lint -> review # first\n  - test -> review\n  - test -> lint on any\n---\n' +
+          body;
+        const blockPath = await pipelineFile(root, 'block', [], '');
+        await writeFile(blockPath, block);
+        const removed = await edit('remove-from-pipeline', 'block', 'lint');
+        assert.equal(removed.code, 0, removed.stderr);
+        assert.match(removed.stdout, /\nRemoved 2 edges that named "lint"\n$/);
+        const after = await readFile(blockPath, 'utf8');
+        assert.equal(
+          after,
+          '---\nname: block\nsteps:\n  - test\n  - review\nedges:\n  - test -> review\n---\n' +
+            body,
+        );
+        assert.equal(after.slice(after.lastIndexOf('---\n') + 4), body);
+        const flow =
+          '---\r\nname: flow\r\nsteps: [lint, test]\r\nedges: [lint -> test] # one\r\n---\r\nNotes\r\n';
+        const flowPath = await pipelineFile(root, 'flow', [], '');
+        await writeFile(flowPath, flow);
+        const emptied = await edit('remove-from-pipeline', 'flow', 'lint');
+        assert.equal(emptied.code, 0, emptied.stderr);
+        assert.match(emptied.stdout, /Removed 1 edge that named "lint"/);
+        assert.equal(
+          await readFile(flowPath, 'utf8'),
+          '---\r\nname: flow\r\nsteps: [test]\r\nedges: [] # one\r\n---\r\nNotes\r\n',
+        );
+        const wrapped =
+          '---\nname: wrapped\nsteps: [lint, test]\nedges:\n  [lint -> test]\n---\n';
+        const wrappedPath = await pipelineFile(root, 'wrapped', [], '');
+        await writeFile(wrappedPath, wrapped);
+        const unsupported = await edit(
+          'remove-from-pipeline',
+          'wrapped',
+          'lint',
+        );
+        assert.equal(unsupported.code, 1);
+        assert.match(
+          unsupported.stderr,
+          /The edges list uses a layout this command cannot edit\. Edit the file directly, then run validate\./,
+        );
+        assert.equal(await readFile(wrappedPath, 'utf8'), wrapped);
+        const chain =
+          '---\nname: chain\nsteps: [lint, review, collect]\nedges:\n  - lint -> review\n  - lint -> collect on failure\n---\nChain body\n';
+        const chainPath = await pipelineFile(root, 'chain', [], '');
+        await writeFile(chainPath, chain);
+        const inserted = await edit('add-to-pipeline', 'chain', 'fmt', [
+          '--after',
+          'lint',
+        ]);
+        assert.equal(inserted.code, 0, inserted.stderr);
+        assert.match(
+          inserted.stdout,
+          /\nRewired "lint -> review" to "fmt -> review"\nAdded edge "lint -> fmt"\n$/,
+        );
+        assert.equal(
+          await readFile(chainPath, 'utf8'),
+          '---\nname: chain\nsteps: [lint, fmt, review, collect]\nedges:\n  - fmt -> review\n  - lint -> collect on failure\n  - lint -> fmt\n---\nChain body\n',
+        );
+        const catalogJson = JSON.parse((await run(['list', '--json'])).stdout);
+        assert.deepEqual(
+          catalogJson.pipelines.find(item => item.name === 'chain').graph,
+          {
+            explicit: true,
+            edges: [
+              { from: 'fmt', to: 'review', when: 'success' },
+              { from: 'lint', to: 'collect', when: 'failure' },
+              { from: 'lint', to: 'fmt', when: 'success' },
+            ],
+          },
+        );
+        const crossingPath = await pipelineFile(root, 'crossing', [
+          'steps: [lint, publish]',
+          ...edgeLines(['lint -> publish']),
+        ]);
+        const validated = await run(['validate']);
+        assert.equal(validated.code, 1);
+        assert.ok(
+          validated.stderr.includes(
+            `error ${crossingPath}:4: Edge "lint -> publish" crosses phases; "lint" is pre-done and "publish" is pre-push\n`,
+          ),
+          validated.stderr,
+        );
+      },
+    );
+  },
+);
