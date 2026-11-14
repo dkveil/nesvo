@@ -4959,22 +4959,6 @@ test(
       async () => {
         const runId = randomUUID();
         const requests = [
-          [
-            'decide-pipeline-gate',
-            {
-              runId,
-              stepId: randomUUID(),
-              reviewId: randomUUID(),
-              version: 1,
-              decisionId: randomUUID(),
-              decision: 'accept',
-              comment: '',
-            },
-          ],
-          [
-            'skip-pipeline-step',
-            { runId, stepId: randomUUID(), reason: 'Covered by hand.' },
-          ],
           ['remove-pipeline-worktree', { runId }],
           [
             'pipeline-metrics',
@@ -7091,7 +7075,10 @@ test(
         const skipped = stepNamed(current, 'approve');
         assert.equal(skipped.state, 'skipped');
         assert.equal(skipped.result, null);
-        assert.equal(skipped.skip.reason, 'Executor not available');
+        assert.equal(
+          skipped.skip.reason,
+          'Runs without a task session do not wait for a human decision',
+        );
       },
     );
 
@@ -9095,9 +9082,27 @@ test(
       'a planning turn runs first in a read-only sandbox and the implementation turn carries the plan',
       async () => {
         const run = await started('planned', codex);
+        const waiting = await waitFor(
+          run.id,
+          current => current.run.status === 'awaiting-human',
+          'The plan gate did not wait',
+        );
+        const gate = stepNamed(waiting, 'approve');
+        assert.equal(gate.state, 'awaiting-human');
+        assert.equal(gate.reviewVersion, 1);
+        const accepted = await host.request('decide-pipeline-gate', {
+          runId: run.id,
+          stepId: gate.id,
+          reviewId: gate.reviewId,
+          version: 1,
+          decisionId: randomUUID(),
+          decision: 'accept',
+          comment: 'Plan approved.',
+        });
+        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
         const finished = await settled(run.id);
         assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
-        assert.equal(stepNamed(finished, 'approve').state, 'skipped');
+        assert.equal(stepNamed(finished, 'approve').state, 'passed');
         const session = await sessionOf(run.sessionId);
         const requests = operatorMessages(session);
         assert.deepEqual(
@@ -11708,6 +11713,943 @@ test(
           ),
           validated.stderr,
         );
+      },
+    );
+  },
+);
+
+test(
+  'human gates bind to the review version and every decision moves the run through the runner',
+  { timeout: 360_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-gates-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    const hosts = [];
+    const owned = new Set();
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      for (const pid of owned)
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    const modules = await loadPipelineTaskModules(directory);
+    const gitEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    );
+    const git = (cwd, ...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.test',
+          ...args,
+        ],
+        { cwd, env: gitEnvironment },
+      );
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    const stepFile = ({ body, ...fields }) =>
+      `---\n${Object.entries(fields)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\n${body}\n`;
+    const onWindows = process.platform === 'win32';
+    const shellBody = (posix, windows) => (onWindows ? windows : posix);
+    const holdStep = (pidPath, seconds) =>
+      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
+    const repository = join(directory, 'repository');
+    const markers = join(directory, 'markers');
+    const marker = name => join(markers, name);
+    await mkdir(markers);
+    await mkdir(repository);
+    const steps = [
+      { name: 'check', type: 'command', phase: 'pre-done', body: 'echo check' },
+      {
+        name: 'approve',
+        type: 'human',
+        phase: 'pre-done',
+        body: 'Approve the change.',
+      },
+      {
+        name: 'publish',
+        type: 'action',
+        phase: 'pre-push',
+        body: shellBody(
+          `echo run >> "${marker('publish-count')}"\necho '{"url":"https://example.test/change/1"}'`,
+          `echo run>>"${marker('publish-count')}"\necho {"url":"https://example.test/change/1"}`,
+        ),
+      },
+      {
+        name: 'deploy',
+        type: 'action',
+        phase: 'pre-push',
+        effect: 'external',
+        body: 'echo deploy',
+      },
+      {
+        name: 'hold',
+        type: 'command',
+        phase: 'pre-done',
+        timeout: '1m',
+        body: shellBody(
+          `while [ ! -f "${marker('go')}" ]; do sleep 0.05; done`,
+          `:wait\nif exist "${marker('go')}" exit /b 0\nping -n 2 127.0.0.1 >nul\ngoto wait`,
+        ),
+      },
+      {
+        name: 'deliver',
+        type: 'action',
+        phase: 'pre-push',
+        timeout: '10m',
+        body: shellBody(
+          `echo run >> "${marker('deliver-count')}"\nif [ -f "${marker('release')}" ]; then echo delivered; else echo $$ > "${marker('deliver.pid')}"; sleep 60; fi`,
+          `echo run>>"${marker('deliver-count')}"\nif exist "${marker('release')}" exit /b 0\n${holdStep(marker('deliver.pid'), 60)}`,
+        ),
+      },
+    ];
+    const pipelines = {
+      gated: ['check', 'approve', 'publish'],
+      guarded: ['approve', 'deploy'],
+      skipping: ['hold', 'approve', 'publish'],
+      delivering: ['deliver'],
+    };
+    const tasks = {
+      accept: ['gated', 'fixture:review-write'],
+      fix: ['gated', 'fixture:review-write'],
+      restart: ['gated', 'fixture:review-write'],
+      definition: ['guarded', 'fixture:review-definition'],
+      skip: ['skipping', 'Skip the gate.'],
+      mark: ['delivering', 'Deliver once.'],
+      again: ['delivering', 'Deliver again.'],
+    };
+    for (const item of steps)
+      await write(
+        join(repository, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+        stepFile(item),
+      );
+    for (const [name, names] of Object.entries(pipelines))
+      await write(
+        join(repository, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        `---\nname: ${name}\nsteps: [${names.join(', ')}]\n---\n`,
+      );
+    for (const [name, [pipeline, body]] of Object.entries(tasks))
+      await write(
+        join(repository, '.agents', 'tasks', `${name}.md`),
+        `---\npipeline: ${pipeline}\ntitle: Gate ${name}\n---\n${body}\n`,
+      );
+    await writeFile(join(repository, 'tracked.txt'), 'initial text\n');
+    await writeFile(join(repository, 'deleted.txt'), 'deleted text\n');
+    await git(repository, 'init', '-q', '-b', 'main');
+    await git(repository, 'add', '-A');
+    await git(repository, 'commit', '-q', '-m', 'Initial commit');
+    const dataDirectory = join(directory, 'data');
+    const pidFile = join(directory, 'pids.json');
+    let host = launch(dataDirectory, pidFile);
+    hosts.push(host);
+    const restart = async () => {
+      host.child.kill('SIGKILL');
+      await host.exited;
+      host = launch(dataDirectory, pidFile);
+      hosts.push(host);
+    };
+    const start = async (name, author = 'codex') => {
+      const response = await host.request('start-pipeline-task', {
+        specPath: join('.agents', 'tasks', `${name}.md`),
+        pipelineName: tasks[name][0],
+        ...(author === 'codex'
+          ? {
+              provider: 'Codex',
+              model: 'fixture-codex',
+              mode: 'supervised',
+              isolation: 'worktree',
+            }
+          : {
+              provider: 'Claude Code',
+              model: 'sonnet',
+              mode: 'read-only',
+              isolation: 'none',
+            }),
+        directory: repository,
+        gateProvider: 'Claude Code',
+        gateModel: 'sonnet',
+      });
+      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      return response.run;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-pipeline-run', { runId });
+      assert.equal(
+        response.type,
+        'pipeline-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const waitFor = async (runId, check, description, timeout = 30_000) => {
+      const deadline = Date.now() + timeout;
+      while (true) {
+        const current = await detail(runId);
+        if (check(current)) return current;
+        assert.ok(
+          Date.now() < deadline,
+          `${description}: ${JSON.stringify({ run: current.run.status, attention: current.run.attention, steps: current.steps.map(step => [step.name, step.state, step.attempt]) })}`,
+        );
+        await delay(50);
+      }
+    };
+    const stepNamed = (current, name) =>
+      current.steps.filter(step => step.name === name).at(-1);
+    const awaitingGate = async (runId, version = 1) => {
+      const current = await waitFor(
+        runId,
+        item =>
+          item.run.status === 'awaiting-human' &&
+          stepNamed(item, 'approve')?.reviewVersion === version,
+        `The gate did not wait on version ${version}`,
+      );
+      return { current, gate: stepNamed(current, 'approve') };
+    };
+    const decide = (run, gate, decision, comment = '', overrides = {}) =>
+      host.request('decide-pipeline-gate', {
+        runId: run.id,
+        stepId: gate.id,
+        reviewId: gate.reviewId,
+        version: gate.reviewVersion,
+        decisionId: randomUUID(),
+        decision,
+        comment,
+        ...overrides,
+      });
+    const reviewsOf = async sessionId =>
+      (await host.request('list-reviews')).reviews
+        .filter(review => review.sessionId === sessionId)
+        .sort((left, right) => left.version - right.version);
+    const sessionOf = async id =>
+      (await host.request('list-sessions')).sessions.find(
+        session => session.id === id,
+      );
+    const operatorMessages = session =>
+      session.messages.filter(message => message.author === 'operator');
+    const lines = async path =>
+      (await readFile(path, 'utf8').catch(() => ''))
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    const codexTurns = async session =>
+      (await lines(pidFile + '.turns'))
+        .map(line => JSON.parse(line))
+        .filter(turn => turn.sessionId === session.providerSessionId);
+    const waitForFile = async path => {
+      const deadline = Date.now() + 15_000;
+      while (true) {
+        try {
+          return await readFile(path, 'utf8');
+        } catch {
+          assert.ok(Date.now() < deadline, `Missing ${path}`);
+          await delay(25);
+        }
+      }
+    };
+    const refusal = (response, code, message) => {
+      assert.equal(response.type, 'error', JSON.stringify(response));
+      assert.equal(response.code, code, JSON.stringify(response));
+      if (message) assert.match(response.message, message);
+    };
+
+    await t.test(
+      'accept checks the fingerprint, accepts the exact version and runs the next phase',
+      async () => {
+        const run = await start('accept');
+        const { current, gate } = await awaitingGate(run.id);
+        assert.equal(stepNamed(current, 'check').state, 'passed');
+        assert.equal(stepNamed(current, 'publish'), undefined);
+        assert.deepEqual(gate.definitionChanges, []);
+        assert.equal(gate.decision, null);
+        const [review] = await reviewsOf(run.sessionId);
+        assert.equal(gate.reviewId, review.id);
+        assert.equal(review.status, 'pending');
+        refusal(
+          await host.request('decide-review', {
+            reviewId: review.id,
+            version: 1,
+            decisionId: randomUUID(),
+            decision: 'accept',
+            feedback: '',
+          }),
+          'busy',
+          /^This result is waiting for its pipeline gate$/,
+        );
+        refusal(
+          await decide(run, gate, 'accept', '', { version: 2 }),
+          'invalid-request',
+          /no longer current/,
+        );
+        refusal(
+          await decide(run, gate, 'accept', '', { reviewId: randomUUID() }),
+          'invalid-request',
+          /different result/,
+        );
+        const tracked = join(run.directory, 'tracked.txt');
+        const original = await readFile(tracked, 'utf8');
+        await writeFile(tracked, 'external edit\n');
+        refusal(
+          await decide(run, gate, 'accept', 'Looks right.'),
+          'invalid-request',
+          /have changed since capture/,
+        );
+        assert.equal(
+          stepNamed(await detail(run.id), 'approve').state,
+          'awaiting-human',
+        );
+        assert.equal((await reviewsOf(run.sessionId))[0].status, 'pending');
+        await writeFile(tracked, original);
+        const decisionId = randomUUID();
+        const accepted = await decide(run, gate, 'accept', 'Looks right.', {
+          decisionId,
+        });
+        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
+        assert.equal(accepted.run.status, 'checking');
+        const finished = await waitFor(
+          run.id,
+          item => item.run.status === 'passed',
+          'The run did not pass after the gate',
+        );
+        const approve = stepNamed(finished, 'approve');
+        assert.equal(approve.state, 'passed');
+        assert.equal(approve.result.status, 'pass');
+        assert.equal(approve.result.summary, 'Accepted by the operator');
+        assert.deepEqual(approve.result.evidence, [
+          {
+            kind: 'text',
+            label: 'Operator note',
+            path: null,
+            text: 'Looks right.',
+            url: null,
+          },
+        ]);
+        assert.deepEqual(
+          [approve.decision.decisionId, approve.decision.kind],
+          [decisionId, 'accept'],
+        );
+        assert.equal(stepNamed(finished, 'publish').state, 'done');
+        const [decided] = await reviewsOf(run.sessionId);
+        assert.equal(decided.status, 'accepted');
+        assert.equal(decided.decision.id, decisionId);
+        const repeated = await decide(run, gate, 'accept', 'Looks right.', {
+          decisionId,
+        });
+        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal(repeated.run.id, run.id);
+        assert.equal(repeated.run.status, 'passed');
+        refusal(
+          await decide(run, gate, 'accept', 'Different note.', { decisionId }),
+          'invalid-request',
+          /already in use/,
+        );
+        assert.deepEqual(await lines(marker('publish-count')), ['run']);
+      },
+    );
+
+    await t.test(
+      'fix sends one correction in the same thread and the phase waits on the new version, then reject ends the run without a turn',
+      async () => {
+        const run = await start('fix');
+        const { gate } = await awaitingGate(run.id);
+        assert.deepEqual(
+          await host.send(
+            JSON.stringify({
+              id: randomUUID(),
+              method: 'decide-pipeline-gate',
+              input: {
+                runId: run.id,
+                stepId: gate.id,
+                reviewId: gate.reviewId,
+                version: gate.reviewVersion,
+                decisionId: randomUUID(),
+                decision: 'fix',
+                comment: '',
+              },
+            }),
+          ),
+          { type: 'error', id: null, code: 'invalid-request' },
+        );
+        const comment = 'fixture:review-correct Tighten the wording.';
+        const fixed = await decide(run, gate, 'fix', comment);
+        assert.equal(fixed.type, 'pipeline-run', JSON.stringify(fixed));
+        assert.equal(fixed.run.status, 'fixing');
+        const second = await awaitingGate(run.id, 2);
+        const session = await sessionOf(run.sessionId);
+        const requests = operatorMessages(session);
+        const correctionId = modules.correctionMessageId(
+          run.id,
+          gate.id,
+          gate.attempt,
+        );
+        assert.deepEqual(
+          requests.map(message => [message.id, message.origin]),
+          [
+            [modules.turnMessageId(run.id, 'implement', 1), 'pipeline'],
+            [correctionId, 'pipeline'],
+          ],
+        );
+        assert.equal(requests[1].body, comment);
+        const turns = await codexTurns(session);
+        assert.equal(turns.length, 2);
+        assert.ok(turns[1].prompt.includes(comment));
+        const reviews = await reviewsOf(run.sessionId);
+        assert.deepEqual(
+          reviews.map(review => [
+            review.version,
+            review.decision?.decision ?? null,
+          ]),
+          [
+            [1, 'request-changes'],
+            [2, null],
+          ],
+        );
+        assert.equal(reviews[1].status, 'pending');
+        assert.equal(second.gate.reviewId, reviews[1].id);
+        assert.deepEqual(
+          second.current.steps.map(step => [
+            step.name,
+            step.attempt,
+            step.state,
+          ]),
+          [
+            ['check', 1, 'passed'],
+            ['check', 2, 'passed'],
+            ['approve', 1, 'failed'],
+            ['approve', 2, 'awaiting-human'],
+          ],
+        );
+        const sent = second.current.steps.find(
+          step => step.name === 'approve' && step.attempt === 1,
+        );
+        assert.equal(sent.decision.kind, 'fix');
+        assert.equal(sent.result.evidence[0].text, comment);
+        const rejected = await decide(
+          run,
+          second.gate,
+          'reject',
+          'Wrong approach.',
+        );
+        assert.equal(rejected.type, 'pipeline-run', JSON.stringify(rejected));
+        assert.equal(rejected.run.status, 'rejected');
+        assert.ok(rejected.run.finishedAt);
+        await delay(300);
+        const after = await detail(run.id);
+        assert.equal(after.run.status, 'rejected');
+        const gateAfter = stepNamed(after, 'approve');
+        assert.equal(gateAfter.state, 'failed');
+        assert.equal(gateAfter.result.status, 'fail');
+        assert.equal(gateAfter.decision.comment, 'Wrong approach.');
+        const latest = (await reviewsOf(run.sessionId)).at(-1);
+        assert.equal(latest.status, 'rejected');
+        assert.deepEqual(
+          [latest.decision.decision, latest.decision.feedback],
+          ['reject', 'Wrong approach.'],
+        );
+        assert.equal(
+          operatorMessages(await sessionOf(run.sessionId)).length,
+          2,
+        );
+        assert.equal((await codexTurns(session)).length, 2);
+        assert.equal(stepNamed(after, 'publish'), undefined);
+      },
+    );
+
+    await t.test(
+      'a gate whose diff adds a definition lists it and cannot be skipped before an external step',
+      async () => {
+        const run = await start('definition');
+        const { gate } = await awaitingGate(run.id);
+        assert.deepEqual(gate.definitionChanges, [
+          '.agents/pipelines/steps/x.md',
+        ]);
+        refusal(
+          await host.request('skip-pipeline-step', {
+            runId: run.id,
+            stepId: gate.id,
+            reason: 'Not needed.',
+          }),
+          'invalid-request',
+          /before an external step/,
+        );
+        const rejected = await decide(
+          run,
+          gate,
+          'reject',
+          'Do not change definitions.',
+        );
+        assert.equal(rejected.run.status, 'rejected');
+      },
+    );
+
+    await t.test(
+      'a pending gate is skipped with a recorded reason that survives a restart',
+      async () => {
+        const run = await start('skip', 'claude');
+        const current = await waitFor(
+          run.id,
+          item =>
+            stepNamed(item, 'hold')?.state === 'running' &&
+            stepNamed(item, 'approve')?.state === 'pending',
+          'The hold step did not start',
+        );
+        const pending = stepNamed(current, 'approve');
+        const skipped = await host.request('skip-pipeline-step', {
+          runId: run.id,
+          stepId: pending.id,
+          reason: 'Reviewed in person.',
+        });
+        assert.equal(skipped.type, 'pipeline-run', JSON.stringify(skipped));
+        await writeFile(marker('go'), '');
+        await waitFor(
+          run.id,
+          item => item.run.status === 'passed',
+          'The run did not pass after the skip',
+        );
+        await restart();
+        const after = await detail(run.id);
+        const approve = stepNamed(after, 'approve');
+        assert.equal(approve.state, 'skipped');
+        assert.equal(approve.result, null);
+        assert.equal(approve.skip.reason, 'Reviewed in person.');
+        assert.equal(stepNamed(after, 'publish').state, 'done');
+      },
+    );
+
+    await t.test(
+      'a restart while a gate waits keeps it and the decision still works',
+      async () => {
+        const run = await start('restart');
+        const { gate } = await awaitingGate(run.id);
+        await restart();
+        const kept = await detail(run.id);
+        assert.equal(kept.run.status, 'awaiting-human');
+        assert.equal(stepNamed(kept, 'approve').state, 'awaiting-human');
+        await delay(300);
+        assert.equal((await detail(run.id)).run.status, 'awaiting-human');
+        const accepted = await decide(run, gate, 'accept');
+        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
+        const finished = await waitFor(
+          run.id,
+          item => item.run.status === 'passed',
+          'The run did not pass after the restart',
+        );
+        assert.deepEqual(
+          stepNamed(finished, 'approve').result.evidence.map(item => item.text),
+          ['Accepted'],
+        );
+      },
+    );
+
+    const uncertainRun = async name => {
+      await rm(marker('deliver.pid'), { force: true });
+      const run = await start(name, 'claude');
+      const pid = Number((await waitForFile(marker('deliver.pid'))).trim());
+      owned.add(pid);
+      await restart();
+      if (onWindows) process.kill(pid);
+      await processesGone([pid], owned);
+      const current = await detail(run.id);
+      assert.equal(current.run.status, 'needs-attention');
+      const deliver = stepNamed(current, 'deliver');
+      assert.equal(deliver.state, 'uncertain');
+      refusal(
+        await host.request('skip-pipeline-step', {
+          runId: run.id,
+          stepId: deliver.id,
+          reason: 'Not needed.',
+        }),
+        'invalid-request',
+        /may already have run/,
+      );
+      refusal(
+        await host.request('resume-pipeline-run', { runId: run.id }),
+        'invalid-request',
+        /may already have run/,
+      );
+      return { run, deliver };
+    };
+    const resolve = (
+      run,
+      step,
+      resolution,
+      comment,
+      decisionId = randomUUID(),
+    ) =>
+      host.request('resolve-pipeline-step', {
+        runId: run.id,
+        stepId: step.id,
+        decisionId,
+        resolution,
+        comment,
+      });
+
+    await t.test(
+      'an uncertain action marked done passes the run without running again',
+      async () => {
+        await rm(marker('deliver-count'), { force: true });
+        const { run, deliver } = await uncertainRun('mark');
+        refusal(
+          await host.send(
+            JSON.stringify({
+              id: randomUUID(),
+              method: 'resolve-pipeline-step',
+              input: {
+                runId: run.id,
+                stepId: deliver.id,
+                decisionId: randomUUID(),
+                resolution: 'mark-done',
+                comment: '',
+              },
+            }),
+          ),
+          'invalid-request',
+        );
+        const decisionId = randomUUID();
+        const resolved = await resolve(
+          run,
+          deliver,
+          'mark-done',
+          'The delivery is visible on the server.',
+          decisionId,
+        );
+        assert.equal(resolved.type, 'pipeline-run', JSON.stringify(resolved));
+        assert.equal(resolved.run.status, 'checking');
+        assert.equal(resolved.run.attention, null);
+        const finished = await waitFor(
+          run.id,
+          item => item.run.status === 'passed',
+          'The run did not pass after marking the step done',
+        );
+        assert.deepEqual(
+          finished.steps.map(step => [step.name, step.attempt, step.state]),
+          [['deliver', 1, 'done']],
+        );
+        const done = stepNamed(finished, 'deliver');
+        assert.equal(done.result.status, 'done');
+        assert.match(done.result.summary, /^Marked done by the operator/);
+        assert.deepEqual(done.result.outputs, {});
+        assert.equal(
+          done.result.evidence[0].text,
+          'The delivery is visible on the server.',
+        );
+        assert.equal(done.decision.kind, 'mark-done');
+        await delay(300);
+        assert.deepEqual(await lines(marker('deliver-count')), ['run']);
+        const repeated = await resolve(
+          run,
+          deliver,
+          'mark-done',
+          'The delivery is visible on the server.',
+          decisionId,
+        );
+        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal(repeated.run.status, 'passed');
+        refusal(
+          await resolve(run, deliver, 'run-again', '', decisionId),
+          'invalid-request',
+          /already in use/,
+        );
+        refusal(
+          await resolve(run, deliver, 'run-again', ''),
+          'invalid-request',
+        );
+      },
+    );
+
+    await t.test(
+      'an uncertain action run again keeps both attempts and runs once more',
+      async () => {
+        await rm(marker('deliver-count'), { force: true });
+        const { run, deliver } = await uncertainRun('again');
+        await writeFile(marker('release'), '');
+        const decisionId = randomUUID();
+        const resolved = await resolve(
+          run,
+          deliver,
+          'run-again',
+          '',
+          decisionId,
+        );
+        assert.equal(resolved.type, 'pipeline-run', JSON.stringify(resolved));
+        const finished = await waitFor(
+          run.id,
+          item => item.run.status === 'passed',
+          'The run did not pass after running the step again',
+        );
+        assert.deepEqual(
+          finished.steps.map(step => [
+            step.name,
+            step.attempt,
+            step.state,
+            step.decision?.kind ?? null,
+          ]),
+          [
+            ['deliver', 1, 'uncertain', 'run-again'],
+            ['deliver', 2, 'done', null],
+          ],
+        );
+        assert.deepEqual(await lines(marker('deliver-count')), ['run', 'run']);
+        const repeated = await resolve(
+          run,
+          deliver,
+          'run-again',
+          '',
+          decisionId,
+        );
+        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal((await detail(run.id)).steps.length, 2);
+        await host.stop();
+      },
+    );
+
+    await t.test(
+      'twenty concurrent run-finished deliveries send exactly one correction and the phase re-runs',
+      async () => {
+        const isolated = join(directory, 'in-process');
+        const bootstrap = launch(
+          isolated,
+          join(directory, 'pids-bootstrap.json'),
+        );
+        hosts.push(bootstrap);
+        assert.equal((await bootstrap.request('health')).type, 'health');
+        await bootstrap.stop();
+        const {
+          PipelineRunner,
+          PipelineRunStore,
+          bindRunEvents,
+          correctionMessageId,
+        } = modules;
+        const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
+        t.after(() => database.close());
+        const store = new PipelineRunStore(database);
+        const sent = [];
+        const completed = new Set();
+        const listeners = new Set();
+        const spawned = [];
+        const sessions = {
+          isBusy: () => false,
+          onRunFinished: listener => {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        };
+        const author = {
+          turnState: (_run, messageId) =>
+            completed.has(messageId)
+              ? 'completed'
+              : sent.some(turn => turn.messageId === messageId)
+                ? 'running'
+                : 'none',
+          sendTurn: turn => {
+            sent.push(turn);
+            return 'sent';
+          },
+          stop: () => undefined,
+        };
+        const command = ({ step }) => {
+          spawned.push(step.attempt);
+          return Promise.resolve({
+            kind: 'result',
+            result: {
+              name: step.name,
+              type: step.type,
+              phase: step.phase,
+              status: 'pass',
+              summary: 'Fixture result.',
+              evidence: [],
+              outputs: {},
+              startedAt: step.startedAt,
+              finishedAt: new Date().toISOString(),
+              durationMs: 0,
+              cost: {
+                usd: null,
+                inputTokens: null,
+                outputTokens: null,
+                provider: null,
+              },
+              attempt: step.attempt,
+            },
+          });
+        };
+        const human = () =>
+          Promise.resolve({
+            kind: 'awaiting-human',
+            reviewId: null,
+            reviewVersion: null,
+            definitionChanges: [],
+          });
+        const runner = new PipelineRunner({
+          store,
+          emit: () => undefined,
+          evidence: { write: () => Promise.resolve('attempt-1.log') },
+          stepExecutors: { command, action: command, human, agent: command },
+          author,
+        });
+        t.after(() => runner.close());
+        const events = bindRunEvents(sessions, runner);
+        const now = new Date().toISOString();
+        const sessionId = randomUUID();
+        database
+          .prepare(
+            'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?)',
+          )
+          .run(sessionId, '{}', now);
+        const source = name => ({
+          scope: 'project',
+          path: join(isolated, `${name}.md`),
+          contentHash: 'a'.repeat(64),
+        });
+        const definition = (name, type) => ({
+          name,
+          type,
+          phase: 'pre-done',
+          skill: null,
+          timeout: '15m',
+          retries: 0,
+          on_fail: 'stop',
+          effect: 'local',
+          needs: [],
+          body: 'true',
+          source: source(name),
+          notes: [],
+        });
+        const run = {
+          id: randomUUID(),
+          revision: 1,
+          pipeline: {
+            name: 'gated',
+            description: '',
+            body: '',
+            source: source('gated'),
+            notes: [],
+            steps: [
+              definition('check', 'command'),
+              definition('approve', 'human'),
+            ],
+          },
+          specPath: join(isolated, 'task.md'),
+          specHash: 'c'.repeat(64),
+          specTitle: 'Fix loop',
+          sessionId,
+          directory: isolated,
+          projectRoot: isolated,
+          isolation: null,
+          gateProvider: 'Claude Code',
+          gateModel: 'default',
+          status: 'fixing',
+          phase: 'pre-done',
+          currentStepIndex: 1,
+          attention: null,
+          createdAt: now,
+          updatedAt: now,
+          finishedAt: null,
+        };
+        assert.equal(store.insertRun(run), true);
+        const row = (name, index, state, extra = {}) => ({
+          id: randomUUID(),
+          runId: run.id,
+          revision: 1,
+          index,
+          name,
+          type: index === 0 ? 'command' : 'human',
+          phase: 'pre-done',
+          state,
+          attempt: 1,
+          result: null,
+          sessionId: null,
+          reviewId: null,
+          reviewVersion: null,
+          skip: null,
+          updatedAt: now,
+          startedAt: now,
+          ...extra,
+        });
+        assert.equal(store.insertStep(row('check', 0, 'passed')), true);
+        const gate = row('approve', 1, 'failed', {
+          decision: {
+            decisionId: randomUUID(),
+            kind: 'fix',
+            comment: 'Tighten the wording.',
+            at: now,
+          },
+        });
+        assert.equal(store.insertStep(gate), true);
+        const deliver = () =>
+          Promise.all(
+            Array.from({ length: 20 }, () =>
+              Promise.resolve().then(() => {
+                for (const listener of listeners)
+                  listener({
+                    sessionId,
+                    runId: randomUUID(),
+                    pipelineRunId: run.id,
+                    status: 'completed',
+                    reviewId: null,
+                  });
+              }),
+            ),
+          );
+        await deliver();
+        await waitUntil(() => sent.length === 1, 'The correction was not sent');
+        await deliver();
+        await delay(50);
+        const messageId = correctionMessageId(run.id, gate.id, 1);
+        assert.deepEqual(sent, [
+          {
+            runId: run.id,
+            kind: 'correction',
+            prompt: 'Tighten the wording.',
+            messageId,
+          },
+        ]);
+        assert.equal(store.getRun(run.id).status, 'fixing');
+        completed.add(messageId);
+        await deliver();
+        await waitUntil(
+          () => store.getRun(run.id).status === 'awaiting-human',
+          'The phase did not re-run after the correction',
+        );
+        assert.deepEqual(
+          store
+            .stepsForRun(run.id)
+            .map(step => [step.name, step.attempt, step.state]),
+          [
+            ['check', 1, 'passed'],
+            ['check', 2, 'passed'],
+            ['approve', 1, 'failed'],
+            ['approve', 2, 'awaiting-human'],
+          ],
+        );
+        assert.deepEqual(spawned, [2]);
+        assert.equal(sent.length, 1);
+        events.release();
       },
     );
   },
