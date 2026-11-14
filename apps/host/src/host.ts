@@ -30,6 +30,7 @@ import {
   DefinitionError,
   inside as insideFolder,
   loadCatalog,
+  loadSpec,
 } from './pipelines/definitions';
 import { EvidenceError, EvidenceStore } from './pipelines/evidence';
 import {
@@ -38,6 +39,7 @@ import {
   unavailableExecutor,
 } from './pipelines/runner';
 import { actionExecutor } from './pipelines/steps/action';
+import { createAgentExecutor } from './pipelines/steps/agent';
 import { commandExecutor } from './pipelines/steps/command';
 import {
   PipelineTasks,
@@ -189,7 +191,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               command: commandExecutor,
               action: actionExecutor,
               human: unavailableExecutor,
-              agent: unavailableExecutor,
+              agent: createAgentExecutor({
+                sessions,
+                usage,
+                spec: async (run, signal) =>
+                  snapshots.read(run.id) ??
+                  (await loadSpec(run.specPath, run.directory, signal)).spec
+                    .body,
+              }),
             },
             author: createSessionAuthor({
               sessions,

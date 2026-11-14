@@ -78,6 +78,7 @@ export type StepExecution = {
   evidence: StepEvidence;
   environment: NodeJS.ProcessEnv;
   now: () => Date;
+  link: (sessionId: string) => void;
 };
 
 export type StepEvidence = Pick<
@@ -807,6 +808,7 @@ export class PipelineRunner {
       evidence: this.evidence,
       environment: this.environment,
       now: () => this.clock.now(),
+      link: sessionId => this.linkStep(running, sessionId),
     };
     const executor = this.executors[definition.type] ?? unavailableExecutor;
     const done = Promise.resolve()
@@ -832,6 +834,16 @@ export class PipelineRunner {
         if (!this.closed) this.track(this.advanceRun(run.id));
       });
     this.active.set(run.id, { controller, done });
+  }
+
+  private linkStep(running: PipelineStepRecord, sessionId: string): void {
+    const current = this.store.getStep(running.id);
+    if (
+      current &&
+      current.state === 'running' &&
+      current.attempt === running.attempt
+    )
+      this.writeStep(current, { sessionId });
   }
 
   private finishStep(running: PipelineStepRecord, outcome: StepOutcome): void {
@@ -926,7 +938,9 @@ export class PipelineRunner {
 
   private writeStep(
     step: PipelineStepRecord,
-    changes: Partial<Pick<PipelineStepRecord, 'state' | 'result' | 'skip'>>,
+    changes: Partial<
+      Pick<PipelineStepRecord, 'state' | 'result' | 'skip' | 'sessionId'>
+    >,
   ): boolean {
     const next: PipelineStepRecord = {
       ...step,
