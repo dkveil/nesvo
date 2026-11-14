@@ -13002,3 +13002,330 @@ test(
     );
   },
 );
+
+test(
+  'the pipeline assistant answers through a read-only session and validates proposals without writing files',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-assistant-')),
+    );
+    const project = join(directory, 'project');
+    const agents = join(project, '.agents', 'pipelines');
+    const pidFile = join(directory, 'pids.json');
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+      return path;
+    };
+    await mkdir(join(project, '.git'), { recursive: true });
+    await mkdir(join(directory, 'global'), { recursive: true });
+    await write(
+      join(agents, 'steps', 'check.md'),
+      '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
+    );
+    await write(
+      join(agents, 'steps', 'approve.md'),
+      '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready.\n',
+    );
+    const pipelineText =
+      '---\nname: default\ndescription: Check and approve\nsteps: [check, approve]\n---\n';
+    await write(join(agents, 'pipelines', 'default.md'), pipelineText);
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'global');
+    const host = launch(join(directory, 'data'), pidFile);
+    const ownedPids = new Set();
+    t.after(async () => {
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      for (const pid of ownedPids)
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          continue;
+        }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const snapshot = async () => {
+      const files = {};
+      const visit = async folder => {
+        for (const entry of await readdir(folder, { withFileTypes: true })) {
+          const path = join(folder, entry.name);
+          if (entry.isDirectory()) await visit(path);
+          else if (!entry.name.startsWith('.nesvo-fixture-'))
+            files[path] = (await readFile(path)).toString('base64');
+        }
+      };
+      await visit(project);
+      await visit(join(directory, 'global'));
+      return files;
+    };
+    const before = await snapshot();
+    const hash = text => createHash('sha256').update(text).digest('hex');
+    const document = {
+      kind: 'pipeline',
+      scope: 'project',
+      name: 'default',
+      contentHash: hash(pipelineText),
+      text: pipelineText,
+    };
+    const send = (text, extra = {}) =>
+      host.request('pipeline-assistant-send', {
+        sessionId: null,
+        provider: 'Claude Code',
+        model: 'sonnet',
+        text,
+        context: {
+          directory: project,
+          pipelineName: 'default',
+          document,
+          selection: ['check'],
+        },
+        ...extra,
+      });
+    const proposal = messageId =>
+      bounded(
+        (async () => {
+          for (;;) {
+            const event = host.pipelineEvents.find(
+              item =>
+                item.type === 'pipeline-assistant-proposal' &&
+                item.messageId === messageId,
+            );
+            if (event) return event;
+            await delay(30);
+          }
+        })(),
+        () => `Proposal event timed out: ${host.error()}`,
+      );
+    const prompts = async () =>
+      (await readFile(pidFile + '.assistant', 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line));
+    let sessionId;
+
+    await t.test(
+      'a new conversation creates a read-only session and emits a validated proposal',
+      async () => {
+        const response = await send('fixture:assistant-proposal');
+        assert.equal(
+          response.type,
+          'pipeline-assistant-turn',
+          response.message,
+        );
+        ({ sessionId } = response.turn);
+        const event = await proposal(response.turn.messageId);
+        const sessions = (await host.request('list-sessions')).sessions;
+        const session = sessions.find(value => value.id === sessionId);
+        assert.equal(session.title, 'Pipeline assistant · default');
+        assert.equal(session.mode, 'read-only');
+        assert.equal(session.delegationEnabled, false);
+        assert.equal(session.pipelineRunId, null);
+        assert.equal(session.directory, project);
+        assert.equal(session.messages[0].origin, 'pipeline');
+        assert.equal(event.sessionId, sessionId);
+        assert.equal(event.status, 'ok');
+        assert.equal(event.proposal.changes.length, 2);
+        assert.deepEqual(
+          event.proposal.changes.map(change => [change.kind, change.name]),
+          [
+            ['step', 'lint-check'],
+            ['pipeline', 'assistant-flow'],
+          ],
+        );
+        assert.deepEqual(event.issues, [
+          { index: 0, issues: [] },
+          { index: 1, issues: [] },
+        ]);
+        assert.equal(
+          JSON.stringify(event).includes('fixture-secret-value'),
+          false,
+        );
+        const [recorded] = await prompts();
+        assert.equal(recorded.command, 'fixture:assistant-proposal');
+        assert.match(recorded.prompt, /Never create, edit or delete files/);
+        assert.match(
+          recorded.prompt,
+          /\[begin catalog ([0-9a-f]+)\]\n[\s\S]*- check · command · pre-done · project · [0-9a-f]{64}\n[\s\S]*- default · project · [0-9a-f]{64}: check, approve\n[\s\S]*\[end catalog \1\]/,
+        );
+        assert.match(
+          recorded.prompt,
+          /\[begin open-document ([0-9a-f]+)\]\nkind: pipeline\nscope: project\nname: default\nhash: [0-9a-f]{64}\n\n---\nname: default\n[\s\S]*\[end open-document \1\]/,
+        );
+        assert.match(
+          recorded.prompt,
+          /\[begin selection ([0-9a-f]+)\]\ncheck\n\[end selection \1\]/,
+        );
+        assert.match(
+          recorded.prompt,
+          /\[begin operator-request ([0-9a-f]+)\]\nfixture:assistant-proposal\n\[end operator-request \1\]/,
+        );
+        assert.match(
+          recorded.prompt,
+          /exactly one fenced code block tagged json/,
+        );
+      },
+    );
+
+    await t.test(
+      'a continued conversation sends only the request and a changed document',
+      async () => {
+        const response = await send('fixture:assistant-missing-step', {
+          sessionId,
+        });
+        assert.equal(response.turn.sessionId, sessionId);
+        const event = await proposal(response.turn.messageId);
+        assert.equal(event.status, 'ok');
+        assert.deepEqual(event.issues[0], { index: 0, issues: [] });
+        assert.deepEqual(
+          event.issues[1].issues.map(issue => [issue.severity, issue.message]),
+          [['error', 'Step "publish" does not exist or is invalid']],
+        );
+        const [first, second] = await prompts();
+        assert.equal(second.resumed, true);
+        assert.ok(second.prompt.length < first.prompt.length);
+        assert.doesNotMatch(second.prompt, /\[begin catalog /);
+        assert.doesNotMatch(second.prompt, /\[begin open-document /);
+        assert.match(second.prompt, /\[begin operator-request [0-9a-f]+\]\n/);
+        const changedText = pipelineText.replace(
+          'Check and approve',
+          'Check, then approve',
+        );
+        await write(join(agents, 'pipelines', 'default.md'), changedText);
+        before[join(agents, 'pipelines', 'default.md')] =
+          Buffer.from(changedText).toString('base64');
+        const changed = await host.request('pipeline-assistant-send', {
+          sessionId,
+          provider: 'Claude Code',
+          model: 'sonnet',
+          text: 'fixture:assistant-prose',
+          context: {
+            directory: project,
+            pipelineName: 'default',
+            document: {
+              ...document,
+              contentHash: hash(changedText),
+              text: changedText,
+            },
+          },
+        });
+        const prose = await proposal(changed.turn.messageId);
+        assert.deepEqual(prose, {
+          type: 'pipeline-assistant-proposal',
+          sessionId,
+          messageId: changed.turn.messageId,
+          status: 'invalid',
+          proposal: null,
+          issues: [],
+        });
+        const third = (await prompts())[2];
+        assert.match(
+          third.prompt,
+          /\[begin open-document [0-9a-f]+\]\n[\s\S]*Check, then approve/,
+        );
+        assert.doesNotMatch(third.prompt, /\[begin catalog /);
+      },
+    );
+
+    await t.test(
+      'the assistant refuses while another session works and for foreign sessions',
+      async () => {
+        const other = (
+          await host.request('create-session', {
+            title: 'Other work',
+            provider: 'Claude Code',
+            model: 'sonnet',
+            directory: project,
+          })
+        ).session;
+        const started = (
+          await host.request('send-message', {
+            sessionId: other.id,
+            messageId: randomUUID(),
+            text: 'fixture:hold',
+          })
+        ).session;
+        await host.event(
+          value =>
+            value.runId === started.runId &&
+            agent(value).body === 'Fixture is waiting.',
+        );
+        const pids = JSON.parse(await readFile(pidFile, 'utf8'));
+        ownedPids.add(pids.pid).add(pids.childPid);
+        const listed = (await host.request('list-sessions')).sessions.length;
+        const busy = await send('fixture:assistant-proposal', { sessionId });
+        assert.deepEqual(busy, {
+          type: 'error',
+          id: busy.id,
+          code: 'busy',
+          message: 'Another session is working on this computer.',
+        });
+        const fresh = await send('fixture:assistant-proposal');
+        assert.equal(fresh.code, 'busy');
+        assert.equal(fresh.message, busy.message);
+        assert.equal(
+          (await host.request('list-sessions')).sessions.length,
+          listed,
+        );
+        await host.request('stop-run', {
+          sessionId: other.id,
+          runId: started.runId,
+        });
+        await host.event(
+          value => value.id === other.id && value.status === 'stopped',
+        );
+        const foreign = await send('fixture:assistant-proposal', {
+          sessionId: other.id,
+        });
+        assert.equal(foreign.code, 'invalid-request');
+        assert.equal(
+          foreign.message,
+          'This session is not a pipeline assistant conversation on this computer.',
+        );
+      },
+    );
+
+    await t.test(
+      'an account limit and a stopped turn end with an invalid proposal',
+      async () => {
+        const limited = await send('fixture:limit', { sessionId });
+        assert.equal(limited.type, 'pipeline-assistant-turn');
+        assert.equal(
+          (await proposal(limited.turn.messageId)).status,
+          'invalid',
+        );
+        const held = await send('fixture:hold', { sessionId });
+        const running = await host.event(
+          value =>
+            value.id === sessionId &&
+            value.status === 'running' &&
+            agent(value).body === 'Fixture is waiting.',
+        );
+        const pids = JSON.parse(await readFile(pidFile, 'utf8'));
+        ownedPids.add(pids.pid).add(pids.childPid);
+        await host.request('stop-run', { sessionId, runId: running.runId });
+        assert.deepEqual(await proposal(held.turn.messageId), {
+          type: 'pipeline-assistant-proposal',
+          sessionId,
+          messageId: held.turn.messageId,
+          status: 'invalid',
+          proposal: null,
+          issues: [],
+        });
+      },
+    );
+
+    await t.test('no project or global file changed', async () => {
+      assert.deepEqual(await snapshot(), before);
+      await host.stop();
+    });
+  },
+);
