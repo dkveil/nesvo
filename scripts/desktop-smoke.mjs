@@ -2847,10 +2847,18 @@ try {
     .getByRole('button', { name: 'Reload', exact: true })
     .click();
   await conflictDialog.waitFor({ state: 'hidden' });
+  const reloadDeadline = Date.now() + 20_000;
+  const descriptionField = inspector.getByRole('textbox', {
+    name: 'Description',
+    exact: true,
+  });
+  while (
+    (await descriptionField.inputValue()) !== 'Changed outside the editor.' &&
+    Date.now() < reloadDeadline
+  )
+    await delay(100);
   assert.equal(
-    await inspector
-      .getByRole('textbox', { name: 'Description', exact: true })
-      .inputValue(),
+    await descriptionField.inputValue(),
     'Changed outside the editor.',
   );
   assert.equal(
