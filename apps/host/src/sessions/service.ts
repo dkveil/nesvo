@@ -115,7 +115,7 @@ export type SessionServiceOptions = {
   environment?: (
     session: Session,
   ) => Readonly<Record<string, string>> | undefined;
-  isGatePending?: (reviewId: string, version: number) => boolean;
+  isHeldByPipeline?: (review: Review) => boolean;
 };
 
 export const GATE_PENDING_MESSAGE =
@@ -352,11 +352,7 @@ export class SessionService {
       return recorded;
     }
     const requested = this.reviews.get(input.reviewId);
-    if (
-      requested &&
-      this.options.isGatePending?.(requested.id, requested.version)
-    )
-      throw new SessionError('busy', GATE_PENDING_MESSAGE);
+    if (requested) this.ensureNotHeldByPipeline(requested);
     this.ensureReviewIdle();
     const { review, session } = this.currentReview(
       input.reviewId,
@@ -369,6 +365,7 @@ export class SessionService {
       if (input.decision === 'accept')
         await this.verifyFiles(review, controller.signal);
       this.ensureDecisionOpen(controller);
+      this.ensureNotHeldByPipeline(review);
       const decided = this.reviews.change(review, {
         status: input.decision === 'accept' ? 'accepted' : 'changes-requested',
         decision: {
@@ -446,6 +443,11 @@ export class SessionService {
     } finally {
       if (this.reviewDecision === controller) this.reviewDecision = undefined;
     }
+  }
+
+  private ensureNotHeldByPipeline(review: Review): void {
+    if (this.options.isHeldByPipeline?.(review))
+      throw new SessionError('busy', GATE_PENDING_MESSAGE);
   }
 
   private ensureReviewIdle(): void {

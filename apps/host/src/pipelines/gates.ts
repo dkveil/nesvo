@@ -33,6 +33,7 @@ type GateStore = Pick<
   | 'insertStep'
   | 'stepsForRun'
   | 'stepByDecision'
+  | 'activeRunForDirectory'
 >;
 
 type GateDecision = Required<DecidePipelineGateInput>;
@@ -176,6 +177,7 @@ export class PipelineGates {
       throw invalid(
         'Only a step in the phase the run is checking can be skipped.',
       );
+    this.ensureOnlyActiveRun(run);
     if (step.type === 'human' && guardsExternalStep(run, latest, step))
       throw invalid(
         `Step "${step.name}" is the human decision before an external step and cannot be skipped.`,
@@ -222,6 +224,7 @@ export class PipelineGates {
       );
     if (run.status !== 'needs-attention')
       throw invalid('This run is not waiting for the step to be resolved.');
+    this.ensureOnlyActiveRun(run);
     const now = new Date().toISOString();
     const decision: PipelineStepDecision = {
       decisionId: input.decisionId,
@@ -393,6 +396,15 @@ export class PipelineGates {
     this.ports.emit({ type: 'pipeline-run-changed', run });
     void this.ports.runner.advanceRun(run.id).catch(() => undefined);
     return run;
+  }
+
+  private ensureOnlyActiveRun(run: PipelineRun): void {
+    const active = this.ports.store.activeRunForDirectory(run.projectRoot);
+    if (active && active.id !== run.id)
+      throw new PipelineRunError(
+        'busy',
+        'A pipeline run is already active for this project. Stop it or wait until it ends.',
+      );
   }
 
   private currentRun(runId: string): PipelineRun {

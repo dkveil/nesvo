@@ -639,16 +639,35 @@ export class PipelineRunner {
       run.sessionId && this.author
         ? this.author.turnState(run, turnMessageId(run.id, kind, 1))
         : 'none';
-    const retried = run.phase
-      ? phaseIndices(run.pipeline, run.phase).flatMap(index => {
-          const step = latest.get(index);
-          return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
-        })
-      : [];
-    const status = resumeStatus(run, latest, retried.length > 0, turn);
-    const awaited =
-      status === 'planning' ? 'plan' : status === 'implementing' ? 'implement' : null;
-    if (awaited && DEAD_TURN_STATES.includes(turn(awaited)))
+    const correction = run.sessionId
+      ? requestedCorrection(run, this.store.stepsForRun(runId))
+      : null;
+    const retried =
+      run.phase && !correction
+        ? phaseIndices(run.pipeline, run.phase).flatMap(index => {
+            const step = latest.get(index);
+            return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
+          })
+        : [];
+    const status = correction
+      ? 'fixing'
+      : resumeStatus(run, latest, retried.length > 0, turn);
+    const awaited = correction
+      ? 'correction'
+      : status === 'planning'
+        ? 'plan'
+        : status === 'implementing'
+          ? 'implement'
+          : null;
+    const awaitedState = correction
+      ? this.author?.turnState(
+          run,
+          correctionMessageId(run.id, correction.step.id, correction.step.attempt),
+        ) ?? 'none'
+      : awaited && awaited !== 'correction'
+        ? turn(awaited)
+        : 'none';
+    if (awaited && DEAD_TURN_STATES.includes(awaitedState))
       throw new PipelineRunError(
         'invalid-request',
         `The ${TURN_LABELS[awaited]} turn did not finish, and a run never repeats a turn. Start a new task.`,
@@ -993,6 +1012,9 @@ export class PipelineRunner {
       this.emit({ type: 'pipeline-run-changed', run: paused });
       return;
     }
+    const step = this.store.getStep(running.id);
+    if (step?.state === 'running')
+      this.writeStep(step, { state: 'interrupted', result: null });
   }
 
   private replaceBoth(

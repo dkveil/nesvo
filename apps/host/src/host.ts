@@ -145,8 +145,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                     : undefined;
                   return run ? runEnvironment(run) : undefined;
                 },
-                isGatePending: (reviewId, version) =>
-                  pipelineRunStore.isGatePending(reviewId, version),
+                isHeldByPipeline: review => {
+                  const runId = store.get(review.sessionId)?.pipelineRunId;
+                  return (
+                    pipelineRunStore.isGatePending(review.id, review.version) ||
+                    (!!runId && pipelineRunStore.isRunInProgress(runId))
+                  );
+                },
               },
             ),
         ),

@@ -239,6 +239,16 @@ export class PipelineRunStore {
     );
   }
 
+  isRunInProgress(runId: string): boolean {
+    return Boolean(
+      this.database
+        .prepare(
+          `SELECT 1 FROM pipeline_runs WHERE id = ? AND status IN (${IN_PROGRESS_SQL})`,
+        )
+        .get(runId),
+    );
+  }
+
   beginStep(
     stepId: string,
     expectedRevision: number,
