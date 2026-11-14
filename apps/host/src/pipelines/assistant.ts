@@ -7,6 +7,7 @@ import {
   type DefinitionCatalog,
   type DefinitionIssue,
   type DesktopEvent,
+  type GraphStep,
   type HostRequest,
   type PipelineAssistantChange,
   type PipelineAssistantDocument,
@@ -26,6 +27,8 @@ import {
 import {
   DefinitionError,
   checkDocument,
+  checkGraph,
+  type DocumentCheck,
   type WriteRoots,
 } from './definitions';
 import { filterResultText } from './evidence';
@@ -130,6 +133,36 @@ const isError = (issue: DefinitionIssue) => issue.severity === 'error';
 
 const answerPath = (provider: Provider): AnswerPath =>
   provider === 'Claude Code' ? 'structured' : 'fenced';
+
+type ChangeCheck = {
+  change: PipelineAssistantChange;
+  path: string;
+  checked: DocumentCheck | null;
+  issues: DefinitionIssue[];
+};
+
+const pipelineIssues = (
+  { change, path, checked, issues }: ChangeCheck,
+  definitions: ReadonlyMap<string, GraphStep>,
+): DefinitionIssue[] => {
+  if (change.kind !== 'pipeline' || !checked || issues.some(isError))
+    return [];
+  const missing = checked.steps
+    .filter(name => !definitions.has(name))
+    .map(name => issueAt(path, `Step "${name}" does not exist or is invalid`));
+  if (missing.length) return missing;
+  return checkGraph(
+    {
+      name: change.name,
+      steps: checked.steps,
+      edges: checked.edges,
+      layout: checked.layout,
+    },
+    path,
+    checked.lines,
+    definitions,
+  ).issues;
+};
 
 export class PipelineAssistant {
   private readonly pending = new Map<string, PendingTurn>();
@@ -427,7 +460,7 @@ export class PipelineAssistant {
       const root = change.scope === 'global' ? roots.global : roots.project;
       const path = join(root, `${change.kind}s`, `${change.name}.md`);
       const text = checkFileText(change.document, root);
-      if (text.length) return { change, path, steps: [], issues: text };
+      if (text.length) return { change, path, checked: null, issues: text };
       const checked = checkDocument(change.kind, path, change.document);
       const issues = [...checked.issues];
       if (checked.name !== null && checked.name !== change.name)
@@ -437,36 +470,22 @@ export class PipelineAssistant {
             `Field "name" must be "${change.name}" to match the file name`,
           ),
         );
-      return { change, path, steps: checked.steps, issues };
+      return { change, path, checked, issues };
     });
-    const available = new Set([
-      ...(catalog?.steps.map(step => step.name) ?? []),
-      ...checks
-        .filter(
-          check =>
-            check.change.kind === 'step' && !check.issues.some(isError),
-        )
-        .map(check => check.change.name),
+    const definitions = new Map<string, GraphStep>([
+      ...(catalog?.steps.map(step => [step.name, step] as const) ?? []),
+      ...checks.flatMap(check =>
+        check.checked?.step && !check.issues.some(isError)
+          ? [[check.change.name, check.checked.step] as const]
+          : [],
+      ),
     ]);
-    return checks.map((check, index) => {
-      const missing =
-        check.change.kind === 'pipeline' && !check.issues.some(isError)
-          ? check.steps
-              .filter(name => !available.has(name))
-              .map(name =>
-                issueAt(
-                  check.path,
-                  `Step "${name}" does not exist or is invalid`,
-                ),
-              )
-          : [];
-      return {
-        index,
-        issues: [...check.issues, ...missing].slice(
-          0,
-          pipelineAssistantLimits.changeIssues,
-        ),
-      };
-    });
+    return checks.map((check, index) => ({
+      index,
+      issues: [...check.issues, ...pipelineIssues(check, definitions)].slice(
+        0,
+        pipelineAssistantLimits.changeIssues,
+      ),
+    }));
   }
 }
