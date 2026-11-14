@@ -3,6 +3,7 @@ import {
   CircleDashed,
   CircleExclamationPoint,
   CircleMinus,
+  CircleOff,
   CirclePause,
   CircleQuestionMark,
   CircleX,
@@ -11,10 +12,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
-import type { PipelineStepState } from '@nesvo/contracts';
-import { stepStateTones, toneText } from './index';
+import { stepStateTones, toneText, type StepDisplayState } from './index';
 
-const stateIcons: Record<PipelineStepState, LucideIcon> = {
+const stateIcons: Record<StepDisplayState, LucideIcon> = {
   pending: CircleDashed,
   running: LoaderCircle,
   'awaiting-human': Hand,
@@ -26,10 +26,11 @@ const stateIcons: Record<PipelineStepState, LucideIcon> = {
   skipped: CircleMinus,
   interrupted: CirclePause,
   uncertain: CircleQuestionMark,
+  unreached: CircleOff,
 };
 
 type StepStateIconProps = {
-  state: PipelineStepState;
+  state: StepDisplayState;
   className?: string;
 };
 

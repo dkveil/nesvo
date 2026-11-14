@@ -42,7 +42,9 @@ export const phaseLabels: Record<StepPhase, string> = {
 
 export const phaseOrder: StepPhase[] = ['plan', 'pre-done', 'pre-push'];
 
-export const stepStateLabels: Record<PipelineStepState, string> = {
+export type StepDisplayState = PipelineStepState | 'unreached';
+
+export const stepStateLabels: Record<StepDisplayState, string> = {
   pending: 'Pending',
   running: 'Running',
   'awaiting-human': 'Waiting for you',
@@ -53,10 +55,11 @@ export const stepStateLabels: Record<PipelineStepState, string> = {
   error: 'Error',
   skipped: 'Skipped',
   interrupted: 'Interrupted',
-  uncertain: 'Uncertain',
+  uncertain: 'May have run',
+  unreached: 'Not reached',
 };
 
-export const stepStateTones: Record<PipelineStepState, PipelineTone> = {
+export const stepStateTones: Record<StepDisplayState, PipelineTone> = {
   pending: 'muted',
   running: 'info',
   'awaiting-human': 'warning',
@@ -68,6 +71,7 @@ export const stepStateTones: Record<PipelineStepState, PipelineTone> = {
   skipped: 'muted',
   interrupted: 'muted',
   uncertain: 'warning',
+  unreached: 'muted',
 };
 
 const runStatusLabels: Record<PipelineRunStatus, string> = {
