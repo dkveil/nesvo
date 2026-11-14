@@ -4,6 +4,8 @@ import {
   BackgroundVariant,
   MarkerType,
   ReactFlow,
+  useReactFlow,
+  useStoreApi,
   type EdgeChange,
   type NodeChange,
   type OnConnect,
@@ -48,6 +50,20 @@ const snapGrid: [number, number] = [10, 10];
 export function EditorCanvas({ state, runStates, automations }: Props) {
   const { document, selection, nodeIssues } = state;
   const [measured, setMeasured] = useState<Record<string, Measured>>({});
+  const { fitView } = useReactFlow();
+  const store = useStoreApi();
+  const revealNode = (id: string) => {
+    const { nodeLookup, transform, width, height } = store.getState();
+    const node = nodeLookup.get(id);
+    if (!node) return;
+    const [offsetX, offsetY, zoom] = transform;
+    const left = node.internals.positionAbsolute.x * zoom + offsetX;
+    const top = node.internals.positionAbsolute.y * zoom + offsetY;
+    const right = left + (node.measured.width ?? 0) * zoom;
+    const bottom = top + (node.measured.height ?? 0) * zoom;
+    if (left < 0 || top < 0 || right > width || bottom > height)
+      void fitView(fitViewOptions);
+  };
   const nodes = useMemo<EditorCanvasNode[]>(
     () => [
       {
@@ -106,6 +122,7 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
     for (const change of changes) {
       if (change.type === 'dimensions' && change.dimensions) {
         const { id, dimensions } = change;
+        if (!measured[id] && id !== START_NODE_ID) revealNode(id);
         setMeasured(current =>
           current[id]?.width === dimensions.width &&
           current[id]?.height === dimensions.height
