@@ -42,6 +42,14 @@ import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -116,6 +124,8 @@ export function Workspace() {
   const [pipelinesEditor, setPipelinesEditor] = useState<EditorTarget | null>(
     null,
   );
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
   const browsing = inbox || pipelinesView;
   const editorHostId = pipelinesEditor?.hostId ?? '';
   const discoverEditorSkills = useCallback(
@@ -423,7 +433,15 @@ export function Workspace() {
       if (trigger?.isConnected) trigger.focus();
     });
   };
+  const guardEditor = (proceed: () => void) => {
+    if (pipelinesView && pipelinesEditor && editorDirty)
+      setLeaveEditor(() => proceed);
+    else proceed();
+  };
   const select = (id: string, targetId = '') => {
+    guardEditor(() => selectNow(id, targetId));
+  };
+  const selectNow = (id: string, targetId = '') => {
     navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
@@ -435,7 +453,8 @@ export function Workspace() {
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
-  const openInbox = () => {
+  const openInbox = () => guardEditor(openInboxNow);
+  const openInboxNow = () => {
     navigationVersion.current += 1;
     setPanel(null);
     setDiffTarget(null);
@@ -444,7 +463,8 @@ export function Workspace() {
     setPipelinesView(false);
     setNavigationOpen(false);
   };
-  const openPipelines = () => {
+  const openPipelines = () => guardEditor(openPipelinesNow);
+  const openPipelinesNow = () => {
     navigationVersion.current += 1;
     setPipelinesSource(
       creating || !selected
@@ -459,7 +479,8 @@ export function Workspace() {
     setPipelinesView(true);
     setNavigationOpen(false);
   };
-  const openCreate = () => {
+  const openCreate = () => guardEditor(openCreateNow);
+  const openCreateNow = () => {
     navigationVersion.current += 1;
     setNavigationOpen(false);
     setDetailsOpen(false);
@@ -1341,6 +1362,7 @@ export function Workspace() {
                 computers={store.computers}
                 statuses={store.providerStates(pipelinesEditor.hostId)}
                 onClose={() => setPipelinesEditor(null)}
+                onDirtyChange={setEditorDirty}
                 onDiscoverSkills={discoverEditorSkills}
                 runOverlay={editorRunOverlay}
                 onInbox={openInbox}
@@ -1640,6 +1662,47 @@ export function Workspace() {
           }
         </Settings>
       )}
+      <Dialog
+        open={leaveEditor !== null}
+        onOpenChange={open => {
+          if (!open) setLeaveEditor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              Leave the graph editor?
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              The pipeline has unsaved changes. Leaving drops the edits made
+              since the last save.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setLeaveEditor(null)}
+            >
+              Keep editing
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                const proceed = leaveEditor;
+                setLeaveEditor(null);
+                setEditorDirty(false);
+                proceed?.();
+              }}
+            >
+              Discard and leave
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
