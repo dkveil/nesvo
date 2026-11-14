@@ -31,7 +31,12 @@ import {
   inside as insideFolder,
   loadCatalog,
   loadSpec,
+  resolveWriteRoots,
 } from './pipelines/definitions';
+import {
+  PipelineAssistant,
+  PipelineAssistantError,
+} from './pipelines/assistant';
 import { EvidenceError, EvidenceStore } from './pipelines/evidence';
 import { PipelineRunError, PipelineRunner } from './pipelines/runner';
 import { PipelineGates } from './pipelines/gates';
@@ -88,6 +93,7 @@ const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'read-pipeline-evidence',
   'save-pipeline-definition',
   'delete-pipeline-definition',
+  'pipeline-assistant-send',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
@@ -264,6 +270,19 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }),
         service => Effect.promise(() => service.close()),
       );
+      const assistant = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new PipelineAssistant({
+              sessions,
+              findSession: id => store.get(id),
+              definitions: { loadCatalog, resolveWriteRoots },
+              emit,
+              signal: probes.controller.signal,
+            }),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
       let evidenceRequests = 0;
       let workspaceRequests = 0;
       let skillRequests = 0;
@@ -290,14 +309,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         if (OPERATOR_ACTIVITY_METHODS.has(request.method))
           sessions.recordOperatorActivity();
         const unavailable =
-          request.method === 'pipeline-assistant-send'
-            ? 'The pipeline assistant is not available on this host yet.'
-            : isPipelineMethod(request.method) &&
-                !SERVED_PIPELINE_METHODS.has(request.method)
-              ? 'Pipelines are not available on this host yet.'
-              : request.method === 'create-session' && request.input.isolation
-                ? 'Workspace isolation is not available on this host yet.'
-                : null;
+          isPipelineMethod(request.method) &&
+          !SERVED_PIPELINE_METHODS.has(request.method)
+            ? 'Pipelines are not available on this host yet.'
+            : request.method === 'create-session' && request.input.isolation
+              ? 'Workspace isolation is not available on this host yet.'
+              : null;
         if (unavailable) {
           yield* Effect.tryPromise(() =>
             send({
@@ -542,6 +559,33 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(start);
           void start.finally(() => probes.pending.delete(start));
+          continue;
+        }
+        if (request.method === 'pipeline-assistant-send') {
+          const turn = assistant
+            .send(request.input)
+            .then(turn =>
+              send({ type: 'pipeline-assistant-turn', id: request.id, turn }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof PipelineAssistantError ||
+                  error instanceof SessionError
+                    ? error.code
+                    : 'unavailable',
+                message:
+                  error instanceof PipelineAssistantError ||
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The pipeline assistant could not start. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(turn);
+          void turn.finally(() => probes.pending.delete(turn));
           continue;
         }
         if (request.method === 'read-pipeline-evidence') {
