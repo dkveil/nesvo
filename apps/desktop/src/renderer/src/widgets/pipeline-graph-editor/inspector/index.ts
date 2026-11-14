@@ -14,7 +14,7 @@ import type { ProviderStates } from '@/entities/session';
 import type { EditorEdge, StepDraft } from '@/entities/pipeline-graph';
 import { EdgeInspectorForm } from './edge-inspector';
 import { PipelineInspectorForm } from './pipeline-inspector';
-import { StartInspectorPlaceholder } from './start-inspector';
+import { StartInspectorForm } from './start-inspector';
 import { StepInspectorForm } from './step-inspector';
 
 export type InspectorMode = 'create' | 'edit';
@@ -86,4 +86,4 @@ export const PipelineInspector: ComponentType<PipelineInspectorProps> =
 export const EdgeInspector: ComponentType<EdgeInspectorProps> =
   EdgeInspectorForm;
 export const StartInspector: ComponentType<StartInspectorProps> =
-  StartInspectorPlaceholder;
+  StartInspectorForm;
