@@ -10031,7 +10031,7 @@ test(
 );
 
 test(
-  'the pipeline assistant contract is bounded, the scheduled job accepts a pipeline and the host answers unavailable',
+  'the pipeline assistant contract is bounded, the scheduled job accepts a pipeline and the host rejects unknown fields',
   { timeout: 60_000 },
   async t => {
     const directory = await realpath(
@@ -10065,28 +10065,18 @@ test(
       },
     };
 
-    await t.test(
-      'the host answers unavailable and rejects unknown fields',
-      async () => {
-        const response = await host.request('pipeline-assistant-send', send);
-        assert.deepEqual(response, {
-          type: 'error',
-          id: response.id,
-          code: 'unavailable',
-          message: 'The pipeline assistant is not available on this host yet.',
-        });
-        assert.deepEqual(
-          await host.send(
-            JSON.stringify({
-              id: randomUUID(),
-              method: 'pipeline-assistant-send',
-              input: { ...send, extra: true },
-            }),
-          ),
-          { type: 'error', id: null, code: 'invalid-request' },
-        );
-      },
-    );
+    await t.test('the host rejects unknown fields', async () => {
+      assert.deepEqual(
+        await host.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'pipeline-assistant-send',
+            input: { ...send, extra: true },
+          }),
+        ),
+        { type: 'error', id: null, code: 'invalid-request' },
+      );
+    });
 
     await t.test('the send input defaults the effort and the selection', () => {
       const parsed = contracts.pipelineAssistantSendSchema.parse({
@@ -13154,7 +13144,7 @@ test(
         assert.match(recorded.prompt, /Never create, edit or delete files/);
         assert.match(
           recorded.prompt,
-          /\[begin catalog ([0-9a-f]+)\]\n[\s\S]*- check · command · pre-done · project · [0-9a-f]{64}\n[\s\S]*- default · project · [0-9a-f]{64}: check, approve\n[\s\S]*\[end catalog \1\]/,
+          /\[begin catalog ([0-9a-f]+)\]\n[\s\S]*- check · command · pre-done · project · [0-9a-f]{64}\n[\s\S]*- default · project · [0-9a-f]{64}: check, approve; chain\n[\s\S]*\[end catalog \1\]/,
         );
         assert.match(
           recorded.prompt,
@@ -13236,6 +13226,27 @@ test(
           /\[begin open-document [0-9a-f]+\]\n[\s\S]*Check, then approve/,
         );
         assert.doesNotMatch(third.prompt, /\[begin catalog /);
+      },
+    );
+
+    await t.test(
+      'a pipeline edge between phases is reported for its change',
+      async () => {
+        const response = await send('fixture:assistant-cross-phase', {
+          sessionId,
+        });
+        const event = await proposal(response.turn.messageId);
+        assert.equal(event.status, 'ok');
+        assert.deepEqual(event.issues[0], { index: 0, issues: [] });
+        assert.deepEqual(
+          event.issues[1].issues.map(issue => [issue.severity, issue.message]),
+          [
+            [
+              'error',
+              'Edge "lint-check -> approve" crosses phases; "lint-check" is pre-done and "approve" is pre-push',
+            ],
+          ],
+        );
       },
     );
 

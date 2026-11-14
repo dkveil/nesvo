@@ -547,7 +547,11 @@ if (args.length === 1 && args[0] === '--version') {
     });
   } else if (command === 'fixture:assistant-proposal') {
     assistantAnswer(
-      '---\nname: assistant-flow\ndescription: Lint, check and approve\nsteps: [lint-check, check, approve]\n---\n',
+      '---\nname: assistant-flow\ndescription: Lint, check and approve\nsteps: [lint-check, check, approve]\nedges: ["lint-check -> check"]\n---\n',
+    );
+  } else if (command === 'fixture:assistant-cross-phase') {
+    assistantAnswer(
+      '---\nname: assistant-flow\ndescription: Lint and approve\nsteps: [lint-check, check, approve]\nedges: ["lint-check -> approve"]\n---\n',
     );
   } else if (command === 'fixture:assistant-missing-step') {
     assistantAnswer(
