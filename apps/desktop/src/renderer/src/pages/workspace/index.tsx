@@ -34,6 +34,8 @@ import {
   sessionStatusLabel,
 } from '@/entities/session';
 import { showsRunStatus } from '@/entities/pipeline';
+import type { EditorTarget } from '@/widgets/pipeline-definitions';
+import type { SkillSummary } from '@/widgets/pipeline-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
@@ -93,6 +95,10 @@ const PipelineDefinitions = lazy(
   () => import('@/widgets/pipeline-definitions'),
 );
 
+const PipelineGraphEditor = lazy(
+  () => import('@/widgets/pipeline-graph-editor'),
+);
+
 export function Workspace() {
   const store = useSessions();
   const [location] = useState(readWorkspaceLocation);
@@ -107,7 +113,52 @@ export function Workspace() {
     hostId: 'local',
     directory: '',
   });
+  const [pipelinesEditor, setPipelinesEditor] = useState<EditorTarget | null>(
+    null,
+  );
   const browsing = inbox || pipelinesView;
+  const editorHostId = pipelinesEditor?.hostId ?? '';
+  const discoverEditorSkills = useCallback(
+    async (directory: string): Promise<SkillSummary[]> => {
+      const found = new Map<string, SkillSummary>();
+      for (const provider of ['Claude Code', 'Codex'] as const) {
+        const catalog = await window.nesvo
+          .discoverSkills({ provider, directory }, editorHostId)
+          .catch(() => null);
+        for (const skill of catalog?.skills ?? [])
+          if (!found.has(skill.name))
+            found.set(skill.name, {
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              source: skill.source,
+            });
+      }
+      return [...found.values()];
+    },
+    [editorHostId],
+  );
+  const editorRun = pipelinesEditor?.pipelineName
+    ? store.pipelineRuns
+        .filter(
+          run =>
+            run.hostId === pipelinesEditor.hostId &&
+            run.pipeline.name === pipelinesEditor.pipelineName &&
+            (!pipelinesEditor.directory ||
+              run.projectRoot === pipelinesEditor.directory ||
+              run.directory === pipelinesEditor.directory),
+        )
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+    : undefined;
+  const editorRunOverlay = editorRun
+    ? {
+        run: editorRun,
+        steps: store.pipelineSteps.filter(
+          step =>
+            step.runId === editorRun.id && step.hostId === editorRun.hostId,
+        ),
+      }
+    : undefined;
   const cardTrigger = useRef<HTMLElement | null>(null);
   const [pipelinePending, setPipelinePending] = useState<
     Record<string, boolean>
@@ -404,6 +455,7 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
+    setPipelinesEditor(null);
     setPipelinesView(true);
     setNavigationOpen(false);
   };
@@ -1045,7 +1097,9 @@ export function Workspace() {
                   {creating
                     ? 'New thread'
                     : pipelinesView
-                      ? 'Pipelines'
+                      ? pipelinesEditor
+                        ? `Graph editor · ${pipelinesEditor.pipelineName ?? 'New pipeline'}`
+                        : 'Pipelines'
                       : inbox
                         ? 'Inbox'
                         : (selected?.title ?? 'New thread')}
@@ -1269,6 +1323,30 @@ export function Workspace() {
               onStart={startThread}
               onStartPipeline={startPipelineTask}
             />
+          ) : pipelinesView && pipelinesEditor ? (
+            <Suspense
+              fallback={
+                <p role="status" className="p-6 text-xs text-muted-foreground">
+                  Loading the graph editor…
+                </p>
+              }
+            >
+              <PipelineGraphEditor
+                hostId={pipelinesEditor.hostId}
+                directory={pipelinesEditor.directory}
+                pipelineName={pipelinesEditor.pipelineName}
+                catalog={pipelinesEditor.catalog}
+                api={window.nesvo.pipelines}
+                scheduledJobsApi={window.nesvo.scheduledJobs}
+                computers={store.computers}
+                statuses={store.providerStates(pipelinesEditor.hostId)}
+                onClose={() => setPipelinesEditor(null)}
+                onDiscoverSkills={discoverEditorSkills}
+                runOverlay={editorRunOverlay}
+                onInbox={openInbox}
+                onSession={select}
+              />
+            </Suspense>
           ) : pipelinesView ? (
             <Suspense
               fallback={
@@ -1282,6 +1360,7 @@ export function Workspace() {
                 hostId={pipelinesSource.hostId}
                 directory={pipelinesSource.directory}
                 api={window.nesvo.pipelines}
+                onEdit={setPipelinesEditor}
               />
             </Suspense>
           ) : inbox ? (

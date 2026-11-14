@@ -3,7 +3,9 @@ import type { Computer, PipelinesApi } from '@nesvo/contracts';
 import {
   ChevronDown,
   CircleX,
+  Plus,
   RefreshCw,
+  SquarePen,
   TriangleAlert,
   Workflow,
 } from 'lucide-react';
@@ -20,6 +22,7 @@ import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   cardIcon,
+  cardIconButton,
   cardRow,
   cardRowAction,
   cardSection,
@@ -37,11 +40,19 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 
+export type EditorTarget = {
+  hostId: string;
+  directory: string;
+  pipelineName: string | null;
+  catalog: DefinitionCatalog;
+};
+
 type Props = {
   computers: Computer[];
   hostId: string;
   directory: string;
   api: Pick<PipelinesApi, 'listDefinitions'>;
+  onEdit?: (target: EditorTarget) => void;
 };
 
 type CatalogState =
@@ -221,6 +232,7 @@ export default function PipelineDefinitions({
   hostId: initialHostId,
   directory: initialDirectory,
   api,
+  onEdit,
 }: Props) {
   const [hostId, setHostId] = useState(initialHostId);
   const [directory, setDirectory] = useState(initialDirectory);
@@ -293,16 +305,32 @@ export default function PipelineDefinitions({
     >
       <div className="mx-auto w-full max-w-5xl space-y-5 px-5 py-6">
         <header className="space-y-1">
-          <h2 className="flex items-center gap-2 text-base font-semibold">
-            <Workflow
-              className="size-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            Pipelines
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Workflow
+                className="size-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              Pipelines
+            </h2>
+            {onEdit && catalog && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7"
+                onClick={() =>
+                  onEdit({ hostId, directory, pipelineName: null, catalog })
+                }
+              >
+                <Plus />
+                New pipeline
+              </Button>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">
-            Definitions read from the files on the chosen computer. Read-only;
-            edit the files to change a pipeline.
+            Definitions read from the files on the chosen computer. Edit opens a
+            pipeline in the graph editor, which writes the files back.
           </p>
         </header>
         <form
@@ -407,7 +435,10 @@ export default function PipelineDefinitions({
                   const count = pipelineIssueCount(catalog, pipeline);
                   const active = selected?.name === pipeline.name;
                   return (
-                    <li key={pipeline.name}>
+                    <li
+                      key={pipeline.name}
+                      className="flex items-center gap-0.5"
+                    >
                       <button
                         type="button"
                         aria-pressed={active}
@@ -418,7 +449,7 @@ export default function PipelineDefinitions({
                         onClick={() => setSelectedName(pipeline.name)}
                         className={cn(
                           cardRowAction,
-                          'aria-pressed:bg-highlight',
+                          'min-w-0 flex-1 aria-pressed:bg-highlight',
                         )}
                       >
                         <Workflow className={cardIcon} aria-hidden="true" />
@@ -435,6 +466,24 @@ export default function PipelineDefinitions({
                           {pipeline.steps.length === 1 ? 'step' : 'steps'}
                         </span>
                       </button>
+                      {onEdit && (
+                        <button
+                          type="button"
+                          aria-label={`Edit ${pipeline.name}`}
+                          title="Edit in the graph editor"
+                          onClick={() =>
+                            onEdit({
+                              hostId,
+                              directory,
+                              pipelineName: pipeline.name,
+                              catalog,
+                            })
+                          }
+                          className={cardIconButton}
+                        >
+                          <SquarePen className="size-3.5" aria-hidden="true" />
+                        </button>
+                      )}
                     </li>
                   );
                 })}
