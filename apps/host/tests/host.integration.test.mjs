@@ -218,6 +218,18 @@ function alive(pid) {
   }
 }
 
+async function stepProcessRecorded(dataDirectory, runId) {
+  const root = join(dataDirectory, 'pipeline-evidence', runId);
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    for (const folder of await readdir(root).catch(() => []))
+      if (await stat(join(root, folder, 'process.json')).catch(() => null))
+        return;
+    assert.ok(Date.now() < deadline, 'The step process was never recorded');
+    await delay(25);
+  }
+}
+
 async function processesGone(pids, tracked) {
   const deadline = Date.now() + 5000;
   while (pids.some(alive) && Date.now() < deadline) await delay(30);
@@ -9260,6 +9272,7 @@ test(
         const run = await started('restart');
         const pid = Number((await waitForFile(marker('blocker.pid'))).trim());
         owned.add(pid);
+        await stepProcessRecorded(dataDirectory, run.id);
         await restart();
         if (onWindows) process.kill(pid);
         await processesGone([pid], owned);
@@ -9306,6 +9319,7 @@ test(
         const run = await started('uncertain');
         const pid = Number((await waitForFile(marker('push.pid'))).trim());
         owned.add(pid);
+        await stepProcessRecorded(dataDirectory, run.id);
         await restart();
         if (onWindows) process.kill(pid);
         await processesGone([pid], owned);
@@ -12282,6 +12296,7 @@ test(
       const run = await start(name, 'claude');
       const pid = Number((await waitForFile(marker('deliver.pid'))).trim());
       owned.add(pid);
+      await stepProcessRecorded(dataDirectory, run.id);
       await restart();
       if (onWindows) process.kill(pid);
       await processesGone([pid], owned);
