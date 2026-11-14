@@ -76,7 +76,11 @@ export const pipelineAssistantProposalEventSchema = z.strictObject({
   issues: z
     .array(
       z.strictObject({
-        index: z.number().int().nonnegative(),
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .max(pipelineAssistantLimits.changes - 1),
         issues: z
           .array(definitionIssueSchema)
           .max(pipelineAssistantLimits.changeIssues),

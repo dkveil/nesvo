@@ -10160,6 +10160,45 @@ test(
       );
     });
 
+    await t.test(
+      'the host refuses to save a scheduled pipeline and keeps listing jobs',
+      async () => {
+        const job = {
+          id: randomUUID(),
+          expectedRevision: null,
+          name: 'Nightly',
+          prompt: '',
+          directory,
+          provider: 'codex',
+          model: 'gpt-5.5',
+          effort: null,
+          mode: 'read-only',
+          schedule: { kind: 'daily', time: '09:00' },
+          timeZone: 'Europe/Warsaw',
+          active: true,
+          pipeline: { name: 'default', specPath: 'task.md' },
+        };
+        const refused = await host.request('save-scheduled-job', job);
+        assert.deepEqual(refused, {
+          type: 'error',
+          id: refused.id,
+          code: 'unavailable',
+          message: 'Scheduled pipelines are not available on this host yet.',
+        });
+        const blank = await host.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'save-scheduled-job',
+            input: { ...job, prompt: '   ', pipeline: null },
+          }),
+        );
+        assert.equal(blank.code, 'invalid-request');
+        const listed = await host.request('list-scheduled-jobs', {});
+        assert.equal(listed.type, 'scheduled-jobs');
+        assert.deepEqual(listed.scheduledJobs, []);
+      },
+    );
+
     await t.test('scheduled jobs take an optional pipeline', () => {
       const job = {
         name: 'Nightly',

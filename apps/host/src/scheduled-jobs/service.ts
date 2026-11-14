@@ -91,7 +91,7 @@ export class ScheduledJobLimitError extends Error {
 
 export class ScheduledJobError extends Error {
   constructor(
-    readonly code: 'busy' | 'not-found' | 'invalid-request',
+    readonly code: 'busy' | 'not-found' | 'invalid-request' | 'unavailable',
     message: string,
   ) {
     super(message);
@@ -134,6 +134,11 @@ export class ScheduledJobService {
 
   save(input: SaveScheduledJobRequest): ScheduledJob {
     const { id, expectedRevision, ...definition } = input;
+    if (definition.pipeline)
+      throw new ScheduledJobError(
+        'unavailable',
+        'Scheduled pipelines are not available on this host yet.',
+      );
     const current = this.store.get(id);
     if (expectedRevision === null) {
       if (current)
