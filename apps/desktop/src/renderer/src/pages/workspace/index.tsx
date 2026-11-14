@@ -103,6 +103,10 @@ const PipelineDefinitions = lazy(
   () => import('@/widgets/pipeline-definitions'),
 );
 
+const PipelineAssistantDock = lazy(
+  () => import('@/widgets/pipeline-assistant'),
+);
+
 const PipelineGraphEditor = lazy(
   () => import('@/widgets/pipeline-graph-editor'),
 );
@@ -1367,6 +1371,28 @@ export function Workspace() {
                 runOverlay={editorRunOverlay}
                 onInbox={openInbox}
                 onSession={select}
+                dock={context => (
+                  <Suspense fallback={null}>
+                    <PipelineAssistantDock
+                      {...context}
+                      hostId={pipelinesEditor.hostId}
+                      directory={pipelinesEditor.directory}
+                      statuses={store.providerStates(pipelinesEditor.hostId)}
+                      computers={store.computers}
+                      sessions={store.sessions}
+                      proposals={store.assistantProposals}
+                      onRefreshProvider={provider =>
+                        void store.refreshProvider(
+                          provider,
+                          pipelinesEditor.hostId,
+                        )
+                      }
+                      onOpenSession={sessionId =>
+                        select(hostKey(sessionId, pipelinesEditor.hostId))
+                      }
+                    />
+                  </Suspense>
+                )}
               />
             </Suspense>
           ) : pipelinesView ? (

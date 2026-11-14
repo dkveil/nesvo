@@ -138,6 +138,10 @@ export function useEditorState({
   const [banner, setBanner] = useState<string | null>(null);
   const [hostIssues, setHostIssues] = useState<DocumentIssue[]>([]);
   const [saving, setSaving] = useState(false);
+  const savedRef = useRef({ dirty, name: initial.name });
+  useEffect(() => {
+    savedRef.current = { dirty, name: initial.name };
+  }, [dirty, initial.name]);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [revealId, setRevealId] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -425,6 +429,25 @@ export function useEditorState({
     setDirty(false);
   };
 
+  const reload = async () => {
+    try {
+      const next = await api.listDefinitions(hostId, { directory });
+      const name = savedRef.current.name;
+      if (!savedRef.current.dirty) {
+        adoptCatalog(next, name);
+        return;
+      }
+      setCatalog(next);
+      const pipeline = next.pipelines.find(item => item.name === name);
+      if (pipeline) setInitial(fromCatalog(pipeline, next));
+      showNotice(
+        'The change was written. Discard your unsaved edits to see it.',
+      );
+    } catch (error) {
+      setBanner(`Could not reload the definitions. ${errorDetail(error)}`);
+    }
+  };
+
   const save = async () => {
     if (saving || validation.hasErrors) return;
     setSaving(true);
@@ -598,6 +621,7 @@ export function useEditorState({
     autoLayoutAll,
     discard,
     save,
+    reload,
     notice,
     showNotice,
     banner,

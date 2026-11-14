@@ -1,10 +1,17 @@
 import '@xyflow/react/dist/base.css';
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import type {
   Computer,
   DefinitionCatalog,
   DesktopApi,
+  PipelineAssistantDocument,
   ScheduledJob,
 } from '@nesvo/contracts';
 import {
@@ -14,6 +21,7 @@ import {
   type StepDisplayState,
 } from '@/entities/pipeline';
 import type { ProviderStates } from '@/entities/session';
+import { toFileText } from '@/entities/pipeline-graph';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -47,7 +55,22 @@ type Props = {
   runOverlay?: { run: PipelineRun; steps: PipelineStepRecord[] };
   onInbox?: (target: InboxTarget) => void;
   onSession?: (key: string) => void;
+  dock?: (context: EditorDockContext) => ReactNode;
 };
+
+export type EditorDockContext = {
+  pipelineName: string | null;
+  document: PipelineAssistantDocument | null;
+  selection: string[];
+  onApplied: () => void;
+};
+
+function EditorDock({
+  render,
+  ...context
+}: EditorDockContext & { render: (context: EditorDockContext) => ReactNode }) {
+  return render(context);
+}
 
 const isTextTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -70,6 +93,7 @@ export default function PipelineGraphEditor({
   runOverlay,
   onInbox = () => {},
   onSession = () => {},
+  dock,
 }: Props) {
   const state = useEditorState({
     hostId,
@@ -126,6 +150,23 @@ export default function PipelineGraphEditor({
     });
     return states;
   }, [overlayOn, runOverlay]);
+  const savedDocument = useMemo<PipelineAssistantDocument | null>(
+    () =>
+      !state.dirty && state.document.hash && state.document.name
+        ? {
+            kind: 'pipeline',
+            scope: state.document.scope,
+            name: state.document.name,
+            contentHash: state.document.hash,
+            text: toFileText(state.document),
+          }
+        : null,
+    [state.dirty, state.document],
+  );
+  const dockSelection = useMemo(
+    () => (state.selection.kind === 'node' ? [state.selection.id] : []),
+    [state.selection],
+  );
   const requestClose = () => {
     if (state.dirty) setClosing(true);
     else onClose();
@@ -185,7 +226,17 @@ export default function PipelineGraphEditor({
             <div
               data-slot="editor-dock"
               className="pointer-events-none absolute right-3 bottom-3 z-10 [&>*]:pointer-events-auto"
-            />
+            >
+              {dock && (
+                <EditorDock
+                  render={dock}
+                  pipelineName={savedDocument?.name ?? pipelineName}
+                  document={savedDocument}
+                  selection={dockSelection}
+                  onApplied={() => void state.reload()}
+                />
+              )}
+            </div>
           </div>
           <InspectorPanel
             state={state}
