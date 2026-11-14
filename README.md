@@ -49,6 +49,8 @@ Claude runs in analysis mode with Read, Glob and Grep. Codex read-only mode can 
 
 A pipeline task runs a task spec from your project through the steps of a pipeline defined in files. Starting a task creates one ordinary session, optionally in its own Git worktree and branch. The session plans first when the pipeline asks for a plan check, then implements the task; when the turn ends, the computer runs the checks and actions of the pipeline in order and records their results. A run never repeats work by itself: Stop ends it, a restart interrupts it until you resume it explicitly, and an action that may already have run needs your decision. One task runs per project at a time.
 
+The operator guide to pipeline files, the graph editor, the assistant dock and the command line is [docs/pipelines.md](docs/pipelines.md).
+
 ## P2 acceptance walkthrough
 
 1. Confirm that Claude Code is detected and logged in, then create a session in a small known directory.
