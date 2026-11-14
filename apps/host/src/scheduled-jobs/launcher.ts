@@ -160,7 +160,7 @@ const toPipelineOutcome = (
   if (status === 'interrupted')
     return {
       status: 'interrupted',
-      reason: 'restart',
+      reason: null,
       reviewId: null,
       resetAt: null,
     };
@@ -168,6 +168,8 @@ const toPipelineOutcome = (
 };
 
 const pipelineStartFailure = (error: unknown, directory: string): unknown => {
+  if (error instanceof SessionError && error.code === 'invalid-request')
+    return new ScheduledJobLaunchError('catalog', error.message);
   if (!(error instanceof PipelineRunError)) return error;
   if (error.code === 'busy') return new SessionError('busy', error.message);
   if (error.code === 'invalid-request')
@@ -375,7 +377,11 @@ export class SessionLauncher implements ScheduledJobLauncher {
       if (!status) return schedule();
       this.clock.clearTimer(deadline);
       this.deadlines.delete(deadline);
-      progress.finished(toPipelineOutcome(status, timedOut));
+      try {
+        progress.finished(toPipelineOutcome(status, timedOut));
+      } catch {
+        return;
+      }
     };
     const schedule = () => {
       poll = this.clock.setTimer(check, PIPELINE_POLL_MS);
