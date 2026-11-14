@@ -333,7 +333,10 @@ async function editPipeline(
     const hash = savedHash(catalog, 'pipeline', pipeline, scope);
     const verb = edit.kind === 'add' ? 'Added' : 'Removed';
     const direction = edit.kind === 'add' ? 'to' : 'from';
-    return `${verb} step "${edit.step}" ${direction} pipeline "${pipeline}" (${scope})${hash ? `, hash ${hash}` : ''}`;
+    return [
+      `${verb} step "${edit.step}" ${direction} pipeline "${pipeline}" (${scope})${hash ? `, hash ${hash}` : ''}`,
+      ...edited.notes,
+    ].join('\n');
   });
 }
 
