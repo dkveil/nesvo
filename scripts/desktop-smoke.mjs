@@ -2672,9 +2672,9 @@ try {
           : null,
       };
     });
-  const edgeShown = () =>
+  const edgeShown = (from, to) =>
     editor
-      .locator('[data-editor-inspector="edge"]')
+      .locator(`[data-editor-edge^="${from} -> ${to}"]`)
       .waitFor({ timeout: 4000 })
       .then(
         () => true,
@@ -2712,7 +2712,7 @@ try {
     });
     await revealHandles([sourceHandle, targetHandle]);
     await sourceHandle.dragTo(targetHandle, { force: true });
-    if (await edgeShown()) return;
+    if (await edgeShown(from, to)) return;
     const notice = await restartedPage
       .locator('[data-editor-notice]')
       .allTextContents();
@@ -2726,6 +2726,7 @@ try {
       }),
     );
     await editorShot(`connect-${from}-${to}`);
+    throw new Error(`The connection ${from} -> ${to} did not appear.`);
   };
   await addGraphStep('smoke-check');
   await addGraphStep('smoke-lint');
