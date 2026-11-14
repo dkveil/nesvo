@@ -13381,3 +13381,829 @@ test(
     });
   },
 );
+
+test(
+  'graph pipelines start ready steps, wait at joins, run failure branches before the failure and mark dead paths unreached',
+  { timeout: 240_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-graph-engine-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+    };
+    const onWindows = process.platform === 'win32';
+    const owned = new Set();
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null) host.child.kill();
+        await host.exited.catch(() => undefined);
+      }
+      for (const pid of owned)
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, { recursive: true, force: true });
+    });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    const probePath = join(directory, 'probe.mjs');
+    await writeFile(
+      probePath,
+      [
+        "import { appendFileSync, existsSync } from 'node:fs';",
+        'const [log, name, wait, exit, emit] = process.argv.slice(2);',
+        'const outputs = Object.fromEntries(',
+        '  Object.entries(process.env)',
+        "    .filter(([key]) => key.startsWith('NESVO_OUTPUT_'))",
+        '    .sort(([left], [right]) => left.localeCompare(right)),',
+        ');',
+        'const note = event =>',
+        '  appendFileSync(',
+        '    log,',
+        '    JSON.stringify({ name, event, at: Date.now(), pid: process.pid, outputs }) +',
+        "      '\\n',",
+        '  );',
+        "note('start');",
+        'setTimeout(() => {',
+        "  note('end');",
+        '  if (emit)',
+        "    console.log(JSON.stringify(Object.fromEntries([emit.split('=')])));",
+        '  process.exitCode = /^\\d+$/.test(exit) ? Number(exit) : existsSync(exit) ? 0 : 1;',
+        '}, Number(wait));',
+        '',
+      ].join('\n'),
+    );
+    const logs = join(directory, 'logs');
+    await mkdir(logs);
+    const logFor = scenario => join(logs, `${scenario}.jsonl`);
+    const probe = (
+      scenario,
+      name,
+      { type = 'command', wait = 0, exit = '0', emit, ...fields } = {},
+    ) => ({
+      name,
+      type,
+      timeout: '2m',
+      ...fields,
+      body: `"${process.execPath}" "${probePath}" "${logFor(scenario)}" ${name} ${wait} "${exit}"${emit ? ` ${emit}` : ''}`,
+    });
+    const agent = name => ({
+      name,
+      type: 'agent',
+      body: 'fixture:verdict-pass\nReview the change.',
+    });
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    const stepFile = ({ body, ...fields }) =>
+      `---\n${Object.entries(fields)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n')}\n---\n${body}\n`;
+    const edgeBlock = edges =>
+      edges.length === 0
+        ? 'edges: []\n'
+        : `edges:\n${edges.map(edge => `  - ${edge}`).join('\n')}\n`;
+    const project = join(directory, 'graphs');
+    await mkdir(join(project, '.git'), { recursive: true });
+    const marker = join(directory, 'fragile-fixed');
+    const pipelines = {
+      'fan-out': {
+        steps: [
+          probe('fan-out', 'prepare'),
+          probe('fan-out', 'left', { wait: 1000 }),
+          probe('fan-out', 'right', { wait: 1000 }),
+          probe('fan-out', 'join'),
+        ],
+        edges: [
+          'prepare -> left',
+          'prepare -> right',
+          'left -> join',
+          'right -> join',
+        ],
+      },
+      'routes-fail': {
+        steps: [
+          probe('routes', 'check', { exit: '1', on_fail: 'stop' }),
+          probe('routes', 'collect', {
+            type: 'action',
+            emit: 'logs=collected',
+          }),
+          probe('routes', 'review'),
+          { name: 'approve', type: 'human', body: 'Approve the change.' },
+          probe('routes', 'notify'),
+        ],
+        edges: [
+          'check -> review',
+          'review -> approve',
+          'check -> collect on failure',
+          'check -> notify on any',
+        ],
+      },
+      'routes-pass': {
+        steps: [
+          probe('routes', 'pass-check'),
+          probe('routes', 'spare'),
+          probe('routes', 'echo-any'),
+        ],
+        edges: [
+          'pass-check -> spare on failure',
+          'pass-check -> echo-any on any',
+        ],
+      },
+      'fix-branch': {
+        steps: [
+          probe('fix', 'fragile', { exit: marker, on_fail: 'fix' }),
+          probe('fix', 'gather'),
+          probe('fix', 'after'),
+        ],
+        edges: ['fragile -> gather on failure', 'fragile -> after'],
+      },
+      agents: {
+        steps: [agent('review-one'), agent('review-two')],
+        edges: [],
+      },
+      five: {
+        steps: ['c1', 'c2', 'c3', 'c4', 'c5'].map(name =>
+          probe('five', name, { wait: 1000 }),
+        ),
+        edges: [],
+      },
+      outputs: {
+        steps: [
+          probe('outputs', 'origin', { type: 'action', emit: 'value=root' }),
+          probe('outputs', 'side', { type: 'action', emit: 'side=left' }),
+          probe('outputs', 'slow', { wait: 600 }),
+          probe('outputs', 'tail'),
+        ],
+        edges: ['origin -> side', 'origin -> slow', 'slow -> tail'],
+      },
+      hold: {
+        steps: [
+          probe('hold', 'hold-a', { wait: 60_000 }),
+          probe('hold', 'hold-b', { wait: 60_000 }),
+        ],
+        edges: [],
+      },
+    };
+    for (const [name, { steps, edges }] of Object.entries(pipelines)) {
+      for (const item of steps)
+        await write(
+          join(project, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+          stepFile({ phase: 'pre-done', ...item }),
+        );
+      await write(
+        join(project, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        `---\nname: ${name}\nsteps: [${steps.map(item => item.name).join(', ')}]\n${edgeBlock(edges)}---\n`,
+      );
+      await write(
+        join(project, '.agents', 'tasks', `${name}.md`),
+        `---\npipeline: ${name}\ntitle: Run ${name}\n---\n## Goal\nRun the ${name} graph.\n`,
+      );
+    }
+    const dataDirectory = join(directory, 'data');
+    let host = launch(dataDirectory, join(directory, 'pids.json'));
+    hosts.push(host);
+    const start = async (root, name, phase) => {
+      const response = await host.request('run-pipeline-steps', {
+        directory: root,
+        specPath: join('.agents', 'tasks', `${name}.md`),
+        ...(phase ? { phase } : {}),
+      });
+      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      return response.run;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-pipeline-run', { runId });
+      assert.equal(
+        response.type,
+        'pipeline-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const waitFor = async (runId, check, description) => {
+      const deadline = Date.now() + 30_000;
+      while (true) {
+        const current = await detail(runId);
+        if (check(current)) return current;
+        assert.ok(
+          Date.now() < deadline,
+          `${description}: ${JSON.stringify({ run: current.run.status, attention: current.run.attention, steps: current.steps.map(step => [step.name, step.attempt, step.state]) })}`,
+        );
+        await delay(50);
+      }
+    };
+    const settled = runId =>
+      waitFor(
+        runId,
+        ({ run }) => !['pending', 'checking'].includes(run.status),
+        'Run did not settle',
+      );
+    const rows = current =>
+      current.steps.map(step => [step.name, step.attempt, step.state]);
+    const named = (current, name) =>
+      current.steps.findLast(step => step.name === name);
+    const events = async scenario =>
+      (await readFile(logFor(scenario), 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    const span = (entries, name) => ({
+      start: entries.find(item => item.name === name && item.event === 'start')
+        ?.at,
+      end: entries.find(item => item.name === name && item.event === 'end')?.at,
+    });
+    const starts = (entries, name) =>
+      entries.filter(item => item.name === name && item.event === 'start');
+    const alivePid = pid => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const gone = async pid => {
+      const deadline = Date.now() + 8_000;
+      while (alivePid(pid) && Date.now() < deadline) await delay(30);
+      assert.equal(alivePid(pid), false, `Step process ${pid} leaked`);
+      owned.delete(pid);
+    };
+    const waitForStarts = async (scenario, name, count) => {
+      const deadline = Date.now() + 15_000;
+      while (true) {
+        const found = starts(await events(scenario), name);
+        if (found.length >= count) {
+          for (const item of found) owned.add(item.pid);
+          return found;
+        }
+        assert.ok(
+          Date.now() < deadline,
+          `${name} did not start ${count} times`,
+        );
+        await delay(25);
+      }
+    };
+
+    await t.test(
+      'a fan-out runs two commands at once and the join waits for both',
+      async () => {
+        const run = await start(project, 'fan-out');
+        const current = await settled(run.id);
+        assert.equal(current.run.status, 'passed', current.run.attention);
+        assert.deepEqual(rows(current), [
+          ['prepare', 1, 'passed'],
+          ['left', 1, 'passed'],
+          ['right', 1, 'passed'],
+          ['join', 1, 'passed'],
+        ]);
+        const entries = await events('fan-out');
+        const prepare = span(entries, 'prepare');
+        const left = span(entries, 'left');
+        const right = span(entries, 'right');
+        const joined = span(entries, 'join');
+        assert.ok(left.start >= prepare.end && right.start >= prepare.end);
+        assert.ok(
+          left.start < right.end && right.start < left.end,
+          JSON.stringify({ left, right }),
+        );
+        const total =
+          Math.max(left.end, right.end) - Math.min(left.start, right.start);
+        assert.ok(total < 1800, `The fan-out took ${total} ms`);
+        assert.ok(joined.start >= Math.max(left.end, right.end));
+        const base = prepare.start;
+        console.log(
+          JSON.stringify({
+            fanOut: Object.fromEntries(
+              [
+                ['prepare', prepare],
+                ['left', left],
+                ['right', right],
+                ['join', joined],
+              ].map(([name, item]) => [
+                name,
+                [item.start - base, item.end - base],
+              ]),
+            ),
+            fanOutTotalMs: total,
+          }),
+        );
+      },
+    );
+
+    await t.test(
+      'a failure branch runs before the failure applies and dead paths are unreached',
+      async () => {
+        const failing = await settled((await start(project, 'routes-fail')).id);
+        assert.equal(failing.run.status, 'failed');
+        assert.deepEqual(rows(failing), [
+          ['check', 1, 'failed'],
+          ['collect', 1, 'done'],
+          ['review', 1, 'unreached'],
+          ['approve', 1, 'unreached'],
+          ['notify', 1, 'passed'],
+        ]);
+        assert.deepEqual(named(failing, 'collect').result.outputs, {
+          logs: 'collected',
+        });
+        assert.equal(
+          named(failing, 'review').skip.reason,
+          'Not reached: "check" failed',
+        );
+        assert.equal(
+          named(failing, 'approve').skip.reason,
+          'Not reached: "review" was not reached',
+        );
+        assert.equal(named(failing, 'review').result, null);
+        assert.equal(named(failing, 'review').startedAt, null);
+        const entries = await events('routes');
+        assert.deepEqual(starts(entries, 'review'), []);
+        assert.ok(
+          span(entries, 'collect').start >= span(entries, 'check').end &&
+            span(entries, 'notify').start >= span(entries, 'check').end,
+        );
+        const passing = await settled((await start(project, 'routes-pass')).id);
+        assert.equal(passing.run.status, 'passed', passing.run.attention);
+        assert.deepEqual(rows(passing), [
+          ['pass-check', 1, 'passed'],
+          ['spare', 1, 'unreached'],
+          ['echo-any', 1, 'passed'],
+        ]);
+        assert.equal(
+          named(passing, 'spare').skip.reason,
+          'Not reached: "pass-check" passed',
+        );
+      },
+    );
+
+    await t.test(
+      'on_fail fix needs attention after the branch ran and resume re-evaluates the dead path',
+      async () => {
+        const run = await start(project, 'fix-branch');
+        const attention = await settled(run.id);
+        assert.equal(attention.run.status, 'needs-attention');
+        assert.match(attention.run.attention, /^Step "fragile" failed: /);
+        assert.deepEqual(rows(attention), [
+          ['fragile', 1, 'failed'],
+          ['gather', 1, 'passed'],
+          ['after', 1, 'unreached'],
+        ]);
+        await writeFile(marker, 'fixed\n');
+        const resumed = await host.request('resume-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        const passed = await settled(run.id);
+        assert.equal(passed.run.status, 'passed', passed.run.attention);
+        assert.deepEqual(rows(passed), [
+          ['fragile', 1, 'failed'],
+          ['fragile', 2, 'passed'],
+          ['gather', 1, 'passed'],
+          ['after', 1, 'unreached'],
+          ['after', 2, 'passed'],
+        ]);
+        const entries = await events('fix');
+        assert.equal(starts(entries, 'gather').length, 1);
+        assert.equal(starts(entries, 'fragile').length, 2);
+        assert.equal(starts(entries, 'after').length, 1);
+      },
+    );
+
+    await t.test('two ready agent steps run one after the other', async () => {
+      const current = await settled((await start(project, 'agents')).id);
+      assert.equal(current.run.status, 'passed', current.run.attention);
+      const [first, second] = current.steps;
+      assert.deepEqual(rows(current), [
+        ['review-one', 1, 'passed'],
+        ['review-two', 1, 'passed'],
+      ]);
+      assert.ok(
+        Date.parse(second.startedAt) >= Date.parse(first.result.finishedAt),
+        JSON.stringify([first.result.finishedAt, second.startedAt]),
+      );
+    });
+
+    await t.test('at most four command steps run at once', async () => {
+      const current = await settled((await start(project, 'five')).id);
+      assert.equal(current.run.status, 'passed', current.run.attention);
+      const entries = await events('five');
+      let running = 0;
+      let peak = 0;
+      for (const item of [...entries].sort(
+        (left, right) =>
+          left.at - right.at ||
+          (left.event === 'end' ? -1 : 1) - (right.event === 'end' ? -1 : 1),
+      )) {
+        running += item.event === 'start' ? 1 : -1;
+        peak = Math.max(peak, running);
+      }
+      assert.equal(peak, 4);
+      const firstEnd = Math.min(
+        ...['c1', 'c2', 'c3', 'c4'].map(name => span(entries, name).end),
+      );
+      assert.ok(span(entries, 'c5').start >= firstEnd);
+    });
+
+    await t.test(
+      'a step sees the outputs of its ancestors and not of a parallel sibling',
+      async () => {
+        const current = await settled((await start(project, 'outputs')).id);
+        assert.equal(current.run.status, 'passed', current.run.attention);
+        const entries = await events('outputs');
+        const seen = name =>
+          entries.find(item => item.name === name && item.event === 'start')
+            .outputs;
+        assert.ok(span(entries, 'side').end < span(entries, 'tail').start);
+        assert.deepEqual(named(current, 'side').result.outputs, {
+          side: 'left',
+        });
+        assert.deepEqual(seen('side'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
+        assert.deepEqual(seen('slow'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
+        assert.deepEqual(seen('tail'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
+      },
+    );
+
+    await t.test(
+      'a restart during a parallel phase interrupts both commands, resume runs each once more and stop ends both',
+      async subtest => {
+        const run = await start(project, 'hold');
+        const first = [
+          ...(await waitForStarts('hold', 'hold-a', 1)),
+          ...(await waitForStarts('hold', 'hold-b', 1)),
+        ].map(item => item.pid);
+        host.child.kill('SIGKILL');
+        await host.exited;
+        host = launch(dataDirectory, join(directory, 'pids-restart.json'));
+        hosts.push(host);
+        await subtest.test(
+          'the restarted host stops both orphaned step processes',
+          {
+            skip:
+              onWindows &&
+              'the killed host takes its step shell with it, and the processes that shell started leave the host job',
+          },
+          async () => {
+            for (const pid of first) await gone(pid);
+          },
+        );
+        if (onWindows) {
+          for (const pid of first) process.kill(pid);
+          for (const pid of first) await gone(pid);
+        }
+        const interrupted = await detail(run.id);
+        assert.equal(interrupted.run.status, 'interrupted');
+        assert.deepEqual(rows(interrupted), [
+          ['hold-a', 1, 'interrupted'],
+          ['hold-b', 1, 'interrupted'],
+        ]);
+        const resumed = await host.request('resume-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        const second = [
+          (await waitForStarts('hold', 'hold-a', 2))[1],
+          (await waitForStarts('hold', 'hold-b', 2))[1],
+        ].map(item => item.pid);
+        const running = await waitFor(
+          run.id,
+          current =>
+            current.steps.filter(step => step.state === 'running').length === 2,
+          'Both steps did not run again',
+        );
+        assert.equal(running.run.status, 'checking');
+        const stopped = await host.request('stop-pipeline-run', {
+          runId: run.id,
+        });
+        assert.equal(stopped.type, 'pipeline-run', JSON.stringify(stopped));
+        for (const pid of second) await gone(pid);
+        const final = await waitFor(
+          run.id,
+          current => current.steps.every(step => step.state !== 'running'),
+          'The stopped steps did not finish',
+        );
+        assert.equal(final.run.status, 'stopped');
+        assert.deepEqual(rows(final), [
+          ['hold-a', 1, 'interrupted'],
+          ['hold-a', 2, 'interrupted'],
+          ['hold-b', 1, 'interrupted'],
+          ['hold-b', 2, 'interrupted'],
+        ]);
+        const entries = await events('hold');
+        assert.equal(starts(entries, 'hold-a').length, 2);
+        assert.equal(starts(entries, 'hold-b').length, 2);
+      },
+    );
+
+    await t.test(
+      'the graph portability fixture produces the expected results',
+      async () => {
+        const fixture = join(directory, 'portability-graph');
+        const agents = join(fixture, '.agents');
+        await mkdir(join(fixture, '.git'), { recursive: true });
+        const commands = {
+          prepare: 'echo prepare passed',
+          lint: 'echo lint passed',
+          unit: 'echo unit failed && exit 1',
+          report: 'echo report passed',
+          collect: 'echo collected',
+        };
+        for (const [name, body] of Object.entries(commands))
+          await write(
+            join(agents, 'pipelines', 'steps', `${name}.md`),
+            `---\nname: ${name}\ntype: command\nphase: pre-done\ntimeout: 1m\n---\n${body}\n`,
+          );
+        await write(
+          join(agents, 'pipelines', 'pipelines', 'graph.md'),
+          [
+            '---',
+            'name: graph',
+            'description: One step fans out into two checks that join into a report, with a failure branch',
+            'steps: [prepare, lint, unit, report, collect]',
+            'edges:',
+            '  - prepare -> lint',
+            '  - prepare -> unit',
+            '  - lint -> report',
+            '  - unit -> report',
+            '  - unit -> collect on failure',
+            'layout:',
+            '  prepare: [0, 70]',
+            '  lint: [260, 0]',
+            '  unit: [260, 140]',
+            '  report: [520, 70]',
+            '  collect: [520, 210]',
+            '---',
+            'Fixture graph pipeline used to compare verdicts between hosts.',
+            '',
+          ].join('\n'),
+        );
+        await write(
+          join(agents, 'tasks', 'graph-spec.md'),
+          '---\npipeline: graph\ntitle: Graph portability fixture task\n---\n## Goal\nProduce the same step verdicts for a graph pipeline on every host that reads these files.\n',
+        );
+        const expected = {
+          'pre-done': {
+            verdict: 'fail',
+            steps: [
+              { name: 'prepare', status: 'pass', evidenceKinds: ['log'] },
+              { name: 'lint', status: 'pass', evidenceKinds: ['log'] },
+              { name: 'unit', status: 'fail', evidenceKinds: ['log'] },
+              {
+                name: 'report',
+                status: 'unreached',
+                evidenceKinds: [],
+                reason: 'Not reached: "unit" failed',
+              },
+              { name: 'collect', status: 'pass', evidenceKinds: ['log'] },
+            ],
+          },
+        };
+        const actual = {};
+        for (const phase of Object.keys(expected)) {
+          const response = await host.request('run-pipeline-steps', {
+            directory: fixture,
+            specPath: '.agents/tasks/graph-spec.md',
+            phase,
+          });
+          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          const current = await settled(response.run.id);
+          actual[phase] = {
+            verdict: current.run.status === 'passed' ? 'pass' : 'fail',
+            steps: current.steps.map(step => ({
+              name: step.name,
+              status: step.result?.status ?? step.state,
+              evidenceKinds: step.result?.evidence.map(item => item.kind) ?? [],
+              ...(step.state === 'unreached'
+                ? { reason: step.skip.reason }
+                : {}),
+            })),
+          };
+        }
+        assert.deepEqual(actual, expected);
+        console.log(JSON.stringify({ portabilityGraph: actual }));
+        await host.stop();
+      },
+    );
+
+    await t.test(
+      'nextMove applies the failure after the branch settled and a phase sees earlier phases but not siblings',
+      async subtest => {
+        const isolated = join(directory, 'in-process');
+        const bootstrap = launch(
+          isolated,
+          join(directory, 'pids-bootstrap.json'),
+        );
+        hosts.push(bootstrap);
+        assert.equal((await bootstrap.request('health')).type, 'health');
+        await bootstrap.stop();
+        const { PipelineRunner, PipelineRunStore, nextMove } =
+          await loadPipelineRunnerModules(directory);
+        const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
+        subtest.after(() => database.close());
+        const store = new PipelineRunStore(database);
+        const now = new Date().toISOString();
+        const definition = (name, phase, extra = {}) => ({
+          name,
+          type: 'command',
+          phase,
+          skill: null,
+          timeout: '15m',
+          retries: 0,
+          on_fail: 'stop',
+          needs: [],
+          body: 'true',
+          source: {
+            scope: 'project',
+            path: join(isolated, `${name}.md`),
+            contentHash: 'a'.repeat(64),
+          },
+          notes: [],
+          ...extra,
+        });
+        const result = (step, status, outputs = {}) => ({
+          name: step.name,
+          type: step.type,
+          phase: step.phase,
+          status,
+          summary: 'Fixture result.',
+          evidence: [],
+          outputs,
+          startedAt: step.startedAt ?? now,
+          finishedAt: new Date().toISOString(),
+          durationMs: 0,
+          cost: {
+            usd: null,
+            inputTokens: null,
+            outputTokens: null,
+            provider: null,
+          },
+          attempt: Math.max(step.attempt, 1),
+        });
+        const makeRun = (steps, edges, extra = {}) => ({
+          id: randomUUID(),
+          revision: 1,
+          pipeline: {
+            name: 'graph',
+            description: '',
+            body: '',
+            source: {
+              scope: 'project',
+              path: join(isolated, 'graph.md'),
+              contentHash: 'b'.repeat(64),
+            },
+            notes: [],
+            steps,
+            graph: { explicit: true, edges },
+          },
+          specPath: join(isolated, 'task.md'),
+          specHash: 'c'.repeat(64),
+          specTitle: 'Graph',
+          sessionId: null,
+          directory: isolated,
+          projectRoot: join(isolated, randomUUID()),
+          isolation: null,
+          gateProvider: 'Claude Code',
+          gateModel: 'default',
+          status: 'checking',
+          phase: 'pre-done',
+          currentStepIndex: 0,
+          attention: null,
+          createdAt: now,
+          updatedAt: now,
+          finishedAt: null,
+          ...extra,
+        });
+        const row = (run, index, state, extra = {}) => {
+          const step = run.pipeline.steps[index];
+          const record = {
+            id: randomUUID(),
+            runId: run.id,
+            revision: 1,
+            index,
+            name: step.name,
+            type: step.type,
+            phase: step.phase,
+            state,
+            attempt: 1,
+            result: null,
+            sessionId: null,
+            reviewId: null,
+            reviewVersion: null,
+            skip: null,
+            updatedAt: now,
+            startedAt: state === 'pending' ? null : now,
+            decision: null,
+            definitionChanges: [],
+            ...extra,
+          };
+          return ['passed', 'failed', 'done', 'error'].includes(state)
+            ? {
+                ...record,
+                result: result(
+                  record,
+                  {
+                    passed: 'pass',
+                    failed: 'fail',
+                    done: 'done',
+                    error: 'error',
+                  }[state],
+                ),
+              }
+            : record;
+        };
+        const context = { turnState: () => 'none', hasAuthor: false };
+        const branchEdges = [{ from: 'gate', to: 'branch', when: 'failure' }];
+        for (const onFail of ['stop', 'fix']) {
+          const run = makeRun(
+            [
+              definition('gate', 'pre-done', { on_fail: onFail }),
+              definition('branch', 'pre-done'),
+            ],
+            branchEdges,
+          );
+          const gate = row(run, 0, 'failed');
+          assert.deepEqual(
+            nextMove(run, [gate, row(run, 1, 'passed')], context),
+            onFail === 'stop'
+              ? { kind: 'finish', status: 'failed' }
+              : {
+                  kind: 'attention',
+                  message: 'Step "gate" failed: Fixture result.',
+                },
+          );
+          const waiting = row(run, 1, 'pending');
+          assert.deepEqual(nextMove(run, [gate, waiting], context), {
+            kind: 'start-step',
+            step: waiting,
+          });
+          assert.deepEqual(
+            nextMove(run, [gate, row(run, 1, 'running')], context),
+            { kind: 'wait' },
+          );
+        }
+
+        const seen = new Map();
+        const command = async ({ step, outputs }) => {
+          seen.set(
+            step.name,
+            Object.fromEntries(
+              [...outputs].map(([name, values]) => [name, Object.keys(values)]),
+            ),
+          );
+          if (step.name === 'alpha') await delay(50);
+          return {
+            kind: 'result',
+            result: result(step, 'pass', { [`${step.name}-key`]: step.name }),
+          };
+        };
+        const skip = () =>
+          Promise.resolve({
+            kind: 'skipped',
+            reason: 'Executor not available',
+          });
+        const runner = new PipelineRunner({
+          store,
+          emit: () => undefined,
+          evidence: { write: () => Promise.resolve('attempt-1.log') },
+          stepExecutors: { command, action: command, human: skip, agent: skip },
+        });
+        subtest.after(() => runner.close());
+        const phased = makeRun(
+          [
+            definition('made', 'pre-done'),
+            definition('alpha', 'pre-push'),
+            definition('beta', 'pre-push'),
+            definition('gamma', 'pre-push'),
+          ],
+          [{ from: 'alpha', to: 'gamma', when: 'success' }],
+          { status: 'pending', phase: 'pre-push', currentStepIndex: null },
+        );
+        assert.equal(store.insertRun(phased), true);
+        const made = row(phased, 0, 'passed');
+        assert.equal(
+          store.insertStep({
+            ...made,
+            result: result(made, 'pass', { artifact: 'built' }),
+          }),
+          true,
+        );
+        await runner.advanceRun(phased.id);
+        await waitUntil(
+          () => store.getRun(phased.id).status === 'passed',
+          'The phased run did not pass',
+        );
+        assert.deepEqual(Object.fromEntries(seen), {
+          alpha: { made: ['artifact'] },
+          beta: { made: ['artifact'] },
+          gamma: { made: ['artifact'], alpha: ['alpha-key'] },
+        });
+      },
+    );
+  },
+);
