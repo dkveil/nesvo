@@ -12220,6 +12220,18 @@ test(
           'The hold step did not start',
         );
         const pending = stepNamed(current, 'approve');
+        const [review] = await reviewsOf(run.sessionId);
+        refusal(
+          await host.request('decide-review', {
+            reviewId: review.id,
+            version: review.version,
+            decisionId: randomUUID(),
+            decision: 'request-changes',
+            feedback: 'Change it from the inbox.',
+          }),
+          'busy',
+          /^This result is waiting for its pipeline gate$/,
+        );
         const skipped = await host.request('skip-pipeline-step', {
           runId: run.id,
           stepId: pending.id,
@@ -12649,6 +12661,57 @@ test(
         );
         assert.deepEqual(spawned, [2]);
         assert.equal(sent.length, 1);
+
+        const later = new Date().toISOString();
+        const failing = {
+          ...run,
+          id: randomUUID(),
+          status: 'needs-attention',
+          attention:
+            'The correction turn failed. Open the session for details.',
+          projectRoot: join(isolated, 'failing'),
+          createdAt: later,
+          updatedAt: later,
+        };
+        assert.equal(store.insertRun(failing), true);
+        const failedGate = {
+          ...row('approve', 1, 'failed', { decision: gate.decision }),
+          runId: failing.id,
+        };
+        assert.equal(
+          store.insertStep({ ...row('check', 0, 'passed'), runId: failing.id }),
+          true,
+        );
+        assert.equal(store.insertStep(failedGate), true);
+        const failedCorrection = correctionMessageId(
+          failing.id,
+          failedGate.id,
+          1,
+        );
+        const failedTurns = new Set([failedCorrection]);
+        const turnState = author.turnState;
+        author.turnState = (current, messageId) =>
+          failedTurns.has(messageId) ? 'failed' : turnState(current, messageId);
+        assert.throws(
+          () => runner.resume(failing.id),
+          /correction turn did not finish/,
+        );
+        failedTurns.delete(failedCorrection);
+        const resumed = runner.resume(failing.id);
+        assert.equal(resumed.status, 'fixing');
+        await waitUntil(
+          () => sent.some(turn => turn.messageId === failedCorrection),
+          'The resumed run did not send its correction',
+        );
+        assert.deepEqual(
+          store
+            .stepsForRun(failing.id)
+            .map(step => [step.name, step.attempt, step.state]),
+          [
+            ['check', 1, 'passed'],
+            ['approve', 1, 'failed'],
+          ],
+        );
         events.release();
       },
     );
