@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import {
   pipelineDefinitionLimits,
   pipelineDefinitionSchema,
@@ -26,8 +27,6 @@ const pipelineFieldsSchema = pipelineDefinitionSchema.pick({
   body: true,
 });
 
-const fieldId = (field: string) => `pipeline-inspector-${field}`;
-
 const scopeLabels = { global: 'Global', project: 'Project' } as const;
 
 const counter = (length: number, limit: number) => (
@@ -50,6 +49,8 @@ export function PipelineInspectorForm({
   issues,
   onChange,
 }: PipelineInspectorProps) {
+  const prefix = useId();
+  const fieldId = (field: string) => `${prefix}pipeline-${field}`;
   const fields = { name, description, body };
   const notes = mergeNotes(
     schemaNotes(pipelineFieldsSchema.safeParse(fields)),

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { describeSchedule, type ScheduledJob } from '@nesvo/contracts';
 import {
   CalendarClock,
@@ -34,7 +34,7 @@ function AutomationRow({
 }) {
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState('');
-  const switchId = `start-automation-${job.id}`;
+  const switchId = `${useId()}automation`;
   const provider = sessionProviders[job.provider];
   const toggle = async () => {
     setSaving(true);
@@ -100,6 +100,7 @@ export function StartInspectorForm({
   onRefresh,
 }: StartInspectorProps) {
   const [adding, setAdding] = useState(false);
+  const headingId = useId();
   const computer = computers.find(item => item.id === hostId);
   const connected = computer?.status === 'connected';
   const named = !!pipelineName;
@@ -127,10 +128,10 @@ export function StartInspectorForm({
           </div>
         </div>
       </section>
-      <section aria-labelledby="start-automations" className="space-y-1.5">
+      <section aria-labelledby={headingId} className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <h3
-            id="start-automations"
+            id={headingId}
             className="text-2xs font-medium text-muted-foreground"
           >
             Automations

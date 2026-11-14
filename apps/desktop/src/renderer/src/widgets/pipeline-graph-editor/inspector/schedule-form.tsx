@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
   pipelineDefinitionLimits,
+  SCHEDULED_JOB_MAX_INTERVAL_MINUTES,
   scheduledJobLimits,
   type TaskSpecSummary,
 } from '@nesvo/contracts';
@@ -49,8 +50,6 @@ type Props = {
 
 const OTHER_SPEC = '__other__';
 
-const fieldId = (field: string) => `start-inspector-${field}`;
-
 export function ScheduleForm({
   directory,
   pipelineName,
@@ -61,6 +60,8 @@ export function ScheduleForm({
   onRefreshProvider,
   onCancel,
 }: Props) {
+  const prefix = useId();
+  const fieldId = (field: string) => `${prefix}schedule-${field}`;
   const ownSpecs = specs.filter(spec => spec.pipeline === pipelineName);
   const [id] = useState(() => crypto.randomUUID());
   const [values, setValues] = useState<ScheduleValues>(() =>
@@ -75,8 +76,11 @@ export function ScheduleForm({
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState('');
-  const input = automationInput(values, id, directory, pipelineName);
-  const notes = automationNotes(values, input);
+  const model =
+    values.model || (statuses[values.provider].status?.models[0]?.id ?? '');
+  const effective = { ...values, model };
+  const input = automationInput(effective, id, directory, pipelineName);
+  const notes = automationNotes(effective, input);
   const notesOf = (field: string): FieldNote[] =>
     attempted ? (notes[field] ?? []) : [];
   const invalid = Object.keys(notes).length > 0;
@@ -215,7 +219,7 @@ export function ScheduleForm({
                 id={fieldId('minutes')}
                 inputMode="numeric"
                 value={values.minutes}
-                maxLength={5}
+                maxLength={String(SCHEDULED_JOB_MAX_INTERVAL_MINUTES).length}
                 aria-invalid={hasError(notesOf('minutes')) || undefined}
                 aria-describedby={describedBy(
                   fieldId('minutes'),
@@ -308,13 +312,14 @@ export function ScheduleForm({
           notes={notesOf('model')}
         >
           <div
+            role="group"
             aria-labelledby={`${fieldId('model')}-label`}
             aria-describedby={describedBy(fieldId('model'), notesOf('model'))}
             className="flex h-8 items-center rounded-md border border-input px-0.5 dark:bg-input/30"
           >
             <ModelPicker
               provider={values.provider}
-              model={values.model}
+              model={model}
               effort={values.effort}
               statuses={statuses}
               disabled={locked}

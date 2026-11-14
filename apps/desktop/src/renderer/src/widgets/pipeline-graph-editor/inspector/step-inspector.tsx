@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
   pipelineDefinitionLimits,
   stepTypeSchema,
@@ -49,8 +49,6 @@ import {
   type DurationUnit,
 } from './step-form';
 
-const fieldId = (field: string) => `step-inspector-${field}`;
-
 const scopeLabels = { global: 'Global', project: 'Project' } as const;
 
 const usageText = (count: number) =>
@@ -100,13 +98,14 @@ export function StepInspectorForm({
   onSave,
   onDelete,
 }: StepInspectorProps) {
-  const [origin, setOrigin] = useState({ name: step.name, phase: step.phase });
+  const prefix = useId();
+  const fieldId = (field: string) => `${prefix}step-${field}`;
+  const baseline = mode === 'edit' ? `${step.name}:${step.hash}` : 'create';
+  const [origin, setOrigin] = useState({ baseline, phase: step.phase });
   const [pendingPhase, setPendingPhase] = useState<StepPhase | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  if (origin.name !== step.name && mode === 'edit') {
-    setOrigin({ name: step.name, phase: step.phase });
+  if (origin.baseline !== baseline) {
+    setOrigin({ baseline, phase: step.phase });
     setPendingPhase(null);
-    setConfirmDelete(false);
   }
   const client = stepNotes(step);
   const notes = mergeNotes(client, issues, stepFields);
@@ -131,7 +130,7 @@ export function StepInspectorForm({
   return (
     <form
       aria-label={`Step ${step.name || 'draft'}`}
-      className="flex min-h-0 flex-1 flex-col"
+      className="flex h-full min-h-0 flex-col"
       onSubmit={event => {
         event.preventDefault();
         if (!blocked && !pendingPhase) onSave();
@@ -296,10 +295,12 @@ export function StepInspectorForm({
                 autoComplete="off"
                 value={duration.amount}
                 aria-invalid={hasError(notesOf('timeout')) || undefined}
-                aria-describedby={describedBy(
-                  fieldId('timeout'),
-                  notesOf('timeout'),
-                )}
+                aria-describedby={[
+                  `${fieldId('timeout')}-hint`,
+                  describedBy(fieldId('timeout'), notesOf('timeout')),
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 onChange={event =>
                   update({
                     timeout: joinDuration(event.target.value, duration.unit),
@@ -334,7 +335,10 @@ export function StepInspectorForm({
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-2xs leading-4 text-muted-foreground">
+            <p
+              id={`${fieldId('timeout')}-hint`}
+              className="text-2xs leading-4 text-muted-foreground"
+            >
               Between 1 second and 4 hours.
             </p>
             <FieldNotes
@@ -372,7 +376,7 @@ export function StepInspectorForm({
                     value={String(count)}
                     className="text-xs tabular-nums"
                   >
-                    {count}
+                    {String(count)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -453,40 +457,17 @@ export function StepInspectorForm({
         )}
       </div>
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-t px-3">
-        {onDelete &&
-          (confirmDelete ? (
-            <>
-              <Button
-                type="button"
-                variant="destructive"
-                size="xs"
-                onClick={() => {
-                  setConfirmDelete(false);
-                  onDelete();
-                }}
-              >
-                Delete file
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setConfirmDelete(false)}
-              >
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => setConfirmDelete(true)}
-              className="text-muted-foreground"
-            >
-              Delete
-            </Button>
-          ))}
+        {onDelete && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={onDelete}
+            className="text-muted-foreground"
+          >
+            {mode === 'create' ? 'Discard step' : 'Remove from pipeline'}
+          </Button>
+        )}
         <span className="min-w-0 flex-1" />
         <Button
           type="submit"

@@ -12,7 +12,9 @@ export type SchemaCheck =
   | { success: true }
   | {
       success: false;
-      error: { issues: { path: PropertyKey[]; message: string }[] };
+      error: {
+        issues: { code: string; path: PropertyKey[]; message: string }[];
+      };
     };
 
 const firstSegment = (path: PropertyKey[]) => String(path[0] ?? 'form');
@@ -23,11 +25,16 @@ export const schemaNotes = (
 ): NotesByField => {
   if (result.success) return {};
   const notes: NotesByField = {};
-  for (const issue of result.error.issues) {
+  const { issues } = result.error;
+  const specific = new Set(
+    issues
+      .filter(issue => issue.code !== 'too_small')
+      .map(issue => fieldOf(issue.path)),
+  );
+  for (const issue of issues) {
     const field = fieldOf(issue.path);
-    const list = (notes[field] ??= []);
-    if (!list.some(note => note.message === issue.message))
-      list.push({ severity: 'error', message: issue.message });
+    if (issue.code === 'too_small' && specific.has(field)) continue;
+    notes[field] ??= [{ severity: 'error', message: issue.message }];
   }
   return notes;
 };

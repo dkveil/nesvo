@@ -33,6 +33,7 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [navigated, setNavigated] = useState(false);
   const text = value ?? '';
   const options = open ? matches(skills, text) : [];
   const current = options[Math.min(active, options.length - 1)];
@@ -45,10 +46,11 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       setOpen(true);
+      setNavigated(true);
       if (!options.length) return;
       const offset = event.key === 'ArrowDown' ? 1 : -1;
       setActive(index => (index + offset + options.length) % options.length);
-    } else if (event.key === 'Enter' && open && current) {
+    } else if (event.key === 'Enter' && open && navigated && current) {
       event.preventDefault();
       choose(current.name);
     } else if (event.key === 'Escape' && open) {
@@ -82,6 +84,7 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
           onChange(event.target.value ? event.target.value : null);
           setOpen(true);
           setActive(0);
+          setNavigated(false);
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}

@@ -31,7 +31,7 @@ export const durationUnitLabels: Record<DurationUnit, string> = {
 };
 
 const DURATION_PARTS = /^(.*?)(ms|s|m|h)$/;
-const DURATION_DIGITS = 7;
+const DURATION_DIGITS = String(pipelineDefinitionLimits.maxTimeoutMs).length;
 
 export const splitDuration = (
   value: string,
@@ -42,7 +42,7 @@ export const splitDuration = (
 };
 
 export const joinDuration = (amount: string, unit: DurationUnit) =>
-  `${amount.replace(/\s+/g, '').slice(0, DURATION_DIGITS)}${unit}`;
+  `${amount.replace(/\D/g, '').slice(0, DURATION_DIGITS)}${unit}`;
 
 export const bodyLabels: Record<StepType, string> = {
   command: 'Command',

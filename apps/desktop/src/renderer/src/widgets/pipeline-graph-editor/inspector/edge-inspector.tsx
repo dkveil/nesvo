@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { formatEdge, graphMessages } from '@nesvo/contracts';
 import { ArrowRight } from 'lucide-react';
 import { edgeWhenLabels } from '@/entities/pipeline-graph';
@@ -35,14 +36,13 @@ const whenHints: Record<EdgeWhen, string> = {
   any: 'The target starts after the source ends, whatever the outcome.',
 };
 
-const fieldId = 'edge-inspector-when';
-
 export function EdgeInspectorForm({
   edge,
   sourceType,
   onChange,
   onDelete,
 }: EdgeInspectorProps) {
+  const fieldId = `${useId()}when`;
   const human = sourceType === 'human';
   const notes =
     human && edge.when === 'failure'
