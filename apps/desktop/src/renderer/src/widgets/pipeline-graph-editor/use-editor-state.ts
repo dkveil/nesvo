@@ -440,6 +440,7 @@ export function useEditorState({
           expectedHash: stepHash(node.step),
         });
         if ('type' in result) {
+          setCatalog(current);
           if (result.type === 'pipeline-definition-conflict')
             setConflict({ kind: 'step', name: node.id, response: result });
           else {
@@ -503,6 +504,18 @@ export function useEditorState({
     const { kind, name, response } = conflict;
     setConflict(null);
     if (choice === 'keep') {
+      if (response.currentHash === null)
+        setCatalog(current => ({
+          ...current,
+          pipelines:
+            kind === 'pipeline'
+              ? current.pipelines.filter(item => item.name !== name)
+              : current.pipelines,
+          steps:
+            kind === 'step'
+              ? current.steps.filter(item => item.name !== name)
+              : current.steps,
+        }));
       if (kind === 'pipeline')
         setDocument(current => ({ ...current, hash: response.currentHash }));
       else
