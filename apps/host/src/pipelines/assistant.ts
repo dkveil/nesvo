@@ -2,6 +2,7 @@ import {
   createSessionSchema,
   pipelineAssistantLimits,
   pipelineAssistantProposalEventSchema,
+  pipelineAssistantProposalJsonSchema,
   pipelineAssistantProposalSchema,
   type DefinitionCatalog,
   type DefinitionIssue,
@@ -12,6 +13,7 @@ import {
   type PipelineAssistantProposal,
   type PipelineAssistantProposalEvent,
   type PipelineAssistantTurn,
+  type Provider,
   type Session,
 } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
@@ -28,7 +30,7 @@ import {
 } from './definitions';
 import { filterResultText } from './evidence';
 import { checkFileText } from './writer';
-import { firstTurnText, laterTurnText } from './wrapper';
+import { firstTurnText, laterTurnText, type AnswerPath } from './wrapper';
 
 const ASSISTANT_TITLE_PREFIX = 'Pipeline assistant · ';
 const TITLE_LIMIT = 100;
@@ -47,6 +49,7 @@ type AssistantSessions = Pick<
   | 'sendPipelineTurn'
   | 'turnState'
   | 'turnReply'
+  | 'finished'
   | 'draftDirectory'
 >;
 
@@ -125,6 +128,9 @@ const issueAt = (path: string, message: string): DefinitionIssue => ({
 
 const isError = (issue: DefinitionIssue) => issue.severity === 'error';
 
+const answerPath = (provider: Provider): AnswerPath =>
+  provider === 'Claude Code' ? 'structured' : 'fenced';
+
 export class PipelineAssistant {
   private readonly pending = new Map<string, PendingTurn>();
   private readonly lastHash = new Map<string, string>();
@@ -178,10 +184,17 @@ export class PipelineAssistant {
         document && this.lastHash.get(existing.id) !== document.contentHash
           ? document
           : null;
+      const answer = answerPath(existing.provider);
       return this.deliver(
         existing.id,
         directory,
-        laterTurnText({ document: changed, selection, text: input.text }),
+        answer,
+        laterTurnText({
+          answer,
+          document: changed,
+          selection,
+          text: input.text,
+        }),
         changed,
       );
     }
@@ -194,16 +207,18 @@ export class PipelineAssistant {
       );
     const catalog = await this.loadCatalog(directory);
     this.ensureIdle();
-    const sessionId =
-      existing?.id ??
+    const session =
+      existing ??
       this.ports.sessions.create(sessionInput!, {
         origin: { kind: 'pipeline-assistant' },
-      }).id;
-    this.created.add(sessionId);
+      });
+    this.created.add(session.id);
+    const answer = answerPath(session.provider);
     return this.deliver(
-      sessionId,
+      session.id,
       directory,
-      firstTurnText({ catalog, document, selection, text: input.text }),
+      answer,
+      firstTurnText({ answer, catalog, document, selection, text: input.text }),
       document,
     );
   }
@@ -211,6 +226,7 @@ export class PipelineAssistant {
   private deliver(
     sessionId: string,
     directory: string,
+    answer: AnswerPath,
     text: string,
     document: PipelineAssistantDocument | null,
   ): PipelineAssistantTurn {
@@ -221,6 +237,9 @@ export class PipelineAssistant {
       text,
       readOnly: true,
       assistant: true,
+      ...(answer === 'structured'
+        ? { outputSchema: pipelineAssistantProposalJsonSchema() }
+        : {}),
     });
     if (sent === 'busy') throw this.busy();
     if (document) this.lastHash.set(sessionId, document.contentHash);
@@ -321,39 +340,43 @@ export class PipelineAssistant {
     const state = this.ports.sessions.turnState(run.sessionId, turn.messageId);
     if (state === 'running') return;
     this.pending.delete(run.sessionId);
-    const reply =
-      state === 'completed'
-        ? this.ports.sessions.turnReply(run.sessionId, turn.messageId)
-        : null;
-    const structured = 'structured' in run ? run.structured : undefined;
-    const proposal =
-      reply === null && structured === undefined
-        ? null
-        : extractProposal(reply ?? '', structured);
     const announce = this.announce(
-      { sessionId: run.sessionId, messageId: turn.messageId },
-      proposal,
-      turn.directory,
+      run,
+      turn,
+      state === 'completed',
     ).catch(() => undefined);
     this.work.add(announce);
     void announce.finally(() => this.work.delete(announce));
   }
 
+  private async read(
+    run: RunFinished,
+    turn: PendingTurn,
+  ): Promise<PipelineAssistantProposal | null> {
+    const reply = this.ports.sessions.turnReply(run.sessionId, turn.messageId);
+    const outcome = await this.ports.sessions
+      .finished(run.sessionId, run.runId)
+      .catch(() => null);
+    return extractProposal(reply ?? '', outcome?.structured);
+  }
+
   private async announce(
-    turn: PipelineAssistantTurn,
-    proposal: PipelineAssistantProposal | null,
-    directory: string,
+    run: RunFinished,
+    turn: PendingTurn,
+    completed: boolean,
   ): Promise<void> {
+    const event = { sessionId: run.sessionId, messageId: turn.messageId };
+    const proposal = completed ? await this.read(run, turn) : null;
     if (!proposal) {
-      this.publish({ ...turn, status: 'invalid', proposal: null, issues: [] });
+      this.publish({ ...event, status: 'invalid', proposal: null, issues: [] });
       return;
     }
     const filtered = filterProposal(proposal);
     this.publish({
-      ...turn,
+      ...event,
       status: 'ok',
       proposal: filtered,
-      issues: await this.validate(filtered.changes, directory),
+      issues: await this.validate(filtered.changes, turn.directory),
     });
   }
 
