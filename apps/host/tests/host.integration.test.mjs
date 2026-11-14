@@ -11108,6 +11108,20 @@ test(
       'steps: [lint, review, security]',
       ...edgeLines(['lint -> review', 'lint -> security']),
     ]);
+    const mixed = await pipelineFile(project, 'mixed', [
+      'steps: [lint, review]',
+      ...edgeLines(['lint => review', 'lint -> zz', 'lint -> lint']),
+    ]);
+    const ghosted = await pipelineFile(project, 'ghosted', [
+      'steps: [lint, ghost]',
+      ...edgeLines(['lint -> ghost']),
+      'layout:',
+      '  old: [0, 0]',
+    ]);
+    const heuristic = await pipelineFile(project, 'heuristic', [
+      'steps: [verify, publish]',
+      ...edgeLines(['verify -> publish']),
+    ]);
     const exclusive = await pipelineFile(project, 'exclusive', [
       'steps: [lint, review, security]',
       ...edgeLines(['lint -> review', 'lint -> security on failure']),
@@ -11204,6 +11218,39 @@ test(
             message: 'Field "edges" must be a list of text entries',
           },
         ]);
+        assert.deepEqual(
+          issuesFor(mixed).map(item => [item.line, item.message]),
+          [
+            [
+              4,
+              'Edge "lint => review" must read "<step> -> <step>" with an optional "on success", "on failure" or "on any"',
+            ],
+            [
+              4,
+              'Edge "lint -> zz" names step "zz", which is not in this pipeline',
+            ],
+            [4, 'Step "lint" cannot connect to itself'],
+          ],
+        );
+        assert.deepEqual(
+          issuesFor(ghosted).map(item => [
+            item.severity,
+            item.line,
+            item.message,
+          ]),
+          [
+            [
+              'warning',
+              6,
+              'Layout names step "old", which is not in this pipeline',
+            ],
+            [
+              'error',
+              3,
+              'Step "ghost" referenced by pipeline "ghosted" does not exist',
+            ],
+          ],
+        );
         assert.deepEqual(issuesFor(layoutShape), [
           {
             severity: 'error',
@@ -11250,6 +11297,13 @@ test(
           ],
         ]);
         assert.deepEqual(warning(exclusive), []);
+        assert.deepEqual(warning(heuristic), [
+          [
+            'warning',
+            null,
+            'Step "publish" looks like an external action (git push, gh pr, curl or wget) and a path reaches it without a human step',
+          ],
+        ]);
         for (const name of ['open-path', 'guarded', 'placed', 'parallel'])
           assert.ok(listed(name), name);
       },
@@ -11566,7 +11620,10 @@ test(
         await writeFile(flowPath, flow);
         const emptied = await edit('remove-from-pipeline', 'flow', 'lint');
         assert.equal(emptied.code, 0, emptied.stderr);
-        assert.match(emptied.stdout, /Removed 1 edge that named "lint"/);
+        assert.match(
+          emptied.stdout,
+          /\nRemoved 1 edge that named "lint"\nStep "test" has no incoming edge now and starts when its phase begins\n$/,
+        );
         assert.equal(
           await readFile(flowPath, 'utf8'),
           '---\r\nname: flow\r\nsteps: [test]\r\nedges: [] # one\r\n---\r\nNotes\r\n',
@@ -11602,6 +11659,30 @@ test(
         assert.equal(
           await readFile(chainPath, 'utf8'),
           '---\nname: chain\nsteps: [lint, fmt, review, collect]\nedges:\n  - fmt -> review\n  - lint -> collect on failure\n  - lint -> fmt\n---\nChain body\n',
+        );
+        const phased =
+          '---\nname: phased\nsteps: [lint, test]\nedges: [lint -> test]\n---\n';
+        const phasedPath = await pipelineFile(root, 'phased', [], '');
+        await writeFile(phasedPath, phased);
+        const across = await edit('add-to-pipeline', 'phased', 'approve', [
+          '--after',
+          'test',
+          '--json',
+        ]);
+        assert.equal(across.code, 0, across.stderr);
+        assert.equal(
+          JSON.parse(across.stdout).pipelines.find(
+            item => item.name === 'phased',
+          ).graph.edges.length,
+          1,
+        );
+        assert.equal(
+          across.stderr,
+          'No edge was added because "test" and "approve" are in different phases\nStep "approve" has no incoming edge and starts when its phase begins\n',
+        );
+        assert.equal(
+          await readFile(phasedPath, 'utf8'),
+          phased.replace('[lint, test]', '[lint, test, approve]'),
         );
         const catalogJson = JSON.parse((await run(['list', '--json'])).stdout);
         assert.deepEqual(
