@@ -1000,6 +1000,7 @@ export async function loadCatalog(
 
 export type DocumentCheck = {
   name: string | null;
+  step: StepDefinition | null;
   steps: string[];
   edges: string[] | null;
   layout: PipelineLayout | null;
@@ -1022,6 +1023,7 @@ export function checkDocument(
     const parsed = parseDocument(file, 'step', stepDefinitionSchema, issues);
     return {
       name: parsed.name,
+      step: parsed.value ?? null,
       steps: [],
       edges: null,
       layout: null,
@@ -1032,6 +1034,7 @@ export function checkDocument(
   const parsed = parseDocument(file, 'pipeline', pipelineDefinitionSchema, issues);
   return {
     name: parsed.name,
+    step: null,
     steps: parsed.value?.steps ?? [],
     edges: parsed.value?.edges ?? null,
     layout: parsed.value?.layout ?? null,
