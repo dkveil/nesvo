@@ -2622,7 +2622,6 @@ try {
   };
   await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
   await restartedPage
-    .getByRole('navigation', { name: 'Sessions', exact: true })
     .getByRole('button', { name: 'Pipelines', exact: true })
     .click();
   const pipelinesView = restartedPage.getByRole('region', {
@@ -2681,7 +2680,22 @@ try {
   await addGraphStep('smoke-lint');
   await addGraphStep('smoke-report');
   await connectSteps('smoke-check', 'smoke-lint');
-  await editor.locator('[data-editor-inspector="edge"]').waitFor();
+  try {
+    await editor.locator('[data-editor-inspector="edge"]').waitFor();
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        graphEditorConnect: {
+          notice: await restartedPage
+            .locator('[data-editor-notice]')
+            .allTextContents(),
+          nodes: await editor.locator('[data-editor-node]').count(),
+          inspector: await inspector.getAttribute('data-editor-inspector'),
+        },
+      }),
+    );
+    throw error;
+  }
   await connectSteps('smoke-check', 'smoke-report');
   await inspector
     .getByRole('button', { name: 'On failure', exact: true })
