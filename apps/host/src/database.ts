@@ -35,7 +35,7 @@ export const openDatabase = (directory: string) =>
         const version = database
           .prepare('PRAGMA user_version')
           .get()?.user_version;
-        if (typeof version !== 'number' || version > 8) {
+        if (typeof version !== 'number' || version > 9) {
           throw new Error('Unsupported database version');
         }
         database.exec(
@@ -115,7 +115,27 @@ export const openDatabase = (directory: string) =>
           database.exec(
             'CREATE INDEX IF NOT EXISTS sessions_pipeline_run ON sessions (pipeline_run_id); CREATE INDEX IF NOT EXISTS sessions_pipeline_step ON sessions (pipeline_step_id)',
           );
-          database.exec('PRAGMA user_version = 8; COMMIT');
+          const scheduledJobColumns = new Set(
+            database
+              .prepare('PRAGMA table_info(scheduled_jobs)')
+              .all()
+              .map(column => column.name),
+          );
+          if (!scheduledJobColumns.has('pipeline'))
+            database.exec(
+              'ALTER TABLE scheduled_jobs ADD COLUMN pipeline TEXT CHECK (pipeline IS NULL OR json_valid(pipeline))',
+            );
+          const scheduledJobRunColumns = new Set(
+            database
+              .prepare('PRAGMA table_info(scheduled_job_runs)')
+              .all()
+              .map(column => column.name),
+          );
+          if (!scheduledJobRunColumns.has('pipeline_run_id'))
+            database.exec(
+              'ALTER TABLE scheduled_job_runs ADD COLUMN pipeline_run_id TEXT REFERENCES pipeline_runs(id) ON DELETE SET NULL',
+            );
+          database.exec('PRAGMA user_version = 9; COMMIT');
         } catch (error) {
           database.exec('ROLLBACK');
           throw error;

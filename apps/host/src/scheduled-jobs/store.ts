@@ -33,6 +33,7 @@ const toJob = (row: Row): ScheduledJob =>
     timeZone: row.time_zone,
     active: row.active === 1,
     timeoutMinutes: row.timeout_minutes,
+    pipeline: row.pipeline === null ? null : JSON.parse(String(row.pipeline)),
     nextRunAt: text(row.next_run_at ?? null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -49,6 +50,7 @@ const toRun = (row: Row): StoredRun => ({
     missedCount: row.missed_count,
     sessionId: text(row.session_id ?? null),
     runId: text(row.session_run_id ?? null),
+    pipelineRunId: text(row.pipeline_run_id ?? null),
     reviewId: text(row.review_id ?? null),
     resetAt: text(row.reset_at ?? null),
     startedAt: text(row.started_at ?? null),
@@ -78,6 +80,7 @@ const jobValues = (job: ScheduledJob) => [
   job.timeZone,
   job.active ? 1 : 0,
   job.timeoutMinutes,
+  job.pipeline ? JSON.stringify(job.pipeline) : null,
   job.nextRunAt,
   job.updatedAt,
 ];
@@ -142,7 +145,7 @@ export class ScheduledJobStore {
   insert(job: ScheduledJob): void {
     this.database
       .prepare(
-        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, pipeline, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(...jobValues(job), job.id, job.createdAt);
   }
@@ -152,7 +155,7 @@ export class ScheduledJobStore {
       Number(
         this.database
           .prepare(
-            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
+            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, pipeline = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
           )
           .run(...jobValues(job), job.id, expectedRevision).changes,
       ) === 1
@@ -174,7 +177,7 @@ export class ScheduledJobStore {
       Number(
         this.database
           .prepare(
-            'INSERT INTO scheduled_job_runs (id, scheduled_job_id, scheduled_for, request_id, trigger_kind, status, reason, missed_count, session_id, session_run_id, review_id, reset_at, recorded_at, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING',
+            'INSERT INTO scheduled_job_runs (id, scheduled_job_id, scheduled_for, request_id, trigger_kind, status, reason, missed_count, session_id, session_run_id, pipeline_run_id, review_id, reset_at, recorded_at, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING',
           )
           .run(
             run.id,
@@ -187,6 +190,7 @@ export class ScheduledJobStore {
             run.missedCount,
             run.sessionId,
             run.runId,
+            run.pipelineRunId,
             run.reviewId,
             run.resetAt,
             run.recordedAt,
@@ -200,13 +204,14 @@ export class ScheduledJobStore {
   updateRun(run: StoredRun): void {
     this.database
       .prepare(
-        'UPDATE scheduled_job_runs SET status = ?, reason = ?, session_id = ?, session_run_id = ?, review_id = ?, reset_at = ?, started_at = ?, finished_at = ? WHERE id = ?',
+        'UPDATE scheduled_job_runs SET status = ?, reason = ?, session_id = ?, session_run_id = ?, pipeline_run_id = ?, review_id = ?, reset_at = ?, started_at = ?, finished_at = ? WHERE id = ?',
       )
       .run(
         run.status,
         run.reason,
         run.sessionId,
         run.runId,
+        run.pipelineRunId,
         run.reviewId,
         run.resetAt,
         run.startedAt,

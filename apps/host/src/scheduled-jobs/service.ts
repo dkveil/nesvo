@@ -40,7 +40,11 @@ export type ScheduledJobLaunch = {
   run: ScheduledJobRun;
 };
 
-export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'>;
+export type ScheduledJobRunLink = Pick<
+  ScheduledJobRun,
+  'sessionId' | 'runId'
+> &
+  Partial<Pick<ScheduledJobRun, 'pipelineRunId'>>;
 
 export type ScheduledJobRunOutcome = Pick<
   ScheduledJobRun,
@@ -134,11 +138,6 @@ export class ScheduledJobService {
 
   save(input: SaveScheduledJobRequest): ScheduledJob {
     const { id, expectedRevision, ...definition } = input;
-    if (definition.pipeline)
-      throw new ScheduledJobError(
-        'unavailable',
-        'Scheduled pipelines are not available on this host yet.',
-      );
     const current = this.store.get(id);
     if (expectedRevision === null) {
       if (current)

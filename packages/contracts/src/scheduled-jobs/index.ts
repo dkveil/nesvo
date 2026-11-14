@@ -138,8 +138,7 @@ const enforcePromptRule = (
     context.addIssue({
       code: 'custom',
       path: ['prompt'],
-      message:
-        'A scheduled pipeline takes its task from the spec; the prompt may stay empty',
+      message: 'Enter a prompt.',
     });
 };
 
