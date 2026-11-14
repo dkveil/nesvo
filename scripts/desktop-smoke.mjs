@@ -2673,8 +2673,8 @@ try {
       };
     });
   const edgeShown = (from, to) =>
-    editor
-      .locator(`[data-editor-edge^="${from} -> ${to}"]`)
+    inspector
+      .getByText(`${from} -> ${to}`, { exact: true })
       .waitFor({ timeout: 4000 })
       .then(
         () => true,
