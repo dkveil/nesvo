@@ -1252,7 +1252,7 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 9);
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -4271,6 +4271,7 @@ test(
         missedCount: 0,
         sessionId: null,
         runId: null,
+        pipelineRunId: null,
         reviewId: null,
         resetAt: null,
         startedAt: null,
@@ -5430,8 +5431,19 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            8,
+            9,
           );
+          for (const [table, column] of [
+            ['scheduled_jobs', 'pipeline'],
+            ['scheduled_job_runs', 'pipeline_run_id'],
+          ])
+            assert.equal(
+              upgraded
+                .prepare(`PRAGMA table_info(${table})`)
+                .all()
+                .some(item => item.name === column),
+              true,
+            );
           const tables = upgraded
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
             .all()
@@ -5502,11 +5514,11 @@ test(
       }
     });
 
-    await t.test('a version 9 database is refused', async () => {
+    await t.test('a version 10 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 9');
+      newer.exec('PRAGMA user_version = 10');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -5518,7 +5530,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          9,
+          10,
         );
       } finally {
         check.close();
@@ -10173,7 +10185,7 @@ test(
     });
 
     await t.test(
-      'the host refuses to save a scheduled pipeline and keeps listing jobs',
+      'the host stores a scheduled pipeline, lists it and still refuses a blank prompt without one',
       async () => {
         const job = {
           id: randomUUID(),
@@ -10190,13 +10202,9 @@ test(
           active: true,
           pipeline: { name: 'default', specPath: 'task.md' },
         };
-        const refused = await host.request('save-scheduled-job', job);
-        assert.deepEqual(refused, {
-          type: 'error',
-          id: refused.id,
-          code: 'unavailable',
-          message: 'Scheduled pipelines are not available on this host yet.',
-        });
+        const saved = await host.request('save-scheduled-job', job);
+        assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+        assert.deepEqual(saved.scheduledJob.pipeline, job.pipeline);
         const blank = await host.send(
           JSON.stringify({
             id: randomUUID(),
@@ -10207,7 +10215,10 @@ test(
         assert.equal(blank.code, 'invalid-request');
         const listed = await host.request('list-scheduled-jobs', {});
         assert.equal(listed.type, 'scheduled-jobs');
-        assert.deepEqual(listed.list.scheduledJobs, []);
+        assert.deepEqual(
+          listed.list.scheduledJobs.map(item => [item.id, item.pipeline]),
+          [[job.id, job.pipeline]],
+        );
       },
     );
 
@@ -10237,10 +10248,7 @@ test(
         prompt: '',
       });
       assert.equal(refused.success, false);
-      assert.equal(
-        refused.error.issues[0].message,
-        'A scheduled pipeline takes its task from the spec; the prompt may stay empty',
-      );
+      assert.equal(refused.error.issues[0].message, 'Enter a prompt.');
       assert.equal(
         scheduledJobDefinitionSchema.safeParse({
           ...job,
@@ -12713,6 +12721,283 @@ test(
           ],
         );
         events.release();
+      },
+    );
+  },
+);
+
+test(
+  'a scheduled job that names a pipeline starts a pipeline task and links its run',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-scheduled-pipeline-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_FIXTURE_LAUNCH_LOG: process.env.NESVO_FIXTURE_LAUNCH_LOG,
+    };
+    let host;
+    t.after(async () => {
+      if (host && host.child.exitCode === null) host.child.kill();
+      await host?.exited.catch(() => undefined);
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
+    const gitEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+    );
+    const git = (cwd, ...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.test',
+          ...args,
+        ],
+        { cwd, env: gitEnvironment },
+      );
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    const repository = join(directory, 'repository');
+    const markers = join(directory, 'markers');
+    await mkdir(markers);
+    const onWindows = process.platform === 'win32';
+    await write(
+      join(repository, '.agents', 'pipelines', 'steps', 'where.md'),
+      `---\nname: where\ntype: command\nphase: pre-done\n---\n${
+        onWindows
+          ? `cd > "${markers}\\where-%NESVO_RUN_ID%"`
+          : `pwd > "${markers}/where-$NESVO_RUN_ID"`
+      }\n`,
+    );
+    await write(
+      join(repository, '.agents', 'pipelines', 'pipelines', 'checked.md'),
+      '---\nname: checked\nsteps: [where]\n---\n',
+    );
+    for (const [name, body] of [
+      ['checked', ''],
+      ['holding', 'fixture:hold\n'],
+    ])
+      await write(
+        join(repository, '.agents', 'tasks', `${name}.md`),
+        `---\npipeline: checked\ntitle: Scheduled ${name}\n---\n${body}## Goal\nRun the checked steps.\n`,
+      );
+    await git(repository, 'init', '-q', '-b', 'main');
+    await git(repository, 'add', '-A');
+    await git(repository, 'commit', '-q', '-m', 'Initial commit');
+    const dataDirectory = join(directory, 'data');
+    const pidFile = join(directory, 'pids.json');
+    host = launch(dataDirectory, pidFile);
+    const definition = (name, pipeline) => ({
+      id: randomUUID(),
+      expectedRevision: null,
+      name,
+      prompt: '',
+      directory: repository,
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      schedule: { kind: 'daily', time: '09:00' },
+      timeZone: 'Europe/Warsaw',
+      active: false,
+      pipeline,
+    });
+    const save = async input => {
+      const saved = await host.request('save-scheduled-job', input);
+      assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+      return saved.scheduledJob;
+    };
+    const runs = async job =>
+      (
+        await host.request('list-scheduled-job-runs', {
+          scheduledJobId: job.id,
+        })
+      ).page.runs;
+    const runNow = async job => {
+      const response = await host.request('run-scheduled-job-now', {
+        id: job.id,
+        requestId: randomUUID(),
+      });
+      assert.equal(
+        response.type,
+        'scheduled-job-run',
+        JSON.stringify(response),
+      );
+      return response.run;
+    };
+    const jobRun = (job, check, description) =>
+      bounded(
+        (async () => {
+          while (true) {
+            const found = (await runs(job)).find(check);
+            if (found) return found;
+            await delay(25);
+          }
+        })(),
+        description,
+        30_000,
+      );
+    const settledRun = job =>
+      jobRun(
+        job,
+        run => !['starting', 'running'].includes(run.status),
+        'The scheduled run did not finish',
+      );
+    const pipelineDetail = async runId => {
+      const response = await host.request('get-pipeline-run', { runId });
+      assert.equal(
+        response.type,
+        'pipeline-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const sessionIds = async () =>
+      (await host.request('list-sessions')).sessions.map(session => session.id);
+
+    const checked = await save(
+      definition('Checked task', {
+        name: 'checked',
+        specPath: join('.agents', 'tasks', 'checked.md'),
+      }),
+    );
+    assert.equal(checked.prompt, '');
+
+    await t.test(
+      'run now starts the pipeline task in a worktree and the job run links both runs',
+      async () => {
+        const started = await runNow(checked);
+        const finished = await settledRun(checked);
+        assert.equal(finished.id, started.id);
+        assert.equal(finished.status, 'completed', JSON.stringify(finished));
+        assert.ok(finished.pipelineRunId);
+        assert.ok(finished.sessionId);
+        assert.equal(finished.runId, null);
+        const { run, steps } = await pipelineDetail(finished.pipelineRunId);
+        assert.equal(run.status, 'passed', JSON.stringify(run));
+        assert.equal(run.sessionId, finished.sessionId);
+        assert.equal(run.projectRoot, repository);
+        assert.ok(run.isolation);
+        assert.equal(run.gateProvider, 'Codex');
+        assert.equal(run.gateModel, 'default');
+        assert.equal(steps.find(step => step.name === 'where').state, 'passed');
+        const session = (await host.request('list-sessions')).sessions.find(
+          item => item.id === finished.sessionId,
+        );
+        assert.equal(session.pipelineRunId, run.id);
+        assert.equal(session.provider, 'Claude Code');
+        assert.equal(session.mode, 'read-only');
+        assert.equal(session.scheduledJobId ?? null, null);
+        const requests = session.messages.filter(
+          message => message.author === 'operator',
+        );
+        assert.ok(requests.length >= 1);
+        assert.ok(requests.every(message => message.origin === 'pipeline'));
+        assert.equal(
+          session.messages.some(message => message.body === checked.prompt),
+          false,
+        );
+        const launched = (
+          await readFile(process.env.NESVO_FIXTURE_LAUNCH_LOG, 'utf8')
+        )
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line))
+          .filter(entry => entry.environment?.NESVO_RUN_ID === run.id);
+        assert.ok(launched.length >= 1);
+        assert.equal(launched[0].environment.NESVO_PROJECT_ROOT, repository);
+        await readFile(join(markers, `where-${run.id}`), 'utf8');
+      },
+    );
+
+    await t.test(
+      'a job naming a missing pipeline fails with the catalog reason and creates nothing',
+      async () => {
+        const missing = await save(
+          definition('Missing pipeline', {
+            name: 'absent',
+            specPath: join('.agents', 'tasks', 'checked.md'),
+          }),
+        );
+        const before = await sessionIds();
+        await runNow(missing);
+        const finished = await settledRun(missing);
+        assert.equal(finished.status, 'failed', JSON.stringify(finished));
+        assert.equal(finished.reason, 'catalog');
+        assert.equal(finished.sessionId, null);
+        assert.equal(finished.pipelineRunId, null);
+        assert.deepEqual(await sessionIds(), before);
+        const listed = await host.request('list-pipeline-runs', {});
+        assert.equal(listed.page.runs.length, 1);
+      },
+    );
+
+    await t.test(
+      'a second run now while a scheduled pipeline is active is busy and Stop ends the job run',
+      async () => {
+        const holding = await save(
+          definition('Holding task', {
+            name: 'checked',
+            specPath: join('.agents', 'tasks', 'holding.md'),
+          }),
+        );
+        await runNow(holding);
+        const active = await jobRun(
+          holding,
+          run => run.status === 'running' && run.pipelineRunId,
+          'The scheduled pipeline did not start',
+        );
+        const busy = await host.request('run-scheduled-job-now', {
+          id: checked.id,
+          requestId: randomUUID(),
+        });
+        assert.equal(busy.code, 'busy', JSON.stringify(busy));
+        const again = await host.request('run-scheduled-job-now', {
+          id: holding.id,
+          requestId: randomUUID(),
+        });
+        assert.equal(again.code, 'busy', JSON.stringify(again));
+        const stopped = await host.request('stop-pipeline-run', {
+          runId: active.pipelineRunId,
+        });
+        assert.equal(stopped.run.status, 'stopped');
+        const finished = await settledRun(holding);
+        assert.equal(finished.status, 'stopped', JSON.stringify(finished));
+        assert.equal(finished.pipelineRunId, active.pipelineRunId);
+      },
+    );
+
+    await t.test(
+      'the stored pipeline and the run link survive a host restart',
+      async () => {
+        host.child.kill('SIGKILL');
+        await host.exited;
+        host = launch(dataDirectory, pidFile);
+        const listed = await host.request('list-scheduled-jobs', {});
+        assert.deepEqual(
+          listed.list.scheduledJobs.find(job => job.id === checked.id).pipeline,
+          checked.pipeline,
+        );
+        const [run] = await runs(checked);
+        assert.equal(run.status, 'completed');
+        assert.ok(run.pipelineRunId);
       },
     );
   },

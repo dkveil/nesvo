@@ -331,6 +331,23 @@ function projectPath(projectDirectory: string): string {
   return project;
 }
 
+export async function isRepositoryRoot(
+  directory: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const project = projectPath(directory);
+  try {
+    return (await repositoryRoot(project, signal)) === project;
+  } catch (error) {
+    if (
+      error instanceof WorkspaceIsolationError &&
+      (error.code === 'not-a-repository' || error.code === 'git-unavailable')
+    )
+      return false;
+    throw error;
+  }
+}
+
 export async function createTaskWorktree({
   projectDirectory,
   dataDirectory,

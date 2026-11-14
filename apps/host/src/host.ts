@@ -174,19 +174,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           }),
       );
       const usage = new ProviderUsageService(probes.controller.signal);
-      const scheduledJobs = yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const service = new ScheduledJobService(
-            scheduledJobStore,
-            sessions,
-            new SessionLauncher(sessions, usage),
-            emit,
-          );
-          service.start();
-          return service;
-        }),
-        service => Effect.promise(() => service.close()),
-      );
       const evidence = new EvidenceStore(directory, id =>
         pipelineRunStore.getStep(id),
       );
@@ -258,6 +245,23 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               emit,
             }),
         ),
+        service => Effect.promise(() => service.close()),
+      );
+      const scheduledJobs = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const service = new ScheduledJobService(
+            scheduledJobStore,
+            sessions,
+            new SessionLauncher(sessions, usage, undefined, undefined, {
+              start: (input, signal) => tasks.start(input, signal),
+              getRun: id => pipelineRunStore.getRun(id),
+              stop: id => pipelines.stop(id),
+            }),
+            emit,
+          );
+          service.start();
+          return service;
+        }),
         service => Effect.promise(() => service.close()),
       );
       let evidenceRequests = 0;
