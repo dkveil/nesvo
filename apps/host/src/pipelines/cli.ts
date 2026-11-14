@@ -329,7 +329,7 @@ async function editPipeline(
     },
     context.signal,
   );
-  return reportWrite(context, result, catalog => {
+  const code = reportWrite(context, result, catalog => {
     const hash = savedHash(catalog, 'pipeline', pipeline, scope);
     const verb = edit.kind === 'add' ? 'Added' : 'Removed';
     const direction = edit.kind === 'add' ? 'to' : 'from';
@@ -338,14 +338,29 @@ async function editPipeline(
       ...edited.notes,
     ].join('\n');
   });
+  if (options.json && code === cliExitCodes.ok)
+    for (const note of edited.notes) context.output.stderr(`${note}\n`);
+  return code;
 }
 
-function addToPipeline(context: Context): Promise<number> {
+async function samePhase(
+  context: Context,
+  step: string,
+  after: string,
+): Promise<boolean> {
+  const catalog = await loadCatalog(context.options.directory, context.signal);
+  const phase = (name: string) =>
+    catalog.steps.find(item => item.name === name)?.phase;
+  return phase(step) === phase(after);
+}
+
+async function addToPipeline(context: Context): Promise<number> {
   const step = requireName(context.options.step, '--step');
   const after = context.options.after
     ? requireName(context.options.after, '--after')
     : null;
-  return editPipeline(context, { kind: 'add', step, after });
+  const connect = after ? await samePhase(context, step, after) : true;
+  return editPipeline(context, { kind: 'add', step, after, connect });
 }
 
 function removeFromPipeline(context: Context): Promise<number> {

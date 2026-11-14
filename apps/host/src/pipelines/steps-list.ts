@@ -1,7 +1,7 @@
 import { formatEdge, parseEdge, type GraphEdge } from '@nesvo/contracts';
 
 export type StepsListEdit =
-  | { kind: 'add'; step: string; after: string | null }
+  | { kind: 'add'; step: string; after: string | null; connect: boolean }
   | { kind: 'remove'; step: string };
 
 export type StepsListResult =
@@ -192,24 +192,43 @@ type EdgeChange = {
   keep: (edge: GraphEdge | null) => boolean;
   rewrite: (edge: GraphEdge) => GraphEdge | null;
   added: GraphEdge | null;
+  notes: string[];
 };
 
-function edgeChange(edit: StepsListEdit): EdgeChange | null {
+const unchanged = {
+  keep: () => true,
+  rewrite: () => null,
+  added: null,
+};
+
+function edgeChange(edit: StepsListEdit): EdgeChange {
   if (edit.kind === 'remove')
     return {
+      ...unchanged,
       keep: edge => !edge || (edge.from !== edit.step && edge.to !== edit.step),
-      rewrite: () => null,
-      added: null,
+      notes: [],
     };
   const after = edit.after;
-  if (after === null) return null;
+  if (after !== null && edit.connect)
+    return {
+      ...unchanged,
+      rewrite: edge =>
+        edge.from === after && edge.when === 'success'
+          ? { ...edge, from: edit.step }
+          : null,
+      added: { from: after, to: edit.step, when: 'success' },
+      notes: [],
+    };
   return {
-    keep: () => true,
-    rewrite: edge =>
-      edge.from === after && edge.when === 'success'
-        ? { ...edge, from: edit.step }
-        : null,
-    added: { from: after, to: edit.step, when: 'success' },
+    ...unchanged,
+    notes: [
+      ...(after === null
+        ? []
+        : [
+            `No edge was added because "${after}" and "${edit.step}" are in different phases`,
+          ]),
+      `Step "${edit.step}" has no incoming edge and starts when its phase begins`,
+    ],
   };
 }
 
@@ -218,6 +237,7 @@ function edgeNotes(
   removed: number,
   rewired: [GraphEdge, GraphEdge][],
   added: GraphEdge | null,
+  sources: string[],
 ): string[] {
   const notes = rewired.map(
     ([before, after]) =>
@@ -228,17 +248,35 @@ function edgeNotes(
     notes.push(
       `Removed ${removed} ${removed === 1 ? 'edge' : 'edges'} that named "${edit.step}"`,
     );
+  for (const name of sources)
+    notes.push(
+      `Step "${name}" has no incoming edge now and starts when its phase begins`,
+    );
   return notes;
+}
+
+function newSources(
+  before: readonly string[],
+  after: readonly string[],
+  edit: StepsListEdit,
+): string[] {
+  const parsed = (tokens: readonly string[]) =>
+    tokens.flatMap(token => parseEdge(unquote(token)) ?? []);
+  const targets = new Set(parsed(after).map(edge => edge.to));
+  return [...new Set(parsed(before).map(edge => edge.to))].filter(
+    name => name !== edit.step && !targets.has(name),
+  );
 }
 
 function editEdges(source: string, edit: StepsListEdit): StepsListResult {
   const change = edgeChange(edit);
-  if (!change) return { ok: true, text: source, notes: [] };
   const lines = source.split(/(?<=\n)/);
   const bounds = frontmatter(lines);
   if ('message' in bounds) return failure(bounds.message);
   const list = findList(lines, bounds.closing, 'edges');
   if (list.kind === 'missing') return { ok: true, text: source, notes: [] };
+  const untouched = { ok: true as const, text: source, notes: change.notes };
+  if (edit.kind === 'add' && !change.added) return untouched;
   if (list.kind === 'unsupported') return failure(unsupported('edges'));
   const rewired: [GraphEdge, GraphEdge][] = [];
   let removed = 0;
@@ -253,27 +291,40 @@ function editEdges(source: string, edit: StepsListEdit): StepsListResult {
     rewired.push([edge, rewritten]);
     return formatEdge(rewritten);
   };
-  const notes = () => edgeNotes(edit, removed, rewired, change.added);
-  if (list.kind === 'flow') {
-    const tokens = list.tokens.flatMap(token => transform(token) ?? []);
-    if (change.added) tokens.push(formatEdge(change.added));
-    if (!notes().length) return { ok: true, text: source, notes: [] };
+  const before =
+    list.kind === 'flow' ? list.tokens : list.items.map(item => item.token);
+  const after = before.flatMap(token => transform(token) ?? []);
+  if (change.added) after.push(formatEdge(change.added));
+  const notes = [
+    ...edgeNotes(
+      edit,
+      removed,
+      rewired,
+      change.added,
+      newSources(before, after, edit),
+    ),
+    ...change.notes,
+  ];
+  if (!removed && !rewired.length && !change.added) return untouched;
+  if (list.kind === 'flow')
     return {
       ok: true,
-      text: replaceLine(lines, list.index, flowLine(lines, list, tokens)),
-      notes: notes(),
+      text: replaceLine(lines, list.index, flowLine(lines, list, after)),
+      notes,
     };
-  }
   const edited = [...lines];
   const dropped = new Set<number>();
   for (const item of list.items) {
-    const token = transform(item.token);
-    if (token === null) dropped.add(item.position);
-    else if (token !== item.token)
+    const edge = parseEdge(unquote(item.token));
+    if (!change.keep(edge)) {
+      dropped.add(item.position);
+      continue;
+    }
+    const rewritten = edge ? change.rewrite(edge) : null;
+    if (rewritten)
       edited[item.position] =
-        `${item.indent}- ${token}${item.comment}${endOfLine(lines[item.position]!)}`;
+        `${item.indent}- ${formatEdge(rewritten)}${item.comment}${endOfLine(lines[item.position]!)}`;
   }
-  if (!notes().length) return { ok: true, text: source, notes: [] };
   const last = list.items[list.items.length - 1]!;
   if (change.added)
     edited[last.position] +=
@@ -287,7 +338,7 @@ function editEdges(source: string, edit: StepsListEdit): StepsListResult {
   return {
     ok: true,
     text: edited.filter((_, position) => !dropped.has(position)).join(''),
-    notes: notes(),
+    notes,
   };
 }
 
