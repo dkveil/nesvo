@@ -76,6 +76,12 @@ export function useSessions() {
   const [pipelineSteps, setPipelineSteps] = useState<
     DesktopPipelineStepRecord[]
   >([]);
+  const [assistantProposals, setAssistantProposals] = useState<
+    Record<
+      string,
+      Extract<WorkspaceEvent, { type: 'pipeline-assistant-proposal' }>
+    >
+  >({});
   const runRequests = useRef(new Set<string>());
   const [computers, setComputers] = useState<Computer[]>([]);
   const computersRef = useRef<Computer[]>([]);
@@ -250,6 +256,11 @@ export function useSessions() {
         mergePipelineRuns([event.run]);
       else if (event.type === 'pipeline-step-changed')
         mergePipelineSteps([event.step]);
+      else if (event.type === 'pipeline-assistant-proposal')
+        setAssistantProposals(previous => ({
+          ...previous,
+          [hostKey(event.messageId, event.hostId)]: event,
+        }));
       else if (event.type === 'host-snapshot') {
         for (const key of [...runRequests.current])
           if (
@@ -378,6 +389,7 @@ export function useSessions() {
     reviews,
     pipelineRuns,
     pipelineSteps,
+    assistantProposals,
     mergePipelineRuns,
     computers,
     loading,
