@@ -10195,7 +10195,7 @@ test(
         assert.equal(blank.code, 'invalid-request');
         const listed = await host.request('list-scheduled-jobs', {});
         assert.equal(listed.type, 'scheduled-jobs');
-        assert.deepEqual(listed.scheduledJobs, []);
+        assert.deepEqual(listed.list.scheduledJobs, []);
       },
     );
 
