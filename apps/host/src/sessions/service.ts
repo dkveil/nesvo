@@ -109,6 +109,7 @@ export type PipelineTurn = {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
+  assistant?: boolean;
 };
 
 export type SessionServiceOptions = {
@@ -238,7 +239,7 @@ export class SessionService {
       this.active.get(turn.sessionId)?.session ??
       this.store.get(turn.sessionId);
     if (!session) throw new SessionError('not-found', 'Session not found.');
-    if (!session.pipelineRunId)
+    if (!session.pipelineRunId && !turn.assistant)
       throw new SessionError(
         'invalid-request',
         'This session is not part of a pipeline task.',

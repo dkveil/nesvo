@@ -15,7 +15,10 @@ export type PipelineSessionOrigin = {
 };
 
 export type SessionOrigin =
-  { kind: 'operator' } | ScheduledJobSessionOrigin | PipelineSessionOrigin;
+  | { kind: 'operator' }
+  | { kind: 'pipeline-assistant' }
+  | ScheduledJobSessionOrigin
+  | PipelineSessionOrigin;
 
 type SessionLinks = Pick<
   Session,
@@ -38,6 +41,14 @@ const originLinks = (
         pipelineRunId: null,
         pipelineStepId: null,
         delegationEnabled: input.provider === 'Codex',
+      };
+    case 'pipeline-assistant':
+      return {
+        scheduledJobId: null,
+        scheduledJobRunId: null,
+        pipelineRunId: null,
+        pipelineStepId: null,
+        delegationEnabled: false,
       };
     case 'scheduled-job':
       return {
