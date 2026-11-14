@@ -719,27 +719,24 @@ try {
       },
     }),
   );
-  const threadDetailsToggle = page.getByRole('button', {
-    name: 'Thread details',
+  const sessionCardToggle = page.getByRole('button', {
+    name: 'Session details',
     exact: true,
   });
-  await threadDetailsToggle.click();
-  const threadDetails = page.getByRole('complementary', {
-    name: 'Thread details',
+  await sessionCardToggle.click();
+  const sessionCard = page.getByRole('complementary', {
+    name: 'Session details',
     exact: true,
   });
   assert.equal(
-    await threadDetails
-      .locator('[data-provider-indicator="Claude Code"]')
-      .getAttribute('aria-label'),
-    'Claude Code limits: Weekly, 38.8% remaining',
+    await sessionCard
+      .locator('[data-usage-row="Claude Code"] [role="progressbar"]')
+      .getAttribute('aria-valuetext'),
+    '61.3% used',
   );
-  assert.equal(
-    await threadDetails.locator('[data-provider-indicator]').count(),
-    2,
-  );
-  await threadDetailsToggle.click();
-  await threadDetails.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await sessionCard.waitFor({ state: 'hidden' });
+  await waitForFocus(sessionCardToggle);
   await openNewThread();
   await page.waitForFunction(
     async () => (await window.nesvo.claudeStatus()).status === 'ready',

@@ -18,6 +18,7 @@ export type {
   PipelineRunStatus,
   PipelineStepState,
   ResolvedPipeline,
+  ResolvedStep,
   StepPhase,
   StepResult,
   TaskSpecSummary,
@@ -193,3 +194,29 @@ export const stepDuration = (step: PipelineStepView, now: number) => {
     return formatDuration(now - Date.parse(step.record.startedAt));
   return '';
 };
+
+const completedStates: PipelineStepState[] = ['passed', 'done', 'skipped'];
+
+const phaseStatePriority: PipelineStepState[] = [
+  'failed',
+  'error',
+  'uncertain',
+  'blocked',
+  'awaiting-human',
+  'running',
+  'interrupted',
+];
+
+export const isStepComplete = (step: PipelineStepView) =>
+  completedStates.includes(step.state);
+
+export const phaseState = (steps: PipelineStepView[]): PipelineStepState => {
+  const urgent = phaseStatePriority.find(state =>
+    steps.some(step => step.state === state),
+  );
+  if (urgent) return urgent;
+  return steps.every(isStepComplete) ? 'passed' : 'pending';
+};
+
+export const phaseProgress = (steps: PipelineStepView[]) =>
+  `${steps.filter(isStepComplete).length}/${steps.length}`;

@@ -58,7 +58,12 @@ import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
-import { ThreadDetails } from '@/widgets/thread-details';
+import {
+  PipelineSection,
+  SessionCard,
+  UsageSection,
+  WorkersSection,
+} from '@/widgets/session-card';
 import { ProviderAccounts, ProviderUsage } from '@/widgets/provider-rail';
 import {
   AppearanceSettings,
@@ -84,8 +89,6 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
-const PipelinePanel = lazy(() => import('@/widgets/pipeline-panel'));
-
 const PipelineDefinitions = lazy(
   () => import('@/widgets/pipeline-definitions'),
 );
@@ -96,17 +99,16 @@ export function Workspace() {
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
   const [sessionTarget, setSessionTarget] = useState('');
-  const [panel, setPanel] = useState<
-    'diff' | 'files' | 'skills' | 'pipeline' | null
-  >(location.diff ? 'diff' : null);
-  const [stepIndex, setStepIndex] = useState<number | null>(null);
+  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
+    location.diff ? 'diff' : null,
+  );
   const [pipelinesView, setPipelinesView] = useState(false);
   const [pipelinesSource, setPipelinesSource] = useState({
     hostId: 'local',
     directory: '',
   });
   const browsing = inbox || pipelinesView;
-  const pipelineStatusButton = useRef<HTMLButtonElement | null>(null);
+  const cardTrigger = useRef<HTMLElement | null>(null);
   const [pipelinePending, setPipelinePending] = useState<
     Record<string, boolean>
   >({});
@@ -137,7 +139,7 @@ export function Workspace() {
   const navigationToggle = useRef<HTMLButtonElement | null>(null);
   const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [threadDetailsOpen, setThreadDetailsOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const threadRequest = useRef(false);
   const navigationVersion = useRef(0);
@@ -246,10 +248,9 @@ export function Workspace() {
         step => step.runId === selectedRun.id && step.hostId === selectedHostId,
       )
     : [];
-  const visiblePanel =
-    (panel === 'diff' && !diffReview) || (panel === 'pipeline' && !selectedRun)
-      ? null
-      : panel;
+  const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
+  const cardSession = !browsing && !creating && selected ? selected : null;
+  const cardRun = cardSession ? selectedRun : undefined;
   useEffect(() => {
     if (
       store.loading ||
@@ -338,24 +339,29 @@ export function Workspace() {
     }
     setPanel('files');
   };
-  const togglePipeline = () => {
-    if (panel === 'pipeline') {
-      closeDiff();
+  const closeCard = () => {
+    setCardOpen(false);
+    const trigger = cardTrigger.current;
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus();
+    });
+  };
+  const toggleCard = (trigger: HTMLElement) => {
+    if (cardOpen) {
+      closeCard();
       return;
     }
-    diffTrigger.current = pipelineStatusButton.current;
+    cardTrigger.current = trigger;
     if (selectedRun)
       setPipelineErrors(previous => ({
         ...previous,
         [entityKey(selectedRun)]: '',
       }));
-    setStepIndex(null);
-    setPanel('pipeline');
+    setCardOpen(true);
   };
   const closeDiff = () => {
     setPanel(null);
     setDiffTarget(null);
-    setStepIndex(null);
     const trigger = diffTrigger.current;
     requestAnimationFrame(() => {
       if (trigger?.isConnected) trigger.focus();
@@ -1079,27 +1085,27 @@ export function Workspace() {
           >
             <Plus />
           </Button>
-          {!browsing && !creating && selectedRun && (
+          {cardRun ? (
             <PipelineStatus
-              run={selectedRun}
-              open={panel === 'pipeline'}
-              buttonRef={pipelineStatusButton}
-              onToggle={togglePipeline}
+              run={cardRun}
+              open={cardOpen}
+              onToggle={toggleCard}
             />
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+              aria-label="Session details"
+              title="Session details"
+              aria-pressed={cardOpen}
+              aria-controls={cardOpen ? 'session-card' : undefined}
+              onClick={event => toggleCard(event.currentTarget)}
+            >
+              <Gauge className="size-4" />
+            </Button>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="hidden text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground md:inline-flex"
-            aria-label="Thread details"
-            title="Thread details"
-            aria-pressed={threadDetailsOpen}
-            aria-controls={threadDetailsOpen ? 'thread-details' : undefined}
-            onClick={() => setThreadDetailsOpen(open => !open)}
-          >
-            <Gauge className="size-4" />
-          </Button>
           {!browsing && !creating && selected && (
             <Button
               type="button"
@@ -1198,24 +1204,48 @@ export function Workspace() {
           </div>
         )}
         <main className="relative flex min-h-0 min-w-0 flex-1">
-          {threadDetailsOpen && (
-            <div className="hidden md:contents">
-              <ThreadDetails
-                id="thread-details"
-                computer={selectedComputer}
-                connection={connection}
-                session={!browsing && !creating && selected ? selected : null}
-                onComputers={() => setSettingsPage('computers')}
-                onFiles={openFiles}
-                usage={
-                  <ProviderUsage
-                    key={`${selectedHostId}/details`}
-                    layout="bars"
-                    {...usageProps}
+          {cardOpen && (
+            <SessionCard
+              key={cardRun ? entityKey(cardRun) : selectedKey}
+              id="session-card"
+              computer={selectedComputer}
+              connection={connection}
+              session={cardSession}
+              run={cardRun}
+              onComputers={() => setSettingsPage('computers')}
+              onFiles={openFiles}
+              onClose={closeCard}
+              pipeline={
+                cardRun && (
+                  <PipelineSection
+                    run={cardRun}
+                    steps={selectedRunSteps}
+                    connected={store.hostReady(selectedHostId)}
+                    pending={!!pipelinePending[entityKey(cardRun)]}
+                    error={pipelineErrors[entityKey(cardRun)] ?? ''}
+                    api={window.nesvo.pipelines}
+                    onStop={() => void controlPipeline('stop')}
+                    onResume={() => void controlPipeline('resume')}
+                    onConfirmAction={stepId =>
+                      void controlPipeline('confirm', stepId)
+                    }
+                    onInbox={openInbox}
+                    onSession={select}
                   />
-                }
-              />
-            </div>
+                )
+              }
+              workers={
+                cardSession && (
+                  <WorkersSection workers={workers} onSession={select} />
+                )
+              }
+              usage={
+                <UsageSection
+                  states={usage.states}
+                  connected={store.hostReady(selectedHostId)}
+                />
+              }
+            />
           )}
           {showingNewThread ? (
             <NewThread
@@ -1450,41 +1480,6 @@ export function Workspace() {
                   savedVersion={diffReview?.version}
                   onSavedDiff={() => setPanel('diff')}
                   onClose={closeDiff}
-                />
-              </Suspense>
-            )}
-          {visiblePanel === 'pipeline' &&
-            !browsing &&
-            !creating &&
-            selectedRun && (
-              <Suspense
-                fallback={
-                  <aside
-                    role="status"
-                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
-                  >
-                    Loading pipeline…
-                  </aside>
-                }
-              >
-                <PipelinePanel
-                  key={entityKey(selectedRun)}
-                  run={selectedRun}
-                  steps={selectedRunSteps}
-                  selectedIndex={stepIndex}
-                  connected={store.hostReady(selectedHostId)}
-                  pending={!!pipelinePending[entityKey(selectedRun)]}
-                  error={pipelineErrors[entityKey(selectedRun)] ?? ''}
-                  api={window.nesvo.pipelines}
-                  onSelectStep={setStepIndex}
-                  onStop={() => void controlPipeline('stop')}
-                  onResume={() => void controlPipeline('resume')}
-                  onConfirmAction={stepId =>
-                    void controlPipeline('confirm', stepId)
-                  }
-                  onClose={closeDiff}
-                  onInbox={openInbox}
-                  onSession={select}
                 />
               </Suspense>
             )}
