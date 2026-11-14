@@ -370,7 +370,13 @@ if (args.length === 1 && args[0] === '--version') {
   if (operatorRequest && process.env.NESVO_FIXTURE_PID_FILE)
     writeFileSync(
       process.env.NESVO_FIXTURE_PID_FILE + '.assistant',
-      JSON.stringify({ sessionId, resumed, command, prompt }) + '\n',
+      JSON.stringify({
+        sessionId,
+        resumed,
+        command,
+        structured: values.has('--json-schema'),
+        prompt,
+      }) + '\n',
       { flag: 'a' },
     );
   const assistantProposal = pipeline => ({
@@ -395,17 +401,14 @@ if (args.length === 1 && args[0] === '--version') {
       },
     ],
   });
-  const assistantAnswer = pipeline => {
+  const assistantAnswer = (pipeline, fenced = false) => {
     const proposal = assistantProposal(pipeline);
-    const text = values.has('--json-schema')
+    const structured = values.has('--json-schema') && !fenced;
+    const text = structured
       ? 'Proposal recorded.'
       : `Here is the proposal.\n\n\`\`\`json\n${JSON.stringify(proposal, null, 2)}\n\`\`\`\n`;
     start(text);
-    finish(
-      text,
-      false,
-      values.has('--json-schema') ? { structured_output: proposal } : {},
-    );
+    finish(text, false, structured ? { structured_output: proposal } : {});
   };
   const repairing = verdictMode && prompt.includes(REPAIR_NOTE);
   const verdict = (text, structured) => {
@@ -549,6 +552,7 @@ if (args.length === 1 && args[0] === '--version') {
   } else if (command === 'fixture:assistant-missing-step') {
     assistantAnswer(
       '---\nname: assistant-flow\ndescription: Lint and publish\nsteps: [lint-check, publish]\n---\n',
+      true,
     );
   } else if (command === 'fixture:assistant-prose') {
     const text = 'I would add a lint step before the approval.';

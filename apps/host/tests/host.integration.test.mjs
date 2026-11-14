@@ -13168,10 +13168,12 @@ test(
           recorded.prompt,
           /\[begin operator-request ([0-9a-f]+)\]\nfixture:assistant-proposal\n\[end operator-request \1\]/,
         );
+        assert.equal(recorded.structured, true);
         assert.match(
           recorded.prompt,
-          /exactly one fenced code block tagged json/,
+          /Return the proposal as your structured answer/,
         );
+        assert.equal(agent(session).body, 'Proposal recorded.');
       },
     );
 
@@ -13191,6 +13193,8 @@ test(
         );
         const [first, second] = await prompts();
         assert.equal(second.resumed, true);
+        assert.equal(second.structured, true);
+        assert.match(second.prompt, /structured answer/);
         assert.ok(second.prompt.length < first.prompt.length);
         assert.doesNotMatch(second.prompt, /\[begin catalog /);
         assert.doesNotMatch(second.prompt, /\[begin open-document /);
@@ -13340,6 +13344,10 @@ test(
         assert.equal(turns.length, 1);
         assert.equal(turns[0].sandbox, 'readOnly');
         assert.match(turns[0].prompt, /\[begin catalog [0-9a-f]+\]\n/);
+        assert.match(
+          turns[0].prompt,
+          /exactly one fenced code block tagged json/,
+        );
         await host.stop();
         host = launch(join(directory, 'data'), pidFile);
         const resumed = await send('fixture:assistant-prose', { sessionId });
