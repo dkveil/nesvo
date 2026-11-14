@@ -1,16 +1,19 @@
 import {
+  checkGraphList,
   definitionCatalogSchema,
-  graphMessages,
+  graphListRules,
   pipelineDefinitionLimits,
   pipelineDefinitionSchema,
   resolveGraph,
   stepDefinitionSchema,
+  stepNameSchema,
   taskSpecSchema,
   type DefinitionCatalog,
   type DefinitionIssue,
   type DefinitionScope,
   type DefinitionSource,
   type GraphInput,
+  type GraphIssue,
   type GraphStep,
   type PipelineDefinition,
   type PipelineGraph,
@@ -545,40 +548,31 @@ function expectedLabel(expected: string): string {
   }
 }
 
-function graphFieldMessage(
-  schemaIssue: SchemaIssue,
-  fields: Record<string, unknown>,
-): string | null {
-  const [field, entry] = schemaIssue.path;
+function graphFieldMessage(schemaIssue: SchemaIssue): string | null {
+  const [field] = schemaIssue.path;
   if (field === 'layout')
     return 'Field "layout" must be a mapping of step name to [x, y]';
-  if (field !== 'edges') return null;
-  if (schemaIssue.code === 'invalid_type')
-    return 'Field "edges" must be a list of text entries';
-  if (schemaIssue.path.length === 1) return graphMessages.edgeLimit;
-  return graphMessages.edgeSyntax(
-    String((fields.edges as unknown[])[entry as number]),
+  if (field === 'edges') return 'Field "edges" must be a list of text entries';
+  return null;
+}
+
+function graphShapeIssue(
+  schemaIssues: SchemaIssue[],
+  field: (typeof graphFields)[number],
+): SchemaIssue | undefined {
+  return schemaIssues.find(
+    item =>
+      item.path[0] === field &&
+      (field === 'layout' || item.code === 'invalid_type'),
   );
 }
 
 function graphSchemaIssues(schemaIssues: SchemaIssue[]): SchemaIssue[] {
-  const edges = schemaIssues.filter(item => item.path[0] === 'edges');
-  const shape = edges.find(item => item.code === 'invalid_type');
-  const limit = edges.find(item => item.path.length === 1);
-  const kept = shape
-    ? [shape]
-    : limit
-      ? [limit]
-      : edges.filter(
-          (item, position) =>
-            edges.findIndex(other => other.path[1] === item.path[1]) ===
-            position,
-        );
-  const layout = schemaIssues.find(item => item.path[0] === 'layout');
-  return schemaIssues.filter(item =>
-    item.path[0] === 'edges'
-      ? kept.includes(item)
-      : item.path[0] !== 'layout' || item === layout,
+  const kept = graphFields.map(field => graphShapeIssue(schemaIssues, field));
+  return schemaIssues.filter(
+    item =>
+      !graphFields.some(field => field === item.path[0]) ||
+      kept.includes(item),
   );
 }
 
@@ -586,7 +580,7 @@ function fieldMessage(
   schemaIssue: SchemaIssue,
   fields: Record<string, unknown>,
 ): string {
-  const graph = graphFieldMessage(schemaIssue, fields);
+  const graph = graphFieldMessage(schemaIssue);
   if (graph) return graph;
   const field = String(schemaIssue.path[0] ?? '');
   const direct = schemaIssue.path.length === 1;
@@ -654,20 +648,26 @@ function parseDocument<T>(
     ),
   );
   const result = schema.safeParse({ ...known, body });
-  if (!result.success)
-    for (const schemaIssue of graphSchemaIssues(result.error.issues)) {
-      const field = String(schemaIssue.path[0] ?? '');
-      issues.push(
-        issue(
-          file.path,
-          fieldMessage(schemaIssue, known),
-          field === 'body' ? bodyLine(file.text, body) : fieldLine(yaml, field),
-        ),
-      );
-    }
+  const schemaIssues = result.success ? [] : result.error.issues;
+  for (const schemaIssue of graphSchemaIssues(schemaIssues)) {
+    const field = String(schemaIssue.path[0] ?? '');
+    issues.push(
+      issue(
+        file.path,
+        fieldMessage(schemaIssue, known),
+        field === 'body' ? bodyLine(file.text, body) : fieldLine(yaml, field),
+      ),
+    );
+  }
+  if (kind === 'pipeline')
+    issues.push(...graphListIssues(known, yaml, file.path, schemaIssues));
   return {
     name,
-    value: result.success && issues.length === before ? result.data : null,
+    value:
+      result.success &&
+      !issues.slice(before).some(item => item.severity === 'error')
+        ? result.data
+        : null,
     file,
     yaml,
   };
@@ -739,6 +739,53 @@ function graphLines(yaml: string | null): GraphLines {
   };
 }
 
+function graphIssues(
+  issues: GraphIssue[],
+  path: string,
+  lines: GraphLines,
+): DefinitionIssue[] {
+  return issues.map(item =>
+    issue(
+      path,
+      item.message,
+      item.field ? lines[item.field] : null,
+      item.severity,
+    ),
+  );
+}
+
+function listedStepNames(value: unknown): string[] | null {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= pipelineDefinitionLimits.pipelineSteps &&
+    value.every(name => stepNameSchema.safeParse(name).success)
+    ? (value as string[])
+    : null;
+}
+
+function graphListIssues(
+  fields: Record<string, unknown>,
+  yaml: string | null,
+  path: string,
+  schemaIssues: SchemaIssue[],
+): DefinitionIssue[] {
+  const steps = listedStepNames(fields.steps);
+  if (!steps) return [];
+  const edges =
+    Array.isArray(fields.edges) && !graphShapeIssue(schemaIssues, 'edges')
+      ? (fields.edges as string[])
+      : null;
+  const layout =
+    fields.layout && !graphShapeIssue(schemaIssues, 'layout')
+      ? (fields.layout as PipelineLayout)
+      : null;
+  return graphIssues(
+    checkGraphList({ steps, edges, layout }),
+    path,
+    graphLines(yaml),
+  );
+}
+
 export function checkGraph(
   pipeline: GraphInput,
   path: string,
@@ -748,13 +795,10 @@ export function checkGraph(
   const resolution = resolveGraph(pipeline, steps);
   return {
     graph: resolution.graph,
-    issues: resolution.issues.map(item =>
-      issue(
-        path,
-        item.message,
-        item.field ? lines[item.field] : null,
-        item.severity,
-      ),
+    issues: graphIssues(
+      resolution.issues.filter(item => !graphListRules.includes(item.rule)),
+      path,
+      lines,
     ),
   };
 }
