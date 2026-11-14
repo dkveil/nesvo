@@ -1,18 +1,23 @@
 import {
   definitionCatalogSchema,
+  graphMessages,
   pipelineDefinitionLimits,
   pipelineDefinitionSchema,
+  resolveGraph,
   stepDefinitionSchema,
   taskSpecSchema,
   type DefinitionCatalog,
   type DefinitionIssue,
   type DefinitionScope,
   type DefinitionSource,
+  type GraphInput,
+  type GraphStep,
   type PipelineDefinition,
+  type PipelineGraph,
+  type PipelineLayout,
   type ResolvedPipeline,
   type ResolvedStep,
   type StepDefinition,
-  type StepPhase,
   type TaskSpec,
   type TaskSpecSummary,
 } from '@nesvo/contracts';
@@ -111,12 +116,7 @@ type DocumentSchema<T> = {
 };
 
 const subject = 'Definition';
-const externalEffectPattern = /\bgit\s+push\b|\bgh\s+pr\b|\bcurl\b|\bwget\b/;
-const phaseOrder: Record<StepPhase, number> = {
-  plan: 0,
-  'pre-done': 1,
-  'pre-push': 2,
-};
+const graphFields = ['edges', 'layout'] as const;
 const knownFields: Record<Kind, readonly string[]> = {
   step: [
     'name',
@@ -129,7 +129,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'effect',
     'needs',
   ],
-  pipeline: ['name', 'description', 'steps'],
+  pipeline: ['name', 'description', 'steps', ...graphFields],
   spec: ['pipeline', 'title'],
 };
 const kindLabels: Record<Kind, string> = {
@@ -545,10 +545,49 @@ function expectedLabel(expected: string): string {
   }
 }
 
+function graphFieldMessage(
+  schemaIssue: SchemaIssue,
+  fields: Record<string, unknown>,
+): string | null {
+  const [field, entry] = schemaIssue.path;
+  if (field === 'layout')
+    return 'Field "layout" must be a mapping of step name to [x, y]';
+  if (field !== 'edges') return null;
+  if (schemaIssue.code === 'invalid_type')
+    return 'Field "edges" must be a list of text entries';
+  if (schemaIssue.path.length === 1) return graphMessages.edgeLimit;
+  return graphMessages.edgeSyntax(
+    String((fields.edges as unknown[])[entry as number]),
+  );
+}
+
+function graphSchemaIssues(schemaIssues: SchemaIssue[]): SchemaIssue[] {
+  const edges = schemaIssues.filter(item => item.path[0] === 'edges');
+  const shape = edges.find(item => item.code === 'invalid_type');
+  const limit = edges.find(item => item.path.length === 1);
+  const kept = shape
+    ? [shape]
+    : limit
+      ? [limit]
+      : edges.filter(
+          (item, position) =>
+            edges.findIndex(other => other.path[1] === item.path[1]) ===
+            position,
+        );
+  const layout = schemaIssues.find(item => item.path[0] === 'layout');
+  return schemaIssues.filter(item =>
+    item.path[0] === 'edges'
+      ? kept.includes(item)
+      : item.path[0] !== 'layout' || item === layout,
+  );
+}
+
 function fieldMessage(
   schemaIssue: SchemaIssue,
   fields: Record<string, unknown>,
 ): string {
+  const graph = graphFieldMessage(schemaIssue, fields);
+  if (graph) return graph;
   const field = String(schemaIssue.path[0] ?? '');
   const direct = schemaIssue.path.length === 1;
   if (schemaIssue.code === 'invalid_value' && direct && schemaIssue.values)
@@ -616,7 +655,7 @@ function parseDocument<T>(
   );
   const result = schema.safeParse({ ...known, body });
   if (!result.success)
-    for (const schemaIssue of result.error.issues) {
+    for (const schemaIssue of graphSchemaIssues(result.error.issues)) {
       const field = String(schemaIssue.path[0] ?? '');
       issues.push(
         issue(
@@ -691,56 +730,33 @@ function source(entry: Entry<unknown>): DefinitionSource {
   };
 }
 
-function executionOrder(steps: readonly ResolvedStep[]): ResolvedStep[] {
-  return steps
-    .map((step, position) => ({ step, position }))
-    .sort(
-      (left, right) =>
-        phaseOrder[left.step.phase] - phaseOrder[right.step.phase] ||
-        left.position - right.position,
-    )
-    .map(({ step }) => step);
+export type GraphLines = Record<(typeof graphFields)[number], number | null>;
+
+function graphLines(yaml: string | null): GraphLines {
+  return {
+    edges: fieldLine(yaml, 'edges'),
+    layout: fieldLine(yaml, 'layout'),
+  };
 }
 
-function pipelineWarnings(pipeline: ResolvedPipeline): DefinitionIssue[] {
-  const path = pipeline.source.path;
-  const warnings: DefinitionIssue[] = [];
-  if (pipeline.steps.every(step => step.type === 'action'))
-    warnings.push(
+export function checkGraph(
+  pipeline: GraphInput,
+  path: string,
+  lines: GraphLines,
+  steps: ReadonlyMap<string, GraphStep>,
+): { graph: PipelineGraph; issues: DefinitionIssue[] } {
+  const resolution = resolveGraph(pipeline, steps);
+  return {
+    graph: resolution.graph,
+    issues: resolution.issues.map(item =>
       issue(
         path,
-        `Pipeline "${pipeline.name}" has no gate; add a command, agent or human step`,
-        null,
-        'warning',
+        item.message,
+        item.field ? lines[item.field] : null,
+        item.severity,
       ),
-    );
-  let human = false;
-  for (const step of executionOrder(pipeline.steps)) {
-    if (step.type === 'human') human = true;
-    if (human) continue;
-    if (step.effect === 'external')
-      warnings.push(
-        issue(
-          path,
-          `Step "${step.name}" in pipeline "${pipeline.name}" is declared external without a human step before it`,
-          null,
-          'warning',
-        ),
-      );
-    else if (
-      (step.type === 'action' || step.type === 'command') &&
-      externalEffectPattern.test(step.body)
-    )
-      warnings.push(
-        issue(
-          path,
-          `Step "${step.name}" in pipeline "${pipeline.name}" looks like an external action (git push, gh pr, curl or wget) without a human step before it`,
-          null,
-          'warning',
-        ),
-      );
-  }
-  return warnings;
+    ),
+  };
 }
 
 export function capIssues(issues: DefinitionIssue[]): DefinitionIssue[] {
@@ -869,16 +885,25 @@ export async function loadCatalog(
         );
     }
     if (issues.length !== before) continue;
-    const pipeline: ResolvedPipeline = {
+    const checked = checkGraph(
+      definition,
+      entry.parsed.file.path,
+      graphLines(entry.parsed.yaml),
+      resolvedSteps,
+    );
+    issues.push(...checked.issues);
+    if (checked.issues.some(item => item.severity === 'error')) continue;
+    resolvedPipelines.push({
       name: definition.name,
       description: definition.description,
       body: definition.body,
       source: source(entry),
       notes: entry.notes,
       steps: members,
-    };
-    issues.push(...pipelineWarnings(pipeline));
-    resolvedPipelines.push(pipeline);
+      ...(definition.edges ? { edges: definition.edges } : {}),
+      ...(definition.layout ? { layout: definition.layout } : {}),
+      graph: checked.graph,
+    });
   }
   issues.push(...stepWarnings(resolvedSteps));
   const specs: TaskSpecSummary[] = [];
@@ -932,6 +957,9 @@ export async function loadCatalog(
 export type DocumentCheck = {
   name: string | null;
   steps: string[];
+  edges: string[] | null;
+  layout: PipelineLayout | null;
+  lines: GraphLines;
   issues: DefinitionIssue[];
 };
 
@@ -948,10 +976,24 @@ export function checkDocument(
   };
   if (kind === 'step') {
     const parsed = parseDocument(file, 'step', stepDefinitionSchema, issues);
-    return { name: parsed.name, steps: [], issues };
+    return {
+      name: parsed.name,
+      steps: [],
+      edges: null,
+      layout: null,
+      lines: graphLines(null),
+      issues,
+    };
   }
   const parsed = parseDocument(file, 'pipeline', pipelineDefinitionSchema, issues);
-  return { name: parsed.name, steps: parsed.value?.steps ?? [], issues };
+  return {
+    name: parsed.name,
+    steps: parsed.value?.steps ?? [],
+    edges: parsed.value?.edges ?? null,
+    layout: parsed.value?.layout ?? null,
+    lines: graphLines(parsed.yaml),
+    issues,
+  };
 }
 
 export type WriteRoots = {

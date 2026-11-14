@@ -23,6 +23,7 @@ import { text } from '../skills/portable';
 import {
   capIssues,
   checkDocument,
+  checkGraph,
   DefinitionError,
   definitionReadLimits,
   inside,
@@ -381,12 +382,22 @@ export async function saveDefinition(
       return conflict(input, path, current.file);
     checkActiveRuns(input, roots.projectRoot, activeRuns);
     if (input.kind === 'pipeline') {
-      const unresolved = missingSteps(
-        checked.steps,
-        await loadCatalog(input.directory, signal),
-        path,
-      );
+      const catalog = await loadCatalog(input.directory, signal);
+      const unresolved = missingSteps(checked.steps, catalog, path);
       if (unresolved.length) return refusedIssues(unresolved);
+      const graph = checkGraph(
+        {
+          name: input.name,
+          steps: checked.steps,
+          edges: checked.edges,
+          layout: checked.layout,
+        },
+        path,
+        checked.lines,
+        new Map(catalog.steps.map(step => [step.name, step])),
+      );
+      if (graph.issues.some(item => item.severity === 'error'))
+        return refusedIssues(graph.issues);
     }
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
