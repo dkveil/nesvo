@@ -57,17 +57,24 @@ export type AuthorPort = {
   stop: (runId: string) => void;
 };
 
+const deterministicId = (seed: string): string => {
+  const hex = createHash('sha256').update(seed).digest('hex');
+  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
 export const turnMessageId = (
   runId: string,
   kind: TurnKind,
   attempt: number,
-): string => {
-  const hex = createHash('sha256')
-    .update(`pipeline-turn:${runId}:${kind}:${attempt}`)
-    .digest('hex');
-  const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-};
+): string => deterministicId(`pipeline-turn:${runId}:${kind}:${attempt}`);
+
+export const correctionMessageId = (
+  runId: string,
+  stepId: string,
+  attempt: number,
+): string =>
+  deterministicId(`pipeline-turn:${runId}:correction:${stepId}:${attempt}`);
 
 export type StepExecution = {
   run: PipelineRun;
@@ -89,7 +96,13 @@ export type StepEvidence = Pick<
 export type StepOutcome =
   | { kind: 'result'; result: StepResult }
   | { kind: 'skipped'; reason: string }
-  | { kind: 'interrupted' };
+  | { kind: 'interrupted' }
+  | {
+      kind: 'awaiting-human';
+      reviewId: string | null;
+      reviewVersion: number | null;
+      definitionChanges: string[];
+    };
 
 export type StepExecutor = (execution: StepExecution) => Promise<StepOutcome>;
 
@@ -219,17 +232,21 @@ type Move =
       message?: string;
     }
   | { kind: 'start-step'; step: PipelineStepRecord }
-  | { kind: 'send-turn'; turn: 'plan' | 'implement' };
+  | { kind: 'send-turn'; turn: AuthorTurn };
 
 type MoveContext = {
-  turnState: (kind: 'plan' | 'implement') => TurnState;
+  turnState: (messageId: string) => TurnState;
   hasAuthor: boolean;
 };
 
 const TURN_LABELS = {
   plan: 'planning',
   implement: 'implementation',
-} as const satisfies Record<'plan' | 'implement', string>;
+  correction: 'correction',
+} as const satisfies Record<TurnKind, string>;
+
+export const MISSING_CORRECTION_ATTENTION =
+  'The correction requested at a gate could not be found.';
 
 const WAIT: Move = { kind: 'wait' };
 
@@ -274,12 +291,18 @@ const afterPlanning = (run: PipelineRun): Move =>
     ? { kind: 'begin-phase', phase: 'plan' }
     : { kind: 'status', status: 'implementing' };
 
+const authorTurn = (run: PipelineRun, kind: 'plan' | 'implement'): AuthorTurn => ({
+  runId: run.id,
+  kind,
+  messageId: turnMessageId(run.id, kind, 1),
+});
+
 const turnMove = (
   state: TurnState,
-  turn: 'plan' | 'implement',
+  turn: AuthorTurn,
   completed: () => Move,
 ): Move => {
-  const label = TURN_LABELS[turn];
+  const label = TURN_LABELS[turn.kind];
   if (state === 'none') return { kind: 'send-turn', turn };
   if (state === 'completed') return completed();
   if (state === 'failed')
@@ -302,17 +325,67 @@ const turnMove = (
   return WAIT;
 };
 
-const authorMove = (run: PipelineRun, context: MoveContext): Move => {
+const requestedCorrection = (
+  run: PipelineRun,
+  steps: readonly PipelineStepRecord[],
+): { step: PipelineStepRecord; comment: string } | null => {
+  if (!run.phase) return null;
+  const latest = latestAttempts(steps);
+  for (const index of phaseIndices(run.pipeline, run.phase)) {
+    const step = latest.get(index);
+    if (step?.state === 'failed' && step.decision?.kind === 'fix')
+      return { step, comment: step.decision.comment };
+  }
+  return null;
+};
+
+const fixMove = (
+  run: PipelineRun,
+  steps: readonly PipelineStepRecord[],
+  context: MoveContext,
+): Move => {
+  const correction = requestedCorrection(run, steps);
+  if (!correction)
+    return { kind: 'attention', message: MISSING_CORRECTION_ATTENTION };
+  const turn: AuthorTurn = {
+    runId: run.id,
+    kind: 'correction',
+    prompt: correction.comment,
+    messageId: correctionMessageId(
+      run.id,
+      correction.step.id,
+      correction.step.attempt,
+    ),
+  };
+  return turnMove(context.turnState(turn.messageId), turn, () =>
+    run.phase === 'plan'
+      ? { kind: 'begin-phase', phase: 'plan' }
+      : afterImplementation(run),
+  );
+};
+
+const authorMove = (
+  run: PipelineRun,
+  steps: readonly PipelineStepRecord[],
+  context: MoveContext,
+): Move => {
   if (run.status === 'pending')
     return needsPlanningTurn(run.pipeline)
       ? { kind: 'status', status: 'planning' }
       : afterPlanning(run);
-  if (run.status === 'planning')
-    return turnMove(context.turnState('plan'), 'plan', () => afterPlanning(run));
-  if (run.status === 'implementing')
-    return turnMove(context.turnState('implement'), 'implement', () =>
+  if (run.status === 'planning') {
+    const turn = authorTurn(run, 'plan');
+    return turnMove(context.turnState(turn.messageId), turn, () =>
+      afterPlanning(run),
+    );
+  }
+  if (run.status === 'implementing') {
+    const turn = authorTurn(run, 'implement');
+    return turnMove(context.turnState(turn.messageId), turn, () =>
       afterImplementation(run),
     );
+  }
+  if (run.status === 'fixing') return fixMove(run, steps, context);
   return WAIT;
 };
 
@@ -335,7 +408,7 @@ function nextMove(
   if (WAITING_STATUSES.includes(run.status)) return WAIT;
   if (run.sessionId && AUTHOR_STATUSES.includes(run.status))
     return context.hasAuthor
-      ? authorMove(run, context)
+      ? authorMove(run, steps, context)
       : { kind: 'attention', message: NO_AUTHOR_ATTENTION };
   if (run.status === 'pending')
     return run.phase && phaseIndices(run.pipeline, run.phase).length > 0
@@ -643,10 +716,8 @@ export class PipelineRunner {
       const steps = this.store.stepsForRun(runId);
       const author = this.author;
       const move = nextMove(run, steps, {
-        turnState: kind =>
-          run.sessionId && author
-            ? author.turnState(run, turnMessageId(run.id, kind, 1))
-            : 'none',
+        turnState: messageId =>
+          run.sessionId && author ? author.turnState(run, messageId) : 'none',
         hasAuthor: Boolean(author),
       });
       if (move.kind === 'wait' || this.closed) return;
@@ -677,12 +748,8 @@ export class PipelineRunner {
     return true;
   }
 
-  private sendTurn(run: PipelineRun, turn: 'plan' | 'implement'): boolean {
-    const result = this.author!.sendTurn({
-      runId: run.id,
-      kind: turn,
-      messageId: turnMessageId(run.id, turn, 1),
-    });
+  private sendTurn(run: PipelineRun, turn: AuthorTurn): boolean {
+    const result = this.author!.sendTurn(turn);
     if (result === 'sent') {
       this.clearBusy(run.id);
       return true;
@@ -862,6 +929,10 @@ export class PipelineRunner {
       this.writeStep(current, { state: 'interrupted', result: null });
       return;
     }
+    if (outcome.kind === 'awaiting-human') {
+      this.awaitHuman(current, outcome);
+      return;
+    }
     if (outcome.kind === 'skipped') {
       this.writeStep(current, {
         state: 'skipped',
@@ -884,6 +955,62 @@ export class PipelineRunner {
           this.timestamp(),
         );
     this.writeStep(current, { state: VERDICT_STATES[result.status], result });
+  }
+
+  private awaitHuman(
+    running: PipelineStepRecord,
+    gate: Extract<StepOutcome, { kind: 'awaiting-human' }>,
+  ): void {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const step = this.store.getStep(running.id);
+      const run = this.store.getRun(running.runId);
+      if (!step || step.state !== 'running') return;
+      if (!run || run.status !== 'checking') {
+        this.writeStep(step, { state: 'interrupted', result: null });
+        return;
+      }
+      const now = this.timestamp();
+      const waiting: PipelineStepRecord = {
+        ...step,
+        revision: step.revision + 1,
+        state: 'awaiting-human',
+        result: null,
+        reviewId: gate.reviewId,
+        reviewVersion: gate.reviewVersion,
+        definitionChanges: gate.definitionChanges,
+        updatedAt: now,
+      };
+      const paused: PipelineRun = {
+        ...run,
+        revision: run.revision + 1,
+        status: 'awaiting-human',
+        currentStepIndex: step.index,
+        updatedAt: now,
+      };
+      if (!this.replaceBoth(waiting, step.revision, paused, run.revision))
+        continue;
+      this.emit({ type: 'pipeline-step-changed', step: waiting });
+      this.emit({ type: 'pipeline-run-changed', run: paused });
+      return;
+    }
+  }
+
+  private replaceBoth(
+    step: PipelineStepRecord,
+    stepRevision: number,
+    run: PipelineRun,
+    runRevision: number,
+  ): boolean {
+    try {
+      return this.store.transact(() => {
+        if (!this.store.replaceStep(step, stepRevision)) return false;
+        if (!this.store.replaceRun(run, runRevision))
+          throw new Error('The run changed.');
+        return true;
+      });
+    } catch {
+      return false;
+    }
   }
 
   private unmetNeed(definition: ResolvedStep): string | null {

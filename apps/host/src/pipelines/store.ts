@@ -220,6 +220,25 @@ export class PipelineRunStore {
       .map(toStep);
   }
 
+  stepByDecision(decisionId: string): PipelineStepRecord | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT document FROM pipeline_steps WHERE json_extract(document, '$.decision.decisionId') = ?",
+      )
+      .get(decisionId);
+    return row ? toStep(row) : undefined;
+  }
+
+  isGatePending(reviewId: string, version: number): boolean {
+    return Boolean(
+      this.database
+        .prepare(
+          "SELECT 1 FROM pipeline_steps WHERE state = 'awaiting-human' AND review_id = ? AND review_version = ? LIMIT 1",
+        )
+        .get(reviewId, version),
+    );
+  }
+
   beginStep(
     stepId: string,
     expectedRevision: number,

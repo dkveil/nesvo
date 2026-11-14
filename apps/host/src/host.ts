@@ -33,14 +33,12 @@ import {
   loadSpec,
 } from './pipelines/definitions';
 import { EvidenceError, EvidenceStore } from './pipelines/evidence';
-import {
-  PipelineRunError,
-  PipelineRunner,
-  unavailableExecutor,
-} from './pipelines/runner';
+import { PipelineRunError, PipelineRunner } from './pipelines/runner';
+import { PipelineGates } from './pipelines/gates';
 import { actionExecutor } from './pipelines/steps/action';
 import { createAgentExecutor } from './pipelines/steps/agent';
 import { commandExecutor } from './pipelines/steps/command';
+import { createHumanExecutor } from './pipelines/steps/human';
 import {
   PipelineTasks,
   SpecSnapshots,
@@ -73,6 +71,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'delete-pipeline-definition',
   'remove-pipeline-worktree',
   'pipeline-assistant-send',
+  'resolve-pipeline-step',
 ]);
 const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'list-pipeline-definitions',
@@ -80,6 +79,9 @@ const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'start-pipeline-task',
   'run-pipeline-steps',
   'resume-pipeline-run',
+  'decide-pipeline-gate',
+  'skip-pipeline-step',
+  'resolve-pipeline-step',
   'list-pipeline-runs',
   'get-pipeline-run',
   'stop-pipeline-run',
@@ -112,6 +114,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const store = new SessionStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
       const pipelineRunStore = new PipelineRunStore(database);
+      const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
       const emit = (message: HostMessage) => {
@@ -129,7 +132,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               store,
               directory,
               emitSessionEvent,
-              new ReviewStore(database),
+              reviewStore,
               () => {
                 const at = new Date().toISOString();
                 scheduledJobStore.interruptActiveRuns(at);
@@ -142,6 +145,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                     : undefined;
                   return run ? runEnvironment(run) : undefined;
                 },
+                isGatePending: (reviewId, version) =>
+                  pipelineRunStore.isGatePending(reviewId, version),
               },
             ),
         ),
@@ -190,7 +195,9 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             stepExecutors: {
               command: commandExecutor,
               action: actionExecutor,
-              human: unavailableExecutor,
+              human: createHumanExecutor({
+                latest: sessionId => reviewStore.latest(sessionId),
+              }),
               agent: createAgentExecutor({
                 sessions,
                 usage,
@@ -226,6 +233,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             await runner.close();
           }),
       ).pipe(Effect.map(({ runner }) => runner));
+      const gates = new PipelineGates({
+        store: pipelineRunStore,
+        runner: pipelines,
+        reviews: {
+          decide: (input, record) => sessions.decideGateReview(input, record),
+        },
+        emit,
+      });
       const tasks = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
@@ -388,6 +403,31 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                   error instanceof SessionError
                     ? error.message
                     : 'Your decision could not be saved. Refresh results and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(decision);
+          void decision.finally(() => probes.pending.delete(decision));
+          continue;
+        }
+        if (request.method === 'decide-pipeline-gate') {
+          const decision = gates
+            .decide(request.input)
+            .then(run => send({ type: 'pipeline-run', id: request.id, run }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof PipelineRunError ||
+                  error instanceof SessionError
+                    ? error.code
+                    : 'unavailable',
+                message:
+                  error instanceof PipelineRunError ||
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Your decision could not be saved. Refresh the run and try again.',
               }),
             )
             .catch(() => undefined);
@@ -902,6 +942,18 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'pipeline-run',
                 id: request.id,
                 run: pipelines.resume(request.input.runId),
+              };
+            if (request.method === 'skip-pipeline-step')
+              return {
+                type: 'pipeline-run',
+                id: request.id,
+                run: gates.skip(request.input),
+              };
+            if (request.method === 'resolve-pipeline-step')
+              return {
+                type: 'pipeline-run',
+                id: request.id,
+                run: gates.resolve(request.input),
               };
             if (request.method === 'stop-pipeline-run')
               return {
