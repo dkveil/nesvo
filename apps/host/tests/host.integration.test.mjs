@@ -13551,6 +13551,32 @@ test(
         ],
         edges: [],
       },
+      'skip-pass': {
+        steps: [
+          probe('skip', 'lead', { wait: 800 }),
+          probe('skip', 'middle'),
+          probe('skip', 'trail'),
+        ],
+      },
+      'skip-fail': {
+        steps: [
+          probe('skip', 'lead-fail', { wait: 800, exit: '1', on_fail: 'stop' }),
+          probe('skip', 'middle-two'),
+          probe('skip', 'trail-two'),
+        ],
+      },
+      'skip-graph': {
+        steps: [
+          probe('skip', 'source-a', {
+            type: 'action',
+            wait: 800,
+            emit: 'value=a',
+          }),
+          probe('skip', 'between'),
+          probe('skip', 'after-skip'),
+        ],
+        edges: ['source-a -> between', 'between -> after-skip'],
+      },
     };
     for (const [name, { steps, edges }] of Object.entries(pipelines)) {
       for (const item of steps)
@@ -13560,7 +13586,7 @@ test(
         );
       await write(
         join(project, '.agents', 'pipelines', 'pipelines', `${name}.md`),
-        `---\nname: ${name}\nsteps: [${steps.map(item => item.name).join(', ')}]\n${edgeBlock(edges)}---\n`,
+        `---\nname: ${name}\nsteps: [${steps.map(item => item.name).join(', ')}]\n${edges ? edgeBlock(edges) : ''}---\n`,
       );
       await write(
         join(project, '.agents', 'tasks', `${name}.md`),
@@ -13827,6 +13853,59 @@ test(
         assert.deepEqual(seen('side'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
         assert.deepEqual(seen('slow'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
         assert.deepEqual(seen('tail'), { NESVO_OUTPUT_ORIGIN_VALUE: 'root' });
+      },
+    );
+
+    await t.test(
+      'a skipped later step never lets its successor start before the earlier steps finish',
+      async () => {
+        const skipWhileRunning = async (name, lead, skipped) => {
+          const run = await start(project, name);
+          await waitForStarts('skip', lead, 1);
+          const current = await detail(run.id);
+          assert.equal(named(current, lead).state, 'running');
+          const response = await host.request('skip-pipeline-step', {
+            runId: run.id,
+            stepId: named(current, skipped).id,
+            reason: 'Not needed for this change',
+          });
+          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          return settled(run.id);
+        };
+        const passing = await skipWhileRunning('skip-pass', 'lead', 'middle');
+        assert.equal(passing.run.status, 'passed', passing.run.attention);
+        assert.deepEqual(rows(passing), [
+          ['lead', 1, 'passed'],
+          ['middle', 1, 'skipped'],
+          ['trail', 1, 'passed'],
+        ]);
+        const failing = await skipWhileRunning(
+          'skip-fail',
+          'lead-fail',
+          'middle-two',
+        );
+        assert.equal(failing.run.status, 'failed');
+        assert.deepEqual(rows(failing), [
+          ['lead-fail', 1, 'failed'],
+          ['middle-two', 1, 'skipped'],
+          ['trail-two', 1, 'pending'],
+        ]);
+        const graph = await skipWhileRunning(
+          'skip-graph',
+          'source-a',
+          'between',
+        );
+        assert.equal(graph.run.status, 'passed', graph.run.attention);
+        const entries = await events('skip');
+        assert.ok(span(entries, 'trail').start >= span(entries, 'lead').end);
+        assert.deepEqual(starts(entries, 'trail-two'), []);
+        assert.deepEqual(starts(entries, 'middle'), []);
+        assert.ok(
+          span(entries, 'after-skip').start >= span(entries, 'source-a').end,
+        );
+        assert.deepEqual(starts(entries, 'after-skip')[0].outputs, {
+          NESVO_OUTPUT_SOURCE_A_VALUE: 'a',
+        });
       },
     );
 
@@ -14147,6 +14226,60 @@ test(
             { kind: 'wait' },
           );
         }
+        const mixed = makeRun(
+          [
+            definition('publish', 'pre-done', { type: 'action' }),
+            definition('approve', 'pre-done', { type: 'human' }),
+            definition('lint', 'pre-done'),
+          ],
+          [],
+        );
+        const lint = row(mixed, 2, 'pending');
+        assert.deepEqual(
+          nextMove(
+            mixed,
+            [row(mixed, 0, 'running'), row(mixed, 1, 'pending'), lint],
+            context,
+          ),
+          { kind: 'start-step', step: lint },
+        );
+        assert.deepEqual(
+          nextMove(
+            mixed,
+            [
+              row(mixed, 0, 'pending'),
+              row(mixed, 1, 'awaiting-human'),
+              row(mixed, 2, 'passed'),
+            ],
+            context,
+          ),
+          { kind: 'wait' },
+        );
+        const fixing = makeRun(
+          [
+            definition('approve', 'pre-done', { type: 'human' }),
+            definition('e2e', 'pre-done'),
+          ],
+          [],
+          { status: 'fixing', sessionId: randomUUID() },
+        );
+        const decided = row(fixing, 0, 'failed', {
+          decision: {
+            decisionId: randomUUID(),
+            kind: 'fix',
+            comment: 'Tighten the check.',
+            at: now,
+          },
+        });
+        const author = { turnState: () => 'none', hasAuthor: true };
+        assert.deepEqual(
+          nextMove(fixing, [decided, row(fixing, 1, 'running')], author),
+          { kind: 'wait' },
+        );
+        assert.equal(
+          nextMove(fixing, [decided, row(fixing, 1, 'passed')], author).kind,
+          'send-turn',
+        );
 
         const seen = new Map();
         const command = async ({ step, outputs }) => {
