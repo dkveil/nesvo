@@ -51,6 +51,7 @@ export const pipelineStepStateSchema = z.enum([
   'skipped',
   'interrupted',
   'uncertain',
+  'unreached',
 ]);
 
 const idSchema = z.uuid();

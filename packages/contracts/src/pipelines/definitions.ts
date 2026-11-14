@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  implicitEdges,
+  PIPELINE_EDGE_CONDITIONS,
+  PIPELINE_EDGE_PATTERN,
+  pipelineGraphLimits,
+} from './graph';
 
 export const pipelineDefinitionLimits = {
   name: 64,
@@ -18,6 +24,8 @@ export const pipelineDefinitionLimits = {
   issueMessage: 800,
   minTimeoutMs: 1000,
   maxTimeoutMs: 4 * 60 * 60 * 1000,
+  edges: pipelineGraphLimits.edges,
+  layoutCoordinate: pipelineGraphLimits.layoutCoordinate,
 } as const;
 
 export const STEP_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -151,9 +159,36 @@ const pipelineDefinitionShape = {
   body: z.string().max(pipelineDefinitionLimits.body).default(''),
 };
 
+export const pipelineEdgeConditionSchema = z.enum(PIPELINE_EDGE_CONDITIONS);
+export const pipelineEdgeSchema = z
+  .string()
+  .min(3)
+  .max(pipelineGraphLimits.edgeText)
+  .regex(
+    PIPELINE_EDGE_PATTERN,
+    'Write an edge as "<step> -> <step>" with an optional "on success", "on failure" or "on any".',
+  );
+const pipelineEdgesSchema = z
+  .array(pipelineEdgeSchema)
+  .max(pipelineDefinitionLimits.edges);
+const layoutCoordinateSchema = z
+  .number()
+  .int()
+  .min(-pipelineDefinitionLimits.layoutCoordinate)
+  .max(pipelineDefinitionLimits.layoutCoordinate);
+export const pipelineLayoutSchema = z
+  .record(z.string(), z.tuple([layoutCoordinateSchema, layoutCoordinateSchema]))
+  .refine(
+    value =>
+      Object.keys(value).length <= pipelineDefinitionLimits.pipelineSteps,
+    `Place at most ${pipelineDefinitionLimits.pipelineSteps} steps in the layout.`,
+  );
+
 export const pipelineDefinitionSchema = z.strictObject({
   ...pipelineDefinitionShape,
   steps: pipelineStepNamesSchema,
+  edges: pipelineEdgesSchema.optional(),
+  layout: pipelineLayoutSchema.optional(),
 });
 
 export const taskSpecSchema = z.strictObject({
@@ -194,6 +229,17 @@ export const resolvedStepSchema = stepDefinitionSchema.safeExtend({
   notes: definitionNotesSchema,
 });
 
+export const resolvedGraphEdgeSchema = z.strictObject({
+  from: stepNameSchema,
+  to: stepNameSchema,
+  when: pipelineEdgeConditionSchema,
+});
+
+export const resolvedGraphSchema = z.strictObject({
+  explicit: z.boolean(),
+  edges: z.array(resolvedGraphEdgeSchema).max(pipelineDefinitionLimits.edges),
+});
+
 export const resolvedPipelineSchema = z
   .strictObject({
     ...pipelineDefinitionShape,
@@ -203,11 +249,18 @@ export const resolvedPipelineSchema = z
       .array(resolvedStepSchema)
       .min(1)
       .max(pipelineDefinitionLimits.pipelineSteps),
+    edges: pipelineEdgesSchema.optional(),
+    layout: pipelineLayoutSchema.optional(),
+    graph: resolvedGraphSchema.optional(),
   })
   .refine(value => !hasDuplicates(value.steps.map(step => step.name)), {
     path: ['steps'],
     message: 'List each step once.',
-  });
+  })
+  .transform(({ graph, ...pipeline }) => ({
+    ...pipeline,
+    graph: graph ?? { explicit: false, edges: implicitEdges(pipeline.steps) },
+  }));
 
 export const definitionIssueSchema = z.strictObject({
   severity: z.enum(['error', 'warning']),
@@ -254,3 +307,6 @@ export type ResolvedPipeline = z.infer<typeof resolvedPipelineSchema>;
 export type TaskSpecSummary = z.infer<typeof taskSpecSummarySchema>;
 export type DefinitionIssue = z.infer<typeof definitionIssueSchema>;
 export type DefinitionCatalog = z.infer<typeof definitionCatalogSchema>;
+export type PipelineEdgeCondition = z.infer<typeof pipelineEdgeConditionSchema>;
+export type PipelineLayout = z.infer<typeof pipelineLayoutSchema>;
+export type ResolvedGraph = z.infer<typeof resolvedGraphSchema>;
