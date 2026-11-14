@@ -313,6 +313,7 @@ const verdicts: Record<PipelineStepState, StepResult['status'] | null> = {
   skipped: null,
   interrupted: null,
   uncertain: null,
+  unreached: null,
 };
 
 export const isPipelineDemoEnabled = (packaged: boolean) =>
