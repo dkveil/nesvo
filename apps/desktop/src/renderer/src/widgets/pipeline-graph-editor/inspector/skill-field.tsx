@@ -40,6 +40,7 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
   const choose = (name: string) => {
     onChange(name);
     setOpen(false);
+    setNavigated(false);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;
@@ -86,7 +87,10 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
           setActive(0);
           setNavigated(false);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setOpen(true);
+          setNavigated(false);
+        }}
         onBlur={() => setOpen(false)}
         onKeyDown={onKeyDown}
         className={cn(inspectorInput, 'font-mono')}
