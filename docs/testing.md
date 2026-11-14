@@ -80,6 +80,8 @@ P6.1 extends these same cases and the principal desktop scenario. Codex discover
 
 The graph editor extends the principal desktop scenario after the pipeline block. It creates a pipeline from the Pipelines view, adds fixture steps from the palette, connects them by dragging handles, sets one condition in the edge inspector, saves and asserts the file on disk (`steps` order, the two `edges` strings, the `layout` keys) and the host's resolved graph; it reopens the pipeline, counts the nodes, asserts the inline refusal of a cross-phase connection, provokes a `pipeline-definition-conflict` by changing the file outside the editor and reloads from the dialog, and colours a finished run on its nodes. Serialization is checked by the round trip through the host loader inside that scenario rather than by a unit test; the look is checked visually with the dark and light screenshots the scenario can write.
 
+The assistant dock follows in the same scenario. It opens the dock in the editor, picks Claude Code, sends a fixture request that answers without a proposal and one that proposes a new step and a new pipeline, checks that the diffs and the operator's text render without the wrapper, writes the step file on disk before Apply to get a conflict, reloads, applies both changes, reads the files back, opens the new pipeline in the editor and opens the assistant session.
+
 Run bun run check and bun run build for foundation changes.
 Run bun run smoke:desktop when a desktop or host transport/lifecycle change affects that path.
 After packaging, run the same scenario with NESVO_PACKAGED_EXECUTABLE set to the executable.
