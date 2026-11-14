@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { stepNameSchema } from '../pipelines/definitions';
 import { claudeModelSchema } from '../sessions';
 import {
   SCHEDULE_TIME_PATTERN,
@@ -70,6 +71,11 @@ export const scheduledJobTimeZoneSchema = z
   .refine(isValidTimeZone, 'Use an IANA time zone such as Europe/Warsaw.')
   .transform(canonicalizeTimeZone);
 
+export const scheduledJobPipelineSchema = z.strictObject({
+  name: stepNameSchema,
+  specPath: z.string().min(1).max(scheduledJobLimits.directory),
+});
+
 const scheduledJobDefinitionShape = {
   name: z
     .string()
@@ -80,9 +86,8 @@ const scheduledJobDefinitionShape = {
   prompt: z
     .string()
     .trim()
-    .min(1)
     .max(scheduledJobLimits.prompt)
-    .regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/),
+    .regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/),
   directory: z.string().trim().max(scheduledJobLimits.directory),
   provider: scheduledJobProviderSchema,
   model: z.string().trim().min(1).max(scheduledJobLimits.model),
@@ -97,6 +102,7 @@ const scheduledJobDefinitionShape = {
     .min(scheduledJobLimits.minTimeoutMinutes)
     .max(scheduledJobLimits.maxTimeoutMinutes)
     .default(scheduledJobLimits.defaultTimeoutMinutes),
+  pipeline: scheduledJobPipelineSchema.nullable().default(null),
 };
 
 type ProviderRuleSubject = {
@@ -124,12 +130,26 @@ const enforceProviderRules = (
     });
 };
 
+const enforcePromptRule = (
+  value: { prompt: string; pipeline: unknown },
+  context: z.RefinementCtx,
+) => {
+  if (value.prompt === '' && !value.pipeline)
+    context.addIssue({
+      code: 'custom',
+      path: ['prompt'],
+      message:
+        'A scheduled pipeline takes its task from the spec; the prompt may stay empty',
+    });
+};
+
 const idSchema = z.uuid();
 const revisionSchema = z.number().int().positive();
 
 export const scheduledJobDefinitionSchema = z
   .strictObject(scheduledJobDefinitionShape)
-  .superRefine(enforceProviderRules);
+  .superRefine(enforceProviderRules)
+  .superRefine(enforcePromptRule);
 
 export const scheduledJobSchema = z
   .strictObject({
@@ -140,7 +160,8 @@ export const scheduledJobSchema = z
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
-  .superRefine(enforceProviderRules);
+  .superRefine(enforceProviderRules)
+  .superRefine(enforcePromptRule);
 
 export const scheduledJobRunStatusSchema = z.enum([
   'starting',
@@ -174,6 +195,7 @@ export const scheduledJobRunSchema = z
     missedCount: z.number().int().min(0),
     sessionId: idSchema.nullable(),
     runId: idSchema.nullable(),
+    pipelineRunId: idSchema.nullable().default(null),
     reviewId: idSchema.nullable(),
     resetAt: z.iso.datetime().nullable(),
     startedAt: z.iso.datetime().nullable(),
@@ -196,7 +218,8 @@ export const saveScheduledJobSchema = z
     expectedRevision: revisionSchema.nullable(),
     ...scheduledJobDefinitionShape,
   })
-  .superRefine(enforceProviderRules);
+  .superRefine(enforceProviderRules)
+  .superRefine(enforcePromptRule);
 
 export const setScheduledJobActiveSchema = z.strictObject({
   id: idSchema,
@@ -240,6 +263,7 @@ export const scheduledJobSessionOriginSchema = z.strictObject({
   runId: idSchema,
 });
 
+export type ScheduledJobPipeline = z.infer<typeof scheduledJobPipelineSchema>;
 export type ScheduledJobSchedule = z.infer<typeof scheduledJobScheduleSchema>;
 export type ScheduledJobDefinition = z.infer<
   typeof scheduledJobDefinitionSchema

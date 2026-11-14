@@ -102,6 +102,9 @@ import {
   startPipelineTaskSchema,
   stopPipelineRunSchema,
   validatePipelineDefinitionsSchema,
+  pipelineAssistantProposalEventSchema,
+  pipelineAssistantSendSchema,
+  pipelineAssistantTurnSchema,
   type DecidePipelineGateInput,
   type DefinitionCatalog,
   type DefinitionWriteResult,
@@ -117,6 +120,8 @@ import {
   type SkipPipelineStepInput,
   type StartPipelineTaskInput,
   type ValidatePipelineDefinitionsInput,
+  type PipelineAssistantSendInput,
+  type PipelineAssistantTurn,
 } from './pipelines';
 
 export * from './sessions';
@@ -159,6 +164,9 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('pipeline-step-changed'),
     step: pipelineStepRecordSchema,
+  }),
+  pipelineAssistantProposalEventSchema.extend({
+    type: z.literal('pipeline-assistant-proposal'),
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -330,6 +338,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     method: z.literal('pipeline-metrics'),
     input: pipelineMetricsInputSchema,
   }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('pipeline-assistant-send'),
+    input: pipelineAssistantSendSchema,
+  }),
 ]);
 
 export const hostHealthSchema = z.strictObject({
@@ -485,6 +498,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     metrics: pipelineMetricsSchema,
   }),
   z.strictObject({
+    type: z.literal('pipeline-assistant-turn'),
+    id: z.uuid(),
+    turn: pipelineAssistantTurnSchema,
+  }),
+  z.strictObject({
     type: z.literal('error'),
     id: z.uuid().nullable(),
     code: z.enum([
@@ -594,6 +612,10 @@ export type PipelinesApi = {
     hostId: HostId,
     input: PipelineMetricsInput,
   ) => Promise<PipelineMetrics>;
+  assistantSend: (
+    hostId: HostId,
+    input: PipelineAssistantSendInput,
+  ) => Promise<PipelineAssistantTurn>;
 };
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;

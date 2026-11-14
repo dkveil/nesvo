@@ -11,6 +11,7 @@ import {
   pipelineRunPageSchema,
   pipelineRunSchema,
   pipelineStepRecordSchema,
+  pipelineAssistantProposalEventSchema,
 } from './pipelines';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
@@ -121,6 +122,8 @@ export const desktopPipelineRunDetailSchema = pipelineRunDetailSchema.extend({
   run: desktopPipelineRunSchema,
   steps: z.array(desktopPipelineStepRecordSchema),
 });
+export const desktopPipelineAssistantProposalSchema =
+  pipelineAssistantProposalEventSchema.extend({ hostId: hostIdSchema });
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
 export type DesktopReview = z.infer<typeof desktopReviewSchema>;
 export type DesktopScheduledJob = z.infer<typeof desktopScheduledJobSchema>;
@@ -176,6 +179,9 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('pipeline-step-changed'),
     step: desktopPipelineStepRecordSchema,
+  }),
+  desktopPipelineAssistantProposalSchema.extend({
+    type: z.literal('pipeline-assistant-proposal'),
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

@@ -3,3 +3,4 @@ export * from './results';
 export * from './runs';
 export * from './metrics';
 export * from './commands';
+export * from './assistant';
