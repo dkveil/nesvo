@@ -13037,7 +13037,7 @@ test(
     };
     process.env.NESVO_TEST_MODE = '1';
     process.env.NESVO_PIPELINES_HOME = join(directory, 'global');
-    const host = launch(join(directory, 'data'), pidFile);
+    let host = launch(join(directory, 'data'), pidFile);
     const ownedPids = new Set();
     t.after(async () => {
       for (const [key, value] of Object.entries(environment))
@@ -13320,6 +13320,39 @@ test(
           proposal: null,
           issues: [],
         });
+      },
+    );
+
+    await t.test(
+      'a Codex conversation runs read-only and a restarted host continues a conversation',
+      async () => {
+        const codex = await send('Describe the pipeline.', {
+          provider: 'Codex',
+          model: 'default',
+        });
+        assert.equal(codex.type, 'pipeline-assistant-turn', codex.message);
+        assert.equal((await proposal(codex.turn.messageId)).status, 'invalid');
+        const turns = (await readFile(pidFile + '.turns', 'utf8'))
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line))
+          .filter(turn => turn.prompt.includes('[begin operator-request '));
+        assert.equal(turns.length, 1);
+        assert.equal(turns[0].sandbox, 'readOnly');
+        assert.match(turns[0].prompt, /\[begin catalog [0-9a-f]+\]\n/);
+        await host.stop();
+        host = launch(join(directory, 'data'), pidFile);
+        const resumed = await send('fixture:assistant-prose', { sessionId });
+        assert.equal(resumed.type, 'pipeline-assistant-turn', resumed.message);
+        assert.equal(resumed.turn.sessionId, sessionId);
+        assert.equal(
+          (await proposal(resumed.turn.messageId)).status,
+          'invalid',
+        );
+        const last = (await prompts()).at(-1);
+        assert.equal(last.resumed, true);
+        assert.match(last.prompt, /\[begin open-document [0-9a-f]+\]\n/);
+        assert.doesNotMatch(last.prompt, /\[begin catalog /);
       },
     );
 
