@@ -18,6 +18,7 @@ type SegmentedProps<T extends string> = {
   disabled?: boolean;
   describedBy?: string;
   invalid?: boolean;
+  toggle?: boolean;
   onChange: (value: T) => void;
 };
 
@@ -49,17 +50,19 @@ export function Segmented<T extends string>({
   disabled = false,
   describedBy,
   invalid = false,
+  toggle = false,
   onChange,
 }: SegmentedProps<T>) {
   return (
     <div
-      role="radiogroup"
+      role={toggle ? 'group' : 'radiogroup'}
       aria-label={label}
       aria-describedby={describedBy}
       aria-invalid={invalid || undefined}
       aria-disabled={disabled || undefined}
       onKeyDown={event => {
-        if (!disabled) moveSelection(event, options, value, onChange);
+        if (!disabled && !toggle)
+          moveSelection(event, options, value, onChange);
       }}
       className={cn(
         'flex w-full gap-0.5 rounded-lg bg-segment-track p-0.5',
@@ -72,17 +75,18 @@ export function Segmented<T extends string>({
           <button
             key={option.value}
             type="button"
-            role="radio"
+            role={toggle ? undefined : 'radio'}
             data-value={option.value}
-            aria-checked={checked}
-            tabIndex={checked ? 0 : -1}
+            aria-checked={toggle ? undefined : checked}
+            aria-pressed={toggle ? checked : undefined}
+            tabIndex={toggle || checked ? 0 : -1}
             title={option.title}
             disabled={disabled || option.disabled}
             onClick={() => onChange(option.value)}
             className={cn(
               'inline-flex h-6 min-w-0 flex-1 items-center justify-center rounded-md px-2 text-2xs text-muted-foreground transition-colors duration-100 outline-none',
               'enabled:hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
-              'aria-checked:bg-segment-active aria-checked:text-foreground',
+              'aria-checked:bg-segment-active aria-checked:text-foreground aria-pressed:bg-segment-active aria-pressed:text-foreground',
             )}
           >
             <span className="truncate">{option.label}</span>

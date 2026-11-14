@@ -12,8 +12,8 @@ import type {
 } from '@nesvo/contracts';
 import type { ProviderStates } from '@/entities/session';
 import type { EditorEdge, StepDraft } from '@/entities/pipeline-graph';
-import { EdgeInspectorPlaceholder } from './edge-inspector';
-import { PipelineInspectorPlaceholder } from './pipeline-inspector';
+import { EdgeInspectorForm } from './edge-inspector';
+import { PipelineInspectorForm } from './pipeline-inspector';
 import { StartInspectorPlaceholder } from './start-inspector';
 import { StepInspectorForm } from './step-inspector';
 
@@ -82,8 +82,8 @@ export type StartInspectorProps = {
 export const StepInspector: ComponentType<StepInspectorProps> =
   StepInspectorForm;
 export const PipelineInspector: ComponentType<PipelineInspectorProps> =
-  PipelineInspectorPlaceholder;
+  PipelineInspectorForm;
 export const EdgeInspector: ComponentType<EdgeInspectorProps> =
-  EdgeInspectorPlaceholder;
+  EdgeInspectorForm;
 export const StartInspector: ComponentType<StartInspectorProps> =
   StartInspectorPlaceholder;
