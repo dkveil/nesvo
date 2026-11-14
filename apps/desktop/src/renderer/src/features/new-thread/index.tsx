@@ -130,6 +130,7 @@ export function NewThread({
     !blockedReason &&
     (pipeline?.pipelineName ? !!pipeline.specPath.trim() : !!text.trim());
   const changePipeline = (next: PipelineChoice | null) => {
+    if (next?.pipelineName) setSkill(null);
     setPipeline(next);
     setIssues([]);
     setError('');
