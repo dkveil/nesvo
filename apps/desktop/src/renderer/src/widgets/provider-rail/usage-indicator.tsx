@@ -1,6 +1,6 @@
 import { Tooltip } from 'radix-ui';
 import { cn } from 'cn';
-import { providerMarks, type Provider } from '@/entities/session';
+import type { Provider } from '@/entities/session';
 import { IndicatorTooltip } from './indicator-tooltip';
 import { UsageBar } from './usage-bar';
 import { UsageRing } from './usage-ring';
@@ -66,14 +66,14 @@ export function UsageIndicator({
         >
           {layout === 'bars' ? (
             <UsageBar
-              mark={providerMarks[provider]}
+              provider={provider}
               remaining={shown}
               level={level}
               state={indicator}
             />
           ) : (
             <UsageRing
-              mark={providerMarks[provider]}
+              provider={provider}
               remaining={shown}
               level={level}
               state={indicator}

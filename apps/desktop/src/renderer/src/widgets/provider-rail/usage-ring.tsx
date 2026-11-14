@@ -1,8 +1,9 @@
 import { cn } from 'cn';
+import { ProviderGlyph, type Provider } from '@/entities/session';
 import type { AllowanceLevel, IndicatorState } from './usage-state';
 
 type Props = {
-  mark: string;
+  provider: Provider;
   remaining: number | null;
   level: AllowanceLevel | null;
   state: IndicatorState;
@@ -11,7 +12,7 @@ type Props = {
 const RING_RADIUS = 15;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-export function UsageRing({ mark, remaining, level, state }: Props) {
+export function UsageRing({ provider, remaining, level, state }: Props) {
   const hasArc = remaining !== null;
   const offset = RING_CIRCUMFERENCE * (1 - (remaining ?? 0) / 100);
   return (
@@ -57,14 +58,13 @@ export function UsageRing({ mark, remaining, level, state }: Props) {
           />
         )}
       </svg>
-      <span
+      <ProviderGlyph
+        provider={provider}
         className={cn(
-          'text-[8px] leading-none font-semibold tracking-wide',
+          'size-3',
           state === 'current' ? 'text-foreground' : 'text-muted-foreground',
         )}
-      >
-        {mark}
-      </span>
+      />
       {state === 'offline' && (
         <span
           aria-hidden="true"

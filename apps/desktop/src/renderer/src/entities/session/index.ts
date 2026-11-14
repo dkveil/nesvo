@@ -44,9 +44,9 @@ export type ProviderState = {
 export type ProviderStates = Record<Provider, ProviderState>;
 
 export const providers: Provider[] = ['Claude Code', 'Codex'];
-export const providerMarks: Record<Provider, string> = {
-  'Claude Code': 'CL',
-  Codex: 'CX',
+export const providerSlugs: Record<Provider, string> = {
+  'Claude Code': 'claude-code',
+  Codex: 'codex',
 };
 export const modeLabels: Record<Session['mode'], string> = {
   'read-only': 'Read-only',

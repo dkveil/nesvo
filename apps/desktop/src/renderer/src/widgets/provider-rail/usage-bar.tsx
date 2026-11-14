@@ -1,4 +1,5 @@
 import { cn } from 'cn';
+import { ProviderGlyph, type Provider } from '@/entities/session';
 import {
   formatPercent,
   type AllowanceLevel,
@@ -6,7 +7,7 @@ import {
 } from './usage-state';
 
 type Props = {
-  mark: string;
+  provider: Provider;
   remaining: number | null;
   level: AllowanceLevel | null;
   state: IndicatorState;
@@ -18,18 +19,17 @@ const stateText: Partial<Record<IndicatorState, string>> = {
   checking: 'Checking…',
 };
 
-export function UsageBar({ mark, remaining, level, state }: Props) {
+export function UsageBar({ provider, remaining, level, state }: Props) {
   const hasFill = remaining !== null;
   return (
     <span className="flex w-full items-center gap-2.5">
-      <span
+      <ProviderGlyph
+        provider={provider}
         className={cn(
-          'w-5 shrink-0 text-[10px] leading-none font-semibold tracking-wide',
+          'size-3.5',
           state === 'current' ? 'text-foreground' : 'text-muted-foreground',
         )}
-      >
-        {mark}
-      </span>
+      />
       <span
         aria-hidden="true"
         className={cn(

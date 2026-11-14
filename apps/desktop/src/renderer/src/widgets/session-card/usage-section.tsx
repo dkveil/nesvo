@@ -1,5 +1,5 @@
 import { cn } from 'cn';
-import { providers, type Provider } from '@/entities/session';
+import { ProviderGlyph, providers, type Provider } from '@/entities/session';
 import {
   formatPercent,
   isStaleUsage,
@@ -65,8 +65,12 @@ export function UsageSection({ states, connected }: Props) {
             title={`${provider} · ${window.label}${stale ? ' · last observation' : ''}`}
             className="col-span-3 grid h-7 grid-cols-subgrid items-center px-2.5 text-xs"
           >
-            <span className="min-w-0 truncate text-muted-foreground">
-              {label}
+            <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+              <ProviderGlyph
+                provider={provider}
+                className="size-3.5 text-current"
+              />
+              <span className="truncate">Weekly</span>
             </span>
             <span
               role="progressbar"

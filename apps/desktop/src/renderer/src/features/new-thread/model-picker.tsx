@@ -4,7 +4,7 @@ import { cn } from 'cn';
 import {
   effortLabel,
   modelLabel,
-  providerMarks,
+  providerSlugs,
   providers,
   ProviderGlyph,
   providerStatusLabel,
@@ -86,7 +86,7 @@ export function ModelPicker({
     if (next) {
       selectProvider(next);
       document
-        .getElementById(`thread-provider-${providerMarks[next]}`)
+        .getElementById(`thread-provider-${providerSlugs[next]}`)
         ?.focus();
     }
   };
@@ -159,7 +159,7 @@ export function ModelPicker({
             return (
               <button
                 key={item}
-                id={`thread-provider-${providerMarks[item]}`}
+                id={`thread-provider-${providerSlugs[item]}`}
                 type="button"
                 role="radio"
                 aria-checked={item === provider}
@@ -169,13 +169,16 @@ export function ModelPicker({
                 onKeyDown={onProviderKeyDown}
                 onClick={() => selectProvider(item)}
                 className={cn(
-                  'relative flex size-7 items-center justify-center rounded-md text-[10px] font-semibold tracking-tight text-muted-foreground transition-colors duration-100 outline-none',
+                  'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
                   'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   'after:absolute after:top-1.5 after:-right-1.5 after:h-4 after:w-0.5 after:rounded-full after:bg-transparent',
                   item === provider && 'text-foreground after:bg-primary',
                 )}
               >
-                {providerMarks[item]}
+                <ProviderGlyph
+                  provider={item}
+                  className="size-4 text-current"
+                />
                 <span
                   aria-hidden="true"
                   className={cn(
