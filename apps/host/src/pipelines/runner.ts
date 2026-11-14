@@ -448,16 +448,33 @@ const unreachedReason = (source: string, outcome: NodeOutcome) =>
 const isSerial = (step: PipelineStepRecord) =>
   SERIAL_STEP_TYPES.includes(step.type);
 
+const EXCLUSIVE_STEP_TYPES = {
+  command: [],
+  action: ['human'],
+  agent: [],
+  human: ['action'],
+} as const satisfies Record<StepType, readonly StepType[]>;
+
 const admits = (
   rows: readonly PipelineStepRecord[],
   step: PipelineStepRecord,
-): boolean =>
-  isSerial(step)
+): boolean => {
+  const excluded: readonly StepType[] = EXCLUSIVE_STEP_TYPES[step.type];
+  if (
+    rows.some(
+      other =>
+        excluded.includes(other.type) &&
+        SESSION_STEP_STATES.includes(other.state),
+    )
+  )
+    return false;
+  return isSerial(step)
     ? !rows.some(
         other => isSerial(other) && SESSION_STEP_STATES.includes(other.state),
       )
     : rows.filter(other => !isSerial(other) && other.state === 'running')
         .length < PARALLEL_STEP_LIMIT;
+};
 
 const checkingMove = (
   run: PipelineRun,
@@ -472,6 +489,11 @@ const checkingMove = (
     if (!step) return WAIT;
     rows.push(step);
   }
+  if (
+    !run.pipeline.graph.explicit &&
+    rows.some(step => ACTIVE_STEP_STATES.includes(step.state))
+  )
+    return WAIT;
   const blocked = rows.find(step => step.state === 'blocked');
   if (blocked)
     return {
@@ -502,8 +524,12 @@ const checkingMove = (
   const pending = rows.filter(step => step.state === 'pending');
   const ready = halted
     ? []
-    : pending.filter(step =>
-        edgesInto(step).every(edge => edge.state === 'fired'),
+    : pending.filter(
+        step =>
+          edgesInto(step).every(edge => edge.state === 'fired') &&
+          ancestors(run.pipeline.graph, step.name).every(name =>
+            Boolean(outcomeOf(named.get(name))),
+          ),
       );
   const start = ready.find(step => admits(all, step));
   if (start) return { kind: 'start-step', step: start };
@@ -567,7 +593,7 @@ export function nextMove(
   context: MoveContext,
 ): Move {
   const move = runMove(run, steps, context);
-  return move.kind === 'begin-phase' &&
+  return (move.kind === 'begin-phase' || move.kind === 'send-turn') &&
     [...latestAttempts(steps).values()].some(step => step.state === 'running')
     ? WAIT
     : move;
@@ -779,9 +805,7 @@ export class PipelineRunner {
       run.phase && !correction
         ? phaseIndices(run.pipeline, run.phase).flatMap(index => {
             const step = latest.get(index);
-            return step && REEVALUATED_STEP_STATES.includes(step.state)
-              ? [step]
-              : [];
+            return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
           })
         : [];
     const status = correction
@@ -1285,10 +1309,6 @@ const RESUMABLE_STEP_STATES: readonly PipelineStepState[] = [
   'failed',
   'error',
   'blocked',
-];
-const REEVALUATED_STEP_STATES: readonly PipelineStepState[] = [
-  ...RESUMABLE_STEP_STATES,
-  'unreached',
 ];
 const DEAD_TURN_STATES: readonly TurnState[] = [
   'failed',
