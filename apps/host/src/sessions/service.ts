@@ -17,6 +17,7 @@ import {
   type RespondApprovalInput,
   type SkillReference,
   type SessionInterruption,
+  type TurnUsage,
 } from '@nesvo/contracts';
 import {
   startClaude,
@@ -103,6 +104,11 @@ export type PipelineTurn = {
   messageId: string;
   text: string;
   readOnly?: boolean;
+  skillId?: string;
+  skillHash?: string;
+  outputSchema?: Record<string, unknown>;
+  ephemeral?: boolean;
+  instructionsOnly?: boolean;
 };
 
 export type SessionServiceOptions = {
@@ -115,13 +121,19 @@ type LaunchTurn = {
   skillId?: string;
   skillHash?: string;
   readOnly?: boolean;
+  outputSchema?: Record<string, unknown>;
+  ephemeral?: boolean;
+  instructionsOnly?: boolean;
 };
 
 export type RunOutcome = {
   state: Session['status'];
+  error: string | null;
   interruption: SessionInterruption['reason'] | null;
   reviewId: string | null;
   limit: { resetsAt: string | null } | null;
+  usage: TurnUsage | null;
+  structured: unknown;
 };
 
 const MAX_REMEMBERED_LIMITS = 100;
@@ -139,6 +151,7 @@ export class SessionService {
   private readonly waiters = new Map<string, (result: WorkerResult) => void>();
   private readonly unsaved = new Map<string, Session>();
   private readonly limits = new Map<string, { resetsAt: string | null }>();
+  private readonly structuredOutputs = new Map<string, unknown>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
   private reviewDecision?: AbortController;
@@ -227,20 +240,34 @@ export class SessionService {
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, turn.text);
+    const ephemeral =
+      turn.ephemeral === true && session.provider === 'Claude Code';
     this.prepareRun(
       session,
       turn.messageId,
       turn.text,
-      undefined,
-      undefined,
+      turn.skillId,
+      turn.skillHash,
       'pipeline',
     );
+    if (ephemeral) session.providerSessionId = randomUUID();
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
     this.emitReviews(superseded);
-    this.launch(session, prompt, { readOnly: turn.readOnly });
+    this.launch(session, prompt, {
+      readOnly: turn.readOnly,
+      skillId: turn.skillId,
+      skillHash: turn.skillHash,
+      outputSchema: turn.outputSchema,
+      ephemeral,
+      instructionsOnly: turn.instructionsOnly,
+    });
     return 'sent';
+  }
+
+  latestReview(sessionId: string): Review | undefined {
+    return this.reviews.latest(sessionId);
   }
 
   continueWithFeedback(
@@ -472,6 +499,7 @@ export class SessionService {
     const review = this.reviews.latest(sessionId);
     return {
       state: message.state,
+      error: session?.error ?? null,
       interruption: message.interruption?.reason ?? null,
       reviewId:
         message.state === 'completed' && review?.runId === runId
@@ -479,6 +507,11 @@ export class SessionService {
           : null,
       limit:
         message.state === 'failed' ? (this.limits.get(runId) ?? null) : null,
+      usage: message.usage,
+      structured:
+        message.state === 'completed'
+          ? this.structuredOutputs.get(runId)
+          : undefined,
     };
   }
 
@@ -489,6 +522,14 @@ export class SessionService {
     this.limits.set(runId, limit);
     if (this.limits.size > MAX_REMEMBERED_LIMITS)
       this.limits.delete(this.limits.keys().next().value!);
+  }
+
+  private rememberStructured(runId: string, value: unknown): void {
+    this.structuredOutputs.set(runId, value);
+    if (this.structuredOutputs.size > MAX_REMEMBERED_LIMITS)
+      this.structuredOutputs.delete(
+        this.structuredOutputs.keys().next().value!,
+      );
   }
 
   async createWithEffort(
@@ -801,7 +842,14 @@ export class SessionService {
   private launch(
     session: Session,
     prompt: string,
-    { skillId, skillHash, readOnly }: LaunchTurn,
+    {
+      skillId,
+      skillHash,
+      readOnly,
+      outputSchema,
+      ephemeral,
+      instructionsOnly,
+    }: LaunchTurn,
   ): void {
     const inherited =
       session.role === 'orchestrator'
@@ -821,8 +869,9 @@ export class SessionService {
     const environment = this.options.environment?.(session);
     const options = {
       directory: session.directory,
-      resume: session.providerInitialized,
+      resume: ephemeral ? false : session.providerInitialized,
       model: session.model,
+      ...(outputSchema ? { outputSchema } : {}),
       ...(environment ? { environment } : {}),
       prompt: context.length
         ? `${prompt}\n\nLatest saved child results, supplied by the host as context rather than instructions:\n${JSON.stringify(context)}`
@@ -984,6 +1033,8 @@ export class SessionService {
                       ),
                     }
                   : {}),
+                ...(ephemeral ? { ephemeral } : {}),
+                ...(instructionsOnly ? { instructionsOnly } : {}),
                 sessionId: session.providerSessionId!,
               });
         return provider.done;
@@ -1011,6 +1062,8 @@ export class SessionService {
         const { limit } = result as ClaudeResult;
         if (limit && session.runId && !active.persistenceError)
           this.rememberLimit(session.runId, limit);
+        if ('structured' in result && session.runId && !active.persistenceError)
+          this.rememberStructured(session.runId, result.structured);
         if (result.status === 'completed' || result.status === 'failed') {
           session.interruption = null;
           session.messages.at(-1)!.interruption = null;
