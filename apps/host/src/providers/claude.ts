@@ -32,6 +32,7 @@ export type ClaudeResult = {
   interruption?: 'provider-disconnected';
   usage?: TurnUsage;
   limit?: { resetsAt: string | null };
+  structured?: unknown;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -68,6 +69,9 @@ const requiredFlags = [
   '--settings',
   '--session-id',
   '--resume',
+  '--json-schema',
+  '--no-session-persistence',
+  '--setting-sources',
   '--model',
 ];
 const maxLineBytes = 1024 * 1024;
@@ -636,6 +640,9 @@ export function startClaude(options: {
   model: string;
   prompt: string;
   environment?: Readonly<Record<string, string>>;
+  outputSchema?: Record<string, unknown>;
+  ephemeral?: boolean;
+  instructionsOnly?: boolean;
   onEvent: (event: ClaudeEvent) => void;
 }): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
   let stopped = false;
@@ -686,6 +693,10 @@ export function startClaude(options: {
         options.sessionId,
       ];
       if (options.model !== 'default') args.push('--model', options.model);
+      if (options.ephemeral) args.push('--no-session-persistence');
+      if (options.instructionsOnly) args.push('--setting-sources', '');
+      if (options.outputSchema)
+        args.push('--json-schema', JSON.stringify(options.outputSchema));
       if (stopped) return { status: 'stopped', error: null };
       owned = ownProcess(
         inspection.executable,
@@ -708,6 +719,7 @@ export function startClaude(options: {
       let stderr = '';
       let resultSeen = false;
       let usage: TurnUsage | null = null;
+      const structured: { output?: { value: unknown } } = {};
       let successful = false;
       let initialized = false;
       let providerFailure: string | null = null;
@@ -905,6 +917,8 @@ export function startClaude(options: {
           resultSeen = true;
           usage = claudeTurnUsage(value);
           successful = value.is_error === false && value.subtype === 'success';
+          if (options.outputSchema && 'structured_output' in value)
+            structured.output = { value: value.structured_output };
           if (!successful) {
             const errors = Array.isArray(value.errors)
               ? value.errors
@@ -919,18 +933,20 @@ export function startClaude(options: {
                     rateLimitFailure ||
                     'Claude did not complete the turn.',
             );
-          } else if (
-            !lastText &&
-            !providerFailure &&
-            !rateLimitFailure &&
-            typeof value.result === 'string' &&
-            value.result
-          ) {
-            messages.set('result-fallback', {
-              text: value.result,
-              blocks: new Map(),
-            });
-            publish();
+          } else if (!lastText && !providerFailure && !rateLimitFailure) {
+            const fallback =
+              typeof value.result === 'string' && value.result
+                ? value.result
+                : structured.output
+                  ? JSON.stringify(structured.output.value, null, 2)
+                  : '';
+            if (fallback) {
+              messages.set('result-fallback', {
+                text: fallback,
+                blocks: new Map(),
+              });
+              publish();
+            }
           }
         } else if (value.type === 'rate_limit_event') {
           const info = object(value.rate_limit_info);
@@ -1004,7 +1020,10 @@ export function startClaude(options: {
         clearTimeout(timer);
         await running.stop();
       }
-      const reported = usage ? { usage } : {};
+      const reported = {
+        ...(usage ? { usage } : {}),
+        ...(structured.output ? { structured: structured.output.value } : {}),
+      };
       if (failure) return { status: 'failed', error: failure };
       if (!exit.confirmed)
         return {

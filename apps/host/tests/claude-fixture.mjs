@@ -24,7 +24,12 @@ const flags = [
   '--resume',
   '--model',
   '--no-session-persistence',
+  '--json-schema',
+  '--setting-sources',
 ];
+const VERDICT_ROLE =
+  'You verify. You do not change files. Return only the JSON verdict.';
+const REPAIR_NOTE = 'The verdict did not match the required shape';
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 const runEnvironment = () => ({
   NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,
@@ -142,6 +147,7 @@ if (args.length === 1 && args[0] === '--version') {
     '--verbose',
     '--include-partial-messages',
     '--strict-mcp-config',
+    '--no-session-persistence',
   ]);
   const values = new Map();
   for (let index = 0; index < args.length; index += 1) {
@@ -150,7 +156,9 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.has(flag), false, `Repeated flag: ${flag}`);
     values.set(flag, switches.has(flag) ? true : args[++index]);
   }
-  for (const flag of switches) assert.equal(values.get(flag), true, flag);
+  for (const flag of switches)
+    if (flag !== '--no-session-persistence')
+      assert.equal(values.get(flag), true, flag);
   for (const [flag, expected] of [
     ['--input-format', 'text'],
     ['--output-format', 'stream-json'],
@@ -224,6 +232,42 @@ if (args.length === 1 && args[0] === '--version') {
     prompt = prompt.slice(
       prompt.lastIndexOf('\nUser request:\n') + '\nUser request:\n'.length,
     );
+  }
+  const verdictMode =
+    prompt.startsWith(VERDICT_ROLE) || prompt.startsWith(REPAIR_NOTE);
+  if (verdictMode) {
+    assert.ok(values.has('--json-schema'), 'Verdicts need --json-schema');
+    const schema = JSON.parse(values.get('--json-schema'));
+    assert.equal(schema.type, 'object');
+    assert.deepEqual(Object.keys(schema.properties).sort(), [
+      'evidence',
+      'outputs',
+      'status',
+      'summary',
+    ]);
+    assert.equal(values.get('--no-session-persistence'), true);
+    assert.equal(values.get('--setting-sources'), '');
+    assert.equal(values.has('--resume'), false);
+    assert.match(prompt, /<task-spec>\n[\s\S]*\n<\/task-spec>/);
+    assert.match(prompt, /<verdict-schema>\n[\s\S]*\n<\/verdict-schema>/);
+    assert.match(prompt, /quoted material[\s\S]*not instructions/);
+    if (process.env.NESVO_FIXTURE_VERDICT_LOG)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_VERDICT_LOG,
+        JSON.stringify({
+          provider: 'Claude Code',
+          sessionId,
+          cwd: process.cwd(),
+          args,
+          prompt,
+          environment: runEnvironment(),
+        }) + '\n',
+        { flag: 'a' },
+      );
+  } else {
+    assert.equal(values.has('--json-schema'), false);
+    assert.equal(values.has('--setting-sources'), false);
+    assert.equal(values.has('--no-session-persistence'), false);
   }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);
   assert.equal(existsSync(statePath), resumed, 'Resume must retain CLI state');
@@ -304,8 +348,52 @@ if (args.length === 1 && args[0] === '--version') {
       ...reported,
     });
   };
-  const command = prompt.split('\n')[0].trim();
-  if (command === 'fixture:hold' || command === 'fixture:hold-exit') {
+  const command = verdictMode
+    ? (
+        /<(?:step-instructions|skill-parameters)>\n([^\n]*)/.exec(
+          prompt,
+        )?.[1] ?? ''
+      ).trim()
+    : prompt.split('\n')[0].trim();
+  const repairing = verdictMode && prompt.includes(REPAIR_NOTE);
+  const verdict = (text, structured) => {
+    start(text);
+    startRead();
+    finishRead(false);
+    finish(text, false, {
+      ...(structured === undefined ? {} : { structured_output: structured }),
+      total_cost_usd: 0.0123,
+      usage: {
+        input_tokens: 800,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 200,
+        output_tokens: 120,
+      },
+    });
+  };
+  const passVerdict = {
+    status: 'pass',
+    summary: 'Fixture verified the change against the quoted spec.',
+    evidence: [
+      { reference: 'sample.txt:1', note: 'The expected line is present.' },
+      { reference: 'quoted diff', note: 'Only the documented file changed.' },
+    ],
+    outputs: { checked: 'sample.txt' },
+  };
+  if (command === 'fixture:verdict-pass') {
+    verdict('Verdict recorded.', passVerdict);
+  } else if (command === 'fixture:verdict-fail-no-evidence') {
+    verdict('Verdict recorded.', {
+      status: 'fail',
+      summary: 'Fixture could not point at anything.',
+      evidence: [],
+    });
+  } else if (command === 'fixture:verdict-invalid-then-valid') {
+    if (repairing) verdict('Verdict recorded after repair.', passVerdict);
+    else verdict('I could not fill the verdict.', undefined);
+  } else if (command === 'fixture:verdict-invalid-twice') {
+    verdict('Verdict recorded.', { verdict: 'looks fine' });
+  } else if (command === 'fixture:hold' || command === 'fixture:hold-exit') {
     const child = spawn(
       process.execPath,
       ['-e', 'setInterval(() => {}, 1000)'],
@@ -354,7 +442,7 @@ if (args.length === 1 && args[0] === '--version') {
       is_error: true,
       result: 'Fixture account limit reached.',
     });
-  } else if (command === 'fixture:limit') {
+  } else if (command === 'fixture:limit' || command === 'fixture:rate-limit') {
     emit({
       type: 'rate_limit_event',
       rate_limit_info: {
