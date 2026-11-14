@@ -2953,6 +2953,258 @@ try {
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
   await pipelinesView.waitFor();
+  const dockConsoleErrors = [];
+  const recordDockConsoleError = message => {
+    if (message.type() === 'error') dockConsoleErrors.push(message.text());
+  };
+  restartedPage.on('console', recordDockConsoleError);
+  await graphStep('check', 'command', 'pre-done', 'echo check');
+  await graphStep('approve', 'human', 'pre-push', 'Approve the change.');
+  const bothShots = async name => {
+    await editorShot(`assistant-${name}-dark`);
+    await restartedPage.evaluate(() => window.nesvo.setColorScheme('light'));
+    await delay(300);
+    await editorShot(`assistant-${name}-light`);
+    await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
+    await delay(300);
+  };
+  const deepText = locator =>
+    locator.evaluate(node => {
+      const walk = element =>
+        [
+          ...(element.shadowRoot ? element.shadowRoot.childNodes : []),
+          ...element.childNodes,
+        ]
+          .map(child =>
+            child.nodeType === Node.TEXT_NODE
+              ? child.textContent
+              : child.nodeType === Node.ELEMENT_NODE
+                ? walk(child)
+                : '',
+          )
+          .join('');
+      return walk(node);
+    });
+  await pipelinesView
+    .getByRole('button', { name: 'Edit smoke', exact: true })
+    .click();
+  await editor.waitFor();
+  const editorDock = editor.locator('[data-slot="editor-dock"]');
+  await editorDock
+    .getByRole('button', { name: 'Open assistant', exact: true })
+    .waitFor();
+  await bothShots('collapsed');
+  await editorDock
+    .getByRole('button', { name: 'Open assistant', exact: true })
+    .click();
+  const assistantDock = editorDock.getByRole('region', {
+    name: 'Assistant',
+    exact: true,
+  });
+  await assistantDock.waitFor();
+  await assistantDock.getByText(/^Describe a change to smoke\./).waitFor();
+  await bothShots('empty');
+  await assistantDock
+    .getByRole('button', { name: 'Choose model', exact: true })
+    .click();
+  const modelPopover = restartedPage.getByRole('dialog', {
+    name: 'Model',
+    exact: true,
+  });
+  await modelPopover.waitFor();
+  await modelPopover
+    .getByRole('radio', { name: 'Claude Code', exact: true })
+    .click();
+  await modelPopover.getByRole('option').first().waitFor();
+  await bothShots('model-picker');
+  await modelPopover.getByRole('option').first().click();
+  await modelPopover.waitFor({ state: 'hidden' });
+  const assistantInput = assistantDock.getByRole('textbox', {
+    name: 'Message the assistant',
+    exact: true,
+  });
+  const sendToAssistant = async (text, shot) => {
+    const before = await assistantDock.locator('[data-assistant-turn]').count();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await assistantInput.fill(text);
+      await assistantInput.press('Enter');
+      if (shot && attempt === 0) await editorShot(shot);
+      const deadline = Date.now() + 15_000;
+      let notice = '';
+      while (Date.now() < deadline) {
+        if (
+          (await assistantDock.locator('[data-assistant-turn]').count()) >
+          before
+        )
+          return;
+        const alert = assistantDock.locator('form [role="alert"]');
+        if (await alert.count()) {
+          notice = await alert.textContent();
+          break;
+        }
+        await delay(100);
+      }
+      if (!/Another session is working/.test(notice))
+        throw new Error(`The assistant did not accept "${text}". ${notice}`);
+      await delay(500);
+    }
+    throw new Error(`The assistant stayed busy for "${text}".`);
+  };
+  await sendToAssistant('fixture:assistant-prose', 'assistant-sending-dark');
+  const invalidTurn = assistantDock.locator(
+    '[data-assistant-status="invalid"]',
+  );
+  await invalidTurn.waitFor({ timeout: 30_000 });
+  await invalidTurn
+    .getByText('The assistant returned no proposal.', { exact: true })
+    .waitFor();
+  await invalidTurn
+    .getByRole('button', { name: 'Show reply', exact: true })
+    .click();
+  await invalidTurn
+    .getByText('I would add a lint step before the approval.')
+    .waitFor();
+  await bothShots('no-proposal');
+  await sendToAssistant('fixture:assistant-proposal');
+  const proposalTurn = assistantDock.locator(
+    '[data-assistant-status="proposal"]',
+  );
+  await proposalTurn.waitFor({ timeout: 30_000 });
+  const lintCard = proposalTurn.locator('[data-proposal-change="lint-check"]');
+  const flowCard = proposalTurn.locator(
+    '[data-proposal-change="assistant-flow"]',
+  );
+  await lintCard.getByText('New file', { exact: true }).waitFor();
+  await flowCard.getByText('New file', { exact: true }).waitFor();
+  assert.match(
+    await deepText(lintCard.locator('[data-assistant-diff]')),
+    /echo lint passed/,
+  );
+  assert.match(
+    await deepText(flowCard.locator('[data-assistant-diff]')),
+    /steps: \[lint-check, check, approve\]/,
+  );
+  const dockText = await assistantDock.textContent();
+  assert.equal(dockText.includes('[begin operator-request'), false);
+  assert.equal(dockText.includes('fixture-secret-value'), false);
+  assert.deepEqual(
+    await assistantDock
+      .locator('[data-assistant-turn] .bg-message-surface')
+      .allTextContents(),
+    ['fixture:assistant-prose', 'fixture:assistant-proposal'],
+  );
+  const lintPath = join(pipelineRoot, 'steps', 'lint-check.md');
+  const flowPath = join(pipelineRoot, 'pipelines', 'assistant-flow.md');
+  await assert.rejects(readFile(lintPath, 'utf8'));
+  await assert.rejects(readFile(flowPath, 'utf8'));
+  await bothShots('proposal');
+  const outsideLint =
+    '---\nname: lint-check\ntype: command\nphase: pre-done\n---\necho written outside\n';
+  await writeFile(lintPath, outsideLint);
+  await lintCard.getByRole('button', { name: 'Apply', exact: true }).click();
+  await lintCard
+    .getByText(/^The file changed since the assistant read it\./)
+    .waitFor();
+  assert.equal(await readFile(lintPath, 'utf8'), outsideLint);
+  await bothShots('conflict');
+  await lintCard.getByRole('button', { name: 'Reload', exact: true }).click();
+  await lintCard
+    .getByText('Changes the current file', { exact: true })
+    .waitFor();
+  assert.match(
+    await deepText(lintCard.locator('[data-assistant-diff]')),
+    /echo written outside/,
+  );
+  await lintCard.getByRole('button', { name: 'Apply', exact: true }).click();
+  await proposalTurn
+    .locator(
+      '[data-proposal-change="lint-check"][data-proposal-state="applied"]',
+    )
+    .waitFor();
+  assert.equal(
+    await readFile(lintPath, 'utf8'),
+    '---\nname: lint-check\ntype: command\nphase: pre-done\ntimeout: 2m\n---\necho lint passed\n',
+  );
+  await flowCard.getByRole('button', { name: 'Apply', exact: true }).click();
+  await proposalTurn
+    .locator(
+      '[data-proposal-change="assistant-flow"][data-proposal-state="applied"]',
+    )
+    .waitFor();
+  assert.match(
+    await readFile(flowPath, 'utf8'),
+    /steps: \[lint-check, check, approve\]/,
+  );
+  await bothShots('applied');
+  const assistantSessionTitle = 'Pipeline assistant · smoke';
+  await assistantDock
+    .getByRole('button', { name: 'Collapse assistant', exact: true })
+    .click();
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'Read', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'Edit assistant-flow', exact: true })
+    .click();
+  await editor.waitFor();
+  for (const name of ['lint-check', 'check', 'approve'])
+    await editor.locator(`[data-editor-node="${name}"]`).waitFor();
+  await editorDock
+    .getByRole('button', { name: 'Open assistant', exact: true })
+    .click();
+  await assistantDock.waitFor();
+  await assistantDock
+    .getByText(/^Describe a change to assistant-flow\./)
+    .waitFor();
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'Edit smoke', exact: true })
+    .click();
+  await editor.waitFor();
+  await assistantDock
+    .getByRole('button', { name: 'Open session', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('heading', { name: assistantSessionTitle, level: 1 })
+    .waitFor();
+  const assistantSession = (
+    await restartedPage.evaluate(() => window.nesvo.listSessions())
+  ).find(
+    session =>
+      session.title === assistantSessionTitle &&
+      session.messages.some(message =>
+        message.body.includes('fixture:assistant-prose'),
+      ),
+  );
+  assert.ok(assistantSession);
+  assert.equal(assistantSession.mode, 'read-only');
+  assert.ok(
+    assistantSession.messages.some(
+      message =>
+        message.author === 'operator' &&
+        message.body.includes('[begin operator-request'),
+    ),
+  );
+  restartedPage.off('console', recordDockConsoleError);
+  assert.deepEqual(dockConsoleErrors, []);
+  console.log(
+    JSON.stringify({
+      assistantDock: {
+        sessionId: assistantSession.id,
+        turns: 2,
+        applied: ['lint-check', 'assistant-flow'],
+      },
+    }),
+  );
+  await restartedPage
+    .getByRole('button', { name: 'Pipelines', exact: true })
+    .click();
+  await pipelinesView.waitFor();
   console.log(
     JSON.stringify({
       graphEditor: {
