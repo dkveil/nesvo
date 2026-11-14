@@ -293,10 +293,10 @@ export class SessionService {
     );
   }
 
-  stopActive(sessionId: string): void {
+  stopActive(sessionId: string, reason?: SessionInterruption['reason']): void {
     const active = this.active.get(sessionId);
     if (active?.session.runId)
-      this.stop({ sessionId, runId: active.session.runId });
+      this.stop({ sessionId, runId: active.session.runId }, reason);
   }
 
   isBusy(): boolean {
@@ -497,6 +497,11 @@ export class SessionService {
     if (!message)
       throw new SessionError('not-found', 'This run is not in the session.');
     const review = this.reviews.latest(sessionId);
+    const structured =
+      message.state === 'completed'
+        ? this.structuredOutputs.get(runId)
+        : undefined;
+    this.structuredOutputs.delete(runId);
     return {
       state: message.state,
       error: session?.error ?? null,
@@ -508,10 +513,7 @@ export class SessionService {
       limit:
         message.state === 'failed' ? (this.limits.get(runId) ?? null) : null,
       usage: message.usage,
-      structured:
-        message.state === 'completed'
-          ? this.structuredOutputs.get(runId)
-          : undefined,
+      structured,
     };
   }
 
@@ -564,6 +566,11 @@ export class SessionService {
       throw new SessionError(
         'not-found',
         'Session not found. Refresh the list.',
+      );
+    if (session.pipelineStepId)
+      throw new SessionError(
+        'invalid-request',
+        'This session records a pipeline gate and does not accept messages. Start a new session to continue the work.',
       );
     const existing = session.messages.find(
       message => message.id === input.messageId,
@@ -976,6 +983,7 @@ export class SessionService {
                 mode: session.mode,
                 effort: session.effort,
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
+                ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(selected
                   ? {
                       skillId: selected.native!.id,
@@ -1062,7 +1070,11 @@ export class SessionService {
         const { limit } = result as ClaudeResult;
         if (limit && session.runId && !active.persistenceError)
           this.rememberLimit(session.runId, limit);
-        if ('structured' in result && session.runId && !active.persistenceError)
+        if (
+          result.structured !== undefined &&
+          session.runId &&
+          !active.persistenceError
+        )
           this.rememberStructured(session.runId, result.structured);
         if (result.status === 'completed' || result.status === 'failed') {
           session.interruption = null;
@@ -1173,7 +1185,7 @@ export class SessionService {
     diff: ReviewDiff,
   ): Promise<void> {
     const reviews =
-      session.status === 'completed'
+      session.status === 'completed' && !session.pipelineStepId
         ? [
             ...this.reviews.supersededBy(session.id),
             this.reviews.result(session, diff),

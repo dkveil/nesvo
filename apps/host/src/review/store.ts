@@ -145,11 +145,12 @@ export class ReviewStore {
       model: session.actualModel ?? session.model,
       directory: session.directory,
       scope: session.scope,
-      task:
+      task: (
         session.messages.find(
           message =>
             message.runId === session.runId && message.author === 'operator',
-        )?.body ?? '',
+        )?.body ?? ''
+      ).slice(0, 32_000),
       summary: session.messages
         .filter(
           message =>
