@@ -2580,6 +2580,266 @@ try {
       },
     }),
   );
+  const graphStep = (name, type, phase, body, extra = '') =>
+    writeFile(
+      join(pipelineRoot, 'steps', `${name}.md`),
+      `---\nname: ${name}\ntype: ${type}\nphase: ${phase}\n${extra}---\n${body}\n`,
+    );
+  await graphStep('smoke-plan', 'agent', 'plan', 'Plan the change.');
+  await graphStep('smoke-lint', 'command', 'pre-done', 'echo lint');
+  await graphStep('smoke-report', 'command', 'pre-done', 'echo report');
+  await graphStep('smoke-approve', 'human', 'pre-push', 'Approve the release.');
+  await graphStep(
+    'smoke-publish',
+    'action',
+    'pre-push',
+    'git push origin HEAD',
+    'effect: external\n',
+  );
+  const editorShot = async name => {
+    if (!process.env.NESVO_SCREENSHOT) return;
+    await restartedPage.evaluate(
+      () =>
+        new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+      const image =
+        await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+          undefined,
+          { stayHidden: true, stayAwake: true },
+        );
+      return image.toPNG().toString('base64');
+    });
+    await writeFile(
+      process.env.NESVO_SCREENSHOT.replace(
+        /\.png$/,
+        `-graph-editor-${name}.png`,
+      ),
+      Buffer.from(encoded, 'base64'),
+    );
+  };
+  await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
+  await restartedPage
+    .getByRole('navigation', { name: 'Sessions', exact: true })
+    .getByRole('button', { name: 'Pipelines', exact: true })
+    .click();
+  const pipelinesView = restartedPage.getByRole('region', {
+    name: 'Pipelines',
+    exact: true,
+  });
+  await pipelinesView
+    .getByLabel('Project folder', { exact: true })
+    .fill(pipelineProject);
+  await pipelinesView
+    .getByRole('button', { name: 'Read', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'New pipeline', exact: true })
+    .click();
+  const editor = restartedPage.getByRole('region', {
+    name: 'Graph editor',
+    exact: true,
+  });
+  await editor.waitFor();
+  const inspector = editor.getByRole('complementary', {
+    name: 'Inspector',
+    exact: true,
+  });
+  await inspector
+    .getByRole('textbox', { name: 'Name', exact: true })
+    .fill('smoke-graph');
+  const addGraphStep = async name => {
+    await editor.getByRole('button', { name: 'Add step', exact: true }).click();
+    await restartedPage.locator(`[data-palette-step="${name}"]`).click();
+    await editor.locator(`[data-editor-node="${name}"]`).waitFor();
+  };
+  const fitGraph = () =>
+    editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
+  const connectSteps = async (from, to) => {
+    await fitGraph();
+    const source = await editor
+      .getByLabel(`Connect from ${from}`, { exact: true })
+      .boundingBox();
+    const target = await editor
+      .getByLabel(`Connect into ${to}`, { exact: true })
+      .boundingBox();
+    await restartedPage.mouse.move(
+      source.x + source.width / 2,
+      source.y + source.height / 2,
+    );
+    await restartedPage.mouse.down();
+    await restartedPage.mouse.move(
+      target.x + target.width / 2,
+      target.y + target.height / 2,
+      { steps: 16 },
+    );
+    await restartedPage.mouse.up();
+  };
+  await addGraphStep('smoke-check');
+  await addGraphStep('smoke-lint');
+  await addGraphStep('smoke-report');
+  await connectSteps('smoke-check', 'smoke-lint');
+  await editor.locator('[data-editor-inspector="edge"]').waitFor();
+  await connectSteps('smoke-check', 'smoke-report');
+  await inspector
+    .getByRole('button', { name: 'On failure', exact: true })
+    .click();
+  await editor
+    .locator(
+      '[data-editor-edge-label="smoke-check -> smoke-report on failure"]',
+    )
+    .waitFor();
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await restartedPage
+    .locator('[data-editor-notice]')
+    .filter({ hasText: 'Saved smoke-graph.' })
+    .waitFor();
+  const graphFile = await readFile(
+    join(pipelineRoot, 'pipelines', 'smoke-graph.md'),
+    'utf8',
+  );
+  assert.match(
+    graphFile,
+    /^steps: \[smoke-check, smoke-lint, smoke-report\]$/m,
+  );
+  assert.match(
+    graphFile,
+    /edges:\n  - smoke-check -> smoke-lint\n  - smoke-check -> smoke-report on failure\n/,
+  );
+  assert.match(
+    graphFile,
+    /layout:\n  smoke-check: \[-?\d+, -?\d+\]\n  smoke-lint: \[-?\d+, -?\d+\]\n  smoke-report: \[-?\d+, -?\d+\]\n---\n/,
+  );
+  const savedCatalog = await pipelineCall('listDefinitions', 'local', {
+    directory: pipelineProject,
+  });
+  const savedGraph = savedCatalog.pipelines.find(
+    pipeline => pipeline.name === 'smoke-graph',
+  );
+  assert.deepEqual(savedGraph.graph, {
+    explicit: true,
+    edges: [
+      { from: 'smoke-check', to: 'smoke-lint', when: 'success' },
+      { from: 'smoke-check', to: 'smoke-report', when: 'failure' },
+    ],
+  });
+  assert.deepEqual(
+    savedCatalog.issues.filter(issue => issue.path.endsWith('smoke-graph.md')),
+    [],
+  );
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'Edit smoke-graph', exact: true })
+    .click();
+  await editor.waitFor();
+  await editor.locator('[data-editor-node="smoke-report"]').waitFor();
+  assert.equal(await editor.locator('[data-editor-node]').count(), 3);
+  await addGraphStep('smoke-approve');
+  await connectSteps('smoke-lint', 'smoke-approve');
+  const refusal = restartedPage.locator('[data-editor-notice]');
+  await refusal.waitFor();
+  assert.match(
+    await refusal.textContent(),
+    /^Edge "smoke-lint -> smoke-approve" crosses phases; "smoke-lint" is pre-done and "smoke-approve" is pre-push$/,
+  );
+  assert.equal(await editor.locator('[data-editor-edge-label]').count(), 1);
+  await addGraphStep('smoke-plan');
+  await addGraphStep('smoke-publish');
+  await connectSteps('smoke-approve', 'smoke-publish');
+  await editor.locator('[data-editor-inspector="edge"]').waitFor();
+  await restartedPage.keyboard.press('Escape');
+  await editor.locator('[data-editor-inspector="pipeline"]').waitFor();
+  await fitGraph();
+  await delay(300);
+  await editorShot('fan-out-dark');
+  await restartedPage.evaluate(() => window.nesvo.setColorScheme('light'));
+  await delay(300);
+  await editorShot('fan-out-light');
+  await editor.getByRole('button', { name: 'Add step', exact: true }).click();
+  await restartedPage
+    .getByRole('listbox', { name: 'Catalog steps', exact: true })
+    .waitFor();
+  await editorShot('palette-light');
+  await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
+  await delay(300);
+  await editorShot('palette-dark');
+  await restartedPage.keyboard.press('Escape');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await restartedPage
+    .locator('[data-editor-notice]')
+    .filter({ hasText: 'Saved smoke-graph.' })
+    .waitFor();
+  await writeFile(
+    join(pipelineRoot, 'pipelines', 'smoke-graph.md'),
+    (
+      await readFile(join(pipelineRoot, 'pipelines', 'smoke-graph.md'), 'utf8')
+    ).replace('---\n', '---\ndescription: Changed outside the editor.\n'),
+  );
+  await inspector
+    .getByRole('textbox', { name: 'Description', exact: true })
+    .fill('Changed inside the editor.');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  const conflictDialog = restartedPage.getByRole('dialog', {
+    name: 'File changed on disk',
+    exact: true,
+  });
+  await conflictDialog.waitFor();
+  await conflictDialog
+    .getByText('description: Changed outside the editor.')
+    .waitFor();
+  await editorShot('conflict-dark');
+  await conflictDialog
+    .getByRole('button', { name: 'Reload', exact: true })
+    .click();
+  await conflictDialog.waitFor({ state: 'hidden' });
+  assert.equal(
+    await inspector
+      .getByRole('textbox', { name: 'Description', exact: true })
+      .inputValue(),
+    'Changed outside the editor.',
+  );
+  assert.equal(
+    await editor
+      .getByRole('button', { name: 'Save', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await pipelinesView
+    .getByRole('button', { name: 'Edit smoke', exact: true })
+    .click();
+  await editor.waitFor();
+  await editor
+    .getByRole('button', { name: 'Show last run', exact: true })
+    .click();
+  await editor
+    .locator('[data-editor-node="smoke-check"][data-run-state="passed"]')
+    .waitFor();
+  await editor.locator('[data-editor-node="smoke-check"]').click();
+  await editor.locator('[data-editor-inspector="node"]').waitFor();
+  await inspector.getByText('Last run', { exact: true }).waitFor();
+  await fitGraph();
+  await delay(300);
+  await editorShot('run-overlay-dark');
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+  await pipelinesView.waitFor();
+  console.log(
+    JSON.stringify({
+      graphEditor: {
+        steps: savedGraph.steps.map(step => step.name),
+        edges: savedGraph.graph.edges.length,
+        layoutKeys: Object.keys(savedGraph.layout).length,
+      },
+    }),
+  );
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;

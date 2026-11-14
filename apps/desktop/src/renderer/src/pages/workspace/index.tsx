@@ -1360,7 +1360,13 @@ export function Workspace() {
                 hostId={pipelinesSource.hostId}
                 directory={pipelinesSource.directory}
                 api={window.nesvo.pipelines}
-                onEdit={setPipelinesEditor}
+                onEdit={target => {
+                  setPipelinesSource({
+                    hostId: target.hostId,
+                    directory: target.directory,
+                  });
+                  setPipelinesEditor(target);
+                }}
               />
             </Suspense>
           ) : inbox ? (
