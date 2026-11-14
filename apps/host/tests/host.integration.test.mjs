@@ -218,12 +218,22 @@ function alive(pid) {
   }
 }
 
+async function recordedPid(file) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8')).pid;
+  } catch {
+    return null;
+  }
+}
+
 async function stepProcessRecorded(dataDirectory, runId) {
   const root = join(dataDirectory, 'pipeline-evidence', runId);
   const deadline = Date.now() + 10_000;
   while (true) {
     for (const folder of await readdir(root).catch(() => []))
-      if (await stat(join(root, folder, 'process.json')).catch(() => null))
+      if (
+        Number.isInteger(await recordedPid(join(root, folder, 'process.json')))
+      )
         return;
     assert.ok(Date.now() < deadline, 'The step process was never recorded');
     await delay(25);
