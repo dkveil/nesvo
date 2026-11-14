@@ -46,12 +46,19 @@ const connectionLabels: Record<Props['connection'], string> = {
 const ROW_KEYS = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
 
 const moveBetweenRows = (event: KeyboardEvent<HTMLElement>) => {
-  if (!ROW_KEYS.includes(event.key)) return;
+  if (
+    !ROW_KEYS.includes(event.key) ||
+    event.defaultPrevented ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  )
+    return;
   const rows = [
     ...event.currentTarget.querySelectorAll<HTMLElement>('[data-card-row]'),
   ];
   if (rows.length === 0) return;
   const index = rows.findIndex(row => row === document.activeElement);
+  if (index < 0 && event.target !== event.currentTarget) return;
   const next =
     event.key === 'Home'
       ? 0

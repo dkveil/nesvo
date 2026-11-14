@@ -314,19 +314,21 @@ export function Workspace() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [toggleSidebar]);
-  const openDiff = (reviewId: string, path?: string) => {
-    diffTrigger.current =
-      document.activeElement instanceof HTMLElement
+  const panelTrigger = () =>
+    cardOpen
+      ? cardTrigger.current
+      : document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+  const openDiff = (reviewId: string, path?: string) => {
+    diffTrigger.current = panelTrigger();
+    setCardOpen(false);
     setDiffTarget({ reviewId, path });
     setPanel('diff');
   };
   const openFiles = () => {
-    diffTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+    diffTrigger.current = panelTrigger();
+    setCardOpen(false);
     if (!diffReview) {
       const latest = store.reviews
         .filter(
@@ -343,7 +345,10 @@ export function Workspace() {
     setCardOpen(false);
     const trigger = cardTrigger.current;
     requestAnimationFrame(() => {
-      if (trigger?.isConnected) trigger.focus();
+      const target = trigger?.isConnected
+        ? trigger
+        : document.querySelector<HTMLElement>('[data-session-card-trigger]');
+      target?.focus();
     });
   };
   const toggleCard = (trigger: HTMLElement) => {
@@ -1101,6 +1106,7 @@ export function Workspace() {
               title="Session details"
               aria-pressed={cardOpen}
               aria-controls={cardOpen ? 'session-card' : undefined}
+              data-session-card-trigger
               onClick={event => toggleCard(event.currentTarget)}
             >
               <Gauge className="size-4" />
@@ -1119,6 +1125,7 @@ export function Workspace() {
                   document.activeElement instanceof HTMLElement
                     ? document.activeElement
                     : null;
+                setCardOpen(false);
                 setPanel('skills');
               }}
               className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
@@ -1206,7 +1213,6 @@ export function Workspace() {
         <main className="relative flex min-h-0 min-w-0 flex-1">
           {cardOpen && (
             <SessionCard
-              key={cardRun ? entityKey(cardRun) : selectedKey}
               id="session-card"
               computer={selectedComputer}
               connection={connection}
@@ -1218,6 +1224,7 @@ export function Workspace() {
               pipeline={
                 cardRun && (
                   <PipelineSection
+                    key={entityKey(cardRun)}
                     run={cardRun}
                     steps={selectedRunSteps}
                     connected={store.hostReady(selectedHostId)}

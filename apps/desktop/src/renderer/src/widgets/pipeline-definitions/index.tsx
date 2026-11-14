@@ -20,6 +20,7 @@ import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   cardIcon,
+  cardRow,
   cardRowAction,
   cardSection,
   cardSectionHeader,
@@ -113,27 +114,28 @@ function DefinitionStep({
   const [open, setOpen] = useState(false);
   const details = !!step.body.trim() || step.notes.length > 0;
   const meta = stepMeta(step);
+  const row = (
+    <>
+      <span className="w-4 shrink-0 text-center text-2xs text-muted-foreground tabular-nums">
+        {index + 1}
+      </span>
+      <span className="min-w-0 shrink-0 truncate">{step.name}</span>
+      <span className="min-w-0 flex-1 truncate text-right text-2xs font-normal text-muted-foreground">
+        {meta}
+      </span>
+    </>
+  );
   return (
     <li data-definition-step={step.name}>
-      <button
-        type="button"
-        aria-expanded={details ? open : undefined}
-        disabled={!details}
-        title={meta}
-        onClick={() => setOpen(value => !value)}
-        className={cn(
-          cardRowAction,
-          'disabled:cursor-default disabled:opacity-100',
-        )}
-      >
-        <span className="w-4 shrink-0 text-center text-2xs text-muted-foreground tabular-nums">
-          {index + 1}
-        </span>
-        <span className="min-w-0 shrink-0 truncate">{step.name}</span>
-        <span className="min-w-0 flex-1 truncate text-right text-2xs font-normal text-muted-foreground">
-          {meta}
-        </span>
-        {details && (
+      {details ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          title={meta}
+          onClick={() => setOpen(value => !value)}
+          className={cardRowAction}
+        >
+          {row}
           <ChevronDown
             aria-hidden="true"
             className={cn(
@@ -141,8 +143,12 @@ function DefinitionStep({
               open && 'rotate-180',
             )}
           />
-        )}
-      </button>
+        </button>
+      ) : (
+        <div title={meta} className={cardRow}>
+          {row}
+        </div>
+      )}
       {open && (
         <div className="space-y-1.5 pt-1 pr-2.5 pb-2 pl-9">
           {step.body.trim() && (

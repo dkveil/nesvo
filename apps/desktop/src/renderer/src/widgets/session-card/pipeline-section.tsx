@@ -3,6 +3,7 @@ import type { PipelinesApi } from '@nesvo/contracts';
 import { ChevronDown } from 'lucide-react';
 import { cn } from 'cn';
 import {
+  canResumeRun,
   isStepComplete,
   phaseLabels,
   phaseProgress,
@@ -11,6 +12,7 @@ import {
   pipelineSteps,
   runStatusLabel,
   runStatusTones,
+  stepStateLabels,
   toneText,
   type PipelinePhaseView,
   type PipelineRun,
@@ -74,12 +76,22 @@ export function PipelineSection({
   });
   const [openStep, setOpenStep] = useState<number | null>(null);
   const status = runStatusLabel(run.status);
-  const toggle = (phase: StepPhase) =>
+  const current =
+    run.currentStepIndex === null ? undefined : views[run.currentStepIndex];
+  const uncertain =
+    current?.state === 'uncertain' && canResumeRun(run) ? current : undefined;
+  const toggle = (phase: StepPhase) => {
+    if (
+      expanded.includes(phase) &&
+      views[openStep ?? -1]?.definition.phase === phase
+    )
+      setOpenStep(null);
     setExpanded(previous =>
       previous.includes(phase)
         ? previous.filter(item => item !== phase)
         : [...previous, phase],
     );
+  };
   return (
     <section
       aria-labelledby="session-card-pipeline"
@@ -110,6 +122,12 @@ export function PipelineSection({
           {run.attention}
         </p>
       )}
+      {uncertain && (
+        <p className="px-2.5 pb-1.5 text-2xs leading-4 text-muted-foreground">
+          {uncertain.definition.name} may already have run. Check its effect,
+          then choose It already ran or Run it again from the actions menu.
+        </p>
+      )}
       {error && (
         <p
           role="alert"
@@ -132,8 +150,10 @@ export function PipelineSection({
                 data-phase={group.phase}
                 data-phase-state={state}
                 aria-expanded={open}
-                aria-controls={`session-card-phase-${group.phase}`}
-                aria-label={`${label}, ${progress} complete`}
+                aria-controls={
+                  open ? `session-card-phase-${group.phase}` : undefined
+                }
+                aria-label={`${label}, ${stepStateLabels[state]}, ${progress} complete`}
                 onClick={() => toggle(group.phase)}
                 className={cardRowAction}
               >

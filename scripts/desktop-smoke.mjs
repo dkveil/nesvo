@@ -732,7 +732,7 @@ try {
     await sessionCard
       .locator('[data-usage-row="Claude Code"] [role="progressbar"]')
       .getAttribute('aria-valuetext'),
-    '61.3% used',
+    '38.8% left',
   );
   await page.keyboard.press('Escape');
   await sessionCard.waitFor({ state: 'hidden' });

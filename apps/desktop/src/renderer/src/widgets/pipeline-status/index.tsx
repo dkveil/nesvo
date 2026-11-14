@@ -19,6 +19,7 @@ export function PipelineStatus({ run, open, onToggle }: Props) {
     <button
       type="button"
       data-pipeline-status={run.status}
+      data-session-card-trigger
       aria-label={`Pipeline ${run.pipeline.name}: ${label}`}
       aria-pressed={open}
       aria-controls={open ? 'session-card' : undefined}
