@@ -77,6 +77,7 @@ const stepDefinitions = (root: string): ResolvedStep[] =>
     timeout: '15m',
     retries,
     on_fail: onFail,
+    effect: type === 'action' ? 'external' : 'local',
     needs: [],
     body:
       type === 'command'
