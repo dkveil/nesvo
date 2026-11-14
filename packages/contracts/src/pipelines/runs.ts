@@ -22,6 +22,8 @@ export const pipelineLimits = {
   gateModel: 200,
   directory: 4096,
   branch: 200,
+  decisionComment: 8000,
+  definitionChanges: 64,
 } as const;
 
 export const pipelineRunStatusSchema = z.enum([
@@ -57,6 +59,21 @@ export const pipelineStepStateSchema = z.enum([
 const idSchema = z.uuid();
 const revisionSchema = z.number().int().positive();
 const directorySchema = z.string().max(pipelineLimits.directory);
+
+export const pipelineStepDecisionKindSchema = z.enum([
+  'accept',
+  'reject',
+  'fix',
+  'mark-done',
+  'run-again',
+]);
+
+export const pipelineStepDecisionSchema = z.strictObject({
+  decisionId: idSchema,
+  kind: pipelineStepDecisionKindSchema,
+  comment: z.string().max(pipelineLimits.decisionComment),
+  at: z.iso.datetime(),
+});
 
 export const pipelineIsolationSchema = z.strictObject({
   worktree: z.string().min(1).max(pipelineLimits.directory),
@@ -117,6 +134,11 @@ export const pipelineStepRecordSchema = z.strictObject({
     .nullable(),
   updatedAt: z.iso.datetime(),
   startedAt: z.iso.datetime().nullable(),
+  decision: pipelineStepDecisionSchema.nullable().default(null),
+  definitionChanges: z
+    .array(z.string().min(1).max(pipelineLimits.directory))
+    .max(pipelineLimits.definitionChanges)
+    .default([]),
 });
 
 export const pipelineRunPageSchema = z.strictObject({
@@ -131,6 +153,10 @@ export const pipelineRunDetailSchema = z.strictObject({
 
 export type PipelineRunStatus = z.infer<typeof pipelineRunStatusSchema>;
 export type PipelineStepState = z.infer<typeof pipelineStepStateSchema>;
+export type PipelineStepDecisionKind = z.infer<
+  typeof pipelineStepDecisionKindSchema
+>;
+export type PipelineStepDecision = z.infer<typeof pipelineStepDecisionSchema>;
 export type PipelineIsolation = z.infer<typeof pipelineIsolationSchema>;
 export type PipelineRun = z.infer<typeof pipelineRunSchema>;
 export type PipelineStepRecord = z.infer<typeof pipelineStepRecordSchema>;

@@ -603,6 +603,8 @@ export class PipelineRunner {
         skip: null,
         updatedAt: now,
         startedAt: null,
+        decision: null,
+        definitionChanges: [],
       }),
     );
     const written = this.store.transact(() => {
@@ -765,6 +767,8 @@ export class PipelineRunner {
           skip: null,
           updatedAt: now,
           startedAt: null,
+          decision: null,
+          definitionChanges: [],
         };
         if (!this.store.insertStep(step)) throw new Error('Step row exists.');
         created.push(step);

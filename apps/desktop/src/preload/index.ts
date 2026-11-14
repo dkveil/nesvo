@@ -55,6 +55,7 @@ import {
   pipelineAssistantTurnSchema,
   readPipelineEvidenceSchema,
   removePipelineWorktreeSchema,
+  resolvePipelineStepSchema,
   resumePipelineRunSchema,
   runPipelineStepsSchema,
   savePipelineDefinitionSchema,
@@ -184,6 +185,14 @@ const pipelines: DesktopApi['pipelines'] = {
       await ipcRenderer.invoke(
         'nesvo:skip-pipeline-step',
         skipPipelineStepSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  resolveStep: async (hostId, input) =>
+    desktopPipelineRunSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:resolve-pipeline-step',
+        resolvePipelineStepSchema.parse(input),
         hostIdSchema.parse(hostId),
       ),
     ),

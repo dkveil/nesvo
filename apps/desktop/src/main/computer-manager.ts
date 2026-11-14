@@ -507,6 +507,7 @@ export class ComputerManager {
       'decide-pipeline-gate': 'pipeline-run',
       'skip-pipeline-step': 'pipeline-run',
       'resume-pipeline-run': 'pipeline-run',
+      'resolve-pipeline-step': 'pipeline-run',
       'stop-pipeline-run': 'pipeline-run',
       'remove-pipeline-worktree': 'pipeline-run',
       'list-pipeline-runs': 'pipeline-runs',

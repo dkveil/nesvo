@@ -95,6 +95,7 @@ import {
   pipelineStepRecordSchema,
   readPipelineEvidenceSchema,
   removePipelineWorktreeSchema,
+  resolvePipelineStepSchema,
   resumePipelineRunSchema,
   runPipelineStepsSchema,
   savePipelineDefinitionSchema,
@@ -115,6 +116,7 @@ import {
   type PipelineMetrics,
   type PipelineMetricsInput,
   type ReadPipelineEvidenceInput,
+  type ResolvePipelineStepInput,
   type RunPipelineStepsInput,
   type SavePipelineDefinitionInput,
   type SkipPipelineStepInput,
@@ -307,6 +309,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('resume-pipeline-run'),
     input: resumePipelineRunSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('resolve-pipeline-step'),
+    input: resolvePipelineStepSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -589,6 +596,10 @@ export type PipelinesApi = {
   skipStep: (
     hostId: HostId,
     input: SkipPipelineStepInput,
+  ) => Promise<DesktopPipelineRun>;
+  resolveStep: (
+    hostId: HostId,
+    input: ResolvePipelineStepInput,
   ) => Promise<DesktopPipelineRun>;
   resumeRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;
   stopRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;

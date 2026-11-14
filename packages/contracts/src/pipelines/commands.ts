@@ -111,8 +111,8 @@ export const decidePipelineGateSchema = z
   .strictObject({
     runId: idSchema,
     stepId: idSchema,
-    reviewId: idSchema,
-    version: z.number().int().positive(),
+    reviewId: idSchema.nullable(),
+    version: z.number().int().positive().nullable(),
     decisionId: idSchema,
     decision: z.enum(['accept', 'reject', 'fix']),
     comment: z.string().trim().max(pipelineCommandLimits.comment).default(''),
@@ -134,6 +134,23 @@ export const skipPipelineStepSchema = z.strictObject({
   stepId: idSchema,
   reason: z.string().trim().min(1).max(pipelineLimits.skipReason),
 });
+
+export const resolvePipelineStepSchema = z
+  .strictObject({
+    runId: idSchema,
+    stepId: idSchema,
+    decisionId: idSchema,
+    resolution: z.enum(['mark-done', 'run-again']),
+    comment: z.string().trim().max(pipelineCommandLimits.comment).default(''),
+  })
+  .superRefine((value, context) => {
+    if (value.resolution === 'mark-done' && !value.comment)
+      context.addIssue({
+        code: 'custom',
+        path: ['comment'],
+        message: 'Describe what you verified before marking the step done',
+      });
+  });
 
 const definitionTargetShape = {
   directory: directorySchema,
@@ -201,6 +218,9 @@ export type ListPipelineRunsInput = z.input<typeof listPipelineRunsSchema>;
 export type PipelineRunReference = z.infer<typeof pipelineRunReferenceSchema>;
 export type DecidePipelineGateInput = z.input<typeof decidePipelineGateSchema>;
 export type SkipPipelineStepInput = z.infer<typeof skipPipelineStepSchema>;
+export type ResolvePipelineStepInput = z.input<
+  typeof resolvePipelineStepSchema
+>;
 export type SavePipelineDefinitionInput = z.infer<
   typeof savePipelineDefinitionSchema
 >;
