@@ -10005,3 +10005,219 @@ test(
     });
   },
 );
+
+test(
+  'the pipeline assistant contract is bounded, the scheduled job accepts a pipeline and the host answers unavailable',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-assistant-contract-')),
+    );
+    const host = launch(directory, join(directory, 'pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const contracts = await loadScheduledJobContracts(directory);
+    const hash = 'a'.repeat(64);
+    const change = {
+      kind: 'step',
+      scope: 'project',
+      name: 'lint',
+      basedOnHash: null,
+      document: 'text',
+      summary: 'Add a lint step.',
+    };
+    const send = {
+      sessionId: null,
+      provider: 'Claude Code',
+      model: 'sonnet',
+      text: 'Add a lint step.',
+      context: {
+        directory,
+        pipelineName: null,
+        document: null,
+      },
+    };
+
+    await t.test(
+      'the host answers unavailable and rejects unknown fields',
+      async () => {
+        const response = await host.request('pipeline-assistant-send', send);
+        assert.deepEqual(response, {
+          type: 'error',
+          id: response.id,
+          code: 'unavailable',
+          message: 'The pipeline assistant is not available on this host yet.',
+        });
+        assert.deepEqual(
+          await host.send(
+            JSON.stringify({
+              id: randomUUID(),
+              method: 'pipeline-assistant-send',
+              input: { ...send, extra: true },
+            }),
+          ),
+          { type: 'error', id: null, code: 'invalid-request' },
+        );
+      },
+    );
+
+    await t.test('the send input defaults the effort and the selection', () => {
+      const parsed = contracts.pipelineAssistantSendSchema.parse({
+        ...send,
+        context: {
+          ...send.context,
+          document: {
+            kind: 'step',
+            scope: 'project',
+            name: 'lint',
+            contentHash: hash,
+            text: 'x',
+          },
+        },
+      });
+      assert.equal(parsed.effort, null);
+      assert.deepEqual(parsed.context.selection, []);
+      assert.equal(
+        contracts.pipelineAssistantSendSchema.safeParse({ ...send, text: '' })
+          .success,
+        false,
+      );
+    });
+
+    await t.test(
+      'the proposal is bounded and exports a flat JSON Schema',
+      () => {
+        const { pipelineAssistantProposalSchema } = contracts;
+        assert.equal(
+          pipelineAssistantProposalSchema.safeParse({
+            message: 'Done.',
+            changes: [change],
+          }).success,
+          true,
+        );
+        assert.equal(
+          pipelineAssistantProposalSchema.safeParse({
+            message: 'Done.',
+            changes: Array.from({ length: 9 }, () => change),
+          }).success,
+          false,
+        );
+        assert.equal(
+          pipelineAssistantProposalSchema.safeParse({
+            message: 'Done.',
+            changes: [{ ...change, document: 'x'.repeat(65_537) }],
+          }).success,
+          false,
+        );
+        assert.equal(
+          JSON.stringify(
+            contracts.pipelineAssistantProposalJsonSchema(),
+          ).includes('$ref'),
+          false,
+        );
+      },
+    );
+
+    await t.test('the proposal event carries bounded issues per change', () => {
+      const event = {
+        sessionId: randomUUID(),
+        messageId: randomUUID(),
+        status: 'invalid',
+        proposal: null,
+        issues: [],
+      };
+      assert.equal(
+        contracts.pipelineAssistantProposalEventSchema.safeParse(event).success,
+        true,
+      );
+      assert.equal(
+        contracts.desktopEventSchema.safeParse({
+          ...event,
+          type: 'pipeline-assistant-proposal',
+        }).success,
+        true,
+      );
+      assert.equal(
+        contracts.workspaceEventSchema.safeParse({
+          ...event,
+          type: 'pipeline-assistant-proposal',
+          hostId: 'local',
+        }).success,
+        true,
+      );
+      assert.equal(
+        contracts.pipelineAssistantProposalEventSchema.safeParse({
+          ...event,
+          issues: Array.from({ length: 9 }, (_, index) => ({
+            index,
+            issues: [],
+          })),
+        }).success,
+        false,
+      );
+    });
+
+    await t.test('scheduled jobs take an optional pipeline', () => {
+      const job = {
+        name: 'Nightly',
+        prompt: 'Check the build.',
+        directory,
+        provider: 'codex',
+        model: 'gpt-5.5',
+        effort: null,
+        mode: 'read-only',
+        schedule: { kind: 'daily', time: '09:00' },
+        timeZone: 'Europe/Warsaw',
+        active: true,
+      };
+      const { scheduledJobDefinitionSchema, scheduledJobRunSchema } = contracts;
+      assert.equal(scheduledJobDefinitionSchema.parse(job).pipeline, null);
+      const pipeline = { name: 'default', specPath: 'task.md' };
+      assert.deepEqual(
+        scheduledJobDefinitionSchema.parse({ ...job, prompt: '', pipeline })
+          .pipeline,
+        pipeline,
+      );
+      const refused = scheduledJobDefinitionSchema.safeParse({
+        ...job,
+        prompt: '',
+      });
+      assert.equal(refused.success, false);
+      assert.equal(
+        refused.error.issues[0].message,
+        'A scheduled pipeline takes its task from the spec; the prompt may stay empty',
+      );
+      assert.equal(
+        scheduledJobDefinitionSchema.safeParse({
+          ...job,
+          pipeline: { ...pipeline, extra: 1 },
+        }).success,
+        false,
+      );
+      const run = {
+        id: randomUUID(),
+        scheduledJobId: randomUUID(),
+        scheduledFor: null,
+        trigger: 'manual',
+        status: 'starting',
+        reason: null,
+        missedCount: 0,
+        sessionId: null,
+        runId: null,
+        reviewId: null,
+        resetAt: null,
+        startedAt: null,
+        finishedAt: null,
+      };
+      assert.equal(scheduledJobRunSchema.parse(run).pipelineRunId, null);
+      const pipelineRunId = randomUUID();
+      assert.equal(
+        scheduledJobRunSchema.parse({ ...run, pipelineRunId }).pipelineRunId,
+        pipelineRunId,
+      );
+    });
+  },
+);

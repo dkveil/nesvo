@@ -2507,6 +2507,20 @@ try {
     pipelineDetail.steps.map(step => [step.name, step.state]),
     [['smoke-check', 'passed']],
   );
+  await assert.rejects(
+    pipelineCall('assistantSend', 'local', {
+      sessionId: null,
+      provider: 'Claude Code',
+      model: 'sonnet',
+      text: 'Add a lint step.',
+      context: {
+        directory: pipelineProject,
+        pipelineName: null,
+        document: null,
+      },
+    }),
+    /The pipeline assistant is not available on this host yet\./,
+  );
   console.log(
     JSON.stringify({
       pipelines: {
