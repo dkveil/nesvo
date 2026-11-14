@@ -1,7 +1,10 @@
 import {
+  ancestors,
+  incoming,
   pipelineLimits,
   stepResultSchema,
   type DefinitionCatalog,
+  type GraphEdge,
   type DesktopEvent,
   type PipelineRun,
   type PipelineRunStatus,
@@ -208,6 +211,18 @@ const COMPLETE_STEP_STATES: readonly PipelineStepState[] = [
   'done',
   'skipped',
 ];
+const FAILED_STEP_STATES: readonly PipelineStepState[] = ['failed', 'error'];
+const SESSION_STEP_STATES: readonly PipelineStepState[] = [
+  'running',
+  'awaiting-human',
+];
+const SERIAL_STEP_TYPES: readonly StepType[] = ['agent', 'human'];
+const PARALLEL_STEP_LIMIT = 4;
+const PHASE_RANK = {
+  plan: 0,
+  'pre-done': 1,
+  'pre-push': 2,
+} as const satisfies Record<StepPhase, number>;
 const VERDICT_STATES = {
   pass: 'passed',
   fail: 'failed',
@@ -221,7 +236,7 @@ const NEXT_PHASE = {
   'pre-push': null,
 } as const satisfies Record<StepPhase, StepPhase | null>;
 
-type Move =
+export type Move =
   | { kind: 'wait' }
   | { kind: 'begin-phase'; phase: StepPhase }
   | { kind: 'status'; status: PipelineRunStatus }
@@ -232,9 +247,11 @@ type Move =
       message?: string;
     }
   | { kind: 'start-step'; step: PipelineStepRecord }
+  | { kind: 'mark-unreached'; step: PipelineStepRecord; reason: string }
+  | { kind: 'reopen-step'; step: PipelineStepRecord }
   | { kind: 'send-turn'; turn: AuthorTurn };
 
-type MoveContext = {
+export type MoveContext = {
   turnState: (messageId: string) => TurnState;
   hasAuthor: boolean;
 };
@@ -400,11 +417,137 @@ const completedPhase = (run: PipelineRun, context: MoveContext): Move => {
     : { kind: 'finish', status: 'passed' };
 };
 
-function nextMove(
+type NodeOutcome = 'success' | 'failure' | 'unreached' | null;
+type EdgeState = 'fired' | 'dead' | 'open';
+type IncomingEdge = {
+  edge: GraphEdge;
+  outcome: NodeOutcome;
+  state: EdgeState;
+  order: number;
+};
+
+const outcomeOf = (step: PipelineStepRecord | undefined): NodeOutcome => {
+  if (!step) return null;
+  if (COMPLETE_STEP_STATES.includes(step.state)) return 'success';
+  if (FAILED_STEP_STATES.includes(step.state)) return 'failure';
+  return step.state === 'unreached' ? 'unreached' : null;
+};
+
+const edgeState = (edge: GraphEdge, outcome: NodeOutcome): EdgeState => {
+  if (!outcome) return 'open';
+  if (outcome === 'unreached') return 'dead';
+  return edge.when === 'any' || edge.when === outcome ? 'fired' : 'dead';
+};
+
+const unreachedReason = (source: string, outcome: NodeOutcome) =>
+  bounded(
+    `Not reached: "${source}" ${outcome === 'unreached' ? 'was not reached' : outcome === 'success' ? 'passed' : 'failed'}`,
+    pipelineLimits.skipReason,
+  );
+
+const isSerial = (step: PipelineStepRecord) =>
+  SERIAL_STEP_TYPES.includes(step.type);
+
+const admits = (
+  rows: readonly PipelineStepRecord[],
+  step: PipelineStepRecord,
+): boolean =>
+  isSerial(step)
+    ? !rows.some(
+        other => isSerial(other) && SESSION_STEP_STATES.includes(other.state),
+      )
+    : rows.filter(other => !isSerial(other) && other.state === 'running')
+        .length < PARALLEL_STEP_LIMIT;
+
+const checkingMove = (
+  run: PipelineRun,
+  phase: StepPhase,
+  steps: readonly PipelineStepRecord[],
+  context: MoveContext,
+): Move => {
+  const latest = latestAttempts(steps);
+  const rows: PipelineStepRecord[] = [];
+  for (const index of phaseIndices(run.pipeline, phase)) {
+    const step = latest.get(index);
+    if (!step) return WAIT;
+    rows.push(step);
+  }
+  const blocked = rows.find(step => step.state === 'blocked');
+  if (blocked)
+    return {
+      kind: 'attention',
+      message: bounded(
+        blocked.result?.summary || `Step "${blocked.name}" is blocked.`,
+        pipelineLimits.attention,
+      ),
+    };
+  const all = [...latest.values()];
+  const named = new Map(all.map(step => [step.name, step]));
+  const edgesInto = (step: PipelineStepRecord): IncomingEdge[] =>
+    incoming(run.pipeline.graph, step.name)
+      .map(edge => {
+        const source = named.get(edge.from);
+        const outcome = outcomeOf(source);
+        return {
+          edge,
+          outcome,
+          state: edgeState(edge, outcome),
+          order: source?.index ?? pipelineLimits.stepsPerRun,
+        };
+      })
+      .sort((left, right) => left.order - right.order);
+  const halted =
+    !run.pipeline.graph.explicit &&
+    rows.some(step => FAILED_STEP_STATES.includes(step.state));
+  const pending = rows.filter(step => step.state === 'pending');
+  const ready = halted
+    ? []
+    : pending.filter(step =>
+        edgesInto(step).every(edge => edge.state === 'fired'),
+      );
+  const start = ready.find(step => admits(all, step));
+  if (start) return { kind: 'start-step', step: start };
+  if (run.pipeline.graph.explicit) {
+    for (const step of pending) {
+      const dead = edgesInto(step).find(edge => edge.state === 'dead');
+      if (dead)
+        return {
+          kind: 'mark-unreached',
+          step,
+          reason: unreachedReason(dead.edge.from, dead.outcome),
+        };
+    }
+    const reopened = rows.find(
+      step =>
+        step.state === 'unreached' &&
+        edgesInto(step).every(edge => edge.state !== 'dead'),
+    );
+    if (reopened) return { kind: 'reopen-step', step: reopened };
+  }
+  if (
+    ready.length > 0 ||
+    rows.some(step => ACTIVE_STEP_STATES.includes(step.state))
+  )
+    return WAIT;
+  const interrupted = rows.find(step => step.state === 'interrupted');
+  if (interrupted)
+    return {
+      kind: 'attention',
+      message: `Step "${interrupted.name}" was interrupted before it finished.`,
+    };
+  const failed = rows.find(step => FAILED_STEP_STATES.includes(step.state));
+  if (failed)
+    return run.pipeline.steps[failed.index]?.on_fail === 'fix'
+      ? { kind: 'attention', message: failureAttention(failed) }
+      : { kind: 'finish', status: 'failed' };
+  return completedPhase(run, context);
+};
+
+const runMove = (
   run: PipelineRun,
   steps: readonly PipelineStepRecord[],
   context: MoveContext,
-): Move {
+): Move => {
   if (WAITING_STATUSES.includes(run.status)) return WAIT;
   if (run.sessionId && AUTHOR_STATUSES.includes(run.status))
     return context.hasAuthor
@@ -415,35 +558,25 @@ function nextMove(
       ? { kind: 'begin-phase', phase: run.phase }
       : { kind: 'attention', message: 'The run has no steps to check.' };
   if (run.status !== 'checking' || !run.phase) return WAIT;
-  const latest = latestAttempts(steps);
-  const ordered = phaseIndices(run.pipeline, run.phase).map(index =>
-    latest.get(index),
-  );
-  if (ordered.some(step => !step || ACTIVE_STEP_STATES.includes(step.state)))
-    return WAIT;
-  for (const step of ordered) {
-    if (!step || COMPLETE_STEP_STATES.includes(step.state)) continue;
-    if (step.state === 'pending') return { kind: 'start-step', step };
-    if (step.state === 'failed' || step.state === 'error')
-      return run.pipeline.steps[step.index]?.on_fail === 'fix'
-        ? { kind: 'attention', message: failureAttention(step) }
-        : { kind: 'finish', status: 'failed' };
-    if (step.state === 'blocked')
-      return {
-        kind: 'attention',
-        message: bounded(
-          step.result?.summary || `Step "${step.name}" is blocked.`,
-          pipelineLimits.attention,
-        ),
-      };
-    return WAIT;
-  }
-  return completedPhase(run, context);
+  return checkingMove(run, run.phase, steps, context);
+};
+
+export function nextMove(
+  run: PipelineRun,
+  steps: readonly PipelineStepRecord[],
+  context: MoveContext,
+): Move {
+  const move = runMove(run, steps, context);
+  return move.kind === 'begin-phase' &&
+    [...latestAttempts(steps).values()].some(step => step.state === 'running')
+    ? WAIT
+    : move;
 }
 
 type PassState = { again: boolean; done: Promise<void> };
 type BusyTurn = { timer: unknown; expired: boolean };
 type ActiveStep = {
+  runId: string;
   controller: AbortController;
   done: Promise<void>;
 };
@@ -579,7 +712,7 @@ export class PipelineRunner {
       this.clearBusy(runId);
       this.emit({ type: 'pipeline-run-changed', run: stopped });
       if (run.sessionId) this.author?.stop(runId);
-      this.active.get(runId)?.controller.abort('stop');
+      this.abortSteps(runId);
       this.track(this.advanceRun(runId));
       return stopped;
     }
@@ -646,7 +779,9 @@ export class PipelineRunner {
       run.phase && !correction
         ? phaseIndices(run.pipeline, run.phase).flatMap(index => {
             const step = latest.get(index);
-            return step && RESUMABLE_STEP_STATES.includes(step.state) ? [step] : [];
+            return step && REEVALUATED_STEP_STATES.includes(step.state)
+              ? [step]
+              : [];
           })
         : [];
     const status = correction
@@ -681,24 +816,7 @@ export class PipelineRunner {
       finishedAt: null,
       updatedAt: now,
     };
-    const created = retried.map(
-      (step): PipelineStepRecord => ({
-        ...step,
-        id: randomUUID(),
-        revision: 1,
-        state: 'pending',
-        attempt: step.attempt + 1,
-        result: null,
-        sessionId: null,
-        reviewId: null,
-        reviewVersion: null,
-        skip: null,
-        updatedAt: now,
-        startedAt: null,
-        decision: null,
-        definitionChanges: [],
-      }),
-    );
+    const created = retried.map(step => nextAttempt(step, now));
     const written = this.store.transact(() => {
       if (!this.store.replaceRun(next, run.revision)) return false;
       for (const step of created)
@@ -732,6 +850,7 @@ export class PipelineRunner {
     for (let iteration = 0; iteration < limit; iteration++) {
       const run = this.store.getRun(runId);
       if (!run) return;
+      if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       const steps = this.store.stepsForRun(runId);
       const author = this.author;
       const move = nextMove(run, steps, {
@@ -763,8 +882,26 @@ export class PipelineRunner {
         ...(move.message ? { attention: move.message } : {}),
       });
     else if (move.kind === 'send-turn') return this.sendTurn(run, move.turn);
+    else if (move.kind === 'mark-unreached')
+      this.writeStep(move.step, {
+        state: 'unreached',
+        result: null,
+        skip: { reason: move.reason, at: this.timestamp() },
+      });
+    else if (move.kind === 'reopen-step') this.reopenStep(move.step);
     else this.startStep(run, steps, move.step);
     return true;
+  }
+
+  private abortSteps(runId: string): void {
+    for (const step of this.active.values())
+      if (step.runId === runId) step.controller.abort('stop');
+  }
+
+  private reopenStep(step: PipelineStepRecord): void {
+    const reopened = nextAttempt(step, this.timestamp());
+    if (this.store.insertStep(reopened))
+      this.emit({ type: 'pipeline-step-changed', step: reopened });
   }
 
   private sendTurn(run: PipelineRun, turn: AuthorTurn): boolean {
@@ -882,18 +1019,23 @@ export class PipelineRunner {
       });
       return;
     }
-    if (run.currentStepIndex !== step.index)
-      if (!this.writeRun(run, { currentStepIndex: step.index })) return;
+    const currentIndex = Math.min(
+      step.index,
+      ...[...latestAttempts(steps).values()]
+        .filter(other => SESSION_STEP_STATES.includes(other.state))
+        .map(other => other.index),
+    );
+    if (run.currentStepIndex !== currentIndex)
+      if (!this.writeRun(run, { currentStepIndex: currentIndex })) return;
     const running = this.store.beginStep(step.id, step.revision, this.timestamp());
     if (!running) return;
     this.emit({ type: 'pipeline-step-changed', step: running });
     const controller = new AbortController();
-    const current = this.store.getRun(run.id) ?? run;
     const execution: StepExecution = {
-      run: current,
+      run: this.store.getRun(run.id) ?? run,
       step: running,
       definition,
-      outputs: earlierOutputs(steps, step.index),
+      outputs: ancestorOutputs(run, steps, step),
       signal: controller.signal,
       evidence: this.evidence,
       environment: this.environment,
@@ -920,10 +1062,10 @@ export class PipelineRunner {
         this.finishStep(running, outcome);
       })
       .finally(() => {
-        this.active.delete(run.id);
+        this.active.delete(running.id);
         if (!this.closed) this.track(this.advanceRun(run.id));
       });
-    this.active.set(run.id, { controller, done });
+    this.active.set(running.id, { runId: run.id, controller, done });
   }
 
   private linkStep(running: PipelineStepRecord, sessionId: string): void {
@@ -1144,6 +1286,10 @@ const RESUMABLE_STEP_STATES: readonly PipelineStepState[] = [
   'error',
   'blocked',
 ];
+const REEVALUATED_STEP_STATES: readonly PipelineStepState[] = [
+  ...RESUMABLE_STEP_STATES,
+  'unreached',
+];
 const DEAD_TURN_STATES: readonly TurnState[] = [
   'failed',
   'stopped',
@@ -1174,16 +1320,41 @@ function resumeStatus(
   return 'pending';
 }
 
-function earlierOutputs(
+function nextAttempt(step: PipelineStepRecord, now: string): PipelineStepRecord {
+  return {
+    ...step,
+    id: randomUUID(),
+    revision: 1,
+    state: 'pending',
+    attempt: step.attempt + 1,
+    result: null,
+    sessionId: null,
+    reviewId: null,
+    reviewVersion: null,
+    skip: null,
+    updatedAt: now,
+    startedAt: null,
+    decision: null,
+    definitionChanges: [],
+  };
+}
+
+function ancestorOutputs(
+  run: PipelineRun,
   steps: readonly PipelineStepRecord[],
-  index: number,
+  step: PipelineStepRecord,
 ): Map<string, Record<string, string>> {
+  const visible = new Set(ancestors(run.pipeline.graph, step.name));
   const outputs = new Map<string, Record<string, string>>();
-  for (const step of [...latestAttempts(steps).values()].sort(
+  for (const other of [...latestAttempts(steps).values()].sort(
     (left, right) => left.index - right.index,
   ))
-    if (step.index < index && step.result && Object.keys(step.result.outputs).length > 0)
-      outputs.set(step.name, step.result.outputs);
+    if (
+      (visible.has(other.name) || PHASE_RANK[other.phase] < PHASE_RANK[step.phase]) &&
+      other.result &&
+      Object.keys(other.result.outputs).length > 0
+    )
+      outputs.set(other.name, other.result.outputs);
   return outputs;
 }
 
