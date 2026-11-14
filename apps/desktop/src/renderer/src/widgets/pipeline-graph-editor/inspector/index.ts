@@ -15,7 +15,7 @@ import type { EditorEdge, StepDraft } from '@/entities/pipeline-graph';
 import { EdgeInspectorPlaceholder } from './edge-inspector';
 import { PipelineInspectorPlaceholder } from './pipeline-inspector';
 import { StartInspectorPlaceholder } from './start-inspector';
-import { StepInspectorPlaceholder } from './step-inspector';
+import { StepInspectorForm } from './step-inspector';
 
 export type InspectorMode = 'create' | 'edit';
 
@@ -80,7 +80,7 @@ export type StartInspectorProps = {
 };
 
 export const StepInspector: ComponentType<StepInspectorProps> =
-  StepInspectorPlaceholder;
+  StepInspectorForm;
 export const PipelineInspector: ComponentType<PipelineInspectorProps> =
   PipelineInspectorPlaceholder;
 export const EdgeInspector: ComponentType<EdgeInspectorProps> =
