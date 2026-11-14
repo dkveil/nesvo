@@ -51,6 +51,8 @@ import {
   pipelineEvidenceSchema,
   pipelineMetricsInputSchema,
   pipelineMetricsSchema,
+  pipelineAssistantSendSchema,
+  pipelineAssistantTurnSchema,
   readPipelineEvidenceSchema,
   removePipelineWorktreeSchema,
   resumePipelineRunSchema,
@@ -238,6 +240,14 @@ const pipelines: DesktopApi['pipelines'] = {
       await ipcRenderer.invoke(
         'nesvo:pipeline-metrics',
         pipelineMetricsInputSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  assistantSend: async (hostId, input) =>
+    pipelineAssistantTurnSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:pipeline-assistant-send',
+        pipelineAssistantSendSchema.parse(input),
         hostIdSchema.parse(hostId),
       ),
     ),

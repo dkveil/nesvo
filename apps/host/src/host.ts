@@ -70,6 +70,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'save-pipeline-definition',
   'delete-pipeline-definition',
   'remove-pipeline-worktree',
+  'pipeline-assistant-send',
 ]);
 const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
   'list-pipeline-definitions',
@@ -248,12 +249,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         if (OPERATOR_ACTIVITY_METHODS.has(request.method))
           sessions.recordOperatorActivity();
         const unavailable =
-          isPipelineMethod(request.method) &&
-          !SERVED_PIPELINE_METHODS.has(request.method)
-            ? 'Pipelines are not available on this host yet.'
-            : request.method === 'create-session' && request.input.isolation
-              ? 'Workspace isolation is not available on this host yet.'
-              : null;
+          request.method === 'pipeline-assistant-send'
+            ? 'The pipeline assistant is not available on this host yet.'
+            : isPipelineMethod(request.method) &&
+                !SERVED_PIPELINE_METHODS.has(request.method)
+              ? 'Pipelines are not available on this host yet.'
+              : request.method === 'create-session' && request.input.isolation
+                ? 'Workspace isolation is not available on this host yet.'
+                : null;
         if (unavailable) {
           yield* Effect.tryPromise(() =>
             send({

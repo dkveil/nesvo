@@ -80,7 +80,9 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'discover-skills' || method === 'start-pipeline-task'
+        method === 'discover-skills' ||
+          method === 'start-pipeline-task' ||
+          method === 'pipeline-assistant-send'
           ? 60000
           : method === 'provider-usage'
             ? 40000

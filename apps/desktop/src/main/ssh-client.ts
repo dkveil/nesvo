@@ -226,7 +226,9 @@ export function connectSshHost(
             ),
           );
         },
-        method === 'discover-skills' || method === 'start-pipeline-task'
+        method === 'discover-skills' ||
+          method === 'start-pipeline-task' ||
+          method === 'pipeline-assistant-send'
           ? 60_000
           : method === 'provider-usage'
             ? 40_000

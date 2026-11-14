@@ -38,6 +38,7 @@ import {
   listPipelineDefinitionsSchema,
   listPipelineRunsSchema,
   pipelineMetricsInputSchema,
+  pipelineAssistantSendSchema,
   readPipelineEvidenceSchema,
   removePipelineWorktreeSchema,
   resumePipelineRunSchema,
@@ -92,6 +93,7 @@ const pipelineInputs = {
   'remove-pipeline-worktree': removePipelineWorktreeSchema,
   'read-pipeline-evidence': readPipelineEvidenceSchema,
   'pipeline-metrics': pipelineMetricsInputSchema,
+  'pipeline-assistant-send': pipelineAssistantSendSchema,
 } satisfies Record<PipelineMethod, { parse: (input: unknown) => unknown }>;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)

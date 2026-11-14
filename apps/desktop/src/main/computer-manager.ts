@@ -513,6 +513,7 @@ export class ComputerManager {
       'get-pipeline-run': 'pipeline-run-detail',
       'read-pipeline-evidence': 'pipeline-evidence',
       'pipeline-metrics': 'pipeline-metrics',
+      'pipeline-assistant-send': 'pipeline-assistant-turn',
     }[method];
     const definitionWrite =
       (method === 'save-pipeline-definition' ||
@@ -546,6 +547,8 @@ export class ComputerManager {
         return response.evidence;
       case 'pipeline-metrics':
         return response.metrics;
+      case 'pipeline-assistant-turn':
+        return response.turn;
       default:
         throw new Error('Unexpected host response.');
     }
@@ -786,6 +789,10 @@ export class ComputerManager {
           type: 'pipeline-step-changed',
           step: { ...event.step, hostId },
         });
+      return;
+    }
+    if (event.type === 'pipeline-assistant-proposal') {
+      if (publish) this.publish({ ...event, hostId });
       return;
     }
     if (event.type === 'session-changed') {
