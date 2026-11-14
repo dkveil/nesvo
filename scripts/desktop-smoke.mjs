@@ -2656,46 +2656,82 @@ try {
   };
   const fitGraph = () =>
     editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
+  const handleInfo = locator =>
+    locator.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const centre = document.elementFromPoint(
+        rect.x + rect.width / 2,
+        rect.y + rect.height / 2,
+      );
+      return {
+        classes: element.className,
+        pointerEvents: getComputedStyle(element).pointerEvents,
+        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+        atCentre: centre
+          ? `${centre.tagName}.${centre.className}`.slice(0, 120)
+          : null,
+      };
+    });
+  const edgeShown = () =>
+    editor
+      .locator('[data-editor-inspector="edge"]')
+      .waitFor({ timeout: 4000 })
+      .then(
+        () => true,
+        () => false,
+      );
+  const canvas = editor.getByRole('application', {
+    name: 'Pipeline graph canvas',
+    exact: true,
+  });
+  const inside = (box, frame) =>
+    !!box &&
+    !!frame &&
+    box.x >= frame.x &&
+    box.y >= frame.y &&
+    box.x + box.width <= frame.x + frame.width &&
+    box.y + box.height <= frame.y + frame.height;
+  const revealHandles = async handles => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const frame = await canvas.boundingBox();
+      const boxes = await Promise.all(
+        handles.map(handle => handle.boundingBox()),
+      );
+      if (boxes.every(box => inside(box, frame))) return;
+      await fitGraph();
+      await delay(250);
+    }
+    throw new Error('Graph editor handles stay outside the canvas.');
+  };
   const connectSteps = async (from, to) => {
-    await fitGraph();
-    const source = await editor
-      .getByLabel(`Connect from ${from}`, { exact: true })
-      .boundingBox();
-    const target = await editor
-      .getByLabel(`Connect into ${to}`, { exact: true })
-      .boundingBox();
-    await restartedPage.mouse.move(
-      source.x + source.width / 2,
-      source.y + source.height / 2,
+    const sourceHandle = editor.getByLabel(`Connect from ${from}`, {
+      exact: true,
+    });
+    const targetHandle = editor.getByLabel(`Connect into ${to}`, {
+      exact: true,
+    });
+    await revealHandles([sourceHandle, targetHandle]);
+    await sourceHandle.dragTo(targetHandle, { force: true });
+    if (await edgeShown()) return;
+    const notice = await restartedPage
+      .locator('[data-editor-notice]')
+      .allTextContents();
+    if (notice.length) return;
+    console.log(
+      JSON.stringify({
+        graphEditorConnect: {
+          from: await handleInfo(sourceHandle),
+          to: await handleInfo(targetHandle),
+        },
+      }),
     );
-    await restartedPage.mouse.down();
-    await restartedPage.mouse.move(
-      target.x + target.width / 2,
-      target.y + target.height / 2,
-      { steps: 16 },
-    );
-    await restartedPage.mouse.up();
+    await editorShot(`connect-${from}-${to}`);
   };
   await addGraphStep('smoke-check');
   await addGraphStep('smoke-lint');
   await addGraphStep('smoke-report');
   await connectSteps('smoke-check', 'smoke-lint');
-  try {
-    await editor.locator('[data-editor-inspector="edge"]').waitFor();
-  } catch (error) {
-    console.log(
-      JSON.stringify({
-        graphEditorConnect: {
-          notice: await restartedPage
-            .locator('[data-editor-notice]')
-            .allTextContents(),
-          nodes: await editor.locator('[data-editor-node]').count(),
-          inspector: await inspector.getAttribute('data-editor-inspector'),
-        },
-      }),
-    );
-    throw error;
-  }
+  await editor.locator('[data-editor-inspector="edge"]').waitFor();
   await connectSteps('smoke-check', 'smoke-report');
   await inspector
     .getByRole('button', { name: 'On failure', exact: true })
