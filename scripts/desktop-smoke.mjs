@@ -2507,19 +2507,40 @@ try {
     pipelineDetail.steps.map(step => [step.name, step.state]),
     [['smoke-check', 'passed']],
   );
-  await assert.rejects(
-    pipelineCall('assistantSend', 'local', {
-      sessionId: null,
-      provider: 'Claude Code',
-      model: 'sonnet',
-      text: 'Add a lint step.',
-      context: {
-        directory: pipelineProject,
-        pipelineName: null,
-        document: null,
-      },
-    }),
-    /The pipeline assistant is not available on this host yet\./,
+  await restartedPage.evaluate(() => {
+    window.smokeAssistantProposals = [];
+    window.nesvo.subscribe(event => {
+      if (event.type === 'pipeline-assistant-proposal')
+        window.smokeAssistantProposals.push(event);
+    });
+  });
+  const assistantTurn = await pipelineCall('assistantSend', 'local', {
+    sessionId: null,
+    provider: 'Claude Code',
+    model: 'sonnet',
+    text: 'fixture:assistant-proposal',
+    context: {
+      directory: pipelineProject,
+      pipelineName: 'smoke',
+      document: null,
+    },
+  });
+  assert.match(assistantTurn.sessionId, /^[0-9a-f-]{36}$/);
+  await restartedPage.waitForFunction(
+    id => window.smokeAssistantProposals.some(event => event.messageId === id),
+    assistantTurn.messageId,
+    { timeout: 30_000 },
+  );
+  const assistantProposal = await restartedPage.evaluate(
+    id => window.smokeAssistantProposals.find(event => event.messageId === id),
+    assistantTurn.messageId,
+  );
+  assert.equal(assistantProposal.hostId, 'local');
+  assert.equal(assistantProposal.sessionId, assistantTurn.sessionId);
+  assert.equal(assistantProposal.status, 'ok');
+  assert.deepEqual(
+    assistantProposal.proposal.changes.map(change => change.name),
+    ['lint-check', 'assistant-flow'],
   );
   const resolution = {
     runId: pipelineRun.id,
@@ -2551,6 +2572,11 @@ try {
           id => window.smokePipelineRuns.filter(run => run.id === id).length,
           pipelineRun.id,
         ),
+        assistant: {
+          sessionId: assistantTurn.sessionId,
+          status: assistantProposal.status,
+          changes: assistantProposal.proposal.changes.length,
+        },
       },
     }),
   );
