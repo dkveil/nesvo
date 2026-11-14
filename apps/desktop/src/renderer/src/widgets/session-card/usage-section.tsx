@@ -52,7 +52,7 @@ export function UsageSection({ states, connected }: Props) {
       aria-label="Usage"
       className={cn(
         cardSection,
-        'grid grid-cols-[minmax(0,auto)_minmax(3rem,1fr)_2.25rem] gap-x-3',
+        'grid grid-cols-[minmax(0,auto)_minmax(3rem,1fr)_2.25rem] gap-x-3 py-2.5',
       )}
     >
       {rows.map(({ provider, window, stale }) => {
@@ -63,7 +63,7 @@ export function UsageSection({ states, connected }: Props) {
             key={provider}
             data-usage-row={provider}
             title={`${provider} · ${window.label}${stale ? ' · last observation' : ''}`}
-            className="col-span-3 grid h-7 grid-cols-subgrid items-center px-2.5 text-xs"
+            className="col-span-3 grid h-5 grid-cols-subgrid items-center px-2.5 text-xs"
           >
             <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
               <ProviderGlyph

@@ -1,7 +1,7 @@
 import { cn } from 'cn';
 
 export const cardRow =
-  'flex h-7 w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] font-medium text-foreground';
+  'flex h-6.75 w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-[12.5px] font-medium text-foreground';
 
 export const cardRowAction = cn(
   cardRow,
@@ -11,7 +11,7 @@ export const cardRowAction = cn(
 export const cardSection = 'px-1.5 py-1.5';
 
 export const cardSectionHeader =
-  'flex h-7 items-center justify-between gap-2 px-2.5 text-2xs text-muted-foreground';
+  'flex h-6.75 items-center justify-between gap-2 px-2.5 text-2xs text-muted-foreground';
 
 export const cardIcon = 'size-4 shrink-0 text-muted-foreground';
 
