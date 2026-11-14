@@ -51,6 +51,7 @@ export type CodexResult = {
   error: string | null;
   interruption?: 'provider-disconnected';
   usage?: TurnUsage;
+  structured?: unknown;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -1261,6 +1262,16 @@ export async function inspectCodexSkills(
   return discovery;
 }
 
+const constrainedMessage = (messages: ReadonlyMap<string, string>): unknown => {
+  const last = [...messages.values()].at(-1);
+  if (last === undefined) return undefined;
+  try {
+    return JSON.parse(last) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
 export function startCodex(options: {
   directory: string;
   sessionId: string | null;
@@ -1277,6 +1288,7 @@ export function startCodex(options: {
   onEvent: (event: CodexEvent) => void;
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
@@ -1719,7 +1731,14 @@ export function startCodex(options: {
       if (turn.status === 'completed')
         confirmTurn(
           lastText
-            ? { status: 'completed', error: null, usage }
+            ? {
+                status: 'completed',
+                error: null,
+                usage,
+                ...(options.outputSchema
+                  ? { structured: constrainedMessage(messages) }
+                  : {}),
+              }
             : {
                 status: 'failed',
                 error: 'Codex completed without an assistant response.',
@@ -2070,6 +2089,7 @@ export function startCodex(options: {
         sandboxPolicy: turnSandboxPolicy,
         ...model,
         ...effort,
+        ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       });
       const turn = object(started.turn);
       if (typeof turn?.id !== 'string' || !turn.id || turn.id.length > 200)

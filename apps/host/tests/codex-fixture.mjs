@@ -726,7 +726,64 @@ if (args.length === 1 && args[0] === '--version') {
       const requestPrompt = prompt.split(
         '\n\nRecovery context supplied by the host, not authorization to repeat previous operations:',
       )[0];
-      const command = requestPrompt.split('\n')[0].trim();
+      const verdictMode =
+        requestPrompt.startsWith(
+          'You verify. You do not change files. Return only the JSON verdict.',
+        ) ||
+        requestPrompt.startsWith(
+          'The verdict did not match the required shape',
+        );
+      if (verdictMode) {
+        assert.equal(thread.supervised, false, 'Verdict threads are read-only');
+        assert.deepEqual(params.sandboxPolicy, {
+          type: 'readOnly',
+          networkAccess: false,
+        });
+        assert.equal(params.outputSchema?.type, 'object');
+        assert.deepEqual(Object.keys(params.outputSchema.properties).sort(), [
+          'evidence',
+          'outputs',
+          'status',
+          'summary',
+        ]);
+        assert.match(requestPrompt, /<task-spec>\n[\s\S]*\n<\/task-spec>/);
+        if (process.env.NESVO_FIXTURE_VERDICT_LOG)
+          writeFileSync(
+            process.env.NESVO_FIXTURE_VERDICT_LOG,
+            JSON.stringify({
+              provider: 'Codex',
+              sessionId: thread.id,
+              cwd: thread.cwd,
+              sandbox: params.sandboxPolicy.type,
+              resumed: thread.resumed,
+              prompt: requestPrompt,
+              environment: runEnvironment(),
+            }) + '\n',
+            { flag: 'a' },
+          );
+      } else assert.equal(params.outputSchema, undefined);
+      const repairing =
+        verdictMode &&
+        requestPrompt.includes('The verdict did not match the required shape');
+      const command = verdictMode
+        ? (
+            /<(?:step-instructions|skill-parameters)>\n([^\n]*)/.exec(
+              requestPrompt,
+            )?.[1] ?? ''
+          ).trim()
+        : requestPrompt.split('\n')[0].trim();
+      const passVerdict = {
+        status: 'pass',
+        summary: 'Codex fixture verified the change against the quoted spec.',
+        evidence: [
+          { reference: 'sample.txt:1', note: 'The expected line is present.' },
+          {
+            reference: 'quoted diff',
+            note: 'Only the documented file changed.',
+          },
+        ],
+        outputs: { checked: 'sample.txt' },
+      };
       const worker =
         /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(
           requestPrompt,
@@ -868,6 +925,24 @@ if (args.length === 1 && args[0] === '--version') {
         requestApproval('command');
       } else if (command === 'fixture:hold') {
         await hold();
+      } else if (command === 'fixture:verdict-pass') {
+        complete(JSON.stringify(passVerdict));
+      } else if (command === 'fixture:verdict-fail-no-evidence') {
+        complete(
+          JSON.stringify({
+            status: 'fail',
+            summary: 'Codex fixture could not point at anything.',
+            evidence: [],
+          }),
+        );
+      } else if (command === 'fixture:verdict-invalid-then-valid') {
+        complete(
+          repairing
+            ? JSON.stringify(passVerdict)
+            : 'The verdict could not be produced as JSON.',
+        );
+      } else if (command === 'fixture:verdict-invalid-twice') {
+        complete(JSON.stringify({ verdict: 'looks fine' }));
       } else if (command === 'fixture:hold-disconnect') {
         await hold();
         await new Promise(resolve => setTimeout(resolve, 2500));
