@@ -9,7 +9,8 @@ type Props = {
 };
 
 export function IssuesStrip({ issues, banner, open }: Props) {
-  if (!banner && (!open || issues.length === 0)) return null;
+  const listed = open || !!banner;
+  if (!listed || (!banner && issues.length === 0)) return null;
   return (
     <div
       role={banner ? 'alert' : 'status'}
@@ -22,7 +23,7 @@ export function IssuesStrip({ issues, banner, open }: Props) {
           {banner}
         </p>
       )}
-      {open && (
+      {listed && (
         <ul className="max-h-32 space-y-0.5 overflow-y-auto">
           {issues.map((issue, index) => {
             const error = issue.severity === 'error';

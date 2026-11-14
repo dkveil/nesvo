@@ -64,10 +64,15 @@ const fileStem = (path: string) =>
 
 const hostIssue = (issue: DefinitionIssue, nodes: EditorNode[]) => {
   const stem = fileStem(issue.path);
+  const named = nodes.some(node => node.id === stem)
+    ? [stem]
+    : nodes
+        .map(node => node.id)
+        .filter(id => issue.message.includes(`"${id}"`));
   return {
     severity: issue.severity,
     message: issue.message,
-    steps: nodes.some(node => node.id === stem) ? [stem] : [],
+    steps: named,
     edgeId: null,
     field: null,
   } satisfies DocumentIssue;
@@ -136,7 +141,14 @@ export function useEditorState({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const validation = useMemo(() => validateDocument(document), [document]);
+  const validation = useMemo(
+    () =>
+      validateDocument(
+        document,
+        catalog.pipelines.map(pipeline => pipeline.name),
+      ),
+    [document, catalog],
+  );
   const issues = useMemo(
     () => [...validation.issues, ...hostIssues],
     [validation.issues, hostIssues],
@@ -244,6 +256,7 @@ export function useEditorState({
       ...stepDefinitionOf(pendingDraft),
       draft: true as const,
       scope: pendingDraft.scope,
+      hash: null,
     };
     mutate(current =>
       withDocumentNodes(current, [
@@ -266,7 +279,12 @@ export function useEditorState({
   const updateStep = (id: string, draft: StepDraft) => {
     const node = document.nodes.find(item => item.id === id);
     if (!node) return;
-    const renamed = isDraftStep(node.step) && draft.name !== id;
+    const wanted = isDraftStep(node.step) && draft.name !== id;
+    const taken =
+      wanted &&
+      (document.nodes.some(item => item.id === draft.name) ||
+        catalog.steps.some(step => step.name === draft.name));
+    const renamed = wanted && !taken;
     const nextId = renamed ? draft.name : id;
     const phaseChanged = draft.phase !== node.step.phase;
     mutate(current => {
@@ -577,9 +595,14 @@ const rehashed = (
   step: EditorNode['step'],
   hash: string | null,
 ): EditorNode['step'] => {
-  if (isDraftStep(step)) return step;
+  if (isDraftStep(step)) return { ...step, hash };
   if (hash === null)
-    return { ...stepDefinitionOf(step), draft: true, scope: step.source.scope };
+    return {
+      ...stepDefinitionOf(step),
+      draft: true,
+      scope: step.source.scope,
+      hash,
+    };
   return { ...step, source: { ...step.source, contentHash: hash } };
 };
 

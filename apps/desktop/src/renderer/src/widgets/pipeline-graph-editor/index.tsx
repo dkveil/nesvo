@@ -42,6 +42,7 @@ type Props = {
   computers: Computer[];
   statuses: ProviderStates;
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onDiscoverSkills?: (directory: string) => Promise<SkillSummary[]>;
   runOverlay?: { run: PipelineRun; steps: PipelineStepRecord[] };
   onInbox?: (target: InboxTarget) => void;
@@ -64,6 +65,7 @@ export default function PipelineGraphEditor({
   computers,
   statuses,
   onClose,
+  onDirtyChange,
   onDiscoverSkills,
   runOverlay,
   onInbox = () => {},
@@ -82,6 +84,10 @@ export default function PipelineGraphEditor({
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [jobsVersion, setJobsVersion] = useState(0);
+  useEffect(() => {
+    onDirtyChange?.(state.dirty);
+  }, [onDirtyChange, state.dirty]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   useEffect(() => {
     let active = true;
     scheduledJobsApi.list(hostId).then(

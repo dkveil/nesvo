@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -29,6 +29,7 @@ type Props = {
 };
 
 const canvasVariables = {
+  '--xy-background-color': 'var(--background)',
   '--xy-handle-background-color': 'var(--muted-foreground)',
   '--xy-handle-border-color': 'var(--background)',
   '--xy-edge-stroke': 'var(--border)',
@@ -39,10 +40,14 @@ const canvasVariables = {
   '--xy-node-border-selected': '1px solid var(--ring)',
 } as CSSProperties;
 
+type Measured = { width: number; height: number };
+
 const fitViewOptions = { padding: 0.25, maxZoom: 1 };
+const snapGrid: [number, number] = [10, 10];
 
 export function EditorCanvas({ state, runStates, automations }: Props) {
   const { document, selection, nodeIssues } = state;
+  const [measured, setMeasured] = useState<Record<string, Measured>>({});
   const nodes = useMemo<EditorCanvasNode[]>(
     () => [
       {
@@ -50,6 +55,7 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
         type: 'start',
         position: { x: START_NODE_X, y: laneTop('plan') + LANE_TOP_PADDING_PX },
         data: { pipelineName: document.name, automations },
+        measured: measured[START_NODE_ID],
         draggable: false,
         deletable: false,
         connectable: false,
@@ -64,6 +70,7 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
           issues: nodeIssues.get(node.id) ?? [],
           runState: runStates?.get(node.id) ?? null,
         },
+        measured: measured[node.id],
         selected: selection.kind === 'node' && selection.id === node.id,
       })),
     ],
@@ -74,6 +81,7 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
       selection,
       nodeIssues,
       runStates,
+      measured,
     ],
   );
   const edges = useMemo<ConditionEdge[]>(
@@ -96,7 +104,15 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
   );
   const onNodesChange = (changes: NodeChange<EditorCanvasNode>[]) => {
     for (const change of changes) {
-      if (change.type === 'position' && change.position) {
+      if (change.type === 'dimensions' && change.dimensions) {
+        const { id, dimensions } = change;
+        setMeasured(current =>
+          current[id]?.width === dimensions.width &&
+          current[id]?.height === dimensions.height
+            ? current
+            : { ...current, [id]: dimensions },
+        );
+      } else if (change.type === 'position' && change.position) {
         if (change.id === START_NODE_ID) continue;
         if (change.dragging) state.moveNode(change.id, change.position);
         else state.settleNode(change.id, change.position);
@@ -145,7 +161,9 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
       panActivationKeyCode="Space"
       selectionOnDrag={false}
       zoomOnDoubleClick={false}
-      deleteKeyCode={['Delete', 'Backspace']}
+      deleteKeyCode="Delete"
+      snapToGrid
+      snapGrid={snapGrid}
       multiSelectionKeyCode={null}
       connectionLineStyle={{ stroke: 'var(--muted-foreground)' }}
       proOptions={{ hideAttribution: true }}

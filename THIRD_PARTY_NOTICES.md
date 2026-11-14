@@ -84,7 +84,7 @@ THE SOFTWARE.
 
 ## Graph editor canvas
 
-The desktop graph editor renders its canvas with @xyflow/react 12.12.1 under the MIT license reproduced below and included in desktop distributions.
+The desktop graph editor renders its canvas with @xyflow/react 12.12.1 and its @xyflow/system 0.0.84 package, both under the MIT license reproduced below and included in desktop distributions.
 
 MIT License
 

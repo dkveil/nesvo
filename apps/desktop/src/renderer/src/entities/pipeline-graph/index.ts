@@ -1,5 +1,6 @@
 import {
   formatEdge,
+  pipelineDefinitionSchema,
   resolveGraph,
   stepDefinitionSchema,
   stepNameSchema,
@@ -24,6 +25,7 @@ export type { EdgeCondition, GraphIssue } from '@nesvo/contracts';
 export type DraftStep = StepDefinition & {
   draft: true;
   scope: DefinitionScope;
+  hash: string | null;
 };
 
 export type StepDraft = StepDefinition & {
@@ -74,7 +76,6 @@ export const LANE_HEIGHT_PX = 400;
 export const LANE_TOP_PADDING_PX = 48;
 export const ROW_HEIGHT_PX = 140;
 export const COLUMN_WIDTH_PX = 260;
-export const NODE_WIDTH_PX = 224;
 export const NODE_HEIGHT_PX = 56;
 export const START_NODE_X = -COLUMN_WIDTH_PX;
 
@@ -113,14 +114,6 @@ export const edgeWhenLabels: Record<EdgeCondition, string> = {
 export const laneTop = (phase: StepPhase) =>
   phaseOrder.indexOf(phase) * LANE_HEIGHT_PX;
 
-export const laneOf = (y: number): StepPhase =>
-  phaseOrder[
-    Math.min(
-      phaseOrder.length - 1,
-      Math.max(0, Math.floor((y + NODE_HEIGHT_PX / 2) / LANE_HEIGHT_PX)),
-    )
-  ] as StepPhase;
-
 export const clampToLane = (phase: StepPhase, y: number) => {
   const top = laneTop(phase) + 8;
   const bottom = laneTop(phase) + LANE_HEIGHT_PX - NODE_HEIGHT_PX - 8;
@@ -135,7 +128,7 @@ export const stepScope = (step: ResolvedStep | DraftStep): DefinitionScope =>
   isDraftStep(step) ? step.scope : step.source.scope;
 
 export const stepHash = (step: ResolvedStep | DraftStep): string | null =>
-  isDraftStep(step) ? null : step.source.contentHash;
+  isDraftStep(step) ? step.hash : step.source.contentHash;
 
 export const stepDefinitionOf = (
   step: ResolvedStep | DraftStep | StepDraft,
@@ -163,7 +156,12 @@ export const applyDraft = (
   draft: StepDraft,
 ): ResolvedStep | DraftStep =>
   isDraftStep(current)
-    ? { ...stepDefinitionOf(draft), draft: true, scope: draft.scope }
+    ? {
+        ...stepDefinitionOf(draft),
+        draft: true,
+        scope: draft.scope,
+        hash: current.hash,
+      }
     : { ...current, ...stepDefinitionOf(draft) };
 
 export const newDraftStep = (scope: DefinitionScope): StepDraft => ({
@@ -346,16 +344,23 @@ export const orderedStepNames = (document: EditorDocument): string[] => {
 };
 
 const plainScalar = /^[A-Za-z0-9][A-Za-z0-9 ,.;'()_/-]*[A-Za-z0-9.)']$/;
+const coreScalar =
+  /^(?:true|false|null|~|yes|no|on|off|[-+]?(?:0x[0-9a-f_]+|0o[0-7_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:e[-+]?[0-9]+)?)|\.inf|\.nan)$/i;
 
 const yamlText = (value: string) =>
-  plainScalar.test(value) ? value : JSON.stringify(value);
+  plainScalar.test(value) && !coreScalar.test(value)
+    ? value
+    : JSON.stringify(value);
+
+const yamlName = (value: string) =>
+  coreScalar.test(value) ? JSON.stringify(value) : value;
 
 export const toFileText = (document: EditorDocument): string => {
   const names = orderedStepNames(document);
-  const lines = [`name: ${document.name}`];
+  const lines = [`name: ${yamlName(document.name)}`];
   if (document.description)
     lines.push(`description: ${yamlText(document.description)}`);
-  lines.push(`steps: [${names.join(', ')}]`);
+  lines.push(`steps: [${names.map(yamlName).join(', ')}]`);
   lines.push('edges:');
   for (const edge of document.edges)
     lines.push(`  - ${formatEdge(toGraphEdge(edge))}`);
@@ -363,7 +368,8 @@ export const toFileText = (document: EditorDocument): string => {
   lines.push('layout:');
   for (const name of names) {
     const position = document.layout[name];
-    if (position) lines.push(`  ${name}: [${position[0]}, ${position[1]}]`);
+    if (position)
+      lines.push(`  ${yamlName(name)}: [${position[0]}, ${position[1]}]`);
   }
   if (names.every(name => !document.layout[name]))
     lines[lines.length - 1] = 'layout: {}';
@@ -372,11 +378,11 @@ export const toFileText = (document: EditorDocument): string => {
 
 export const stepFileText = (step: StepDefinition): string => {
   const lines = [
-    `name: ${step.name}`,
+    `name: ${yamlName(step.name)}`,
     `type: ${step.type}`,
     `phase: ${step.phase}`,
   ];
-  if (step.skill) lines.push(`skill: ${step.skill}`);
+  if (step.skill) lines.push(`skill: ${yamlName(step.skill)}`);
   lines.push(`timeout: ${step.timeout}`);
   if (step.retries) lines.push(`retries: ${step.retries}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
@@ -440,10 +446,50 @@ const graphToDocumentIssue = (
   field: issue.field,
 });
 
+const pipelineFieldIssues = (document: EditorDocument): DocumentIssue[] => {
+  const parsed = pipelineDefinitionSchema.safeParse({
+    name: document.name,
+    description: document.description,
+    body: document.body,
+    steps: document.nodes.map(node => node.id),
+    edges: document.edges.map(edge => formatEdge(toGraphEdge(edge))),
+    layout: document.layout,
+  });
+  if (parsed.success) return [];
+  return parsed.error.issues
+    .filter(issue => issue.path[0] !== 'name' && issue.path[0] !== 'steps')
+    .map(issue => ({
+      severity: 'error' as const,
+      message: `Pipeline ${String(issue.path[0] ?? 'file')}: ${issue.message}`,
+      steps: [],
+      edgeId: null,
+      field: String(issue.path[0] ?? ''),
+    }));
+};
+
 export const validateDocument = (
   document: EditorDocument,
+  existingPipelines: readonly string[] = [],
 ): DocumentValidation => {
   const issues: DocumentIssue[] = [];
+  if (document.hash === null && existingPipelines.includes(document.name))
+    issues.push({
+      severity: 'error',
+      message: `A pipeline named "${document.name}" already exists; open it with Edit.`,
+      steps: [],
+      edgeId: null,
+      field: 'name',
+    });
+  for (const node of document.nodes)
+    if (isDraftStep(node.step) && node.step.name !== node.id)
+      issues.push({
+        severity: 'error',
+        message: `Step name "${node.step.name}" is already used; choose another name.`,
+        steps: [node.id],
+        edgeId: null,
+        field: 'name',
+      });
+  issues.push(...pipelineFieldIssues(document));
   if (!stepNameSchema.safeParse(document.name).success)
     issues.push({
       severity: 'error',

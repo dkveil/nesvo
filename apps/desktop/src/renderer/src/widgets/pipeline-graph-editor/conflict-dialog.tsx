@@ -26,7 +26,7 @@ export function ConflictDialog({ conflict, onResolve }: Props) {
           <DialogDescription className="text-xs">
             {conflict?.kind === 'step' ? 'Step' : 'Pipeline'} "{conflict?.name}"{' '}
             {deleted
-              ? 'no longer exists. Reload to start from an empty file, or keep your version and save it as a new file.'
+              ? 'no longer exists on disk. Your edits are kept and the next save creates the file again.'
               : 'was changed since it was opened. Nothing is merged: reload the current file and lose your edits, or keep your edits and save them on top of the new version.'}
           </DialogDescription>
         </DialogHeader>
@@ -36,16 +36,18 @@ export function ConflictDialog({ conflict, onResolve }: Props) {
           </pre>
         )}
         <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onResolve('reload')}
-          >
-            Reload
-          </Button>
+          {!deleted && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onResolve('reload')}
+            >
+              Reload
+            </Button>
+          )}
           <Button type="button" size="sm" onClick={() => onResolve('keep')}>
-            Keep mine on top of the new version
+            {deleted ? 'Keep mine' : 'Keep mine on top of the new version'}
           </Button>
         </DialogFooter>
       </DialogContent>
