@@ -472,13 +472,24 @@ export class PipelineAssistant {
         );
       return { change, path, checked, issues };
     });
-    const definitions = new Map<string, GraphStep>([
-      ...(catalog?.steps.map(step => [step.name, step] as const) ?? []),
-      ...checks.flatMap(check =>
-        check.checked?.step && !check.issues.some(isError)
+    const projectSteps = new Set(
+      catalog?.steps
+        .filter(step => step.source.scope === 'project')
+        .map(step => step.name),
+    );
+    const proposed = (scope: PipelineAssistantChange['scope']) =>
+      checks.flatMap(check =>
+        check.change.scope === scope &&
+        check.checked?.step &&
+        !check.issues.some(isError) &&
+        !(scope === 'global' && projectSteps.has(check.change.name))
           ? [[check.change.name, check.checked.step] as const]
           : [],
-      ),
+      );
+    const definitions = new Map<string, GraphStep>([
+      ...(catalog?.steps.map(step => [step.name, step] as const) ?? []),
+      ...proposed('global'),
+      ...proposed('project'),
     ]);
     return checks.map((check, index) => ({
       index,
