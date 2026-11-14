@@ -1289,6 +1289,7 @@ export function startCodex(options: {
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  instructionsOnly?: boolean;
 }): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
@@ -2037,6 +2038,7 @@ export function startCodex(options: {
             ...(options.effort
               ? { model_reasoning_effort: options.effort }
               : {}),
+            ...(options.instructionsOnly ? { project_doc_max_bytes: 0 } : {}),
             mcp_servers: disabledServers,
             notify: [],
             allow_login_shell: false,

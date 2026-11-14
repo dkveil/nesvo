@@ -194,10 +194,18 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               agent: createAgentExecutor({
                 sessions,
                 usage,
-                spec: async (run, signal) =>
-                  snapshots.read(run.id) ??
-                  (await loadSpec(run.specPath, run.directory, signal)).spec
-                    .body,
+                spec: async (run, signal) => {
+                  const snapshot = snapshots.read(run.id);
+                  if (snapshot !== null) return snapshot;
+                  const loaded = await loadSpec(
+                    run.specPath,
+                    run.directory,
+                    signal,
+                  );
+                  return loaded.source.contentHash === run.specHash
+                    ? loaded.spec.body
+                    : null;
+                },
               }),
             },
             author: createSessionAuthor({

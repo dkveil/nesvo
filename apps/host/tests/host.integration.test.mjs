@@ -6888,7 +6888,11 @@ test(
             'echo {"ghp_ABCDEFGHIJKLMNOPQRST1234":"1"}',
           ),
         },
-        { name: 'review', type: 'agent', body: 'Review the change.' },
+        {
+          name: 'review',
+          type: 'agent',
+          body: 'fixture:verdict-pass\nReview the change.',
+        },
         { name: 'approve', type: 'human', body: 'Approve the change.' },
         {
           name: 'missing',
@@ -7080,12 +7084,14 @@ test(
           JSON.stringify(secretKey.result),
           /ghp_ABCDEFGHIJKLMNOPQRST1234/,
         );
-        for (const name of ['review', 'approve']) {
-          const skipped = stepNamed(current, name);
-          assert.equal(skipped.state, 'skipped');
-          assert.equal(skipped.result, null);
-          assert.equal(skipped.skip.reason, 'Executor not available');
-        }
+        const review = stepNamed(current, 'review');
+        assert.equal(review.state, 'passed', review.result?.summary);
+        assert.ok(review.sessionId);
+        assert.equal(review.result.evidence.length, 2);
+        const skipped = stepNamed(current, 'approve');
+        assert.equal(skipped.state, 'skipped');
+        assert.equal(skipped.result, null);
+        assert.equal(skipped.skip.reason, 'Executor not available');
       },
     );
 
@@ -10340,6 +10346,7 @@ test(
       agentStep('verify-repair', 'fixture:verdict-invalid-then-valid'),
       agentStep('verify-invalid', 'fixture:verdict-invalid-twice'),
       agentStep('verify-limit', 'fixture:rate-limit'),
+      agentStep('verify-provider-fail', 'fixture:fail'),
       agentStep('verify-timeout', 'fixture:hold', { timeout: '2s' }),
       agentStep('verify-hold', 'fixture:hold', { timeout: '10m' }),
       agentStep('verify-skill', 'fixture:verdict-pass', {
@@ -10355,7 +10362,7 @@ test(
         name: 'after',
         type: 'command',
         phase: 'pre-done',
-        body: process.platform === 'win32' ? 'echo after' : 'echo after',
+        body: 'echo after',
       },
     ];
     const pipelines = {
@@ -10364,6 +10371,7 @@ test(
       repair: ['verify-repair'],
       invalid: ['verify-invalid'],
       limit: ['verify-limit'],
+      providerfail: ['verify-provider-fail'],
       timeout: ['verify-timeout'],
       hold: ['verify-hold'],
       skill: ['verify-skill'],
@@ -10610,6 +10618,25 @@ test(
         const authorSession = await sessionOf(run.sessionId);
         assert.equal(operatorMessages(authorSession).length, 1);
         assert.equal(authorSession.pipelineStepId, null);
+        const reviews = (await host.request('list-reviews')).reviews;
+        assert.equal(
+          reviews.some(item => item.sessionId === session.id),
+          false,
+          'A gate verdict is not a result to accept',
+        );
+        assert.equal(
+          reviews.some(item => item.sessionId === run.sessionId),
+          true,
+        );
+        const followUp = await host.request('send-message', {
+          sessionId: session.id,
+          messageId: randomUUID(),
+          text: 'fixture:hold',
+        });
+        assert.equal(followUp.type, 'error');
+        assert.equal(followUp.code, 'invalid-request');
+        assert.match(followUp.message, /records a pipeline gate/);
+        assert.equal(operatorMessages(await sessionOf(session.id)).length, 1);
       },
     );
 
@@ -10691,6 +10718,14 @@ test(
         const session = await stepSession(run, step);
         assert.equal(session.status, 'failed');
         assert.equal((await verdictsFor(run)).length, 1);
+        const failed = await settled((await started('providerfail')).id);
+        assert.equal(failed.run.status, 'needs-attention');
+        const failedStep = stepNamed(failed, 'verify-provider-fail');
+        assert.equal(failedStep.state, 'blocked');
+        assert.equal(
+          failedStep.result.summary,
+          'The step session did not return a verdict: Fixture account limit reached.',
+        );
       },
     );
 
@@ -10826,6 +10861,7 @@ test(
         assert.equal(verdicts[0].provider, 'Codex');
         assert.equal(verdicts[0].sandbox, 'readOnly');
         assert.equal(verdicts[0].resumed, false);
+        assert.equal(verdicts[0].projectDocBytes, 0);
         assert.equal(verdicts[0].cwd, repository);
       },
     );
@@ -10871,7 +10907,7 @@ test(
         assert.equal(step.state, 'blocked');
         assert.equal(
           step.result.summary,
-          'Claude Code has no remaining allowance in its 5-hour window. Resets at 2099-01-02T03:04:05.000Z.',
+          'Claude Code has no remaining allowance. Resets at 2099-01-02T03:04:05.000Z.',
         );
         assert.equal(step.sessionId, null);
         assert.equal((await verdictsFor(run)).length, 0);

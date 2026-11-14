@@ -619,6 +619,7 @@ if (args.length === 1 && args[0] === '--version') {
         supervised,
         resumed,
         effort,
+        projectDocBytes: params.config?.project_doc_max_bytes ?? null,
       };
       assert.equal(
         existsSync(statePath(thread.id)),
@@ -735,6 +736,7 @@ if (args.length === 1 && args[0] === '--version') {
         );
       if (verdictMode) {
         assert.equal(thread.supervised, false, 'Verdict threads are read-only');
+        assert.equal(params.approvalPolicy, 'never');
         assert.deepEqual(params.sandboxPolicy, {
           type: 'readOnly',
           networkAccess: false,
@@ -756,6 +758,7 @@ if (args.length === 1 && args[0] === '--version') {
               cwd: thread.cwd,
               sandbox: params.sandboxPolicy.type,
               resumed: thread.resumed,
+              projectDocBytes: thread.projectDocBytes,
               prompt: requestPrompt,
               environment: runEnvironment(),
             }) + '\n',

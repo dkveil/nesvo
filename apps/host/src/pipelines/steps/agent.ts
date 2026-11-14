@@ -22,6 +22,7 @@ import type {
   RunOutcome,
   SessionService,
 } from '../../sessions/service';
+import { exhaustedUntil } from '../../scheduled-jobs/limit-gate';
 import { discoverDirectorySkills } from '../../skills/service';
 import type { StepExecution, StepExecutor, StepOutcome } from '../runner';
 
@@ -30,15 +31,13 @@ export const VERDICT_ROLE =
 export const REPAIR_NOTE = 'The verdict did not match the required shape';
 export const NO_VERDICT = 'The step returned no valid verdict';
 export const NO_EVIDENCE = 'The verdict has no evidence';
-export const STEP_BUSY = 'The computer was busy with another session';
-export const AGENT_STEP_BUSY_MS = 60_000;
 
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const DIFF_CHARS = 200_000;
 const AUTHOR_RESPONSE_CHARS = 60_000;
 const PREVIOUS_ANSWER_CHARS = 4_000;
 const QUOTED_MARKERS =
-  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema)\b/gi;
+  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema|previous-answer)\b/gi;
 
 export type AgentStepSessions = Pick<
   SessionService,
@@ -60,7 +59,6 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<SkillCatalog>;
-  busyWaitMs?: number;
 };
 
 type StepSkill = { skillId: string; skillHash: string | undefined };
@@ -86,27 +84,11 @@ const clip = (value: string, limit: number) =>
     ? `${value.slice(0, limit)}\n[Truncated at ${limit} characters.]`
     : value;
 
-export const quotaReason = (
-  usage: ProviderUsage,
-  now: number,
-): string | null => {
-  if (usage.status !== 'ready') return null;
-  const exhausted = usage.windows.find(
-    window =>
-      window.usedPercent >= 100 &&
-      window.resetsAt !== null &&
-      Date.parse(window.resetsAt) > now,
-  );
-  if (exhausted)
-    return `${usage.provider} has no remaining allowance in its ${exhausted.label} window. Resets at ${exhausted.resetsAt}.`;
-  if (usage.ordinaryUsageAllowed === false) {
-    const reset = usage.windows
-      .map(window => window.resetsAt)
-      .filter((value): value is string => value !== null && Date.parse(value) > now)
-      .sort()[0];
-    return `${usage.provider} reports no remaining allowance.${reset ? ` Resets at ${reset}.` : ''}`;
-  }
-  return null;
+export const quotaReason = (usage: ProviderUsage, now: Date): string | null => {
+  const until = exhaustedUntil(usage, now);
+  return until
+    ? `${usage.provider} has no remaining allowance. Resets at ${until}.`
+    : null;
 };
 
 const diffSection = (review: Review | undefined, hasSession: boolean) => {
@@ -213,6 +195,7 @@ const issuesText = (error: z.ZodError) =>
         : issue.message,
     )
     .join('; ')
+    .replace(/[<>\r\n]+/g, ' ')
     .slice(0, 600);
 
 const evaluate = (
@@ -236,12 +219,15 @@ const evaluate = (
       : invalid(issuesText(verdict.error));
   }
   if (flags.aborted) return { kind: 'interrupted' };
-  if (outcome.state === 'stopped')
+  if (flags.timedOut)
     return {
       kind: 'failed',
-      summary: flags.timedOut
-        ? `Timed out after ${flags.timeout}; the step session was stopped.`
-        : 'The step session was stopped before it returned a verdict.',
+      summary: `Timed out after ${flags.timeout}; the step session was stopped.`,
+    };
+  if (outcome.state === 'stopped')
+    return {
+      kind: 'blocked',
+      summary: 'The step session was stopped before it returned a verdict.',
     };
   if (outcome.limit)
     return {
@@ -251,15 +237,19 @@ const evaluate = (
         : 'Provider usage limit reached. Check the provider for the reset time.',
     };
   return {
-    kind: 'failed',
-    summary: outcome.error ?? 'The step session did not complete its turn.',
+    kind: 'blocked',
+    summary: `The step session did not return a verdict: ${outcome.error ?? 'the turn did not complete.'}`,
   };
 };
 
 const sumUsage = (usages: readonly TurnUsage[]) => {
   const total = (pick: (usage: TurnUsage) => number | null) => {
-    const values = usages.map(pick).filter((value): value is number => value !== null);
-    return values.length ? values.reduce((left, right) => left + right, 0) : null;
+    const values = usages
+      .map(pick)
+      .filter((value): value is number => value !== null);
+    return values.length
+      ? values.reduce((left, right) => left + right, 0)
+      : null;
   };
   return {
     usd: total(usage => usage.costUsd),
@@ -273,10 +263,10 @@ const verdictEvidence = (verdict: AgentVerdict): Evidence[] =>
     kind: 'text',
     label: item.reference.slice(0, stepResultLimits.evidenceLabel),
     path: null,
-    text: (item.note ? `${item.reference}\n${item.note}` : item.reference).slice(
-      0,
-      stepResultLimits.evidenceText,
-    ),
+    text: (item.note
+      ? `${item.reference}\n${item.note}`
+      : item.reference
+    ).slice(0, stepResultLimits.evidenceText),
     url: null,
   }));
 
@@ -300,7 +290,9 @@ const resolveStepSkill = async (
   }
   const matches = catalog.skills.filter(skill => skill.name === name);
   if (matches.length === 0)
-    return { reason: `Skill "${name}" is not in the skill library for this folder.` };
+    return {
+      reason: `Skill "${name}" is not in the skill library for this folder.`,
+    };
   const usable = matches.filter(skill => skill.invocation !== 'blocked');
   if (usable.length === 0)
     return {
@@ -314,7 +306,7 @@ const resolveStepSkill = async (
 };
 
 const waitForIdle = (
-  sessions: AgentStepSessions,
+  sessions: Pick<AgentStepSessions, 'onRunFinished'>,
   signal: AbortSignal,
   delayMs: number,
 ) =>
@@ -337,7 +329,11 @@ export const createAgentExecutor =
     const { run, step, definition, signal } = execution;
     const startedAt = step.startedAt ?? execution.now().toISOString();
     const usages: TurnUsage[] = [];
-    const result = (status: StepResult['status'], summary: string, verdict?: AgentVerdict): StepOutcome => {
+    const result = (
+      status: StepResult['status'],
+      summary: string,
+      verdict?: AgentVerdict,
+    ): StepOutcome => {
       const finishedAt = execution.now().toISOString();
       return {
         kind: 'result',
@@ -351,7 +347,10 @@ export const createAgentExecutor =
           outputs: verdict?.outputs ?? {},
           startedAt,
           finishedAt,
-          durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)),
+          durationMs: Math.max(
+            0,
+            Date.parse(finishedAt) - Date.parse(startedAt),
+          ),
           cost: { ...sumUsage(usages), provider: run.gateProvider },
           attempt: Math.max(step.attempt, 1),
         },
@@ -364,15 +363,19 @@ export const createAgentExecutor =
       usage = await ports.usage.read({ provider: run.gateProvider });
     } catch {
       if (signal.aborted) return interrupted;
-      return result('fail', 'The provider allowance could not be checked.');
+      return result('blocked', 'The provider allowance could not be checked.');
     }
     if (signal.aborted) return interrupted;
-    const quota = quotaReason(usage, execution.now().getTime());
+    const quota = quotaReason(usage, execution.now());
     if (quota) return result('blocked', quota);
 
     let skill: StepSkill | null = null;
     if (definition.skill) {
-      const resolved = await resolveStepSkill(ports, execution, definition.skill);
+      const resolved = await resolveStepSkill(
+        ports,
+        execution,
+        definition.skill,
+      );
       if (signal.aborted) return interrupted;
       if ('reason' in resolved) return result('blocked', resolved.reason);
       skill = resolved;
@@ -382,14 +385,20 @@ export const createAgentExecutor =
     if (signal.aborted) return interrupted;
     const prompt = verdictPrompt({
       spec,
-      review: run.sessionId ? ports.sessions.latestReview(run.sessionId) : undefined,
+      review: run.sessionId
+        ? ports.sessions.latestReview(run.sessionId)
+        : undefined,
       hasSession: run.sessionId !== null,
       body: definition.body,
       skill: definition.skill,
     });
 
     const input: CreateSessionInput = {
-      title: `${run.pipeline.name} · ${step.name} · attempt ${Math.max(step.attempt, 1)}`.slice(0, 100),
+      title:
+        `${run.pipeline.name} · ${step.name} · attempt ${Math.max(step.attempt, 1)}`.slice(
+          0,
+          100,
+        ),
       provider: run.gateProvider,
       model: run.gateModel,
       mode: 'read-only',
@@ -402,7 +411,7 @@ export const createAgentExecutor =
       });
     } catch (error) {
       return result(
-        'fail',
+        'blocked',
         `The step session could not be created: ${error instanceof Error ? error.message : 'unknown error'}`,
       );
     }
@@ -412,14 +421,25 @@ export const createAgentExecutor =
     const timeoutMs = parseDurationMs(timeout) ?? DEFAULT_TIMEOUT_MS;
     const deadline = Date.now() + timeoutMs;
     let timedOut = false;
-    const stopSession = () => ports.sessions.stopActive(session.id);
+    const stopSession = () =>
+      ports.sessions.stopActive(
+        session.id,
+        signal.reason === 'shutdown' ? 'host-shutdown' : undefined,
+      );
     const timer = setTimeout(() => {
       timedOut = true;
       stopSession();
     }, timeoutMs);
     signal.addEventListener('abort', stopSession, { once: true });
 
+    const busyTimeout = (): Evaluation => ({
+      kind: 'failed',
+      summary: `Timed out after ${timeout} while the computer was busy with another session.`,
+    });
+
     const turn = async (text: string): Promise<Evaluation> => {
+      if (signal.aborted) return { kind: 'interrupted' };
+      if (timedOut) return busyTimeout();
       const messageId = randomUUID();
       let resolveFinished!: (finished: RunFinished) => void;
       const finished = new Promise<RunFinished>(resolve => {
@@ -446,25 +466,17 @@ export const createAgentExecutor =
               : {}),
           });
         let sent = send();
-        if (sent === 'busy') {
+        while (sent === 'busy') {
           await waitForIdle(
             ports.sessions,
             signal,
-            Math.max(0, Math.min(ports.busyWaitMs ?? AGENT_STEP_BUSY_MS, deadline - Date.now())),
+            Math.max(0, deadline - Date.now()),
           );
           if (signal.aborted) return { kind: 'interrupted' };
-          if (timedOut)
-            return {
-              kind: 'failed',
-              summary: `Timed out after ${timeout} while the computer was busy with another session.`,
-            };
+          if (timedOut) return busyTimeout();
           sent = send();
         }
-        if (sent === 'busy') return { kind: 'blocked', summary: STEP_BUSY };
-        if (timedOut) {
-          stopSession();
-          return { kind: 'failed', summary: `Timed out after ${timeout}; the step session was stopped.` };
-        }
+        if (timedOut || signal.aborted) stopSession();
         const run = await finished;
         const outcome = await ports.sessions.finished(session.id, run.runId);
         if (outcome.usage) usages.push(outcome.usage);
@@ -482,7 +494,7 @@ export const createAgentExecutor =
       } catch (error) {
         if (signal.aborted) return { kind: 'interrupted' };
         return {
-          kind: 'failed',
+          kind: 'blocked',
           summary: `The step turn could not be sent: ${error instanceof Error ? error.message : 'unknown error'}`,
         };
       } finally {
@@ -499,8 +511,10 @@ export const createAgentExecutor =
           evaluation.verdict,
         );
       if (evaluation.kind === 'no-evidence') return result('fail', NO_EVIDENCE);
-      if (evaluation.kind === 'blocked') return result('blocked', evaluation.summary);
-      if (evaluation.kind === 'failed') return result('fail', evaluation.summary);
+      if (evaluation.kind === 'blocked')
+        return result('blocked', evaluation.summary);
+      if (evaluation.kind === 'failed')
+        return result('fail', evaluation.summary);
       return null;
     };
 
