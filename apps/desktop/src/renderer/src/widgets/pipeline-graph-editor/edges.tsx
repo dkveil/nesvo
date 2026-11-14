@@ -41,6 +41,7 @@ export function ConditionEdgeView({
     <>
       <BaseEdge
         id={id}
+        data-editor-edge={id}
         path={path}
         markerEnd={markerEnd}
         interactionWidth={18}

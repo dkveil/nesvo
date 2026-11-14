@@ -122,7 +122,10 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
     for (const change of changes) {
       if (change.type === 'dimensions' && change.dimensions) {
         const { id, dimensions } = change;
-        if (!measured[id] && id !== START_NODE_ID) revealNode(id);
+        if (id === state.revealId) {
+          revealNode(id);
+          state.clearReveal();
+        }
         setMeasured(current =>
           current[id]?.width === dimensions.width &&
           current[id]?.height === dimensions.height
@@ -140,7 +143,14 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
             : { kind: 'node', id: change.id },
         );
       } else if (change.type === 'remove' && change.id !== START_NODE_ID) {
-        state.removeNode(change.id);
+        const { id } = change;
+        setMeasured(current => {
+          if (!current[id]) return current;
+          const rest = { ...current };
+          delete rest[id];
+          return rest;
+        });
+        state.removeNode(id);
       }
     }
   };

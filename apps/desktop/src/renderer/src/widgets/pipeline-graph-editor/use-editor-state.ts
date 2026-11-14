@@ -139,6 +139,7 @@ export function useEditorState({
   const [hostIssues, setHostIssues] = useState<DocumentIssue[]>([]);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [revealId, setRevealId] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const validation = useMemo(
@@ -215,6 +216,7 @@ export function useEditorState({
         },
       ]),
     );
+    setRevealId(step.name);
     select({ kind: 'node', id: step.name });
   };
 
@@ -271,6 +273,7 @@ export function useEditorState({
     );
     setPendingDraft(null);
     setDraftProblems([]);
+    setRevealId(step.name);
     setSelection({ kind: 'node', id: step.name });
   };
 
@@ -563,9 +566,13 @@ export function useEditorState({
     }
   };
 
+  const clearReveal = useCallback(() => setRevealId(null), []);
+
   return {
     catalog,
     document,
+    revealId,
+    clearReveal,
     dirty,
     saving,
     validation,
