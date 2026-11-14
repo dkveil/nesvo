@@ -489,6 +489,39 @@ const parallelAgentWarning = (
   }
 };
 
+const layoutWarnings = (
+  layout: GraphInput['layout'],
+  members: ReadonlySet<string>,
+  report: Collector,
+) => {
+  for (const name of Object.keys(layout ?? {}))
+    if (!members.has(name)) report.add('W1', graphMessages.layoutStep(name));
+};
+
+const ordered = (issues: readonly GraphIssue[]): GraphIssue[] => [
+  ...issues.filter(issue => issue.severity === 'error'),
+  ...issues.filter(issue => issue.severity === 'warning'),
+];
+
+export const graphListRules: readonly GraphRule[] = [
+  'E1',
+  'E2',
+  'E3',
+  'E4',
+  'E9',
+  'W1',
+];
+
+export const checkGraphList = (
+  input: Pick<GraphInput, 'steps' | 'edges' | 'layout'>,
+): GraphIssue[] => {
+  const report = collector();
+  const members = new Set(input.steps);
+  if (input.edges) listedEdges(input.edges, members, report);
+  layoutWarnings(input.layout, members, report);
+  return ordered(report.issues);
+};
+
 export const resolveGraph = (
   input: GraphInput,
   stepsByName: ReadonlyMap<string, GraphStep>,
@@ -507,8 +540,7 @@ export const resolveGraph = (
   const looped = !input.edges || listed ? cycles(input.steps, edges) : [];
   for (const cycle of looped)
     report.add('E6', graphMessages.cycle(cycle), cycle);
-  for (const name of Object.keys(input.layout ?? {}))
-    if (!members.has(name)) report.add('W1', graphMessages.layoutStep(name));
+  layoutWarnings(input.layout, members, report);
   if (known.length && known.every(step => step.type === 'action'))
     report.add('W3', graphMessages.noGate(input.name));
   if ((!input.edges || listed) && !looped.length) {
@@ -525,9 +557,5 @@ export const resolveGraph = (
       report,
     );
   }
-  const issues = [
-    ...report.issues.filter(issue => issue.severity === 'error'),
-    ...report.issues.filter(issue => issue.severity === 'warning'),
-  ];
-  return { graph: { explicit, edges }, issues };
+  return { graph: { explicit, edges }, issues: ordered(report.issues) };
 };
