@@ -9373,7 +9373,7 @@ test(
 
     await t.test(
       'a busy host arms one timer, the idle event sends the turn once and an expired timer needs attention',
-      async () => {
+      async subtest => {
         const isolated = join(directory, 'in-process');
         const bootstrap = launch(
           isolated,
@@ -9390,7 +9390,7 @@ test(
           AUTHOR_BUSY_MS,
         } = taskModules;
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
-        t.after(() => database.close());
+        subtest.after(() => database.close());
         const store = new PipelineRunStore(database);
         const clock = createFakeClock('2026-11-13T10:00:00.000Z', () => {});
         let busy = true;
@@ -12466,7 +12466,7 @@ test(
 
     await t.test(
       'twenty concurrent run-finished deliveries send exactly one correction and the phase re-runs',
-      async () => {
+      async subtest => {
         const isolated = join(directory, 'in-process');
         const bootstrap = launch(
           isolated,
@@ -12482,7 +12482,7 @@ test(
           correctionMessageId,
         } = modules;
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
-        t.after(() => database.close());
+        subtest.after(() => database.close());
         const store = new PipelineRunStore(database);
         const sent = [];
         const completed = new Set();
