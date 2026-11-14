@@ -115,7 +115,25 @@ export type SessionServiceOptions = {
   environment?: (
     session: Session,
   ) => Readonly<Record<string, string>> | undefined;
+  isGatePending?: (reviewId: string, version: number) => boolean;
 };
+
+export const GATE_PENDING_MESSAGE =
+  'This result is waiting for its pipeline gate';
+
+export type GateReviewDecision = {
+  reviewId: string;
+  version: number;
+  decisionId: string;
+  decision: 'accept' | 'reject' | 'request-changes';
+  feedback: string;
+};
+
+const GATE_REVIEW_STATUS = {
+  accept: 'accepted',
+  reject: 'rejected',
+  'request-changes': 'changes-requested',
+} as const satisfies Record<GateReviewDecision['decision'], Review['status']>;
 
 type LaunchTurn = {
   skillId?: string;
@@ -333,77 +351,24 @@ export class SessionService {
         );
       return recorded;
     }
-    if (this.isBusy() || this.unsaved.size)
-      throw new SessionError(
-        'busy',
-        'Wait for the active group to finish and its result to be saved.',
-      );
-    const review = this.reviews.get(input.reviewId);
-    const session = review ? this.store.get(review.sessionId) : undefined;
+    const requested = this.reviews.get(input.reviewId);
     if (
-      !review ||
-      !session ||
-      review.status !== 'pending' ||
-      review.version !== input.version ||
-      session.runId !== review.runId ||
-      session.status !== 'completed' ||
-      this.reviews.latest(session.id)?.id !== review.id
+      requested &&
+      this.options.isGatePending?.(requested.id, requested.version)
     )
-      throw new SessionError(
-        'invalid-request',
-        'This result is no longer current or has already been reviewed. Refresh the inbox.',
-      );
-    for (const dependency of review.dependencies) {
-      const current = this.reviews.latest(dependency.sessionId);
-      const child = this.store.get(dependency.sessionId);
-      if (
-        current?.id !== dependency.reviewId ||
-        current.version !== dependency.version ||
-        current.status === 'superseded' ||
-        child?.runId !== current.runId ||
-        child.status !== 'completed'
-      )
-        throw new SessionError(
-          'invalid-request',
-          'A worker result has changed. Ask the parent session for an updated summary.',
-        );
-    }
+      throw new SessionError('busy', GATE_PENDING_MESSAGE);
+    this.ensureReviewIdle();
+    const { review, session } = this.currentReview(
+      input.reviewId,
+      input.version,
+      ['pending'],
+    );
     const controller = new AbortController();
     this.reviewDecision = controller;
     try {
-      if (input.decision === 'accept') {
-        const artifacts = [
-          review,
-          ...review.dependencies.map(dependency =>
-            this.reviews.get(dependency.reviewId)!,
-          ),
-        ];
-        for (const artifact of artifacts) {
-          if (artifact.diff.status === 'not-applicable') continue;
-          if (artifact.diff.status !== 'complete' || !artifact.diff.fingerprint)
-            throw new SessionError(
-              'invalid-request',
-              'The result or its worker has no complete diff. Request changes to the affected result with a smaller scope.',
-            );
-          const current = await captureWorkspace(
-            artifact.directory,
-            controller.signal,
-          );
-          if (
-            current.status !== 'complete' ||
-            current.fingerprint !== artifact.diff.fingerprint
-          )
-            throw new SessionError(
-              'invalid-request',
-              'Files for this result or its worker have changed since capture or cannot be checked. Revise the affected session and review its current result.',
-            );
-        }
-      }
-      if (this.closing || controller.signal.aborted)
-        throw new SessionError(
-          'busy',
-          'The host is closing. Your decision was not saved.',
-        );
+      if (input.decision === 'accept')
+        await this.verifyFiles(review, controller.signal);
+      this.ensureDecisionOpen(controller);
       const decided = this.reviews.change(review, {
         status: input.decision === 'accept' ? 'accepted' : 'changes-requested',
         decision: {
@@ -441,6 +406,128 @@ export class SessionService {
       return decided;
     } finally {
       if (this.reviewDecision === controller) this.reviewDecision = undefined;
+    }
+  }
+
+  async decideGateReview(
+    input: GateReviewDecision,
+    record: () => void,
+  ): Promise<Review> {
+    this.ensureReviewIdle();
+    const { review } = this.currentReview(
+      input.reviewId,
+      input.version,
+      input.decision === 'accept' ? ['pending', 'accepted'] : ['pending'],
+    );
+    const controller = new AbortController();
+    this.reviewDecision = controller;
+    try {
+      if (input.decision === 'accept')
+        await this.verifyFiles(review, controller.signal);
+      this.ensureDecisionOpen(controller);
+      const decided =
+        review.status === 'pending'
+          ? this.reviews.change(review, {
+              status: GATE_REVIEW_STATUS[input.decision],
+              decision: {
+                id: input.decisionId,
+                decision: input.decision,
+                feedback: input.feedback,
+                at: new Date().toISOString(),
+              },
+            })
+          : null;
+      this.store.saveMany([], () => {
+        if (decided) this.reviews.saveMany([decided]);
+        record();
+      });
+      if (decided) this.emitReviews([decided]);
+      return decided ?? review;
+    } finally {
+      if (this.reviewDecision === controller) this.reviewDecision = undefined;
+    }
+  }
+
+  private ensureReviewIdle(): void {
+    if (this.isBusy() || this.unsaved.size)
+      throw new SessionError(
+        'busy',
+        'Wait for the active group to finish and its result to be saved.',
+      );
+  }
+
+  private ensureDecisionOpen(controller: AbortController): void {
+    if (this.closing || controller.signal.aborted)
+      throw new SessionError(
+        'busy',
+        'The host is closing. Your decision was not saved.',
+      );
+  }
+
+  private currentReview(
+    reviewId: string,
+    version: number,
+    statuses: readonly Review['status'][],
+  ): { review: Review; session: Session } {
+    const review = this.reviews.get(reviewId);
+    const session = review ? this.store.get(review.sessionId) : undefined;
+    if (
+      !review ||
+      !session ||
+      !statuses.includes(review.status) ||
+      review.version !== version ||
+      session.runId !== review.runId ||
+      session.status !== 'completed' ||
+      this.reviews.latest(session.id)?.id !== review.id
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This result is no longer current or has already been reviewed. Refresh the inbox.',
+      );
+    for (const dependency of review.dependencies) {
+      const current = this.reviews.latest(dependency.sessionId);
+      const child = this.store.get(dependency.sessionId);
+      if (
+        current?.id !== dependency.reviewId ||
+        current.version !== dependency.version ||
+        current.status === 'superseded' ||
+        child?.runId !== current.runId ||
+        child.status !== 'completed'
+      )
+        throw new SessionError(
+          'invalid-request',
+          'A worker result has changed. Ask the parent session for an updated summary.',
+        );
+    }
+    return { review, session };
+  }
+
+  private async verifyFiles(
+    review: Review,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const artifacts = [
+      review,
+      ...review.dependencies.map(dependency =>
+        this.reviews.get(dependency.reviewId)!,
+      ),
+    ];
+    for (const artifact of artifacts) {
+      if (artifact.diff.status === 'not-applicable') continue;
+      if (artifact.diff.status !== 'complete' || !artifact.diff.fingerprint)
+        throw new SessionError(
+          'invalid-request',
+          'The result or its worker has no complete diff. Request changes to the affected result with a smaller scope.',
+        );
+      const current = await captureWorkspace(artifact.directory, signal);
+      if (
+        current.status !== 'complete' ||
+        current.fingerprint !== artifact.diff.fingerprint
+      )
+        throw new SessionError(
+          'invalid-request',
+          'Files for this result or its worker have changed since capture or cannot be checked. Revise the affected session and review its current result.',
+        );
     }
   }
 
