@@ -1,18 +1,21 @@
 import {
+  describeSchedule,
   previewOccurrences,
   type DesktopScheduledJob as ScheduledJob,
   type DesktopScheduledJobRun as ScheduledJobRun,
   type ScheduledJobDefinition,
 } from '@nesvo/contracts';
+import type { PipelineTone } from '@/entities/pipeline';
 import type { Provider } from '@/entities/session';
 
 export type {
   DesktopScheduledJob as ScheduledJob,
   DesktopScheduledJobRun as ScheduledJobRun,
 } from '@nesvo/contracts';
+export { toneText } from '@/entities/pipeline';
 
 export type JobProvider = ScheduledJob['provider'];
-export type RunTone = 'success' | 'warning' | 'error' | 'muted' | 'info';
+export type RunTone = PipelineTone;
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -97,14 +100,6 @@ export const runTones: Record<ScheduledJobRun['status'], RunTone> = {
   unavailable: 'warning',
 };
 
-export const toneText: Record<RunTone, string> = {
-  success: 'text-success-foreground',
-  warning: 'text-warning-foreground',
-  error: 'text-error-foreground',
-  muted: 'text-muted-foreground',
-  info: 'text-info-foreground',
-};
-
 export const isActiveRun = (run: Pick<ScheduledJobRun, 'status'>) =>
   run.status === 'starting' || run.status === 'running';
 
@@ -160,19 +155,8 @@ export const runSummary = (run: ScheduledJobRun) => {
 export const scheduleSummary = ({
   schedule,
   timeZone,
-}: Pick<ScheduledJobDefinition, 'schedule' | 'timeZone'>) => {
-  const rule =
-    schedule.kind === 'daily'
-      ? `Daily ${schedule.time}`
-      : schedule.kind === 'weekdays'
-        ? `Weekdays ${schedule.time}`
-        : schedule.kind === 'weekly'
-          ? `${WEEKDAYS[schedule.weekday]}s ${schedule.time}`
-          : schedule.minutes % 60 === 0
-            ? `Every ${schedule.minutes / 60} h`
-            : `Every ${schedule.minutes} min`;
-  return `${rule} · ${timeZone}`;
-};
+}: Pick<ScheduledJobDefinition, 'schedule' | 'timeZone'>) =>
+  `${describeSchedule(schedule)} · ${timeZone}`;
 
 export const formatUntil = (iso: string, now: number) => {
   const remaining = Date.parse(iso) - now;
