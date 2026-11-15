@@ -201,8 +201,9 @@ export function AutomationEditor({
             {editing ? 'Edit automation' : 'New automation'}
           </SheetTitle>
           <SheetDescription className="text-xs">
-            Runs a read-only prompt on a schedule. Each run is a session with
-            its result in the Inbox.
+            {values.pipeline
+              ? 'Runs a pipeline on a schedule. Each run is a pipeline run with its result in the Inbox.'
+              : 'Runs a read-only prompt on a schedule. Each run is a session with its result in the Inbox.'}
           </SheetDescription>
         </SheetHeader>
         <form
@@ -283,14 +284,14 @@ export function AutomationEditor({
                   <HostPicker
                     computers={computers}
                     hostId={values.hostId}
-                    disabled={pending || editing}
+                    disabled={pending || editing || !!values.pipeline}
                     onChange={hostId => change({ hostId })}
                     onManageComputers={onManageComputers}
                   />
                   <LocationPicker
                     directory={values.directory}
                     computerName={computer?.name ?? 'this computer'}
-                    disabled={pending}
+                    disabled={pending || !!values.pipeline}
                     open={locationOpen && !pending}
                     onOpenChange={setLocationOpen}
                     onChange={directory => change({ directory })}
@@ -301,10 +302,16 @@ export function AutomationEditor({
                     Runs only while Nesvo is open.
                   </p>
                 )}
-                {editing && (
+                {values.pipeline ? (
                   <p className="text-2xs leading-4 text-muted-foreground">
-                    An automation stays on the computer it was created on.
+                    A pipeline automation stays in the project of its pipeline.
                   </p>
+                ) : (
+                  editing && (
+                    <p className="text-2xs leading-4 text-muted-foreground">
+                      An automation stays on the computer it was created on.
+                    </p>
+                  )
                 )}
               </div>
               <div className="space-y-1.5">
