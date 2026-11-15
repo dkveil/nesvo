@@ -5456,7 +5456,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            9,
+            10,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -5525,7 +5525,7 @@ test(
             )
             .all()
             .map(row => row.name),
-          ['metadata', 'workflow_runs', 'reviews', 'sessions'],
+          ['metadata', 'reviews', 'sessions', 'workflow_runs'],
         );
         assert.equal(
           check
@@ -5539,11 +5539,11 @@ test(
       }
     });
 
-    await t.test('a version 10 database is refused', async () => {
+    await t.test('a version 11 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 10');
+      newer.exec('PRAGMA user_version = 11');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -5555,7 +5555,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          10,
+          11,
         );
       } finally {
         check.close();

@@ -18,7 +18,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { text } from '../skills/portable';
 import {
   capIssues,
@@ -353,6 +353,7 @@ function issueAt(path: string, message: string): DefinitionIssue {
 
 function legacyPath(
   target: DefinitionTarget,
+  requestedRoot: string,
   catalog: DefinitionCatalog,
 ): string | null {
   const entries = target.kind === 'step' ? catalog.steps : catalog.workflows;
@@ -360,18 +361,24 @@ function legacyPath(
     item => item.name === target.name && item.source.scope === target.scope,
   );
   if (!entry) return null;
-  const path = entry.source.path;
-  return basename(dirname(dirname(path))) === 'pipelines' ? path : null;
+  const expected = join(
+    dirname(requestedRoot),
+    'pipelines',
+    target.kind === 'step' ? 'steps' : 'pipelines',
+    `${target.name}.md`,
+  );
+  return pathKey(entry.source.path) === pathKey(expected) ? expected : null;
 }
 
 async function readLegacy(
   target: DefinitionTarget,
+  requestedRoot: string,
   current: Current,
   catalog: DefinitionCatalog,
   signal: AbortSignal,
 ): Promise<{ path: string; current: Current } | WorkflowDefinitionRefused | null> {
   if (current.file) return null;
-  const path = legacyPath(target, catalog);
+  const path = legacyPath(target, requestedRoot, catalog);
   if (!path) return null;
   const legacy = await readCurrent(path, signal);
   return isRefusal(legacy) ? legacy : { path, current: legacy };
@@ -414,7 +421,13 @@ export async function saveDefinition(
     if (isRefusal(found)) return found;
     let current: Current = found;
     const catalog = await loadCatalog(input.directory, signal);
-    const legacy = await readLegacy(input, current, catalog, signal);
+    const legacy = await readLegacy(
+      input,
+      requested,
+      current,
+      catalog,
+      signal,
+    );
     if (legacy && 'type' in legacy) return legacy;
     if (legacy) current = legacy.current;
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
@@ -475,7 +488,13 @@ export async function deleteDefinition(
     if (isRefusal(found)) return found;
     let current: Current = found;
     const catalog = await loadCatalog(input.directory, signal);
-    const legacy = await readLegacy(input, current, catalog, signal);
+    const legacy = await readLegacy(
+      input,
+      requested,
+      current,
+      catalog,
+      signal,
+    );
     if (legacy && 'type' in legacy) return legacy;
     if (legacy) {
       path = legacy.path;
