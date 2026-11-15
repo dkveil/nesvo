@@ -1,8 +1,13 @@
 import { SCHEDULED_JOB_MIN_INTERVAL_MINUTES } from '@nesvo/contracts';
 import {
   formatOccurrence,
+  listTimeZones,
   previewSchedule,
+  scheduleKindLabels,
+  scheduleKinds,
   weekdayNames,
+  weekdayOrder,
+  type ScheduleKind,
 } from '@/entities/scheduled-job';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
@@ -18,7 +23,6 @@ import {
   scheduleOf,
   type AutomationErrors,
   type AutomationValues,
-  type ScheduleKind,
 } from './automation-form';
 import { FieldError } from './field-error';
 
@@ -30,27 +34,10 @@ type Props = {
   onBlur: (field: 'time' | 'minutes' | 'timeZone') => void;
 };
 
-const scheduleKinds: { value: ScheduleKind; label: string }[] = [
-  { value: 'weekdays', label: 'Weekdays' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'interval', label: 'Interval' },
-];
-
-const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
-
-const listTimeZones = () => {
-  try {
-    return Intl.supportedValuesOf('timeZone');
-  } catch {
-    return ['UTC'];
-  }
-};
-
 const timeZones = listTimeZones();
 
 const isScheduleKind = (value: string): value is ScheduleKind =>
-  scheduleKinds.some(kind => kind.value === value);
+  scheduleKinds.some(kind => kind === value);
 
 const previewText = (values: AutomationValues) => {
   const schedule = scheduleOf(values);
@@ -90,12 +77,8 @@ export function ScheduleFields({
         }}
       >
         {scheduleKinds.map(kind => (
-          <ToggleGroupItem
-            key={kind.value}
-            value={kind.value}
-            className="h-7 text-xs"
-          >
-            {kind.label}
+          <ToggleGroupItem key={kind} value={kind} className="h-7 text-xs">
+            {scheduleKindLabels[kind]}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>

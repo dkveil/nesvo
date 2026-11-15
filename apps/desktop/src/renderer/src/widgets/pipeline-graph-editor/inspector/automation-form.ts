@@ -6,37 +6,27 @@ import {
   scheduledJobLimits,
   type ScheduledJob,
 } from '@nesvo/contracts';
+import {
+  jobProviders,
+  localTimeZone,
+  type ScheduleKind,
+} from '@/entities/scheduled-job';
 import type { Provider } from '@/entities/session';
 import { schemaNotes, type NotesByField } from './field-notes';
 import type { AutomationInput } from './index';
 
-export const scheduleKinds = [
-  'weekdays',
-  'daily',
-  'weekly',
-  'interval',
-] as const;
-
-export type ScheduleKind = (typeof scheduleKinds)[number];
-
-export const scheduleKindLabels: Record<ScheduleKind, string> = {
-  weekdays: 'Weekdays',
-  daily: 'Daily',
-  weekly: 'Weekly',
-  interval: 'Interval',
-};
-
-export const weekdayLabels = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
-
-export const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+export {
+  jobProviders,
+  listTimeZones,
+  localTimeZone,
+  scheduleKindLabels,
+  scheduleKinds,
+  sessionProviders,
+  weekdayNames as weekdayLabels,
+  weekdayOrder,
+  type JobProvider,
+  type ScheduleKind,
+} from '@/entities/scheduled-job';
 
 export type ScheduleValues = {
   name: string;
@@ -52,39 +42,9 @@ export type ScheduleValues = {
   timeoutMinutes: string;
 };
 
-export type JobProvider = ScheduledJob['provider'];
-
-export const jobProviders: Record<Provider, JobProvider> = {
-  'Claude Code': 'claude',
-  Codex: 'codex',
-};
-
-export const sessionProviders: Record<JobProvider, Provider> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-};
-
 const DEFAULT_TIME = '09:00';
 const DEFAULT_INTERVAL_MINUTES = 60;
 const MINUTE_MS = 60_000;
-
-export const localTimeZone = () => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-};
-
-export const listTimeZones = (current: string) => {
-  let zones: string[];
-  try {
-    zones = Intl.supportedValuesOf('timeZone');
-  } catch {
-    zones = ['UTC'];
-  }
-  return zones.includes(current) ? zones : [current, ...zones];
-};
 
 export const initialScheduleValues = (
   pipelineName: string,

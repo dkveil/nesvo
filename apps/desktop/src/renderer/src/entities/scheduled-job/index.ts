@@ -29,6 +29,42 @@ const WEEKDAYS = [
 
 export const weekdayNames = WEEKDAYS;
 
+export const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+
+export const scheduleKinds = [
+  'weekdays',
+  'daily',
+  'weekly',
+  'interval',
+] as const satisfies readonly ScheduledJobDefinition['schedule']['kind'][];
+
+export type ScheduleKind = (typeof scheduleKinds)[number];
+
+export const scheduleKindLabels: Record<ScheduleKind, string> = {
+  weekdays: 'Weekdays',
+  daily: 'Daily',
+  weekly: 'Weekly',
+  interval: 'Interval',
+};
+
+export const localTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
+export const listTimeZones = (current = '') => {
+  let zones: string[];
+  try {
+    zones = Intl.supportedValuesOf('timeZone');
+  } catch {
+    zones = ['UTC'];
+  }
+  return !current || zones.includes(current) ? zones : [current, ...zones];
+};
+
 export const sessionProviders: Record<JobProvider, Provider> = {
   claude: 'Claude Code',
   codex: 'Codex',

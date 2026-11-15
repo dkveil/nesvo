@@ -10,12 +10,12 @@ import {
 } from '@nesvo/contracts';
 import {
   jobProviders,
+  localTimeZone,
   sessionProviders,
+  type ScheduleKind,
   type ScheduledJob,
 } from '@/entities/scheduled-job';
 import type { Provider } from '@/entities/session';
-
-export type ScheduleKind = ScheduledJobSchedule['kind'];
 
 export type AutomationValues = {
   id: string;
@@ -56,14 +56,6 @@ const PROMPT_CONTROL_CHARACTERS =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const DEFAULT_INTERVAL_MINUTES = '60';
 
-export const detectedTimeZone = () => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-};
-
 const currentMinute = () => {
   const now = new Date();
   now.setSeconds(0, 0);
@@ -88,7 +80,7 @@ export const newAutomationValues = (
   weekday: 1,
   minutes: DEFAULT_INTERVAL_MINUTES,
   anchorAt: currentMinute(),
-  timeZone: detectedTimeZone(),
+  timeZone: localTimeZone(),
   timeoutMinutes: String(scheduledJobLimits.defaultTimeoutMinutes),
   active: true,
 });
