@@ -444,7 +444,7 @@ export function SessionSidebar({
                     )}
                     {closed && (
                       <span className="text-xs tabular-nums">
-                        {roots.length}
+                        {roots.length + jobGroups.length}
                       </span>
                     )}
                     <ChevronDown
