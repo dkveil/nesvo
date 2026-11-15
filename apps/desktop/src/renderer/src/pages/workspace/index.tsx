@@ -263,13 +263,31 @@ export function Workspace() {
   >({});
   const stopping = useRef(new Set<string>());
   const automations = useScheduledJobs(store.computers);
-  const jobOf = (session: Pick<Session, 'scheduledJobId' | 'hostId'>) =>
+  const jobOf = (
+    session: Pick<Session, 'scheduledJobId' | 'hostId' | 'pipelineRunId'>,
+  ) =>
     session.scheduledJobId
       ? automations.jobs.find(
           job =>
             job.id === session.scheduledJobId && job.hostId === session.hostId,
         )
-      : undefined;
+      : session.pipelineRunId
+        ? automations.jobs.find(
+            job =>
+              job.hostId === session.hostId &&
+              automations
+                .runs(job)
+                .runs.some(run => run.pipelineRunId === session.pipelineRunId),
+          )
+        : undefined;
+  const isAutomationSession = (session: Session) =>
+    !!session.scheduledJobId || !!jobOf(session);
+  const automationErrorKey = (session: Session) => {
+    const job = jobOf(session);
+    return job
+      ? entityKey(job)
+      : hostKey(session.scheduledJobId ?? '', session.hostId);
+  };
   const automationLabel = (session: Session) => {
     const name = jobOf(session)?.name;
     return name ? `Automation ${name}` : 'An automation';
@@ -743,7 +761,7 @@ export function Workspace() {
   const threadBusyReason =
     store.loading || store.error
       ? 'Session history is still loading.'
-      : hostRun?.scheduledJobId
+      : hostRun && isAutomationSession(hostRun)
         ? `${automationLabel(hostRun)} is running on this computer.`
         : hostRun
           ? 'Another session is working on this computer.'
@@ -989,17 +1007,43 @@ export function Workspace() {
   const runningSessions = store.sessions.filter(
     session => session.status === 'running' || session.status === 'stopping',
   );
-  const runningAutomations = runningSessions.filter(
-    session => session.scheduledJobId,
-  );
+  const runningAutomations = runningSessions.filter(isAutomationSession);
+  const stopPipelineRun = async (hostId: string, pipelineRunId: string) => {
+    try {
+      store.mergePipelineRuns([
+        await window.nesvo.pipelines.stopRun(hostId, pipelineRunId),
+      ]);
+      return '';
+    } catch (failure) {
+      return `Could not stop the pipeline. ${errorDetail(failure)}`;
+    }
+  };
   const stopAutomation = async (session: Session, reportKey = '') => {
-    const error = await stop(session);
-    if (!error || !session.scheduledJobId) return;
+    const error =
+      !session.scheduledJobId && session.pipelineRunId
+        ? await stopPipelineRun(session.hostId, session.pipelineRunId)
+        : await stop(session);
+    if (!error || !isAutomationSession(session)) return;
     setAutomationErrors(previous => ({
       ...previous,
-      [hostKey(session.scheduledJobId ?? '', session.hostId)]: error,
+      [automationErrorKey(session)]: error,
     }));
     if (reportKey) setErrors(previous => ({ ...previous, [reportKey]: error }));
+  };
+  const stopAutomationRun = async (job: ScheduledJob, run: ScheduledJobRun) => {
+    if (run.pipelineRunId) {
+      const error = await stopPipelineRun(run.hostId, run.pipelineRunId);
+      if (error)
+        setAutomationErrors(previous => ({
+          ...previous,
+          [entityKey(job)]: error,
+        }));
+      return;
+    }
+    const session = store.sessions.find(
+      item => item.id === run.sessionId && item.hostId === run.hostId,
+    );
+    if (session) await stopAutomation(session);
   };
   const automationBusy = (session: Session, reportKey = '') => (
     <>
@@ -1043,7 +1087,7 @@ export function Workspace() {
       session => session.hostId === job.hostId,
     );
     if (!running) return '';
-    return running.scheduledJobId
+    return isAutomationSession(running)
       ? `${automationLabel(running)} is running.`
       : 'Another session is working on this computer.';
   };
@@ -1689,7 +1733,7 @@ export function Workspace() {
                     item.hostId === review.hostId,
                 );
                 const name = session && jobOf(session)?.name;
-                return session?.scheduledJobId
+                return session && isAutomationSession(session)
                   ? name
                     ? `Automation · ${name}`
                     : 'Automation'
@@ -1702,15 +1746,9 @@ export function Workspace() {
                   className="mb-3 px-3 text-2xs text-muted-foreground"
                 >
                   {automationBusy(session)}
-                  {automationErrors[
-                    hostKey(session.scheduledJobId ?? '', session.hostId)
-                  ] && (
+                  {automationErrors[automationErrorKey(session)] && (
                     <span role="alert" className="block text-destructive">
-                      {
-                        automationErrors[
-                          hostKey(session.scheduledJobId ?? '', session.hostId)
-                        ]
-                      }
+                      {automationErrors[automationErrorKey(session)]}
                     </span>
                   )}
                 </p>
@@ -1746,13 +1784,7 @@ export function Workspace() {
                 openAutomationEditor(duplicateValues(automationJob))
               }
               onDelete={() => deleteAutomation(automationJob)}
-              onStop={run => {
-                const session = store.sessions.find(
-                  item =>
-                    item.id === run.sessionId && item.hostId === run.hostId,
-                );
-                if (session) void stopAutomation(session);
-              }}
+              onStop={run => void stopAutomationRun(automationJob, run)}
               onSession={select}
               onLoadMore={() =>
                 void automations.loadRuns(
@@ -1880,7 +1912,7 @@ export function Workspace() {
                   )
                 }
                 otherRunLabel={
-                  activeRun?.scheduledJobId
+                  activeRun && isAutomationSession(activeRun)
                     ? automationBusy(activeRun, selectedKey)
                     : undefined
                 }
