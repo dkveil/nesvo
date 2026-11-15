@@ -18,7 +18,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { text } from '../skills/portable';
 import {
   capIssues,
@@ -351,6 +351,37 @@ function issueAt(path: string, message: string): DefinitionIssue {
   return { severity: 'error', path, line: null, message };
 }
 
+function legacyPath(
+  target: DefinitionTarget,
+  catalog: DefinitionCatalog,
+): string | null {
+  const entries = target.kind === 'step' ? catalog.steps : catalog.workflows;
+  const entry = entries.find(
+    item => item.name === target.name && item.source.scope === target.scope,
+  );
+  if (!entry) return null;
+  const path = entry.source.path;
+  return basename(dirname(dirname(path))) === 'pipelines' ? path : null;
+}
+
+async function readLegacy(
+  target: DefinitionTarget,
+  current: Current,
+  catalog: DefinitionCatalog,
+  signal: AbortSignal,
+): Promise<{ path: string; current: Current } | WorkflowDefinitionRefused | null> {
+  if (current.file) return null;
+  const path = legacyPath(target, catalog);
+  if (!path) return null;
+  const legacy = await readCurrent(path, signal);
+  return isRefusal(legacy) ? legacy : { path, current: legacy };
+}
+
+async function removeLegacy(path: string | null) {
+  if (!path) return;
+  await unlink(path).catch(() => undefined);
+}
+
 export async function saveDefinition(
   input: SaveDefinitionInput,
   signal: AbortSignal,
@@ -377,15 +408,19 @@ export async function saveDefinition(
     const existing = await prepareFolder(input, roots, false);
     if (existing && 'type' in existing) return existing;
     const path = existing?.path ?? plannedPath;
-    const current = existing
+    const found: Current | WorkflowDefinitionRefused = existing
       ? await readCurrent(path, signal)
       : { file: null };
-    if (isRefusal(current)) return current;
+    if (isRefusal(found)) return found;
+    let current: Current = found;
+    const catalog = await loadCatalog(input.directory, signal);
+    const legacy = await readLegacy(input, current, catalog, signal);
+    if (legacy && 'type' in legacy) return legacy;
+    if (legacy) current = legacy.current;
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
-      return conflict(input, path, current.file);
+      return conflict(input, legacy?.path ?? path, current.file);
     checkActiveRuns(input, roots.projectRoot, activeRuns);
     if (input.kind === 'workflow') {
-      const catalog = await loadCatalog(input.directory, signal);
       const unresolved = missingSteps(checked.steps, catalog, path);
       if (unresolved.length) return refusedIssues(unresolved);
       const graph = checkGraph(
@@ -407,8 +442,13 @@ export async function saveDefinition(
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
       return location ?? refusal(requested, 'The folder cannot be created.');
-    const outcome = await publish(input, location, signal);
+    const outcome = await publish(
+      legacy ? { ...input, expectedHash: null } : input,
+      location,
+      signal,
+    );
     if (outcome !== 'written') return outcome;
+    await removeLegacy(legacy?.path ?? null);
     return loadCatalog(input.directory, signal);
   }).catch(error => {
     if (error instanceof DefinitionError) throw error;
@@ -426,28 +466,34 @@ export async function deleteDefinition(
   const requested = input.scope === 'global' ? roots.global : roots.project;
   return exclusive(pathKey(requested), async () => {
     const location = await prepareFolder(input, roots, false);
-    if (!location)
-      return conflict(input, join(requested, `${input.kind}s`, `${input.name}.md`), null);
-    if ('type' in location) return location;
-    const current = await readCurrent(location.path, signal);
-    if (isRefusal(current)) return current;
+    if (location && 'type' in location) return location;
+    const plannedPath = join(requested, `${input.kind}s`, `${input.name}.md`);
+    let path = location?.path ?? plannedPath;
+    const found: Current | WorkflowDefinitionRefused = location
+      ? await readCurrent(path, signal)
+      : { file: null };
+    if (isRefusal(found)) return found;
+    let current: Current = found;
+    const catalog = await loadCatalog(input.directory, signal);
+    const legacy = await readLegacy(input, current, catalog, signal);
+    if (legacy && 'type' in legacy) return legacy;
+    if (legacy) {
+      path = legacy.path;
+      current = legacy.current;
+    }
     if (current.file?.contentHash !== input.expectedHash)
-      return conflict(input, location.path, current.file);
+      return conflict(input, path, current.file);
     checkActiveRuns(input, roots.projectRoot, activeRuns);
     if (input.kind === 'step') {
-      const users = stepUsers(
-        input.name,
-        location.path,
-        await loadCatalog(input.directory, signal),
-      );
+      const users = stepUsers(input.name, path, catalog);
       if (users.length) return refusedIssues(users);
     }
-    const latest = await readCurrent(location.path, signal);
+    const latest = await readCurrent(path, signal);
     if (isRefusal(latest)) return latest;
     if (latest.file?.contentHash !== input.expectedHash)
-      return conflict(input, location.path, latest.file);
+      return conflict(input, path, latest.file);
     try {
-      await unlink(location.path);
+      await unlink(path);
     } catch (error) {
       return unavailable(error);
     }

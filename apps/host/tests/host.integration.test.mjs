@@ -1274,7 +1274,10 @@ test(
     );
     await host.stop();
     const migrated = new DatabaseSync(path);
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 9);
+    assert.equal(
+      migrated.prepare('PRAGMA user_version').get().user_version,
+      10,
+    );
     migrated.close();
     const reopened = open();
     assert.equal(
@@ -6312,6 +6315,68 @@ test(
       assert.equal(portable.specs[0].workflow, 'portability');
     });
 
+    await t.test(
+      'legacy pipelines roots are read with a visible note and specs accept the pipeline field',
+      async () => {
+        const legacyProject = join(directory, 'legacy');
+        await mkdir(join(legacyProject, '.git'), { recursive: true });
+        const legacyRoot = join(legacyProject, '.agents', 'pipelines');
+        await write(
+          join(legacyRoot, 'steps', 'old-check.md'),
+          '---\nname: old-check\ntype: command\nphase: pre-done\n---\necho old\n',
+        );
+        await write(
+          join(legacyRoot, 'pipelines', 'old-flow.md'),
+          '---\nname: old-flow\nsteps: [old-check]\n---\n',
+        );
+        await write(
+          join(legacyProject, '.agents', 'workflows', 'steps', 'old-check.md'),
+          '---\nname: old-check\ntype: command\nphase: pre-done\n---\necho new\n',
+        );
+        await write(
+          join(legacyProject, '.agents', 'tasks', 'old-spec.md'),
+          '---\npipeline: old-flow\n---\n## Goal\nKeep working.\n',
+        );
+        process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
+        const legacy = await loadCatalog(legacyProject, signal);
+        assert.deepEqual(
+          legacy.issues.filter(item => item.severity === 'error'),
+          [],
+        );
+        assert.ok(
+          legacy.issues.some(
+            item =>
+              item.severity === 'warning' &&
+              item.path === legacyRoot &&
+              item.message.startsWith('Legacy location'),
+          ),
+          JSON.stringify(legacy.issues),
+        );
+        const flow = resolveWorkflow('old-flow', legacy);
+        assert.equal(
+          flow.source.path,
+          join(legacyRoot, 'pipelines', 'old-flow.md'),
+        );
+        assert.match(flow.notes[0], /^Legacy location: move /);
+        assert.equal(flow.steps[0].body, 'echo new\n');
+        assert.deepEqual(flow.steps[0].notes, []);
+        assert.equal(legacy.specs[0].workflow, 'old-flow');
+        assert.ok(
+          legacy.issues.some(
+            item =>
+              item.severity === 'warning' &&
+              item.message.includes(
+                'Field "pipeline" is the legacy name of "workflow"',
+              ),
+          ),
+        );
+        assert.deepEqual(legacy.roots, {
+          global: null,
+          project: join(legacyProject, '.agents', 'workflows'),
+        });
+      },
+    );
+
     await t.test('the override is ignored outside test mode', async () => {
       delete process.env.NESVO_TEST_MODE;
       process.env.NESVO_WORKFLOWS_HOME = home;
@@ -8014,6 +8079,174 @@ test(
         assert.equal(other.type, 'workflow-definitions');
       },
     );
+
+    await t.test(
+      'a definition saved from the legacy pipelines folder moves to the workflows folder',
+      async () => {
+        const legacyPath = join(
+          project,
+          '.agents',
+          'pipelines',
+          'steps',
+          'legacy-check.md',
+        );
+        const document = stepDocument('legacy-check');
+        await mkdir(join(legacyPath, '..'), { recursive: true });
+        await writeFile(legacyPath, document);
+        const stale = await save('step', 'legacy-check', document, null);
+        assert.equal(stale.type, 'workflow-definition-conflict');
+        assert.equal(stale.path, legacyPath);
+        assert.equal(stale.currentHash, hashOf(document));
+        const edited = stepDocument('legacy-check', { timeout: '2m' });
+        const moved = await save(
+          'step',
+          'legacy-check',
+          edited,
+          hashOf(document),
+        );
+        assert.equal(moved.type, 'workflow-definitions', JSON.stringify(moved));
+        assert.equal(await readFile(stepPath('legacy-check'), 'utf8'), edited);
+        await assert.rejects(stat(legacyPath));
+        const listed = moved.catalog.steps.find(
+          step => step.name === 'legacy-check',
+        );
+        assert.equal(listed.source.path, stepPath('legacy-check'));
+        assert.deepEqual(listed.notes, []);
+        const removed = await remove('step', 'legacy-check', hashOf(edited));
+        assert.equal(removed.type, 'workflow-definitions');
+        await assert.rejects(stat(stepPath('legacy-check')));
+      },
+    );
+  },
+);
+
+test(
+  'a version 9 database renames its pipeline tables, columns and document keys to workflows',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-migration-')),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const outfile = join(directory, 'database.mjs');
+    await promisify(execFile)('bun', [
+      'build',
+      fileURLToPath(new URL('../src/database.ts', import.meta.url)),
+      '--target=node',
+      '--format=esm',
+      `--outfile=${outfile}`,
+    ]);
+    const { openDatabaseSync } = await import(pathToFileURL(outfile).href);
+    const data = join(directory, 'data');
+    await mkdir(data);
+    const seeded = new DatabaseSync(join(data, 'nesvo.sqlite'));
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+    seeded.exec(
+      [
+        'CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+        'CREATE TABLE sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL, scheduled_job_id TEXT, scheduled_job_run_id TEXT, pipeline_run_id TEXT, pipeline_step_id TEXT)',
+        'CREATE TABLE pipeline_runs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, directory TEXT NOT NULL, project_root TEXT NOT NULL, pipeline_name TEXT NOT NULL, spec_path TEXT NOT NULL, spec_hash TEXT NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), status TEXT NOT NULL, phase TEXT, current_step_index INTEGER, session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)',
+        'CREATE INDEX pipeline_runs_status ON pipeline_runs (status)',
+        'CREATE TABLE pipeline_steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE, revision INTEGER NOT NULL, step_index INTEGER NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, attempt INTEGER NOT NULL, document TEXT NOT NULL, session_id TEXT, review_id TEXT, review_version INTEGER, started_at TEXT, updated_at TEXT NOT NULL)',
+        'CREATE TABLE scheduled_jobs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL, directory TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, effort TEXT, mode TEXT NOT NULL, schedule TEXT NOT NULL, time_zone TEXT NOT NULL, active INTEGER NOT NULL, timeout_minutes INTEGER NOT NULL, next_run_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, pipeline TEXT CHECK (pipeline IS NULL OR json_valid(pipeline)))',
+        'CREATE TABLE scheduled_job_runs (id TEXT PRIMARY KEY, scheduled_job_id TEXT NOT NULL, scheduled_for TEXT, request_id TEXT UNIQUE, trigger_kind TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, missed_count INTEGER NOT NULL, session_id TEXT, session_run_id TEXT, review_id TEXT, reset_at TEXT, recorded_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, pipeline_run_id TEXT)',
+        'PRAGMA user_version = 9',
+      ].join('; '),
+    );
+    seeded
+      .prepare('INSERT INTO metadata (key, value) VALUES (?, ?)')
+      .run('instance_id', randomUUID());
+    seeded
+      .prepare(
+        'INSERT INTO pipeline_runs (id, revision, directory, project_root, pipeline_name, spec_path, spec_hash, document, status, created_at, updated_at, finished_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        runId,
+        directory,
+        directory,
+        'legacy',
+        'spec.md',
+        'a'.repeat(64),
+        JSON.stringify({
+          id: runId,
+          pipeline: { name: 'legacy' },
+          status: 'passed',
+        }),
+        'passed',
+        now,
+        now,
+        now,
+      );
+    seeded
+      .prepare(
+        'INSERT INTO sessions (id, document, updated_at, pipeline_run_id) VALUES (?, ?, ?, ?)',
+      )
+      .run(
+        sessionId,
+        JSON.stringify({
+          id: sessionId,
+          pipelineRunId: runId,
+          pipelineStepId: null,
+          messages: [{ id: 'first', origin: 'pipeline' }],
+        }),
+        now,
+        runId,
+      );
+    seeded.close();
+
+    const migrated = openDatabaseSync(data);
+    try {
+      const tables = migrated
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map(row => row.name);
+      assert.ok(tables.includes('workflow_runs'), tables.join(','));
+      assert.ok(tables.includes('workflow_steps'));
+      assert.ok(!tables.some(name => name.startsWith('pipeline')));
+      const columns = table =>
+        migrated
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .map(row => row.name);
+      assert.ok(columns('workflow_runs').includes('workflow_name'));
+      assert.ok(!columns('workflow_runs').includes('pipeline_name'));
+      assert.ok(columns('sessions').includes('workflow_run_id'));
+      assert.ok(columns('sessions').includes('workflow_step_id'));
+      assert.ok(!columns('sessions').includes('pipeline_run_id'));
+      assert.ok(columns('scheduled_jobs').includes('workflow'));
+      assert.ok(columns('scheduled_job_runs').includes('workflow_run_id'));
+      assert.deepEqual(
+        JSON.parse(
+          migrated
+            .prepare('SELECT document FROM workflow_runs WHERE id = ?')
+            .get(runId).document,
+        ),
+        { id: runId, workflow: { name: 'legacy' }, status: 'passed' },
+      );
+      const session = JSON.parse(
+        migrated
+          .prepare('SELECT document FROM sessions WHERE id = ?')
+          .get(sessionId).document,
+      );
+      assert.equal(session.workflowRunId, runId);
+      assert.equal(session.workflowStepId, null);
+      assert.equal('pipelineRunId' in session, false);
+      assert.equal(session.messages[0].origin, 'workflow');
+      assert.equal(
+        migrated.prepare('PRAGMA user_version').get().user_version,
+        10,
+      );
+      const indexes = migrated
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map(row => row.name);
+      assert.ok(!indexes.some(name => name.includes('pipeline')));
+      assert.ok(indexes.includes('workflow_runs_status'));
+    } finally {
+      migrated.close();
+    }
   },
 );
 
@@ -9883,6 +10116,22 @@ test(
       assert.equal(result.code, 2, result.stderr);
       assert.match(result.stderr, new RegExp(sha(edited)));
       assert.equal(await readFile(workflowPath('raced'), 'utf8'), edited);
+    });
+
+    await t.test('the pipelines alias answers like workflows', async () => {
+      const aliased = await new Promise((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          [entry, 'pipelines', 'list', '--json', '--directory', project],
+          { env: environment, stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+        let stdout = '';
+        child.stdout.on('data', chunk => (stdout += chunk));
+        child.on('error', reject);
+        child.on('close', code => resolve({ code, stdout }));
+      });
+      assert.equal(aliased.code, 0);
+      assert.deepEqual(JSON.parse(aliased.stdout), await listed());
     });
 
     await t.test('validate reports issues through its exit code', async () => {

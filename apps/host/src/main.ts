@@ -29,7 +29,7 @@ async function main() {
     );
     return;
   }
-  if (command === 'workflows') {
+  if (command === 'workflows' || command === 'pipelines') {
     process.exitCode = await runWorkflowsCli(
       process.argv.slice(3),
       process.env,
@@ -61,7 +61,7 @@ async function main() {
   }
   if (command)
     throw new Error(
-      'Supported commands: daemon, connect, service-unit, workflows, or no command for an owned stdio host.',
+      'Supported commands: daemon, connect, service-unit, workflows (alias pipelines), or no command for an owned stdio host.',
     );
   const directory = process.env.NESVO_DATA_DIR;
   if (!directory)

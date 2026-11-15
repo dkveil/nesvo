@@ -133,8 +133,13 @@ const knownFields: Record<Kind, readonly string[]> = {
     'needs',
   ],
   workflow: ['name', 'description', 'steps', ...graphFields],
-  spec: ['workflow', 'title'],
+  spec: ['workflow', 'pipeline', 'title'],
 };
+const legacyFields: Partial<Record<Kind, Record<string, string>>> = {
+  spec: { pipeline: 'workflow' },
+};
+const definitionsFolder = ['.agents', 'workflows'] as const;
+const legacyDefinitionsFolder = ['.agents', 'pipelines'] as const;
 const kindLabels: Record<Kind, string> = {
   step: 'step',
   workflow: 'workflow',
@@ -386,7 +391,35 @@ function globalRoot(): string {
   const override = process.env.NESVO_WORKFLOWS_HOME;
   return process.env.NESVO_TEST_MODE === '1' && override && isAbsolute(override)
     ? override
-    : join(homedir(), '.agents', 'workflows');
+    : join(homedir(), ...definitionsFolder);
+}
+
+function legacyRootBeside(root: string): string {
+  return join(dirname(root), legacyDefinitionsFolder[1]);
+}
+
+async function legacyRoot(
+  path: string,
+  excluded: (string | null)[],
+  currentRoot: string,
+  read: ReadContext,
+  issues: DefinitionIssue[],
+): Promise<string | null> {
+  const canonical = await canonicalRoot(path, read);
+  if (
+    !canonical ||
+    excluded.some(other => other && pathKey(other) === pathKey(canonical))
+  )
+    return null;
+  issues.push(
+    issue(
+      canonical,
+      `Legacy location: definitions are still read from ${canonical}; new files are saved to ${currentRoot}. Move the folder.`,
+      null,
+      'warning',
+    ),
+  );
+  return canonical;
 }
 
 async function canonicalDirectory(
@@ -504,6 +537,7 @@ function suggestion(field: string, kind: Kind): string | null {
   let best: string | null = null;
   let score = Infinity;
   for (const known of knownFields[kind]) {
+    if (legacyFields[kind]?.[known]) continue;
     const value = distance(normalized, known);
     if (value <= Math.max(2, Math.floor(known.length / 2)) && value < score) {
       best = known;
@@ -605,6 +639,29 @@ function parseError(error: unknown): FileIssue {
   );
 }
 
+function aliasLegacyFields(
+  kind: Kind,
+  fields: Record<string, unknown>,
+  file: DefinitionFile,
+  yaml: string | null,
+  issues: DefinitionIssue[],
+): Record<string, unknown> {
+  for (const [legacy, current] of Object.entries(legacyFields[kind] ?? {})) {
+    if (!(legacy in fields)) continue;
+    issues.push(
+      issue(
+        file.path,
+        `Field "${legacy}" is the legacy name of "${current}"; rename it`,
+        fieldLine(yaml, legacy),
+        'warning',
+      ),
+    );
+    if (!(current in fields)) fields[current] = fields[legacy];
+    delete fields[legacy];
+  }
+  return fields;
+}
+
 function parseDocument<T>(
   file: DefinitionFile,
   kind: Kind,
@@ -642,10 +699,16 @@ function parseDocument<T>(
       ),
     );
   }
-  const known = Object.fromEntries(
-    Object.entries(fields).filter(([field]) =>
-      knownFields[kind].includes(field),
+  const known = aliasLegacyFields(
+    kind,
+    Object.fromEntries(
+      Object.entries(fields).filter(([field]) =>
+        knownFields[kind].includes(field),
+      ),
     ),
+    file,
+    yaml,
+    issues,
   );
   const result = schema.safeParse({ ...known, body });
   const schemaIssues = result.success ? [] : result.error.issues;
@@ -697,26 +760,47 @@ function index<T>(
   return named;
 }
 
+type Indexed<T> = { parsed: Parsed<T>; notes: string[] };
+
+function withLegacy<T>(
+  current: Map<string, Parsed<T>>,
+  legacy: Map<string, Parsed<T>>,
+  currentRoot: string,
+): Map<string, Indexed<T>> {
+  const combined = new Map<string, Indexed<T>>();
+  for (const [name, parsed] of legacy)
+    combined.set(name, {
+      parsed,
+      notes: [
+        bounded(`Legacy location: move ${parsed.file.path} to ${currentRoot}`),
+      ],
+    });
+  for (const [name, parsed] of current)
+    combined.set(name, { parsed, notes: [] });
+  return combined;
+}
+
 function merge<T>(
-  global: Map<string, Parsed<T>>,
-  project: Map<string, Parsed<T>>,
+  global: Map<string, Indexed<T>>,
+  project: Map<string, Indexed<T>>,
   kind: Kind,
 ): Map<string, Entry<T> & { notes: string[] }> {
   const merged = new Map<string, Entry<T> & { notes: string[] }>();
-  for (const [name, parsed] of global)
-    merged.set(name, { scope: 'global', parsed, notes: [] });
-  for (const [name, parsed] of project) {
+  for (const [name, { parsed, notes }] of global)
+    merged.set(name, { scope: 'global', parsed, notes });
+  for (const [name, { parsed, notes }] of project) {
     const shadowed = global.get(name);
     merged.set(name, {
       scope: 'project',
       parsed,
       notes: shadowed
         ? [
+            ...notes,
             bounded(
-              `Overrides the global ${kindLabels[kind]} ${shadowed.file.path}`,
+              `Overrides the global ${kindLabels[kind]} ${shadowed.parsed.file.path}`,
             ),
           ]
-        : [],
+        : notes,
     });
   }
   return merged;
@@ -822,6 +906,7 @@ async function readRoot(
   root: string | null,
   read: ReadContext,
   issues: DefinitionIssue[],
+  workflowsFolder: 'workflows' | 'pipelines' = 'workflows',
 ): Promise<{
   steps: Parsed<StepDefinition>[];
   workflows: Parsed<WorkflowDefinition>[];
@@ -829,7 +914,7 @@ async function readRoot(
   if (!root) return { steps: [], workflows: [] };
   const stepFiles = await listMarkdown(join(root, 'steps'), 'step', read, issues);
   const workflowFiles = await listMarkdown(
-    join(root, 'workflows'),
+    join(root, workflowsFolder),
     'workflow',
     read,
     issues,
@@ -866,32 +951,78 @@ export async function loadCatalog(
   const read = context(signal);
   const root = await projectRoot(await canonicalDirectory(directory, read), read);
   const issues: DefinitionIssue[] = [];
-  const global = await canonicalRoot(globalRoot(), read);
-  const projectCandidate = await canonicalRoot(
-    join(root, '.agents', 'workflows'),
-    read,
-  );
+  const globalPath = globalRoot();
+  const projectPath = join(root, ...definitionsFolder);
+  const global = await canonicalRoot(globalPath, read);
+  const projectCandidate = await canonicalRoot(projectPath, read);
   const project =
     projectCandidate &&
     (!global || pathKey(projectCandidate) !== pathKey(global))
       ? projectCandidate
       : null;
+  const legacyGlobal = await legacyRoot(
+    legacyRootBeside(globalPath),
+    [global, project],
+    globalPath,
+    read,
+    issues,
+  );
+  const legacyProject = await legacyRoot(
+    join(root, ...legacyDefinitionsFolder),
+    [global, project, legacyGlobal],
+    projectPath,
+    read,
+    issues,
+  );
   const globalFiles = await readRoot(global, read, issues);
+  const legacyGlobalFiles = await readRoot(
+    legacyGlobal,
+    read,
+    issues,
+    'pipelines',
+  );
   const projectFiles = await readRoot(project, read, issues);
+  const legacyProjectFiles = await readRoot(
+    legacyProject,
+    read,
+    issues,
+    'pipelines',
+  );
   const specFiles = await listMarkdown(
     join(root, '.agents', 'tasks'),
     'spec',
     read,
     issues,
   );
+  const scoped = <T>(
+    kind: Kind,
+    current: Parsed<T>[],
+    legacy: Parsed<T>[],
+    currentRoot: string,
+  ) =>
+    withLegacy(
+      index(current, kind, issues),
+      index(legacy, kind, issues),
+      currentRoot,
+    );
   const steps = merge(
-    index(globalFiles.steps, 'step', issues),
-    index(projectFiles.steps, 'step', issues),
+    scoped('step', globalFiles.steps, legacyGlobalFiles.steps, globalPath),
+    scoped('step', projectFiles.steps, legacyProjectFiles.steps, projectPath),
     'step',
   );
   const workflows = merge(
-    index(globalFiles.workflows, 'workflow', issues),
-    index(projectFiles.workflows, 'workflow', issues),
+    scoped(
+      'workflow',
+      globalFiles.workflows,
+      legacyGlobalFiles.workflows,
+      globalPath,
+    ),
+    scoped(
+      'workflow',
+      projectFiles.workflows,
+      legacyProjectFiles.workflows,
+      projectPath,
+    ),
     'workflow',
   );
   const resolvedSteps = new Map<string, ResolvedStep>();
@@ -962,7 +1093,8 @@ export async function loadCatalog(
           workflows.has(name)
             ? `Workflow "${name}" referenced by this task spec is invalid`
             : `Workflow "${name}" referenced by this task spec does not exist`,
-          fieldLine(parsed.yaml, 'workflow'),
+          fieldLine(parsed.yaml, 'workflow') ??
+            fieldLine(parsed.yaml, 'pipeline'),
         ),
       );
     specs.push({
@@ -1060,7 +1192,7 @@ export async function resolveWriteRoots(
   );
   return {
     projectRoot: projectRootPath,
-    project: join(projectRootPath, '.agents', 'workflows'),
+    project: join(projectRootPath, ...definitionsFolder),
     global: globalRoot(),
   };
 }

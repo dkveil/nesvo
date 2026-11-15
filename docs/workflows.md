@@ -14,6 +14,10 @@ Everything lives in plain Markdown files on the computer that runs the task. A r
 
 The project is the nearest folder, at or above the working directory, that contains `.git`, or the folder itself when there is none. A project step or workflow with the same name as a global one replaces it. Each file is at most 64 KiB; a root reads at most 200 steps and 100 workflows.
 
+### Legacy location
+
+Workflows were called pipelines before November 2026 and lived in `~/.agents/pipelines/` and `<project>/.agents/pipelines/`, with the workflow files in a `pipelines/` subfolder. Nesvo still reads those folders, read-only, and marks what it finds: the catalog carries a warning naming the legacy folder and every step or workflow read from it shows a `Legacy location` note. A file with the same name in the new root wins over the legacy one. Nothing is written to a legacy folder: saving a definition that was read from one, in the editor, the dock or the command line, writes it to `.agents/workflows/` and removes the legacy file, so a folder migrates one file at a time, or all at once when you move it yourself. A task spec may still say `pipeline:` instead of `workflow:`; the catalog warns and asks you to rename the field. The `.claude/workflows/` folder is not a Nesvo location: it belongs to a Claude Code feature with the same name.
+
 Saving or deleting a workflow that has a run in progress is refused as busy, in the editor and the dock alike.
 
 The files are the source of truth. Nesvo never keeps a second copy of a definition: a run pins the definitions it started with, so editing a file never changes a run in progress.
@@ -182,5 +186,7 @@ node apps/host/dist/main.js workflows add-step --directory <project> --scope pro
 node apps/host/dist/main.js workflows add-to-workflow --directory <project> --scope project --workflow <name> --step <name> [--after <name>]
 node apps/host/dist/main.js workflows remove-from-workflow --directory <project> --scope project --workflow <name> --step <name>
 ```
+
+`pipelines` is accepted as an alias of the `workflows` command for scripts written before the rename.
 
 `validate` prints `severity path:line: message` and exits 1 on an error. Edits keep the rest of the file byte for byte, check that every listed step exists and name the hash they read: a file that changed meanwhile is a conflict (exit 2) and nothing is written. `remove-from-workflow` also removes the edges that name the step and reports them; `add-to-workflow --after` moves only the `on success` edges that leave the named step to the new step. In a graph with explicit `edges`, a step added without `--after`, or into another phase, has no incoming edge and starts with its phase, possibly in parallel; removing a step does not reconnect its neighbours, so a step left without incoming edges becomes a phase start. The command prints each of these as a note. The CLI has no database, so it does not see runs in progress. Exit codes: 0 success, 1 validation errors, 2 conflict, 3 inside a workflow run, 64 usage. Inside a workflow run session the commands that write refuse with exit 3, so a run cannot change its own definitions.

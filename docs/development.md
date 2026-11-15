@@ -55,6 +55,8 @@ node apps/host/dist/main.js workflows add-to-workflow --directory <project> --sc
 node apps/host/dist/main.js workflows remove-from-workflow --directory <project> --scope project --workflow <name> --step <name>
 ```
 
+The command is also reachable as `pipelines`, its name before the rename. Definitions in the legacy `.agents/pipelines` folders are read with a warning and move to `.agents/workflows` when saved; see [workflows.md](workflows.md#legacy-location).
+
 `list` prints the `contentHash` of every definition. Replacing an existing step requires the hash that was read as `--expected-hash`; a changed file answers with its current hash, exits 2 and writes nothing, so read it again. Validation errors exit 1. When `NESVO_RUN_ID` is set, the three writing commands exit 3 without touching a file; `validate` and `list` still work. Details are in the architecture notes on definition commands.
 
 ## Workflow demo runs

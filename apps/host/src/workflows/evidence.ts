@@ -16,6 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { adoptLegacyFolder } from './legacy-folders';
 import { processCreatedAt } from '../process/process-created-at';
 import { processStartTime } from '../providers/process-tree';
 
@@ -93,7 +94,11 @@ export class EvidenceStore {
     dataDirectory: string,
     private readonly steps: StepLookup,
   ) {
-    this.root = join(dataDirectory, 'workflow-evidence');
+    this.root = adoptLegacyFolder(
+      dataDirectory,
+      'workflow-evidence',
+      'pipeline-evidence',
+    );
   }
 
   stepDirectory(step: Pick<WorkflowStepRecord, 'runId' | 'index' | 'name'>) {

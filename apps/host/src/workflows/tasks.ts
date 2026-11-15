@@ -18,6 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, extname, isAbsolute, join } from 'node:path';
+import { adoptLegacyFolder } from './legacy-folders';
 import {
   SessionError,
   confirmCodexEffort,
@@ -83,7 +84,11 @@ export class SpecSnapshots {
   private readonly root: string;
 
   constructor(dataDirectory: string) {
-    this.root = join(dataDirectory, 'workflow-specs');
+    this.root = adoptLegacyFolder(
+      dataDirectory,
+      'workflow-specs',
+      'pipeline-specs',
+    );
   }
 
   write(runId: string, body: string): void {

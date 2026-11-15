@@ -313,7 +313,12 @@ async function editWorkflow(
   const scope = needed(options.scope, '--scope');
   const workflow = requireName(options.workflow, '--workflow');
   const roots = await resolveWriteRoots(options.directory, context.signal);
-  const path = join(roots[scope], 'workflows', `${workflow}.md`);
+  const catalog = await loadCatalog(options.directory, context.signal);
+  const located = catalog.workflows.find(
+    item => item.name === workflow && item.source.scope === scope,
+  );
+  const path =
+    located?.source.path ?? join(roots[scope], 'workflows', `${workflow}.md`);
   const current = await readDefinitionFile(path, context.signal);
   const edited = editStepsList(current.text, edit);
   if (!edited.ok) return refuse(context, edited.message, path);
