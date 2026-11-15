@@ -34,6 +34,7 @@ export type AutomationValues = {
   timeZone: string;
   timeoutMinutes: string;
   active: boolean;
+  pipeline: ScheduledJob['pipeline'];
 };
 
 export type AutomationField =
@@ -83,6 +84,7 @@ export const newAutomationValues = (
   timeZone: localTimeZone(),
   timeoutMinutes: String(scheduledJobLimits.defaultTimeoutMinutes),
   active: true,
+  pipeline: null,
 });
 
 export const automationValues = (job: ScheduledJob): AutomationValues => ({
@@ -106,6 +108,7 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
   timeZone: job.timeZone,
   timeoutMinutes: String(job.timeoutMinutes),
   active: job.active,
+  pipeline: job.pipeline,
 });
 
 export const duplicateValues = (job: ScheduledJob): AutomationValues => ({
@@ -144,8 +147,9 @@ export const validateAutomation = (
     errors.name = `Use at most ${scheduledJobLimits.name} characters.`;
   else if (CONTROL_CHARACTERS.test(name))
     errors.name = 'Use a single line without control characters.';
-  if (!prompt) errors.prompt = 'Enter a prompt.';
-  else if (prompt.startsWith('/')) errors.prompt = SKILL_PROMPT_MESSAGE;
+  if (!prompt) {
+    if (!values.pipeline) errors.prompt = 'Enter a prompt.';
+  } else if (prompt.startsWith('/')) errors.prompt = SKILL_PROMPT_MESSAGE;
   else if (prompt.length > scheduledJobLimits.prompt)
     errors.prompt = `Use at most ${scheduledJobLimits.prompt} characters.`;
   else if (PROMPT_CONTROL_CHARACTERS.test(prompt))
@@ -190,6 +194,7 @@ export const toSaveInput = (
     timeZone: values.timeZone,
     active: values.active,
     timeoutMinutes: wholeNumber(values.timeoutMinutes),
+    pipeline: values.pipeline,
   };
   const parsed = scheduledJobDefinitionSchema.safeParse(definition);
   if (!parsed.success)

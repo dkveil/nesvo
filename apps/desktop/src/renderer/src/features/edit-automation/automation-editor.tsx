@@ -241,30 +241,42 @@ export function AutomationEditor({
                   message={visible('name')}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="automation-prompt" className="text-xs">
-                  Prompt
-                </Label>
-                <Textarea
-                  id="automation-prompt"
-                  data-field="prompt"
-                  value={values.prompt}
-                  maxLength={9000}
-                  placeholder="Summarize what changed since yesterday."
-                  aria-invalid={!!visible('prompt')}
-                  aria-describedby={
-                    visible('prompt') ? 'automation-prompt-error' : undefined
-                  }
-                  disabled={pending}
-                  onChange={event => change({ prompt: event.target.value })}
-                  onBlur={() => touch('prompt')}
-                  className="min-h-24 text-[13px] leading-5"
-                />
-                <FieldError
-                  id="automation-prompt-error"
-                  message={visible('prompt')}
-                />
-              </div>
+              {values.pipeline ? (
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium">Pipeline</span>
+                  <p
+                    data-field="pipeline"
+                    className="text-[13px] text-muted-foreground [overflow-wrap:anywhere]"
+                  >
+                    {values.pipeline.name} · {values.pipeline.specPath}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="automation-prompt" className="text-xs">
+                    Prompt
+                  </Label>
+                  <Textarea
+                    id="automation-prompt"
+                    data-field="prompt"
+                    value={values.prompt}
+                    maxLength={9000}
+                    placeholder="Summarize what changed since yesterday."
+                    aria-invalid={!!visible('prompt')}
+                    aria-describedby={
+                      visible('prompt') ? 'automation-prompt-error' : undefined
+                    }
+                    disabled={pending}
+                    onChange={event => change({ prompt: event.target.value })}
+                    onBlur={() => touch('prompt')}
+                    className="min-h-24 text-[13px] leading-5"
+                  />
+                  <FieldError
+                    id="automation-prompt-error"
+                    message={visible('prompt')}
+                  />
+                </div>
+              )}
               <div className="space-y-1.5">
                 <span className="text-xs font-medium">Computer and folder</span>
                 <div className="flex min-w-0 flex-wrap items-center gap-1">
