@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
+  Brain,
   ChevronRight,
   CircleAlert,
   FilePenLine,
@@ -36,6 +37,7 @@ const icons = {
   read: BookOpen,
   search: Search,
   tool: Wrench,
+  thinking: Brain,
 };
 
 function ActivityItem({ item }: { item: Activity }) {
@@ -83,7 +85,15 @@ function ActivityItem({ item }: { item: Activity }) {
             ))}
           </ul>
         )}
-        {item.detail && (
+        {item.detail && item.kind === 'thinking' && (
+          <p
+            aria-label="Thinking"
+            className="max-h-48 overflow-auto text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere] italic text-muted-foreground"
+          >
+            {item.detail}
+          </p>
+        )}
+        {item.detail && item.kind !== 'thinking' && (
           <pre
             aria-label="Activity details"
             className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
@@ -158,13 +168,11 @@ export function SessionActivity({
           minute: '2-digit',
         })
       : '';
-  const latest =
-    items.findLast(item => item.status === 'running') ?? items.at(-1);
+  const running = live
+    ? items.findLast(item => item.status === 'running')
+    : undefined;
   const failures = items.filter(item => item.status === 'failed').length;
-  const summary =
-    live && latest
-      ? `${latest.status === 'running' ? '' : 'Last: '}${latest.title}`
-      : activitySummary(items);
+  const summary = live ? '' : activitySummary(items);
   const batches = activityBatches(items);
   return (
     <section
@@ -192,6 +200,15 @@ export function SessionActivity({
             >
               {completedTime}
             </time>
+          )}
+          {running && (
+            <span
+              className="min-w-0 truncate text-xs"
+              title={running.title}
+              data-activity-current
+            >
+              · {running.title}
+            </span>
           )}
           {summary && (
             <span className="min-w-0 truncate text-xs" title={summary}>

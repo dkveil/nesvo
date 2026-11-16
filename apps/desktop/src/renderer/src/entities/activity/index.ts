@@ -76,6 +76,8 @@ export function batchLabel(batch: ActivityBatch) {
     batch.items.flatMap(item => item.paths).filter(Boolean),
   );
   if (batch.kind === 'command') return `${count} commands`;
+  if (batch.kind === 'thinking')
+    return count === 1 ? 'Thought once' : `Thought ${count} times`;
   if (batch.kind === 'search') return `${count} searches`;
   if (batch.kind === 'read')
     return paths.size > 0
