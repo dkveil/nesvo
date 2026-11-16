@@ -231,6 +231,10 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         "CREATE TABLE IF NOT EXISTS assistant_changes (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence > 0), status TEXT NOT NULL CHECK (status IN ('applied', 'undone')), document TEXT NOT NULL CHECK (json_valid(document)), previous TEXT, definitions_root TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (conversation_id, sequence))",
       );
+      if (!columnNames(database, 'assistant_changes').has('definitions_root'))
+        database.exec(
+          'ALTER TABLE assistant_changes ADD COLUMN definitions_root TEXT',
+        );
       database.exec('PRAGMA user_version = 11; COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
