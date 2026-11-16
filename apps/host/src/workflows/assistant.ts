@@ -188,6 +188,7 @@ export class WorkflowAssistant {
         existing.id,
         directory,
         laterTurnText({
+          view: input.context.view,
           automations: this.automations(directory),
           changes: this.ports.changes.history(existing.id).changes,
           document: changed,
@@ -216,6 +217,7 @@ export class WorkflowAssistant {
       session.id,
       directory,
       firstTurnText({
+        view: input.context.view,
         catalog,
         automations: this.automations(directory),
         document,

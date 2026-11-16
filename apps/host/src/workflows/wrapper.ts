@@ -8,6 +8,7 @@ import {
   type DefinitionCatalog,
   type ScheduledJob,
   type WorkflowAssistantDocument,
+  type WorkflowAssistantView,
 } from '@nesvo/contracts';
 import { randomBytes } from 'node:crypto';
 
@@ -20,6 +21,7 @@ const FENCE_BYTES = 6;
 type QuotedBlock = { label: string; text: string };
 
 export type FirstTurn = {
+  view: WorkflowAssistantView | undefined;
   catalog: DefinitionCatalog;
   automations: readonly ScheduledJob[];
   document: WorkflowAssistantDocument | null;
@@ -28,6 +30,7 @@ export type FirstTurn = {
 };
 
 export type LaterTurn = {
+  view: WorkflowAssistantView | undefined;
   automations: readonly ScheduledJob[];
   changes: readonly AssistantChange[];
   document: WorkflowAssistantDocument | null;
@@ -137,6 +140,20 @@ const changesBlock = (changes: readonly AssistantChange[]): QuotedBlock => ({
     : 'none',
 });
 
+const VIEW_TEXT: Record<WorkflowAssistantView, string> = {
+  'workflows-list':
+    'The operator is on the Workflows list. Steps, workflows and automations can all change.',
+  'automations-list':
+    'The operator is on the Automations list. Automations and the workflows they run are the likely subject; steps and workflows can change too.',
+  editor:
+    'The operator is in the graph editor of the open workflow. Steps, workflows and automations can all change.',
+};
+
+const viewBlock = (view: WorkflowAssistantView | undefined): QuotedBlock => ({
+  label: 'view',
+  text: view ? VIEW_TEXT[view] : 'Not stated.',
+});
+
 const documentBlock = (document: WorkflowAssistantDocument): QuotedBlock => ({
   label: 'open-document',
   text: `kind: ${document.kind}\nscope: ${document.scope}\nname: ${document.name}\nhash: ${document.contentHash}\n\n${document.text}`,
@@ -165,6 +182,7 @@ const quote = (blocks: readonly QuotedBlock[]): string => {
 };
 
 export const firstTurnText = ({
+  view,
   catalog,
   automations,
   document,
@@ -177,6 +195,7 @@ export const firstTurnText = ({
     quote([
       { label: 'catalog', text: catalogSummary(catalog) },
       { label: 'automations', text: automationSummary(automations) },
+      viewBlock(view),
       ...(document ? [documentBlock(document)] : []),
       selectionBlock(selection),
       { label: 'operator-request', text },
@@ -185,6 +204,7 @@ export const firstTurnText = ({
   ].join('\n\n');
 
 export const laterTurnText = ({
+  view,
   automations,
   changes,
   document,
@@ -195,6 +215,7 @@ export const laterTurnText = ({
     quote([
       changesBlock(changes),
       { label: 'automations', text: automationSummary(automations) },
+      viewBlock(view),
       ...(document ? [documentBlock(document)] : []),
       selectionBlock(selection),
       { label: 'operator-request', text },
