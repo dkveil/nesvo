@@ -2519,16 +2519,19 @@ try {
   );
   await restartedPage.evaluate(() => {
     window.smokeAssistantProposals = [];
+    window.smokeAssistantChanges = [];
     window.nesvo.subscribe(event => {
       if (event.type === 'workflow-assistant-proposal')
         window.smokeAssistantProposals.push(event);
+      if (event.type === 'workflow-assistant-change')
+        window.smokeAssistantChanges.push(event);
     });
   });
   const assistantTurn = await workflowCall('assistantSend', 'local', {
     sessionId: null,
     provider: 'Claude Code',
     model: 'sonnet',
-    text: 'fixture:assistant-proposal',
+    text: 'fixture:assistant-live',
     context: {
       directory: workflowProject,
       workflowName: 'smoke',
@@ -2548,9 +2551,53 @@ try {
   assert.equal(assistantProposal.hostId, 'local');
   assert.equal(assistantProposal.sessionId, assistantTurn.sessionId);
   assert.equal(assistantProposal.status, 'ok');
+  assert.deepEqual(assistantProposal.proposal.changes, []);
+  const assistantChanges = await restartedPage.evaluate(
+    id =>
+      window.smokeAssistantChanges.filter(
+        event => event.change.messageId === id,
+      ),
+    assistantTurn.messageId,
+  );
   assert.deepEqual(
-    assistantProposal.proposal.changes.map(change => change.name),
-    ['lint-check', 'assistant-flow'],
+    assistantChanges.map(event => [
+      event.hostId,
+      event.change.kind,
+      event.change.op,
+      event.change.createdBy,
+    ]),
+    [
+      ['local', 'step', 'create', 'assistant'],
+      ['local', 'workflow', 'create', 'assistant'],
+      ['local', 'automation', 'create', 'assistant'],
+    ],
+  );
+  const assistantHistory = await workflowCall(
+    'assistantChanges',
+    'local',
+    assistantTurn.sessionId,
+  );
+  assert.deepEqual(
+    assistantHistory.changes,
+    assistantChanges.map(event => event.change),
+  );
+  const [liveStep, liveWorkflow, liveAutomation] = assistantHistory.changes;
+  const createdAutomation = (
+    await restartedPage.evaluate(() => window.nesvo.scheduledJobs.list('local'))
+  ).find(job => job.id === liveAutomation.target.automationId);
+  assert.equal(createdAutomation.active, false);
+  for (const change of [liveWorkflow, liveStep, liveAutomation]) {
+    const undone = await workflowCall('assistantUndo', 'local', {
+      conversationId: assistantTurn.sessionId,
+      changeId: change.changeId,
+    });
+    assert.equal(undone.status, 'undone', JSON.stringify(undone));
+  }
+  await assert.rejects(
+    readFile(join(workflowRoot, 'steps', 'lint-check.md'), 'utf8'),
+  );
+  await assert.rejects(
+    readFile(join(workflowRoot, 'workflows', 'assistant-flow.md'), 'utf8'),
   );
   const resolution = {
     runId: workflowRun.id,
@@ -2585,7 +2632,8 @@ try {
         assistant: {
           sessionId: assistantTurn.sessionId,
           status: assistantProposal.status,
-          changes: assistantProposal.proposal.changes.length,
+          changes: assistantChanges.length,
+          undone: assistantHistory.changes.length,
         },
       },
     }),
@@ -3121,39 +3169,27 @@ try {
     throw new Error(`The assistant stayed busy for "${text}".`);
   };
   await sendToAssistant('fixture:assistant-prose', 'assistant-sending-dark');
-  const invalidTurn = assistantDock.locator(
-    '[data-assistant-status="invalid"]',
-  );
-  await invalidTurn.waitFor({ timeout: 30_000 });
-  await invalidTurn
-    .getByText('The assistant answered without a change it could apply.', {
-      exact: true,
-    })
-    .waitFor();
-  await invalidTurn
-    .getByRole('button', { name: 'Show reply', exact: true })
-    .click();
-  await invalidTurn
-    .getByText('I would add a lint step before the approval.')
-    .waitFor();
-  await bothShots('no-proposal');
-  await sendToAssistant('fixture:assistant-proposal');
-  const proposalTurn = assistantDock.locator(
-    '[data-assistant-status="proposal"]',
-  );
-  await proposalTurn.waitFor({ timeout: 30_000 });
-  const lintCard = proposalTurn.locator('[data-proposal-change="lint-check"]');
-  const flowCard = proposalTurn.locator(
-    '[data-proposal-change="assistant-flow"]',
-  );
-  await lintCard.getByText('New file', { exact: true }).waitFor();
-  await flowCard.getByText('New file', { exact: true }).waitFor();
-  assert.match(
-    await deepText(lintCard.locator('[data-assistant-diff]')),
-    /echo lint passed/,
+  const replyTurn = assistantDock
+    .locator('[data-assistant-status="proposal"]')
+    .filter({ hasText: 'I would add a lint step before the approval.' });
+  await replyTurn.waitFor({ timeout: 30_000 });
+  await bothShots('reply');
+  const lintPath = join(workflowRoot, 'steps', 'lint-check.md');
+  const flowPath = join(workflowRoot, 'workflows', 'assistant-flow.md');
+  await assert.rejects(readFile(lintPath, 'utf8'));
+  await sendToAssistant('fixture:assistant-live');
+  const liveTurn = assistantDock
+    .locator('[data-assistant-status="proposal"]')
+    .filter({
+      hasText: 'Added a lint check, a workflow and a disabled automation.',
+    });
+  await liveTurn.waitFor({ timeout: 30_000 });
+  assert.equal(
+    await readFile(lintPath, 'utf8'),
+    '---\nname: lint-check\ntype: command\nphase: pre-done\ntimeout: 2m\n---\necho lint passed\n',
   );
   assert.match(
-    await deepText(flowCard.locator('[data-assistant-diff]')),
+    await readFile(flowPath, 'utf8'),
     /steps: \[lint-check, check, approve\]/,
   );
   const dockText = await assistantDock.textContent();
@@ -3163,51 +3199,31 @@ try {
     await assistantDock
       .locator('[data-assistant-turn] .bg-message-surface')
       .allTextContents(),
-    ['fixture:assistant-prose', 'fixture:assistant-proposal'],
+    ['fixture:assistant-prose', 'fixture:assistant-live'],
   );
-  const lintPath = join(workflowRoot, 'steps', 'lint-check.md');
-  const flowPath = join(workflowRoot, 'workflows', 'assistant-flow.md');
-  await assert.rejects(readFile(lintPath, 'utf8'));
-  await assert.rejects(readFile(flowPath, 'utf8'));
-  await bothShots('proposal');
-  const outsideLint =
-    '---\nname: lint-check\ntype: command\nphase: pre-done\n---\necho written outside\n';
-  await writeFile(lintPath, outsideLint);
-  await lintCard.getByRole('button', { name: 'Apply', exact: true }).click();
-  await lintCard
-    .getByText(/^The file changed since the assistant read it\./)
-    .waitFor();
-  assert.equal(await readFile(lintPath, 'utf8'), outsideLint);
-  await bothShots('conflict');
-  await lintCard.getByRole('button', { name: 'Reload', exact: true }).click();
-  await lintCard
-    .getByText('Changes the current file', { exact: true })
-    .waitFor();
-  assert.match(
-    await deepText(lintCard.locator('[data-assistant-diff]')),
-    /echo written outside/,
+  await bothShots('live');
+  const dockConversation = (
+    await restartedPage.evaluate(() => window.nesvo.listSessions())
+  ).find(
+    session =>
+      session.title === 'Workflow assistant · smoke' &&
+      session.messages.some(message =>
+        message.body.includes('fixture:assistant-live'),
+      ) &&
+      session.id !== assistantTurn.sessionId,
   );
-  await lintCard.getByRole('button', { name: 'Apply', exact: true }).click();
-  await proposalTurn
-    .locator(
-      '[data-proposal-change="lint-check"][data-proposal-state="applied"]',
-    )
-    .waitFor();
+  const dockAutomation = (
+    await workflowCall('assistantChanges', 'local', dockConversation.id)
+  ).changes.find(change => change.kind === 'automation');
   assert.equal(
-    await readFile(lintPath, 'utf8'),
-    '---\nname: lint-check\ntype: command\nphase: pre-done\ntimeout: 2m\n---\necho lint passed\n',
+    (
+      await workflowCall('assistantUndo', 'local', {
+        conversationId: dockConversation.id,
+        changeId: dockAutomation.changeId,
+      })
+    ).status,
+    'undone',
   );
-  await flowCard.getByRole('button', { name: 'Apply', exact: true }).click();
-  await proposalTurn
-    .locator(
-      '[data-proposal-change="assistant-flow"][data-proposal-state="applied"]',
-    )
-    .waitFor();
-  assert.match(
-    await readFile(flowPath, 'utf8'),
-    /steps: \[lint-check, check, approve\]/,
-  );
-  await bothShots('applied');
   const assistantSessionTitle = 'Workflow assistant · smoke';
   await assistantDock
     .getByRole('button', { name: 'Collapse assistant', exact: true })
@@ -3269,7 +3285,7 @@ try {
       assistantDock: {
         sessionId: assistantSession.id,
         turns: 2,
-        applied: ['lint-check', 'assistant-flow'],
+        live: ['lint-check', 'assistant-flow'],
       },
     }),
   );
