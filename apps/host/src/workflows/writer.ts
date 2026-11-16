@@ -6,6 +6,7 @@ import {
   type DefinitionScope,
   type DefinitionWriteResult,
   type GraphStep,
+  type StepDefinition,
   type WorkflowDefinitionConflict,
   type WorkflowDefinitionRefused,
 } from '@nesvo/contracts';
@@ -34,6 +35,7 @@ import {
   readDefinitionFile,
   resolveWriteRoots,
   unguardedExternalIssues,
+  EXTERNAL_GUARD_NOTE,
   type DefinitionFile,
 } from './definitions';
 
@@ -281,30 +283,58 @@ function missingSteps(
 
 function guardedStepIssues(
   input: SaveDefinitionInput,
-  step: GraphStep,
+  step: StepDefinition,
+  previous: DefinitionFile | null,
   catalog: DefinitionCatalog,
+  path: string,
 ): DefinitionIssue[] {
-  const effective = catalog.steps.find(item => item.name === input.name);
-  if (effective && effective.source.scope !== input.scope) return [];
-  const steps = new Map<string, GraphStep>(
-    catalog.steps.map(item => [item.name, item]),
-  );
-  steps.set(input.name, step);
-  return catalog.workflows
-    .filter(workflow => workflow.steps.some(item => item.name === input.name))
-    .flatMap(workflow =>
-      unguardedExternalIssues(
-        {
-          name: workflow.name,
-          steps: workflow.steps.map(item => item.name),
-          edges: workflow.edges,
-          layout: workflow.layout,
-        },
-        workflow.source.path,
-        steps,
-        input.name,
+  const issues: DefinitionIssue[] = [];
+  if (input.scope === 'global') {
+    issues.push(
+      ...unguardedExternalIssues(
+        { name: input.name, steps: [input.name] },
+        path,
+        new Map([[input.name, step]]),
       ),
     );
+    const replaced = previous
+      ? checkDocument('step', path, previous.text).step
+      : null;
+    if (replaced?.type === 'human' && step.type !== 'human')
+      issues.push(
+        issueAt(
+          path,
+          `Global step "${input.name}" is a human step that workflows in other projects may rely on. ${EXTERNAL_GUARD_NOTE}`,
+        ),
+      );
+  }
+  const effective = catalog.steps.find(item => item.name === input.name);
+  if (input.scope === 'global' && effective?.source.scope === 'project')
+    return issues;
+  const current = new Map<string, GraphStep>(
+    catalog.steps.map(item => [item.name, item]),
+  );
+  const next = new Map(current).set(input.name, step);
+  for (const workflow of catalog.workflows) {
+    if (!workflow.steps.some(item => item.name === input.name)) continue;
+    const graph = {
+      name: workflow.name,
+      steps: workflow.steps.map(item => item.name),
+      edges: workflow.edges,
+      layout: workflow.layout,
+    };
+    const known = new Set(
+      unguardedExternalIssues(graph, workflow.source.path, current).map(
+        item => item.message,
+      ),
+    );
+    issues.push(
+      ...unguardedExternalIssues(graph, workflow.source.path, next).filter(
+        item => !known.has(item.message),
+      ),
+    );
+  }
+  return issues;
 }
 
 function stepUsers(
@@ -499,7 +529,13 @@ export async function saveDefinition(
         : [];
       if (unguarded.length) return refusedIssues(unguarded);
     } else if (options.guardExternal && checked.step) {
-      const unguarded = guardedStepIssues(input, checked.step, catalog);
+      const unguarded = guardedStepIssues(
+        input,
+        checked.step,
+        current.file,
+        catalog,
+        path,
+      );
       if (unguarded.length) return refusedIssues(unguarded);
     }
     const location = await prepareFolder(input, roots, true);

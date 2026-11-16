@@ -13698,9 +13698,18 @@ test(
           [
             ['workflow', 'unsafe'],
             ['automation', 'unsafe'],
+            ['step', 'unsafe'],
             [null, 'invalid'],
             [null, 'invalid'],
           ],
+        );
+        assert.match(
+          refusals[2].issues[0].message,
+          /"approve" in workflow "default" is declared external without a human step before it/,
+        );
+        assert.match(
+          await readFile(join(agents, 'steps', 'approve.md'), 'utf8'),
+          /type: human/,
         );
         assert.match(
           refusals[0].issues[0].message,

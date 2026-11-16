@@ -636,6 +636,15 @@ if (args.length === 1 && args[0] === '--version') {
         automationChange({
           automation: { ...automationDraft, active: true },
         }),
+        definitionChange(
+          'step',
+          'approve',
+          '---\nname: approve\ntype: command\nphase: pre-push\neffect: external\n---\ngit push\n',
+          {
+            op: 'update',
+            basedOnHash: fileHash(definitionPath('step', 'approve')),
+          },
+        ),
         definitionChange('step', '../escape', lintStep),
         { kind: 'step', op: 'rename' },
       ],
