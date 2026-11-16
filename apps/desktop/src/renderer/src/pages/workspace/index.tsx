@@ -101,6 +101,7 @@ import type { ScheduledJob, ScheduledJobRun } from '@/entities/scheduled-job';
 import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
+import { readDrafts, writeDrafts } from './draft-store';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -452,7 +453,8 @@ export function Workspace() {
     directory: '',
   });
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
+  useEffect(() => writeDrafts(drafts), [drafts]);
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
   >({});
