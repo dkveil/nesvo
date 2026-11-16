@@ -35,6 +35,10 @@ import {
 } from '@/entities/session';
 import { showsRunStatus } from '@/entities/workflow';
 import type { EditorTarget } from '@/widgets/workflow-definitions';
+import {
+  NewWorkflowSheet,
+  type NewWorkflowDraft,
+} from '@/features/new-workflow/new-workflow-sheet';
 import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import {
@@ -151,6 +155,29 @@ export function Workspace() {
   const [workflowsEditor, setWorkflowsEditor] = useState<EditorTarget | null>(
     null,
   );
+  const [newWorkflow, setNewWorkflow] = useState<{
+    hostId: string;
+    directory: string;
+  } | null>(null);
+  const createWorkflow = async (draft: NewWorkflowDraft) => {
+    const catalog = await window.nesvo.workflows.listDefinitions(draft.hostId, {
+      directory: draft.directory,
+    });
+    setWorkflowsSource({ hostId: draft.hostId, directory: draft.directory });
+    setWorkflowsEditor({
+      hostId: draft.hostId,
+      directory: draft.directory,
+      workflowName: null,
+      catalog,
+      draft: {
+        name: draft.name,
+        description: draft.description,
+        body: draft.body,
+        scope: draft.scope,
+      },
+    });
+    setNewWorkflow(null);
+  };
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
   const browsing = inbox || workflowsView || !!automation;
@@ -1665,6 +1692,7 @@ export function Workspace() {
                 directory={workflowsEditor.directory}
                 workflowName={workflowsEditor.workflowName}
                 catalog={workflowsEditor.catalog}
+                draft={workflowsEditor.draft}
                 api={window.nesvo.workflows}
                 scheduledJobsApi={window.nesvo.scheduledJobs}
                 computers={store.computers}
@@ -1729,6 +1757,7 @@ export function Workspace() {
                   });
                   setWorkflowsEditor(target);
                 }}
+                onCreate={setNewWorkflow}
               />
             </Suspense>
           ) : inbox ? (
@@ -2058,6 +2087,23 @@ export function Workspace() {
             )}
         </main>
       </div>
+      {newWorkflow && (
+        <NewWorkflowSheet
+          hostId={newWorkflow.hostId}
+          directory={newWorkflow.directory}
+          computers={store.computers}
+          existingNames={async (hostId, directory) =>
+            (
+              await window.nesvo.workflows.listDefinitions(hostId, {
+                directory,
+              })
+            ).workflows.map(workflow => workflow.name)
+          }
+          onManageComputers={() => setSettingsPage('computers')}
+          onCreate={createWorkflow}
+          onClose={() => setNewWorkflow(null)}
+        />
+      )}
       {editor && (
         <AutomationEditor
           key={editor.initial.id}

@@ -59,11 +59,16 @@ export type Conflict = {
   response: WorkflowDefinitionConflict;
 };
 
+export type EditorDraftFields = Partial<
+  Pick<EditorDocument, 'name' | 'description' | 'body' | 'scope'>
+>;
+
 type Params = {
   hostId: string;
   directory: string;
   workflowName: string | null;
   catalog: DefinitionCatalog;
+  draft?: EditorDraftFields;
   api: Pick<WorkflowsApi, 'saveDefinition' | 'listDefinitions'>;
 };
 
@@ -98,9 +103,12 @@ const hostIssue = (issue: DefinitionIssue, nodes: EditorNode[]) => {
 const initialDocument = (
   catalog: DefinitionCatalog,
   workflowName: string | null,
+  draft: EditorDraftFields | undefined,
 ) => {
   const workflow = catalog.workflows.find(item => item.name === workflowName);
-  return workflow ? fromCatalog(workflow, catalog) : newDocument(catalog);
+  return workflow
+    ? fromCatalog(workflow, catalog)
+    : { ...newDocument(catalog), ...draft };
 };
 
 export const draftIssues = (draft: StepDraft): InspectorIssue[] => {
@@ -239,11 +247,12 @@ export function useEditorState({
   directory,
   workflowName,
   catalog: initialCatalog,
+  draft,
   api,
 }: Params) {
   const [catalog, setCatalog] = useState(initialCatalog);
   const [initial, setInitial] = useState(() =>
-    initialDocument(initialCatalog, workflowName),
+    initialDocument(initialCatalog, workflowName, draft),
   );
   const [document, setDocumentState] = useState(initial);
   const documentRef = useRef(initial);
@@ -254,9 +263,9 @@ export function useEditorState({
   const [historySize, setHistorySize] = useState({ past: 0, future: 0 });
   const dragSnapshot = useRef<EditorDocument | null>(null);
   const lastMerge = useRef<string | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(!!draft?.name);
   const [selection, setSelection] = useState<Selection>(
-    workflowName ? { kind: 'none' } : { kind: 'workflow' },
+    workflowName || draft?.name ? { kind: 'none' } : { kind: 'workflow' },
   );
   const [pendingDraft, setPendingDraft] = useState<StepDraft | null>(null);
   const [draftOrigin, setDraftOrigin] = useState<AddOrigin | undefined>();

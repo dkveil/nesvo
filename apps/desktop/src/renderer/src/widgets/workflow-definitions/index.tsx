@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Computer, WorkflowsApi } from '@nesvo/contracts';
+import type { Computer, DefinitionScope, WorkflowsApi } from '@nesvo/contracts';
 import {
   ChevronDown,
   CircleX,
@@ -27,8 +27,8 @@ import {
   cardRowAction,
   cardSection,
   cardSectionHeader,
-  cardSurface,
   cardValue,
+  fieldSurface,
 } from '@/shared/ui/card-row-styles';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
@@ -40,11 +40,19 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 
+export type EditorDraft = {
+  name: string;
+  description: string;
+  body: string;
+  scope: DefinitionScope;
+};
+
 export type EditorTarget = {
   hostId: string;
   directory: string;
   workflowName: string | null;
   catalog: DefinitionCatalog;
+  draft?: EditorDraft;
 };
 
 type Props = {
@@ -53,6 +61,7 @@ type Props = {
   directory: string;
   api: Pick<WorkflowsApi, 'listDefinitions'>;
   onEdit?: (target: EditorTarget) => void;
+  onCreate?: (source: { hostId: string; directory: string }) => void;
 };
 
 type CatalogState =
@@ -190,7 +199,7 @@ function WorkflowDetail({ workflow }: { workflow: ResolvedWorkflow }) {
   return (
     <section
       aria-label={`${workflow.name} steps`}
-      className={cn(cardSurface, 'min-w-0 divide-y')}
+      className={cn(fieldSurface, 'min-w-0 divide-y')}
     >
       <div className="space-y-0.5 px-4 py-3">
         <h3 className="text-[13px] font-semibold">{workflow.name}</h3>
@@ -233,6 +242,7 @@ export default function WorkflowDefinitions({
   directory: initialDirectory,
   api,
   onEdit,
+  onCreate,
 }: Props) {
   const [hostId, setHostId] = useState(initialHostId);
   const [directory, setDirectory] = useState(initialDirectory);
@@ -303,36 +313,34 @@ export default function WorkflowDefinitions({
       aria-label="Workflows"
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
     >
-      <div className="mx-auto w-full max-w-5xl space-y-5 px-5 py-6">
-        <header className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h2 className="flex items-center gap-2 text-base font-semibold">
-              <Workflow
-                className="size-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              Workflows
-            </h2>
-            {onEdit && catalog && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="ml-auto h-7"
-                onClick={() =>
-                  onEdit({ hostId, directory, workflowName: null, catalog })
-                }
-              >
-                <Plus />
-                New workflow
-              </Button>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Definitions read from the files on the chosen computer. Edit opens a
-            workflow in the graph editor, which writes the files back.
-          </p>
-        </header>
+      <div className="mx-auto w-full max-w-5xl space-y-4 px-5 py-6 lg:px-8">
+        <div className="flex items-center justify-between gap-3 px-3">
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {!catalog
+              ? 'Workflows are read from the files on the chosen computer'
+              : catalog.workflows.length === 0
+                ? 'No workflows'
+                : `${catalog.workflows.length} ${catalog.workflows.length === 1 ? 'workflow' : 'workflows'} · ${catalog.steps.length} ${catalog.steps.length === 1 ? 'step' : 'steps'}${catalog.issues.length ? ` · ${catalog.issues.length} ${catalog.issues.length === 1 ? 'issue' : 'issues'}` : ''}`}
+          </span>
+          {onCreate && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1.5 px-2 text-xs"
+              disabled={!connected}
+              title={
+                connected
+                  ? 'New workflow'
+                  : 'Connect the computer to create a workflow.'
+              }
+              onClick={() => onCreate({ hostId, directory })}
+            >
+              <Plus className="size-3.5" />
+              New workflow
+            </Button>
+          )}
+        </div>
         <form
           className="flex flex-wrap items-end gap-2"
           onSubmit={event => {
@@ -429,7 +437,7 @@ export default function WorkflowDefinitions({
             <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)]">
               <ul
                 aria-label="Workflow definitions"
-                className={cn(cardSurface, 'h-fit min-w-0 space-y-px p-1.5')}
+                className={cn(fieldSurface, 'h-fit min-w-0 space-y-px p-1.5')}
               >
                 {catalog.workflows.map(workflow => {
                   const count = workflowIssueCount(catalog, workflow);
@@ -493,7 +501,34 @@ export default function WorkflowDefinitions({
                   </li>
                 )}
               </ul>
-              {selected && <WorkflowDetail workflow={selected} />}
+              {selected ? (
+                <WorkflowDetail workflow={selected} />
+              ) : (
+                <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
+                  <span className="mb-2 flex size-10 items-center justify-center rounded-xl border bg-card text-muted-foreground">
+                    <Workflow className="size-4.5" aria-hidden="true" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight">
+                    No workflows yet
+                  </h2>
+                  <p className="max-w-sm text-xs leading-5 text-muted-foreground">
+                    A workflow is a graph of checks, agents, approvals and
+                    actions that runs on a task. Build one in the graph editor.
+                  </p>
+                  {onCreate && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-xs"
+                      disabled={!connected}
+                      onClick={() => onCreate({ hostId, directory })}
+                    >
+                      New workflow
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             {catalog.issues.length > 0 && (
               <section aria-label="Validation issues" className="space-y-2">
@@ -501,7 +536,7 @@ export default function WorkflowDefinitions({
                   {catalog.issues.length} validation{' '}
                   {catalog.issues.length === 1 ? 'issue' : 'issues'}
                 </h3>
-                <ul className={cn(cardSurface, 'space-y-px p-1.5')}>
+                <ul className={cn(fieldSurface, 'space-y-px p-1.5')}>
                   {catalog.issues.map((issue, index) => {
                     const error = issue.severity === 'error';
                     const Icon = error ? CircleX : TriangleAlert;
