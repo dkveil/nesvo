@@ -2972,9 +2972,12 @@ try {
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
-  await editor
-    .getByRole('button', { name: 'Show last run', exact: true })
-    .click();
+  const lastRunToggle = editor.getByRole('button', {
+    name: 'Last run',
+    exact: true,
+  });
+  if ((await lastRunToggle.getAttribute('aria-pressed')) !== 'true')
+    await lastRunToggle.click();
   await editor
     .locator('[data-editor-node="smoke-check"][data-run-state="passed"]')
     .waitFor();
