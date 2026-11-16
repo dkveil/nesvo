@@ -126,6 +126,18 @@ export const sendMessageSchema = z.strictObject({
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
 });
+export const queuedMessageSchema = z.strictObject({
+  id: z.uuid(),
+  text: z.string().trim().min(1).max(32000),
+  skillId: z.string().min(1).max(8192).optional(),
+  skillHash: skillHashSchema.optional(),
+  createdAt: z.iso.datetime(),
+});
+export const queuedMessageRefSchema = z.strictObject({
+  sessionId: z.uuid(),
+  messageId: z.uuid(),
+});
+export const sessionQueueLimit = 20;
 export const stopRunSchema = z.strictObject({
   sessionId: z.uuid(),
   runId: z.uuid(),
@@ -207,6 +219,7 @@ export const sessionSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   messages: z.array(sessionMessageSchema),
+  queue: z.array(queuedMessageSchema).max(sessionQueueLimit).default([]),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([
@@ -239,6 +252,8 @@ export type SessionIsolation = z.infer<typeof sessionIsolationSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
+export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;
 export type ClaudeStatus = z.infer<typeof claudeStatusSchema>;
 export type CodexStatus = z.infer<typeof codexStatusSchema>;

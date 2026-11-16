@@ -125,6 +125,7 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       messages: [],
+      queue: [],
       parentId: null,
       parentRunId: null,
       scope: null,
@@ -207,6 +208,7 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       messages: [],
+      queue: [],
     };
   }
 

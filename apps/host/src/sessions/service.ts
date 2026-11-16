@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   delegationPlanSchema,
+  sessionQueueLimit,
   type CreateSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
@@ -11,6 +12,7 @@ import {
   type ReviewDiff,
   type Delegation,
   type DesktopEvent,
+  type QueuedMessageRefInput,
   type SendMessageInput,
   type Session,
   type StopRunInput,
@@ -708,6 +710,7 @@ export class SessionService {
       input.skillId,
       input.skillHash,
     );
+    session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
     this.emitSession(session);
@@ -717,6 +720,119 @@ export class SessionService {
       skillHash: input.skillHash,
     });
     return structuredClone(session);
+  }
+
+  queue(input: SendMessageInput): Session {
+    const session = this.acceptingSession(input.sessionId);
+    if (input.skillHash && !input.skillId)
+      throw new SessionError(
+        'invalid-request',
+        'A skill snapshot requires a selected skill.',
+      );
+    if (
+      session.queue.some(item => item.id === input.messageId) ||
+      session.messages.some(message => message.id === input.messageId)
+    )
+      return structuredClone(session);
+    if (!this.isBusy()) return this.send(input);
+    if (session.queue.length >= sessionQueueLimit)
+      throw new SessionError(
+        'invalid-request',
+        'The queue is full. Remove a queued message first.',
+      );
+    session.queue.push({
+      id: input.messageId,
+      text: input.text,
+      ...(input.skillId ? { skillId: input.skillId } : {}),
+      ...(input.skillHash ? { skillHash: input.skillHash } : {}),
+      createdAt: new Date().toISOString(),
+    });
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.queue.pop();
+      throw error;
+    }
+    return structuredClone(session);
+  }
+
+  cancelQueued(input: QueuedMessageRefInput): Session {
+    const session = this.acceptingSession(input.sessionId);
+    const queue = session.queue;
+    if (!queue.some(item => item.id === input.messageId))
+      return structuredClone(session);
+    session.queue = queue.filter(item => item.id !== input.messageId);
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.queue = queue;
+      throw error;
+    }
+    return structuredClone(session);
+  }
+
+  startQueued(input: QueuedMessageRefInput): Session {
+    const session = this.acceptingSession(input.sessionId);
+    const entry = session.queue.find(item => item.id === input.messageId);
+    if (!entry)
+      throw new SessionError(
+        'not-found',
+        'This queued message is no longer waiting. Refresh the session.',
+      );
+    if (this.isBusy())
+      throw new SessionError(
+        'busy',
+        'Wait for the active run to finish or use Stop.',
+      );
+    return this.send({
+      sessionId: session.id,
+      messageId: entry.id,
+      text: entry.text,
+      skillId: entry.skillId,
+      skillHash: entry.skillHash,
+    });
+  }
+
+  private acceptingSession(sessionId: string): Session {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session)
+      throw new SessionError(
+        'not-found',
+        'Session not found. Refresh the list.',
+      );
+    if (session.workflowStepId)
+      throw new SessionError(
+        'invalid-request',
+        'This session records a workflow gate and does not accept messages. Start a new session to continue the work.',
+      );
+    return session;
+  }
+
+  private startNextQueued(session: Session): void {
+    const next = session.queue[0];
+    if (session.status !== 'completed' || !next || this.isBusy()) return;
+    try {
+      this.send({
+        sessionId: session.id,
+        messageId: next.id,
+        text: next.text,
+        skillId: next.skillId,
+        skillHash: next.skillHash,
+      });
+    } catch (error) {
+      session.error =
+        error instanceof SessionError
+          ? error.message
+          : 'The next queued message could not start. Use Send now to retry.';
+      try {
+        this.publish(session);
+      } catch {
+        return;
+      }
+    }
   }
 
   decideDelegation(input: DecideDelegationInput): Session {
@@ -1257,6 +1373,7 @@ export class SessionService {
           this.active.delete(session.id);
         this.finishWorker(session);
         this.notifyFinished(session);
+        if (!this.unsaved.has(session.id)) this.startNextQueued(session);
       });
   }
 

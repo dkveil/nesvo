@@ -173,6 +173,10 @@ Requests carry unique correlation IDs. Session events are separate from response
 The renderer cannot send arbitrary host requests. It can only call the API exposed by preload.
 Main denies external window creation, renderer navigation and permission requests.
 
+## Message queue
+
+A message submitted while a run is active, or while the host is busy with another session, joins that session's queue instead of being refused. The queue is a per-session FIFO of at most 20 entries saved in the session document, each with its message ID, text and optional skill selection; older documents default to an empty queue. When a session's own run completes normally in the live host, the host starts the oldest entry through the ordinary send path with the entry's ID as the message ID, so a retried start cannot launch a second turn. Stop, a failure or an interruption holds the queue, and so does a host restart: recovery restores queued entries without starting them. A held entry starts only when the operator chooses Send now on it, or follows a new message once that turn completes. A failed automatic start leaves the entry at the front and records the reason on the session. Editing a queued entry removes it and returns its text to the composer; the skill selection is not restored.
+
 ## Growth by domain
 
 Introduce sessions, delegation, review and skills modules as their stages are accepted.

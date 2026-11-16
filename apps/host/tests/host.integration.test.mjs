@@ -4593,6 +4593,123 @@ test(
 );
 
 test(
+  'host queues messages during a run, holds them after Stop and starts the next one after a completed run',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-queue-host-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const host = launch(directory, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const workspace = join(directory, 'workspace');
+    await mkdir(workspace);
+    const session = (
+      await host.request('create-session', {
+        title: 'Queued work',
+        model: 'sonnet',
+        directory: workspace,
+      })
+    ).session;
+    const held = (
+      await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'fixture:hold',
+      })
+    ).session;
+    assert.equal(held.status, 'running');
+    const queued = (id, text) => ({
+      sessionId: session.id,
+      messageId: id,
+      text,
+    });
+    const first = queued(randomUUID(), 'fixture:stream');
+    const second = queued(randomUUID(), 'Queued follow-up.');
+    const dropped = queued(randomUUID(), 'Dropped follow-up.');
+    for (const input of [first, second, dropped]) {
+      const response = await host.request('queue-message', input);
+      assert.equal(response.type, 'session', JSON.stringify(response));
+    }
+    const repeated = (await host.request('queue-message', first)).session;
+    assert.equal(repeated.runId, held.runId);
+    assert.deepEqual(
+      repeated.queue.map(item => [item.id, item.text]),
+      [first, second, dropped].map(item => [item.messageId, item.text]),
+    );
+    const cancelled = (
+      await host.request('cancel-queued', {
+        sessionId: session.id,
+        messageId: dropped.messageId,
+      })
+    ).session;
+    assert.deepEqual(
+      cancelled.queue.map(item => item.id),
+      [first.messageId, second.messageId],
+    );
+    assert.equal(cancelled.status, 'running');
+    await host.request('stop-run', {
+      sessionId: session.id,
+      runId: held.runId,
+    });
+    await host.event(
+      value => value.id === session.id && value.status === 'stopped',
+    );
+    await delay(300);
+    const stopped = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    assert.equal(stopped.status, 'stopped');
+    assert.equal(stopped.queue.length, 2);
+    const started = await bounded(
+      (async () => {
+        while (true) {
+          const response = await host.request('start-queued', {
+            sessionId: session.id,
+            messageId: first.messageId,
+          });
+          if (response.code !== 'busy') return response;
+          await delay(20);
+        }
+      })(),
+      'The queued message never started',
+    );
+    assert.equal(started.type, 'session', JSON.stringify(started));
+    assert.equal(started.session.status, 'running');
+    assert.equal(started.session.messages.at(-2).id, first.messageId);
+    assert.deepEqual(
+      started.session.queue.map(item => item.id),
+      [second.messageId],
+    );
+    const completed = await host.event(
+      value =>
+        value.runId === started.session.runId && value.status === 'completed',
+    );
+    assert.equal(agent(completed).body, 'Fixture streamed reply.');
+    const following = await host.event(
+      value =>
+        value.id === session.id &&
+        value.status === 'running' &&
+        value.messages.some(message => message.id === second.messageId),
+    );
+    assert.deepEqual(following.queue, []);
+    const finished = await host.event(
+      value => value.runId === following.runId && value.status === 'completed',
+    );
+    assert.equal(
+      finished.messages.filter(message => message.author === 'operator').length,
+      3,
+    );
+    assert.deepEqual(finished.queue, []);
+    await host.stop();
+  },
+);
+
+test(
   'host serves scheduled job commands, interrupts claimed runs and keeps sessions on delete',
   { timeout: 60_000 },
   async t => {

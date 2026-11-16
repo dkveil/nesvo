@@ -70,6 +70,9 @@ import { SessionLauncher } from './scheduled-jobs/launcher';
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
   'send-message',
+  'queue-message',
+  'cancel-queued',
+  'start-queued',
   'stop-run',
   'respond-approval',
   'decide-delegation',
@@ -997,6 +1000,24 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.send(request.input),
+              };
+            if (request.method === 'queue-message')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.queue(request.input),
+              };
+            if (request.method === 'cancel-queued')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.cancelQueued(request.input),
+              };
+            if (request.method === 'start-queued')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.startQueued(request.input),
               };
             if (request.method === 'stop-run') {
               const bound = store.get(request.input.sessionId);

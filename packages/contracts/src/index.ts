@@ -27,6 +27,7 @@ import {
   codexStatusSchema,
   createSessionSchema,
   sendMessageSchema,
+  queuedMessageRefSchema,
   sessionSchema,
   stopRunSchema,
   respondApprovalSchema,
@@ -35,6 +36,7 @@ import {
   type CodexStatus,
   type CreateSessionInput,
   type SendMessageInput,
+  type QueuedMessageRefInput,
   type StopRunInput,
   type RespondApprovalInput,
   type DecideDelegationInput,
@@ -243,6 +245,21 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('send-message'),
     input: sendMessageSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('queue-message'),
+    input: sendMessageSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('cancel-queued'),
+    input: queuedMessageRefSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('start-queued'),
+    input: queuedMessageRefSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -743,6 +760,18 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   sendMessage: (
     input: SendMessageInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  queueMessage: (
+    input: SendMessageInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  cancelQueued: (
+    input: QueuedMessageRefInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  startQueued: (
+    input: QueuedMessageRefInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   stopRun: (input: StopRunInput, hostId?: HostId) => Promise<DesktopSession>;
