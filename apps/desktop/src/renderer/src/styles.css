@@ -49,6 +49,7 @@
   --color-segment-active: var(--segment-active);
   --color-send-idle: var(--send-idle);
   --color-send-idle-foreground: var(--send-idle-foreground);
+  --color-brand-mark: var(--brand-mark);
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
 }
@@ -135,6 +136,9 @@
   --project-chip-4: #a800b7;
   --project-chip-5: #c10007;
   --project-chip-6: #00786f;
+  --brand-black: #000000;
+  --brand-white: #ffffff;
+  --brand-mark: var(--brand-black);
 }
 
 :root.dark {
@@ -203,6 +207,7 @@
   --project-chip-4: #ed6bff;
   --project-chip-5: #ff6467;
   --project-chip-6: #46ecd5;
+  --brand-mark: var(--brand-white);
 }
 
 .hljs-keyword,
