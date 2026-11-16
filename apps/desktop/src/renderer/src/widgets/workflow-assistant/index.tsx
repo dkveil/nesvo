@@ -239,8 +239,10 @@ export default function WorkflowAssistantDock({
     !providerState.error;
   const blockedReason = !connected
     ? `${computer?.name ?? 'This computer'} is offline.`
-    : context.view !== 'automations' && !directory.trim()
-      ? 'Choose a project folder to ask the assistant.'
+    : !directory.trim()
+      ? context.view === 'automations'
+        ? 'Choose a project folder in Workflows first; automations are created there.'
+        : 'Choose a project folder to ask the assistant.'
       : !providerReady
         ? `${pick.provider} is not ready on ${computer?.name ?? 'this computer'}.`
         : !pick.model

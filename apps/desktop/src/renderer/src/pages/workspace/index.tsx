@@ -2114,18 +2114,18 @@ export function Workspace() {
                 onSetActive={(job, active) =>
                   void setAutomationActive(job, active)
                 }
-                highlighted={assistantAddedAutomations(defaultAutomationHost)}
+                highlighted={assistantAddedAutomations(workflowsSource.hostId)}
               />
               {assistantDock(
-                defaultAutomationHost,
-                '',
+                workflowsSource.hostId,
+                workflowsSource.directory,
                 {
                   view: 'automations',
                   workflowName: null,
                   document: null,
                   selection: [],
                 },
-                () => refreshAfterAssistant(defaultAutomationHost),
+                () => refreshAfterAssistant(workflowsSource.hostId),
               )}
             </div>
           ) : selected ? (
