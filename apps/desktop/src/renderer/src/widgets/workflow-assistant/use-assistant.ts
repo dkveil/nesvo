@@ -1,17 +1,23 @@
 import { useMemo, useState } from 'react';
 import type {
+  AssistantChange,
+  AssistantChangeRefusal,
   DesktopSession,
-  WorkflowAssistantDocument,
   WorkspaceEvent,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { hostKey } from '@/shared/lib/host-key';
+import { assistantArea, type AssistantContext } from './assistant-context';
 import {
+  clearSessionId,
   conversationScope,
+  readConversations,
   readSessionId,
   readTurns,
+  rememberConversation,
   saveSessionId,
   saveTurn,
+  type AssistantConversation,
   type AssistantPick,
   type AssistantTurn,
 } from './assistant-storage';
@@ -28,6 +34,7 @@ export type AssistantEntryStatus =
   | 'proposal'
   | 'invalid'
   | 'failed'
+  | 'stopped'
   | 'unavailable';
 
 export type AssistantEntry = {
@@ -36,28 +43,32 @@ export type AssistantEntry = {
   status: AssistantEntryStatus;
   reply: string;
   proposal: AssistantProposal | null;
+  changes: AssistantChange[];
+  refusals: AssistantChangeRefusal[];
 };
 
 type UseAssistantParams = {
   hostId: string;
   directory: string;
-  workflowName: string | null;
-  document: WorkflowAssistantDocument | null;
-  selection: string[];
+  context: AssistantContext;
   sessions: DesktopSession[];
   proposals: Record<string, AssistantProposal>;
+  changes: AssistantChange[];
+  refusals: AssistantChangeRefusal[];
   pick: AssistantPick;
 };
 
 const documentLimit = 65_536;
 const selectionLimit = 32;
 const sentThisRun = new Set<string>();
-const endedStates = new Set(['failed', 'stopped', 'interrupted']);
+const endedStates = new Set(['failed', 'interrupted']);
 
 function entryFor(
   turn: AssistantTurn,
   session: DesktopSession | null,
   proposal: AssistantProposal | null,
+  changes: AssistantChange[],
+  refusals: AssistantChangeRefusal[],
 ): AssistantEntry {
   const operator = session?.messages.find(item => item.id === turn.messageId);
   const reply = operator
@@ -70,6 +81,8 @@ function entryFor(
     text: turn.text,
     reply: reply?.body ?? '',
     proposal,
+    changes,
+    refusals,
   };
   if (proposal)
     return {
@@ -80,27 +93,40 @@ function entryFor(
     return { ...base, status: 'unavailable' };
   if (!reply || reply.state === 'running' || reply.state === 'stopping')
     return { ...base, status: 'working' };
+  if (reply.state === 'stopped') return { ...base, status: 'stopped' };
   if (endedStates.has(reply.state)) return { ...base, status: 'failed' };
   return {
     ...base,
-    status: sentThisRun.has(turn.messageId) ? 'checking' : 'replied',
+    status:
+      sentThisRun.has(turn.messageId) && changes.length === 0
+        ? 'checking'
+        : 'replied',
   };
 }
 
 export function useAssistant({
   hostId,
   directory,
-  workflowName,
-  document,
-  selection,
+  context,
   sessions,
   proposals,
+  changes,
+  refusals,
   pick,
 }: UseAssistantParams) {
-  const scope = conversationScope(hostId, directory, workflowName);
+  const scope = conversationScope(
+    hostId,
+    directory,
+    context.workflowName,
+    assistantArea(context),
+  );
   const [stored, setStored] = useState(() => ({
     scope,
     sessionId: readSessionId(scope),
+  }));
+  const [conversationsState, setConversationsState] = useState(() => ({
+    scope,
+    list: readConversations(scope),
   }));
   const [turnsBySession, setTurnsBySession] = useState<
     Record<string, AssistantTurn[]>
@@ -119,15 +145,34 @@ export function useAssistant({
     () => (sessionKey ? readTurns(sessionKey) : []),
     [sessionKey],
   );
+  const conversations: AssistantConversation[] =
+    conversationsState.scope === scope
+      ? conversationsState.list
+      : readConversations(scope);
   const turns = turnsBySession[sessionKey] ?? storedTurns;
   const continuing =
     !!session &&
     session.provider === pick.provider &&
     session.model === pick.model &&
     (session.effort ?? '') === pick.effort;
+  const ownChanges = sessionId
+    ? changes.filter(change => change.conversationId === sessionId)
+    : [];
+  const ownRefusals = sessionId
+    ? refusals.filter(refusal => refusal.conversationId === sessionId)
+    : [];
   const entries = turns.map(turn =>
-    entryFor(turn, session, proposals[hostKey(turn.messageId, hostId)] ?? null),
+    entryFor(
+      turn,
+      session,
+      proposals[hostKey(turn.messageId, hostId)] ?? null,
+      ownChanges.filter(change => change.messageId === turn.messageId),
+      ownRefusals.filter(refusal => refusal.messageId === turn.messageId),
+    ),
   );
+  const running =
+    !!session &&
+    (session.status === 'running' || session.status === 'stopping');
   const send = async (text: string) => {
     const message = text.trim();
     if (!message || pending !== null) return false;
@@ -142,10 +187,12 @@ export function useAssistant({
         text: message,
         context: {
           directory,
-          workflowName,
+          workflowName: context.workflowName,
           document:
-            document && document.text.length <= documentLimit ? document : null,
-          selection: selection.slice(0, selectionLimit),
+            context.document && context.document.text.length <= documentLimit
+              ? context.document
+              : null,
+          selection: context.selection.slice(0, selectionLimit),
         },
       });
       const key = hostKey(turn.sessionId, hostId);
@@ -153,6 +200,14 @@ export function useAssistant({
       sentThisRun.add(turn.messageId);
       saveSessionId(scope, turn.sessionId);
       saveTurn(key, saved);
+      rememberConversation(scope, {
+        sessionId: turn.sessionId,
+        title:
+          conversations.find(item => item.sessionId === turn.sessionId)
+            ?.title ?? message,
+        at: new Date().toISOString(),
+      });
+      setConversationsState({ scope, list: readConversations(scope) });
       setStored({ scope, sessionId: turn.sessionId });
       setTurnsBySession(previous => ({
         ...previous,
@@ -171,12 +226,28 @@ export function useAssistant({
       setPending(null);
     }
   };
+  const startNew = () => {
+    clearSessionId(scope);
+    setStored({ scope, sessionId: null });
+    setNotice(null);
+  };
+  const switchTo = (target: string) => {
+    saveSessionId(scope, target);
+    setStored({ scope, sessionId: target });
+    setNotice(null);
+  };
   return {
     session,
+    sessionId,
     entries,
     pending,
+    running,
     notice: notice?.scope === scope ? notice.text : '',
     newConversation: !!session && !continuing,
+    conversations,
+    changes: ownChanges,
     send,
+    startNew,
+    switchTo,
   };
 }

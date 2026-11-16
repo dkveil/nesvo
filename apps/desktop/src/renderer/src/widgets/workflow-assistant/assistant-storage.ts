@@ -6,23 +6,44 @@ export type AssistantPick = {
   effort: string;
 };
 export type AssistantTurn = { messageId: string; text: string };
+export type AssistantConversation = {
+  sessionId: string;
+  title: string;
+  at: string;
+};
+export type AssistantSize = { width: number; height: number };
 
 type Saved = {
   collapsed: boolean;
+  size: AssistantSize | null;
   picks: Record<string, AssistantPick>;
   sessions: Record<string, string>;
+  conversations: Record<string, AssistantConversation[]>;
   turns: Record<string, AssistantTurn[]>;
 };
 
-const key = 'nesvo.workflow-assistant.v1';
+const key = 'nesvo.workflow-assistant.v2';
 const identifier = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const maxSessions = 40;
+const maxConversations = 20;
 const maxTurns = 40;
 const maxText = 8000;
+const maxTitle = 120;
+export const assistantSizeLimits = {
+  minWidth: 340,
+  maxWidth: 760,
+  minHeight: 380,
+  maxHeight: 960,
+  defaultWidth: 420,
+  defaultHeight: 560,
+} as const;
+
 const empty = (): Saved => ({
   collapsed: true,
+  size: null,
   picks: {},
   sessions: {},
+  conversations: {},
   turns: {},
 });
 
@@ -46,6 +67,27 @@ const pickFrom = (value: unknown): AssistantPick | null => {
     : null;
 };
 
+const sizeFrom = (value: unknown): AssistantSize | null => {
+  const item = record(value);
+  return typeof item.width === 'number' &&
+    typeof item.height === 'number' &&
+    Number.isFinite(item.width) &&
+    Number.isFinite(item.height)
+    ? clampSize({ width: item.width, height: item.height })
+    : null;
+};
+
+export const clampSize = (size: AssistantSize): AssistantSize => ({
+  width: Math.min(
+    assistantSizeLimits.maxWidth,
+    Math.max(assistantSizeLimits.minWidth, Math.round(size.width)),
+  ),
+  height: Math.min(
+    assistantSizeLimits.maxHeight,
+    Math.max(assistantSizeLimits.minHeight, Math.round(size.height)),
+  ),
+});
+
 const turnsFrom = (value: unknown): AssistantTurn[] =>
   (Array.isArray(value) ? value : [])
     .map(record)
@@ -62,6 +104,25 @@ const turnsFrom = (value: unknown): AssistantTurn[] =>
     }))
     .slice(-maxTurns);
 
+const conversationsFrom = (value: unknown): AssistantConversation[] =>
+  (Array.isArray(value) ? value : [])
+    .map(record)
+    .filter(
+      item =>
+        typeof item.sessionId === 'string' &&
+        identifier.test(item.sessionId) &&
+        typeof item.title === 'string' &&
+        item.title.length <= maxTitle &&
+        typeof item.at === 'string' &&
+        !Number.isNaN(Date.parse(item.at)),
+    )
+    .map(item => ({
+      sessionId: item.sessionId as string,
+      title: item.title as string,
+      at: item.at as string,
+    }))
+    .slice(0, maxConversations);
+
 function read(): Saved {
   try {
     const raw = localStorage.getItem(key);
@@ -69,6 +130,7 @@ function read(): Saved {
     const value = record(JSON.parse(raw));
     const saved = empty();
     if (typeof value.collapsed === 'boolean') saved.collapsed = value.collapsed;
+    saved.size = sizeFrom(value.size);
     for (const [host, pick] of Object.entries(record(value.picks))) {
       const valid = pickFrom(pick);
       if (valid) saved.picks[host] = valid;
@@ -76,6 +138,8 @@ function read(): Saved {
     for (const [scope, sessionId] of Object.entries(record(value.sessions)))
       if (typeof sessionId === 'string' && identifier.test(sessionId))
         saved.sessions[scope] = sessionId;
+    for (const [scope, list] of Object.entries(record(value.conversations)))
+      saved.conversations[scope] = conversationsFrom(list);
     for (const [session, turns] of Object.entries(record(value.turns)))
       saved.turns[session] = turnsFrom(turns);
     return saved;
@@ -89,12 +153,21 @@ function update(change: (saved: Saved) => void): void {
     const saved = read();
     change(saved);
     const sessions = Object.entries(saved.sessions).slice(-maxSessions);
+    const conversations = Object.entries(saved.conversations).slice(
+      -maxSessions,
+    );
     const turns = Object.entries(saved.turns).slice(-maxSessions);
     localStorage.setItem(
       key,
       JSON.stringify({
         ...saved,
         sessions: Object.fromEntries(sessions),
+        conversations: Object.fromEntries(
+          conversations.map(([scope, items]) => [
+            scope,
+            items.slice(0, maxConversations),
+          ]),
+        ),
         turns: Object.fromEntries(
           turns.map(([session, items]) => [session, items.slice(-maxTurns)]),
         ),
@@ -109,13 +182,25 @@ export const conversationScope = (
   hostId: string,
   directory: string,
   workflowName: string | null,
-) => JSON.stringify([hostId, directory, workflowName ?? '']);
+  area = '',
+) => JSON.stringify([hostId, directory, workflowName ?? '', area]);
 
 export const readCollapsed = () => read().collapsed;
 
 export const saveCollapsed = (collapsed: boolean) =>
   update(saved => {
     saved.collapsed = collapsed;
+  });
+
+export const readSize = (): AssistantSize =>
+  read().size ?? {
+    width: assistantSizeLimits.defaultWidth,
+    height: assistantSizeLimits.defaultHeight,
+  };
+
+export const saveSize = (size: AssistantSize) =>
+  update(saved => {
+    saved.size = clampSize(size);
   });
 
 export const readPick = (hostId: string) => read().picks[hostId] ?? null;
@@ -131,6 +216,29 @@ export const saveSessionId = (scope: string, sessionId: string) =>
   update(saved => {
     delete saved.sessions[scope];
     saved.sessions[scope] = sessionId;
+  });
+
+export const clearSessionId = (scope: string) =>
+  update(saved => {
+    delete saved.sessions[scope];
+  });
+
+export const readConversations = (scope: string) =>
+  read().conversations[scope] ?? [];
+
+export const rememberConversation = (
+  scope: string,
+  conversation: AssistantConversation,
+) =>
+  update(saved => {
+    const rest = (saved.conversations[scope] ?? []).filter(
+      item => item.sessionId !== conversation.sessionId,
+    );
+    delete saved.conversations[scope];
+    saved.conversations[scope] = [
+      { ...conversation, title: conversation.title.slice(0, maxTitle) },
+      ...rest,
+    ].slice(0, maxConversations);
   });
 
 export const readTurns = (sessionKey: string) => read().turns[sessionKey] ?? [];
