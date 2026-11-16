@@ -14,6 +14,7 @@ import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -739,12 +740,113 @@ test(
     await delay(150);
     assert.deepEqual(await readTurns(), beforeShutdownTurns);
     assert.equal((await first.request('shutdown')).code, 'invalid-request');
+    const automationId = randomUUID();
+    const savedAutomation = await first.request('save-scheduled-job', {
+      id: automationId,
+      expectedRevision: null,
+      name: 'Unattended summary',
+      prompt: 'Summarize the workspace.',
+      directory: '',
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      schedule: {
+        kind: 'interval',
+        minutes: 30,
+        anchorAt: new Date().toISOString(),
+      },
+      timeZone: 'UTC',
+      active: true,
+    });
+    assert.equal(
+      savedAutomation.type,
+      'scheduled-job',
+      JSON.stringify(savedAutomation),
+    );
+    const sessionsBeforeAutomation = (await first.request('list-sessions'))
+      .sessions.length;
     await disconnectAll();
     restarted.child.kill('SIGINT');
     assert.deepEqual(
       await bounded(restarted.exited, 'Restarted daemon did not shut down'),
       { code: 0, signal: null },
       restarted.error(),
+    );
+    const seededDatabase = new DatabaseSync(join(data, 'nesvo.sqlite'));
+    try {
+      seededDatabase
+        .prepare('UPDATE scheduled_jobs SET next_run_at = ? WHERE id = ?')
+        .run(new Date(Date.now() - 20_000).toISOString(), automationId);
+    } finally {
+      seededDatabase.close();
+    }
+    const unattended = start();
+    await unattended.next(message => message.type === 'daemon-ready');
+    const unattendedRun = async () => {
+      const database = new DatabaseSync(join(data, 'nesvo.sqlite'), {
+        readOnly: true,
+      });
+      try {
+        return database
+          .prepare(
+            'SELECT status, session_id AS sessionId, review_id AS reviewId FROM scheduled_job_runs WHERE scheduled_job_id = ?',
+          )
+          .all(automationId);
+      } finally {
+        database.close();
+      }
+    };
+    const unattendedDeadline = Date.now() + 15_000;
+    let recordedRuns = [];
+    while (Date.now() < unattendedDeadline) {
+      recordedRuns = await unattendedRun().catch(() => []);
+      if (recordedRuns.some(run => run.status === 'completed')) break;
+      await delay(50);
+    }
+    assert.deepEqual(
+      recordedRuns.map(run => run.status),
+      ['completed'],
+      JSON.stringify(recordedRuns),
+    );
+    const late = await connect(instanceId);
+    const lateRuns = (
+      await late.request('list-scheduled-job-runs', {
+        scheduledJobId: automationId,
+      })
+    ).page.runs;
+    assert.equal(lateRuns.length, 1);
+    assert.deepEqual(
+      [lateRuns[0].trigger, lateRuns[0].status, lateRuns[0].reason],
+      ['schedule', 'completed', null],
+    );
+    const lateSessions = (await late.request('list-sessions')).sessions;
+    assert.equal(lateSessions.length, sessionsBeforeAutomation + 1);
+    assert.equal(
+      lateSessions.filter(value => value.scheduledJobId === automationId)
+        .length,
+      1,
+    );
+    const lateReviews = (await late.request('list-reviews')).reviews;
+    assert.equal(
+      lateReviews.filter(
+        value =>
+          value.id === lateRuns[0].reviewId && value.status === 'pending',
+      ).length,
+      1,
+    );
+    await delay(300);
+    assert.equal((await unattendedRun()).length, 1);
+    assert.equal(
+      (await late.request('list-sessions')).sessions.length,
+      sessionsBeforeAutomation + 1,
+    );
+    await disconnectAll();
+    unattended.child.kill('SIGINT');
+    assert.deepEqual(
+      await bounded(unattended.exited, 'Unattended daemon did not shut down'),
+      { code: 0, signal: null },
+      unattended.error(),
     );
     t.diagnostic(
       JSON.stringify({
@@ -761,6 +863,7 @@ test(
         offlineCompletionPersisted: true,
         bridgeEofPreservedDaemon: true,
         daemonShutdownInterruptedRun: true,
+        unattendedAutomationRunReceivedOnce: true,
       }),
     );
   },
