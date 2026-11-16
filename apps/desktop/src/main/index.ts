@@ -140,6 +140,7 @@ void app.whenReady().then(async () => {
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
+      icon: join(import.meta.dirname, '../renderer/app-icon.png'),
       backgroundColor: windowColors().background,
       show: !smokeTest,
       autoHideMenuBar: true,

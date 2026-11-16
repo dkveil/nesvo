@@ -2,6 +2,7 @@ appId: app.nesvo.desktop
 productName: Nesvo
 directories:
   output: release
+  buildResources: build
 files:
   - dist/**/*
   - package.json
@@ -17,9 +18,12 @@ extraFiles:
     to: THIRD_PARTY_DIFF_LICENSES.txt
 win:
   target: zip
+  icon: build/icon.ico
 mac:
   target: zip
+  icon: build/icon.icns
   identity: null
 linux:
   target: tar.gz
   executableName: nesvo
+  icon: build/icons

@@ -34,6 +34,7 @@ import {
   type WorkflowRun,
 } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
+import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 
@@ -311,14 +312,7 @@ export function SessionSidebar({
             <PanelLeft className="size-4" />
           </Button>
         )}
-        <span
-          className={cn(
-            'text-[13px] font-semibold tracking-tight select-none',
-            !onCollapse && 'pl-1',
-          )}
-        >
-          Nesvo
-        </span>
+        <BrandWordmark className={cn('select-none', !onCollapse && 'ml-1')} />
       </div>
       <div className="space-y-0.5 px-(--sidebar-inset) pb-2">
         <div className="flex items-center gap-0.5">
