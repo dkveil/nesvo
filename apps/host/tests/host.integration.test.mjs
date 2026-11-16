@@ -13459,6 +13459,18 @@ test(
       join(agents, 'steps', 'approve.md'),
       '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready.\n',
     );
+    await write(
+      join(agents, 'steps', 'deploy.md'),
+      '---\nname: deploy\ntype: command\nphase: pre-push\neffect: external\n---\ngit push\n',
+    );
+    await write(
+      join(agents, 'workflows', 'ship.md'),
+      '---\nname: ship\nsteps: [check, deploy]\n---\n',
+    );
+    await write(
+      join(agents, 'workflows', 'release.md'),
+      '---\nname: release\nsteps: [check, publish-now]\n---\n',
+    );
     const workflowText =
       '---\nname: default\ndescription: Check and approve\nsteps: [check, approve]\n---\n';
     const workflowPath = await write(
@@ -13699,9 +13711,18 @@ test(
             ['workflow', 'unsafe'],
             ['automation', 'unsafe'],
             ['step', 'unsafe'],
+            ['step', 'unsafe'],
+            ['step', 'unsafe'],
             [null, 'invalid'],
             [null, 'invalid'],
           ],
+        );
+        assert.match(refusals[3].issues[0].message, /"deploy"/);
+        assert.match(refusals[4].issues[0].message, /"publish-now"/);
+        await assert.rejects(stat(join(agents, 'steps', 'publish-now.md')));
+        assert.match(
+          await readFile(join(agents, 'steps', 'deploy.md'), 'utf8'),
+          /^git push$/m,
         );
         assert.match(
           refusals[2].issues[0].message,
@@ -13735,6 +13756,18 @@ test(
           ],
         );
         await assert.rejects(stat(join(agents, 'workflows', 'cross-flow.md')));
+        const glued = await send('fixture:assistant-glued', { sessionId });
+        assert.equal(
+          (await proposal(glued.turn.messageId)).proposal.message,
+          'Then the second:\nAdded two steps.',
+        );
+        const pair = changesOf(glued.turn.messageId);
+        assert.deepEqual(
+          pair.map(change => change.target.name),
+          ['glued-one', 'glued-two'],
+        );
+        for (const change of pair)
+          assert.equal((await undo(change.changeId)).result.status, 'undone');
       },
     );
 
