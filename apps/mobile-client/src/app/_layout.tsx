@@ -4,14 +4,17 @@ import { StatusBar } from 'expo-status-bar';
 import { MobileWorkspace } from '@/hooks/mobile-workspace';
 import wordmark from '@/assets/wordmark.png';
 
-const BrandTitle = () => (
-  <Image
-    source={wordmark}
-    accessibilityRole="header"
-    accessibilityLabel="Nesvo"
-    style={{ width: 128, height: 22 }}
-  />
-);
+function BrandTitle() {
+  return (
+    <Image
+      source={wordmark}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel="Nesvo"
+      style={{ width: 128, height: 22 }}
+    />
+  );
+}
 
 export default function RootLayout() {
   return (
