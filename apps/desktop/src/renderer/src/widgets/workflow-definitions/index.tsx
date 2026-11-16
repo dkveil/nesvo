@@ -489,9 +489,10 @@ export default function WorkflowDefinitions({
                           !reviewed.includes(workflow.name) && (
                             <span
                               data-added-by-assistant
+                              title="Added by the assistant"
                               className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 font-normal text-info-foreground"
                             >
-                              Added by assistant
+                              Assistant
                             </span>
                           )}
                         {count > 0 && (
