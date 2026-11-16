@@ -1,8 +1,15 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import {
   Background,
   BackgroundVariant,
   MarkerType,
+  MiniMap,
   ReactFlow,
   useReactFlow,
   useStoreApi,
@@ -10,48 +17,74 @@ import {
   type NodeChange,
   type OnConnect,
 } from '@xyflow/react';
-import type { StepDisplayState } from '@/entities/workflow';
 import {
-  LANE_TOP_PADDING_PX,
-  START_NODE_X,
   edgeTones,
-  laneTop,
+  firstStepPosition,
+  startPosition,
   toneColor,
+  type EdgeCondition,
 } from '@/entities/workflow-graph';
-import { START_NODE_ID, edgeTypes, nodeTypes } from './canvas-types';
+import { CanvasControls } from './canvas-controls';
+import {
+  HOVER_LINGER_MS,
+  PLACEHOLDER_NODE_ID,
+  START_NODE_ID,
+  edgeTypes,
+  fitViewOptions,
+  nodeTypes,
+} from './canvas-types';
 import type { ConditionEdge } from './edges';
-import { Lanes } from './lanes';
-import type { EditorCanvasNode } from './nodes';
-import type { EditorState } from './use-editor-state';
+import type { EditorCanvasNode, RunBadge } from './nodes';
+import { PhaseFrames } from './phase-frames';
+import type { AddOrigin, EditorState } from './use-editor-state';
 
 type Props = {
   state: EditorState;
-  runStates: Map<string, StepDisplayState> | null;
+  runBadges: Map<string, RunBadge> | null;
   automations: number;
+  onRequestAdd: (origin: AddOrigin, event: ReactMouseEvent) => void;
 };
 
 const canvasVariables = {
   '--xy-background-color': 'var(--background)',
-  '--xy-handle-background-color': 'var(--muted-foreground)',
-  '--xy-handle-border-color': 'var(--background)',
   '--xy-edge-stroke': 'var(--border)',
   '--xy-edge-stroke-selected': 'var(--foreground)',
   '--xy-connectionline-stroke': 'var(--muted-foreground)',
   '--xy-selection-background-color': 'var(--highlight)',
   '--xy-selection-border': '1px dashed var(--ring)',
-  '--xy-node-border-selected': '1px solid var(--ring)',
+  '--xy-node-border-selected': 'none',
+  '--xy-minimap-background-color': 'var(--card)',
+  '--xy-minimap-mask-background-color': 'var(--overlay)',
+  '--xy-minimap-node-background-color': 'var(--muted-foreground)',
+  '--xy-minimap-node-stroke-color': 'transparent',
 } as CSSProperties;
 
 type Measured = { width: number; height: number };
 
-const fitViewOptions = { padding: 0.25, maxZoom: 1 };
 const snapGrid: [number, number] = [10, 10];
 
-export function EditorCanvas({ state, runStates, automations }: Props) {
+export function EditorCanvas({
+  state,
+  runBadges,
+  automations,
+  onRequestAdd,
+}: Props) {
   const { document, selection, nodeIssues } = state;
   const [measured, setMeasured] = useState<Record<string, Measured>>({});
+  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+  const [minimap, setMinimap] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { fitView } = useReactFlow();
   const store = useStoreApi();
+  const hoverEdge = (id: string | null) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    if (id) setHoveredEdge(id);
+    else
+      hoverTimer.current = setTimeout(
+        () => setHoveredEdge(null),
+        HOVER_LINGER_MS,
+      );
+  };
   const revealNode = (id: string) => {
     const { nodeLookup, transform, width, height } = store.getState();
     const node = nodeLookup.get(id);
@@ -64,50 +97,94 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
     if (left < 0 || top < 0 || right > width || bottom > height)
       void fitView(fitViewOptions);
   };
-  const nodes = useMemo<EditorCanvasNode[]>(
-    () => [
+  const outgoing = useMemo(() => {
+    const map = new Map<string, Set<EdgeCondition>>();
+    for (const edge of document.edges) {
+      const set = map.get(edge.from) ?? new Set<EdgeCondition>();
+      set.add(edge.when);
+      map.set(edge.from, set);
+    }
+    return map;
+  }, [document.edges]);
+  const nodes = useMemo<EditorCanvasNode[]>(() => {
+    const start = startPosition(document.nodes);
+    const list: EditorCanvasNode[] = [
       {
         id: START_NODE_ID,
         type: 'start',
-        position: { x: START_NODE_X, y: laneTop('plan') + LANE_TOP_PADDING_PX },
-        data: { workflowName: document.name, automations },
+        position: start,
+        data: {
+          workflowName: document.name,
+          automations,
+          onAdd: event => onRequestAdd({ kind: 'start' }, event),
+        },
         measured: measured[START_NODE_ID],
         draggable: false,
         deletable: false,
         connectable: false,
         selected: selection.kind === 'start',
       },
-      ...document.nodes.map<EditorCanvasNode>(node => ({
+    ];
+    if (document.nodes.length === 0)
+      list.push({
+        id: PLACEHOLDER_NODE_ID,
+        type: 'placeholder',
+        position: firstStepPosition(),
+        data: { onAdd: event => onRequestAdd({ kind: 'start' }, event) },
+        draggable: false,
+        deletable: false,
+        connectable: false,
+      });
+    for (const node of document.nodes) {
+      const used = outgoing.get(node.id);
+      list.push({
         id: node.id,
         type: 'step',
         position: node.position,
         data: {
           editor: node,
           issues: nodeIssues.get(node.id) ?? [],
-          runState: runStates?.get(node.id) ?? null,
+          run: runBadges?.get(node.id) ?? null,
+          freeSuccess: !used?.has('success') && !used?.has('any'),
+          freeFailure: !used?.has('failure') && !used?.has('any'),
+          onAdd: (when, event) =>
+            onRequestAdd({ kind: 'after', id: node.id, when }, event),
+          onDelete: () => state.removeNode(node.id),
+          onDuplicate: () => state.duplicateNode(node.id),
         },
         measured: measured[node.id],
         selected: selection.kind === 'node' && selection.id === node.id,
-      })),
-    ],
-    [
-      document.name,
-      document.nodes,
-      automations,
-      selection,
-      nodeIssues,
-      runStates,
-      measured,
-    ],
-  );
+      });
+    }
+    return list;
+  }, [
+    document.name,
+    document.nodes,
+    automations,
+    selection,
+    nodeIssues,
+    runBadges,
+    measured,
+    outgoing,
+    onRequestAdd,
+    state,
+  ]);
   const edges = useMemo<ConditionEdge[]>(
     () =>
       document.edges.map(edge => ({
         id: edge.id,
         source: edge.from,
+        sourceHandle: edge.when === 'failure' ? 'failure' : 'success',
         target: edge.to,
+        targetHandle: 'in',
         type: 'condition',
-        data: { when: edge.when },
+        data: {
+          when: edge.when,
+          hovered: hoveredEdge === edge.id,
+          onHover: hovering => hoverEdge(hovering ? edge.id : null),
+          onInsert: event => onRequestAdd({ kind: 'edge', id: edge.id }, event),
+          onDelete: () => state.removeEdge(edge.id),
+        },
         selected: selection.kind === 'edge' && selection.id === edge.id,
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -116,7 +193,7 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
           height: 14,
         },
       })),
-    [document.edges, selection],
+    [document.edges, selection, hoveredEdge, onRequestAdd, state],
   );
   const onNodesChange = (changes: NodeChange<EditorCanvasNode>[]) => {
     for (const change of changes) {
@@ -133,16 +210,22 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
             : { ...current, [id]: dimensions },
         );
       } else if (change.type === 'position' && change.position) {
-        if (change.id === START_NODE_ID) continue;
+        if (change.id === START_NODE_ID || change.id === PLACEHOLDER_NODE_ID)
+          continue;
         if (change.dragging) state.moveNode(change.id, change.position);
         else state.settleNode(change.id, change.position);
       } else if (change.type === 'select' && change.selected) {
+        if (change.id === PLACEHOLDER_NODE_ID) continue;
         state.select(
           change.id === START_NODE_ID
             ? { kind: 'start' }
             : { kind: 'node', id: change.id },
         );
-      } else if (change.type === 'remove' && change.id !== START_NODE_ID) {
+      } else if (
+        change.type === 'remove' &&
+        change.id !== START_NODE_ID &&
+        change.id !== PLACEHOLDER_NODE_ID
+      ) {
         const { id } = change;
         setMeasured(current => {
           if (!current[id]) return current;
@@ -166,9 +249,14 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
       connection.source &&
       connection.target &&
       connection.source !== START_NODE_ID &&
-      connection.target !== START_NODE_ID
+      connection.target !== START_NODE_ID &&
+      connection.target !== PLACEHOLDER_NODE_ID
     )
-      state.connect(connection.source, connection.target);
+      state.connect(
+        connection.source,
+        connection.target,
+        connection.sourceHandle === 'failure' ? 'failure' : 'success',
+      );
   };
   return (
     <ReactFlow<EditorCanvasNode, ConditionEdge>
@@ -179,7 +267,9 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
-      onPaneClick={() => state.select({ kind: 'workflow' })}
+      onEdgeMouseEnter={(_, edge) => hoverEdge(edge.id)}
+      onEdgeMouseLeave={() => hoverEdge(null)}
+      onPaneClick={() => state.select({ kind: 'none' })}
       fitView
       fitViewOptions={fitViewOptions}
       minZoom={0.25}
@@ -201,11 +291,30 @@ export function EditorCanvas({ state, runStates, automations }: Props) {
     >
       <Background
         variant={BackgroundVariant.Dots}
-        gap={20}
-        size={1}
+        gap={24}
+        size={1.2}
         color="var(--border)"
       />
-      <Lanes />
+      <PhaseFrames nodes={document.nodes} />
+      {minimap && (
+        <MiniMap
+          pannable
+          zoomable
+          position="bottom-right"
+          className="!m-3 !mb-16 rounded-lg border shadow-(--popover-shadow)"
+          nodeColor={node =>
+            node.type === 'start' ? 'var(--primary)' : 'var(--muted-foreground)'
+          }
+          nodeBorderRadius={8}
+          aria-label="Minimap"
+        />
+      )}
+      <CanvasControls
+        minimap={minimap}
+        onToggleMinimap={() => setMinimap(value => !value)}
+        onTidy={state.autoLayoutAll}
+        tidyDisabled={document.nodes.length === 0}
+      />
     </ReactFlow>
   );
 }
