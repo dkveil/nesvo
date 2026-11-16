@@ -19,16 +19,15 @@ The brand defines two colours, black `#000000` and white `#ffffff`. The desktop 
 
 Run `bun run brand:assets` after changing a source SVG. The script rasterizes the sources through the pinned Electron runtime and writes:
 
-| File                                            | Purpose                                          |
-| ----------------------------------------------- | ------------------------------------------------ |
-| `apps/desktop/build/icon.ico`                   | Windows package icon, 16 to 256 px               |
-| `apps/desktop/build/icon.icns`                  | macOS package icon, 16 to 1024 px                |
-| `apps/desktop/build/icons/*.png`                | Linux package icons, 16 to 1024 px               |
-| `apps/desktop/src/renderer/public/app-icon.png` | Window and taskbar icon                          |
-| `apps/desktop/src/renderer/public/favicon.svg`  | Renderer favicon                                 |
-| `apps/mobile-client/assets/icon.png`            | Mobile launcher icon, 1024 px, full bleed        |
-| `apps/mobile-client/assets/adaptive-icon.png`   | Android adaptive foreground and monochrome layer |
-| `apps/mobile-client/assets/wordmark.png`        | Mobile header wordmark at 3x                     |
+| File                                           | Purpose                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------ |
+| `apps/desktop/build/icon.ico`                  | Windows package icon, 16 to 256 px                                             |
+| `apps/desktop/build/icon.icns`                 | macOS package icon, 16 to 1024 px                                              |
+| `apps/desktop/build/icons/*.png`               | Linux package icons, 16 to 1024 px; 256 px is also the window and taskbar icon |
+| `apps/desktop/src/renderer/public/favicon.svg` | Renderer favicon                                                               |
+| `apps/mobile-client/assets/icon.png`           | Mobile launcher icon, 1024 px, full bleed                                      |
+| `apps/mobile-client/assets/adaptive-icon.png`  | Android adaptive foreground and monochrome layer                               |
+| `apps/mobile-client/assets/wordmark.png`       | Mobile header wordmark at 3x                                                   |
 
 The output is deterministic: running the script twice produces identical files. Commit the regenerated files together with the source change.
 

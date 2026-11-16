@@ -12,25 +12,24 @@ const LETTERS = [
   { x: 308, d: 'M0 0H40L64 24V64H24L0 40ZM20 20V32L32 44H44V32L32 20Z' },
 ] as const;
 
-export const BrandWordmark = ({
-  className,
-  ...props
-}: ComponentProps<'svg'>) => (
-  <svg
-    viewBox="0 0 372 64"
-    role="img"
-    aria-label="Nesvo"
-    className={cn('h-3 w-auto shrink-0 text-brand-mark', className)}
-    {...props}
-  >
-    <g fill="currentColor" fillRule="evenodd">
-      {LETTERS.map(letter => (
-        <path
-          key={letter.x}
-          transform={`translate(${letter.x} 0)`}
-          d={letter.d}
-        />
-      ))}
-    </g>
-  </svg>
-);
+export function BrandWordmark({ className, ...props }: ComponentProps<'svg'>) {
+  return (
+    <svg
+      viewBox="0 0 372 64"
+      role="img"
+      aria-label="Nesvo"
+      className={cn('h-3 w-auto shrink-0 text-brand-mark', className)}
+      {...props}
+    >
+      <g fill="currentColor" fillRule="evenodd">
+        {LETTERS.map(letter => (
+          <path
+            key={letter.x}
+            transform={`translate(${letter.x} 0)`}
+            d={letter.d}
+          />
+        ))}
+      </g>
+    </svg>
+  );
+}

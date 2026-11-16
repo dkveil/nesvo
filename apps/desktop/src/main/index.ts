@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron';
+import appIcon from '../../build/icons/256x256.png?asset';
 import { startHost } from './host-client';
 import {
   ComputerManager,
@@ -140,7 +141,7 @@ void app.whenReady().then(async () => {
       minWidth: 640,
       minHeight: 480,
       title: 'Nesvo',
-      icon: join(import.meta.dirname, '../renderer/app-icon.png'),
+      icon: appIcon,
       backgroundColor: windowColors().background,
       show: !smokeTest,
       autoHideMenuBar: true,
