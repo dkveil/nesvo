@@ -351,23 +351,27 @@ function issueAt(path: string, message: string): DefinitionIssue {
   return { severity: 'error', path, line: null, message };
 }
 
-function legacyPath(
+async function legacyPath(
   target: DefinitionTarget,
   requestedRoot: string,
   catalog: DefinitionCatalog,
-): string | null {
+): Promise<string | null> {
   const entries = target.kind === 'step' ? catalog.steps : catalog.workflows;
   const entry = entries.find(
     item => item.name === target.name && item.source.scope === target.scope,
   );
   if (!entry) return null;
+  const parent = dirname(requestedRoot);
+  const base = await realpath(parent).catch(() => parent);
   const expected = join(
-    dirname(requestedRoot),
+    base,
     'pipelines',
     target.kind === 'step' ? 'steps' : 'pipelines',
     `${target.name}.md`,
   );
-  return pathKey(entry.source.path) === pathKey(expected) ? expected : null;
+  return pathKey(entry.source.path) === pathKey(expected)
+    ? entry.source.path
+    : null;
 }
 
 async function readLegacy(
@@ -378,15 +382,21 @@ async function readLegacy(
   signal: AbortSignal,
 ): Promise<{ path: string; current: Current } | WorkflowDefinitionRefused | null> {
   if (current.file) return null;
-  const path = legacyPath(target, requestedRoot, catalog);
+  const path = await legacyPath(target, requestedRoot, catalog);
   if (!path) return null;
   const legacy = await readCurrent(path, signal);
   return isRefusal(legacy) ? legacy : { path, current: legacy };
 }
 
-async function removeLegacy(path: string | null) {
-  if (!path) return;
-  await unlink(path).catch(() => undefined);
+async function removeLegacy(
+  legacy: { path: string; current: Current } | null,
+  signal: AbortSignal,
+) {
+  if (!legacy?.current.file) return;
+  const latest = await readCurrent(legacy.path, signal);
+  if (isRefusal(latest) || !latest.file) return;
+  if (latest.file.contentHash !== legacy.current.file.contentHash) return;
+  await unlink(legacy.path).catch(() => undefined);
 }
 
 export async function saveDefinition(
@@ -461,7 +471,7 @@ export async function saveDefinition(
       signal,
     );
     if (outcome !== 'written') return outcome;
-    await removeLegacy(legacy?.path ?? null);
+    await removeLegacy(legacy, signal);
     return loadCatalog(input.directory, signal);
   }).catch(error => {
     if (error instanceof DefinitionError) throw error;
