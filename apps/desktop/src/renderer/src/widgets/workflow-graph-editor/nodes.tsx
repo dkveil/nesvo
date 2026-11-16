@@ -33,6 +33,7 @@ export type StepNodeData = {
   editor: EditorNode;
   issues: NodeIssue[];
   run: RunBadge | null;
+  addedByAssistant: boolean;
   freeSuccess: boolean;
   freeFailure: boolean;
   onAdd: (when: EdgeCondition, event: ReactMouseEvent) => void;
@@ -132,7 +133,8 @@ const typeTileTone: Record<StepType, string> = {
 };
 
 export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
-  const { editor, issues, run, freeSuccess, freeFailure } = data;
+  const { editor, issues, run, freeSuccess, freeFailure, addedByAssistant } =
+    data;
   const step = editor.step;
   const { hovered, enter, leave } = useLinger();
   const errors = issues.filter(issue => issue.severity === 'error').length;
@@ -212,6 +214,15 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             {isDraftStep(step) && (
               <span className="shrink-0 rounded-full border px-1.5 text-[10px] leading-4 text-muted-foreground">
                 New
+              </span>
+            )}
+            {addedByAssistant && !isDraftStep(step) && (
+              <span
+                data-added-by-assistant
+                title="Added by the assistant"
+                className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 text-info-foreground"
+              >
+                Assistant
               </span>
             )}
           </div>

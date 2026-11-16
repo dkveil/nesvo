@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  AssistantChange,
+  AssistantChangeRefusal,
   Computer,
   DesktopApi,
   DesktopWorkflowRun,
@@ -82,6 +84,27 @@ export function useSessions() {
       Extract<WorkspaceEvent, { type: 'workflow-assistant-proposal' }>
     >
   >({});
+  const [assistantChanges, setAssistantChanges] = useState<
+    Record<string, AssistantChange[]>
+  >({});
+  const [assistantRefusals, setAssistantRefusals] = useState<
+    Record<string, AssistantChangeRefusal[]>
+  >({});
+  const recordAssistantChange = useCallback(
+    (hostId: string, change: AssistantChange) =>
+      setAssistantChanges(previous => {
+        const list = previous[hostId] ?? [];
+        const rest = list.filter(item => item.changeId !== change.changeId);
+        return {
+          ...previous,
+          [hostId]: [...rest, change].sort(
+            (left, right) =>
+              left.at.localeCompare(right.at) || left.sequence - right.sequence,
+          ),
+        };
+      }),
+    [],
+  );
   const runRequests = useRef(new Set<string>());
   const [computers, setComputers] = useState<Computer[]>([]);
   const computersRef = useRef<Computer[]>([]);
@@ -261,6 +284,16 @@ export function useSessions() {
           ...previous,
           [hostKey(event.messageId, event.hostId)]: event,
         }));
+      else if (event.type === 'workflow-assistant-change')
+        recordAssistantChange(event.hostId, event.change);
+      else if (event.type === 'workflow-assistant-change-refused')
+        setAssistantRefusals(previous => ({
+          ...previous,
+          [event.hostId]: [
+            ...(previous[event.hostId] ?? []),
+            event.refusal,
+          ].slice(-200),
+        }));
       else if (event.type === 'host-snapshot') {
         for (const key of [...runRequests.current])
           if (
@@ -338,6 +371,7 @@ export function useSessions() {
     };
   }, [
     attempt,
+    recordAssistantChange,
     inspectProvider,
     merge,
     mergeReviews,
@@ -390,6 +424,9 @@ export function useSessions() {
     workflowRuns,
     workflowSteps,
     assistantProposals,
+    assistantChanges,
+    assistantRefusals,
+    recordAssistantChange,
     mergeWorkflowRuns,
     computers,
     loading,

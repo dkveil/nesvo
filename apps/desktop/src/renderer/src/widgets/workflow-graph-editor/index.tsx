@@ -66,6 +66,7 @@ type Props = {
   runOverlay?: { run: WorkflowRun; steps: WorkflowStepRecord[] };
   onInbox?: (target: InboxTarget) => void;
   onSession?: (key: string) => void;
+  assistantAdded?: string[];
   dock?: (context: EditorDockContext) => ReactNode;
 };
 
@@ -107,6 +108,7 @@ export default function WorkflowGraphEditor({
   runOverlay,
   onInbox = () => {},
   onSession = () => {},
+  assistantAdded = [],
   dock,
 }: Props) {
   const state = useEditorState({
@@ -293,6 +295,7 @@ export default function WorkflowGraphEditor({
               state={state}
               runBadges={runBadges}
               automations={automations.length}
+              assistantAdded={assistantAdded}
               onRequestAdd={requestAdd}
             />
             {state.notice && (
