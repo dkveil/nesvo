@@ -236,7 +236,24 @@ export class AssistantChanges {
       this.refuse(context, outcome);
       return null;
     }
-    return this.record(context, outcome);
+    try {
+      return this.record(context, outcome);
+    } catch {
+      this.refuse(context, {
+        kind: outcome.kind,
+        op: outcome.op,
+        target: outcome.target,
+        summary: outcome.summary,
+        reason: 'unavailable',
+        issues: [
+          issueAt(
+            outcome.target.type === 'definition' ? outcome.target.path : '',
+            'The change was saved but could not be recorded, so it cannot be undone here.',
+          ),
+        ],
+      });
+      return null;
+    }
   }
 
   private record(context: ChangeContext, applied: Applied): AssistantChange {

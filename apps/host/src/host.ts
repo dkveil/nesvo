@@ -672,13 +672,22 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (request.method === 'workflow-assistant-changes') {
-          yield* Effect.tryPromise(() =>
-            send({
+          let response: HostMessage;
+          try {
+            response = {
               type: 'workflow-assistant-changes',
               id: request.id,
               history: assistantChanges.history(request.input.conversationId),
-            }),
-          );
+            };
+          } catch {
+            response = {
+              type: 'error',
+              id: request.id,
+              code: 'unavailable',
+              message: 'The change history could not be read. Try again.',
+            };
+          }
+          yield* Effect.tryPromise(() => send(response));
           continue;
         }
         if (request.method === 'read-workflow-evidence') {

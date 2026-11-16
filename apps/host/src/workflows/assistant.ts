@@ -78,13 +78,16 @@ export class WorkflowAssistantError extends Error {
 const bounded = (value: string, limit: number) =>
   value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 
+const CHANGE_OPENING = `\`\`\`${ASSISTANT_CHANGE_FENCE}`;
 const CHANGE_BLOCK = new RegExp(
-  `^\`\`\`${ASSISTANT_CHANGE_FENCE}[ \\t]*\\r?\\n([\\s\\S]*?)^\`\`\`[ \\t]*$`,
+  `${CHANGE_OPENING}[ \\t]*\\r?\\n([\\s\\S]*?)^\`\`\``,
   'gm',
 );
 
 export const changeBlocks = (body: string): string[] =>
   [...body.matchAll(CHANGE_BLOCK)].map(match => match[1] ?? '');
+
+const openings = (body: string) => body.split(CHANGE_OPENING).length - 1;
 
 const replyText = (body: string) =>
   bounded(
@@ -113,6 +116,7 @@ export class WorkflowAssistant {
   private readonly created = new Set<string>();
   private starting = false;
   private readonly work = new Set<Promise<void>>();
+  private readonly settling = new Map<string, Promise<void>>();
   private readonly release: () => void;
 
   constructor(
@@ -158,7 +162,10 @@ export class WorkflowAssistant {
 
   async close(): Promise<void> {
     this.release();
-    await Promise.all(this.work);
+    await Promise.all([
+      ...this.work,
+      ...[...this.pending.values()].map(turn => turn.chain),
+    ]);
   }
 
   private async begin(
@@ -175,6 +182,7 @@ export class WorkflowAssistant {
         document && this.lastHash.get(existing.id) !== document.contentHash
           ? document
           : null;
+      await this.settling.get(existing.id);
       await this.ports.changes.idle(existing.id);
       return this.deliver(
         existing.id,
@@ -393,7 +401,12 @@ export class WorkflowAssistant {
       () => undefined,
     );
     this.work.add(announce);
-    void announce.finally(() => this.work.delete(announce));
+    this.settling.set(run.sessionId, announce);
+    void announce.finally(() => {
+      this.work.delete(announce);
+      if (this.settling.get(run.sessionId) === announce)
+        this.settling.delete(run.sessionId);
+    });
   }
 
   private async announce(turn: PendingTurn, completed: boolean): Promise<void> {
@@ -401,7 +414,23 @@ export class WorkflowAssistant {
     const reply = completed
       ? this.ports.sessions.turnReply(sessionId, messageId)
       : null;
-    if (reply !== null) this.consume(turn, reply);
+    if (reply !== null) {
+      this.consume(turn, reply);
+      if (openings(reply) > changeBlocks(reply).length)
+        this.ports.changes.refuse(turn.context, {
+          kind: null,
+          op: null,
+          target: null,
+          summary: '',
+          reason: 'invalid',
+          issues: [
+            issueAt(
+              '',
+              'A change block was not closed, so it was not applied.',
+            ),
+          ],
+        });
+    }
     await turn.chain;
     await this.ports.changes.idle(sessionId);
     this.publish({
