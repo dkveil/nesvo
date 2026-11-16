@@ -30,7 +30,14 @@ export const workflowAssistantDocumentSchema = z.strictObject({
   text: z.string().max(workflowAssistantLimits.document),
 });
 
+export const workflowAssistantViewSchema = z.enum([
+  'workflows-list',
+  'automations-list',
+  'editor',
+]);
+
 export const workflowAssistantContextSchema = z.strictObject({
+  view: workflowAssistantViewSchema.optional(),
   directory: z.string().trim().max(workflowDefinitionLimits.path),
   workflowName: stepNameSchema.nullable(),
   document: workflowAssistantDocumentSchema.nullable(),
@@ -97,6 +104,7 @@ export const workflowAssistantTurnSchema = z.strictObject({
 export type WorkflowAssistantDocument = z.infer<
   typeof workflowAssistantDocumentSchema
 >;
+export type WorkflowAssistantView = z.infer<typeof workflowAssistantViewSchema>;
 export type WorkflowAssistantContext = z.infer<
   typeof workflowAssistantContextSchema
 >;
