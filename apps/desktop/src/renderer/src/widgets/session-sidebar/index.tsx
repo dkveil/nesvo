@@ -46,6 +46,7 @@ type Props = {
   onSettings: () => void;
   pendingActions: number;
   selectedId: string;
+  unreadKeys?: Set<string>;
   inbox: boolean;
   workflows: boolean;
   onSelect: (id: string) => void;
@@ -126,6 +127,7 @@ export function SessionSidebar({
   onSettings,
   pendingActions,
   selectedId,
+  unreadKeys,
   inbox,
   workflows,
   onSelect,
@@ -226,6 +228,7 @@ export function SessionSidebar({
     const directory = directoryLabel(session.directory);
     const role = sessionRoleLabel(session);
     const remote = session.hostId !== 'local';
+    const unread = !selected && !!unreadKeys?.has(entityKey(session));
     return (
       <li key={entityKey(session)}>
         <button
@@ -233,7 +236,7 @@ export function SessionSidebar({
           data-host-id={session.hostId}
           data-session-id={session.id}
           aria-current={selected ? 'page' : undefined}
-          aria-label={`${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}`}
+          aria-label={`${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}`}
           title={`${computer?.name ?? session.hostId} · ${session.provider} · ${role || 'Session'} · ${statusText(session)}`}
           onClick={() => onSelect(entityKey(session))}
           className={cn(
@@ -263,8 +266,19 @@ export function SessionSidebar({
               />
             </span>
           </span>
-          <span className="mt-1 flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-sidebar-foreground">
+          <span className="relative mt-1 flex min-w-0 items-center gap-1.5">
+            {unread && (
+              <span
+                aria-hidden="true"
+                className="absolute top-1/2 -left-2 size-1.5 -translate-y-1/2 rounded-full bg-foreground"
+              />
+            )}
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-[13px] text-sidebar-foreground',
+                unread ? 'font-semibold' : 'font-medium',
+              )}
+            >
               {session.title}
             </span>
             {remote && !grouped && (

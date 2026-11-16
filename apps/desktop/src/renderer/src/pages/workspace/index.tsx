@@ -102,6 +102,8 @@ import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';
+import { readSeen, writeSeen } from './seen-store';
+import { useAttention } from './use-attention';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -455,6 +457,8 @@ export function Workspace() {
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
+  const [seen, setSeen] = useState<Record<string, number>>(readSeen);
+  useEffect(() => writeSeen(seen), [seen]);
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
   >({});
@@ -524,6 +528,39 @@ export function Workspace() {
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
   const selectedKey = selected ? entityKey(selected) : '';
+  const selectedRevision = selected?.revision ?? 0;
+  const selectedVisible = !inbox && !creating && !workflowsView && !automation;
+  const markSeen = useCallback(() => {
+    if (!selectedKey || !selectedVisible || !document.hasFocus()) return;
+    setSeen(previous => {
+      if (previous[selectedKey] === selectedRevision) return previous;
+      const next = { ...previous };
+      delete next[selectedKey];
+      next[selectedKey] = selectedRevision;
+      return next;
+    });
+  }, [selectedKey, selectedRevision, selectedVisible]);
+  useEffect(() => {
+    markSeen();
+    window.addEventListener('focus', markSeen);
+    return () => window.removeEventListener('focus', markSeen);
+  }, [markSeen]);
+  const unreadKeys = new Set(
+    store.sessions
+      .filter(session => {
+        if (session.revision <= (seen[entityKey(session)] ?? 0)) return false;
+        return (
+          session.messages.at(-1)?.author === 'agent' ||
+          ['completed', 'failed', 'interrupted', 'stopped'].includes(
+            session.status,
+          ) ||
+          session.pendingApprovals.length > 0 ||
+          session.delegations.some(item => item.status === 'pending')
+        );
+      })
+      .map(entityKey),
+  );
+  useAttention(store.sessions, key => selectNow(key));
   const selectedHostId = selected?.hostId ?? 'local';
   const selectedComputer = store.computers.find(
     computer => computer.id === selectedHostId,
@@ -1533,6 +1570,7 @@ export function Workspace() {
         0,
       ),
     selectedId: creating || workflowsView || automation ? '' : selectedKey,
+    unreadKeys,
     inbox,
     workflows: workflowsView,
     onSelect: select,
