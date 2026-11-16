@@ -125,12 +125,16 @@ export const sendMessageSchema = z.strictObject({
   text: z.string().trim().min(1).max(32000),
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
+  model: modelSchema.optional(),
+  effort: reasoningEffortSchema.nullable().optional(),
 });
 export const queuedMessageSchema = z.strictObject({
   id: z.uuid(),
   text: z.string().trim().min(1).max(32000),
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
+  model: modelSchema.optional(),
+  effort: reasoningEffortSchema.nullable().optional(),
   createdAt: z.iso.datetime(),
 });
 export const queuedMessageRefSchema = z.strictObject({
@@ -178,6 +182,8 @@ export const sessionMessageSchema = z.strictObject({
   interruption: sessionInterruptionSchema.nullable().optional(),
   usage: turnUsageSchema.nullable().default(null),
   origin: z.literal('workflow').nullable().default(null),
+  model: z.string().nullable().default(null),
+  effort: reasoningEffortSchema.nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),

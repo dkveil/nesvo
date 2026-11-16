@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
+  claudeModelSchema,
   delegationPlanSchema,
   sessionQueueLimit,
   type CreateSessionInput,
@@ -64,6 +65,35 @@ export async function confirmCodexEffort(
       'invalid-request',
       `Codex does not report the ${effort} reasoning effort for ${model}.`,
     );
+}
+
+type TurnSelection = Pick<Session, 'model' | 'effort'>;
+
+function resolveTurnSelection(
+  session: Session,
+  input: Pick<SendMessageInput, 'model' | 'effort'>,
+): TurnSelection {
+  const model = input.model ?? session.model;
+  const effort = input.effort === undefined ? session.effort : input.effort;
+  if (
+    session.provider === 'Claude Code' &&
+    !claudeModelSchema.safeParse(model).success
+  )
+    throw new SessionError(
+      'invalid-request',
+      'Unsupported Claude Code model. Choose default, opus, sonnet or haiku.',
+    );
+  if (effort && session.provider === 'Claude Code')
+    throw new SessionError(
+      'invalid-request',
+      'Claude Code sessions do not accept a reasoning effort.',
+    );
+  if (effort && model === 'default')
+    throw new SessionError(
+      'invalid-request',
+      'Choose a specific Codex model to set a reasoning effort.',
+    );
+  return { model, effort };
 }
 
 export class SessionError extends Error {
@@ -700,9 +730,12 @@ export class SessionService {
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
+    const selection = resolveTurnSelection(session, input);
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, input.text);
+    session.model = selection.model;
+    session.effort = selection.effort;
     this.prepareRun(
       session,
       input.messageId,
@@ -729,6 +762,7 @@ export class SessionService {
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
+    resolveTurnSelection(session, input);
     if (
       session.queue.some(item => item.id === input.messageId) ||
       session.messages.some(message => message.id === input.messageId)
@@ -745,6 +779,8 @@ export class SessionService {
       text: input.text,
       ...(input.skillId ? { skillId: input.skillId } : {}),
       ...(input.skillHash ? { skillHash: input.skillHash } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.effort === undefined ? {} : { effort: input.effort }),
       createdAt: new Date().toISOString(),
     });
     try {
@@ -790,6 +826,8 @@ export class SessionService {
       text: entry.text,
       skillId: entry.skillId,
       skillHash: entry.skillHash,
+      model: entry.model,
+      effort: entry.effort,
     });
   }
 
@@ -821,6 +859,8 @@ export class SessionService {
         text: next.text,
         skillId: next.skillId,
         skillHash: next.skillHash,
+        model: next.model,
+        effort: next.effort,
       });
     } catch (error) {
       session.error =
@@ -1045,6 +1085,8 @@ export class SessionService {
         completedAt: createdAt,
         usage: null,
         origin,
+        model: session.model,
+        effort: session.effort,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -1058,6 +1100,8 @@ export class SessionService {
         completedAt: null,
         usage: null,
         origin: null,
+        model: null,
+        effort: null,
       },
     );
   }

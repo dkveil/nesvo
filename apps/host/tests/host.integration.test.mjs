@@ -4710,6 +4710,88 @@ test(
 );
 
 test(
+  'host applies a model change to the next turn, keeps the provider thread and records it on the message',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-model-change-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const host = launch(directory, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const workspace = join(directory, 'workspace');
+    await mkdir(workspace);
+    const session = (
+      await host.request('create-session', {
+        title: 'Model change',
+        model: 'sonnet',
+        directory: workspace,
+      })
+    ).session;
+    const first = (
+      await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'First turn.',
+      })
+    ).session;
+    const firstDone = await host.event(
+      value => value.runId === first.runId && value.status === 'completed',
+    );
+    assert.equal(firstDone.actualModel, 'fixture-sonnet');
+    for (const selection of [
+      { model: 'opus', effort: 'high' },
+      { model: 'fixture-codex' },
+    ]) {
+      const rejected = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'Rejected turn.',
+        ...selection,
+      });
+      assert.equal(rejected.code, 'invalid-request', JSON.stringify(selection));
+    }
+    const unchanged = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    assert.equal(unchanged.model, 'sonnet');
+    assert.equal(unchanged.messages.length, firstDone.messages.length);
+    const messageId = randomUUID();
+    const changed = (
+      await host.request('send-message', {
+        sessionId: session.id,
+        messageId,
+        text: 'Second turn.',
+        model: 'opus',
+      })
+    ).session;
+    assert.equal(changed.model, 'opus');
+    assert.equal(changed.providerSessionId, firstDone.providerSessionId);
+    const operator = changed.messages.filter(
+      message => message.author === 'operator',
+    );
+    assert.deepEqual(
+      operator.map(message => [message.model, message.effort]),
+      [
+        ['sonnet', null],
+        ['opus', null],
+      ],
+    );
+    assert.equal(operator.at(-1).id, messageId);
+    const secondDone = await host.event(
+      value => value.runId === changed.runId && value.status === 'completed',
+    );
+    assert.equal(secondDone.actualModel, 'fixture-opus');
+    assert.equal(secondDone.providerSessionId, firstDone.providerSessionId);
+    await host.stop();
+  },
+);
+
+test(
   'host serves scheduled job commands, interrupts claimed runs and keeps sessions on delete',
   { timeout: 60_000 },
   async t => {
