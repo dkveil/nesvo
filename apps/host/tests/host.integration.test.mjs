@@ -10529,6 +10529,22 @@ test(
       });
       assert.equal(parsed.effort, null);
       assert.deepEqual(parsed.context.selection, []);
+      assert.equal(parsed.context.view, undefined);
+      for (const view of ['workflows-list', 'automations-list', 'editor'])
+        assert.equal(
+          contracts.workflowAssistantSendSchema.parse({
+            ...send,
+            context: { ...send.context, view },
+          }).context.view,
+          view,
+        );
+      assert.equal(
+        contracts.workflowAssistantSendSchema.safeParse({
+          ...send,
+          context: { ...send.context, view: 'automations' },
+        }).success,
+        false,
+      );
       assert.equal(
         contracts.workflowAssistantSendSchema.safeParse({ ...send, text: '' })
           .success,
@@ -13699,6 +13715,10 @@ test(
           recorded.prompt,
           /\[begin automations ([0-9a-f]+)\]\n[\s\S]*- none\n\[end automations \1\]/,
         );
+        assert.match(
+          recorded.prompt,
+          /\[begin view ([0-9a-f]+)\]\nNot stated\.\n\[end view \1\]/,
+        );
       },
     );
 
@@ -13763,6 +13783,12 @@ test(
           ],
         );
         await assert.rejects(stat(join(agents, 'workflows', 'cross-flow.md')));
+      },
+    );
+
+    await t.test(
+      'glued change blocks apply and undo stays in the recorded definitions folder',
+      async () => {
         const glued = await send('fixture:assistant-glued', { sessionId });
         assert.equal(
           (await proposal(glued.turn.messageId)).proposal.message,
@@ -13773,8 +13799,33 @@ test(
           pair.map(change => change.target.name),
           ['glued-one', 'glued-two'],
         );
+        const moved = join(project, '.agents', 'workflows-moved');
+        await rename(agents, moved);
+        const gone = await undo(pair[0].changeId);
+        assert.equal(gone.result.status, 'refused');
+        assert.equal(
+          gone.result.issues[0].message,
+          `The definitions folder ${agents} where this change was made no longer exists.`,
+        );
+        if (linkedFolder) {
+          await symlink(
+            moved,
+            agents,
+            process.platform === 'win32' ? 'junction' : 'dir',
+          );
+          const elsewhere = await undo(pair[0].changeId);
+          assert.equal(elsewhere.result.status, 'refused');
+          assert.equal(
+            elsewhere.result.issues[0].message,
+            `The definitions folder now resolves to ${moved}, not ${agents} where this change was made.`,
+          );
+          await rm(agents);
+        }
+        assert.ok(await stat(join(moved, 'steps', 'glued-one.md')));
+        await rename(moved, agents);
         for (const change of pair)
           assert.equal((await undo(change.changeId)).result.status, 'undone');
+        await assert.rejects(stat(join(agents, 'steps', 'glued-one.md')));
       },
     );
 
@@ -13891,9 +13942,22 @@ test(
         assert.equal(saved.type, 'scheduled-job', saved.message);
         const response = await send(
           `fixture:assistant-automation-update ${id} ${saved.scheduledJob.revision}`,
-          { sessionId },
+          {
+            sessionId,
+            context: {
+              view: 'automations-list',
+              directory: project,
+              workflowName: null,
+              document: null,
+              selection: [],
+            },
+          },
         );
         await proposal(response.turn.messageId);
+        assert.match(
+          (await prompts()).at(-1).prompt,
+          /\[begin view ([0-9a-f]+)\]\nThe operator is on the Automations list\./,
+        );
         const [edited] = changesOf(response.turn.messageId);
         assert.deepEqual(edited.before, { type: 'revision', revision: 1 });
         const [changed] = await jobs();
