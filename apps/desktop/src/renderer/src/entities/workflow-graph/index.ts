@@ -72,12 +72,24 @@ export type DocumentValidation = {
   hasErrors: boolean;
 };
 
-export const LANE_HEIGHT_PX = 400;
-export const LANE_TOP_PADDING_PX = 48;
-export const ROW_HEIGHT_PX = 140;
-export const COLUMN_WIDTH_PX = 260;
-export const NODE_HEIGHT_PX = 56;
-export const START_NODE_X = -COLUMN_WIDTH_PX;
+export const NODE_WIDTH_PX = 220;
+export const NODE_HEIGHT_PX = 64;
+export const COLUMN_WIDTH_PX = 300;
+export const ROW_HEIGHT_PX = 96;
+export const PHASE_GAP_PX = 110;
+export const FRAME_PADDING_PX = 28;
+export const FRAME_LABEL_PX = 22;
+export const START_NODE_WIDTH_PX = 200;
+
+export type Position = { x: number; y: number };
+
+export type PhaseFrame = {
+  phase: StepPhase;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export const stepTypeLabels: Record<StepType, string> = {
   command: 'Command',
@@ -111,14 +123,76 @@ export const edgeWhenLabels: Record<EdgeCondition, string> = {
   any: 'Always',
 };
 
-export const laneTop = (phase: StepPhase) =>
-  phaseOrder.indexOf(phase) * LANE_HEIGHT_PX;
+const overlaps = (left: Position, right: Position) =>
+  Math.abs(left.x - right.x) < NODE_WIDTH_PX &&
+  Math.abs(left.y - right.y) < NODE_HEIGHT_PX;
 
-export const clampToLane = (phase: StepPhase, y: number) => {
-  const top = laneTop(phase) + 8;
-  const bottom = laneTop(phase) + LANE_HEIGHT_PX - NODE_HEIGHT_PX - 8;
-  return Math.min(bottom, Math.max(top, y));
+const freeSlot = (nodes: readonly EditorNode[], wanted: Position): Position => {
+  const position = { ...wanted };
+  while (nodes.some(node => overlaps(node.position, position)))
+    position.y += ROW_HEIGHT_PX;
+  return position;
 };
+
+export const placeAfter = (
+  nodes: readonly EditorNode[],
+  source: EditorNode,
+): Position =>
+  freeSlot(nodes, {
+    x: source.position.x + COLUMN_WIDTH_PX,
+    y: source.position.y,
+  });
+
+export const placeBetween = (
+  nodes: readonly EditorNode[],
+  from: EditorNode,
+  to: EditorNode,
+): Position =>
+  freeSlot(nodes, {
+    x: Math.round((from.position.x + to.position.x) / 2),
+    y: Math.round((from.position.y + to.position.y) / 2) + ROW_HEIGHT_PX,
+  });
+
+export const placeBelow = (
+  nodes: readonly EditorNode[],
+  source: EditorNode,
+): Position =>
+  freeSlot(nodes, {
+    x: source.position.x,
+    y: source.position.y + ROW_HEIGHT_PX,
+  });
+
+export const phaseFrames = (nodes: readonly EditorNode[]): PhaseFrame[] =>
+  phaseOrder.flatMap(phase => {
+    const inPhase = nodes.filter(node => node.step.phase === phase);
+    if (inPhase.length === 0) return [];
+    const xs = inPhase.map(node => node.position.x);
+    const ys = inPhase.map(node => node.position.y);
+    const x = Math.min(...xs) - FRAME_PADDING_PX;
+    const y = Math.min(...ys) - FRAME_PADDING_PX - FRAME_LABEL_PX;
+    return [
+      {
+        phase,
+        x,
+        y,
+        width: Math.max(...xs) + NODE_WIDTH_PX + FRAME_PADDING_PX - x,
+        height: Math.max(...ys) + NODE_HEIGHT_PX + FRAME_PADDING_PX - y,
+      },
+    ];
+  });
+
+export const startPosition = (nodes: readonly EditorNode[]): Position => {
+  if (nodes.length === 0) return { x: 0, y: 0 };
+  return {
+    x: Math.min(...nodes.map(node => node.position.x)) - COLUMN_WIDTH_PX,
+    y: Math.min(...nodes.map(node => node.position.y)),
+  };
+};
+
+export const firstStepPosition = (): Position => ({
+  x: COLUMN_WIDTH_PX,
+  y: 0,
+});
 
 export const isDraftStep = (
   step: ResolvedStep | DraftStep,
@@ -229,37 +303,73 @@ const depthsByPhase = (
   return depths;
 };
 
+const byCurrentPlace = (left: EditorNode, right: EditorNode) =>
+  left.position.y - right.position.y ||
+  left.position.x - right.position.x ||
+  left.id.localeCompare(right.id);
+
 export const autoLayout = (
   nodes: readonly EditorNode[],
   edges: readonly EditorEdge[],
-): Record<string, { x: number; y: number }> => {
+): Record<string, Position> => {
   const depths = depthsByPhase(nodes, edges);
-  const positions: Record<string, { x: number; y: number }> = {};
+  const positions: Record<string, Position> = {};
+  let offset = 0;
   for (const phase of phaseOrder) {
+    const inPhase = [...nodes]
+      .filter(node => node.step.phase === phase)
+      .sort(byCurrentPlace);
+    if (inPhase.length === 0) continue;
     const rows = new Map<number, number>();
-    for (const node of nodes) {
-      if (node.step.phase !== phase) continue;
+    let columns = 1;
+    for (const node of inPhase) {
       const depth = depths.get(node.id) ?? 0;
       const row = rows.get(depth) ?? 0;
       rows.set(depth, row + 1);
+      columns = Math.max(columns, depth + 1);
       positions[node.id] = {
-        x: depth * COLUMN_WIDTH_PX,
-        y: laneTop(phase) + LANE_TOP_PADDING_PX + row * ROW_HEIGHT_PX,
+        x: offset + depth * COLUMN_WIDTH_PX,
+        y: row * ROW_HEIGHT_PX,
       };
     }
+    offset += columns * COLUMN_WIDTH_PX + PHASE_GAP_PX;
   }
   return positions;
 };
 
-export const placeAtLaneEnd = (
+export const placeAtPhaseEnd = (
   nodes: readonly EditorNode[],
   phase: StepPhase,
-) => {
-  const inLane = nodes.filter(node => node.step.phase === phase);
-  const x = inLane.length
-    ? Math.max(...inLane.map(node => node.position.x)) + COLUMN_WIDTH_PX
-    : 0;
-  return { x, y: laneTop(phase) + LANE_TOP_PADDING_PX };
+): Position => {
+  const inPhase = nodes.filter(node => node.step.phase === phase);
+  if (inPhase.length)
+    return freeSlot(nodes, {
+      x: Math.max(...inPhase.map(node => node.position.x)) + COLUMN_WIDTH_PX,
+      y: Math.min(...inPhase.map(node => node.position.y)),
+    });
+  const earlier = nodes.filter(
+    node => phaseOrder.indexOf(node.step.phase) < phaseOrder.indexOf(phase),
+  );
+  const later = nodes.filter(
+    node => phaseOrder.indexOf(node.step.phase) > phaseOrder.indexOf(phase),
+  );
+  if (earlier.length)
+    return freeSlot(nodes, {
+      x:
+        Math.max(...earlier.map(node => node.position.x)) +
+        COLUMN_WIDTH_PX +
+        PHASE_GAP_PX,
+      y: Math.min(...earlier.map(node => node.position.y)),
+    });
+  if (later.length)
+    return freeSlot(nodes, {
+      x:
+        Math.min(...later.map(node => node.position.x)) -
+        COLUMN_WIDTH_PX -
+        PHASE_GAP_PX,
+      y: Math.min(...later.map(node => node.position.y)),
+    });
+  return firstStepPosition();
 };
 
 const layoutOf = (nodes: readonly EditorNode[]): WorkflowLayout =>
@@ -303,7 +413,7 @@ export const fromCatalog = (
   const unplaced: EditorNode[] = resolved.map(step => ({
     id: step.name,
     step,
-    position: { x: 0, y: laneTop(step.phase) + LANE_TOP_PADDING_PX },
+    position: { x: 0, y: 0 },
     issues: [],
   }));
   const saved = workflow.layout ?? {};
@@ -312,8 +422,8 @@ export const fromCatalog = (
   for (const node of unplaced) {
     const stored = saved[node.id];
     const position = stored
-      ? { x: stored[0], y: clampToLane(node.step.phase, stored[1]) }
-      : (computed[node.id] ?? placeAtLaneEnd(nodes, node.step.phase));
+      ? { x: stored[0], y: stored[1] }
+      : (computed[node.id] ?? placeAtPhaseEnd(nodes, node.step.phase));
     nodes.push({ ...node, position });
   }
   return {
