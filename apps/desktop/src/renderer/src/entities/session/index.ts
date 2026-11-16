@@ -53,8 +53,15 @@ export const modeLabels: Record<Session['mode'], string> = {
   supervised: 'Workspace edits',
 };
 
+const versionedClaudeModel = /^claude-(opus|sonnet|haiku)-(\d+)-(\d+)/;
+
 export function modelLabel(model: string) {
-  return modelLabels[model] ?? model;
+  const known = modelLabels[model];
+  if (known) return known;
+  const versioned = versionedClaudeModel.exec(model);
+  if (!versioned) return model;
+  const [, family, major, minor] = versioned;
+  return `${modelLabels[family!]} ${major}.${minor}`;
 }
 
 export function providerStatusLabel(provider: Provider, state: ProviderState) {
