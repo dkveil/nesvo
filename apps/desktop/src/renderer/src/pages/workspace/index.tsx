@@ -794,6 +794,7 @@ export function Workspace() {
     text: string,
     skill: SelectedSkill | null,
     onAcknowledge: () => void,
+    queued = false,
   ) => {
     const sessionId = target.id;
     const sessionKey = entityKey(target);
@@ -816,7 +817,8 @@ export function Workspace() {
       onAcknowledge();
     };
     try {
-      const session = await desktopApi(hostId).sendMessage({
+      const api = desktopApi(hostId);
+      const session = await (queued ? api.queueMessage : api.sendMessage)({
         sessionId,
         messageId: attempt.messageId,
         text,
@@ -832,10 +834,12 @@ export function Workspace() {
       }));
       try {
         const history = await store.recover(hostId);
+        const recovered = history.find(session => session.id === sessionId);
         if (
-          history
-            .find(session => session.id === sessionId)
-            ?.messages.some(message => message.id === attempt.messageId)
+          recovered?.messages.some(
+            message => message.id === attempt.messageId,
+          ) ||
+          recovered?.queue.some(item => item.id === attempt.messageId)
         )
           acknowledge();
       } catch (recoveryFailure) {
@@ -850,14 +854,12 @@ export function Workspace() {
     }
   };
   const send = async (typed?: { text: string; skill: SelectedSkill }) => {
+    if (!selected || sendingRef.current || connection !== 'ready') return;
     if (
-      !selected ||
-      sendingRef.current ||
-      activeRun ||
-      connection !== 'ready' ||
-      selectedProviderState?.status?.status !== 'ready' ||
-      selectedProviderState.loading ||
-      selectedProviderState.error
+      !activeRun &&
+      (selectedProviderState?.status?.status !== 'ready' ||
+        selectedProviderState.loading ||
+        selectedProviderState.error)
     )
       return;
     const sessionKey = entityKey(selected);
@@ -865,12 +867,50 @@ export function Workspace() {
     if (!text || text.length > 32000) return;
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
-    await deliver(selected, text, skill, () => {
-      if ((draftVersions.current[sessionKey] ?? 0) === version) {
-        setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
-        setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
-      }
-    });
+    await deliver(
+      selected,
+      text,
+      skill,
+      () => {
+        if ((draftVersions.current[sessionKey] ?? 0) === version) {
+          setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
+          setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
+        }
+      },
+      !!activeRun,
+    );
+  };
+  const changeQueued = async (
+    target: Session,
+    messageId: string,
+    action: 'cancel' | 'start',
+  ) => {
+    const key = entityKey(target);
+    const api = desktopApi(target.hostId);
+    setErrors(previous => ({ ...previous, [key]: '' }));
+    try {
+      const input = { sessionId: target.id, messageId };
+      store.merge([
+        await (action === 'cancel'
+          ? api.cancelQueued(input)
+          : api.startQueued(input)),
+      ]);
+      return true;
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [key]: `${action === 'cancel' ? 'Could not remove the queued message.' : 'Could not send the queued message.'} ${errorDetail(failure)}`,
+      }));
+      return false;
+    }
+  };
+  const editQueued = async (
+    target: Session,
+    messageId: string,
+    text: string,
+  ) => {
+    if (await changeQueued(target, messageId, 'cancel'))
+      changeDraft(entityKey(target), text);
   };
   const startThread = async (
     input: CreateSessionInput,
@@ -2238,6 +2278,18 @@ export function Workspace() {
                 onDraft={value => changeDraft(selectedKey, value)}
                 onSend={typed => void send(typed)}
                 onStop={() => void stop()}
+                canQueue={
+                  !sending && connection === 'ready' && !selected.workflowStepId
+                }
+                onQueuedCancel={messageId =>
+                  void changeQueued(selected, messageId, 'cancel')
+                }
+                onQueuedStart={messageId =>
+                  void changeQueued(selected, messageId, 'start')
+                }
+                onQueuedEdit={(messageId, text) =>
+                  void editQueued(selected, messageId, text)
+                }
               />
             </div>
           ) : (

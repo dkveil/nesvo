@@ -10,6 +10,7 @@ import {
   decideReviewSchema,
   hostHealthSchema,
   sendMessageSchema,
+  queuedMessageRefSchema,
   stopRunSchema,
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
@@ -414,6 +415,30 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  queueMessage: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:queue-message',
+        sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  cancelQueued: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:cancel-queued',
+        queuedMessageRefSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  startQueued: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:start-queued',
+        queuedMessageRefSchema.parse(input),
         route(hostId),
       ),
     ),

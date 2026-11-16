@@ -9,6 +9,7 @@ import {
   type DecideReviewInput,
   type DesktopEvent,
   type SendMessageInput,
+  type QueuedMessageRefInput,
   type RespondApprovalInput,
   type StopRunInput,
   type HostRequest,
@@ -195,6 +196,24 @@ export function startHost(directory: string) {
     },
     sendMessage: async (input: SendMessageInput) => {
       const response = await request('send-message', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    queueMessage: async (input: SendMessageInput) => {
+      const response = await request('queue-message', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    cancelQueued: async (input: QueuedMessageRefInput) => {
+      const response = await request('cancel-queued', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    startQueued: async (input: QueuedMessageRefInput) => {
+      const response = await request('start-queued', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

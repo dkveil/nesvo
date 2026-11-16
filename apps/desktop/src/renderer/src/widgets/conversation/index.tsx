@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   FolderOpen,
+  ListEnd,
   Lock,
   Monitor,
   Pencil,
@@ -78,6 +79,10 @@ type Props = {
   onDraft: (value: string) => void;
   onSend: (typed?: { text: string; skill: SelectedSkill }) => void;
   onStop: () => void;
+  canQueue: boolean;
+  onQueuedCancel: (messageId: string) => void;
+  onQueuedStart: (messageId: string) => void;
+  onQueuedEdit: (messageId: string, text: string) => void;
 };
 
 export function Conversation({
@@ -104,6 +109,10 @@ export function Conversation({
   onDraft,
   onSend,
   onStop,
+  canQueue,
+  onQueuedCancel,
+  onQueuedStart,
+  onQueuedEdit,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -125,6 +134,8 @@ export function Conversation({
   useEffect(() => () => window.clearTimeout(pasteTimer.current), []);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
+  const queueing = running || otherRun;
+  const canSubmit = queueing ? canQueue : canSend;
   const groupRun =
     !session.parentId &&
     (session.delegations.some(
@@ -140,7 +151,8 @@ export function Conversation({
     !session.error &&
     !error &&
     session.pendingApprovals.length === 0 &&
-    session.delegations.length === 0;
+    session.delegations.length === 0 &&
+    session.queue.length === 0;
   const model = modelLabel(session.actualModel ?? session.model);
   const operatorBodies = session.messages
     .filter(message => message.author === 'operator')
@@ -157,6 +169,22 @@ export function Conversation({
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
       firstAgents.set(message.runId, message.id);
+  const queueButton = (
+    <Button
+      type="submit"
+      size="icon-sm"
+      className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
+      disabled={!draft.trim() || !canQueue}
+      aria-label="Queue message"
+      title={
+        running
+          ? 'Send when this turn ends'
+          : 'Keep queued until you choose Send now'
+      }
+    >
+      <ListEnd />
+    </Button>
+  );
   const composer = (
     <SelectSkill
       key={entityKey(session)}
@@ -188,7 +216,7 @@ export function Conversation({
           className="mx-auto w-full max-w-(--composer-max-width) space-y-2"
           onSubmit={event => {
             event.preventDefault();
-            if (!draft.trim() || !canSend) return;
+            if (!draft.trim() || !canSubmit) return;
             setRecall(null);
             if (selectedSkill || !hasTypedCommand) {
               onSend();
@@ -231,7 +259,7 @@ export function Conversation({
                     !event.nativeEvent.isComposing
                   ) {
                     event.preventDefault();
-                    if (!running) target.form?.requestSubmit();
+                    if (!running || canQueue) target.form?.requestSubmit();
                     return;
                   }
                   if (
@@ -306,17 +334,19 @@ export function Conversation({
                   <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
                     {otherRun
                       ? (otherRunLabel ?? 'Another session is working')
-                      : sending
-                        ? 'Sending…'
-                        : session.delegations.some(
-                              delegation =>
-                                delegation.runId === session.runId &&
-                                delegation.status === 'pending',
-                            )
-                          ? 'Worker approval needed'
-                          : session.pendingApprovals.length > 0
-                            ? 'Approval needed'
-                            : ''}
+                      : running && draft.trim()
+                        ? 'Will send when this turn ends'
+                        : sending
+                          ? 'Sending…'
+                          : session.delegations.some(
+                                delegation =>
+                                  delegation.runId === session.runId &&
+                                  delegation.status === 'pending',
+                              )
+                            ? 'Worker approval needed'
+                            : session.pendingApprovals.length > 0
+                              ? 'Approval needed'
+                              : ''}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -332,6 +362,7 @@ export function Conversation({
                       </span>
                     )}
                   </span>
+                  {running && !!draft.trim() && queueButton}
                   {running ? (
                     <Button
                       type="button"
@@ -354,6 +385,8 @@ export function Conversation({
                           : 'Stopping…'
                         : stopLabel}
                     </Button>
+                  ) : otherRun ? (
+                    queueButton
                   ) : (
                     <Button
                       type="submit"
@@ -585,6 +618,56 @@ export function Conversation({
             );
           })}
           {delegations}
+          {session.queue.length > 0 && (
+            <section aria-label="Queued messages" className="space-y-3">
+              {session.queue.map(entry => (
+                <article
+                  key={entry.id}
+                  aria-label="Queued message"
+                  className="flex flex-col items-end gap-1"
+                >
+                  <span className="text-[11px] text-muted-foreground">
+                    Queued
+                  </span>
+                  <MessageBody
+                    body={entry.text}
+                    className="max-w-[85%] rounded-2xl border border-dashed px-3.5 py-2 text-sm leading-6"
+                  />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      disabled={!canQueue}
+                      onClick={() => onQueuedEdit(entry.id, entry.text)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      disabled={!canQueue}
+                      onClick={() => onQueuedCancel(entry.id)}
+                    >
+                      Remove
+                    </Button>
+                    {!running && (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        disabled={!canSend}
+                        onClick={() => onQueuedStart(entry.id)}
+                      >
+                        Send now
+                      </Button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
           {session.pendingApprovals.map(approval => {
             const pending =
               !!approvalPending[

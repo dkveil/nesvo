@@ -17,6 +17,7 @@ import {
   decideReviewSchema,
   respondApprovalSchema,
   sendMessageSchema,
+  queuedMessageRefSchema,
   stopRunSchema,
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
@@ -485,6 +486,39 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:queue-message',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'queue-message',
+        sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:cancel-queued',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'cancel-queued',
+        queuedMessageRefSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:start-queued',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'start-queued',
+        queuedMessageRefSchema.parse(input),
         route(hostId),
       );
     },
