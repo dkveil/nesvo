@@ -356,7 +356,7 @@ export default function WorkflowAssistantDock({
     <section
       role="region"
       aria-label="Assistant"
-      className="glass-popover flex h-[520px] max-h-[calc(100vh-7rem)] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border"
+      className="glass-popover flex h-[460px] max-h-[calc(100vh-9rem)] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border"
     >
       <header className="flex h-10 shrink-0 items-center gap-1 border-b pr-1.5 pl-3">
         <Sparkles
