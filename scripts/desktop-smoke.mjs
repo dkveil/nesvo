@@ -985,11 +985,14 @@ try {
   await newThread
     .locator('[data-thread-project]', { hasText: /^branch-location$/ })
     .waitFor();
-  assert.equal(await newThread.locator('[data-branch-kind]').count(), 0);
+  await page
+    .locator('[data-branch-kind="branch"]', { hasText: 'smoke-branch' })
+    .waitFor();
   await chooseLocation(directory);
   await newThread
     .locator('[data-thread-project]', { hasText: /^nesvo-desktop-/ })
     .waitFor();
+  await page.locator('[data-branch-kind]').waitFor({ state: 'detached' });
   await newThread
     .getByRole('button', { name: 'Send message', exact: true })
     .click();
