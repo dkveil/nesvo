@@ -27,7 +27,6 @@ const ICNS_ENTRIES = [
   ['ic09', 512],
   ['ic10', 1024],
 ];
-const WINDOW_ICON_PX = 256;
 const FAVICON_PX = 64;
 const MOBILE_ICON_PX = 1024;
 const WORDMARK_HEIGHT_PX = 66;
@@ -55,7 +54,7 @@ const mark = (size, extent, color) => {
 const desktopIcon = size => {
   const inset = size <= 48 ? 0 : Math.round(size * 0.09);
   const tile = size - inset * 2;
-  const radius = tile * 0.225;
+  const radius = Math.round(tile * 22.5) / 100;
   const edge = Math.max(1, size / 256);
   return square(
     size,
@@ -130,10 +129,11 @@ const render = async () => {
   for (const job of jobs) {
     window.setContentSize(job.width, job.height);
     await window.webContents.executeJavaScript('document.body.innerHTML = ' + JSON.stringify(job.markup));
-    await new Promise(done => setTimeout(done, 200));
+    await window.webContents.executeJavaScript('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))');
     const image = await window.webContents.capturePage({ x: 0, y: 0, width: job.width, height: job.height });
     const size = image.getSize();
     if (size.width !== job.width || size.height !== job.height) throw new Error(job.name + ' rendered at ' + size.width + 'x' + size.height);
+    if (!image.toBitmap().some((value, index) => index % 4 === 3 && value > 0)) throw new Error(job.name + ' rendered empty');
     writeFileSync(join(directory, job.name + '.png'), image.toPNG());
   }
 };
@@ -144,102 +144,101 @@ app.whenReady().then(render).then(() => app.quit(), error => {
 `;
 
 const workspace = await mkdtemp(join(tmpdir(), 'nesvo-brand-'));
-await writeFile(join(workspace, 'jobs.json'), JSON.stringify(jobs));
-await writeFile(join(workspace, 'main.cjs'), rasterizerMain);
-const requireDesktop = createRequire(
-  join(repository, 'apps/desktop/package.json'),
-);
-const run = spawnSync(
-  requireDesktop('electron'),
-  ['--force-device-scale-factor=1', join(workspace, 'main.cjs'), workspace],
-  {
-    stdio: 'inherit',
-    env: Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) => key !== 'ELECTRON_RUN_AS_NODE',
-      ),
-    ),
-  },
-);
-if (run.status !== 0) throw new Error(`Rasterizer exited with ${run.status}`);
-
-const raster = name => readFile(join(workspace, `${name}.png`));
-
-const encodeIco = images => {
-  const header = Buffer.alloc(6 + images.length * 16);
-  header.writeUInt16LE(0, 0);
-  header.writeUInt16LE(1, 2);
-  header.writeUInt16LE(images.length, 4);
-  let offset = header.length;
-  images.forEach(({ size, png }, index) => {
-    const entry = 6 + index * 16;
-    header.writeUInt8(size >= 256 ? 0 : size, entry);
-    header.writeUInt8(size >= 256 ? 0 : size, entry + 1);
-    header.writeUInt16LE(1, entry + 4);
-    header.writeUInt16LE(32, entry + 6);
-    header.writeUInt32LE(png.length, entry + 8);
-    header.writeUInt32LE(offset, entry + 12);
-    offset += png.length;
-  });
-  return Buffer.concat([header, ...images.map(({ png }) => png)]);
-};
-
-const encodeIcns = images => {
-  const chunks = images.map(({ type, png }) => {
-    const head = Buffer.alloc(8);
-    head.write(type, 0, 'ascii');
-    head.writeUInt32BE(png.length + 8, 4);
-    return Buffer.concat([head, png]);
-  });
-  const body = Buffer.concat(chunks);
-  const head = Buffer.alloc(8);
-  head.write('icns', 0, 'ascii');
-  head.writeUInt32BE(body.length + 8, 4);
-  return Buffer.concat([head, body]);
-};
-
-await mkdir(join(desktopBuild, 'icons'), { recursive: true });
-await mkdir(rendererPublic, { recursive: true });
-await mkdir(mobileAssets, { recursive: true });
-
-const icoImages = await Promise.all(
-  ICO_SIZES_PX.map(async size => ({
-    size,
-    png: await raster(`desktop-${size}`),
-  })),
-);
-await writeFile(join(desktopBuild, 'icon.ico'), encodeIco(icoImages));
-
-const icnsImages = await Promise.all(
-  ICNS_ENTRIES.map(async ([type, size]) => ({
-    type,
-    png: await raster(`desktop-${size}`),
-  })),
-);
-await writeFile(join(desktopBuild, 'icon.icns'), encodeIcns(icnsImages));
-
-for (const size of LINUX_SIZES_PX)
-  await writeFile(
-    join(desktopBuild, 'icons', `${size}x${size}.png`),
-    await raster(`desktop-${size}`),
+try {
+  await writeFile(join(workspace, 'jobs.json'), JSON.stringify(jobs));
+  await writeFile(join(workspace, 'main.cjs'), rasterizerMain);
+  const requireDesktop = createRequire(
+    join(repository, 'apps/desktop/package.json'),
   );
+  const run = spawnSync(
+    requireDesktop('electron'),
+    ['--force-device-scale-factor=1', join(workspace, 'main.cjs'), workspace],
+    {
+      stdio: 'inherit',
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) => key !== 'ELECTRON_RUN_AS_NODE',
+        ),
+      ),
+    },
+  );
+  if (run.error) throw run.error;
+  if (run.status !== 0) throw new Error(`Rasterizer exited with ${run.status}`);
 
-await writeFile(
-  join(rendererPublic, 'app-icon.png'),
-  await raster(`desktop-${WINDOW_ICON_PX}`),
-);
-await writeFile(
-  join(rendererPublic, 'favicon.svg'),
-  `${desktopIcon(FAVICON_PX)}\n`,
-);
-await writeFile(join(mobileAssets, 'icon.png'), await raster('mobile-icon'));
-await writeFile(
-  join(mobileAssets, 'adaptive-icon.png'),
-  await raster('mobile-adaptive'),
-);
-await writeFile(
-  join(mobileAssets, 'wordmark.png'),
-  await raster('mobile-wordmark'),
-);
+  const raster = name => readFile(join(workspace, `${name}.png`));
 
-await rm(workspace, { recursive: true, force: true });
+  const encodeIco = images => {
+    const header = Buffer.alloc(6 + images.length * 16);
+    header.writeUInt16LE(0, 0);
+    header.writeUInt16LE(1, 2);
+    header.writeUInt16LE(images.length, 4);
+    let offset = header.length;
+    images.forEach(({ size, png }, index) => {
+      const entry = 6 + index * 16;
+      header.writeUInt8(size >= 256 ? 0 : size, entry);
+      header.writeUInt8(size >= 256 ? 0 : size, entry + 1);
+      header.writeUInt16LE(1, entry + 4);
+      header.writeUInt16LE(32, entry + 6);
+      header.writeUInt32LE(png.length, entry + 8);
+      header.writeUInt32LE(offset, entry + 12);
+      offset += png.length;
+    });
+    return Buffer.concat([header, ...images.map(({ png }) => png)]);
+  };
+
+  const encodeIcns = images => {
+    const chunks = images.map(({ type, png }) => {
+      const head = Buffer.alloc(8);
+      head.write(type, 0, 'ascii');
+      head.writeUInt32BE(png.length + 8, 4);
+      return Buffer.concat([head, png]);
+    });
+    const body = Buffer.concat(chunks);
+    const head = Buffer.alloc(8);
+    head.write('icns', 0, 'ascii');
+    head.writeUInt32BE(body.length + 8, 4);
+    return Buffer.concat([head, body]);
+  };
+
+  await mkdir(join(desktopBuild, 'icons'), { recursive: true });
+  await mkdir(rendererPublic, { recursive: true });
+  await mkdir(mobileAssets, { recursive: true });
+
+  const icoImages = await Promise.all(
+    ICO_SIZES_PX.map(async size => ({
+      size,
+      png: await raster(`desktop-${size}`),
+    })),
+  );
+  await writeFile(join(desktopBuild, 'icon.ico'), encodeIco(icoImages));
+
+  const icnsImages = await Promise.all(
+    ICNS_ENTRIES.map(async ([type, size]) => ({
+      type,
+      png: await raster(`desktop-${size}`),
+    })),
+  );
+  await writeFile(join(desktopBuild, 'icon.icns'), encodeIcns(icnsImages));
+
+  for (const size of LINUX_SIZES_PX)
+    await writeFile(
+      join(desktopBuild, 'icons', `${size}x${size}.png`),
+      await raster(`desktop-${size}`),
+    );
+
+  await writeFile(
+    join(rendererPublic, 'favicon.svg'),
+    `${desktopIcon(FAVICON_PX)}\n`,
+  );
+  await writeFile(join(mobileAssets, 'icon.png'), await raster('mobile-icon'));
+  await writeFile(
+    join(mobileAssets, 'adaptive-icon.png'),
+    await raster('mobile-adaptive'),
+  );
+  await writeFile(
+    join(mobileAssets, 'wordmark.png'),
+    await raster('mobile-wordmark'),
+  );
+} finally {
+  await rm(workspace, { recursive: true, force: true });
+}
