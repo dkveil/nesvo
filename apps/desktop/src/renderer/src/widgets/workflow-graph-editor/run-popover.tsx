@@ -88,19 +88,24 @@ export function RunPopover({
     if (!chosenSpec || reason) return;
     setStarting(true);
     setFailure('');
+    const effort = resolveEffort(
+      modelEfforts(statuses[current.provider], current.model),
+      current.effort,
+    );
+    const input: StartWorkflowTaskInput = {
+      specPath: chosenSpec.source.path,
+      workflowName,
+      provider: current.provider,
+      model: current.model,
+      ...(effort ? { effort } : {}),
+      mode: 'read-only',
+      directory,
+      isolation: isolation ? 'worktree' : 'none',
+      gateProvider: gate.provider,
+      gateModel: gate.model,
+    };
     try {
-      await onRun({
-        specPath: chosenSpec.source.path,
-        workflowName,
-        provider: current.provider,
-        model: current.model,
-        ...(current.effort ? { effort: current.effort } : {}),
-        mode: 'read-only',
-        directory,
-        isolation: isolation ? 'worktree' : 'none',
-        gateProvider: gate.provider,
-        gateModel: gate.model,
-      } as StartWorkflowTaskInput);
+      await onRun(input);
       setOpen(false);
     } catch (error) {
       setFailure(errorDetail(error));

@@ -402,6 +402,28 @@ export const newDocument = (catalog: DefinitionCatalog): EditorDocument => ({
   layout: {},
 });
 
+const isStackedLayout = (
+  nodes: readonly EditorNode[],
+  saved: WorkflowLayout,
+): boolean => {
+  const bands = phaseOrder
+    .map(phase =>
+      nodes
+        .filter(node => node.step.phase === phase && saved[node.id])
+        .map(node => saved[node.id]!),
+    )
+    .filter(band => band.length > 0);
+  if (bands.length < 2) return false;
+  return bands.slice(1).every((band, index) => {
+    const earlier = bands[index]!;
+    const earlierMaxX = Math.max(...earlier.map(([x]) => x));
+    const laterMinX = Math.min(...band.map(([x]) => x));
+    const earlierMaxY = Math.max(...earlier.map(([, y]) => y));
+    const laterMinY = Math.min(...band.map(([, y]) => y));
+    return laterMinX <= earlierMaxX && laterMinY > earlierMaxY;
+  });
+};
+
 export const fromCatalog = (
   workflow: ResolvedWorkflow,
   catalog: DefinitionCatalog,
@@ -417,10 +439,12 @@ export const fromCatalog = (
     issues: [],
   }));
   const saved = workflow.layout ?? {};
-  const computed = Object.keys(saved).length ? {} : autoLayout(unplaced, edges);
+  const stacked = isStackedLayout(unplaced, saved);
+  const computed =
+    Object.keys(saved).length && !stacked ? {} : autoLayout(unplaced, edges);
   const nodes: EditorNode[] = [];
   for (const node of unplaced) {
-    const stored = saved[node.id];
+    const stored = stacked ? undefined : saved[node.id];
     const position = stored
       ? { x: stored[0], y: stored[1] }
       : (computed[node.id] ?? placeAtPhaseEnd(nodes, node.step.phase));

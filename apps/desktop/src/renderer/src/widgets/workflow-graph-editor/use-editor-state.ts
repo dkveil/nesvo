@@ -155,6 +155,21 @@ const rehashed = (
   return { ...step, source: { ...step.source, contentHash: hash } };
 };
 
+const selectionIn = (
+  document: EditorDocument,
+  selection: Selection,
+): Selection => {
+  if (selection.kind === 'node')
+    return document.nodes.some(node => node.id === selection.id)
+      ? selection
+      : { kind: 'none' };
+  if (selection.kind === 'edge')
+    return document.edges.some(edge => edge.id === selection.id)
+      ? selection
+      : { kind: 'none' };
+  return selection;
+};
+
 const copyName = (base: string, taken: (name: string) => boolean) => {
   const stem = base.replace(/-copy(-\d+)?$/, '');
   let candidate = `${stem}-copy`;
@@ -238,6 +253,7 @@ export function useEditorState({
   });
   const [historySize, setHistorySize] = useState({ past: 0, future: 0 });
   const dragSnapshot = useRef<EditorDocument | null>(null);
+  const lastMerge = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [selection, setSelection] = useState<Selection>(
     workflowName ? { kind: 'none' } : { kind: 'workflow' },
@@ -310,6 +326,7 @@ export function useEditorState({
   };
 
   const remember = (snapshot: EditorDocument) => {
+    lastMerge.current = null;
     history.current.past.push(snapshot);
     if (history.current.past.length > HISTORY_LIMIT)
       history.current.past.shift();
@@ -319,12 +336,14 @@ export function useEditorState({
 
   const mutate = (
     update: (current: EditorDocument) => EditorDocument,
-    options: { transient?: boolean } = {},
+    options: { transient?: boolean; merge?: string } = {},
   ) => {
     const current = documentRef.current;
     const next = update(current);
     if (next === current) return;
-    if (!options.transient) remember(current);
+    const merged = !!options.merge && lastMerge.current === options.merge;
+    if (!options.transient && !merged) remember(current);
+    lastMerge.current = options.transient ? null : (options.merge ?? null);
     replaceDocument(next);
     setDirty(true);
     setHostIssues([]);
@@ -341,7 +360,10 @@ export function useEditorState({
 
   const setWorkflowFields = (
     fields: Partial<{ name: string; description: string; body: string }>,
-  ) => mutate(current => ({ ...current, ...fields }));
+  ) =>
+    mutate(current => ({ ...current, ...fields }), {
+      merge: `workflow:${Object.keys(fields).join(',')}`,
+    });
 
   const applyInsertion = (insertion: Insertion, id: string) => {
     mutate(() => insertion.document);
@@ -428,30 +450,35 @@ export function useEditorState({
     const hadEdges = documentRef.current.edges.some(
       edge => edge.from === id || edge.to === id,
     );
-    mutate(current => {
-      const base = renamed ? renameNode(current, id, nextId) : current;
-      const nodes = base.nodes.map(item =>
-        item.id === nextId
-          ? {
-              ...item,
-              step: applyDraft(item.step, {
-                ...draft,
-                name: isDraftStep(item.step) ? draft.name : item.step.name,
-              }),
-              position: phaseChanged
-                ? placeAtPhaseEnd(
-                    base.nodes.filter(other => other.id !== nextId),
-                    draft.phase,
-                  )
-                : item.position,
-            }
-          : item,
-      );
-      const edges = phaseChanged
-        ? base.edges.filter(edge => edge.from !== nextId && edge.to !== nextId)
-        : base.edges;
-      return { ...base, edges, ...withLayout(nodes) };
-    });
+    mutate(
+      current => {
+        const base = renamed ? renameNode(current, id, nextId) : current;
+        const nodes = base.nodes.map(item =>
+          item.id === nextId
+            ? {
+                ...item,
+                step: applyDraft(item.step, {
+                  ...draft,
+                  name: isDraftStep(item.step) ? draft.name : item.step.name,
+                }),
+                position: phaseChanged
+                  ? placeAtPhaseEnd(
+                      base.nodes.filter(other => other.id !== nextId),
+                      draft.phase,
+                    )
+                  : item.position,
+              }
+            : item,
+        );
+        const edges = phaseChanged
+          ? base.edges.filter(
+              edge => edge.from !== nextId && edge.to !== nextId,
+            )
+          : base.edges;
+        return { ...base, edges, ...withLayout(nodes) };
+      },
+      { merge: phaseChanged ? undefined : `step:${nextId}` },
+    );
     if (phaseChanged && hadEdges)
       showNotice(
         `Connections of "${nextId}" were removed because the step moved to another phase.`,
@@ -532,7 +559,7 @@ export function useEditorState({
               : node,
           ),
         ),
-      { transient: true },
+      { transient: !!snapshot },
     );
   };
 
@@ -589,24 +616,27 @@ export function useEditorState({
       );
     });
 
+  const restore = (next: EditorDocument) => {
+    lastMerge.current = null;
+    syncHistorySize();
+    replaceDocument(next);
+    setSelection(current => selectionIn(next, current));
+    setDirty(true);
+    setHostIssues([]);
+  };
+
   const undo = () => {
     const previous = history.current.past.pop();
     if (!previous) return;
     history.current.future.push(documentRef.current);
-    syncHistorySize();
-    replaceDocument(previous);
-    setDirty(true);
-    setHostIssues([]);
+    restore(previous);
   };
 
   const redo = () => {
     const next = history.current.future.pop();
     if (!next) return;
     history.current.past.push(documentRef.current);
-    syncHistorySize();
-    replaceDocument(next);
-    setDirty(true);
-    setHostIssues([]);
+    restore(next);
   };
 
   const discard = () => {

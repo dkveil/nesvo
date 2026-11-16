@@ -232,6 +232,16 @@ export default function WorkflowGraphEditor({
         state.duplicateNode(state.selection.id);
       return;
     }
+    if (event.key === 'Delete') {
+      if (state.selection.kind === 'node') {
+        event.preventDefault();
+        state.removeNode(state.selection.id);
+      } else if (state.selection.kind === 'edge') {
+        event.preventDefault();
+        state.removeEdge(state.selection.id);
+      }
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       if (addRequest) setAddRequest(null);

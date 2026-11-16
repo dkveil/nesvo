@@ -278,7 +278,7 @@ export function EditorCanvas({
       panActivationKeyCode="Space"
       selectionOnDrag={false}
       zoomOnDoubleClick={false}
-      deleteKeyCode="Delete"
+      deleteKeyCode={null}
       snapToGrid
       snapGrid={snapGrid}
       multiSelectionKeyCode={null}
