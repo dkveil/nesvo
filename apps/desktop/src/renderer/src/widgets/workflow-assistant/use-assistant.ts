@@ -58,6 +58,11 @@ type UseAssistantParams = {
   pick: AssistantPick;
 };
 
+const assistantSendView = {
+  workflows: 'workflows-list',
+  automations: 'automations-list',
+  editor: 'editor',
+} as const;
 const documentLimit = 65_536;
 const selectionLimit = 32;
 const sentThisRun = new Set<string>();
@@ -191,6 +196,7 @@ export function useAssistant({
         effort: pick.effort || null,
         text: message,
         context: {
+          view: assistantSendView[context.view],
           directory,
           workflowName: context.workflowName,
           document:
