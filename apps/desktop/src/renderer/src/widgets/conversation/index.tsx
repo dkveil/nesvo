@@ -1,5 +1,6 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  ArrowDown,
   ArrowUp,
   FolderOpen,
   Lock,
@@ -30,6 +31,13 @@ import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { entityKey } from '@/shared/lib/host-key';
 import { MessageBody } from './message-body';
+import { CopyMessageButton } from './copy-message-button';
+import { ClampedPrompt } from './clamped-prompt';
+import { isLongPrompt } from './long-prompt';
+
+const MESSAGE_MAX_LENGTH = 32000;
+const PASTE_NOTICE_MS = 5000;
+const NEAR_BOTTOM_PX = 96;
 
 const interruptionLabels: Record<SessionInterruption['reason'], string> = {
   'host-shutdown': 'Interrupted when Nesvo closed',
@@ -104,6 +112,17 @@ export function Conversation({
     latestDraft.current = draft;
   }, [draft]);
   const followOutput = useRef(true);
+  const jumping = useRef(false);
+  const [jumpSessionId, setJumpSessionId] = useState('');
+  const [recallState, setRecall] = useState<{
+    sessionId: string;
+    index: number;
+    text: string;
+  } | null>(null);
+  const recall = recallState?.sessionId === session.id ? recallState : null;
+  const [pasteTruncated, setPasteTruncated] = useState(false);
+  const pasteTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(pasteTimer.current), []);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
   const groupRun =
@@ -122,7 +141,11 @@ export function Conversation({
     !error &&
     session.pendingApprovals.length === 0 &&
     session.delegations.length === 0;
-  const model = session.actualModel ?? modelLabel(session.model);
+  const model = modelLabel(session.actualModel ?? session.model);
+  const operatorBodies = session.messages
+    .filter(message => message.author === 'operator')
+    .map(message => message.body);
+  const limitReached = draft.length >= MESSAGE_MAX_LENGTH;
   const ModeIcon = session.mode === 'supervised' ? Pencil : Lock;
   const HostIcon = session.hostId === 'local' ? Monitor : Server;
   const runStarts = new Map(
@@ -166,6 +189,7 @@ export function Conversation({
           onSubmit={event => {
             event.preventDefault();
             if (!draft.trim() || !canSend) return;
+            setRecall(null);
             if (selectedSkill || !hasTypedCommand) {
               onSend();
               return;
@@ -194,12 +218,86 @@ export function Conversation({
                 ref={messageInput}
                 id="message-input"
                 {...inputAria}
-                onKeyDown={onKeyDown}
+                onKeyDown={event => {
+                  onKeyDown(event);
+                  if (event.defaultPrevented) return;
+                  const target = event.currentTarget;
+                  if (
+                    event.key === 'Enter' &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    if (!running) target.form?.requestSubmit();
+                    return;
+                  }
+                  if (
+                    event.shiftKey ||
+                    event.altKey ||
+                    event.ctrlKey ||
+                    event.metaKey ||
+                    event.nativeEvent.isComposing ||
+                    target.selectionStart !== target.selectionEnd
+                  )
+                    return;
+                  if (draft && draft !== recall?.text) return;
+                  if (event.key === 'ArrowUp') {
+                    if (
+                      target.value
+                        .slice(0, target.selectionStart)
+                        .includes('\n')
+                    )
+                      return;
+                    const index = recall
+                      ? Math.max(0, recall.index - 1)
+                      : operatorBodies.length - 1;
+                    const text = operatorBodies[index];
+                    if (!text) return;
+                    event.preventDefault();
+                    setRecall({ sessionId: session.id, index, text });
+                    onDraft(text);
+                  } else if (event.key === 'ArrowDown' && recall) {
+                    if (target.value.slice(target.selectionEnd).includes('\n'))
+                      return;
+                    event.preventDefault();
+                    const index = recall.index + 1;
+                    const text = operatorBodies[index];
+                    if (text) {
+                      setRecall({ sessionId: session.id, index, text });
+                      onDraft(text);
+                    } else {
+                      setRecall(null);
+                      onDraft('');
+                    }
+                  }
+                }}
+                onPaste={event => {
+                  const target = event.currentTarget;
+                  const pasted = event.clipboardData.getData('text');
+                  const selected = target.selectionEnd - target.selectionStart;
+                  if (
+                    draft.length - selected + pasted.length <=
+                    MESSAGE_MAX_LENGTH
+                  )
+                    return;
+                  setPasteTruncated(true);
+                  window.clearTimeout(pasteTimer.current);
+                  pasteTimer.current = window.setTimeout(
+                    () => setPasteTruncated(false),
+                    PASTE_NOTICE_MS,
+                  );
+                }}
                 onInput={onInput}
                 placeholder="Ask anything. / for skills"
                 value={draft}
-                onChange={event => onDraft(event.target.value)}
-                maxLength={32000}
+                onChange={event => {
+                  setRecall(null);
+                  onDraft(event.target.value);
+                }}
+                maxLength={MESSAGE_MAX_LENGTH}
                 className="max-h-48 min-h-11 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-sm leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent"
               />
               <div className="flex items-center justify-between gap-3 pt-1">
@@ -273,6 +371,15 @@ export function Conversation({
             </div>,
           )}
           {notice}
+          {(limitReached || pasteTruncated) && (
+            <p
+              role="status"
+              className="px-3 text-[11px] leading-5 text-muted-foreground"
+            >
+              Message limit reached (32,000 characters). Shorten it or split it
+              into several messages.
+            </p>
+          )}
           <div className="flex min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground">
             <span
               className="flex h-7 max-w-40 min-w-0 items-center gap-1.5 px-1.5"
@@ -313,8 +420,19 @@ export function Conversation({
     );
     if (!viewport) return;
     const trackPosition = () => {
-      followOutput.current =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96;
+      const near =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+        NEAR_BOTTOM_PX;
+      if (jumping.current) {
+        if (!near) return;
+        jumping.current = false;
+      }
+      followOutput.current = near;
+      setJumpSessionId(
+        !near && viewport.scrollHeight > viewport.clientHeight
+          ? session.id
+          : '',
+      );
     };
     viewport.addEventListener('scroll', trackPosition, { passive: true });
     return () => viewport.removeEventListener('scroll', trackPosition);
@@ -334,6 +452,16 @@ export function Conversation({
       followOutput.current = false;
     }
   }, [session.id, focusTarget]);
+  const scrollToEnd = () => {
+    const viewport = bottom.current?.closest<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+    jumping.current = true;
+    followOutput.current = true;
+    setJumpSessionId('');
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+  };
   return (
     <section
       aria-label="Conversation"
@@ -365,7 +493,7 @@ export function Conversation({
                 }
                 data-author={message.author}
                 className={cn(
-                  'space-y-2',
+                  'group space-y-2',
                   message.author === 'operator' && 'flex flex-col items-end',
                 )}
               >
@@ -422,15 +550,31 @@ export function Conversation({
                     live ? session.status : message.state,
                     live,
                   )}
-                {(message.body || !live) && (
-                  <MessageBody
-                    body={message.body || 'No response text.'}
-                    className={
-                      message.author === 'operator'
-                        ? 'max-w-[85%] rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6'
-                        : 'w-full text-sm leading-7'
-                    }
-                  />
+                {(message.body || !live) &&
+                  (message.author === 'operator' ? (
+                    isLongPrompt(message.body) ? (
+                      <ClampedPrompt>
+                        <MessageBody
+                          body={message.body}
+                          className="rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6"
+                        />
+                      </ClampedPrompt>
+                    ) : (
+                      <MessageBody
+                        body={message.body || 'No response text.'}
+                        className="max-w-[85%] rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6"
+                      />
+                    )
+                  ) : (
+                    <MessageBody
+                      body={message.body || 'No response text.'}
+                      className="w-full text-sm leading-7"
+                    />
+                  ))}
+                {message.author === 'agent' && !live && message.body && (
+                  <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <CopyMessageButton body={message.body} />
+                  </div>
                 )}
                 {message.interruption && message.runId !== session.runId && (
                   <p className="text-xs text-muted-foreground">
@@ -557,8 +701,23 @@ export function Conversation({
         </div>
       )}
       <div
-        className={cn('shrink-0 px-5', empty ? 'mb-auto pb-16' : 'pt-2 pb-4')}
+        className={cn(
+          'relative shrink-0 px-5',
+          empty ? 'mb-auto pb-16' : 'pt-2 pb-4',
+        )}
       >
+        {jumpSessionId === session.id && !empty && (
+          <button
+            type="button"
+            aria-label="Scroll to end"
+            className="absolute -top-9 left-1/2 z-20 inline-flex h-7 -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background/90 px-3 text-xs text-muted-foreground shadow-sm backdrop-blur hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            onMouseDown={event => event.preventDefault()}
+            onClick={scrollToEnd}
+          >
+            <ArrowDown className="size-3.5" aria-hidden="true" />
+            Scroll to end
+          </button>
+        )}
         {composer}
       </div>
     </section>
