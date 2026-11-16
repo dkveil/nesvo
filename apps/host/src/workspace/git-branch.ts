@@ -9,12 +9,7 @@ let liveReaders = 0;
 const noBranch: GitBranch = { kind: 'none' };
 
 export class GitBranchError extends Error {
-  code: 'invalid-directory' | 'unavailable';
-
-  constructor(code: 'invalid-directory' | 'unavailable', message: string) {
-    super(message);
-    this.code = code;
-  }
+  readonly code = 'unavailable';
 }
 
 function readGitHeadInChild(): void {
@@ -60,20 +55,7 @@ function readGitHeadInChild(): void {
     }
     return null;
   };
-  const resolveFolder = (requested: string): string | null => {
-    try {
-      if (!path.isAbsolute(requested) || !fs.statSync(requested).isDirectory())
-        return null;
-      return fs.realpathSync(requested);
-    } catch {
-      return null;
-    }
-  };
-  const folder = resolveFolder(process.argv[1] ?? '');
-  if (folder === null) {
-    process.stdout.write(JSON.stringify({ invalid: true }));
-    return;
-  }
+  const folder = process.argv[1] ?? '';
   let head: string | null = null;
   try {
     const gitDirectory = findGitDirectory(folder);
@@ -116,7 +98,7 @@ export function readGitBranch(
   signal.throwIfAborted();
   if (liveReaders >= MAX_LIVE_READERS)
     return Promise.reject(
-      new GitBranchError('unavailable', 'Too many Git branch reads are stuck.'),
+      new GitBranchError('Too many Git branch reads are stuck.'),
     );
   const child = spawn(process.execPath, readerArguments(directory), {
     env: readerEnvironment(),
@@ -148,12 +130,7 @@ export function readGitBranch(
       child.kill('SIGKILL');
       child.stdout.destroy();
       child.unref();
-      finish(
-        new GitBranchError(
-          'unavailable',
-          'The Git branch could not be read in time.',
-        ),
-      );
+      finish(new GitBranchError('The Git branch could not be read in time.'));
     };
     const timer = setTimeout(cutOff, BRANCH_READ_TIMEOUT_MS);
     signal.addEventListener('abort', cutOff, { once: true });
@@ -163,41 +140,24 @@ export function readGitBranch(
       if (output.length > MAX_READER_OUTPUT_BYTES) cutOff();
     });
     child.once('error', () =>
-      finish(
-        new GitBranchError('unavailable', 'The Git branch could not be read.'),
-      ),
+      finish(new GitBranchError('The Git branch could not be read.')),
     );
     child.once('close', code => {
-      const report = code === 0 ? parsedReport(output) : undefined;
+      const report = code === 0 ? parsedHead(output) : undefined;
       if (report === undefined)
-        finish(
-          new GitBranchError(
-            'unavailable',
-            'The Git branch could not be read.',
-          ),
-        );
-      else if ('invalid' in report)
-        finish(
-          new GitBranchError(
-            'invalid-directory',
-            'The directory does not exist or cannot be accessed.',
-          ),
-        );
-      else finish(report.head === null ? noBranch : parseGitHead(report.head));
+        finish(new GitBranchError('The Git branch could not be read.'));
+      else finish(report === null ? noBranch : parseGitHead(report));
     });
   });
 }
 
-function parsedReport(
-  output: string,
-): { invalid: true } | { head: string | null } | undefined {
+function parsedHead(output: string): string | null | undefined {
   try {
     const value: unknown = JSON.parse(output);
-    if (value === null || typeof value !== 'object') return undefined;
-    if ('invalid' in value && value.invalid === true) return { invalid: true };
-    if (!('head' in value)) return undefined;
+    if (value === null || typeof value !== 'object' || !('head' in value))
+      return undefined;
     return typeof value.head === 'string' || value.head === null
-      ? { head: value.head }
+      ? value.head
       : undefined;
   } catch {
     return undefined;

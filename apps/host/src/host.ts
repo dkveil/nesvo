@@ -20,6 +20,7 @@ import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
+import { FolderError, resolveFolder } from './workspace/folder';
 import { GitBranchError, readGitBranch } from './workspace/git-branch';
 import {
   discoverDirectorySkills,
@@ -830,7 +831,10 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 branch: request.input.directory
                   ? await readGitBranch(
-                      request.input.directory,
+                      await resolveFolder(
+                        request.input.directory,
+                        probes.controller.signal,
+                      ),
                       probes.controller.signal,
                     )
                   : { kind: 'none' },
@@ -862,13 +866,15 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 code:
                   error instanceof WorkspaceError ||
                   error instanceof SessionError ||
-                  error instanceof GitBranchError
+                  error instanceof GitBranchError ||
+                  error instanceof FolderError
                     ? error.code
                     : 'unavailable',
                 message:
                   error instanceof WorkspaceError ||
                   error instanceof SessionError ||
-                  error instanceof GitBranchError
+                  error instanceof GitBranchError ||
+                  error instanceof FolderError
                     ? error.message
                     : 'The workspace could not be read. Refresh and try again.',
               }),
