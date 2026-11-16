@@ -5,6 +5,7 @@ import {
   type DefinitionKind,
   type DefinitionScope,
   type DefinitionWriteResult,
+  type GraphInput,
   type GraphStep,
   type StepDefinition,
   type WorkflowDefinitionConflict,
@@ -15,6 +16,7 @@ import {
   link,
   lstat,
   mkdir,
+  readdir,
   realpath,
   rename,
   unlink,
@@ -37,6 +39,7 @@ import {
   unguardedExternalIssues,
   EXTERNAL_GUARD_NOTE,
   type DefinitionFile,
+  type WriteRoots,
 } from './definitions';
 
 export type DefinitionTarget = {
@@ -281,13 +284,58 @@ function missingSteps(
     }));
 }
 
-function guardedStepIssues(
+type WorkflowGraph = GraphInput & { path: string };
+
+async function referencingWorkflows(
+  name: string,
+  roots: WriteRoots,
+  catalog: DefinitionCatalog,
+  signal: AbortSignal,
+): Promise<WorkflowGraph[]> {
+  const found = new Map<string, WorkflowGraph>(
+    catalog.workflows.map(workflow => [
+      pathKey(workflow.source.path),
+      {
+        path: workflow.source.path,
+        name: workflow.name,
+        steps: workflow.steps.map(item => item.name),
+        edges: workflow.edges,
+        layout: workflow.layout,
+      },
+    ]),
+  );
+  for (const root of [roots.project, roots.global]) {
+    const folder = join(root, 'workflows');
+    const entries = await readdir(folder).catch(() => [] as string[]);
+    for (const entry of entries) {
+      const path = join(folder, entry);
+      if (!entry.endsWith('.md') || found.has(pathKey(path))) continue;
+      const file = await readDefinitionFile(path, signal).catch(() => null);
+      if (!file) continue;
+      const checked = checkDocument('workflow', path, file.text);
+      found.set(pathKey(path), {
+        path,
+        name: checked.name ?? entry.slice(0, -3),
+        steps: checked.steps,
+        edges: checked.edges,
+        layout: checked.layout,
+      });
+    }
+  }
+  return [...found.values()].filter(workflow =>
+    workflow.steps.includes(name),
+  );
+}
+
+async function guardedStepIssues(
   input: SaveDefinitionInput,
   step: StepDefinition,
   previous: DefinitionFile | null,
   catalog: DefinitionCatalog,
+  roots: WriteRoots,
   path: string,
-): DefinitionIssue[] {
+  signal: AbortSignal,
+): Promise<DefinitionIssue[]> {
   const issues: DefinitionIssue[] = [];
   if (input.scope === 'global') {
     issues.push(
@@ -315,22 +363,26 @@ function guardedStepIssues(
     catalog.steps.map(item => [item.name, item]),
   );
   const next = new Map(current).set(input.name, step);
-  for (const workflow of catalog.workflows) {
-    if (!workflow.steps.some(item => item.name === input.name)) continue;
-    const graph = {
-      name: workflow.name,
-      steps: workflow.steps.map(item => item.name),
-      edges: workflow.edges,
-      layout: workflow.layout,
-    };
+  const workflows = await referencingWorkflows(
+    input.name,
+    roots,
+    catalog,
+    signal,
+  );
+  for (const workflow of workflows) {
     const known = new Set(
-      unguardedExternalIssues(graph, workflow.source.path, current).map(
+      unguardedExternalIssues(workflow, workflow.path, current).map(
+        item => item.message,
+      ),
+    );
+    const involved = new Set(
+      unguardedExternalIssues(workflow, workflow.path, next, input.name).map(
         item => item.message,
       ),
     );
     issues.push(
-      ...unguardedExternalIssues(graph, workflow.source.path, next).filter(
-        item => !known.has(item.message),
+      ...unguardedExternalIssues(workflow, workflow.path, next).filter(
+        item => involved.has(item.message) || !known.has(item.message),
       ),
     );
   }
@@ -529,12 +581,14 @@ export async function saveDefinition(
         : [];
       if (unguarded.length) return refusedIssues(unguarded);
     } else if (options.guardExternal && checked.step) {
-      const unguarded = guardedStepIssues(
+      const unguarded = await guardedStepIssues(
         input,
         checked.step,
         current.file,
         catalog,
+        roots,
         path,
+        signal,
       );
       if (unguarded.length) return refusedIssues(unguarded);
     }

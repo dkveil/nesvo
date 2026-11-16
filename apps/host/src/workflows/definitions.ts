@@ -894,9 +894,15 @@ export function unguardedExternalIssues(
   workflow: GraphInput,
   path: string,
   steps: ReadonlyMap<string, GraphStep>,
+  involving: string | null = null,
 ): DefinitionIssue[] {
+  if (!workflow.steps.every(name => steps.has(name))) return [];
   return resolveGraph(workflow, steps)
-    .issues.filter(item => item.rule === 'W2')
+    .issues.filter(
+      item =>
+        item.rule === 'W2' &&
+        (involving === null || item.steps.includes(involving)),
+    )
     .map(item =>
       issue(
         path,
