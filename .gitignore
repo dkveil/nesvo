@@ -32,7 +32,7 @@
 !/apps/host/src/skills/
 !/apps/host/src/mobile/
 !/apps/host/src/scheduled-jobs/
-!/apps/host/src/pipelines/
+!/apps/host/src/workflows/
 !/apps/host/src/process/
 !/apps/host/tests/
 /apps/host/tests/*
@@ -43,7 +43,7 @@
 !/apps/host/tests/mobile.integration.test.mjs
 !/apps/host/tests/claude-fixture.mjs
 !/apps/host/tests/codex-fixture.mjs
-!/apps/host/tests/pipeline-hold-fixture.mjs
+!/apps/host/tests/workflow-hold-fixture.mjs
 !/packages/
 /packages/*
 !/packages/contracts/
@@ -64,7 +64,7 @@
 !/docs/independent-host.md
 !/docs/ssh-host.md
 !/docs/mobile.md
-!/docs/pipelines.md
+!/docs/workflows.md
 !/.github/
 /.github/*
 !/.github/dependabot.yml

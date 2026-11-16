@@ -236,8 +236,8 @@ export function AutomationDetail({
           </div>
           <p className="text-xs text-muted-foreground">{nextRuns(job, now)}</p>
           <p className="line-clamp-3 rounded-lg border bg-card px-3 py-2 text-[13px] leading-5 whitespace-pre-wrap text-card-foreground [overflow-wrap:anywhere]">
-            {job.pipeline
-              ? `Pipeline ${job.pipeline.name} · ${job.pipeline.specPath}`
+            {job.workflow
+              ? `Workflow ${job.workflow.name} · ${job.workflow.specPath}`
               : job.prompt}
           </p>
           {error && (

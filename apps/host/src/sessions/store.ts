@@ -8,24 +8,24 @@ import {
   type Delegation,
 } from '@nesvo/contracts';
 
-export type PipelineSessionOrigin = {
-  kind: 'pipeline';
+export type WorkflowSessionOrigin = {
+  kind: 'workflow';
   runId: string;
   stepId?: string;
 };
 
 export type SessionOrigin =
   | { kind: 'operator' }
-  | { kind: 'pipeline-assistant' }
+  | { kind: 'workflow-assistant' }
   | ScheduledJobSessionOrigin
-  | PipelineSessionOrigin;
+  | WorkflowSessionOrigin;
 
 type SessionLinks = Pick<
   Session,
   | 'scheduledJobId'
   | 'scheduledJobRunId'
-  | 'pipelineRunId'
-  | 'pipelineStepId'
+  | 'workflowRunId'
+  | 'workflowStepId'
   | 'delegationEnabled'
 >;
 
@@ -38,32 +38,32 @@ const originLinks = (
       return {
         scheduledJobId: null,
         scheduledJobRunId: null,
-        pipelineRunId: null,
-        pipelineStepId: null,
+        workflowRunId: null,
+        workflowStepId: null,
         delegationEnabled: input.provider === 'Codex',
       };
-    case 'pipeline-assistant':
+    case 'workflow-assistant':
       return {
         scheduledJobId: null,
         scheduledJobRunId: null,
-        pipelineRunId: null,
-        pipelineStepId: null,
+        workflowRunId: null,
+        workflowStepId: null,
         delegationEnabled: false,
       };
     case 'scheduled-job':
       return {
         scheduledJobId: origin.scheduledJobId,
         scheduledJobRunId: origin.runId,
-        pipelineRunId: null,
-        pipelineStepId: null,
+        workflowRunId: null,
+        workflowStepId: null,
         delegationEnabled: false,
       };
-    case 'pipeline':
+    case 'workflow':
       return {
         scheduledJobId: null,
         scheduledJobRunId: null,
-        pipelineRunId: origin.runId,
-        pipelineStepId: origin.stepId ?? null,
+        workflowRunId: origin.runId,
+        workflowStepId: origin.stepId ?? null,
         delegationEnabled: false,
       };
   }
@@ -150,15 +150,15 @@ export class SessionStore {
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const statement = this.database.prepare(
-        'INSERT INTO sessions (id, document, updated_at, pipeline_run_id, pipeline_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, (SELECT id FROM pipeline_runs WHERE id = ?), (SELECT id FROM pipeline_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, pipeline_run_id = excluded.pipeline_run_id, pipeline_step_id = excluded.pipeline_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
+        'INSERT INTO sessions (id, document, updated_at, workflow_run_id, workflow_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, (SELECT id FROM workflow_runs WHERE id = ?), (SELECT id FROM workflow_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, workflow_run_id = excluded.workflow_run_id, workflow_step_id = excluded.workflow_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
       );
       for (const session of next)
         statement.run(
           session.id,
           JSON.stringify(session),
           session.updatedAt,
-          session.pipelineRunId,
-          session.pipelineStepId,
+          session.workflowRunId,
+          session.workflowStepId,
           session.scheduledJobId,
           session.scheduledJobRunId,
         );
@@ -186,8 +186,8 @@ export class SessionStore {
       scope: proposal.scope,
       delegationEnabled: false,
       delegations: [],
-      pipelineRunId: null,
-      pipelineStepId: null,
+      workflowRunId: null,
+      workflowStepId: null,
       scheduledJobId: null,
       scheduledJobRunId: null,
       providerSessionId:

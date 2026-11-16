@@ -61,16 +61,16 @@ If the host must continue after the final login session ends, an administrator m
 
 `systemctl --user stop nesvo-host.service` deliberately stops this host and its work. The unit sends SIGTERM to the host first and allows up to 30 seconds for graceful cleanup. After that, systemd terminates remaining processes in this service's group. This boundary affects only processes owned by that service.
 
-## Pipeline definition commands on the host
+## Workflow definition commands on the host
 
-The installed bundle also checks and edits pipeline definitions of the account it runs under, with no service running:
+The installed bundle also checks and edits workflow definitions of the account it runs under, with no service running:
 
 ```sh
-node "$HOME/.local/lib/nesvo/main.mjs" pipelines validate --directory /path/to/project
-node "$HOME/.local/lib/nesvo/main.mjs" pipelines list --directory /path/to/project --json
+node "$HOME/.local/lib/nesvo/main.mjs" workflows validate --directory /path/to/project
+node "$HOME/.local/lib/nesvo/main.mjs" workflows list --directory /path/to/project --json
 ```
 
-`list` shows each definition's `contentHash`; `add-step`, `add-to-pipeline` and `remove-from-pipeline` accept `--expected-hash` and refuse with exit 2 when the file differs from that version. Inside a pipeline run, which sets `NESVO_RUN_ID`, the writing commands exit 3 and the operator changes definitions instead. The commands read and write only this host's `~/.agents/pipelines` and the given project; they open no database and copy no definitions between computers.
+`list` shows each definition's `contentHash`; `add-step`, `add-to-workflow` and `remove-from-workflow` accept `--expected-hash` and refuse with exit 2 when the file differs from that version. Inside a workflow run, which sets `NESVO_RUN_ID`, the writing commands exit 3 and the operator changes definitions instead. The commands read and write only this host's `~/.agents/workflows` and the given project; they open no database and copy no definitions between computers.
 
 ## Verify SSH identity and add the computer
 

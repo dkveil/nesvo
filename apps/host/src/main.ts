@@ -5,7 +5,7 @@ import { runDaemon } from './daemon';
 import { connectDaemon } from './daemon-bridge';
 import { resolve } from 'node:path';
 import { renderServiceUnit } from './service-unit';
-import { runPipelinesCli } from './pipelines/cli';
+import { runWorkflowsCli } from './workflows/cli';
 
 async function main() {
   const command = process.argv[2];
@@ -29,8 +29,8 @@ async function main() {
     );
     return;
   }
-  if (command === 'pipelines') {
-    process.exitCode = await runPipelinesCli(
+  if (command === 'workflows') {
+    process.exitCode = await runWorkflowsCli(
       process.argv.slice(3),
       process.env,
       {
@@ -61,7 +61,7 @@ async function main() {
   }
   if (command)
     throw new Error(
-      'Supported commands: daemon, connect, service-unit, pipelines, or no command for an owned stdio host.',
+      'Supported commands: daemon, connect, service-unit, workflows, or no command for an owned stdio host.',
     );
   const directory = process.env.NESVO_DATA_DIR;
   if (!directory)

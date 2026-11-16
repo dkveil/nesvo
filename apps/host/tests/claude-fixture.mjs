@@ -379,7 +379,7 @@ if (args.length === 1 && args[0] === '--version') {
       }) + '\n',
       { flag: 'a' },
     );
-  const assistantProposal = pipeline => ({
+  const assistantProposal = workflow => ({
     message: 'Fixture proposal.',
     changes: [
       {
@@ -392,17 +392,17 @@ if (args.length === 1 && args[0] === '--version') {
         summary: 'Add a lint check. API_TOKEN=fixture-secret-value',
       },
       {
-        kind: 'pipeline',
+        kind: 'workflow',
         scope: 'project',
         name: 'assistant-flow',
         basedOnHash: null,
-        document: pipeline,
-        summary: 'Add a pipeline that lints and asks for approval.',
+        document: workflow,
+        summary: 'Add a workflow that lints and asks for approval.',
       },
     ],
   });
-  const assistantAnswer = (pipeline, fenced = false) => {
-    const proposal = assistantProposal(pipeline);
+  const assistantAnswer = (workflow, fenced = false) => {
+    const proposal = assistantProposal(workflow);
     const structured = values.has('--json-schema') && !fenced;
     const text = structured
       ? 'Proposal recorded.'

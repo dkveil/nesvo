@@ -8,7 +8,7 @@ import {
 import type { Computer } from '@nesvo/contracts';
 import { FolderOpen, GitBranch, Monitor, Server } from 'lucide-react';
 import { cn } from 'cn';
-import type { PipelineRun } from '@/entities/pipeline';
+import type { WorkflowRun } from '@/entities/workflow';
 import { directoryLabel, type Session } from '@/entities/session';
 import {
   cardIcon,
@@ -19,7 +19,7 @@ import {
   cardSurface,
 } from '@/shared/ui/card-row-styles';
 
-export { PipelineSection } from './pipeline-section';
+export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
 export { WorkersSection } from './workers-section';
 
@@ -28,8 +28,8 @@ type Props = {
   computer: Computer | undefined;
   connection: 'connecting' | 'ready' | 'unavailable';
   session: Session | null;
-  run: PipelineRun | undefined;
-  pipeline: ReactNode;
+  run: WorkflowRun | undefined;
+  workflow: ReactNode;
   workers: ReactNode;
   usage: ReactNode;
   onComputers: () => void;
@@ -84,7 +84,7 @@ export function SessionCard({
   connection,
   session,
   run,
-  pipeline,
+  workflow,
   workers,
   usage,
   onComputers,
@@ -169,7 +169,7 @@ export function SessionCard({
           </p>
         </div>
       )}
-      {pipeline}
+      {workflow}
       {workers}
       {usage}
     </aside>

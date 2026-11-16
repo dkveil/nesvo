@@ -96,24 +96,24 @@ export const openDatabase = (directory: string) =>
             'CREATE INDEX IF NOT EXISTS sessions_scheduled_job ON sessions (scheduled_job_id); CREATE INDEX IF NOT EXISTS sessions_scheduled_job_run ON sessions (scheduled_job_run_id)',
           );
           database.exec(
-            'CREATE TABLE IF NOT EXISTS pipeline_runs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (revision > 0), directory TEXT NOT NULL, project_root TEXT NOT NULL, pipeline_name TEXT NOT NULL, spec_path TEXT NOT NULL, spec_hash TEXT NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), status TEXT NOT NULL, phase TEXT, current_step_index INTEGER, session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)',
+            'CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (revision > 0), directory TEXT NOT NULL, project_root TEXT NOT NULL, workflow_name TEXT NOT NULL, spec_path TEXT NOT NULL, spec_hash TEXT NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), status TEXT NOT NULL, phase TEXT, current_step_index INTEGER, session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)',
           );
           database.exec(
-            'CREATE INDEX IF NOT EXISTS pipeline_runs_project ON pipeline_runs (project_root, created_at DESC); CREATE INDEX IF NOT EXISTS pipeline_runs_status ON pipeline_runs (status); CREATE INDEX IF NOT EXISTS pipeline_runs_recent ON pipeline_runs (updated_at DESC, id DESC)',
+            'CREATE INDEX IF NOT EXISTS workflow_runs_project ON workflow_runs (project_root, created_at DESC); CREATE INDEX IF NOT EXISTS workflow_runs_status ON workflow_runs (status); CREATE INDEX IF NOT EXISTS workflow_runs_recent ON workflow_runs (updated_at DESC, id DESC)',
           );
           database.exec(
-            'CREATE TABLE IF NOT EXISTS pipeline_steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE, revision INTEGER NOT NULL CHECK (revision > 0), step_index INTEGER NOT NULL CHECK (step_index >= 0), name TEXT NOT NULL, type TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, attempt INTEGER NOT NULL CHECK (attempt >= 0), document TEXT NOT NULL CHECK (json_valid(document)), session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL, review_version INTEGER, started_at TEXT, updated_at TEXT NOT NULL, UNIQUE (run_id, step_index, attempt))',
+            'CREATE TABLE IF NOT EXISTS workflow_steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE, revision INTEGER NOT NULL CHECK (revision > 0), step_index INTEGER NOT NULL CHECK (step_index >= 0), name TEXT NOT NULL, type TEXT NOT NULL, phase TEXT NOT NULL, state TEXT NOT NULL, attempt INTEGER NOT NULL CHECK (attempt >= 0), document TEXT NOT NULL CHECK (json_valid(document)), session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL, review_version INTEGER, started_at TEXT, updated_at TEXT NOT NULL, UNIQUE (run_id, step_index, attempt))',
           );
-          if (!sessionColumns.has('pipeline_run_id'))
+          if (!sessionColumns.has('workflow_run_id'))
             database.exec(
-              'ALTER TABLE sessions ADD COLUMN pipeline_run_id TEXT REFERENCES pipeline_runs(id) ON DELETE SET NULL',
+              'ALTER TABLE sessions ADD COLUMN workflow_run_id TEXT REFERENCES workflow_runs(id) ON DELETE SET NULL',
             );
-          if (!sessionColumns.has('pipeline_step_id'))
+          if (!sessionColumns.has('workflow_step_id'))
             database.exec(
-              'ALTER TABLE sessions ADD COLUMN pipeline_step_id TEXT REFERENCES pipeline_steps(id) ON DELETE SET NULL',
+              'ALTER TABLE sessions ADD COLUMN workflow_step_id TEXT REFERENCES workflow_steps(id) ON DELETE SET NULL',
             );
           database.exec(
-            'CREATE INDEX IF NOT EXISTS sessions_pipeline_run ON sessions (pipeline_run_id); CREATE INDEX IF NOT EXISTS sessions_pipeline_step ON sessions (pipeline_step_id)',
+            'CREATE INDEX IF NOT EXISTS sessions_workflow_run ON sessions (workflow_run_id); CREATE INDEX IF NOT EXISTS sessions_workflow_step ON sessions (workflow_step_id)',
           );
           const scheduledJobColumns = new Set(
             database
@@ -121,9 +121,9 @@ export const openDatabase = (directory: string) =>
               .all()
               .map(column => column.name),
           );
-          if (!scheduledJobColumns.has('pipeline'))
+          if (!scheduledJobColumns.has('workflow'))
             database.exec(
-              'ALTER TABLE scheduled_jobs ADD COLUMN pipeline TEXT CHECK (pipeline IS NULL OR json_valid(pipeline))',
+              'ALTER TABLE scheduled_jobs ADD COLUMN workflow TEXT CHECK (workflow IS NULL OR json_valid(workflow))',
             );
           const scheduledJobRunColumns = new Set(
             database
@@ -131,9 +131,9 @@ export const openDatabase = (directory: string) =>
               .all()
               .map(column => column.name),
           );
-          if (!scheduledJobRunColumns.has('pipeline_run_id'))
+          if (!scheduledJobRunColumns.has('workflow_run_id'))
             database.exec(
-              'ALTER TABLE scheduled_job_runs ADD COLUMN pipeline_run_id TEXT REFERENCES pipeline_runs(id) ON DELETE SET NULL',
+              'ALTER TABLE scheduled_job_runs ADD COLUMN workflow_run_id TEXT REFERENCES workflow_runs(id) ON DELETE SET NULL',
             );
           database.exec('PRAGMA user_version = 9; COMMIT');
         } catch (error) {

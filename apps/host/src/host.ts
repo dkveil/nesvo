@@ -4,7 +4,7 @@ import {
   hostRequestSchema,
   claudeStatusSchema,
   codexStatusSchema,
-  isPipelineMethod,
+  isWorkflowMethod,
   type DefinitionCatalog,
   type DefinitionWriteResult,
   type HostMessage,
@@ -25,33 +25,33 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
-import { PipelineRunStore } from './pipelines/store';
+import { WorkflowRunStore } from './workflows/store';
 import {
   DefinitionError,
   inside as insideFolder,
   loadCatalog,
   loadSpec,
   resolveWriteRoots,
-} from './pipelines/definitions';
+} from './workflows/definitions';
 import {
-  PipelineAssistant,
-  PipelineAssistantError,
-} from './pipelines/assistant';
-import { EvidenceError, EvidenceStore } from './pipelines/evidence';
-import { PipelineRunError, PipelineRunner } from './pipelines/runner';
-import { PipelineGates } from './pipelines/gates';
-import { actionExecutor } from './pipelines/steps/action';
-import { createAgentExecutor } from './pipelines/steps/agent';
-import { commandExecutor } from './pipelines/steps/command';
-import { createHumanExecutor } from './pipelines/steps/human';
+  WorkflowAssistant,
+  WorkflowAssistantError,
+} from './workflows/assistant';
+import { EvidenceError, EvidenceStore } from './workflows/evidence';
+import { WorkflowRunError, WorkflowRunner } from './workflows/runner';
+import { WorkflowGates } from './workflows/gates';
+import { actionExecutor } from './workflows/steps/action';
+import { createAgentExecutor } from './workflows/steps/agent';
+import { commandExecutor } from './workflows/steps/command';
+import { createHumanExecutor } from './workflows/steps/human';
 import {
-  PipelineTasks,
+  WorkflowTasks,
   SpecSnapshots,
   bindRunEvents,
   createSessionAuthor,
   runEnvironment,
-} from './pipelines/tasks';
-import { deleteDefinition, saveDefinition } from './pipelines/writer';
+} from './workflows/tasks';
+import { deleteDefinition, saveDefinition } from './workflows/writer';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -66,34 +66,34 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'respond-approval',
   'decide-delegation',
   'decide-review',
-  'start-pipeline-task',
-  'run-pipeline-steps',
-  'decide-pipeline-gate',
-  'skip-pipeline-step',
-  'resume-pipeline-run',
-  'stop-pipeline-run',
-  'save-pipeline-definition',
-  'delete-pipeline-definition',
-  'remove-pipeline-worktree',
-  'pipeline-assistant-send',
-  'resolve-pipeline-step',
+  'start-workflow-task',
+  'run-workflow-steps',
+  'decide-workflow-gate',
+  'skip-workflow-step',
+  'resume-workflow-run',
+  'stop-workflow-run',
+  'save-workflow-definition',
+  'delete-workflow-definition',
+  'remove-workflow-worktree',
+  'workflow-assistant-send',
+  'resolve-workflow-step',
 ]);
-const SERVED_PIPELINE_METHODS = new Set<HostRequest['method']>([
-  'list-pipeline-definitions',
-  'validate-pipeline-definitions',
-  'start-pipeline-task',
-  'run-pipeline-steps',
-  'resume-pipeline-run',
-  'decide-pipeline-gate',
-  'skip-pipeline-step',
-  'resolve-pipeline-step',
-  'list-pipeline-runs',
-  'get-pipeline-run',
-  'stop-pipeline-run',
-  'read-pipeline-evidence',
-  'save-pipeline-definition',
-  'delete-pipeline-definition',
-  'pipeline-assistant-send',
+const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
+  'list-workflow-definitions',
+  'validate-workflow-definitions',
+  'start-workflow-task',
+  'run-workflow-steps',
+  'resume-workflow-run',
+  'decide-workflow-gate',
+  'skip-workflow-step',
+  'resolve-workflow-step',
+  'list-workflow-runs',
+  'get-workflow-run',
+  'stop-workflow-run',
+  'read-workflow-evidence',
+  'save-workflow-definition',
+  'delete-workflow-definition',
+  'workflow-assistant-send',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
@@ -119,7 +119,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const database = yield* openDatabase(directory);
       const store = new SessionStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
-      const pipelineRunStore = new PipelineRunStore(database);
+      const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
@@ -142,20 +142,20 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               () => {
                 const at = new Date().toISOString();
                 scheduledJobStore.interruptActiveRuns(at);
-                pipelineRunStore.interruptActiveRuns(at);
+                workflowRunStore.interruptActiveRuns(at);
               },
               {
                 environment: session => {
-                  const run = session.pipelineRunId
-                    ? pipelineRunStore.getRun(session.pipelineRunId)
+                  const run = session.workflowRunId
+                    ? workflowRunStore.getRun(session.workflowRunId)
                     : undefined;
                   return run ? runEnvironment(run) : undefined;
                 },
-                isHeldByPipeline: review => {
-                  const runId = store.get(review.sessionId)?.pipelineRunId;
+                isHeldByWorkflow: review => {
+                  const runId = store.get(review.sessionId)?.workflowRunId;
                   return (
-                    pipelineRunStore.isGatePending(review.id, review.version) ||
-                    (!!runId && pipelineRunStore.isRunInProgress(runId))
+                    workflowRunStore.isGatePending(review.id, review.version) ||
+                    (!!runId && workflowRunStore.isRunInProgress(runId))
                   );
                 },
               },
@@ -181,13 +181,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       const usage = new ProviderUsageService(probes.controller.signal);
       const evidence = new EvidenceStore(directory, id =>
-        pipelineRunStore.getStep(id),
+        workflowRunStore.getStep(id),
       );
       const snapshots = new SpecSnapshots(directory);
-      const pipelines = yield* Effect.acquireRelease(
+      const workflows = yield* Effect.acquireRelease(
         Effect.sync(() => {
-          const runner = new PipelineRunner({
-            store: pipelineRunStore,
+          const runner = new WorkflowRunner({
+            store: workflowRunStore,
             emit,
             evidence,
             stepExecutors: {
@@ -215,7 +215,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             },
             author: createSessionAuthor({
               sessions,
-              store: pipelineRunStore,
+              store: workflowRunStore,
               snapshots,
             }),
           });
@@ -231,9 +231,9 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             await runner.close();
           }),
       ).pipe(Effect.map(({ runner }) => runner));
-      const gates = new PipelineGates({
-        store: pipelineRunStore,
-        runner: pipelines,
+      const gates = new WorkflowGates({
+        store: workflowRunStore,
+        runner: workflows,
         reviews: {
           decide: (input, record) => sessions.decideGateReview(input, record),
         },
@@ -242,9 +242,9 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const tasks = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
-            new PipelineTasks({
-              store: pipelineRunStore,
-              runner: pipelines,
+            new WorkflowTasks({
+              store: workflowRunStore,
+              runner: workflows,
               sessions,
               snapshots,
               dataDirectory: directory,
@@ -260,8 +260,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             sessions,
             new SessionLauncher(sessions, usage, undefined, undefined, {
               start: (input, signal) => tasks.start(input, signal),
-              getRun: id => pipelineRunStore.getRun(id),
-              stop: id => pipelines.stop(id),
+              getRun: id => workflowRunStore.getRun(id),
+              stop: id => workflows.stop(id),
             }),
             emit,
           );
@@ -273,7 +273,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const assistant = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
-            new PipelineAssistant({
+            new WorkflowAssistant({
               sessions,
               findSession: id => store.get(id),
               definitions: { loadCatalog, resolveWriteRoots },
@@ -309,9 +309,9 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         if (OPERATOR_ACTIVITY_METHODS.has(request.method))
           sessions.recordOperatorActivity();
         const unavailable =
-          isPipelineMethod(request.method) &&
-          !SERVED_PIPELINE_METHODS.has(request.method)
-            ? 'Pipelines are not available on this host yet.'
+          isWorkflowMethod(request.method) &&
+          !SERVED_WORKFLOW_METHODS.has(request.method)
+            ? 'Workflows are not available on this host yet.'
             : request.method === 'create-session' && request.input.isolation
               ? 'Workspace isolation is not available on this host yet.'
               : null;
@@ -328,7 +328,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         if (request.method === 'shutdown') {
           yield* Effect.promise(() => scheduledJobs.close());
-          yield* Effect.promise(() => pipelines.close());
+          yield* Effect.promise(() => workflows.close());
           yield* Effect.promise(() => sessions.close());
           probes.controller.abort();
           yield* Effect.promise(() => Promise.all(probes.pending));
@@ -436,21 +436,21 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void decision.finally(() => probes.pending.delete(decision));
           continue;
         }
-        if (request.method === 'decide-pipeline-gate') {
+        if (request.method === 'decide-workflow-gate') {
           const decision = gates
             .decide(request.input)
-            .then(run => send({ type: 'pipeline-run', id: request.id, run }))
+            .then(run => send({ type: 'workflow-run', id: request.id, run }))
             .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
                 code:
-                  error instanceof PipelineRunError ||
+                  error instanceof WorkflowRunError ||
                   error instanceof SessionError
                     ? error.code
                     : 'unavailable',
                 message:
-                  error instanceof PipelineRunError ||
+                  error instanceof WorkflowRunError ||
                   error instanceof SessionError
                     ? error.message
                     : 'Your decision could not be saved. Refresh the run and try again.',
@@ -462,8 +462,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (
-          request.method === 'list-pipeline-definitions' ||
-          request.method === 'validate-pipeline-definitions'
+          request.method === 'list-workflow-definitions' ||
+          request.method === 'validate-workflow-definitions'
         ) {
           if (definitionRequests >= 2) {
             yield* Effect.tryPromise(() =>
@@ -472,7 +472,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 code: 'busy',
                 message:
-                  'Pipeline definitions are already being read. Try again shortly.',
+                  'Workflow definitions are already being read. Try again shortly.',
               }),
             );
             continue;
@@ -503,7 +503,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           definitionRequests++;
           const inspection = loading
             .then(catalog =>
-              send({ type: 'pipeline-definitions', id: request.id, catalog }),
+              send({ type: 'workflow-definitions', id: request.id, catalog }),
             )
             .catch(error =>
               send({
@@ -516,7 +516,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 message:
                   error instanceof DefinitionError
                     ? error.message
-                    : 'Pipeline definitions could not be read. Verify the folder and try again.',
+                    : 'Workflow definitions could not be read. Verify the folder and try again.',
               }),
             )
             .catch(() => undefined);
@@ -528,32 +528,32 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (
-          request.method === 'run-pipeline-steps' ||
-          request.method === 'start-pipeline-task'
+          request.method === 'run-workflow-steps' ||
+          request.method === 'start-workflow-task'
         ) {
           const start = (
-            request.method === 'start-pipeline-task'
+            request.method === 'start-workflow-task'
               ? tasks.start(request.input, probes.controller.signal)
-              : pipelines.startManualRun(
+              : workflows.startManualRun(
                   request.input,
                   probes.controller.signal,
                 )
           )
-            .then(run => send({ type: 'pipeline-run', id: request.id, run }))
+            .then(run => send({ type: 'workflow-run', id: request.id, run }))
             .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
                 code:
-                  error instanceof PipelineRunError ||
+                  error instanceof WorkflowRunError ||
                   error instanceof SessionError
                     ? error.code
                     : 'unavailable',
                 message:
-                  error instanceof PipelineRunError ||
+                  error instanceof WorkflowRunError ||
                   error instanceof SessionError
                     ? error.message
-                    : 'The pipeline run could not start. Try again.',
+                    : 'The workflow run could not start. Try again.',
               }),
             )
             .catch(() => undefined);
@@ -561,26 +561,26 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void start.finally(() => probes.pending.delete(start));
           continue;
         }
-        if (request.method === 'pipeline-assistant-send') {
+        if (request.method === 'workflow-assistant-send') {
           const turn = assistant
             .send(request.input)
             .then(turn =>
-              send({ type: 'pipeline-assistant-turn', id: request.id, turn }),
+              send({ type: 'workflow-assistant-turn', id: request.id, turn }),
             )
             .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
                 code:
-                  error instanceof PipelineAssistantError ||
+                  error instanceof WorkflowAssistantError ||
                   error instanceof SessionError
                     ? error.code
                     : 'unavailable',
                 message:
-                  error instanceof PipelineAssistantError ||
+                  error instanceof WorkflowAssistantError ||
                   error instanceof SessionError
                     ? error.message
-                    : 'The pipeline assistant could not start. Try again.',
+                    : 'The workflow assistant could not start. Try again.',
               }),
             )
             .catch(() => undefined);
@@ -588,7 +588,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void turn.finally(() => probes.pending.delete(turn));
           continue;
         }
-        if (request.method === 'read-pipeline-evidence') {
+        if (request.method === 'read-workflow-evidence') {
           if (evidenceRequests >= 8) {
             yield* Effect.tryPromise(() =>
               send({
@@ -605,7 +605,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .read(request.input.runId, request.input.stepId, request.input.path)
             .then(item =>
               send({
-                type: 'pipeline-evidence',
+                type: 'workflow-evidence',
                 id: request.id,
                 evidence: item,
               }),
@@ -631,8 +631,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (
-          request.method === 'save-pipeline-definition' ||
-          request.method === 'delete-pipeline-definition'
+          request.method === 'save-workflow-definition' ||
+          request.method === 'delete-workflow-definition'
         ) {
           if (definitionWrites >= CONCURRENT_DEFINITION_WRITES) {
             yield* Effect.tryPromise(() =>
@@ -641,7 +641,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 code: 'busy',
                 message:
-                  'Pipeline definitions are already being written. Try again shortly.',
+                  'Workflow definitions are already being written. Try again shortly.',
               }),
             );
             continue;
@@ -671,8 +671,8 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             name: string;
             projectRoot: string;
           }) =>
-            pipelineRunStore
-              .activeRunsForPipeline(target.name, null)
+            workflowRunStore
+              .activeRunsForWorkflow(target.name, null)
               .filter(
                 run =>
                   target.scope === 'global' ||
@@ -683,7 +683,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
               .map(run => run.id);
           definitionWrites++;
           const writing: Promise<DefinitionWriteResult> =
-            request.method === 'save-pipeline-definition'
+            request.method === 'save-workflow-definition'
               ? saveDefinition(
                   { ...request.input, directory },
                   probes.controller.signal,
@@ -700,7 +700,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 'type' in result
                   ? { ...result, id: request.id }
                   : {
-                      type: 'pipeline-definitions',
+                      type: 'workflow-definitions',
                       id: request.id,
                       catalog: result,
                     },
@@ -895,13 +895,13 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             if (request.method === 'stop-run') {
               const bound = store.get(request.input.sessionId);
               if (
-                bound?.pipelineRunId &&
-                sessions.isPipelineTurnActive(bound.id, request.input.runId) &&
-                pipelineRunStore.getRun(bound.pipelineRunId)?.sessionId ===
+                bound?.workflowRunId &&
+                sessions.isWorkflowTurnActive(bound.id, request.input.runId) &&
+                workflowRunStore.getRun(bound.workflowRunId)?.sessionId ===
                   bound.id
               ) {
                 try {
-                  pipelines.stop(bound.pipelineRunId);
+                  workflows.stop(bound.workflowRunId);
                 } catch {
                   sessions.stopActive(bound.id);
                 }
@@ -962,57 +962,57 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 run: scheduledJobs.runNow(request.input),
               };
-            if (request.method === 'get-pipeline-run') {
-              const run = pipelineRunStore.getRun(request.input.runId);
+            if (request.method === 'get-workflow-run') {
+              const run = workflowRunStore.getRun(request.input.runId);
               if (!run)
-                throw new PipelineRunError(
+                throw new WorkflowRunError(
                   'not-found',
-                  'Pipeline run not found.',
+                  'Workflow run not found.',
                 );
               return {
-                type: 'pipeline-run-detail',
+                type: 'workflow-run-detail',
                 id: request.id,
                 detail: {
                   run,
-                  steps: pipelineRunStore.stepsForRun(run.id),
+                  steps: workflowRunStore.stepsForRun(run.id),
                 },
               };
             }
-            if (request.method === 'list-pipeline-runs') {
-              const page = pipelineRunStore.listRuns(
+            if (request.method === 'list-workflow-runs') {
+              const page = workflowRunStore.listRuns(
                 request.input.cursor,
                 request.input.limit,
               );
               if (!page)
-                throw new PipelineRunError(
+                throw new WorkflowRunError(
                   'invalid-request',
                   'The run list cursor is invalid. Refresh the list.',
                 );
-              return { type: 'pipeline-runs', id: request.id, page };
+              return { type: 'workflow-runs', id: request.id, page };
             }
-            if (request.method === 'resume-pipeline-run')
+            if (request.method === 'resume-workflow-run')
               return {
-                type: 'pipeline-run',
+                type: 'workflow-run',
                 id: request.id,
-                run: pipelines.resume(request.input.runId),
+                run: workflows.resume(request.input.runId),
               };
-            if (request.method === 'skip-pipeline-step')
+            if (request.method === 'skip-workflow-step')
               return {
-                type: 'pipeline-run',
+                type: 'workflow-run',
                 id: request.id,
                 run: gates.skip(request.input),
               };
-            if (request.method === 'resolve-pipeline-step')
+            if (request.method === 'resolve-workflow-step')
               return {
-                type: 'pipeline-run',
+                type: 'workflow-run',
                 id: request.id,
                 run: gates.resolve(request.input),
               };
-            if (request.method === 'stop-pipeline-run')
+            if (request.method === 'stop-workflow-run')
               return {
-                type: 'pipeline-run',
+                type: 'workflow-run',
                 id: request.id,
-                run: pipelines.stop(request.input.runId),
+                run: workflows.stop(request.input.runId),
               };
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
@@ -1031,7 +1031,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             const known =
               error instanceof SessionError ||
               error instanceof ScheduledJobError ||
-              error instanceof PipelineRunError;
+              error instanceof WorkflowRunError;
             return {
               type: 'error',
               id: request.id,

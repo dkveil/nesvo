@@ -91,15 +91,15 @@ type ActiveRun = {
 export type RunFinished = {
   sessionId: string;
   runId: string;
-  pipelineRunId: string | null;
+  workflowRunId: string | null;
   status: Session['status'];
   reviewId: string | null;
 };
 
-export type PipelineTurnState =
+export type WorkflowTurnState =
   'none' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 
-export type PipelineTurn = {
+export type WorkflowTurn = {
   sessionId: string;
   messageId: string;
   text: string;
@@ -116,11 +116,11 @@ export type SessionServiceOptions = {
   environment?: (
     session: Session,
   ) => Readonly<Record<string, string>> | undefined;
-  isHeldByPipeline?: (review: Review) => boolean;
+  isHeldByWorkflow?: (review: Review) => boolean;
 };
 
 export const GATE_PENDING_MESSAGE =
-  'This result is waiting for its pipeline gate';
+  'This result is waiting for its workflow gate';
 
 export type GateReviewDecision = {
   reviewId: string;
@@ -192,7 +192,7 @@ export class SessionService {
     return () => this.finishedListeners.delete(listener);
   }
 
-  turnState(sessionId: string, messageId: string): PipelineTurnState {
+  turnState(sessionId: string, messageId: string): WorkflowTurnState {
     const active = this.active.get(sessionId);
     const session =
       active?.session ??
@@ -202,7 +202,7 @@ export class SessionService {
       message =>
         message.id === messageId &&
         message.author === 'operator' &&
-        message.origin === 'pipeline',
+        message.origin === 'workflow',
     );
     if (!session || !request) return 'none';
     if (active?.session.runId === request.runId) return 'running';
@@ -234,31 +234,31 @@ export class SessionService {
     return reply?.body ?? null;
   }
 
-  sendPipelineTurn(turn: PipelineTurn): 'sent' | 'busy' {
+  sendWorkflowTurn(turn: WorkflowTurn): 'sent' | 'busy' {
     const session =
       this.active.get(turn.sessionId)?.session ??
       this.store.get(turn.sessionId);
     if (!session) throw new SessionError('not-found', 'Session not found.');
     if (
-      !session.pipelineRunId &&
+      !session.workflowRunId &&
       !(turn.assistant && session.mode === 'read-only' && !session.parentId)
     )
       throw new SessionError(
         'invalid-request',
-        'This session is not part of a pipeline task.',
+        'This session is not part of a workflow task.',
       );
     const existing = session.messages.find(
       message => message.id === turn.messageId,
     );
     if (existing) {
-      if (existing.author !== 'operator' || existing.origin !== 'pipeline')
+      if (existing.author !== 'operator' || existing.origin !== 'workflow')
         throw new SessionError(
           'invalid-request',
           'This message ID is already in use.',
         );
       return 'sent';
     }
-    if (!this.canStartPipelineTurn()) return 'busy';
+    if (!this.canStartWorkflowTurn()) return 'busy';
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, turn.text);
@@ -270,7 +270,7 @@ export class SessionService {
       turn.text,
       turn.skillId,
       turn.skillHash,
-      'pipeline',
+      'workflow',
     );
     if (ephemeral) session.providerSessionId = randomUUID();
     const superseded = this.reviews.supersededBy(session.id);
@@ -297,10 +297,10 @@ export class SessionService {
     text: string,
     messageId: string,
   ): 'sent' | 'busy' {
-    return this.sendPipelineTurn({ sessionId, messageId, text });
+    return this.sendWorkflowTurn({ sessionId, messageId, text });
   }
 
-  isPipelineTurnActive(sessionId: string, runId: string): boolean {
+  isWorkflowTurnActive(sessionId: string, runId: string): boolean {
     const active = this.active.get(sessionId);
     return (
       !!active &&
@@ -310,7 +310,7 @@ export class SessionService {
         message =>
           message.runId === runId &&
           message.author === 'operator' &&
-          message.origin === 'pipeline',
+          message.origin === 'workflow',
       )
     );
   }
@@ -321,7 +321,7 @@ export class SessionService {
       this.stop({ sessionId, runId: active.session.runId }, reason);
   }
 
-  canStartPipelineTurn(): boolean {
+  canStartWorkflowTurn(): boolean {
     return !this.isBusy() && !this.unsaved.size;
   }
 
@@ -360,7 +360,7 @@ export class SessionService {
       return recorded;
     }
     const requested = this.reviews.get(input.reviewId);
-    if (requested) this.ensureNotHeldByPipeline(requested);
+    if (requested) this.ensureNotHeldByWorkflow(requested);
     this.ensureReviewIdle();
     const { review, session } = this.currentReview(
       input.reviewId,
@@ -373,7 +373,7 @@ export class SessionService {
       if (input.decision === 'accept')
         await this.verifyFiles(review, controller.signal);
       this.ensureDecisionOpen(controller);
-      this.ensureNotHeldByPipeline(review);
+      this.ensureNotHeldByWorkflow(review);
       const decided = this.reviews.change(review, {
         status: input.decision === 'accept' ? 'accepted' : 'changes-requested',
         decision: {
@@ -453,8 +453,8 @@ export class SessionService {
     }
   }
 
-  private ensureNotHeldByPipeline(review: Review): void {
-    if (this.options.isHeldByPipeline?.(review))
+  private ensureNotHeldByWorkflow(review: Review): void {
+    if (this.options.isHeldByWorkflow?.(review))
       throw new SessionError('busy', GATE_PENDING_MESSAGE);
   }
 
@@ -664,10 +664,10 @@ export class SessionService {
         'not-found',
         'Session not found. Refresh the list.',
       );
-    if (session.pipelineStepId)
+    if (session.workflowStepId)
       throw new SessionError(
         'invalid-request',
-        'This session records a pipeline gate and does not accept messages. Start a new session to continue the work.',
+        'This session records a workflow gate and does not accept messages. Start a new session to continue the work.',
       );
     const existing = session.messages.find(
       message => message.id === input.messageId,
@@ -902,7 +902,7 @@ export class SessionService {
     text: string,
     skillId?: string,
     skillHash?: string,
-    origin: 'pipeline' | null = null,
+    origin: 'workflow' | null = null,
   ): void {
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
@@ -1261,7 +1261,7 @@ export class SessionService {
     const finished: RunFinished = {
       sessionId: session.id,
       runId: session.runId,
-      pipelineRunId: session.pipelineRunId,
+      workflowRunId: session.workflowRunId,
       status: session.status,
       reviewId:
         session.status === 'completed' && review?.runId === session.runId
@@ -1282,7 +1282,7 @@ export class SessionService {
     diff: ReviewDiff,
   ): Promise<void> {
     const reviews =
-      session.status === 'completed' && !session.pipelineStepId
+      session.status === 'completed' && !session.workflowStepId
         ? [
             ...this.reviews.supersededBy(session.id),
             this.reviews.result(session, diff),

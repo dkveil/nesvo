@@ -14,9 +14,9 @@ import {
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
   type DesktopScheduledJobRunPage,
-  type DesktopPipelineRun,
-  type DesktopPipelineRunDetail,
-  type DesktopPipelineRunPage,
+  type DesktopWorkflowRun,
+  type DesktopWorkflowRunDetail,
+  type DesktopWorkflowRunPage,
   type DesktopSession,
   type HostId,
   type SshComputerInput,
@@ -78,53 +78,53 @@ import {
   type SkillCatalog,
 } from './skills';
 import {
-  decidePipelineGateSchema,
+  decideWorkflowGateSchema,
   definitionCatalogSchema,
-  deletePipelineDefinitionSchema,
-  getPipelineRunSchema,
-  listPipelineDefinitionsSchema,
-  listPipelineRunsSchema,
-  pipelineDefinitionConflictSchema,
-  pipelineDefinitionRefusedSchema,
-  pipelineEvidenceSchema,
-  pipelineMetricsInputSchema,
-  pipelineMetricsSchema,
-  pipelineRunDetailSchema,
-  pipelineRunPageSchema,
-  pipelineRunSchema,
-  pipelineStepRecordSchema,
-  readPipelineEvidenceSchema,
-  removePipelineWorktreeSchema,
-  resolvePipelineStepSchema,
-  resumePipelineRunSchema,
-  runPipelineStepsSchema,
-  savePipelineDefinitionSchema,
-  skipPipelineStepSchema,
-  startPipelineTaskSchema,
-  stopPipelineRunSchema,
-  validatePipelineDefinitionsSchema,
-  pipelineAssistantProposalEventSchema,
-  pipelineAssistantSendSchema,
-  pipelineAssistantTurnSchema,
-  type DecidePipelineGateInput,
+  deleteWorkflowDefinitionSchema,
+  getWorkflowRunSchema,
+  listWorkflowDefinitionsSchema,
+  listWorkflowRunsSchema,
+  workflowDefinitionConflictSchema,
+  workflowDefinitionRefusedSchema,
+  workflowEvidenceSchema,
+  workflowMetricsInputSchema,
+  workflowMetricsSchema,
+  workflowRunDetailSchema,
+  workflowRunPageSchema,
+  workflowRunSchema,
+  workflowStepRecordSchema,
+  readWorkflowEvidenceSchema,
+  removeWorkflowWorktreeSchema,
+  resolveWorkflowStepSchema,
+  resumeWorkflowRunSchema,
+  runWorkflowStepsSchema,
+  saveWorkflowDefinitionSchema,
+  skipWorkflowStepSchema,
+  startWorkflowTaskSchema,
+  stopWorkflowRunSchema,
+  validateWorkflowDefinitionsSchema,
+  workflowAssistantProposalEventSchema,
+  workflowAssistantSendSchema,
+  workflowAssistantTurnSchema,
+  type DecideWorkflowGateInput,
   type DefinitionCatalog,
   type DefinitionWriteResult,
-  type DeletePipelineDefinitionInput,
-  type ListPipelineDefinitionsInput,
-  type ListPipelineRunsInput,
-  type PipelineEvidence,
-  type PipelineMetrics,
-  type PipelineMetricsInput,
-  type ReadPipelineEvidenceInput,
-  type ResolvePipelineStepInput,
-  type RunPipelineStepsInput,
-  type SavePipelineDefinitionInput,
-  type SkipPipelineStepInput,
-  type StartPipelineTaskInput,
-  type ValidatePipelineDefinitionsInput,
-  type PipelineAssistantSendInput,
-  type PipelineAssistantTurn,
-} from './pipelines';
+  type DeleteWorkflowDefinitionInput,
+  type ListWorkflowDefinitionsInput,
+  type ListWorkflowRunsInput,
+  type WorkflowEvidence,
+  type WorkflowMetrics,
+  type WorkflowMetricsInput,
+  type ReadWorkflowEvidenceInput,
+  type ResolveWorkflowStepInput,
+  type RunWorkflowStepsInput,
+  type SaveWorkflowDefinitionInput,
+  type SkipWorkflowStepInput,
+  type StartWorkflowTaskInput,
+  type ValidateWorkflowDefinitionsInput,
+  type WorkflowAssistantSendInput,
+  type WorkflowAssistantTurn,
+} from './workflows';
 
 export * from './sessions';
 export * from './reasoning-effort';
@@ -137,7 +137,7 @@ export * from './provider-usage';
 export * from './mobile';
 export * from './scheduled-jobs';
 export * from './appearance';
-export * from './pipelines';
+export * from './workflows';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -160,15 +160,15 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
     run: scheduledJobRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-run-changed'),
-    run: pipelineRunSchema,
+    type: z.literal('workflow-run-changed'),
+    run: workflowRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-step-changed'),
-    step: pipelineStepRecordSchema,
+    type: z.literal('workflow-step-changed'),
+    step: workflowStepRecordSchema,
   }),
-  pipelineAssistantProposalEventSchema.extend({
-    type: z.literal('pipeline-assistant-proposal'),
+  workflowAssistantProposalEventSchema.extend({
+    type: z.literal('workflow-assistant-proposal'),
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -267,88 +267,88 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('list-pipeline-definitions'),
-    input: listPipelineDefinitionsSchema,
+    method: z.literal('list-workflow-definitions'),
+    input: listWorkflowDefinitionsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('validate-pipeline-definitions'),
-    input: validatePipelineDefinitionsSchema,
+    method: z.literal('validate-workflow-definitions'),
+    input: validateWorkflowDefinitionsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('start-pipeline-task'),
-    input: startPipelineTaskSchema,
+    method: z.literal('start-workflow-task'),
+    input: startWorkflowTaskSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('run-pipeline-steps'),
-    input: runPipelineStepsSchema,
+    method: z.literal('run-workflow-steps'),
+    input: runWorkflowStepsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('list-pipeline-runs'),
-    input: listPipelineRunsSchema,
+    method: z.literal('list-workflow-runs'),
+    input: listWorkflowRunsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('get-pipeline-run'),
-    input: getPipelineRunSchema,
+    method: z.literal('get-workflow-run'),
+    input: getWorkflowRunSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('decide-pipeline-gate'),
-    input: decidePipelineGateSchema,
+    method: z.literal('decide-workflow-gate'),
+    input: decideWorkflowGateSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('skip-pipeline-step'),
-    input: skipPipelineStepSchema,
+    method: z.literal('skip-workflow-step'),
+    input: skipWorkflowStepSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('resume-pipeline-run'),
-    input: resumePipelineRunSchema,
+    method: z.literal('resume-workflow-run'),
+    input: resumeWorkflowRunSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('resolve-pipeline-step'),
-    input: resolvePipelineStepSchema,
+    method: z.literal('resolve-workflow-step'),
+    input: resolveWorkflowStepSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('stop-pipeline-run'),
-    input: stopPipelineRunSchema,
+    method: z.literal('stop-workflow-run'),
+    input: stopWorkflowRunSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('save-pipeline-definition'),
-    input: savePipelineDefinitionSchema,
+    method: z.literal('save-workflow-definition'),
+    input: saveWorkflowDefinitionSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('delete-pipeline-definition'),
-    input: deletePipelineDefinitionSchema,
+    method: z.literal('delete-workflow-definition'),
+    input: deleteWorkflowDefinitionSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('remove-pipeline-worktree'),
-    input: removePipelineWorktreeSchema,
+    method: z.literal('remove-workflow-worktree'),
+    input: removeWorkflowWorktreeSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('read-pipeline-evidence'),
-    input: readPipelineEvidenceSchema,
+    method: z.literal('read-workflow-evidence'),
+    input: readWorkflowEvidenceSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('pipeline-metrics'),
-    input: pipelineMetricsInputSchema,
+    method: z.literal('workflow-metrics'),
+    input: workflowMetricsInputSchema,
   }),
   z.strictObject({
     id: z.uuid(),
-    method: z.literal('pipeline-assistant-send'),
-    input: pipelineAssistantSendSchema,
+    method: z.literal('workflow-assistant-send'),
+    input: workflowAssistantSendSchema,
   }),
 ]);
 
@@ -473,41 +473,41 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     run: scheduledJobRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-definitions'),
+    type: z.literal('workflow-definitions'),
     id: z.uuid(),
     catalog: definitionCatalogSchema,
   }),
-  pipelineDefinitionConflictSchema.extend({ id: z.uuid() }),
-  pipelineDefinitionRefusedSchema.extend({ id: z.uuid() }),
+  workflowDefinitionConflictSchema.extend({ id: z.uuid() }),
+  workflowDefinitionRefusedSchema.extend({ id: z.uuid() }),
   z.strictObject({
-    type: z.literal('pipeline-run'),
+    type: z.literal('workflow-run'),
     id: z.uuid(),
-    run: pipelineRunSchema,
+    run: workflowRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-runs'),
+    type: z.literal('workflow-runs'),
     id: z.uuid(),
-    page: pipelineRunPageSchema,
+    page: workflowRunPageSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-run-detail'),
+    type: z.literal('workflow-run-detail'),
     id: z.uuid(),
-    detail: pipelineRunDetailSchema,
+    detail: workflowRunDetailSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-evidence'),
+    type: z.literal('workflow-evidence'),
     id: z.uuid(),
-    evidence: pipelineEvidenceSchema,
+    evidence: workflowEvidenceSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-metrics'),
+    type: z.literal('workflow-metrics'),
     id: z.uuid(),
-    metrics: pipelineMetricsSchema,
+    metrics: workflowMetricsSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-assistant-turn'),
+    type: z.literal('workflow-assistant-turn'),
     id: z.uuid(),
-    turn: pipelineAssistantTurnSchema,
+    turn: workflowAssistantTurnSchema,
   }),
   z.strictObject({
     type: z.literal('error'),
@@ -560,77 +560,77 @@ export type ScheduledJobsApi = {
     cursor: string | null,
   ) => Promise<DesktopScheduledJobRunPage>;
 };
-export type PipelineMethod = Extract<
+export type WorkflowMethod = Extract<
   HostRequest['method'],
-  `${string}pipeline${string}`
+  `${string}workflow${string}`
 >;
-export const isPipelineMethod = (
+export const isWorkflowMethod = (
   method: HostRequest['method'],
-): method is PipelineMethod => method.includes('pipeline');
-export type PipelinesApi = {
+): method is WorkflowMethod => method.includes('workflow');
+export type WorkflowsApi = {
   listDefinitions: (
     hostId: HostId,
-    input: ListPipelineDefinitionsInput,
+    input: ListWorkflowDefinitionsInput,
   ) => Promise<DefinitionCatalog>;
   validateDefinitions: (
     hostId: HostId,
-    input: ValidatePipelineDefinitionsInput,
+    input: ValidateWorkflowDefinitionsInput,
   ) => Promise<DefinitionCatalog>;
   startTask: (
     hostId: HostId,
-    input: StartPipelineTaskInput,
-  ) => Promise<DesktopPipelineRun>;
+    input: StartWorkflowTaskInput,
+  ) => Promise<DesktopWorkflowRun>;
   runSteps: (
     hostId: HostId,
-    input: RunPipelineStepsInput,
-  ) => Promise<DesktopPipelineRun>;
+    input: RunWorkflowStepsInput,
+  ) => Promise<DesktopWorkflowRun>;
   listRuns: (
     hostId: HostId,
-    input: ListPipelineRunsInput,
-  ) => Promise<DesktopPipelineRunPage>;
-  getRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRunDetail>;
+    input: ListWorkflowRunsInput,
+  ) => Promise<DesktopWorkflowRunPage>;
+  getRun: (hostId: HostId, runId: string) => Promise<DesktopWorkflowRunDetail>;
   decideGate: (
     hostId: HostId,
-    input: DecidePipelineGateInput,
-  ) => Promise<DesktopPipelineRun>;
+    input: DecideWorkflowGateInput,
+  ) => Promise<DesktopWorkflowRun>;
   skipStep: (
     hostId: HostId,
-    input: SkipPipelineStepInput,
-  ) => Promise<DesktopPipelineRun>;
+    input: SkipWorkflowStepInput,
+  ) => Promise<DesktopWorkflowRun>;
   resolveStep: (
     hostId: HostId,
-    input: ResolvePipelineStepInput,
-  ) => Promise<DesktopPipelineRun>;
-  resumeRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;
-  stopRun: (hostId: HostId, runId: string) => Promise<DesktopPipelineRun>;
+    input: ResolveWorkflowStepInput,
+  ) => Promise<DesktopWorkflowRun>;
+  resumeRun: (hostId: HostId, runId: string) => Promise<DesktopWorkflowRun>;
+  stopRun: (hostId: HostId, runId: string) => Promise<DesktopWorkflowRun>;
   saveDefinition: (
     hostId: HostId,
-    input: SavePipelineDefinitionInput,
+    input: SaveWorkflowDefinitionInput,
   ) => Promise<DefinitionWriteResult>;
   deleteDefinition: (
     hostId: HostId,
-    input: DeletePipelineDefinitionInput,
+    input: DeleteWorkflowDefinitionInput,
   ) => Promise<DefinitionWriteResult>;
   removeWorktree: (
     hostId: HostId,
     runId: string,
-  ) => Promise<DesktopPipelineRun>;
+  ) => Promise<DesktopWorkflowRun>;
   readEvidence: (
     hostId: HostId,
-    input: ReadPipelineEvidenceInput,
-  ) => Promise<PipelineEvidence>;
+    input: ReadWorkflowEvidenceInput,
+  ) => Promise<WorkflowEvidence>;
   metrics: (
     hostId: HostId,
-    input: PipelineMetricsInput,
-  ) => Promise<PipelineMetrics>;
+    input: WorkflowMetricsInput,
+  ) => Promise<WorkflowMetrics>;
   assistantSend: (
     hostId: HostId,
-    input: PipelineAssistantSendInput,
-  ) => Promise<PipelineAssistantTurn>;
+    input: WorkflowAssistantSendInput,
+  ) => Promise<WorkflowAssistantTurn>;
 };
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
-  pipelines: PipelinesApi;
+  workflows: WorkflowsApi;
   colorScheme: () => Promise<ColorScheme>;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
   onAppliedColorScheme: (

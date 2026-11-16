@@ -86,7 +86,7 @@ function launch(directory, pidFile) {
   const reviewWaiters = new Set();
   const observedReviews = [];
   const scheduledEvents = [];
-  const pipelineEvents = [];
+  const workflowEvents = [];
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -119,8 +119,8 @@ function launch(directory, pidFile) {
         } else reviewEvents.push(message.review);
       } else if (message.type.startsWith('scheduled-job-') && !message.id) {
         scheduledEvents.push(message);
-      } else if (message.type.startsWith('pipeline-') && !message.id) {
-        pipelineEvents.push(message);
+      } else if (message.type.startsWith('workflow-') && !message.id) {
+        workflowEvents.push(message);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -162,7 +162,7 @@ function launch(directory, pidFile) {
     observed,
     observedReviews,
     scheduledEvents,
-    pipelineEvents,
+    workflowEvents,
     request,
     send,
     error: () => stderr,
@@ -227,7 +227,7 @@ async function recordedPid(file) {
 }
 
 async function stepProcessRecorded(dataDirectory, runId) {
-  const root = join(dataDirectory, 'pipeline-evidence', runId);
+  const root = join(dataDirectory, 'workflow-evidence', runId);
   const deadline = Date.now() + 10_000;
   while (true) {
     for (const folder of await readdir(root).catch(() => []))
@@ -355,7 +355,7 @@ test(
       status: 'ready',
       protocolVersion: 1,
       instanceId,
-      capabilities: ['scheduled-jobs', 'reasoning-effort', 'pipelines'],
+      capabilities: ['scheduled-jobs', 'reasoning-effort', 'workflows'],
     });
     assert.equal(status.type, 'claude-status');
     assert.equal(status.status.status, 'ready');
@@ -4293,7 +4293,7 @@ test(
         missedCount: 0,
         sessionId: null,
         runId: null,
-        pipelineRunId: null,
+        workflowRunId: null,
         reviewId: null,
         resetAt: null,
         startedAt: null,
@@ -4541,7 +4541,7 @@ test(
     assert.deepEqual(health.capabilities, [
       'scheduled-jobs',
       'reasoning-effort',
-      'pipelines',
+      'workflows',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -4959,11 +4959,11 @@ test('Skill YAML limits are enforced on the event stream before construction', a
 });
 
 test(
-  'pipeline contracts bound definitions and the host refuses pipeline commands until the engine lands',
+  'workflow contracts bound definitions and the host refuses workflow commands until the engine lands',
   { timeout: 60_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipelines-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflows-')),
     );
     const host = launch(directory, join(directory, 'pids.json'));
     t.after(async () => {
@@ -4972,19 +4972,19 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
 
-    await t.test('the host advertises pipelines', async () => {
+    await t.test('the host advertises workflows', async () => {
       const { health } = await host.request('health');
-      assert.equal(health.capabilities.includes('pipelines'), true);
+      assert.equal(health.capabilities.includes('workflows'), true);
     });
 
     await t.test(
-      'every pipeline command the host does not serve yet answers unavailable',
+      'every workflow command the host does not serve yet answers unavailable',
       async () => {
         const runId = randomUUID();
         const requests = [
-          ['remove-pipeline-worktree', { runId }],
+          ['remove-workflow-worktree', { runId }],
           [
-            'pipeline-metrics',
+            'workflow-metrics',
             { directory: null, since: '2026-11-01T00:00:00.000Z' },
           ],
         ];
@@ -4996,7 +4996,7 @@ test(
               type: 'error',
               id: response.id,
               code: 'unavailable',
-              message: 'Pipelines are not available on this host yet.',
+              message: 'Workflows are not available on this host yet.',
             },
             method,
           );
@@ -5039,13 +5039,13 @@ test(
       assert.deepEqual((await host.request('list-sessions')).sessions, []);
     });
 
-    await t.test('unknown pipeline request fields are invalid', async () => {
+    await t.test('unknown workflow request fields are invalid', async () => {
       for (const input of [{ directory, recursive: true }, { directory: 42 }])
         assert.deepEqual(
           await host.send(
             JSON.stringify({
               id: randomUUID(),
-              method: 'list-pipeline-definitions',
+              method: 'list-workflow-definitions',
               input,
             }),
           ),
@@ -5057,12 +5057,12 @@ test(
     const {
       agentVerdictJsonSchema,
       agentVerdictSchema,
-      decidePipelineGateSchema,
+      decideWorkflowGateSchema,
       evidenceSchema,
       parseDurationMs,
-      pipelineDefinitionSchema,
+      workflowDefinitionSchema,
       sessionSchema,
-      startPipelineTaskSchema,
+      startWorkflowTaskSchema,
       stepDefinitionSchema,
       stepResultSchema,
       taskSpecSchema,
@@ -5106,11 +5106,11 @@ test(
         ['browser', 'env:TEST_ACCOUNT'],
       );
       assert.deepEqual(
-        pipelineDefinitionSchema.parse({ name: 'default', steps: ['a'] }),
+        workflowDefinitionSchema.parse({ name: 'default', steps: ['a'] }),
         { name: 'default', description: '', body: '', steps: ['a'] },
       );
       assert.equal(
-        taskSpecSchema.parse({ pipeline: 'default', body: 'Fix it.' }).title,
+        taskSpecSchema.parse({ workflow: 'default', body: 'Fix it.' }).title,
         undefined,
       );
     });
@@ -5135,9 +5135,9 @@ test(
         { ...step, effect: 'remote' },
       ])
         rejects(stepDefinitionSchema, value);
-      rejects(pipelineDefinitionSchema, { name: 'default', steps: [] });
-      rejects(pipelineDefinitionSchema, { name: 'default', steps: ['a', 'a'] });
-      rejects(taskSpecSchema, { pipeline: 'default', body: '  ' });
+      rejects(workflowDefinitionSchema, { name: 'default', steps: [] });
+      rejects(workflowDefinitionSchema, { name: 'default', steps: ['a', 'a'] });
+      rejects(taskSpecSchema, { workflow: 'default', body: '  ' });
     });
 
     await t.test('durations stay between one second and four hours', () => {
@@ -5212,7 +5212,7 @@ test(
     await t.test('commands validate providers and decisions', () => {
       const start = {
         specPath: 'task.md',
-        pipelineName: 'default',
+        workflowName: 'default',
         provider: 'Codex',
         model: 'gpt-5.5',
         effort: 'high',
@@ -5222,9 +5222,9 @@ test(
         gateProvider: 'Claude Code',
         gateModel: 'sonnet',
       };
-      assert.equal(startPipelineTaskSchema.safeParse(start).success, true);
-      rejects(startPipelineTaskSchema, { ...start, gateModel: 'gpt-5.5' });
-      rejects(startPipelineTaskSchema, {
+      assert.equal(startWorkflowTaskSchema.safeParse(start).success, true);
+      rejects(startWorkflowTaskSchema, { ...start, gateModel: 'gpt-5.5' });
+      rejects(startWorkflowTaskSchema, {
         ...start,
         provider: 'Claude Code',
         model: 'sonnet',
@@ -5237,16 +5237,16 @@ test(
         decisionId: randomUUID(),
       };
       assert.equal(
-        decidePipelineGateSchema.parse({ ...decision, decision: 'accept' })
+        decideWorkflowGateSchema.parse({ ...decision, decision: 'accept' })
           .comment,
         '',
       );
-      rejects(decidePipelineGateSchema, { ...decision, decision: 'reject' });
-      rejects(decidePipelineGateSchema, { ...decision, decision: 'fix' });
+      rejects(decideWorkflowGateSchema, { ...decision, decision: 'reject' });
+      rejects(decideWorkflowGateSchema, { ...decision, decision: 'fix' });
     });
 
     await t.test(
-      'stored sessions without pipeline fields stay readable',
+      'stored sessions without workflow fields stay readable',
       () => {
         const now = '2026-11-13T10:00:00.000Z';
         const session = sessionSchema.parse({
@@ -5277,18 +5277,18 @@ test(
             },
           ],
         });
-        assert.equal(session.pipelineRunId, null);
-        assert.equal(session.pipelineStepId, null);
+        assert.equal(session.workflowRunId, null);
+        assert.equal(session.workflowStepId, null);
         assert.equal(session.messages[0].origin, null);
       },
     );
   },
 );
 
-const loadPipelineStoreModules = async directory => {
+const loadWorkflowStoreModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
-  const outdir = join(directory, 'pipeline-store-modules');
-  const entries = ['pipelines/store.ts', 'sessions/store.ts'];
+  const outdir = join(directory, 'workflow-store-modules');
+  const entries = ['workflows/store.ts', 'sessions/store.ts'];
   await promisify(execFile)('bun', [
     'build',
     ...entries.map(entry => join(source, entry)),
@@ -5320,11 +5320,11 @@ const createVersion7Database = (path, extra = '') => {
 };
 
 test(
-  'schema version 8 upgrades, rolls back and stores pipeline runs durably',
+  'schema version 8 upgrades, rolls back and stores workflow runs durably',
   { timeout: 120_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-store-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-store-')),
     );
     let database = null;
     t.after(async () => {
@@ -5332,8 +5332,8 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
     const contracts = await loadScheduledJobContracts(directory);
-    const { PipelineRunStore, EXTERNAL_ACTION_ATTENTION, SessionStore } =
-      await loadPipelineStoreModules(directory);
+    const { WorkflowRunStore, EXTERNAL_ACTION_ATTENTION, SessionStore } =
+      await loadWorkflowStoreModules(directory);
     const now = '2026-11-13T10:00:00.000Z';
     const at = minute =>
       new Date(Date.parse(now) + minute * 60_000).toISOString();
@@ -5343,7 +5343,7 @@ test(
         provider: 'Claude Code',
         providerSessionId: null,
         providerInitialized: false,
-        title: 'Pipeline session',
+        title: 'Workflow session',
         model: 'sonnet',
         actualModel: null,
         role: 'standalone',
@@ -5370,10 +5370,10 @@ test(
       },
     });
     const makeRun = (overrides = {}) =>
-      contracts.pipelineRunSchema.parse({
+      contracts.workflowRunSchema.parse({
         id: randomUUID(),
         revision: 1,
-        pipeline: {
+        workflow: {
           name: 'default',
           description: '',
           body: '',
@@ -5406,7 +5406,7 @@ test(
         ...overrides,
       });
     const makeStep = (run, index, type, overrides = {}) =>
-      contracts.pipelineStepRecordSchema.parse({
+      contracts.workflowStepRecordSchema.parse({
         id: randomUUID(),
         runId: run.id,
         revision: 1,
@@ -5456,8 +5456,8 @@ test(
             9,
           );
           for (const [table, column] of [
-            ['scheduled_jobs', 'pipeline'],
-            ['scheduled_job_runs', 'pipeline_run_id'],
+            ['scheduled_jobs', 'workflow'],
+            ['scheduled_job_runs', 'workflow_run_id'],
           ])
             assert.equal(
               upgraded
@@ -5470,14 +5470,14 @@ test(
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
             .all()
             .map(row => row.name);
-          assert.ok(tables.includes('pipeline_runs'));
-          assert.ok(tables.includes('pipeline_steps'));
+          assert.ok(tables.includes('workflow_runs'));
+          assert.ok(tables.includes('workflow_steps'));
           const columns = upgraded
             .prepare('PRAGMA table_info(sessions)')
             .all()
             .map(column => column.name);
-          assert.ok(columns.includes('pipeline_run_id'));
-          assert.ok(columns.includes('pipeline_step_id'));
+          assert.ok(columns.includes('workflow_run_id'));
+          assert.ok(columns.includes('workflow_step_id'));
           assert.equal(
             upgraded
               .prepare('SELECT count(*) AS total FROM sessions WHERE id = ?')
@@ -5501,7 +5501,7 @@ test(
       await mkdir(failingPath);
       createVersion7Database(
         join(failingPath, 'nesvo.sqlite'),
-        'CREATE TABLE pipeline_runs (id TEXT PRIMARY KEY);',
+        'CREATE TABLE workflow_runs (id TEXT PRIMARY KEY);',
       ).close();
       const host = launch(failingPath, join(failingPath, 'pids.json'));
       assert.equal(
@@ -5522,13 +5522,13 @@ test(
             )
             .all()
             .map(row => row.name),
-          ['metadata', 'pipeline_runs', 'reviews', 'sessions'],
+          ['metadata', 'workflow_runs', 'reviews', 'sessions'],
         );
         assert.equal(
           check
             .prepare('PRAGMA table_info(sessions)')
             .all()
-            .some(column => column.name === 'pipeline_run_id'),
+            .some(column => column.name === 'workflow_run_id'),
           false,
         );
       } finally {
@@ -5561,7 +5561,7 @@ test(
 
     database = new DatabaseSync(join(upgradePath, 'nesvo.sqlite'));
     database.exec('PRAGMA foreign_keys = ON');
-    const store = new PipelineRunStore(database);
+    const store = new WorkflowRunStore(database);
     const sessions = new SessionStore(database);
 
     await t.test('replaceRun rejects a stale revision', () => {
@@ -5656,7 +5656,7 @@ test(
       store.prune(root, 2);
       const remaining = new Set(
         database
-          .prepare('SELECT id FROM pipeline_runs WHERE project_root = ?')
+          .prepare('SELECT id FROM workflow_runs WHERE project_root = ?')
           .all(root)
           .map(row => row.id),
       );
@@ -5823,7 +5823,7 @@ test(
       assert.equal(store.getStep(queued.id).state, 'pending');
       assert.equal(
         database
-          .prepare('SELECT started_at FROM pipeline_steps WHERE id = ?')
+          .prepare('SELECT started_at FROM workflow_steps WHERE id = ?')
           .get(step.id).started_at,
         at(10),
       );
@@ -5837,25 +5837,25 @@ test(
         const step = makeStep(run, 0, 'command', { attempt: 1 });
         store.insertStep(step);
         const session = sessionDocument(randomUUID(), {
-          pipelineRunId: run.id,
-          pipelineStepId: step.id,
+          workflowRunId: run.id,
+          workflowStepId: step.id,
         });
         sessions.save(session);
         const link = () =>
           database
             .prepare(
-              'SELECT pipeline_run_id AS runId, pipeline_step_id AS stepId FROM sessions WHERE id = ?',
+              'SELECT workflow_run_id AS runId, workflow_step_id AS stepId FROM sessions WHERE id = ?',
             )
             .get(session.id);
         assert.deepEqual({ ...link() }, { runId: run.id, stepId: step.id });
         assert.equal(store.linkSession(session.id, run.id, null), true);
         assert.deepEqual({ ...link() }, { runId: run.id, stepId: null });
         const reloaded = sessions.get(session.id);
-        assert.equal(reloaded.pipelineRunId, run.id);
-        assert.equal(reloaded.pipelineStepId, null);
+        assert.equal(reloaded.workflowRunId, run.id);
+        assert.equal(reloaded.workflowStepId, null);
         sessions.save(reloaded);
         assert.deepEqual({ ...link() }, { runId: run.id, stepId: null });
-        database.prepare('DELETE FROM pipeline_runs WHERE id = ?').run(run.id);
+        database.prepare('DELETE FROM workflow_runs WHERE id = ?').run(run.id);
         assert.deepEqual({ ...link() }, { runId: null, stepId: null });
         assert.equal(sessions.get(session.id).id, session.id);
         sessions.save(session);
@@ -5866,15 +5866,15 @@ test(
 );
 
 test(
-  'pipeline definitions load from global and project roots with readable issues',
+  'workflow definitions load from global and project roots with readable issues',
   { timeout: 120_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-definitions-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-definitions-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     const restore = () => {
       for (const [key, value] of Object.entries(environment))
@@ -5889,7 +5889,7 @@ test(
     await promisify(execFile)('bun', [
       'build',
       fileURLToPath(
-        new URL('../src/pipelines/definitions.ts', import.meta.url),
+        new URL('../src/workflows/definitions.ts', import.meta.url),
       ),
       '--target=node',
       '--format=esm',
@@ -5900,7 +5900,7 @@ test(
       loadCatalog,
       loadSpec,
       readDefinitionFile,
-      resolvePipeline,
+      resolveWorkflow,
     } = await import(pathToFileURL(outfile).href);
     const write = async (path, content) => {
       await mkdir(join(path, '..'), { recursive: true });
@@ -5912,9 +5912,9 @@ test(
         .filter(([key]) => key !== 'body')
         .map(([key, value]) => `${key}: ${value}`)
         .join('\n')}\n---\n${fields.body ?? ''}\n`;
-    const home = join(directory, 'home', '.agents', 'pipelines');
+    const home = join(directory, 'home', '.agents', 'workflows');
     const project = join(directory, 'project');
-    const definitions = join(project, '.agents', 'pipelines');
+    const definitions = join(project, '.agents', 'workflows');
     await mkdir(join(project, '.git'), { recursive: true });
     const globalLint = await write(
       join(home, 'steps', 'lint.md'),
@@ -5965,11 +5965,11 @@ test(
       '---\nname: &anchor anchored\ntype: command\nphase: pre-done\n---\nbun test\n',
     );
     await write(
-      join(home, 'pipelines', 'default.md'),
+      join(home, 'workflows', 'default.md'),
       '---\nname: default\ndescription: Lint, review, approve, publish\nsteps: [lint, review, approve, publish]\n---\n',
     );
     const release = await write(
-      join(home, 'pipelines', 'release.md'),
+      join(home, 'workflows', 'release.md'),
       '---\nname: release\nsteps: [publish, approve]\n---\n',
     );
     const projectLint = await write(
@@ -5993,21 +5993,21 @@ test(
       }),
     );
     const broken = await write(
-      join(definitions, 'pipelines', 'broken.md'),
+      join(definitions, 'workflows', 'broken.md'),
       '---\nname: broken\nsteps:\n  - lint\n  - missing-step\n---\n',
     );
     const linked = join(definitions, 'steps', 'linked.md');
     await symlink(globalLint, linked);
-    const withPipeline = await write(
-      join(project, '.agents', 'tasks', 'with-pipeline.md'),
-      '---\npipeline: default\ntitle: Fix the parser\n---\n## Goal\nFix it.\n',
+    const withWorkflow = await write(
+      join(project, '.agents', 'tasks', 'with-workflow.md'),
+      '---\nworkflow: default\ntitle: Fix the parser\n---\n## Goal\nFix it.\n',
     );
-    const withoutPipeline = await write(
-      join(project, '.agents', 'tasks', 'without-pipeline.md'),
-      '---\ntitle: No pipeline\n---\n## Goal\nFix it.\n',
+    const withoutWorkflow = await write(
+      join(project, '.agents', 'tasks', 'without-workflow.md'),
+      '---\ntitle: No workflow\n---\n## Goal\nFix it.\n',
     );
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = home;
+    process.env.NESVO_WORKFLOWS_HOME = home;
     const signal = new AbortController().signal;
     const nested = join(project, 'src', 'deep');
     await mkdir(nested, { recursive: true });
@@ -6032,7 +6032,7 @@ test(
           ['approve', 'fixer', 'lint', 'publish', 'review'],
         );
         assert.deepEqual(
-          catalog.pipelines.map(item => item.name),
+          catalog.workflows.map(item => item.name),
           ['default', 'release'],
         );
       },
@@ -6044,7 +6044,7 @@ test(
       assert.equal(lint.source.path, projectLint);
       assert.equal(lint.body, 'bun run lint:project\n');
       assert.deepEqual(lint.notes, [`Overrides the global step ${globalLint}`]);
-      const resolved = resolvePipeline('default', catalog);
+      const resolved = resolveWorkflow('default', catalog);
       assert.equal(resolved.source.scope, 'global');
       assert.deepEqual(
         resolved.steps.map(item => [item.name, item.source.scope]),
@@ -6088,7 +6088,7 @@ test(
           path: broken,
           line: 3,
           message:
-            'Step "missing-step" referenced by pipeline "broken" does not exist',
+            'Step "missing-step" referenced by workflow "broken" does not exist',
         },
       ]);
       assert.deepEqual(messages(linked), [
@@ -6108,11 +6108,11 @@ test(
           [
             [
               'warning',
-              'Step "publish" in pipeline "release" looks like an external action (git push, gh pr, curl or wget) without a human step before it',
+              'Step "publish" in workflow "release" looks like an external action (git push, gh pr, curl or wget) without a human step before it',
             ],
           ],
         );
-        assert.deepEqual(issuesFor(join(home, 'pipelines', 'default.md')), []);
+        assert.deepEqual(issuesFor(join(home, 'workflows', 'default.md')), []);
         assert.deepEqual(
           issuesFor(fixer).map(item => [item.severity, item.message]),
           [
@@ -6130,40 +6130,40 @@ test(
       async () => {
         assert.deepEqual(catalog.specs, [
           {
-            pipeline: 'default',
+            workflow: 'default',
             title: 'Fix the parser',
             source: {
               scope: 'project',
-              path: withPipeline,
+              path: withWorkflow,
               contentHash: catalog.specs[0].source.contentHash,
             },
           },
         ]);
-        assert.deepEqual(issuesFor(withoutPipeline), [
+        assert.deepEqual(issuesFor(withoutWorkflow), [
           {
             severity: 'error',
-            path: withoutPipeline,
+            path: withoutWorkflow,
             line: null,
-            message: 'Missing required field "pipeline"',
+            message: 'Missing required field "workflow"',
           },
         ]);
-        const loaded = await loadSpec(withPipeline, project, signal);
-        assert.equal(loaded.spec.pipeline, 'default');
+        const loaded = await loadSpec(withWorkflow, project, signal);
+        assert.equal(loaded.spec.workflow, 'default');
         assert.equal(loaded.spec.body, '## Goal\nFix it.\n');
         assert.deepEqual(loaded.source, catalog.specs[0].source);
         await assert.rejects(
-          loadSpec(withoutPipeline, project, signal),
+          loadSpec(withoutWorkflow, project, signal),
           error =>
             error instanceof DefinitionError &&
             error.issues.some(
               item =>
-                item.path === withoutPipeline &&
-                item.message.includes('"pipeline"'),
+                item.path === withoutWorkflow &&
+                item.message.includes('"workflow"'),
             ),
         );
         const outside = await write(
           join(directory, 'outside', 'spec.md'),
-          '---\npipeline: default\n---\nFix it.\n',
+          '---\nworkflow: default\n---\nFix it.\n',
         );
         await assert.rejects(
           loadSpec(outside, project, signal),
@@ -6196,7 +6196,7 @@ test(
         assert.notEqual(edited.contentHash, first.contentHash);
         const reloaded = await loadCatalog(project, signal);
         assert.equal(
-          resolvePipeline('default', reloaded).steps[0].source.contentHash,
+          resolveWorkflow('default', reloaded).steps[0].source.contentHash,
           edited.contentHash,
         );
         await assert.rejects(
@@ -6209,7 +6209,7 @@ test(
     await t.test('a folder without git does not read its parent', async () => {
       const loose = join(directory, 'loose');
       await write(
-        join(loose, '.agents', 'pipelines', 'steps', 'parent-only.md'),
+        join(loose, '.agents', 'workflows', 'steps', 'parent-only.md'),
         step({
           name: 'parent-only',
           type: 'command',
@@ -6228,12 +6228,12 @@ test(
     });
 
     await t.test(
-      'the catalog respects the step and pipeline file caps',
+      'the catalog respects the step and workflow file caps',
       async () => {
-        const crowded = join(directory, 'crowded', '.agents', 'pipelines');
-        process.env.NESVO_PIPELINES_HOME = crowded;
+        const crowded = join(directory, 'crowded', '.agents', 'workflows');
+        process.env.NESVO_WORKFLOWS_HOME = crowded;
         await mkdir(join(crowded, 'steps'), { recursive: true });
-        await mkdir(join(crowded, 'pipelines'), { recursive: true });
+        await mkdir(join(crowded, 'workflows'), { recursive: true });
         await Promise.all([
           ...Array.from({ length: 201 }, (_, item) =>
             writeFile(
@@ -6250,7 +6250,7 @@ test(
             writeFile(
               join(
                 crowded,
-                'pipelines',
+                'workflows',
                 `p${String(item).padStart(3, '0')}.md`,
               ),
               `---\nname: p${item}\nsteps: [s0]\n---\n`,
@@ -6261,12 +6261,12 @@ test(
         await mkdir(join(empty, '.git'), { recursive: true });
         const capped = await loadCatalog(empty, signal);
         assert.equal(capped.steps.length, 200);
-        assert.equal(capped.pipelines.length, 100);
+        assert.equal(capped.workflows.length, 100);
         assert.deepEqual(
           capped.issues.map(item => item.message),
           [
             'The folder has 201 step files; only the first 200 are read.',
-            'The folder has 101 pipeline files; only the first 100 are read.',
+            'The folder has 101 workflow files; only the first 100 are read.',
           ],
         );
       },
@@ -6277,28 +6277,28 @@ test(
       const agents = join(fixture, '.agents');
       await mkdir(join(fixture, '.git'), { recursive: true });
       await write(
-        join(agents, 'pipelines', 'steps', 'check.md'),
+        join(agents, 'workflows', 'steps', 'check.md'),
         '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
       );
       await write(
-        join(agents, 'pipelines', 'steps', 'approve.md'),
+        join(agents, 'workflows', 'steps', 'approve.md'),
         '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
       );
       await write(
-        join(agents, 'pipelines', 'pipelines', 'portability.md'),
-        '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+        join(agents, 'workflows', 'workflows', 'portability.md'),
+        '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture workflow used to compare verdicts between hosts.\n',
       );
       await write(
         join(agents, 'tasks', 'portability-spec.md'),
-        '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+        '---\nworkflow: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
       );
-      process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+      process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
       const portable = await loadCatalog(fixture, signal);
       assert.deepEqual(portable.issues, []);
       assert.equal(portable.roots.global, null);
-      const pipeline = resolvePipeline('portability', portable);
+      const workflow = resolveWorkflow('portability', portable);
       assert.deepEqual(
-        pipeline.steps.map(item => [
+        workflow.steps.map(item => [
           item.name,
           item.type,
           item.phase,
@@ -6309,12 +6309,12 @@ test(
           ['approve', 'human', 'pre-push', '15m'],
         ],
       );
-      assert.equal(portable.specs[0].pipeline, 'portability');
+      assert.equal(portable.specs[0].workflow, 'portability');
     });
 
     await t.test('the override is ignored outside test mode', async () => {
       delete process.env.NESVO_TEST_MODE;
-      process.env.NESVO_PIPELINES_HOME = home;
+      process.env.NESVO_WORKFLOWS_HOME = home;
       const production = await loadCatalog(project, signal);
       assert.notEqual(production.roots.global, home);
       process.env.NESVO_TEST_MODE = '1';
@@ -6323,38 +6323,38 @@ test(
     await t.test(
       'the host serves definition reads and stops cleanly while one is pending',
       async () => {
-        process.env.NESVO_PIPELINES_HOME = home;
+        process.env.NESVO_WORKFLOWS_HOME = home;
         const host = launch(directory, join(directory, 'pids.json'));
         t.after(async () => {
           if (host.child.exitCode === null) host.child.kill();
           await host.exited.catch(() => undefined);
         });
-        const listed = await host.request('list-pipeline-definitions', {
+        const listed = await host.request('list-workflow-definitions', {
           directory: project,
         });
-        assert.equal(listed.type, 'pipeline-definitions');
+        assert.equal(listed.type, 'workflow-definitions');
         assert.deepEqual(
-          listed.catalog.pipelines.map(item => item.name),
+          listed.catalog.workflows.map(item => item.name),
           ['default', 'release'],
         );
-        const validated = await host.request('validate-pipeline-definitions', {
+        const validated = await host.request('validate-workflow-definitions', {
           directory: project,
         });
         assert.deepEqual(validated.catalog.issues, listed.catalog.issues);
-        const missingFolder = await host.request('list-pipeline-definitions', {
+        const missingFolder = await host.request('list-workflow-definitions', {
           directory: join(directory, 'missing'),
         });
         assert.equal(missingFolder.type, 'error');
         assert.equal(missingFolder.code, 'invalid-directory');
         const { health } = await host.request('health');
-        assert.equal(health.capabilities.includes('pipelines'), true);
-        const pending = host.request('list-pipeline-definitions', {
+        assert.equal(health.capabilities.includes('workflows'), true);
+        const pending = host.request('list-workflow-definitions', {
           directory: project,
         });
         await host.stop();
         const settled = await pending;
         assert.ok(
-          settled.type === 'pipeline-definitions' ||
+          settled.type === 'workflow-definitions' ||
             (settled.type === 'error' && settled.code === 'unavailable'),
           JSON.stringify(settled),
         );
@@ -6732,10 +6732,10 @@ test(
   },
 );
 
-const loadPipelineRunnerModules = async directory => {
+const loadWorkflowRunnerModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
-  const outdir = join(directory, 'pipeline-runner-modules');
-  const entries = ['pipelines/runner.ts', 'pipelines/store.ts'];
+  const outdir = join(directory, 'workflow-runner-modules');
+  const entries = ['workflows/runner.ts', 'workflows/store.ts'];
   await promisify(execFile)('bun', [
     'build',
     ...entries.map(entry => join(source, entry)),
@@ -6754,20 +6754,20 @@ const loadPipelineRunnerModules = async directory => {
   return Object.assign({}, ...modules);
 };
 
-const pipelineHoldFixturePath = fileURLToPath(
-  new URL('./pipeline-hold-fixture.mjs', import.meta.url),
+const workflowHoldFixturePath = fileURLToPath(
+  new URL('./workflow-hold-fixture.mjs', import.meta.url),
 );
 
 test(
-  'pipeline runner executes command and action steps through one serialized entry point',
+  'workflow runner executes command and action steps through one serialized entry point',
   { timeout: 240_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-runner-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-runner-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
       MY_TOKEN: process.env.MY_TOKEN,
     };
     const onWindows = process.platform === 'win32';
@@ -6788,11 +6788,11 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
     process.env.MY_TOKEN = 'token-value-1234';
     const shellBody = (posix, windows) => (onWindows ? windows : posix);
     const holdStep = (pidPath, seconds) =>
-      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
+      `"${process.execPath}" "${workflowHoldFixturePath}" "${pidPath}" ${seconds}`;
     const write = async (path, content) => {
       await mkdir(join(path, '..'), { recursive: true });
       await writeFile(path, content);
@@ -6801,22 +6801,22 @@ test(
       `---\n${Object.entries(fields)
         .map(([key, value]) => `${key}: ${value}`)
         .join('\n')}\n---\n${body}\n`;
-    const createProject = async (name, steps, pipelines) => {
+    const createProject = async (name, steps, workflows) => {
       const project = join(directory, name);
       await mkdir(join(project, '.git'), { recursive: true });
       for (const item of steps)
         await write(
-          join(project, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+          join(project, '.agents', 'workflows', 'steps', `${item.name}.md`),
           stepFile({ phase: 'pre-done', ...item }),
         );
-      for (const [pipeline, names] of Object.entries(pipelines)) {
+      for (const [workflow, names] of Object.entries(workflows)) {
         await write(
-          join(project, '.agents', 'pipelines', 'pipelines', `${pipeline}.md`),
-          `---\nname: ${pipeline}\nsteps: [${names.join(', ')}]\n---\n`,
+          join(project, '.agents', 'workflows', 'workflows', `${workflow}.md`),
+          `---\nname: ${workflow}\nsteps: [${names.join(', ')}]\n---\n`,
         );
         await write(
-          join(project, '.agents', 'tasks', `${pipeline}.md`),
-          `---\npipeline: ${pipeline}\ntitle: Run ${pipeline}\n---\n## Goal\nRun the ${pipeline} steps.\n`,
+          join(project, '.agents', 'tasks', `${workflow}.md`),
+          `---\nworkflow: ${workflow}\ntitle: Run ${workflow}\n---\n## Goal\nRun the ${workflow} steps.\n`,
         );
       }
       return project;
@@ -6957,19 +6957,19 @@ test(
     let host = launch(dataDirectory, join(directory, 'pids.json'));
     hosts.push(host);
     const start = async (root, name, phase) => {
-      const response = await host.request('run-pipeline-steps', {
+      const response = await host.request('run-workflow-steps', {
         directory: root,
         specPath: join('.agents', 'tasks', `${name}.md`),
         ...(phase ? { phase } : {}),
       });
-      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
       return response.run;
     };
     const detail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -6995,14 +6995,14 @@ test(
     const stepNamed = (current, name) =>
       current.steps.find(step => step.name === name);
     const evidenceText = async (runId, step) => {
-      const response = await host.request('read-pipeline-evidence', {
+      const response = await host.request('read-workflow-evidence', {
         runId,
         stepId: step.id,
         path: step.result.evidence[0].path,
       });
       assert.equal(
         response.type,
-        'pipeline-evidence',
+        'workflow-evidence',
         JSON.stringify(response),
       );
       assert.equal(response.evidence.status, 'text');
@@ -7040,9 +7040,9 @@ test(
         assert.equal(broken.result.status, 'fail');
         assert.match(broken.result.summary, /^Exit code 3\./);
         assert.match(broken.result.summary, /boom/);
-        const changes = host.pipelineEvents.filter(
+        const changes = host.workflowEvents.filter(
           event =>
-            event.type === 'pipeline-step-changed' &&
+            event.type === 'workflow-step-changed' &&
             event.step.id === greet.id,
         );
         assert.deepEqual(
@@ -7053,10 +7053,10 @@ test(
             ['passed', 3],
           ],
         );
-        const runChanges = host.pipelineEvents
+        const runChanges = host.workflowEvents
           .filter(
             event =>
-              event.type === 'pipeline-run-changed' && event.run.id === run.id,
+              event.type === 'workflow-run-changed' && event.run.id === run.id,
           )
           .map(event => event.run.revision);
         assert.deepEqual(
@@ -7158,7 +7158,7 @@ test(
         try {
           const row = database
             .prepare(
-              'SELECT state, started_at FROM pipeline_steps WHERE run_id = ?',
+              'SELECT state, started_at FROM workflow_steps WHERE run_id = ?',
             )
             .get(run.id);
           assert.equal(row.state, 'running');
@@ -7167,16 +7167,16 @@ test(
           database.close();
         }
         assert.equal(alivePid(pid), true);
-        const second = await host.request('run-pipeline-steps', {
+        const second = await host.request('run-workflow-steps', {
           directory: project,
           specPath: join(project, '.agents', 'tasks', 'failing.md'),
         });
         assert.equal(second.type, 'error');
         assert.equal(second.code, 'busy');
-        const stopped = await host.request('stop-pipeline-run', {
+        const stopped = await host.request('stop-workflow-run', {
           runId: run.id,
         });
-        assert.equal(stopped.type, 'pipeline-run');
+        assert.equal(stopped.type, 'workflow-run');
         assert.equal(stopped.run.status, 'stopped');
         assert.ok(stopped.run.finishedAt);
         const current = await waitFor(
@@ -7187,11 +7187,11 @@ test(
         assert.equal(current.run.status, 'stopped');
         assert.equal(current.steps[0].result, null);
         await gone(pid);
-        const again = await host.request('stop-pipeline-run', {
+        const again = await host.request('stop-workflow-run', {
           runId: run.id,
         });
         assert.equal(again.run.revision, current.run.revision);
-        const unknown = await host.request('stop-pipeline-run', {
+        const unknown = await host.request('stop-workflow-run', {
           runId: randomUUID(),
         });
         assert.equal(unknown.code, 'not-found');
@@ -7199,28 +7199,28 @@ test(
     );
 
     await t.test('requests are validated and runs page', async () => {
-      const invalid = await host.request('run-pipeline-steps', {
+      const invalid = await host.request('run-workflow-steps', {
         directory: join(directory, 'absent'),
         specPath: 'task.md',
       });
       assert.equal(invalid.code, 'invalid-directory');
-      const missingSpec = await host.request('run-pipeline-steps', {
+      const missingSpec = await host.request('run-workflow-steps', {
         directory: project,
         specPath: '.agents/tasks/none.md',
       });
       assert.equal(missingSpec.code, 'invalid-request');
-      const noPhase = await host.request('run-pipeline-steps', {
+      const noPhase = await host.request('run-workflow-steps', {
         directory: project,
         specPath: '.agents/tasks/full.md',
         phase: 'pre-push',
       });
       assert.equal(noPhase.code, 'invalid-request');
       assert.match(noPhase.message, /no steps in phase pre-push/);
-      const first = await host.request('list-pipeline-runs', { limit: 2 });
-      assert.equal(first.type, 'pipeline-runs');
+      const first = await host.request('list-workflow-runs', { limit: 2 });
+      assert.equal(first.type, 'workflow-runs');
       assert.equal(first.page.runs.length, 2);
       assert.ok(first.page.nextCursor);
-      const second = await host.request('list-pipeline-runs', {
+      const second = await host.request('list-workflow-runs', {
         cursor: first.page.nextCursor,
         limit: 100,
       });
@@ -7228,19 +7228,19 @@ test(
       assert.equal(second.page.nextCursor, null);
       const runId = first.page.runs[0].id;
       const { steps } = await detail(runId);
-      const traversal = await host.request('read-pipeline-evidence', {
+      const traversal = await host.request('read-workflow-evidence', {
         runId,
         stepId: steps[0].id,
         path: '../attempt-1.log',
       });
       assert.equal(traversal.code, 'invalid-request');
-      const absent = await host.request('read-pipeline-evidence', {
+      const absent = await host.request('read-workflow-evidence', {
         runId,
         stepId: randomUUID(),
         path: 'attempt-1.log',
       });
       assert.equal(absent.code, 'not-found');
-      const unknownRun = await host.request('get-pipeline-run', {
+      const unknownRun = await host.request('get-workflow-run', {
         runId: randomUUID(),
       });
       assert.equal(unknownRun.code, 'not-found');
@@ -7253,20 +7253,20 @@ test(
         const agents = join(fixture, '.agents');
         await mkdir(join(fixture, '.git'), { recursive: true });
         await write(
-          join(agents, 'pipelines', 'steps', 'check.md'),
+          join(agents, 'workflows', 'steps', 'check.md'),
           '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
         );
         await write(
-          join(agents, 'pipelines', 'steps', 'approve.md'),
+          join(agents, 'workflows', 'steps', 'approve.md'),
           '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
         );
         await write(
-          join(agents, 'pipelines', 'pipelines', 'portability.md'),
-          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+          join(agents, 'workflows', 'workflows', 'portability.md'),
+          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture workflow used to compare verdicts between hosts.\n',
         );
         await write(
           join(agents, 'tasks', 'portability-spec.md'),
-          '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+          '---\nworkflow: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
         );
         const expected = {
           'pre-done': [
@@ -7278,12 +7278,12 @@ test(
         };
         const actual = {};
         for (const phase of Object.keys(expected)) {
-          const response = await host.request('run-pipeline-steps', {
+          const response = await host.request('run-workflow-steps', {
             directory: fixture,
             specPath: '.agents/tasks/portability-spec.md',
             phase,
           });
-          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          assert.equal(response.type, 'workflow-run', JSON.stringify(response));
           const current = await settled(response.run.id);
           assert.equal(current.run.status, 'passed');
           actual[phase] = current.steps.map(step => ({
@@ -7390,11 +7390,11 @@ test(
         hosts.push(bootstrap);
         assert.equal((await bootstrap.request('health')).type, 'health');
         await bootstrap.stop();
-        const { PipelineRunner, PipelineRunStore } =
-          await loadPipelineRunnerModules(directory);
+        const { WorkflowRunner, WorkflowRunStore } =
+          await loadWorkflowRunnerModules(directory);
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
         subtest.after(() => database.close());
-        const base = new PipelineRunStore(database);
+        const base = new WorkflowRunStore(database);
         let getRunCalls = 0;
         let onGetRun = null;
         const store = new Proxy(base, {
@@ -7445,7 +7445,7 @@ test(
             kind: 'skipped',
             reason: 'Executor not available',
           });
-        runner = new PipelineRunner({
+        runner = new WorkflowRunner({
           store,
           emit: () => undefined,
           evidence: { write: () => Promise.resolve('attempt-1.log') },
@@ -7473,7 +7473,7 @@ test(
           const run = {
             id: randomUUID(),
             revision: 1,
-            pipeline: {
+            workflow: {
               name: 'ordered',
               description: '',
               body: '',
@@ -7571,7 +7571,7 @@ test(
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     const hosts = [];
     t.after(async () => {
@@ -7584,12 +7584,12 @@ test(
       }
       await rm(directory, { recursive: true, force: true });
     });
-    const home = join(directory, 'home', '.agents', 'pipelines');
+    const home = join(directory, 'home', '.agents', 'workflows');
     const project = join(directory, 'project');
-    const definitions = join(project, '.agents', 'pipelines');
+    const definitions = join(project, '.agents', 'workflows');
     await mkdir(join(project, '.git'), { recursive: true });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = home;
+    process.env.NESVO_WORKFLOWS_HOME = home;
     const start = () => {
       const host = launch(directory, join(directory, 'pids.json'));
       hosts.push(host);
@@ -7607,10 +7607,10 @@ test(
       })
         .map(([key, value]) => `${key}: ${value}`)
         .join('\n')}\n---\nbun test\n`;
-    const pipelineDocument = (name, steps) =>
+    const workflowDocument = (name, steps) =>
       `---\nname: ${name}\nsteps: [${steps.join(', ')}]\n---\n`;
     const save = (kind, name, document, expectedHash, scope = 'project') =>
-      host.request('save-pipeline-definition', {
+      host.request('save-workflow-definition', {
         directory: project,
         scope,
         kind,
@@ -7619,7 +7619,7 @@ test(
         expectedHash,
       });
     const remove = (kind, name, expectedHash, scope = 'project') =>
-      host.request('delete-pipeline-definition', {
+      host.request('delete-workflow-definition', {
         directory: project,
         scope,
         kind,
@@ -7627,7 +7627,7 @@ test(
         expectedHash,
       });
     const stepPath = name => join(definitions, 'steps', `${name}.md`);
-    const pipelinePath = name => join(definitions, 'pipelines', `${name}.md`);
+    const workflowPath = name => join(definitions, 'workflows', `${name}.md`);
     const listing = async folder => readdir(join(definitions, folder));
 
     await t.test(
@@ -7635,7 +7635,7 @@ test(
       async () => {
         const document = stepDocument('unit-tests');
         const saved = await save('step', 'unit-tests', document, null);
-        assert.equal(saved.type, 'pipeline-definitions');
+        assert.equal(saved.type, 'workflow-definitions');
         assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), document);
         const listed = saved.catalog.steps.find(
           item => item.name === 'unit-tests',
@@ -7655,7 +7655,7 @@ test(
       const previous = hashOf(stepDocument('unit-tests'));
       const document = stepDocument('unit-tests', { timeout: '5m' });
       const saved = await save('step', 'unit-tests', document, previous);
-      assert.equal(saved.type, 'pipeline-definitions');
+      assert.equal(saved.type, 'workflow-definitions');
       assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), document);
       assert.deepEqual(await listing('steps'), ['unit-tests.md']);
     });
@@ -7674,7 +7674,7 @@ test(
         assert.deepEqual(
           { ...conflict, id: undefined },
           {
-            type: 'pipeline-definition-conflict',
+            type: 'workflow-definition-conflict',
             id: undefined,
             scope: 'project',
             kind: 'step',
@@ -7699,7 +7699,7 @@ test(
           stepDocument('unit-tests'),
           null,
         );
-        assert.equal(conflict.type, 'pipeline-definition-conflict');
+        assert.equal(conflict.type, 'workflow-definition-conflict');
         assert.equal(conflict.currentHash, hashOf(current));
         assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
       },
@@ -7714,7 +7714,7 @@ test(
           stepDocument('bogus', { retry: 2 }),
           null,
         );
-        assert.equal(unknownField.type, 'pipeline-definition-refused');
+        assert.equal(unknownField.type, 'workflow-definition-refused');
         assert.match(unknownField.issues[0].message, /Unknown field "retry"/);
         const mismatch = await save(
           'step',
@@ -7722,7 +7722,7 @@ test(
           stepDocument('another'),
           null,
         );
-        assert.equal(mismatch.type, 'pipeline-definition-refused');
+        assert.equal(mismatch.type, 'workflow-definition-refused');
         assert.match(mismatch.issues.at(-1).message, /must be "other"/);
         const human = await save(
           'step',
@@ -7730,7 +7730,7 @@ test(
           stepDocument('approve', { type: 'human', retries: 1 }),
           null,
         );
-        assert.equal(human.type, 'pipeline-definition-refused');
+        assert.equal(human.type, 'workflow-definition-refused');
         assert.match(human.issues[0].message, /Human steps do not retry/);
         const agent = await save(
           'step',
@@ -7738,14 +7738,14 @@ test(
           stepDocument('review', { type: 'agent', effect: 'external' }),
           null,
         );
-        assert.equal(agent.type, 'pipeline-definition-refused');
+        assert.equal(agent.type, 'workflow-definition-refused');
         const flood = await save(
           'step',
           'flood',
           `---\nname: flood\ntype: command\nphase: pre-done\n${Array.from({ length: 240 }, (_, index) => `extra${index}: 1`).join('\n')}\n---\nbun test\n`,
           null,
         );
-        assert.equal(flood.type, 'pipeline-definition-refused');
+        assert.equal(flood.type, 'workflow-definition-refused');
         assert.equal(flood.issues.length, 200);
         const binary = await save(
           'step',
@@ -7753,7 +7753,7 @@ test(
           '---\nname: binary\n---\n\0',
           null,
         );
-        assert.equal(binary.type, 'pipeline-definition-refused');
+        assert.equal(binary.type, 'workflow-definition-refused');
         assert.deepEqual(await listing('steps'), ['unit-tests.md']);
       },
     );
@@ -7761,8 +7761,8 @@ test(
     await t.test('unsafe names are invalid requests', async () => {
       for (const name of ['../escape', 'a/b', 'Upper', ''])
         for (const [method, extra] of [
-          ['save-pipeline-definition', { document: stepDocument('x') }],
-          ['delete-pipeline-definition', {}],
+          ['save-workflow-definition', { document: stepDocument('x') }],
+          ['delete-workflow-definition', {}],
         ])
           assert.deepEqual(
             await host.send(
@@ -7787,23 +7787,23 @@ test(
       assert.deepEqual(await listing('steps'), ['unit-tests.md']);
     });
 
-    await t.test('a pipeline must reference existing steps', async () => {
+    await t.test('a workflow must reference existing steps', async () => {
       const missing = await save(
-        'pipeline',
+        'workflow',
         'default',
-        pipelineDocument('default', ['unit-tests', 'ghost']),
+        workflowDocument('default', ['unit-tests', 'ghost']),
         null,
       );
-      assert.equal(missing.type, 'pipeline-definition-refused');
+      assert.equal(missing.type, 'workflow-definition-refused');
       assert.match(missing.issues[0].message, /Step "ghost" does not exist/);
-      const document = pipelineDocument('default', ['unit-tests']);
-      const saved = await save('pipeline', 'default', document, null);
-      assert.equal(saved.type, 'pipeline-definitions');
+      const document = workflowDocument('default', ['unit-tests']);
+      const saved = await save('workflow', 'default', document, null);
+      assert.equal(saved.type, 'workflow-definitions');
       assert.deepEqual(
-        saved.catalog.pipelines.map(item => item.name),
+        saved.catalog.workflows.map(item => item.name),
         ['default'],
       );
-      assert.deepEqual(await listing('pipelines'), ['default.md']);
+      assert.deepEqual(await listing('workflows'), ['default.md']);
     });
 
     await t.test(
@@ -7816,20 +7816,20 @@ test(
         });
         assert.equal(
           (await save('step', 'publish', publish, null)).type,
-          'pipeline-definitions',
+          'workflow-definitions',
         );
         const saved = await save(
-          'pipeline',
+          'workflow',
           'release',
-          pipelineDocument('release', ['publish']),
+          workflowDocument('release', ['publish']),
           null,
         );
-        assert.equal(saved.type, 'pipeline-definitions');
+        assert.equal(saved.type, 'workflow-definitions');
         assert.ok(
           saved.catalog.issues.some(
             item =>
               item.severity === 'warning' &&
-              /"publish" in pipeline "release" is declared external/.test(
+              /"publish" in workflow "release" is declared external/.test(
                 item.message,
               ),
           ),
@@ -7838,7 +7838,7 @@ test(
     );
 
     await t.test(
-      'deleting honours the hash and referencing pipelines',
+      'deleting honours the hash and referencing workflows',
       async () => {
         const current = stepDocument('unit-tests', { timeout: '5m' });
         const stale = await remove(
@@ -7846,17 +7846,17 @@ test(
           'unit-tests',
           hashOf(stepDocument('unit-tests')),
         );
-        assert.equal(stale.type, 'pipeline-definition-conflict');
+        assert.equal(stale.type, 'workflow-definition-conflict');
         assert.equal(stale.document, current);
         assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
         const used = await remove('step', 'unit-tests', hashOf(current));
-        assert.equal(used.type, 'pipeline-definition-refused');
-        assert.match(used.issues[0].message, /used by pipeline "default"/);
+        assert.equal(used.type, 'workflow-definition-refused');
+        assert.match(used.issues[0].message, /used by workflow "default"/);
         assert.equal(await readFile(stepPath('unit-tests'), 'utf8'), current);
         const lone = stepDocument('lone');
         await save('step', 'lone', lone, null);
         const removed = await remove('step', 'lone', hashOf(lone));
-        assert.equal(removed.type, 'pipeline-definitions');
+        assert.equal(removed.type, 'workflow-definitions');
         assert.equal(
           removed.catalog.steps.some(item => item.name === 'lone'),
           false,
@@ -7865,7 +7865,7 @@ test(
           code: 'ENOENT',
         });
         const again = await remove('step', 'lone', hashOf(lone));
-        assert.equal(again.type, 'pipeline-definition-conflict');
+        assert.equal(again.type, 'workflow-definition-conflict');
         assert.equal(again.currentHash, null);
         assert.equal(again.document, null);
       },
@@ -7887,11 +7887,11 @@ test(
           ),
         );
         assert.deepEqual(results.map(item => item.type).sort(), [
-          'pipeline-definition-conflict',
-          'pipeline-definitions',
+          'workflow-definition-conflict',
+          'workflow-definitions',
         ]);
         const winner = results.find(
-          item => item.type === 'pipeline-definitions',
+          item => item.type === 'workflow-definitions',
         );
         const written = await readFile(stepPath('race'), 'utf8');
         assert.equal(
@@ -7914,7 +7914,7 @@ test(
         null,
         'global',
       );
-      assert.equal(refused.type, 'pipeline-definition-refused');
+      assert.equal(refused.type, 'workflow-definition-refused');
       await assert.rejects(stat(home), { code: 'ENOENT' });
       const document = stepDocument('shared-check');
       const saved = await save(
@@ -7924,7 +7924,7 @@ test(
         null,
         'global',
       );
-      assert.equal(saved.type, 'pipeline-definitions');
+      assert.equal(saved.type, 'workflow-definitions');
       const listed = saved.catalog.steps.find(
         item => item.name === 'shared-check',
       );
@@ -7940,23 +7940,23 @@ test(
     });
 
     await t.test(
-      'a pipeline with an active run cannot be changed',
+      'a workflow with an active run cannot be changed',
       async () => {
         const contracts = await loadScheduledJobContracts(directory);
-        const { PipelineRunStore } = await loadPipelineStoreModules(directory);
+        const { WorkflowRunStore } = await loadWorkflowStoreModules(directory);
         const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
         database.exec('PRAGMA busy_timeout = 5000');
         const now = '2026-11-13T10:00:00.000Z';
-        const run = contracts.pipelineRunSchema.parse({
+        const run = contracts.workflowRunSchema.parse({
           id: randomUUID(),
           revision: 1,
-          pipeline: {
+          workflow: {
             name: 'default',
             description: '',
             body: '',
             source: {
               scope: 'project',
-              path: pipelinePath('default'),
+              path: workflowPath('default'),
               contentHash: 'b'.repeat(64),
             },
             steps: [
@@ -7990,28 +7990,28 @@ test(
           updatedAt: now,
           finishedAt: null,
         });
-        assert.equal(new PipelineRunStore(database).insertRun(run), true);
+        assert.equal(new WorkflowRunStore(database).insertRun(run), true);
         database.close();
-        const current = pipelineDocument('default', ['unit-tests']);
+        const current = workflowDocument('default', ['unit-tests']);
         const changed = await save(
-          'pipeline',
+          'workflow',
           'default',
-          pipelineDocument('default', ['unit-tests', 'publish']),
+          workflowDocument('default', ['unit-tests', 'publish']),
           hashOf(current),
         );
         assert.equal(changed.type, 'error');
         assert.equal(changed.code, 'busy');
         assert.ok(changed.message.includes(run.id));
-        const removed = await remove('pipeline', 'default', hashOf(current));
+        const removed = await remove('workflow', 'default', hashOf(current));
         assert.equal(removed.code, 'busy');
-        assert.equal(await readFile(pipelinePath('default'), 'utf8'), current);
+        assert.equal(await readFile(workflowPath('default'), 'utf8'), current);
         const other = await save(
-          'pipeline',
+          'workflow',
           'nightly',
-          pipelineDocument('nightly', ['unit-tests']),
+          workflowDocument('nightly', ['unit-tests']),
           null,
         );
-        assert.equal(other.type, 'pipeline-definitions');
+        assert.equal(other.type, 'workflow-definitions');
       },
     );
   },
@@ -8685,13 +8685,13 @@ test(
   },
 );
 
-const loadPipelineTaskModules = async directory => {
+const loadWorkflowTaskModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
-  const outdir = join(directory, 'pipeline-task-modules');
+  const outdir = join(directory, 'workflow-task-modules');
   const entries = [
-    'pipelines/runner.ts',
-    'pipelines/store.ts',
-    'pipelines/tasks.ts',
+    'workflows/runner.ts',
+    'workflows/store.ts',
+    'workflows/tasks.ts',
   ];
   await promisify(execFile)('bun', [
     'build',
@@ -8712,15 +8712,15 @@ const loadPipelineTaskModules = async directory => {
 };
 
 test(
-  'pipeline tasks run on a bound session and move only through the runner',
+  'workflow tasks run on a bound session and move only through the runner',
   { timeout: 360_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-tasks-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-tasks-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
       NESVO_FIXTURE_LAUNCH_LOG: process.env.NESVO_FIXTURE_LAUNCH_LOG,
     };
     const hosts = [];
@@ -8745,10 +8745,10 @@ test(
       });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
     process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
-    const taskModules = await loadPipelineTaskModules(directory);
-    const pipelineTurnId = (runId, kind) =>
+    const taskModules = await loadWorkflowTaskModules(directory);
+    const workflowTurnId = (runId, kind) =>
       taskModules.turnMessageId(runId, kind, 1);
     const gitEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
@@ -8776,7 +8776,7 @@ test(
     const onWindows = process.platform === 'win32';
     const shellBody = (posix, windows) => (onWindows ? windows : posix);
     const holdStep = (pidPath, seconds) =>
-      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
+      `"${process.execPath}" "${workflowHoldFixturePath}" "${pidPath}" ${seconds}`;
     const samePath = (left, right) =>
       onWindows ? left.toLowerCase() === right.toLowerCase() : left === right;
     const repository = join(directory, 'repository');
@@ -8851,7 +8851,7 @@ test(
         ),
       },
     ];
-    const pipelines = {
+    const workflows = {
       isolated: ['setup', 'where', 'publish'],
       readonly: ['where'],
       planned: ['approve', 'where'],
@@ -8863,17 +8863,17 @@ test(
     };
     for (const item of steps)
       await write(
-        join(repository, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+        join(repository, '.agents', 'workflows', 'steps', `${item.name}.md`),
         stepFile(item),
       );
-    for (const [name, names] of Object.entries(pipelines)) {
+    for (const [name, names] of Object.entries(workflows)) {
       await write(
-        join(repository, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        join(repository, '.agents', 'workflows', 'workflows', `${name}.md`),
         `---\nname: ${name}\nsteps: [${names.join(', ')}]\n---\n`,
       );
       await write(
         join(repository, '.agents', 'tasks', `${name}.md`),
-        `---\npipeline: ${name}\ntitle: Run ${name}\n---\n${name === 'holding' ? 'fixture:hold\n' : ''}## Goal\nRun the ${name} steps.\n`,
+        `---\nworkflow: ${name}\ntitle: Run ${name}\n---\n${name === 'holding' ? 'fixture:hold\n' : ''}## Goal\nRun the ${name} steps.\n`,
       );
     }
     await git(repository, 'init', '-q', '-b', 'main');
@@ -8895,9 +8895,9 @@ test(
       mode: 'supervised',
     };
     const start = (name, extra = {}) =>
-      host.request('start-pipeline-task', {
+      host.request('start-workflow-task', {
         specPath: join('.agents', 'tasks', `${name}.md`),
-        pipelineName: name,
+        workflowName: name,
         provider: 'Claude Code',
         model: 'sonnet',
         mode: 'read-only',
@@ -8909,14 +8909,14 @@ test(
       });
     const started = async (name, extra) => {
       const response = await start(name, extra);
-      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
       return response.run;
     };
     const detail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -8980,10 +8980,10 @@ test(
       current.steps.filter(step => step.name === name).at(-1);
 
     await t.test(
-      'health lists pipelines and a public session request cannot carry an origin',
+      'health lists workflows and a public session request cannot carry an origin',
       async () => {
         const { health } = await host.request('health');
-        assert.equal(health.capabilities.includes('pipelines'), true);
+        assert.equal(health.capabilities.includes('workflows'), true);
         assert.deepEqual(
           await host.send(
             JSON.stringify({
@@ -8995,7 +8995,7 @@ test(
                 model: 'fixture-codex',
                 mode: 'read-only',
                 directory: repository,
-                origin: { kind: 'pipeline', runId: randomUUID() },
+                origin: { kind: 'workflow', runId: randomUUID() },
               },
             }),
           ),
@@ -9021,13 +9021,13 @@ test(
         assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
         const session = await sessionOf(run.sessionId);
         assert.equal(session.directory, run.directory);
-        assert.equal(session.pipelineRunId, run.id);
+        assert.equal(session.workflowRunId, run.id);
         assert.equal(session.delegationEnabled, false);
         assert.equal(session.status, 'completed');
         const requests = operatorMessages(session);
         assert.deepEqual(
           requests.map(message => [message.id, message.origin]),
-          [[pipelineTurnId(run.id, 'implement'), 'pipeline']],
+          [[workflowTurnId(run.id, 'implement'), 'workflow']],
         );
         assert.match(requests[0].body, /Run the isolated steps\./);
         assert.match(requests[0].body, /Implement the task as planned\.$/);
@@ -9066,16 +9066,16 @@ test(
           publish.result.outputs.url,
           'https://example.test/change/1',
         );
-        const listed = await host.request('list-pipeline-runs', {});
+        const listed = await host.request('list-workflow-runs', {});
         assert.ok(
           listed.page.runs.some(
             item => item.id === run.id && item.sessionId === session.id,
           ),
         );
         assert.ok(
-          host.pipelineEvents.some(
+          host.workflowEvents.some(
             event =>
-              event.type === 'pipeline-run-changed' &&
+              event.type === 'workflow-run-changed' &&
               event.run.id === run.id &&
               event.run.status === 'passed',
           ),
@@ -9124,7 +9124,7 @@ test(
         const gate = stepNamed(waiting, 'approve');
         assert.equal(gate.state, 'awaiting-human');
         assert.equal(gate.reviewVersion, 1);
-        const accepted = await host.request('decide-pipeline-gate', {
+        const accepted = await host.request('decide-workflow-gate', {
           runId: run.id,
           stepId: gate.id,
           reviewId: gate.reviewId,
@@ -9133,7 +9133,7 @@ test(
           decision: 'accept',
           comment: 'Plan approved.',
         });
-        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
+        assert.equal(accepted.type, 'workflow-run', JSON.stringify(accepted));
         const finished = await settled(run.id);
         assert.equal(finished.run.status, 'passed', JSON.stringify(finished));
         assert.equal(stepNamed(finished, 'approve').state, 'passed');
@@ -9141,7 +9141,7 @@ test(
         const requests = operatorMessages(session);
         assert.deepEqual(
           requests.map(message => message.id),
-          [pipelineTurnId(run.id, 'plan'), pipelineTurnId(run.id, 'implement')],
+          [workflowTurnId(run.id, 'plan'), workflowTurnId(run.id, 'implement')],
         );
         const plan = session.messages.find(
           message =>
@@ -9199,10 +9199,10 @@ test(
         const second = await start('readonly');
         assert.equal(second.type, 'error');
         assert.equal(second.code, 'busy');
-        const stopped = await host.request('stop-pipeline-run', {
+        const stopped = await host.request('stop-workflow-run', {
           runId: run.id,
         });
-        assert.equal(stopped.type, 'pipeline-run');
+        assert.equal(stopped.type, 'workflow-run');
         assert.equal(stopped.run.status, 'stopped');
         await host.event(
           item => item.id === session.id && item.status === 'stopped',
@@ -9268,7 +9268,7 @@ test(
         const session = await sessionOf(run.sessionId);
         assert.deepEqual(
           operatorMessages(session).map(message => message.id),
-          [pipelineTurnId(run.id, 'implement')],
+          [workflowTurnId(run.id, 'implement')],
         );
         assert.equal((await launchesFor(run)).length, 1);
         assert.equal((await sessionOf(other.session.id)).status, 'stopped');
@@ -9290,10 +9290,10 @@ test(
         assert.equal(interrupted.run.status, 'interrupted');
         assert.equal(stepNamed(interrupted, 'blocker').state, 'interrupted');
         await writeFile(marker('resume'), '');
-        const resumed = await host.request('resume-pipeline-run', {
+        const resumed = await host.request('resume-workflow-run', {
           runId: run.id,
         });
-        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        assert.equal(resumed.type, 'workflow-run', JSON.stringify(resumed));
         assert.equal(resumed.run.status, 'checking');
         assert.equal(resumed.run.attention, null);
         const finished = await settled(run.id);
@@ -9315,7 +9315,7 @@ test(
         const session = await sessionOf(run.sessionId);
         assert.equal(operatorMessages(session).length, 1);
         assert.equal((await launchesFor(run)).length, 1);
-        const again = await host.request('resume-pipeline-run', {
+        const again = await host.request('resume-workflow-run', {
           runId: run.id,
         });
         assert.equal(again.type, 'error');
@@ -9337,7 +9337,7 @@ test(
         assert.equal(current.run.status, 'needs-attention');
         assert.equal(current.run.attention, 'External action may have run.');
         assert.equal(stepNamed(current, 'push').state, 'uncertain');
-        const refused = await host.request('resume-pipeline-run', {
+        const refused = await host.request('resume-workflow-run', {
           runId: run.id,
         });
         assert.deepEqual(refused, {
@@ -9383,15 +9383,15 @@ test(
         assert.equal((await bootstrap.request('health')).type, 'health');
         await bootstrap.stop();
         const {
-          PipelineRunner,
-          PipelineRunStore,
+          WorkflowRunner,
+          WorkflowRunStore,
           bindRunEvents,
           AUTHOR_BUSY_ATTENTION,
           AUTHOR_BUSY_MS,
         } = taskModules;
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
         subtest.after(() => database.close());
-        const store = new PipelineRunStore(database);
+        const store = new WorkflowRunStore(database);
         const clock = createFakeClock('2026-11-13T10:00:00.000Z', () => {});
         let busy = true;
         const sent = [];
@@ -9449,7 +9449,7 @@ test(
             kind: 'skipped',
             reason: 'Executor not available',
           });
-        const runner = new PipelineRunner({
+        const runner = new WorkflowRunner({
           store,
           clock,
           emit: () => undefined,
@@ -9470,7 +9470,7 @@ test(
           const run = {
             id: randomUUID(),
             revision: 1,
-            pipeline: {
+            workflow: {
               name: 'checks',
               description: '',
               body: '',
@@ -9541,7 +9541,7 @@ test(
         await delay(20);
         events.idle();
         await delay(20);
-        assert.deepEqual(sent, [pipelineTurnId(waiting.id, 'implement')]);
+        assert.deepEqual(sent, [workflowTurnId(waiting.id, 'implement')]);
         assert.deepEqual(clock.pending(), []);
         assert.deepEqual(runner.waitingForIdle(), []);
 
@@ -9553,7 +9553,7 @@ test(
                 listener({
                   sessionId: waiting.sessionId,
                   runId: randomUUID(),
-                  pipelineRunId: waiting.id,
+                  workflowRunId: waiting.id,
                   status: 'completed',
                   reviewId: null,
                 });
@@ -9589,7 +9589,7 @@ test(
           AUTHOR_BUSY_ATTENTION,
           'The computer was busy with another session',
         );
-        assert.deepEqual(sent, [pipelineTurnId(waiting.id, 'implement')]);
+        assert.deepEqual(sent, [workflowTurnId(waiting.id, 'implement')]);
         assert.deepEqual(runner.waitingForIdle(), []);
         events.release();
       },
@@ -9598,33 +9598,33 @@ test(
 );
 
 test(
-  'the pipelines command validates and writes definitions with versions and refuses run sessions',
+  'the workflows command validates and writes definitions with versions and refuses run sessions',
   { timeout: 120_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipelines-cli-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflows-cli-')),
     );
     t.after(() => rm(directory, { recursive: true, force: true }));
     const entry = fileURLToPath(new URL('../dist/main.js', import.meta.url));
     const project = join(directory, 'project');
     const home = join(directory, 'home');
     const dataDirectory = join(directory, 'data');
-    const definitions = join(project, '.agents', 'pipelines');
+    const definitions = join(project, '.agents', 'workflows');
     await mkdir(join(project, '.git'), { recursive: true });
-    await mkdir(join(definitions, 'pipelines'), { recursive: true });
+    await mkdir(join(definitions, 'workflows'), { recursive: true });
     await mkdir(home, { recursive: true });
     await mkdir(dataDirectory, { recursive: true });
     const environment = {
       PATH: process.env.PATH,
       TMPDIR: process.env.TMPDIR,
       NESVO_TEST_MODE: '1',
-      NESVO_PIPELINES_HOME: home,
+      NESVO_WORKFLOWS_HOME: home,
     };
     const run = (args, extra = {}) =>
       new Promise((resolve, reject) => {
         const child = spawn(
           process.execPath,
-          [entry, 'pipelines', ...args, '--directory', project],
+          [entry, 'workflows', ...args, '--directory', project],
           {
             env: { ...environment, ...extra },
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -9639,7 +9639,7 @@ test(
       });
     const sha = text => createHash('sha256').update(text).digest('hex');
     const stepPath = name => join(definitions, 'steps', `${name}.md`);
-    const pipelinePath = name => join(definitions, 'pipelines', `${name}.md`);
+    const workflowPath = name => join(definitions, 'workflows', `${name}.md`);
     const stepText = (name, command) =>
       `---\nname: ${name}\ntype: command\nphase: pre-done\n---\n${command}\n`;
     const stepFile = async (name, command) => {
@@ -9763,7 +9763,7 @@ test(
       },
     );
 
-    await t.test('add-to-pipeline edits only the steps list', async () => {
+    await t.test('add-to-workflow edits only the steps list', async () => {
       await writeFile(
         join(directory, 'review.md'),
         '---\nname: review\ntype: command\nphase: pre-done\n---\nbun run review\n',
@@ -9784,12 +9784,12 @@ test(
       ]);
       const before =
         '---\r\nname: default\r\ndescription: Checks\r\nsteps:\r\n  - lint # first\r\n  - test\r\n---\r\nBody stays\r\n\r\n- not a step\r\n';
-      await writeFile(pipelinePath('default'), before);
+      await writeFile(workflowPath('default'), before);
       const added = await run([
-        'add-to-pipeline',
+        'add-to-workflow',
         '--scope',
         'project',
-        '--pipeline',
+        '--workflow',
         'default',
         '--step',
         'review',
@@ -9798,45 +9798,45 @@ test(
       ]);
       assert.equal(added.code, 0, added.stderr);
       assert.equal(
-        await readFile(pipelinePath('default'), 'utf8'),
+        await readFile(workflowPath('default'), 'utf8'),
         before.replace(
           '  - lint # first\r\n',
           '  - lint # first\r\n  - review\r\n',
         ),
       );
       const removed = await run([
-        'remove-from-pipeline',
+        'remove-from-workflow',
         '--scope',
         'project',
-        '--pipeline',
+        '--workflow',
         'default',
         '--step',
         'review',
       ]);
       assert.equal(removed.code, 0, removed.stderr);
-      assert.equal(await readFile(pipelinePath('default'), 'utf8'), before);
+      assert.equal(await readFile(workflowPath('default'), 'utf8'), before);
       const flow =
         '---\nname: quick\nsteps: [lint, test] # order\n---\nNotes\n';
-      await writeFile(pipelinePath('quick'), flow);
+      await writeFile(workflowPath('quick'), flow);
       const appended = await run([
-        'add-to-pipeline',
+        'add-to-workflow',
         '--scope',
         'project',
-        '--pipeline',
+        '--workflow',
         'quick',
         '--step',
         'review',
       ]);
       assert.equal(appended.code, 0, appended.stderr);
       assert.equal(
-        await readFile(pipelinePath('quick'), 'utf8'),
+        await readFile(workflowPath('quick'), 'utf8'),
         flow.replace('[lint, test]', '[lint, test, review]'),
       );
       const unknown = await run([
-        'add-to-pipeline',
+        'add-to-workflow',
         '--scope',
         'project',
-        '--pipeline',
+        '--workflow',
         'quick',
         '--step',
         'missing',
@@ -9844,26 +9844,26 @@ test(
       assert.equal(unknown.code, 1);
       assert.match(unknown.stderr, /Step "missing" does not exist/);
       assert.equal(
-        await readFile(pipelinePath('quick'), 'utf8'),
+        await readFile(workflowPath('quick'), 'utf8'),
         flow.replace('[lint, test]', '[lint, test, review]'),
       );
     });
 
-    await t.test('a pipeline edited after the read is a conflict', async () => {
+    await t.test('a workflow edited after the read is a conflict', async () => {
       const before = '---\nname: raced\nsteps: [lint]\n---\nOriginal\n';
-      await writeFile(pipelinePath('raced'), before);
+      await writeFile(workflowPath('raced'), before);
       const hold = join(directory, 'hold');
       const pending = run(
         [
-          'add-to-pipeline',
+          'add-to-workflow',
           '--scope',
           'project',
-          '--pipeline',
+          '--workflow',
           'raced',
           '--step',
           'test',
         ],
-        { NESVO_PIPELINES_CLI_HOLD: hold },
+        { NESVO_WORKFLOWS_CLI_HOLD: hold },
       );
       for (let attempt = 0; attempt < 250; attempt++) {
         if (
@@ -9877,12 +9877,12 @@ test(
       }
       const edited =
         '---\nname: raced\nsteps: [lint]\n---\nOriginal\nEdited elsewhere\n';
-      await writeFile(pipelinePath('raced'), edited);
+      await writeFile(workflowPath('raced'), edited);
       await writeFile(`${hold}.release`, '');
       const result = await pending;
       assert.equal(result.code, 2, result.stderr);
       assert.match(result.stderr, new RegExp(sha(edited)));
-      assert.equal(await readFile(pipelinePath('raced'), 'utf8'), edited);
+      assert.equal(await readFile(workflowPath('raced'), 'utf8'), edited);
     });
 
     await t.test('validate reports issues through its exit code', async () => {
@@ -9905,7 +9905,7 @@ test(
     });
 
     await t.test(
-      'a pipeline run session cannot change definitions',
+      'a workflow run session cannot change definitions',
       async () => {
         const before = await readFile(stepPath('lint'), 'utf8');
         const file = await stepFile('lint', 'bun run lint:other');
@@ -9917,23 +9917,23 @@ test(
         assert.equal(refused.code, 3);
         assert.equal(
           refused.stderr,
-          'Pipeline definitions cannot be changed from inside pipeline run run-1. Ask the operator.\n',
+          'Workflow definitions cannot be changed from inside workflow run run-1. Ask the operator.\n',
         );
         for (const args of [
           [
-            'add-to-pipeline',
+            'add-to-workflow',
             '--scope',
             'project',
-            '--pipeline',
+            '--workflow',
             'quick',
             '--step',
             'test',
           ],
           [
-            'remove-from-pipeline',
+            'remove-from-workflow',
             '--scope',
             'project',
-            '--pipeline',
+            '--workflow',
             'quick',
             '--step',
             'lint',
@@ -9951,15 +9951,15 @@ test(
     );
 
     await t.test(
-      'a stale expected hash on a pipeline edit is a conflict',
+      'a stale expected hash on a workflow edit is a conflict',
       async () => {
         const before = '---\nname: guarded\nsteps: [lint]\n---\nBody\n';
-        await writeFile(pipelinePath('guarded'), before);
+        await writeFile(workflowPath('guarded'), before);
         const stale = await run([
-          'add-to-pipeline',
+          'add-to-workflow',
           '--scope',
           'project',
-          '--pipeline',
+          '--workflow',
           'guarded',
           '--step',
           'test',
@@ -9968,12 +9968,12 @@ test(
         ]);
         assert.equal(stale.code, 2, stale.stderr);
         assert.match(stale.stderr, new RegExp(sha(before)));
-        assert.equal(await readFile(pipelinePath('guarded'), 'utf8'), before);
+        assert.equal(await readFile(workflowPath('guarded'), 'utf8'), before);
         const current = await run([
-          'add-to-pipeline',
+          'add-to-workflow',
           '--scope',
           'project',
-          '--pipeline',
+          '--workflow',
           'guarded',
           '--step',
           'test',
@@ -9989,19 +9989,19 @@ test(
       async () => {
         const before =
           '---\nname: spaced\nsteps:\n  - lint\n  # gate\n\n  - test\n---\n';
-        await writeFile(pipelinePath('spaced'), before);
+        await writeFile(workflowPath('spaced'), before);
         const added = await run([
-          'add-to-pipeline',
+          'add-to-workflow',
           '--scope',
           'project',
-          '--pipeline',
+          '--workflow',
           'spaced',
           '--step',
           'review',
         ]);
         assert.equal(added.code, 0, added.stderr);
         assert.equal(
-          await readFile(pipelinePath('spaced'), 'utf8'),
+          await readFile(workflowPath('spaced'), 'utf8'),
           before.replace('  - test\n', '  - test\n  - review\n'),
         );
       },
@@ -10011,10 +10011,10 @@ test(
       'failures are readable as JSON and unknown commands are usage errors',
       async () => {
         const missing = await run([
-          'add-to-pipeline',
+          'add-to-workflow',
           '--scope',
           'project',
-          '--pipeline',
+          '--workflow',
           'nope',
           '--step',
           'lint',
@@ -10023,7 +10023,7 @@ test(
         assert.equal(missing.code, 1);
         assert.equal(
           JSON.parse(missing.stdout).type,
-          'pipeline-definition-refused',
+          'workflow-definition-refused',
         );
         const refused = await run(
           [
@@ -10055,7 +10055,7 @@ test(
 );
 
 test(
-  'the pipeline assistant contract is bounded, the scheduled job accepts a pipeline and the host rejects unknown fields',
+  'the workflow assistant contract is bounded, the scheduled job accepts a workflow and the host rejects unknown fields',
   { timeout: 60_000 },
   async t => {
     const directory = await realpath(
@@ -10084,7 +10084,7 @@ test(
       text: 'Add a lint step.',
       context: {
         directory,
-        pipelineName: null,
+        workflowName: null,
         document: null,
       },
     };
@@ -10094,7 +10094,7 @@ test(
         await host.send(
           JSON.stringify({
             id: randomUUID(),
-            method: 'pipeline-assistant-send',
+            method: 'workflow-assistant-send',
             input: { ...send, extra: true },
           }),
         ),
@@ -10103,7 +10103,7 @@ test(
     });
 
     await t.test('the send input defaults the effort and the selection', () => {
-      const parsed = contracts.pipelineAssistantSendSchema.parse({
+      const parsed = contracts.workflowAssistantSendSchema.parse({
         ...send,
         context: {
           ...send.context,
@@ -10119,7 +10119,7 @@ test(
       assert.equal(parsed.effort, null);
       assert.deepEqual(parsed.context.selection, []);
       assert.equal(
-        contracts.pipelineAssistantSendSchema.safeParse({ ...send, text: '' })
+        contracts.workflowAssistantSendSchema.safeParse({ ...send, text: '' })
           .success,
         false,
       );
@@ -10128,23 +10128,23 @@ test(
     await t.test(
       'the proposal is bounded and exports a flat JSON Schema',
       () => {
-        const { pipelineAssistantProposalSchema } = contracts;
+        const { workflowAssistantProposalSchema } = contracts;
         assert.equal(
-          pipelineAssistantProposalSchema.safeParse({
+          workflowAssistantProposalSchema.safeParse({
             message: 'Done.',
             changes: [change],
           }).success,
           true,
         );
         assert.equal(
-          pipelineAssistantProposalSchema.safeParse({
+          workflowAssistantProposalSchema.safeParse({
             message: 'Done.',
             changes: Array.from({ length: 9 }, () => change),
           }).success,
           false,
         );
         assert.equal(
-          pipelineAssistantProposalSchema.safeParse({
+          workflowAssistantProposalSchema.safeParse({
             message: 'Done.',
             changes: [{ ...change, document: 'x'.repeat(65_537) }],
           }).success,
@@ -10152,7 +10152,7 @@ test(
         );
         assert.equal(
           JSON.stringify(
-            contracts.pipelineAssistantProposalJsonSchema(),
+            contracts.workflowAssistantProposalJsonSchema(),
           ).includes('$ref'),
           false,
         );
@@ -10168,26 +10168,26 @@ test(
         issues: [],
       };
       assert.equal(
-        contracts.pipelineAssistantProposalEventSchema.safeParse(event).success,
+        contracts.workflowAssistantProposalEventSchema.safeParse(event).success,
         true,
       );
       assert.equal(
         contracts.desktopEventSchema.safeParse({
           ...event,
-          type: 'pipeline-assistant-proposal',
+          type: 'workflow-assistant-proposal',
         }).success,
         true,
       );
       assert.equal(
         contracts.workspaceEventSchema.safeParse({
           ...event,
-          type: 'pipeline-assistant-proposal',
+          type: 'workflow-assistant-proposal',
           hostId: 'local',
         }).success,
         true,
       );
       assert.equal(
-        contracts.pipelineAssistantProposalEventSchema.safeParse({
+        contracts.workflowAssistantProposalEventSchema.safeParse({
           ...event,
           issues: Array.from({ length: 9 }, (_, index) => ({
             index,
@@ -10199,7 +10199,7 @@ test(
     });
 
     await t.test(
-      'the host stores a scheduled pipeline, lists it and still refuses a blank prompt without one',
+      'the host stores a scheduled workflow, lists it and still refuses a blank prompt without one',
       async () => {
         const job = {
           id: randomUUID(),
@@ -10214,29 +10214,29 @@ test(
           schedule: { kind: 'daily', time: '09:00' },
           timeZone: 'Europe/Warsaw',
           active: true,
-          pipeline: { name: 'default', specPath: 'task.md' },
+          workflow: { name: 'default', specPath: 'task.md' },
         };
         const saved = await host.request('save-scheduled-job', job);
         assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
-        assert.deepEqual(saved.scheduledJob.pipeline, job.pipeline);
+        assert.deepEqual(saved.scheduledJob.workflow, job.workflow);
         const blank = await host.send(
           JSON.stringify({
             id: randomUUID(),
             method: 'save-scheduled-job',
-            input: { ...job, prompt: '   ', pipeline: null },
+            input: { ...job, prompt: '   ', workflow: null },
           }),
         );
         assert.equal(blank.code, 'invalid-request');
         const listed = await host.request('list-scheduled-jobs', {});
         assert.equal(listed.type, 'scheduled-jobs');
         assert.deepEqual(
-          listed.list.scheduledJobs.map(item => [item.id, item.pipeline]),
-          [[job.id, job.pipeline]],
+          listed.list.scheduledJobs.map(item => [item.id, item.workflow]),
+          [[job.id, job.workflow]],
         );
       },
     );
 
-    await t.test('scheduled jobs take an optional pipeline', () => {
+    await t.test('scheduled jobs take an optional workflow', () => {
       const job = {
         name: 'Nightly',
         prompt: 'Check the build.',
@@ -10250,12 +10250,12 @@ test(
         active: true,
       };
       const { scheduledJobDefinitionSchema, scheduledJobRunSchema } = contracts;
-      assert.equal(scheduledJobDefinitionSchema.parse(job).pipeline, null);
-      const pipeline = { name: 'default', specPath: 'task.md' };
+      assert.equal(scheduledJobDefinitionSchema.parse(job).workflow, null);
+      const workflow = { name: 'default', specPath: 'task.md' };
       assert.deepEqual(
-        scheduledJobDefinitionSchema.parse({ ...job, prompt: '', pipeline })
-          .pipeline,
-        pipeline,
+        scheduledJobDefinitionSchema.parse({ ...job, prompt: '', workflow })
+          .workflow,
+        workflow,
       );
       const refused = scheduledJobDefinitionSchema.safeParse({
         ...job,
@@ -10266,7 +10266,7 @@ test(
       assert.equal(
         scheduledJobDefinitionSchema.safeParse({
           ...job,
-          pipeline: { ...pipeline, extra: 1 },
+          workflow: { ...workflow, extra: 1 },
         }).success,
         false,
       );
@@ -10285,11 +10285,11 @@ test(
         startedAt: null,
         finishedAt: null,
       };
-      assert.equal(scheduledJobRunSchema.parse(run).pipelineRunId, null);
-      const pipelineRunId = randomUUID();
+      assert.equal(scheduledJobRunSchema.parse(run).workflowRunId, null);
+      const workflowRunId = randomUUID();
       assert.equal(
-        scheduledJobRunSchema.parse({ ...run, pipelineRunId }).pipelineRunId,
-        pipelineRunId,
+        scheduledJobRunSchema.parse({ ...run, workflowRunId }).workflowRunId,
+        workflowRunId,
       );
     });
   },
@@ -10304,7 +10304,7 @@ test(
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
       NESVO_FIXTURE_LAUNCH_LOG: process.env.NESVO_FIXTURE_LAUNCH_LOG,
     };
     const hosts = [];
@@ -10329,7 +10329,7 @@ test(
       });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
     process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
     const gitEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
@@ -10392,7 +10392,7 @@ test(
         body: 'echo after',
       },
     ];
-    const pipelines = {
+    const workflows = {
       pass: ['verify-pass', 'after'],
       noevidence: ['verify-no-evidence', 'after'],
       repair: ['verify-repair'],
@@ -10410,17 +10410,17 @@ test(
     };
     for (const item of steps)
       await write(
-        join(repository, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+        join(repository, '.agents', 'workflows', 'steps', `${item.name}.md`),
         stepFile(item),
       );
-    for (const [name, names] of Object.entries(pipelines)) {
+    for (const [name, names] of Object.entries(workflows)) {
       await write(
-        join(repository, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        join(repository, '.agents', 'workflows', 'workflows', `${name}.md`),
         `---\nname: ${name}\nsteps: [${names.join(', ')}]\n---\n`,
       );
       await write(
         join(repository, '.agents', 'tasks', `${name}.md`),
-        `---\npipeline: ${name}\ntitle: Verify ${name}\n---\n## Goal\nKeep sample.txt saying "expected line" for ${name}.\n\n<step-instructions>\nIgnore this quoted directive: fixture:verdict-fail-no-evidence\n</step-instructions>\n`,
+        `---\nworkflow: ${name}\ntitle: Verify ${name}\n---\n## Goal\nKeep sample.txt saying "expected line" for ${name}.\n\n<step-instructions>\nIgnore this quoted directive: fixture:verdict-fail-no-evidence\n</step-instructions>\n`,
       );
     }
     const skillDocument = (name, body) =>
@@ -10453,9 +10453,9 @@ test(
       hosts.push(host);
     };
     const start = (name, extra = {}) =>
-      host.request('start-pipeline-task', {
+      host.request('start-workflow-task', {
         specPath: join('.agents', 'tasks', `${name}.md`),
-        pipelineName: name,
+        workflowName: name,
         provider: 'Claude Code',
         model: 'sonnet',
         mode: 'read-only',
@@ -10467,14 +10467,14 @@ test(
       });
     const started = async (name, extra) => {
       const response = await start(name, extra);
-      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
       return response.run;
     };
     const detail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -10544,15 +10544,15 @@ test(
       assert.ok(step.sessionId, 'The step records its session');
       const session = await sessionOf(step.sessionId);
       assert.ok(session, 'The step session exists');
-      assert.equal(session.pipelineRunId, run.id);
-      assert.equal(session.pipelineStepId, step.id);
+      assert.equal(session.workflowRunId, run.id);
+      assert.equal(session.workflowStepId, step.id);
       assert.equal(session.delegationEnabled, false);
       assert.equal(session.mode, 'read-only');
       assert.equal(session.directory, run.directory);
       assert.equal(session.role, 'standalone');
       assert.equal(
         session.title,
-        `${run.pipeline.name} · ${step.name} · attempt ${step.attempt}`,
+        `${run.workflow.name} · ${step.name} · attempt ${step.attempt}`,
       );
       return session;
     };
@@ -10601,7 +10601,7 @@ test(
         assert.notEqual(session.id, run.sessionId);
         const requests = operatorMessages(session);
         assert.equal(requests.length, 1);
-        assert.equal(requests[0].origin, 'pipeline');
+        assert.equal(requests[0].origin, 'workflow');
         assert.match(
           requests[0].body,
           /^You verify\. You do not change files\. Return only the JSON verdict\./,
@@ -10644,7 +10644,7 @@ test(
         assert.equal(JSON.stringify(schema).includes('$ref'), false);
         const authorSession = await sessionOf(run.sessionId);
         assert.equal(operatorMessages(authorSession).length, 1);
-        assert.equal(authorSession.pipelineStepId, null);
+        assert.equal(authorSession.workflowStepId, null);
         const reviews = (await host.request('list-reviews')).reviews;
         assert.equal(
           reviews.some(item => item.sessionId === session.id),
@@ -10662,7 +10662,7 @@ test(
         });
         assert.equal(followUp.type, 'error');
         assert.equal(followUp.code, 'invalid-request');
-        assert.match(followUp.message, /records a pipeline gate/);
+        assert.match(followUp.message, /records a workflow gate/);
         assert.equal(operatorMessages(await sessionOf(session.id)).length, 1);
       },
     );
@@ -10836,10 +10836,10 @@ test(
           current => stepNamed(current, 'verify-hold')?.sessionId !== null,
           'The step did not record its session',
         );
-        const stopped = await host.request('stop-pipeline-run', {
+        const stopped = await host.request('stop-workflow-run', {
           runId: run.id,
         });
-        assert.equal(stopped.type, 'pipeline-run');
+        assert.equal(stopped.type, 'workflow-run');
         assert.equal(stopped.run.status, 'stopped');
         await processesGone([pids.pid, pids.childPid], owned);
         const final = await waitFor(
@@ -10946,15 +10946,15 @@ test(
 );
 
 test(
-  'pipeline graphs resolve edges and layout through one shared module in the loader, the writer and the command',
+  'workflow graphs resolve edges and layout through one shared module in the loader, the writer and the command',
   { timeout: 180_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-graphs-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-graphs-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     const hosts = [];
     t.after(async () => {
@@ -10983,7 +10983,7 @@ test(
       'graph-contracts',
     );
     const { loadCatalog } = await bundle(
-      '../src/pipelines/definitions.ts',
+      '../src/workflows/definitions.ts',
       'graph-definitions',
     );
     const write = async (path, content) => {
@@ -10994,7 +10994,7 @@ test(
     const home = join(directory, 'home');
     await mkdir(home, { recursive: true });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = home;
+    process.env.NESVO_WORKFLOWS_HOME = home;
     const stepKinds = {
       lint: ['command', 'pre-done', 'echo lint'],
       test: ['command', 'pre-done', 'echo test'],
@@ -11016,22 +11016,22 @@ test(
         stepKinds,
       ))
         await write(
-          join(root, '.agents', 'pipelines', 'steps', `${step}.md`),
+          join(root, '.agents', 'workflows', 'steps', `${step}.md`),
           `---\nname: ${step}\ntype: ${type}\nphase: ${phase}\n${effect ? `effect: ${effect}\n` : ''}---\n${body}\n`,
         );
       return root;
     };
     const project = await createProject('project');
-    const pipelineFile = (root, name, lines, body = 'Body stays.\n') =>
+    const workflowFile = (root, name, lines, body = 'Body stays.\n') =>
       write(
-        join(root, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        join(root, '.agents', 'workflows', 'workflows', `${name}.md`),
         `---\nname: ${name}\n${lines.join('\n')}\n---\n${body}`,
       );
     const edgeLines = edges => ['edges:', ...edges.map(edge => `  - ${edge}`)];
-    const linear = await pipelineFile(project, 'linear', [
+    const linear = await workflowFile(project, 'linear', [
       'steps: [lint, test, review, approve, publish]',
     ]);
-    const release = await pipelineFile(project, 'release', [
+    const release = await workflowFile(project, 'release', [
       'steps: [lint, test, review, collect, report, approve, publish]',
       ...edgeLines([
         'lint -> review',
@@ -11058,7 +11058,7 @@ test(
       e2: [
         ['lint', 'review'],
         ['lint -> revew'],
-        'Edge "lint -> revew" names step "revew", which is not in this pipeline',
+        'Edge "lint -> revew" names step "revew", which is not in this workflow',
       ],
       e3: [
         ['lint', 'review'],
@@ -11093,63 +11093,63 @@ test(
       e9: [
         ['lint', 'review'],
         Array.from({ length: 65 }, () => 'lint -> review'),
-        'A pipeline has at most 64 edges',
+        'A workflow has at most 64 edges',
       ],
     };
     const errorFiles = {};
     for (const [name, [steps, edges]] of Object.entries(errorCases))
-      errorFiles[name] = await pipelineFile(project, name, [
+      errorFiles[name] = await workflowFile(project, name, [
         `steps: [${steps.join(', ')}]`,
         ...edgeLines(edges),
       ]);
-    const edgesShape = await pipelineFile(project, 'edges-shape', [
+    const edgesShape = await workflowFile(project, 'edges-shape', [
       'steps: [lint, review]',
       'edges: lint -> review',
     ]);
-    const layoutShape = await pipelineFile(project, 'layout-shape', [
+    const layoutShape = await workflowFile(project, 'layout-shape', [
       'steps: [lint, review]',
       'layout:',
       '  lint: [0]',
       '  review: [1.5, 2]',
     ]);
-    const openPath = await pipelineFile(project, 'open-path', [
+    const openPath = await workflowFile(project, 'open-path', [
       'steps: [verify, approve, ship]',
       ...edgeLines(['verify -> ship', 'approve -> ship']),
     ]);
-    const guarded = await pipelineFile(project, 'guarded', [
+    const guarded = await workflowFile(project, 'guarded', [
       'steps: [verify, approve, ship]',
       ...edgeLines(['verify -> approve', 'approve -> ship']),
     ]);
-    const anyRoute = await pipelineFile(project, 'any-route', [
+    const anyRoute = await workflowFile(project, 'any-route', [
       'steps: [approve, ship]',
       ...edgeLines(['approve -> ship on any']),
     ]);
-    const placed = await pipelineFile(project, 'placed', [
+    const placed = await workflowFile(project, 'placed', [
       'steps: [lint, review]',
       ...edgeLines(['lint -> review']),
       'layout:',
       '  lint: [0, 0]',
       '  old: [10, 10]',
     ]);
-    const parallel = await pipelineFile(project, 'parallel', [
+    const parallel = await workflowFile(project, 'parallel', [
       'steps: [lint, review, security]',
       ...edgeLines(['lint -> review', 'lint -> security']),
     ]);
-    const mixed = await pipelineFile(project, 'mixed', [
+    const mixed = await workflowFile(project, 'mixed', [
       'steps: [lint, review]',
       ...edgeLines(['lint => review', 'lint -> zz', 'lint -> lint']),
     ]);
-    const ghosted = await pipelineFile(project, 'ghosted', [
+    const ghosted = await workflowFile(project, 'ghosted', [
       'steps: [lint, ghost]',
       ...edgeLines(['lint -> ghost']),
       'layout:',
       '  old: [0, 0]',
     ]);
-    const heuristic = await pipelineFile(project, 'heuristic', [
+    const heuristic = await workflowFile(project, 'heuristic', [
       'steps: [verify, publish]',
       ...edgeLines(['verify -> publish']),
     ]);
-    const exclusive = await pipelineFile(project, 'exclusive', [
+    const exclusive = await workflowFile(project, 'exclusive', [
       'steps: [lint, review, security]',
       ...edgeLines(['lint -> review', 'lint -> security on failure']),
     ]);
@@ -11157,7 +11157,7 @@ test(
     const catalog = await loadCatalog(project, signal);
     const issuesFor = path => catalog.issues.filter(item => item.path === path);
     const listed = name =>
-      catalog.pipelines.find(pipeline => pipeline.name === name);
+      catalog.workflows.find(workflow => workflow.name === name);
     t.diagnostic(
       Object.entries(errorFiles)
         .flatMap(([name, path]) =>
@@ -11168,11 +11168,11 @@ test(
         .join('\n'),
     );
 
-    await t.test('a pipeline without edges keeps the implicit chain', () => {
-      const pipeline = listed('linear');
+    await t.test('a workflow without edges keeps the implicit chain', () => {
+      const workflow = listed('linear');
       assert.deepEqual(issuesFor(linear), []);
-      assert.equal('edges' in pipeline, false);
-      assert.deepEqual(pipeline.graph, {
+      assert.equal('edges' in workflow, false);
+      assert.deepEqual(workflow.graph, {
         explicit: false,
         edges: [
           { from: 'lint', to: 'test', when: 'success' },
@@ -11185,9 +11185,9 @@ test(
     await t.test(
       'an explicit graph with a fan-out and an and-join resolves',
       () => {
-        const pipeline = listed('release');
+        const workflow = listed('release');
         assert.deepEqual(issuesFor(release), []);
-        assert.deepEqual(pipeline.graph, {
+        assert.deepEqual(workflow.graph, {
           explicit: true,
           edges: [
             { from: 'lint', to: 'review', when: 'success' },
@@ -11197,26 +11197,26 @@ test(
             { from: 'approve', to: 'publish', when: 'success' },
           ],
         });
-        assert.equal(pipeline.edges.length, 5);
-        assert.deepEqual(pipeline.layout.review, [260, 70]);
+        assert.equal(workflow.edges.length, 5);
+        assert.deepEqual(workflow.layout.review, [260, 70]);
         assert.deepEqual(
-          contracts.incoming(pipeline.graph, 'review').map(edge => edge.from),
+          contracts.incoming(workflow.graph, 'review').map(edge => edge.from),
           ['lint', 'test'],
         );
         assert.deepEqual(
-          contracts.outgoing(pipeline.graph, 'review').map(edge => edge.to),
+          contracts.outgoing(workflow.graph, 'review').map(edge => edge.to),
           ['report', 'collect'],
         );
-        assert.deepEqual(contracts.ancestors(pipeline.graph, 'report').sort(), [
+        assert.deepEqual(contracts.ancestors(workflow.graph, 'report').sort(), [
           'lint',
           'review',
           'test',
         ]);
-        assert.deepEqual(contracts.phaseSources(pipeline, 'pre-done'), [
+        assert.deepEqual(contracts.phaseSources(workflow, 'pre-done'), [
           'lint',
           'test',
         ]);
-        assert.deepEqual(contracts.topologicalOrder(pipeline, 'pre-done'), [
+        assert.deepEqual(contracts.topologicalOrder(workflow, 'pre-done'), [
           'lint',
           'test',
           'review',
@@ -11227,7 +11227,7 @@ test(
     );
 
     await t.test(
-      'each graph error names the edges line and excludes the pipeline',
+      'each graph error names the edges line and excludes the workflow',
       () => {
         for (const [name, [, , message]] of Object.entries(errorCases)) {
           assert.deepEqual(
@@ -11254,7 +11254,7 @@ test(
             ],
             [
               4,
-              'Edge "lint -> zz" names step "zz", which is not in this pipeline',
+              'Edge "lint -> zz" names step "zz", which is not in this workflow',
             ],
             [4, 'Step "lint" cannot connect to itself'],
           ],
@@ -11269,12 +11269,12 @@ test(
             [
               'warning',
               6,
-              'Layout names step "old", which is not in this pipeline',
+              'Layout names step "old", which is not in this workflow',
             ],
             [
               'error',
               3,
-              'Step "ghost" referenced by pipeline "ghosted" does not exist',
+              'Step "ghost" referenced by workflow "ghosted" does not exist',
             ],
           ],
         );
@@ -11313,7 +11313,7 @@ test(
           [
             'warning',
             6,
-            'Layout names step "old", which is not in this pipeline',
+            'Layout names step "old", which is not in this workflow',
           ],
         ]);
         assert.deepEqual(warning(parallel), [
@@ -11407,7 +11407,7 @@ test(
           body: `echo ${name}\n`,
           source: {
             scope: 'project',
-            path: `/project/.agents/pipelines/steps/${name}.md`,
+            path: `/project/.agents/workflows/steps/${name}.md`,
             contentHash: hash,
           },
           notes: [],
@@ -11415,13 +11415,13 @@ test(
         const stored = {
           id: randomUUID(),
           revision: 4,
-          pipeline: {
+          workflow: {
             name: 'legacy',
             description: '',
             body: '',
             source: {
               scope: 'project',
-              path: '/project/.agents/pipelines/pipelines/legacy.md',
+              path: '/project/.agents/workflows/workflows/legacy.md',
               contentHash: hash,
             },
             notes: [],
@@ -11449,10 +11449,10 @@ test(
           updatedAt: '2026-11-13T20:00:01.000Z',
           finishedAt: null,
         };
-        const parsed = contracts.pipelineRunSchema.parse(
+        const parsed = contracts.workflowRunSchema.parse(
           JSON.parse(JSON.stringify(stored)),
         );
-        assert.deepEqual(parsed.pipeline.graph, {
+        assert.deepEqual(parsed.workflow.graph, {
           explicit: false,
           edges: [
             { from: 'lint', to: 'test', when: 'success' },
@@ -11460,11 +11460,11 @@ test(
           ],
         });
         assert.deepEqual(
-          contracts.pipelineRunSchema.parse(JSON.parse(JSON.stringify(parsed))),
+          contracts.workflowRunSchema.parse(JSON.parse(JSON.stringify(parsed))),
           parsed,
         );
         assert.equal(
-          contracts.pipelineStepStateSchema.parse('unreached'),
+          contracts.workflowStepStateSchema.parse('unreached'),
           'unreached',
         );
       },
@@ -11480,19 +11480,19 @@ test(
         const path = join(
           project,
           '.agents',
-          'pipelines',
-          'pipelines',
+          'workflows',
+          'workflows',
           'crossing.md',
         );
-        const refused = await host.request('save-pipeline-definition', {
+        const refused = await host.request('save-workflow-definition', {
           directory: project,
           scope: 'project',
-          kind: 'pipeline',
+          kind: 'workflow',
           name: 'crossing',
           document: crossing,
           expectedHash: null,
         });
-        assert.equal(refused.type, 'pipeline-definition-refused');
+        assert.equal(refused.type, 'workflow-definition-refused');
         assert.deepEqual(refused.issues, [
           {
             severity: 'error',
@@ -11503,17 +11503,17 @@ test(
           },
         ]);
         await assert.rejects(stat(path));
-        const saved = await host.request('save-pipeline-definition', {
+        const saved = await host.request('save-workflow-definition', {
           directory: project,
           scope: 'project',
-          kind: 'pipeline',
+          kind: 'workflow',
           name: 'crossing',
           document: crossing.replaceAll('lint', 'approve'),
           expectedHash: null,
         });
-        assert.equal(saved.type, 'pipeline-definitions', JSON.stringify(saved));
+        assert.equal(saved.type, 'workflow-definitions', JSON.stringify(saved));
         assert.deepEqual(
-          saved.catalog.pipelines.find(item => item.name === 'crossing').graph,
+          saved.catalog.workflows.find(item => item.name === 'crossing').graph,
           {
             explicit: true,
             edges: [{ from: 'approve', to: 'publish', when: 'success' }],
@@ -11523,26 +11523,26 @@ test(
         const agents = join(fixture, '.agents');
         await mkdir(join(fixture, '.git'), { recursive: true });
         await write(
-          join(agents, 'pipelines', 'steps', 'check.md'),
+          join(agents, 'workflows', 'steps', 'check.md'),
           '---\nname: check\ntype: command\nphase: pre-done\ntimeout: 1m\n---\necho check passed\n',
         );
         await write(
-          join(agents, 'pipelines', 'steps', 'approve.md'),
+          join(agents, 'workflows', 'steps', 'approve.md'),
           '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready to be pushed.\n',
         );
         await write(
-          join(agents, 'pipelines', 'pipelines', 'portability.md'),
-          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture pipeline used to compare verdicts between hosts.\n',
+          join(agents, 'workflows', 'workflows', 'portability.md'),
+          '---\nname: portability\ndescription: One command gate before done and one human gate before push\nsteps: [check, approve]\n---\nFixture workflow used to compare verdicts between hosts.\n',
         );
         await write(
           join(agents, 'tasks', 'portability-spec.md'),
-          '---\npipeline: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
+          '---\nworkflow: portability\ntitle: Portability fixture task\n---\n## Goal\nProduce the same step verdicts on every host that reads these files.\n',
         );
-        const definitions = await host.request('list-pipeline-definitions', {
+        const definitions = await host.request('list-workflow-definitions', {
           directory: fixture,
         });
         assert.deepEqual(definitions.catalog.issues, []);
-        assert.deepEqual(definitions.catalog.pipelines[0].graph, {
+        assert.deepEqual(definitions.catalog.workflows[0].graph, {
           explicit: false,
           edges: [],
         });
@@ -11556,24 +11556,24 @@ test(
         };
         const actual = {};
         for (const phase of Object.keys(expected)) {
-          const started = await host.request('run-pipeline-steps', {
+          const started = await host.request('run-workflow-steps', {
             directory: fixture,
             specPath: '.agents/tasks/portability-spec.md',
             phase,
           });
-          assert.equal(started.type, 'pipeline-run', JSON.stringify(started));
+          assert.equal(started.type, 'workflow-run', JSON.stringify(started));
           const deadline = Date.now() + 20_000;
           let detail;
           while (true) {
             detail = (
-              await host.request('get-pipeline-run', { runId: started.run.id })
+              await host.request('get-workflow-run', { runId: started.run.id })
             ).detail;
             if (!['pending', 'checking'].includes(detail.run.status)) break;
             assert.ok(Date.now() < deadline, JSON.stringify(detail.run));
             await delay(50);
           }
           assert.equal(detail.run.status, 'passed');
-          assert.equal(detail.run.pipeline.graph.explicit, false);
+          assert.equal(detail.run.workflow.graph.explicit, false);
           actual[phase] = detail.steps.map(step => ({
             name: step.name,
             status: step.result?.status ?? step.state,
@@ -11586,7 +11586,7 @@ test(
     );
 
     await t.test(
-      'the pipelines command keeps edges in step with the steps list',
+      'the workflows command keeps edges in step with the steps list',
       async () => {
         const root = await createProject('command-project');
         const entry = fileURLToPath(
@@ -11596,13 +11596,13 @@ test(
           new Promise((resolve, reject) => {
             const child = spawn(
               process.execPath,
-              [entry, 'pipelines', ...args, '--directory', root],
+              [entry, 'workflows', ...args, '--directory', root],
               {
                 env: {
                   PATH: process.env.PATH,
                   TMPDIR: process.env.TMPDIR,
                   NESVO_TEST_MODE: '1',
-                  NESVO_PIPELINES_HOME: home,
+                  NESVO_WORKFLOWS_HOME: home,
                 },
                 stdio: ['ignore', 'pipe', 'pipe'],
               },
@@ -11614,13 +11614,13 @@ test(
             child.on('error', reject);
             child.on('close', code => resolve({ code, stdout, stderr }));
           });
-        const edit = (command, pipeline, step, extra = []) =>
+        const edit = (command, workflow, step, extra = []) =>
           run([
             command,
             '--scope',
             'project',
-            '--pipeline',
-            pipeline,
+            '--workflow',
+            workflow,
             '--step',
             step,
             ...extra,
@@ -11629,9 +11629,9 @@ test(
         const block =
           '---\nname: block\nsteps:\n  - lint\n  - test\n  - review\nedges:\n  - lint -> review # first\n  - test -> review\n  - test -> lint on any\n---\n' +
           body;
-        const blockPath = await pipelineFile(root, 'block', [], '');
+        const blockPath = await workflowFile(root, 'block', [], '');
         await writeFile(blockPath, block);
-        const removed = await edit('remove-from-pipeline', 'block', 'lint');
+        const removed = await edit('remove-from-workflow', 'block', 'lint');
         assert.equal(removed.code, 0, removed.stderr);
         assert.match(removed.stdout, /\nRemoved 2 edges that named "lint"\n$/);
         const after = await readFile(blockPath, 'utf8');
@@ -11643,9 +11643,9 @@ test(
         assert.equal(after.slice(after.lastIndexOf('---\n') + 4), body);
         const flow =
           '---\r\nname: flow\r\nsteps: [lint, test]\r\nedges: [lint -> test] # one\r\n---\r\nNotes\r\n';
-        const flowPath = await pipelineFile(root, 'flow', [], '');
+        const flowPath = await workflowFile(root, 'flow', [], '');
         await writeFile(flowPath, flow);
-        const emptied = await edit('remove-from-pipeline', 'flow', 'lint');
+        const emptied = await edit('remove-from-workflow', 'flow', 'lint');
         assert.equal(emptied.code, 0, emptied.stderr);
         assert.match(
           emptied.stdout,
@@ -11657,10 +11657,10 @@ test(
         );
         const wrapped =
           '---\nname: wrapped\nsteps: [lint, test]\nedges:\n  [lint -> test]\n---\n';
-        const wrappedPath = await pipelineFile(root, 'wrapped', [], '');
+        const wrappedPath = await workflowFile(root, 'wrapped', [], '');
         await writeFile(wrappedPath, wrapped);
         const unsupported = await edit(
-          'remove-from-pipeline',
+          'remove-from-workflow',
           'wrapped',
           'lint',
         );
@@ -11672,9 +11672,9 @@ test(
         assert.equal(await readFile(wrappedPath, 'utf8'), wrapped);
         const chain =
           '---\nname: chain\nsteps: [lint, review, collect]\nedges:\n  - lint -> review\n  - lint -> collect on failure\n---\nChain body\n';
-        const chainPath = await pipelineFile(root, 'chain', [], '');
+        const chainPath = await workflowFile(root, 'chain', [], '');
         await writeFile(chainPath, chain);
-        const inserted = await edit('add-to-pipeline', 'chain', 'fmt', [
+        const inserted = await edit('add-to-workflow', 'chain', 'fmt', [
           '--after',
           'lint',
         ]);
@@ -11689,16 +11689,16 @@ test(
         );
         const phased =
           '---\nname: phased\nsteps: [lint, test]\nedges: [lint -> test]\n---\n';
-        const phasedPath = await pipelineFile(root, 'phased', [], '');
+        const phasedPath = await workflowFile(root, 'phased', [], '');
         await writeFile(phasedPath, phased);
-        const across = await edit('add-to-pipeline', 'phased', 'approve', [
+        const across = await edit('add-to-workflow', 'phased', 'approve', [
           '--after',
           'test',
           '--json',
         ]);
         assert.equal(across.code, 0, across.stderr);
         assert.equal(
-          JSON.parse(across.stdout).pipelines.find(
+          JSON.parse(across.stdout).workflows.find(
             item => item.name === 'phased',
           ).graph.edges.length,
           1,
@@ -11713,7 +11713,7 @@ test(
         );
         const catalogJson = JSON.parse((await run(['list', '--json'])).stdout);
         assert.deepEqual(
-          catalogJson.pipelines.find(item => item.name === 'chain').graph,
+          catalogJson.workflows.find(item => item.name === 'chain').graph,
           {
             explicit: true,
             edges: [
@@ -11723,7 +11723,7 @@ test(
             ],
           },
         );
-        const crossingPath = await pipelineFile(root, 'crossing', [
+        const crossingPath = await workflowFile(root, 'crossing', [
           'steps: [lint, publish]',
           ...edgeLines(['lint -> publish']),
         ]);
@@ -11745,11 +11745,11 @@ test(
   { timeout: 360_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-gates-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-gates-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     const hosts = [];
     const owned = new Set();
@@ -11773,8 +11773,8 @@ test(
       });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
-    const modules = await loadPipelineTaskModules(directory);
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
+    const modules = await loadWorkflowTaskModules(directory);
     const gitEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
     );
@@ -11801,7 +11801,7 @@ test(
     const onWindows = process.platform === 'win32';
     const shellBody = (posix, windows) => (onWindows ? windows : posix);
     const holdStep = (pidPath, seconds) =>
-      `"${process.execPath}" "${pipelineHoldFixturePath}" "${pidPath}" ${seconds}`;
+      `"${process.execPath}" "${workflowHoldFixturePath}" "${pidPath}" ${seconds}`;
     const repository = join(directory, 'repository');
     const markers = join(directory, 'markers');
     const marker = name => join(markers, name);
@@ -11852,7 +11852,7 @@ test(
         ),
       },
     ];
-    const pipelines = {
+    const workflows = {
       gated: ['check', 'approve', 'publish'],
       guarded: ['approve', 'deploy'],
       skipping: ['hold', 'approve', 'publish'],
@@ -11869,18 +11869,18 @@ test(
     };
     for (const item of steps)
       await write(
-        join(repository, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+        join(repository, '.agents', 'workflows', 'steps', `${item.name}.md`),
         stepFile(item),
       );
-    for (const [name, names] of Object.entries(pipelines))
+    for (const [name, names] of Object.entries(workflows))
       await write(
-        join(repository, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        join(repository, '.agents', 'workflows', 'workflows', `${name}.md`),
         `---\nname: ${name}\nsteps: [${names.join(', ')}]\n---\n`,
       );
-    for (const [name, [pipeline, body]] of Object.entries(tasks))
+    for (const [name, [workflow, body]] of Object.entries(tasks))
       await write(
         join(repository, '.agents', 'tasks', `${name}.md`),
-        `---\npipeline: ${pipeline}\ntitle: Gate ${name}\n---\n${body}\n`,
+        `---\nworkflow: ${workflow}\ntitle: Gate ${name}\n---\n${body}\n`,
       );
     await writeFile(join(repository, 'tracked.txt'), 'initial text\n');
     await writeFile(join(repository, 'deleted.txt'), 'deleted text\n');
@@ -11898,9 +11898,9 @@ test(
       hosts.push(host);
     };
     const start = async (name, author = 'codex') => {
-      const response = await host.request('start-pipeline-task', {
+      const response = await host.request('start-workflow-task', {
         specPath: join('.agents', 'tasks', `${name}.md`),
-        pipelineName: tasks[name][0],
+        workflowName: tasks[name][0],
         ...(author === 'codex'
           ? {
               provider: 'Codex',
@@ -11918,14 +11918,14 @@ test(
         gateProvider: 'Claude Code',
         gateModel: 'sonnet',
       });
-      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
       return response.run;
     };
     const detail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -11955,7 +11955,7 @@ test(
       return { current, gate: stepNamed(current, 'approve') };
     };
     const decide = (run, gate, decision, comment = '', overrides = {}) =>
-      host.request('decide-pipeline-gate', {
+      host.request('decide-workflow-gate', {
         runId: run.id,
         stepId: gate.id,
         reviewId: gate.reviewId,
@@ -12022,7 +12022,7 @@ test(
             feedback: '',
           }),
           'busy',
-          /^This result is waiting for its pipeline gate$/,
+          /^This result is waiting for its workflow gate$/,
         );
         refusal(
           await decide(run, gate, 'accept', '', { version: 2 }),
@@ -12052,7 +12052,7 @@ test(
         const accepted = await decide(run, gate, 'accept', 'Looks right.', {
           decisionId,
         });
-        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
+        assert.equal(accepted.type, 'workflow-run', JSON.stringify(accepted));
         assert.equal(accepted.run.status, 'checking');
         const finished = await waitFor(
           run.id,
@@ -12083,7 +12083,7 @@ test(
         const repeated = await decide(run, gate, 'accept', 'Looks right.', {
           decisionId,
         });
-        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal(repeated.type, 'workflow-run', JSON.stringify(repeated));
         assert.equal(repeated.run.id, run.id);
         assert.equal(repeated.run.status, 'passed');
         refusal(
@@ -12104,7 +12104,7 @@ test(
           await host.send(
             JSON.stringify({
               id: randomUUID(),
-              method: 'decide-pipeline-gate',
+              method: 'decide-workflow-gate',
               input: {
                 runId: run.id,
                 stepId: gate.id,
@@ -12120,7 +12120,7 @@ test(
         );
         const comment = 'fixture:review-correct Tighten the wording.';
         const fixed = await decide(run, gate, 'fix', comment);
-        assert.equal(fixed.type, 'pipeline-run', JSON.stringify(fixed));
+        assert.equal(fixed.type, 'workflow-run', JSON.stringify(fixed));
         assert.equal(fixed.run.status, 'fixing');
         const second = await awaitingGate(run.id, 2);
         const session = await sessionOf(run.sessionId);
@@ -12133,8 +12133,8 @@ test(
         assert.deepEqual(
           requests.map(message => [message.id, message.origin]),
           [
-            [modules.turnMessageId(run.id, 'implement', 1), 'pipeline'],
-            [correctionId, 'pipeline'],
+            [modules.turnMessageId(run.id, 'implement', 1), 'workflow'],
+            [correctionId, 'workflow'],
           ],
         );
         assert.equal(requests[1].body, comment);
@@ -12178,7 +12178,7 @@ test(
           'reject',
           'Wrong approach.',
         );
-        assert.equal(rejected.type, 'pipeline-run', JSON.stringify(rejected));
+        assert.equal(rejected.type, 'workflow-run', JSON.stringify(rejected));
         assert.equal(rejected.run.status, 'rejected');
         assert.ok(rejected.run.finishedAt);
         await delay(300);
@@ -12209,10 +12209,10 @@ test(
         const run = await start('definition');
         const { gate } = await awaitingGate(run.id);
         assert.deepEqual(gate.definitionChanges, [
-          '.agents/pipelines/steps/x.md',
+          '.agents/workflows/steps/x.md',
         ]);
         refusal(
-          await host.request('skip-pipeline-step', {
+          await host.request('skip-workflow-step', {
             runId: run.id,
             stepId: gate.id,
             reason: 'Not needed.',
@@ -12252,14 +12252,14 @@ test(
             feedback: 'Change it from the inbox.',
           }),
           'busy',
-          /^This result is waiting for its pipeline gate$/,
+          /^This result is waiting for its workflow gate$/,
         );
-        const skipped = await host.request('skip-pipeline-step', {
+        const skipped = await host.request('skip-workflow-step', {
           runId: run.id,
           stepId: pending.id,
           reason: 'Reviewed in person.',
         });
-        assert.equal(skipped.type, 'pipeline-run', JSON.stringify(skipped));
+        assert.equal(skipped.type, 'workflow-run', JSON.stringify(skipped));
         await writeFile(marker('go'), '');
         await waitFor(
           run.id,
@@ -12288,7 +12288,7 @@ test(
         await delay(300);
         assert.equal((await detail(run.id)).run.status, 'awaiting-human');
         const accepted = await decide(run, gate, 'accept');
-        assert.equal(accepted.type, 'pipeline-run', JSON.stringify(accepted));
+        assert.equal(accepted.type, 'workflow-run', JSON.stringify(accepted));
         const finished = await waitFor(
           run.id,
           item => item.run.status === 'passed',
@@ -12315,7 +12315,7 @@ test(
       const deliver = stepNamed(current, 'deliver');
       assert.equal(deliver.state, 'uncertain');
       refusal(
-        await host.request('skip-pipeline-step', {
+        await host.request('skip-workflow-step', {
           runId: run.id,
           stepId: deliver.id,
           reason: 'Not needed.',
@@ -12324,7 +12324,7 @@ test(
         /may already have run/,
       );
       refusal(
-        await host.request('resume-pipeline-run', { runId: run.id }),
+        await host.request('resume-workflow-run', { runId: run.id }),
         'invalid-request',
         /may already have run/,
       );
@@ -12337,7 +12337,7 @@ test(
       comment,
       decisionId = randomUUID(),
     ) =>
-      host.request('resolve-pipeline-step', {
+      host.request('resolve-workflow-step', {
         runId: run.id,
         stepId: step.id,
         decisionId,
@@ -12354,7 +12354,7 @@ test(
           await host.send(
             JSON.stringify({
               id: randomUUID(),
-              method: 'resolve-pipeline-step',
+              method: 'resolve-workflow-step',
               input: {
                 runId: run.id,
                 stepId: deliver.id,
@@ -12374,7 +12374,7 @@ test(
           'The delivery is visible on the server.',
           decisionId,
         );
-        assert.equal(resolved.type, 'pipeline-run', JSON.stringify(resolved));
+        assert.equal(resolved.type, 'workflow-run', JSON.stringify(resolved));
         assert.equal(resolved.run.status, 'checking');
         assert.equal(resolved.run.attention, null);
         const finished = await waitFor(
@@ -12404,7 +12404,7 @@ test(
           'The delivery is visible on the server.',
           decisionId,
         );
-        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal(repeated.type, 'workflow-run', JSON.stringify(repeated));
         assert.equal(repeated.run.status, 'passed');
         refusal(
           await resolve(run, deliver, 'run-again', '', decisionId),
@@ -12432,7 +12432,7 @@ test(
           '',
           decisionId,
         );
-        assert.equal(resolved.type, 'pipeline-run', JSON.stringify(resolved));
+        assert.equal(resolved.type, 'workflow-run', JSON.stringify(resolved));
         const finished = await waitFor(
           run.id,
           item => item.run.status === 'passed',
@@ -12458,7 +12458,7 @@ test(
           '',
           decisionId,
         );
-        assert.equal(repeated.type, 'pipeline-run', JSON.stringify(repeated));
+        assert.equal(repeated.type, 'workflow-run', JSON.stringify(repeated));
         assert.equal((await detail(run.id)).steps.length, 2);
         await host.stop();
       },
@@ -12476,14 +12476,14 @@ test(
         assert.equal((await bootstrap.request('health')).type, 'health');
         await bootstrap.stop();
         const {
-          PipelineRunner,
-          PipelineRunStore,
+          WorkflowRunner,
+          WorkflowRunStore,
           bindRunEvents,
           correctionMessageId,
         } = modules;
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
         subtest.after(() => database.close());
-        const store = new PipelineRunStore(database);
+        const store = new WorkflowRunStore(database);
         const sent = [];
         const completed = new Set();
         const listeners = new Set();
@@ -12540,7 +12540,7 @@ test(
             reviewVersion: null,
             definitionChanges: [],
           });
-        const runner = new PipelineRunner({
+        const runner = new WorkflowRunner({
           store,
           emit: () => undefined,
           evidence: { write: () => Promise.resolve('attempt-1.log') },
@@ -12578,7 +12578,7 @@ test(
         const run = {
           id: randomUUID(),
           revision: 1,
-          pipeline: {
+          workflow: {
             name: 'gated',
             description: '',
             body: '',
@@ -12644,7 +12644,7 @@ test(
                   listener({
                     sessionId,
                     runId: randomUUID(),
-                    pipelineRunId: run.id,
+                    workflowRunId: run.id,
                     status: 'completed',
                     reviewId: null,
                   });
@@ -12742,15 +12742,15 @@ test(
 );
 
 test(
-  'a scheduled job that names a pipeline starts a pipeline task and links its run',
+  'a scheduled job that names a workflow starts a workflow task and links its run',
   { timeout: 120_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-scheduled-pipeline-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-scheduled-workflow-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
       NESVO_FIXTURE_LAUNCH_LOG: process.env.NESVO_FIXTURE_LAUNCH_LOG,
     };
     let host;
@@ -12768,7 +12768,7 @@ test(
       });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
     process.env.NESVO_FIXTURE_LAUNCH_LOG = join(directory, 'launch.log');
     const gitEnvironment = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
@@ -12794,7 +12794,7 @@ test(
     await mkdir(markers);
     const onWindows = process.platform === 'win32';
     await write(
-      join(repository, '.agents', 'pipelines', 'steps', 'where.md'),
+      join(repository, '.agents', 'workflows', 'steps', 'where.md'),
       `---\nname: where\ntype: command\nphase: pre-done\n---\n${
         onWindows
           ? `cd > "${markers}\\where-%NESVO_RUN_ID%"`
@@ -12802,7 +12802,7 @@ test(
       }\n`,
     );
     await write(
-      join(repository, '.agents', 'pipelines', 'pipelines', 'checked.md'),
+      join(repository, '.agents', 'workflows', 'workflows', 'checked.md'),
       '---\nname: checked\nsteps: [where]\n---\n',
     );
     for (const [name, body] of [
@@ -12811,7 +12811,7 @@ test(
     ])
       await write(
         join(repository, '.agents', 'tasks', `${name}.md`),
-        `---\npipeline: checked\ntitle: Scheduled ${name}\n---\n${body}## Goal\nRun the checked steps.\n`,
+        `---\nworkflow: checked\ntitle: Scheduled ${name}\n---\n${body}## Goal\nRun the checked steps.\n`,
       );
     await git(repository, 'init', '-q', '-b', 'main');
     await git(repository, 'add', '-A');
@@ -12819,7 +12819,7 @@ test(
     const dataDirectory = join(directory, 'data');
     const pidFile = join(directory, 'pids.json');
     host = launch(dataDirectory, pidFile);
-    const definition = (name, pipeline) => ({
+    const definition = (name, workflow) => ({
       id: randomUUID(),
       expectedRevision: null,
       name,
@@ -12832,7 +12832,7 @@ test(
       schedule: { kind: 'daily', time: '09:00' },
       timeZone: 'Europe/Warsaw',
       active: false,
-      pipeline,
+      workflow,
     });
     const save = async input => {
       const saved = await host.request('save-scheduled-job', input);
@@ -12875,11 +12875,11 @@ test(
         run => !['starting', 'running'].includes(run.status),
         'The scheduled run did not finish',
       );
-    const pipelineDetail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+    const workflowDetail = async runId => {
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -12896,16 +12896,16 @@ test(
     assert.equal(checked.prompt, '');
 
     await t.test(
-      'run now starts the pipeline task in a worktree and the job run links both runs',
+      'run now starts the workflow task in a worktree and the job run links both runs',
       async () => {
         const started = await runNow(checked);
         const finished = await settledRun(checked);
         assert.equal(finished.id, started.id);
         assert.equal(finished.status, 'completed', JSON.stringify(finished));
-        assert.ok(finished.pipelineRunId);
+        assert.ok(finished.workflowRunId);
         assert.ok(finished.sessionId);
         assert.equal(finished.runId, null);
-        const { run, steps } = await pipelineDetail(finished.pipelineRunId);
+        const { run, steps } = await workflowDetail(finished.workflowRunId);
         assert.equal(run.status, 'passed', JSON.stringify(run));
         assert.equal(run.sessionId, finished.sessionId);
         assert.equal(run.projectRoot, repository);
@@ -12916,7 +12916,7 @@ test(
         const session = (await host.request('list-sessions')).sessions.find(
           item => item.id === finished.sessionId,
         );
-        assert.equal(session.pipelineRunId, run.id);
+        assert.equal(session.workflowRunId, run.id);
         assert.equal(session.provider, 'Claude Code');
         assert.equal(session.mode, 'read-only');
         assert.equal(session.scheduledJobId ?? null, null);
@@ -12924,7 +12924,7 @@ test(
           message => message.author === 'operator',
         );
         assert.ok(requests.length >= 1);
-        assert.ok(requests.every(message => message.origin === 'pipeline'));
+        assert.ok(requests.every(message => message.origin === 'workflow'));
         assert.equal(
           session.messages.some(message => message.body === checked.prompt),
           false,
@@ -12943,10 +12943,10 @@ test(
     );
 
     await t.test(
-      'a job naming a missing pipeline fails with the catalog reason and creates nothing',
+      'a job naming a missing workflow fails with the catalog reason and creates nothing',
       async () => {
         const missing = await save(
-          definition('Missing pipeline', {
+          definition('Missing workflow', {
             name: 'absent',
             specPath: join('.agents', 'tasks', 'checked.md'),
           }),
@@ -12957,15 +12957,15 @@ test(
         assert.equal(finished.status, 'failed', JSON.stringify(finished));
         assert.equal(finished.reason, 'catalog');
         assert.equal(finished.sessionId, null);
-        assert.equal(finished.pipelineRunId, null);
+        assert.equal(finished.workflowRunId, null);
         assert.deepEqual(await sessionIds(), before);
-        const listed = await host.request('list-pipeline-runs', {});
+        const listed = await host.request('list-workflow-runs', {});
         assert.equal(listed.page.runs.length, 1);
       },
     );
 
     await t.test(
-      'a second run now while a scheduled pipeline is active is busy and Stop ends the job run',
+      'a second run now while a scheduled workflow is active is busy and Stop ends the job run',
       async () => {
         const holding = await save(
           definition('Holding task', {
@@ -12976,8 +12976,8 @@ test(
         await runNow(holding);
         const active = await jobRun(
           holding,
-          run => run.status === 'running' && run.pipelineRunId,
-          'The scheduled pipeline did not start',
+          run => run.status === 'running' && run.workflowRunId,
+          'The scheduled workflow did not start',
         );
         const busy = await host.request('run-scheduled-job-now', {
           id: checked.id,
@@ -12989,44 +12989,44 @@ test(
           requestId: randomUUID(),
         });
         assert.equal(again.code, 'busy', JSON.stringify(again));
-        const stopped = await host.request('stop-pipeline-run', {
-          runId: active.pipelineRunId,
+        const stopped = await host.request('stop-workflow-run', {
+          runId: active.workflowRunId,
         });
         assert.equal(stopped.run.status, 'stopped');
         const finished = await settledRun(holding);
         assert.equal(finished.status, 'stopped', JSON.stringify(finished));
-        assert.equal(finished.pipelineRunId, active.pipelineRunId);
+        assert.equal(finished.workflowRunId, active.workflowRunId);
       },
     );
 
     await t.test(
-      'the stored pipeline and the run link survive a host restart',
+      'the stored workflow and the run link survive a host restart',
       async () => {
         host.child.kill('SIGKILL');
         await host.exited;
         host = launch(dataDirectory, pidFile);
         const listed = await host.request('list-scheduled-jobs', {});
         assert.deepEqual(
-          listed.list.scheduledJobs.find(job => job.id === checked.id).pipeline,
-          checked.pipeline,
+          listed.list.scheduledJobs.find(job => job.id === checked.id).workflow,
+          checked.workflow,
         );
         const [run] = await runs(checked);
         assert.equal(run.status, 'completed');
-        assert.ok(run.pipelineRunId);
+        assert.ok(run.workflowRunId);
       },
     );
   },
 );
 
 test(
-  'the pipeline assistant answers through a read-only session and validates proposals without writing files',
+  'the workflow assistant answers through a read-only session and validates proposals without writing files',
   { timeout: 120_000 },
   async t => {
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-assistant-')),
     );
     const project = join(directory, 'project');
-    const agents = join(project, '.agents', 'pipelines');
+    const agents = join(project, '.agents', 'workflows');
     const pidFile = join(directory, 'pids.json');
     const write = async (path, content) => {
       await mkdir(join(path, '..'), { recursive: true });
@@ -13043,15 +13043,15 @@ test(
       join(agents, 'steps', 'approve.md'),
       '---\nname: approve\ntype: human\nphase: pre-push\n---\nConfirm that the change is ready.\n',
     );
-    const pipelineText =
+    const workflowText =
       '---\nname: default\ndescription: Check and approve\nsteps: [check, approve]\n---\n';
-    await write(join(agents, 'pipelines', 'default.md'), pipelineText);
+    await write(join(agents, 'workflows', 'default.md'), workflowText);
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'global');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'global');
     let host = launch(join(directory, 'data'), pidFile);
     const ownedPids = new Set();
     t.after(async () => {
@@ -13085,21 +13085,21 @@ test(
     const before = await snapshot();
     const hash = text => createHash('sha256').update(text).digest('hex');
     const document = {
-      kind: 'pipeline',
+      kind: 'workflow',
       scope: 'project',
       name: 'default',
-      contentHash: hash(pipelineText),
-      text: pipelineText,
+      contentHash: hash(workflowText),
+      text: workflowText,
     };
     const send = (text, extra = {}) =>
-      host.request('pipeline-assistant-send', {
+      host.request('workflow-assistant-send', {
         sessionId: null,
         provider: 'Claude Code',
         model: 'sonnet',
         text,
         context: {
           directory: project,
-          pipelineName: 'default',
+          workflowName: 'default',
           document,
           selection: ['check'],
         },
@@ -13109,9 +13109,9 @@ test(
       bounded(
         (async () => {
           for (;;) {
-            const event = host.pipelineEvents.find(
+            const event = host.workflowEvents.find(
               item =>
-                item.type === 'pipeline-assistant-proposal' &&
+                item.type === 'workflow-assistant-proposal' &&
                 item.messageId === messageId,
             );
             if (event) return event;
@@ -13133,19 +13133,19 @@ test(
         const response = await send('fixture:assistant-proposal');
         assert.equal(
           response.type,
-          'pipeline-assistant-turn',
+          'workflow-assistant-turn',
           response.message,
         );
         ({ sessionId } = response.turn);
         const event = await proposal(response.turn.messageId);
         const sessions = (await host.request('list-sessions')).sessions;
         const session = sessions.find(value => value.id === sessionId);
-        assert.equal(session.title, 'Pipeline assistant · default');
+        assert.equal(session.title, 'Workflow assistant · default');
         assert.equal(session.mode, 'read-only');
         assert.equal(session.delegationEnabled, false);
-        assert.equal(session.pipelineRunId, null);
+        assert.equal(session.workflowRunId, null);
         assert.equal(session.directory, project);
-        assert.equal(session.messages[0].origin, 'pipeline');
+        assert.equal(session.messages[0].origin, 'workflow');
         assert.equal(event.sessionId, sessionId);
         assert.equal(event.status, 'ok');
         assert.equal(event.proposal.changes.length, 2);
@@ -13153,7 +13153,7 @@ test(
           event.proposal.changes.map(change => [change.kind, change.name]),
           [
             ['step', 'lint-check'],
-            ['pipeline', 'assistant-flow'],
+            ['workflow', 'assistant-flow'],
           ],
         );
         assert.deepEqual(event.issues, [
@@ -13173,7 +13173,7 @@ test(
         );
         assert.match(
           recorded.prompt,
-          /\[begin open-document ([0-9a-f]+)\]\nkind: pipeline\nscope: project\nname: default\nhash: [0-9a-f]{64}\n\n---\nname: default\n[\s\S]*\[end open-document \1\]/,
+          /\[begin open-document ([0-9a-f]+)\]\nkind: workflow\nscope: project\nname: default\nhash: [0-9a-f]{64}\n\n---\nname: default\n[\s\S]*\[end open-document \1\]/,
         );
         assert.match(
           recorded.prompt,
@@ -13214,21 +13214,21 @@ test(
         assert.doesNotMatch(second.prompt, /\[begin catalog /);
         assert.doesNotMatch(second.prompt, /\[begin open-document /);
         assert.match(second.prompt, /\[begin operator-request [0-9a-f]+\]\n/);
-        const changedText = pipelineText.replace(
+        const changedText = workflowText.replace(
           'Check and approve',
           'Check, then approve',
         );
-        await write(join(agents, 'pipelines', 'default.md'), changedText);
-        before[join(agents, 'pipelines', 'default.md')] =
+        await write(join(agents, 'workflows', 'default.md'), changedText);
+        before[join(agents, 'workflows', 'default.md')] =
           Buffer.from(changedText).toString('base64');
-        const changed = await host.request('pipeline-assistant-send', {
+        const changed = await host.request('workflow-assistant-send', {
           sessionId,
           provider: 'Claude Code',
           model: 'sonnet',
           text: 'fixture:assistant-prose',
           context: {
             directory: project,
-            pipelineName: 'default',
+            workflowName: 'default',
             document: {
               ...document,
               contentHash: hash(changedText),
@@ -13238,7 +13238,7 @@ test(
         });
         const prose = await proposal(changed.turn.messageId);
         assert.deepEqual(prose, {
-          type: 'pipeline-assistant-proposal',
+          type: 'workflow-assistant-proposal',
           sessionId,
           messageId: changed.turn.messageId,
           status: 'invalid',
@@ -13255,7 +13255,7 @@ test(
     );
 
     await t.test(
-      'a pipeline edge between phases is reported for its change',
+      'a workflow edge between phases is reported for its change',
       async () => {
         const response = await send('fixture:assistant-cross-phase', {
           sessionId,
@@ -13328,7 +13328,7 @@ test(
         assert.equal(foreign.code, 'invalid-request');
         assert.equal(
           foreign.message,
-          'This session is not a pipeline assistant conversation on this computer.',
+          'This session is not a workflow assistant conversation on this computer.',
         );
       },
     );
@@ -13337,7 +13337,7 @@ test(
       'an account limit and a stopped turn end with an invalid proposal',
       async () => {
         const limited = await send('fixture:limit', { sessionId });
-        assert.equal(limited.type, 'pipeline-assistant-turn');
+        assert.equal(limited.type, 'workflow-assistant-turn');
         assert.equal(
           (await proposal(limited.turn.messageId)).status,
           'invalid',
@@ -13353,7 +13353,7 @@ test(
         ownedPids.add(pids.pid).add(pids.childPid);
         await host.request('stop-run', { sessionId, runId: running.runId });
         assert.deepEqual(await proposal(held.turn.messageId), {
-          type: 'pipeline-assistant-proposal',
+          type: 'workflow-assistant-proposal',
           sessionId,
           messageId: held.turn.messageId,
           status: 'invalid',
@@ -13366,11 +13366,11 @@ test(
     await t.test(
       'a Codex conversation runs read-only and a restarted host continues a conversation',
       async () => {
-        const codex = await send('Describe the pipeline.', {
+        const codex = await send('Describe the workflow.', {
           provider: 'Codex',
           model: 'default',
         });
-        assert.equal(codex.type, 'pipeline-assistant-turn', codex.message);
+        assert.equal(codex.type, 'workflow-assistant-turn', codex.message);
         assert.equal((await proposal(codex.turn.messageId)).status, 'invalid');
         const turns = (await readFile(pidFile + '.turns', 'utf8'))
           .trim()
@@ -13387,7 +13387,7 @@ test(
         await host.stop();
         host = launch(join(directory, 'data'), pidFile);
         const resumed = await send('fixture:assistant-prose', { sessionId });
-        assert.equal(resumed.type, 'pipeline-assistant-turn', resumed.message);
+        assert.equal(resumed.type, 'workflow-assistant-turn', resumed.message);
         assert.equal(resumed.turn.sessionId, sessionId);
         assert.equal(
           (await proposal(resumed.turn.messageId)).status,
@@ -13408,15 +13408,15 @@ test(
 );
 
 test(
-  'graph pipelines start ready steps, wait at joins, run failure branches before the failure and mark dead paths unreached',
+  'graph workflows start ready steps, wait at joins, run failure branches before the failure and mark dead paths unreached',
   { timeout: 240_000 },
   async t => {
     const directory = await realpath(
-      await mkdtemp(join(tmpdir(), 'nesvo-pipeline-graph-engine-')),
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-graph-engine-')),
     );
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
-      NESVO_PIPELINES_HOME: process.env.NESVO_PIPELINES_HOME,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
     };
     const onWindows = process.platform === 'win32';
     const owned = new Set();
@@ -13436,7 +13436,7 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
     process.env.NESVO_TEST_MODE = '1';
-    process.env.NESVO_PIPELINES_HOME = join(directory, 'empty-home');
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
     const probePath = join(directory, 'probe.mjs');
     await writeFile(
       probePath,
@@ -13498,7 +13498,7 @@ test(
     const project = join(directory, 'graphs');
     await mkdir(join(project, '.git'), { recursive: true });
     const marker = join(directory, 'fragile-fixed');
-    const pipelines = {
+    const workflows = {
       'fan-out': {
         steps: [
           probe('fan-out', 'prepare'),
@@ -13603,38 +13603,38 @@ test(
         edges: ['source-a -> between', 'between -> after-skip'],
       },
     };
-    for (const [name, { steps, edges }] of Object.entries(pipelines)) {
+    for (const [name, { steps, edges }] of Object.entries(workflows)) {
       for (const item of steps)
         await write(
-          join(project, '.agents', 'pipelines', 'steps', `${item.name}.md`),
+          join(project, '.agents', 'workflows', 'steps', `${item.name}.md`),
           stepFile({ phase: 'pre-done', ...item }),
         );
       await write(
-        join(project, '.agents', 'pipelines', 'pipelines', `${name}.md`),
+        join(project, '.agents', 'workflows', 'workflows', `${name}.md`),
         `---\nname: ${name}\nsteps: [${steps.map(item => item.name).join(', ')}]\n${edges ? edgeBlock(edges) : ''}---\n`,
       );
       await write(
         join(project, '.agents', 'tasks', `${name}.md`),
-        `---\npipeline: ${name}\ntitle: Run ${name}\n---\n## Goal\nRun the ${name} graph.\n`,
+        `---\nworkflow: ${name}\ntitle: Run ${name}\n---\n## Goal\nRun the ${name} graph.\n`,
       );
     }
     const dataDirectory = join(directory, 'data');
     let host = launch(dataDirectory, join(directory, 'pids.json'));
     hosts.push(host);
     const start = async (root, name, phase) => {
-      const response = await host.request('run-pipeline-steps', {
+      const response = await host.request('run-workflow-steps', {
         directory: root,
         specPath: join('.agents', 'tasks', `${name}.md`),
         ...(phase ? { phase } : {}),
       });
-      assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
       return response.run;
     };
     const detail = async runId => {
-      const response = await host.request('get-pipeline-run', { runId });
+      const response = await host.request('get-workflow-run', { runId });
       assert.equal(
         response.type,
-        'pipeline-run-detail',
+        'workflow-run-detail',
         JSON.stringify(response),
       );
       return response.detail;
@@ -13807,10 +13807,10 @@ test(
           ['after', 1, 'unreached'],
         ]);
         await writeFile(marker, 'fixed\n');
-        const resumed = await host.request('resume-pipeline-run', {
+        const resumed = await host.request('resume-workflow-run', {
           runId: run.id,
         });
-        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        assert.equal(resumed.type, 'workflow-run', JSON.stringify(resumed));
         const passed = await settled(run.id);
         assert.equal(passed.run.status, 'passed', passed.run.attention);
         assert.deepEqual(rows(passed), [
@@ -13889,12 +13889,12 @@ test(
           await waitForStarts('skip', lead, 1);
           const current = await detail(run.id);
           assert.equal(named(current, lead).state, 'running');
-          const response = await host.request('skip-pipeline-step', {
+          const response = await host.request('skip-workflow-step', {
             runId: run.id,
             stepId: named(current, skipped).id,
             reason: 'Not needed for this change',
           });
-          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          assert.equal(response.type, 'workflow-run', JSON.stringify(response));
           return settled(run.id);
         };
         const passing = await skipWhileRunning('skip-pass', 'lead', 'middle');
@@ -13967,10 +13967,10 @@ test(
           ['hold-a', 1, 'interrupted'],
           ['hold-b', 1, 'interrupted'],
         ]);
-        const resumed = await host.request('resume-pipeline-run', {
+        const resumed = await host.request('resume-workflow-run', {
           runId: run.id,
         });
-        assert.equal(resumed.type, 'pipeline-run', JSON.stringify(resumed));
+        assert.equal(resumed.type, 'workflow-run', JSON.stringify(resumed));
         const second = [
           (await waitForStarts('hold', 'hold-a', 2))[1],
           (await waitForStarts('hold', 'hold-b', 2))[1],
@@ -13982,10 +13982,10 @@ test(
           'Both steps did not run again',
         );
         assert.equal(running.run.status, 'checking');
-        const stopped = await host.request('stop-pipeline-run', {
+        const stopped = await host.request('stop-workflow-run', {
           runId: run.id,
         });
-        assert.equal(stopped.type, 'pipeline-run', JSON.stringify(stopped));
+        assert.equal(stopped.type, 'workflow-run', JSON.stringify(stopped));
         for (const pid of second) await gone(pid);
         const final = await waitFor(
           run.id,
@@ -14020,11 +14020,11 @@ test(
         };
         for (const [name, body] of Object.entries(commands))
           await write(
-            join(agents, 'pipelines', 'steps', `${name}.md`),
+            join(agents, 'workflows', 'steps', `${name}.md`),
             `---\nname: ${name}\ntype: command\nphase: pre-done\ntimeout: 1m\n---\n${body}\n`,
           );
         await write(
-          join(agents, 'pipelines', 'pipelines', 'graph.md'),
+          join(agents, 'workflows', 'workflows', 'graph.md'),
           [
             '---',
             'name: graph',
@@ -14043,13 +14043,13 @@ test(
             '  report: [520, 70]',
             '  collect: [520, 210]',
             '---',
-            'Fixture graph pipeline used to compare verdicts between hosts.',
+            'Fixture graph workflow used to compare verdicts between hosts.',
             '',
           ].join('\n'),
         );
         await write(
           join(agents, 'tasks', 'graph-spec.md'),
-          '---\npipeline: graph\ntitle: Graph portability fixture task\n---\n## Goal\nProduce the same step verdicts for a graph pipeline on every host that reads these files.\n',
+          '---\nworkflow: graph\ntitle: Graph portability fixture task\n---\n## Goal\nProduce the same step verdicts for a graph workflow on every host that reads these files.\n',
         );
         const expected = {
           'pre-done': {
@@ -14070,12 +14070,12 @@ test(
         };
         const actual = {};
         for (const phase of Object.keys(expected)) {
-          const response = await host.request('run-pipeline-steps', {
+          const response = await host.request('run-workflow-steps', {
             directory: fixture,
             specPath: '.agents/tasks/graph-spec.md',
             phase,
           });
-          assert.equal(response.type, 'pipeline-run', JSON.stringify(response));
+          assert.equal(response.type, 'workflow-run', JSON.stringify(response));
           const current = await settled(response.run.id);
           actual[phase] = {
             verdict: current.run.status === 'passed' ? 'pass' : 'fail',
@@ -14106,11 +14106,11 @@ test(
         hosts.push(bootstrap);
         assert.equal((await bootstrap.request('health')).type, 'health');
         await bootstrap.stop();
-        const { PipelineRunner, PipelineRunStore, nextMove } =
-          await loadPipelineRunnerModules(directory);
+        const { WorkflowRunner, WorkflowRunStore, nextMove } =
+          await loadWorkflowRunnerModules(directory);
         const database = new DatabaseSync(join(isolated, 'nesvo.sqlite'));
         subtest.after(() => database.close());
-        const store = new PipelineRunStore(database);
+        const store = new WorkflowRunStore(database);
         const now = new Date().toISOString();
         const definition = (name, phase, extra = {}) => ({
           name,
@@ -14152,7 +14152,7 @@ test(
         const makeRun = (steps, edges, extra = {}) => ({
           id: randomUUID(),
           revision: 1,
-          pipeline: {
+          workflow: {
             name: 'graph',
             description: '',
             body: '',
@@ -14184,7 +14184,7 @@ test(
           ...extra,
         });
         const row = (run, index, state, extra = {}) => {
-          const step = run.pipeline.steps[index];
+          const step = run.workflow.steps[index];
           const record = {
             id: randomUUID(),
             runId: run.id,
@@ -14325,7 +14325,7 @@ test(
             kind: 'skipped',
             reason: 'Executor not available',
           });
-        const runner = new PipelineRunner({
+        const runner = new WorkflowRunner({
           store,
           emit: () => undefined,
           evidence: { write: () => Promise.resolve('attempt-1.log') },

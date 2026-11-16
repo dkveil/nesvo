@@ -646,7 +646,7 @@ try {
   assert.deepEqual(localComputer.capabilities, [
     'scheduled-jobs',
     'reasoning-effort',
-    'pipelines',
+    'workflows',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -2431,97 +2431,97 @@ try {
     byId(restored.sessions),
   );
   assert.deepEqual(await fixtureState(), stateAfterClose);
-  const pipelineCall = (method, ...args) =>
+  const workflowCall = (method, ...args) =>
     restartedPage.evaluate(
-      ([name, params]) => window.nesvo.pipelines[name](...params),
+      ([name, params]) => window.nesvo.workflows[name](...params),
       [method, args],
     );
-  const pipelineComputer = (
+  const workflowComputer = (
     await restartedPage.evaluate(() => window.nesvo.listComputers())
   ).find(computer => computer.id === 'local');
-  assert.equal(pipelineComputer.capabilities.includes('pipelines'), true);
-  const definitionCatalog = await pipelineCall('listDefinitions', 'local', {
+  assert.equal(workflowComputer.capabilities.includes('workflows'), true);
+  const definitionCatalog = await workflowCall('listDefinitions', 'local', {
     directory,
   });
-  assert.ok(Array.isArray(definitionCatalog.pipelines));
+  assert.ok(Array.isArray(definitionCatalog.workflows));
   assert.ok(Array.isArray(definitionCatalog.issues));
   await assert.rejects(
-    pipelineCall('listDefinitions', 'local', { directory, recursive: true }),
+    workflowCall('listDefinitions', 'local', { directory, recursive: true }),
   );
   await assert.rejects(
-    pipelineCall('listDefinitions', 'not-a-host', { directory }),
+    workflowCall('listDefinitions', 'not-a-host', { directory }),
     /Invalid UUID/,
   );
-  const pipelineProject = join(directory, 'pipeline-project');
-  const pipelineRoot = join(pipelineProject, '.agents', 'pipelines');
+  const workflowProject = join(directory, 'workflow-project');
+  const workflowRoot = join(workflowProject, '.agents', 'workflows');
   for (const folder of [
-    join(pipelineProject, '.git'),
-    join(pipelineRoot, 'steps'),
-    join(pipelineRoot, 'pipelines'),
-    join(pipelineProject, '.agents', 'tasks'),
+    join(workflowProject, '.git'),
+    join(workflowRoot, 'steps'),
+    join(workflowRoot, 'workflows'),
+    join(workflowProject, '.agents', 'tasks'),
   ])
     await mkdir(folder, { recursive: true });
   await writeFile(
-    join(pipelineRoot, 'steps', 'smoke-check.md'),
+    join(workflowRoot, 'steps', 'smoke-check.md'),
     '---\nname: smoke-check\ntype: command\nphase: pre-done\n---\necho ok\n',
   );
   await writeFile(
-    join(pipelineRoot, 'pipelines', 'smoke.md'),
+    join(workflowRoot, 'workflows', 'smoke.md'),
     '---\nname: smoke\nsteps: [smoke-check]\n---\n',
   );
   await writeFile(
-    join(pipelineProject, '.agents', 'tasks', 'smoke.md'),
-    '---\npipeline: smoke\ntitle: Smoke pipeline task\n---\nCheck the pipeline path.\n',
+    join(workflowProject, '.agents', 'tasks', 'smoke.md'),
+    '---\nworkflow: smoke\ntitle: Smoke workflow task\n---\nCheck the workflow path.\n',
   );
   await restartedPage.evaluate(() => {
-    window.smokePipelineRuns = [];
+    window.smokeWorkflowRuns = [];
     window.nesvo.subscribe(event => {
-      if (event.type === 'pipeline-run-changed')
-        window.smokePipelineRuns.push(event.run);
+      if (event.type === 'workflow-run-changed')
+        window.smokeWorkflowRuns.push(event.run);
     });
   });
-  const pipelineRun = await pipelineCall('startTask', 'local', {
+  const workflowRun = await workflowCall('startTask', 'local', {
     specPath: join('.agents', 'tasks', 'smoke.md'),
-    pipelineName: 'smoke',
+    workflowName: 'smoke',
     provider: 'Claude Code',
     model: 'sonnet',
     mode: 'read-only',
-    directory: pipelineProject,
+    directory: workflowProject,
     isolation: 'none',
     gateProvider: 'Claude Code',
     gateModel: 'sonnet',
   });
-  assert.equal(pipelineRun.hostId, 'local');
-  assert.ok(pipelineRun.sessionId);
+  assert.equal(workflowRun.hostId, 'local');
+  assert.ok(workflowRun.sessionId);
   await restartedPage.waitForFunction(
     id =>
-      window.smokePipelineRuns.some(
+      window.smokeWorkflowRuns.some(
         run => run.id === id && run.status === 'passed',
       ),
-    pipelineRun.id,
+    workflowRun.id,
     { timeout: 30_000 },
   );
-  const pipelineDetail = await pipelineCall('getRun', 'local', pipelineRun.id);
-  assert.equal(pipelineDetail.run.status, 'passed');
+  const workflowDetail = await workflowCall('getRun', 'local', workflowRun.id);
+  assert.equal(workflowDetail.run.status, 'passed');
   assert.deepEqual(
-    pipelineDetail.steps.map(step => [step.name, step.state]),
+    workflowDetail.steps.map(step => [step.name, step.state]),
     [['smoke-check', 'passed']],
   );
   await restartedPage.evaluate(() => {
     window.smokeAssistantProposals = [];
     window.nesvo.subscribe(event => {
-      if (event.type === 'pipeline-assistant-proposal')
+      if (event.type === 'workflow-assistant-proposal')
         window.smokeAssistantProposals.push(event);
     });
   });
-  const assistantTurn = await pipelineCall('assistantSend', 'local', {
+  const assistantTurn = await workflowCall('assistantSend', 'local', {
     sessionId: null,
     provider: 'Claude Code',
     model: 'sonnet',
     text: 'fixture:assistant-proposal',
     context: {
-      directory: pipelineProject,
-      pipelineName: 'smoke',
+      directory: workflowProject,
+      workflowName: 'smoke',
       document: null,
     },
   });
@@ -2543,12 +2543,12 @@ try {
     ['lint-check', 'assistant-flow'],
   );
   const resolution = {
-    runId: pipelineRun.id,
-    stepId: pipelineDetail.steps[0].id,
+    runId: workflowRun.id,
+    stepId: workflowDetail.steps[0].id,
     decisionId: randomUUID(),
   };
   await assert.rejects(
-    pipelineCall('resolveStep', 'local', {
+    workflowCall('resolveStep', 'local', {
       ...resolution,
       resolution: 'mark-done',
       comment: '',
@@ -2556,7 +2556,7 @@ try {
     /Describe what you verified/,
   );
   await assert.rejects(
-    pipelineCall('resolveStep', 'local', {
+    workflowCall('resolveStep', 'local', {
       ...resolution,
       resolution: 'run-again',
     }),
@@ -2564,13 +2564,13 @@ try {
   );
   console.log(
     JSON.stringify({
-      pipelines: {
-        capabilities: pipelineComputer.capabilities,
-        runId: pipelineRun.id,
-        status: pipelineDetail.run.status,
+      workflows: {
+        capabilities: workflowComputer.capabilities,
+        runId: workflowRun.id,
+        status: workflowDetail.run.status,
         rendererEvents: await restartedPage.evaluate(
-          id => window.smokePipelineRuns.filter(run => run.id === id).length,
-          pipelineRun.id,
+          id => window.smokeWorkflowRuns.filter(run => run.id === id).length,
+          workflowRun.id,
         ),
         assistant: {
           sessionId: assistantTurn.sessionId,
@@ -2582,7 +2582,7 @@ try {
   );
   const graphStep = (name, type, phase, body, extra = '') =>
     writeFile(
-      join(pipelineRoot, 'steps', `${name}.md`),
+      join(workflowRoot, 'steps', `${name}.md`),
       `---\nname: ${name}\ntype: ${type}\nphase: ${phase}\n${extra}---\n${body}\n`,
     );
   await graphStep('smoke-plan', 'agent', 'plan', 'Plan the change.');
@@ -2622,20 +2622,20 @@ try {
   };
   await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
   await restartedPage
-    .getByRole('button', { name: 'Pipelines', exact: true })
+    .getByRole('button', { name: 'Workflows', exact: true })
     .click();
-  const pipelinesView = restartedPage.getByRole('region', {
-    name: 'Pipelines',
+  const workflowsView = restartedPage.getByRole('region', {
+    name: 'Workflows',
     exact: true,
   });
-  await pipelinesView
+  await workflowsView
     .getByLabel('Project folder', { exact: true })
-    .fill(pipelineProject);
-  await pipelinesView
+    .fill(workflowProject);
+  await workflowsView
     .getByRole('button', { name: 'Read', exact: true })
     .click();
-  await pipelinesView
-    .getByRole('button', { name: 'New pipeline', exact: true })
+  await workflowsView
+    .getByRole('button', { name: 'New workflow', exact: true })
     .click();
   const editor = restartedPage.getByRole('region', {
     name: 'Graph editor',
@@ -2681,7 +2681,7 @@ try {
         () => false,
       );
   const canvas = editor.getByRole('application', {
-    name: 'Pipeline graph canvas',
+    name: 'Workflow graph canvas',
     exact: true,
   });
   const inside = (box, frame) =>
@@ -2755,7 +2755,7 @@ try {
     .filter({ hasText: 'Saved smoke-graph.' })
     .waitFor();
   const graphFile = await readFile(
-    join(pipelineRoot, 'pipelines', 'smoke-graph.md'),
+    join(workflowRoot, 'workflows', 'smoke-graph.md'),
     'utf8',
   );
   assert.match(
@@ -2770,11 +2770,11 @@ try {
     graphFile,
     /layout:\n  smoke-check: \[-?\d+, -?\d+\]\n  smoke-lint: \[-?\d+, -?\d+\]\n  smoke-report: \[-?\d+, -?\d+\]\n---\n/,
   );
-  const savedCatalog = await pipelineCall('listDefinitions', 'local', {
-    directory: pipelineProject,
+  const savedCatalog = await workflowCall('listDefinitions', 'local', {
+    directory: workflowProject,
   });
-  const savedGraph = savedCatalog.pipelines.find(
-    pipeline => pipeline.name === 'smoke-graph',
+  const savedGraph = savedCatalog.workflows.find(
+    workflow => workflow.name === 'smoke-graph',
   );
   assert.deepEqual(savedGraph.graph, {
     explicit: true,
@@ -2790,7 +2790,7 @@ try {
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Edit smoke-graph', exact: true })
     .click();
   await editor.waitFor();
@@ -2810,7 +2810,7 @@ try {
   await connectSteps('smoke-approve', 'smoke-publish');
   await editor.locator('[data-editor-inspector="edge"]').waitFor();
   await restartedPage.keyboard.press('Escape');
-  await editor.locator('[data-editor-inspector="pipeline"]').waitFor();
+  await editor.locator('[data-editor-inspector="workflow"]').waitFor();
   await fitGraph();
   await delay(300);
   await editorShot('fan-out-dark');
@@ -2832,9 +2832,9 @@ try {
     .filter({ hasText: 'Saved smoke-graph.' })
     .waitFor();
   await writeFile(
-    join(pipelineRoot, 'pipelines', 'smoke-graph.md'),
+    join(workflowRoot, 'workflows', 'smoke-graph.md'),
     (
-      await readFile(join(pipelineRoot, 'pipelines', 'smoke-graph.md'), 'utf8')
+      await readFile(join(workflowRoot, 'workflows', 'smoke-graph.md'), 'utf8')
     ).replace('---\n', '---\ndescription: Changed outside the editor.\n'),
   );
   await inspector
@@ -2874,7 +2874,7 @@ try {
       .isDisabled(),
     true,
   );
-  await editorShot('inspector-pipeline-dark');
+  await editorShot('inspector-workflow-dark');
   await editor.getByRole('button', { name: 'Add step', exact: true }).click();
   await restartedPage
     .getByRole('button', { name: 'New step', exact: true })
@@ -2915,7 +2915,7 @@ try {
     .filter({ hasText: 'Saved smoke-graph.' })
     .waitFor();
   assert.match(
-    await readFile(join(pipelineRoot, 'steps', 'smoke-timeout.md'), 'utf8'),
+    await readFile(join(workflowRoot, 'steps', 'smoke-timeout.md'), 'utf8'),
     /^timeout: 90m$/m,
   );
   await editor.locator('[data-editor-start]').click();
@@ -2933,7 +2933,7 @@ try {
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
@@ -2952,7 +2952,7 @@ try {
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
-  await pipelinesView.waitFor();
+  await workflowsView.waitFor();
   const dockConsoleErrors = [];
   const recordDockConsoleError = message => {
     if (message.type() === 'error') dockConsoleErrors.push(message.text());
@@ -2985,7 +2985,7 @@ try {
           .join('');
       return walk(node);
     });
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
@@ -3093,8 +3093,8 @@ try {
       .allTextContents(),
     ['fixture:assistant-prose', 'fixture:assistant-proposal'],
   );
-  const lintPath = join(pipelineRoot, 'steps', 'lint-check.md');
-  const flowPath = join(pipelineRoot, 'pipelines', 'assistant-flow.md');
+  const lintPath = join(workflowRoot, 'steps', 'lint-check.md');
+  const flowPath = join(workflowRoot, 'workflows', 'assistant-flow.md');
   await assert.rejects(readFile(lintPath, 'utf8'));
   await assert.rejects(readFile(flowPath, 'utf8'));
   await bothShots('proposal');
@@ -3136,17 +3136,17 @@ try {
     /steps: \[lint-check, check, approve\]/,
   );
   await bothShots('applied');
-  const assistantSessionTitle = 'Pipeline assistant · smoke';
+  const assistantSessionTitle = 'Workflow assistant · smoke';
   await assistantDock
     .getByRole('button', { name: 'Collapse assistant', exact: true })
     .click();
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Read', exact: true })
     .click();
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Edit assistant-flow', exact: true })
     .click();
   await editor.waitFor();
@@ -3162,7 +3162,7 @@ try {
   await editor
     .getByRole('button', { name: 'Close graph editor', exact: true })
     .click();
-  await pipelinesView
+  await workflowsView
     .getByRole('button', { name: 'Edit smoke', exact: true })
     .click();
   await editor.waitFor();
@@ -3202,9 +3202,9 @@ try {
     }),
   );
   await restartedPage
-    .getByRole('button', { name: 'Pipelines', exact: true })
+    .getByRole('button', { name: 'Workflows', exact: true })
     .click();
-  await pipelinesView.waitFor();
+  await workflowsView.waitFor();
   console.log(
     JSON.stringify({
       graphEditor: {

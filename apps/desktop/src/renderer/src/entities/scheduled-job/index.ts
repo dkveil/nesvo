@@ -5,17 +5,17 @@ import {
   type DesktopScheduledJobRun as ScheduledJobRun,
   type ScheduledJobDefinition,
 } from '@nesvo/contracts';
-import type { PipelineTone } from '@/entities/pipeline';
+import type { WorkflowTone } from '@/entities/workflow';
 import type { Provider } from '@/entities/session';
 
 export type {
   DesktopScheduledJob as ScheduledJob,
   DesktopScheduledJobRun as ScheduledJobRun,
 } from '@nesvo/contracts';
-export { toneText } from '@/entities/pipeline';
+export { toneText } from '@/entities/workflow';
 
 export type JobProvider = ScheduledJob['provider'];
-export type RunTone = PipelineTone;
+export type RunTone = WorkflowTone;
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;

@@ -165,7 +165,7 @@ export const sessionMessageSchema = z.strictObject({
   skill: skillReferenceSchema.optional(),
   interruption: sessionInterruptionSchema.nullable().optional(),
   usage: turnUsageSchema.nullable().default(null),
-  origin: z.literal('pipeline').nullable().default(null),
+  origin: z.literal('workflow').nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -184,8 +184,8 @@ export const sessionSchema = z.strictObject({
   scope: z.string().max(1000).nullable().default(null),
   delegationEnabled: z.boolean().default(false),
   delegations: z.array(delegationSchema).max(100).default([]),
-  pipelineRunId: z.uuid().nullable().default(null),
-  pipelineStepId: z.uuid().nullable().default(null),
+  workflowRunId: z.uuid().nullable().default(null),
+  workflowStepId: z.uuid().nullable().default(null),
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),

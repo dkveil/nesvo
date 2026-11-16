@@ -13,7 +13,7 @@ import type {
   DesktopReview as Review,
   DesktopSession as Session,
   RespondApprovalInput,
-  StartPipelineTaskInput,
+  StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
   ArrowLeft,
@@ -33,9 +33,9 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { showsRunStatus } from '@/entities/pipeline';
-import type { EditorTarget } from '@/widgets/pipeline-definitions';
-import type { SkillSummary } from '@/widgets/pipeline-graph-editor/inspector';
+import { showsRunStatus } from '@/entities/workflow';
+import type { EditorTarget } from '@/widgets/workflow-definitions';
+import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import {
   AutomationEditor,
@@ -69,14 +69,14 @@ import {
 } from '@/shared/ui/sheet';
 import { Conversation } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
-import { PipelineStatus } from '@/widgets/pipeline-status';
+import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import {
-  PipelineSection,
+  WorkflowSection,
   SessionCard,
   UsageSection,
   WorkersSection,
@@ -109,16 +109,16 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
-const PipelineDefinitions = lazy(
-  () => import('@/widgets/pipeline-definitions'),
+const WorkflowDefinitions = lazy(
+  () => import('@/widgets/workflow-definitions'),
 );
 
-const PipelineAssistantDock = lazy(
-  () => import('@/widgets/pipeline-assistant'),
+const WorkflowAssistantDock = lazy(
+  () => import('@/widgets/workflow-assistant'),
 );
 
-const PipelineGraphEditor = lazy(
-  () => import('@/widgets/pipeline-graph-editor'),
+const WorkflowGraphEditor = lazy(
+  () => import('@/widgets/workflow-graph-editor'),
 );
 
 export function Workspace() {
@@ -142,18 +142,18 @@ export function Workspace() {
   const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
     location.diff ? 'diff' : null,
   );
-  const [pipelinesView, setPipelinesView] = useState(false);
-  const [pipelinesSource, setPipelinesSource] = useState({
+  const [workflowsView, setWorkflowsView] = useState(false);
+  const [workflowsSource, setWorkflowsSource] = useState({
     hostId: 'local',
     directory: '',
   });
-  const [pipelinesEditor, setPipelinesEditor] = useState<EditorTarget | null>(
+  const [workflowsEditor, setWorkflowsEditor] = useState<EditorTarget | null>(
     null,
   );
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
-  const browsing = inbox || pipelinesView || !!automation;
-  const editorHostId = pipelinesEditor?.hostId ?? '';
+  const browsing = inbox || workflowsView || !!automation;
+  const editorHostId = workflowsEditor?.hostId ?? '';
   const discoverEditorSkills = useCallback(
     async (directory: string): Promise<SkillSummary[]> => {
       const found = new Map<string, SkillSummary>();
@@ -174,35 +174,35 @@ export function Workspace() {
     },
     [editorHostId],
   );
-  const editorRun = pipelinesEditor?.pipelineName
-    ? store.pipelineRuns
+  const editorRun = workflowsEditor?.workflowName
+    ? store.workflowRuns
         .filter(
           run =>
-            run.hostId === pipelinesEditor.hostId &&
-            run.pipeline.name === pipelinesEditor.pipelineName &&
-            (!pipelinesEditor.directory ||
-              run.projectRoot === pipelinesEditor.directory ||
-              run.directory === pipelinesEditor.directory),
+            run.hostId === workflowsEditor.hostId &&
+            run.workflow.name === workflowsEditor.workflowName &&
+            (!workflowsEditor.directory ||
+              run.projectRoot === workflowsEditor.directory ||
+              run.directory === workflowsEditor.directory),
         )
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
     : undefined;
   const editorRunOverlay = editorRun
     ? {
         run: editorRun,
-        steps: store.pipelineSteps.filter(
+        steps: store.workflowSteps.filter(
           step =>
             step.runId === editorRun.id && step.hostId === editorRun.hostId,
         ),
       }
     : undefined;
   const cardTrigger = useRef<HTMLElement | null>(null);
-  const [pipelinePending, setPipelinePending] = useState<
+  const [workflowPending, setWorkflowPending] = useState<
     Record<string, boolean>
   >({});
-  const [pipelineErrors, setPipelineErrors] = useState<Record<string, string>>(
+  const [workflowErrors, setWorkflowErrors] = useState<Record<string, string>>(
     {},
   );
-  const pipelineRequests = useRef(new Set<string>());
+  const workflowRequests = useRef(new Set<string>());
   const [diffTarget, setDiffTarget] = useState<{
     reviewId: string;
     path?: string;
@@ -264,20 +264,20 @@ export function Workspace() {
   const stopping = useRef(new Set<string>());
   const automations = useScheduledJobs(store.computers);
   const jobOf = (
-    session: Pick<Session, 'scheduledJobId' | 'hostId' | 'pipelineRunId'>,
+    session: Pick<Session, 'scheduledJobId' | 'hostId' | 'workflowRunId'>,
   ) =>
     session.scheduledJobId
       ? automations.jobs.find(
           job =>
             job.id === session.scheduledJobId && job.hostId === session.hostId,
         )
-      : session.pipelineRunId
+      : session.workflowRunId
         ? automations.jobs.find(
             job =>
               job.hostId === session.hostId &&
               automations
                 .runs(job)
-                .runs.some(run => run.pipelineRunId === session.pipelineRunId),
+                .runs.some(run => run.workflowRunId === session.workflowRunId),
           )
         : undefined;
   const isAutomationSession = (session: Session) =>
@@ -354,14 +354,14 @@ export function Workspace() {
             review.hostId === selectedHostId,
         )
       : undefined;
-  const selectedRun = selected?.pipelineRunId
-    ? store.pipelineRuns.find(
+  const selectedRun = selected?.workflowRunId
+    ? store.workflowRuns.find(
         run =>
-          run.id === selected.pipelineRunId && run.hostId === selectedHostId,
+          run.id === selected.workflowRunId && run.hostId === selectedHostId,
       )
     : undefined;
   const selectedRunSteps = selectedRun
-    ? store.pipelineSteps.filter(
+    ? store.workflowSteps.filter(
         step => step.runId === selectedRun.id && step.hostId === selectedHostId,
       )
     : [];
@@ -477,7 +477,7 @@ export function Workspace() {
     }
     cardTrigger.current = trigger;
     if (selectedRun)
-      setPipelineErrors(previous => ({
+      setWorkflowErrors(previous => ({
         ...previous,
         [entityKey(selectedRun)]: '',
       }));
@@ -492,7 +492,7 @@ export function Workspace() {
     });
   };
   const guardEditor = (proceed: () => void) => {
-    if (pipelinesView && pipelinesEditor && editorDirty)
+    if (workflowsView && workflowsEditor && editorDirty)
       setLeaveEditor(() => proceed);
     else proceed();
   };
@@ -507,7 +507,7 @@ export function Workspace() {
     setSelectedId(id);
     setSessionTarget(targetId);
     setInbox(false);
-    setPipelinesView(false);
+    setWorkflowsView(false);
     setAutomation('');
     setNavigationOpen(false);
     setDetailsOpen(false);
@@ -519,14 +519,14 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(true);
-    setPipelinesView(false);
+    setWorkflowsView(false);
     setAutomation('');
     setNavigationOpen(false);
   };
-  const openPipelines = () => guardEditor(openPipelinesNow);
-  const openPipelinesNow = () => {
+  const openWorkflows = () => guardEditor(openWorkflowsNow);
+  const openWorkflowsNow = () => {
     navigationVersion.current += 1;
-    setPipelinesSource(
+    setWorkflowsSource(
       creating || !selected
         ? { hostId: threadSetup.hostId, directory: threadSetup.directory }
         : { hostId: selected.hostId, directory: selected.directory },
@@ -535,9 +535,9 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
-    setPipelinesEditor(null);
+    setWorkflowsEditor(null);
     setAutomation('');
-    setPipelinesView(true);
+    setWorkflowsView(true);
     setNavigationOpen(false);
   };
   const openAutomations = (target = 'list') =>
@@ -548,8 +548,8 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
-    setPipelinesEditor(null);
-    setPipelinesView(false);
+    setWorkflowsEditor(null);
+    setWorkflowsView(false);
     setAutomation(target);
     setNavigationOpen(false);
     setDetailsOpen(false);
@@ -562,7 +562,7 @@ export function Workspace() {
     setPanel(null);
     setDiffTarget(null);
     setInbox(false);
-    setPipelinesView(false);
+    setWorkflowsView(false);
     setAutomation('');
     setCreating(true);
   };
@@ -688,8 +688,8 @@ export function Workspace() {
       threadRequest.current = false;
     }
   };
-  const startPipelineTask = async (
-    input: StartPipelineTaskInput,
+  const startWorkflowTask = async (
+    input: StartWorkflowTaskInput,
   ): Promise<'opened' | 'started'> => {
     const hostId = threadSetup.hostId;
     if (threadRequest.current || sendingRef.current)
@@ -698,13 +698,13 @@ export function Workspace() {
       throw new Error('Connect this computer before starting a task.');
     threadRequest.current = true;
     const origin = navigationVersion.current;
-    let run: Awaited<ReturnType<typeof window.nesvo.pipelines.startTask>>;
+    let run: Awaited<ReturnType<typeof window.nesvo.workflows.startTask>>;
     try {
-      run = await window.nesvo.pipelines.startTask(hostId, input);
+      run = await window.nesvo.workflows.startTask(hostId, input);
     } finally {
       threadRequest.current = false;
     }
-    store.mergePipelineRuns([run]);
+    store.mergeWorkflowRuns([run]);
     if (!run.sessionId) return 'started';
     try {
       const history = await store.recover(hostId);
@@ -716,37 +716,37 @@ export function Workspace() {
       return 'started';
     }
   };
-  const controlPipeline = async (
+  const controlWorkflow = async (
     action: 'stop' | 'resume' | 'confirm',
     stepId = '',
   ) => {
     if (!selectedRun || !store.hostReady(selectedRun.hostId)) return;
     const run = selectedRun;
     const key = entityKey(run);
-    if (pipelineRequests.current.has(key)) return;
-    pipelineRequests.current.add(key);
-    setPipelinePending(previous => ({ ...previous, [key]: true }));
-    setPipelineErrors(previous => ({ ...previous, [key]: '' }));
+    if (workflowRequests.current.has(key)) return;
+    workflowRequests.current.add(key);
+    setWorkflowPending(previous => ({ ...previous, [key]: true }));
+    setWorkflowErrors(previous => ({ ...previous, [key]: '' }));
     try {
-      store.mergePipelineRuns([
+      store.mergeWorkflowRuns([
         action === 'stop'
-          ? await window.nesvo.pipelines.stopRun(run.hostId, run.id)
+          ? await window.nesvo.workflows.stopRun(run.hostId, run.id)
           : action === 'resume'
-            ? await window.nesvo.pipelines.resumeRun(run.hostId, run.id)
-            : await window.nesvo.pipelines.skipStep(run.hostId, {
+            ? await window.nesvo.workflows.resumeRun(run.hostId, run.id)
+            : await window.nesvo.workflows.skipStep(run.hostId, {
                 runId: run.id,
                 stepId,
                 reason: 'The operator confirmed that the action already ran.',
               }),
       ]);
     } catch (failure) {
-      setPipelineErrors(previous => ({
+      setWorkflowErrors(previous => ({
         ...previous,
-        [key]: `Could not ${action === 'stop' ? 'stop the pipeline' : action === 'resume' ? 'resume the pipeline' : 'record the decision'}. ${errorDetail(failure)}`,
+        [key]: `Could not ${action === 'stop' ? 'stop the workflow' : action === 'resume' ? 'resume the workflow' : 'record the decision'}. ${errorDetail(failure)}`,
       }));
     } finally {
-      pipelineRequests.current.delete(key);
-      setPipelinePending(previous => {
+      workflowRequests.current.delete(key);
+      setWorkflowPending(previous => {
         const next = { ...previous };
         delete next[key];
         return next;
@@ -1008,20 +1008,20 @@ export function Workspace() {
     session => session.status === 'running' || session.status === 'stopping',
   );
   const runningAutomations = runningSessions.filter(isAutomationSession);
-  const stopPipelineRun = async (hostId: string, pipelineRunId: string) => {
+  const stopWorkflowRun = async (hostId: string, workflowRunId: string) => {
     try {
-      store.mergePipelineRuns([
-        await window.nesvo.pipelines.stopRun(hostId, pipelineRunId),
+      store.mergeWorkflowRuns([
+        await window.nesvo.workflows.stopRun(hostId, workflowRunId),
       ]);
       return '';
     } catch (failure) {
-      return `Could not stop the pipeline. ${errorDetail(failure)}`;
+      return `Could not stop the workflow. ${errorDetail(failure)}`;
     }
   };
   const stopAutomation = async (session: Session, reportKey = '') => {
     const error =
-      !session.scheduledJobId && session.pipelineRunId
-        ? await stopPipelineRun(session.hostId, session.pipelineRunId)
+      !session.scheduledJobId && session.workflowRunId
+        ? await stopWorkflowRun(session.hostId, session.workflowRunId)
         : await stop(session);
     if (!error || !isAutomationSession(session)) return;
     setAutomationErrors(previous => ({
@@ -1031,8 +1031,8 @@ export function Workspace() {
     if (reportKey) setErrors(previous => ({ ...previous, [reportKey]: error }));
   };
   const stopAutomationRun = async (job: ScheduledJob, run: ScheduledJobRun) => {
-    if (run.pipelineRunId) {
-      const error = await stopPipelineRun(run.hostId, run.pipelineRunId);
+    if (run.workflowRunId) {
+      const error = await stopWorkflowRun(run.hostId, run.workflowRunId);
       if (error)
         setAutomationErrors(previous => ({
           ...previous,
@@ -1197,7 +1197,7 @@ export function Workspace() {
     connection === 'ready' && !store.loading && !store.error;
   const sidebarProps = {
     sessions: store.sessions,
-    pipelineRuns: store.pipelineRuns,
+    workflowRuns: store.workflowRuns,
     computers: store.computers,
     hostName: selectedComputer?.name ?? 'Local',
     onComputers: () => {
@@ -1222,12 +1222,12 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: creating || pipelinesView || automation ? '' : selectedKey,
+    selectedId: creating || workflowsView || automation ? '' : selectedKey,
     inbox,
-    pipelines: pipelinesView,
+    workflows: workflowsView,
     onSelect: select,
     onInbox: openInbox,
-    onPipelines: openPipelines,
+    onWorkflows: openWorkflows,
     onCreate: openCreate,
     scheduledJobs: automations.jobs,
     automations: !!automation,
@@ -1405,10 +1405,10 @@ export function Workspace() {
                 <h1 className="truncate text-[13px] font-semibold">
                   {creating
                     ? 'New thread'
-                    : pipelinesView
-                      ? pipelinesEditor
-                        ? `Graph editor · ${pipelinesEditor.pipelineName ?? 'New pipeline'}`
-                        : 'Pipelines'
+                    : workflowsView
+                      ? workflowsEditor
+                        ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`
+                        : 'Workflows'
                       : inbox
                         ? 'Inbox'
                         : automationView === 'detail'
@@ -1458,7 +1458,7 @@ export function Workspace() {
             <Plus />
           </Button>
           {cardRun ? (
-            <PipelineStatus
+            <WorkflowStatus
               run={cardRun}
               open={cardOpen}
               onToggle={toggleCard}
@@ -1588,20 +1588,20 @@ export function Workspace() {
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
               onClose={closeCard}
-              pipeline={
+              workflow={
                 cardRun && (
-                  <PipelineSection
+                  <WorkflowSection
                     key={entityKey(cardRun)}
                     run={cardRun}
                     steps={selectedRunSteps}
                     connected={store.hostReady(selectedHostId)}
-                    pending={!!pipelinePending[entityKey(cardRun)]}
-                    error={pipelineErrors[entityKey(cardRun)] ?? ''}
-                    api={window.nesvo.pipelines}
-                    onStop={() => void controlPipeline('stop')}
-                    onResume={() => void controlPipeline('resume')}
+                    pending={!!workflowPending[entityKey(cardRun)]}
+                    error={workflowErrors[entityKey(cardRun)] ?? ''}
+                    api={window.nesvo.workflows}
+                    onStop={() => void controlWorkflow('stop')}
+                    onResume={() => void controlWorkflow('resume')}
                     onConfirmAction={stepId =>
-                      void controlPipeline('confirm', stepId)
+                      void controlWorkflow('confirm', stepId)
                     }
                     onInbox={openInbox}
                     onSession={select}
@@ -1634,9 +1634,9 @@ export function Workspace() {
               busyReason={threadBusyReason}
               hostApi={desktopApi(threadSetup.hostId)}
               onStart={startThread}
-              onStartPipeline={startPipelineTask}
+              onStartWorkflow={startWorkflowTask}
             />
-          ) : pipelinesView && pipelinesEditor ? (
+          ) : workflowsView && workflowsEditor ? (
             <Suspense
               fallback={
                 <p role="status" className="p-6 text-xs text-muted-foreground">
@@ -1644,16 +1644,16 @@ export function Workspace() {
                 </p>
               }
             >
-              <PipelineGraphEditor
-                hostId={pipelinesEditor.hostId}
-                directory={pipelinesEditor.directory}
-                pipelineName={pipelinesEditor.pipelineName}
-                catalog={pipelinesEditor.catalog}
-                api={window.nesvo.pipelines}
+              <WorkflowGraphEditor
+                hostId={workflowsEditor.hostId}
+                directory={workflowsEditor.directory}
+                workflowName={workflowsEditor.workflowName}
+                catalog={workflowsEditor.catalog}
+                api={window.nesvo.workflows}
                 scheduledJobsApi={window.nesvo.scheduledJobs}
                 computers={store.computers}
-                statuses={store.providerStates(pipelinesEditor.hostId)}
-                onClose={() => setPipelinesEditor(null)}
+                statuses={store.providerStates(workflowsEditor.hostId)}
+                onClose={() => setWorkflowsEditor(null)}
                 onDirtyChange={setEditorDirty}
                 onDiscoverSkills={discoverEditorSkills}
                 runOverlay={editorRunOverlay}
@@ -1661,47 +1661,47 @@ export function Workspace() {
                 onSession={select}
                 dock={context => (
                   <Suspense fallback={null}>
-                    <PipelineAssistantDock
+                    <WorkflowAssistantDock
                       {...context}
-                      hostId={pipelinesEditor.hostId}
-                      directory={pipelinesEditor.directory}
-                      statuses={store.providerStates(pipelinesEditor.hostId)}
+                      hostId={workflowsEditor.hostId}
+                      directory={workflowsEditor.directory}
+                      statuses={store.providerStates(workflowsEditor.hostId)}
                       computers={store.computers}
                       sessions={store.sessions}
                       proposals={store.assistantProposals}
                       onRefreshProvider={provider =>
                         void store.refreshProvider(
                           provider,
-                          pipelinesEditor.hostId,
+                          workflowsEditor.hostId,
                         )
                       }
                       onOpenSession={sessionId =>
-                        select(hostKey(sessionId, pipelinesEditor.hostId))
+                        select(hostKey(sessionId, workflowsEditor.hostId))
                       }
                     />
                   </Suspense>
                 )}
               />
             </Suspense>
-          ) : pipelinesView ? (
+          ) : workflowsView ? (
             <Suspense
               fallback={
                 <p role="status" className="p-6 text-xs text-muted-foreground">
-                  Loading pipelines…
+                  Loading workflows…
                 </p>
               }
             >
-              <PipelineDefinitions
+              <WorkflowDefinitions
                 computers={store.computers}
-                hostId={pipelinesSource.hostId}
-                directory={pipelinesSource.directory}
-                api={window.nesvo.pipelines}
+                hostId={workflowsSource.hostId}
+                directory={workflowsSource.directory}
+                api={window.nesvo.workflows}
                 onEdit={target => {
-                  setPipelinesSource({
+                  setWorkflowsSource({
                     hostId: target.hostId,
                     directory: target.directory,
                   });
-                  setPipelinesEditor(target);
+                  setWorkflowsEditor(target);
                 }}
               />
             </Suspense>
@@ -2113,7 +2113,7 @@ export function Workspace() {
               Leave the graph editor?
             </DialogTitle>
             <DialogDescription className="text-xs">
-              The pipeline has unsaved changes. Leaving drops the edits made
+              The workflow has unsaved changes. Leaving drops the edits made
               since the last save.
             </DialogDescription>
           </DialogHeader>

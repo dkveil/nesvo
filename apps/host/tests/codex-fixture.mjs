@@ -835,13 +835,13 @@ if (args.length === 1 && args[0] === '--version') {
         complete('Codex fixture corrected files.');
       } else if (requestPrompt.includes('fixture:review-definition')) {
         assert.equal(thread.supervised, true);
-        const steps = join(thread.cwd, '.agents', 'pipelines', 'steps');
+        const steps = join(thread.cwd, '.agents', 'workflows', 'steps');
         mkdirSync(steps, { recursive: true });
         writeFileSync(
           join(steps, 'x.md'),
           '---\nname: x\ntype: command\nphase: pre-done\n---\necho x\n',
         );
-        complete('Codex fixture changed a pipeline definition.');
+        complete('Codex fixture changed a workflow definition.');
       } else if (requestPrompt.includes('fixture:review-write')) {
         assert.equal(thread.supervised, true);
         writeFileSync(join(thread.cwd, 'tracked.txt'), 'initial agent text\n');

@@ -201,8 +201,8 @@ export function AutomationEditor({
             {editing ? 'Edit automation' : 'New automation'}
           </SheetTitle>
           <SheetDescription className="text-xs">
-            {values.pipeline
-              ? 'Runs a pipeline on a schedule. Each run is a pipeline run with its result in the Inbox.'
+            {values.workflow
+              ? 'Runs a workflow on a schedule. Each run is a workflow run with its result in the Inbox.'
               : 'Runs a read-only prompt on a schedule. Each run is a session with its result in the Inbox.'}
           </SheetDescription>
         </SheetHeader>
@@ -242,14 +242,14 @@ export function AutomationEditor({
                   message={visible('name')}
                 />
               </div>
-              {values.pipeline ? (
+              {values.workflow ? (
                 <div className="space-y-1.5">
-                  <span className="text-xs font-medium">Pipeline</span>
+                  <span className="text-xs font-medium">Workflow</span>
                   <p
-                    data-field="pipeline"
+                    data-field="workflow"
                     className="text-[13px] text-muted-foreground [overflow-wrap:anywhere]"
                   >
-                    {values.pipeline.name} · {values.pipeline.specPath}
+                    {values.workflow.name} · {values.workflow.specPath}
                   </p>
                 </div>
               ) : (
@@ -284,14 +284,14 @@ export function AutomationEditor({
                   <HostPicker
                     computers={computers}
                     hostId={values.hostId}
-                    disabled={pending || editing || !!values.pipeline}
+                    disabled={pending || editing || !!values.workflow}
                     onChange={hostId => change({ hostId })}
                     onManageComputers={onManageComputers}
                   />
                   <LocationPicker
                     directory={values.directory}
                     computerName={computer?.name ?? 'this computer'}
-                    disabled={pending || !!values.pipeline}
+                    disabled={pending || !!values.workflow}
                     open={locationOpen && !pending}
                     onOpenChange={setLocationOpen}
                     onChange={directory => change({ directory })}
@@ -302,9 +302,9 @@ export function AutomationEditor({
                     Runs only while Nesvo is open.
                   </p>
                 )}
-                {values.pipeline ? (
+                {values.workflow ? (
                   <p className="text-2xs leading-4 text-muted-foreground">
-                    A pipeline automation stays in the project of its pipeline.
+                    A workflow automation stays in the project of its workflow.
                   </p>
                 ) : (
                   editing && (

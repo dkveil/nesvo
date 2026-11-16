@@ -227,8 +227,8 @@ export function connectSshHost(
           );
         },
         method === 'discover-skills' ||
-          method === 'start-pipeline-task' ||
-          method === 'pipeline-assistant-send'
+          method === 'start-workflow-task' ||
+          method === 'workflow-assistant-send'
           ? 60_000
           : method === 'provider-usage'
             ? 40_000

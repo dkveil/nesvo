@@ -31,15 +31,15 @@ import {
   runStatusTones,
   showsRunStatus,
   toneText,
-  type PipelineRun,
-} from '@/entities/pipeline';
+  type WorkflowRun,
+} from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 
 type Props = {
   sessions: Session[];
-  pipelineRuns: PipelineRun[];
+  workflowRuns: WorkflowRun[];
   computers: Computer[];
   hostName: string;
   onComputers: () => void;
@@ -47,10 +47,10 @@ type Props = {
   pendingActions: number;
   selectedId: string;
   inbox: boolean;
-  pipelines: boolean;
+  workflows: boolean;
   onSelect: (id: string) => void;
   onInbox: () => void;
-  onPipelines: () => void;
+  onWorkflows: () => void;
   onCreate: () => void;
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
@@ -75,7 +75,7 @@ function SessionStatus({
   now,
 }: {
   session: Session;
-  run: PipelineRun | undefined;
+  run: WorkflowRun | undefined;
   offline: boolean;
   now: number;
 }) {
@@ -119,7 +119,7 @@ function SessionStatus({
 
 export function SessionSidebar({
   sessions,
-  pipelineRuns,
+  workflowRuns,
   computers,
   hostName,
   onComputers,
@@ -127,10 +127,10 @@ export function SessionSidebar({
   pendingActions,
   selectedId,
   inbox,
-  pipelines,
+  workflows,
   onSelect,
   onInbox,
-  onPipelines,
+  onWorkflows,
   onCreate,
   onCollapse,
   collapseToggleRef,
@@ -151,19 +151,19 @@ export function SessionSidebar({
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
   const runOf = (session: Session) =>
-    session.pipelineRunId
-      ? pipelineRuns.find(
+    session.workflowRunId
+      ? workflowRuns.find(
           run =>
-            run.id === session.pipelineRunId && run.hostId === session.hostId,
+            run.id === session.workflowRunId && run.hostId === session.hostId,
         )
       : undefined;
   const parentIdOf = (session: Session) =>
     session.parentId ??
-    (session.pipelineStepId ? (runOf(session)?.sessionId ?? null) : null);
+    (session.workflowStepId ? (runOf(session)?.sessionId ?? null) : null);
   const statusText = (session: Session) => {
     const run = runOf(session);
     return showsRunStatus(session, run)
-      ? `Pipeline ${runStatusLabel(run.status)}`
+      ? `Workflow ${runStatusLabel(run.status)}`
       : sessionStatusLabel(session);
   };
   const childrenOf = (root: Session) =>
@@ -221,7 +221,7 @@ export function SessionSidebar({
   const grouped = computers.length > 1;
   const row = (session: Session, child = false) => {
     const computer = computerOf(session);
-    const selected = !inbox && !pipelines && selectedId === entityKey(session);
+    const selected = !inbox && !workflows && selectedId === entityKey(session);
     const offline = computer?.status !== 'connected';
     const directory = directoryLabel(session.directory);
     const role = sessionRoleLabel(session);
@@ -394,13 +394,13 @@ export function SessionSidebar({
           className={cn(
             'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 outline-none',
             'hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
-            pipelines && 'bg-sidebar-row-selected text-sidebar-foreground',
+            workflows && 'bg-sidebar-row-selected text-sidebar-foreground',
           )}
-          onClick={onPipelines}
-          aria-current={pipelines ? 'page' : undefined}
+          onClick={onWorkflows}
+          aria-current={workflows ? 'page' : undefined}
         >
           <Workflow className="size-4 text-sidebar-icon" aria-hidden="true" />
-          Pipelines
+          Workflows
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">

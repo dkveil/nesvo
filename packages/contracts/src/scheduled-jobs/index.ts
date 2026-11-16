@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { stepNameSchema } from '../pipelines/definitions';
+import { stepNameSchema } from '../workflows/definitions';
 import { claudeModelSchema } from '../sessions';
 import {
   SCHEDULE_TIME_PATTERN,
@@ -71,7 +71,7 @@ export const scheduledJobTimeZoneSchema = z
   .refine(isValidTimeZone, 'Use an IANA time zone such as Europe/Warsaw.')
   .transform(canonicalizeTimeZone);
 
-export const scheduledJobPipelineSchema = z.strictObject({
+export const scheduledJobWorkflowSchema = z.strictObject({
   name: stepNameSchema,
   specPath: z.string().min(1).max(scheduledJobLimits.directory),
 });
@@ -102,7 +102,7 @@ const scheduledJobDefinitionShape = {
     .min(scheduledJobLimits.minTimeoutMinutes)
     .max(scheduledJobLimits.maxTimeoutMinutes)
     .default(scheduledJobLimits.defaultTimeoutMinutes),
-  pipeline: scheduledJobPipelineSchema.nullable().default(null),
+  workflow: scheduledJobWorkflowSchema.nullable().default(null),
 };
 
 type ProviderRuleSubject = {
@@ -131,10 +131,10 @@ const enforceProviderRules = (
 };
 
 const enforcePromptRule = (
-  value: { prompt: string; pipeline: unknown },
+  value: { prompt: string; workflow: unknown },
   context: z.RefinementCtx,
 ) => {
-  if (value.prompt === '' && !value.pipeline)
+  if (value.prompt === '' && !value.workflow)
     context.addIssue({
       code: 'custom',
       path: ['prompt'],
@@ -194,7 +194,7 @@ export const scheduledJobRunSchema = z
     missedCount: z.number().int().min(0),
     sessionId: idSchema.nullable(),
     runId: idSchema.nullable(),
-    pipelineRunId: idSchema.nullable().default(null),
+    workflowRunId: idSchema.nullable().default(null),
     reviewId: idSchema.nullable(),
     resetAt: z.iso.datetime().nullable(),
     startedAt: z.iso.datetime().nullable(),
@@ -262,7 +262,7 @@ export const scheduledJobSessionOriginSchema = z.strictObject({
   runId: idSchema,
 });
 
-export type ScheduledJobPipeline = z.infer<typeof scheduledJobPipelineSchema>;
+export type ScheduledJobWorkflow = z.infer<typeof scheduledJobWorkflowSchema>;
 export type ScheduledJobSchedule = z.infer<typeof scheduledJobScheduleSchema>;
 export type ScheduledJobDefinition = z.infer<
   typeof scheduledJobDefinitionSchema

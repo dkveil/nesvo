@@ -81,8 +81,8 @@ export function startHost(directory: string) {
           reject(new Error('Host timed out'));
         },
         method === 'discover-skills' ||
-          method === 'start-pipeline-task' ||
-          method === 'pipeline-assistant-send'
+          method === 'start-workflow-task' ||
+          method === 'workflow-assistant-send'
           ? 60000
           : method === 'provider-usage'
             ? 40000

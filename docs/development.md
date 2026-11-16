@@ -43,23 +43,23 @@ Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run ho
 Each stdin line is a JSON object validated by packages/contracts: health, claude-status, codex-status, list-sessions, list-reviews, create-session, send-message, stop-run, respond-approval, decide-delegation, decide-review or shutdown. Commands use a UUID id; send-message also has an idempotent messageId, and stop-run addresses a specific runId. Approval responses additionally identify the exact pending request and carry only accept or decline. Delegation decisions identify sessionId, runId and delegationId and carry accept or decline; they never accept renderer-supplied worker settings. Review decisions carry reviewId, version, decisionId, accept or request-changes, and required feedback for corrections.
 Responses, session-changed and review-changed events are JSONL on stdout; diagnostics go to stderr. Readers must correlate responses by id instead of treating the next line as the response. Closing stdin also closes the host and its active group.
 
-### Pipeline definition commands
+### Workflow definition commands
 
-The same bundle validates and changes pipeline definitions without a running host or a database:
+The same bundle validates and changes workflow definitions without a running host or a database:
 
 ```sh
-node apps/host/dist/main.js pipelines validate --directory <project>
-node apps/host/dist/main.js pipelines list --directory <project> --json
-node apps/host/dist/main.js pipelines add-step --directory <project> --scope project --file step.md [--expected-hash <hash>]
-node apps/host/dist/main.js pipelines add-to-pipeline --directory <project> --scope project --pipeline <name> --step <name> [--after <name>]
-node apps/host/dist/main.js pipelines remove-from-pipeline --directory <project> --scope project --pipeline <name> --step <name>
+node apps/host/dist/main.js workflows validate --directory <project>
+node apps/host/dist/main.js workflows list --directory <project> --json
+node apps/host/dist/main.js workflows add-step --directory <project> --scope project --file step.md [--expected-hash <hash>]
+node apps/host/dist/main.js workflows add-to-workflow --directory <project> --scope project --workflow <name> --step <name> [--after <name>]
+node apps/host/dist/main.js workflows remove-from-workflow --directory <project> --scope project --workflow <name> --step <name>
 ```
 
 `list` prints the `contentHash` of every definition. Replacing an existing step requires the hash that was read as `--expected-hash`; a changed file answers with its current hash, exits 2 and writes nothing, so read it again. Validation errors exit 1. When `NESVO_RUN_ID` is set, the three writing commands exit 3 without touching a file; `validate` and `list` still work. Details are in the architecture notes on definition commands.
 
-## Pipeline demo runs
+## Workflow demo runs
 
-The header pipeline status and the session card can be previewed in every run state with demo runs. Set NESVO_PIPELINE_DEMO=1 before starting an unpackaged desktop build; optional NESVO_PIPELINE_DEMO_DIRECTORY sets the folder the demo sessions point at. Main then adds five read-only demo sessions to Local with runs that are checking, passed, need attention after a failed command step, wait for a human gate, and stop on an uncertain action, plus one nested agent step session. Run lists, run detail, evidence reads, Stop, Resume and the skip that records an uncertain action as done for those runs are answered in memory by `apps/desktop/src/main/pipeline-demo.ts`; nothing reaches the host or the database, and every other command, including starting a task, still goes to the real host. A packaged build ignores the flag and never creates the demo source. While the flag is on, the Local run list comes only from the demo, so real runs on Local are not listed. Use a dedicated NESVO_DATA_DIR, because the demo sessions appear next to real ones.
+The header workflow status and the session card can be previewed in every run state with demo runs. Set NESVO_WORKFLOW_DEMO=1 before starting an unpackaged desktop build; optional NESVO_WORKFLOW_DEMO_DIRECTORY sets the folder the demo sessions point at. Main then adds five read-only demo sessions to Local with runs that are checking, passed, need attention after a failed command step, wait for a human gate, and stop on an uncertain action, plus one nested agent step session. Run lists, run detail, evidence reads, Stop, Resume and the skip that records an uncertain action as done for those runs are answered in memory by `apps/desktop/src/main/workflow-demo.ts`; nothing reaches the host or the database, and every other command, including starting a task, still goes to the real host. A packaged build ignores the flag and never creates the demo source. While the flag is on, the Local run list comes only from the demo, so real runs on Local are not listed. Use a dedicated NESVO_DATA_DIR, because the demo sessions appear next to real ones.
 
 ## Local data
 
@@ -71,7 +71,7 @@ Empty working-directory input creates a dedicated folder under the host's worksp
 
 NESVO_CLAUDE_EXECUTABLE and NESVO_CODEX_EXECUTABLE optionally select absolute native executable paths. A JavaScript CLI entry is launched using the existing Node runtime. The test suite uses these overrides for its local fixtures. Production discovery checks PATH and common native installation locations; shell wrappers are not executed.
 
-Isolated pipeline tasks create their Git worktrees under the data directory, in `worktrees/`, on branches named `nesvo/<slug>-<runId8>`. They are removed only by an explicit removal request, which refuses a worktree with uncommitted changes unless forced and keeps the branch. A worktree holds only tracked files, so `.env`, local state and installed dependencies are absent. Nesvo copies nothing and has no file list for it; a `plan` phase step prepares the worktree from the operator's project, which every step receives as `NESVO_PROJECT_ROOT`:
+Isolated workflow tasks create their Git worktrees under the data directory, in `worktrees/`, on branches named `nesvo/<slug>-<runId8>`. They are removed only by an explicit removal request, which refuses a worktree with uncommitted changes unless forced and keeps the branch. A worktree holds only tracked files, so `.env`, local state and installed dependencies are absent. Nesvo copies nothing and has no file list for it; a `plan` phase step prepares the worktree from the operator's project, which every step receives as `NESVO_PROJECT_ROOT`:
 
 ```md
 ---

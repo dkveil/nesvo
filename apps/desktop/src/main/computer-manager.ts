@@ -5,8 +5,8 @@ import {
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
   type DesktopScheduledJobRunPage,
-  type DesktopPipelineRun,
-  type DesktopPipelineRunPage,
+  type DesktopWorkflowRun,
+  type DesktopWorkflowRunPage,
   type DesktopSession,
   type DesktopReview,
   type HostCapability,
@@ -16,10 +16,10 @@ import {
   type Session,
   type Review,
   type ScheduledJob,
-  type PipelineMethod,
+  type WorkflowMethod,
   type SshComputerInput,
   type WorkspaceEvent,
-  isPipelineMethod,
+  isWorkflowMethod,
   sshComputerInputSchema,
 } from '@nesvo/contracts';
 import { type startHost } from './host-client';
@@ -41,7 +41,7 @@ type ExecutableMethod = Exclude<
   | 'list-sessions'
   | 'list-reviews'
   | ScheduledJobMethod
-  | PipelineMethod
+  | WorkflowMethod
 >;
 type Connection = {
   request: (
@@ -56,8 +56,8 @@ type Entry = {
   sessions: Map<string, Session>;
   reviews: Map<string, Review>;
   scheduledJobRevisions: Map<string, number>;
-  pipelineRunRevisions: Map<string, number>;
-  pipelineStepRevisions: Map<string, number>;
+  workflowRunRevisions: Map<string, number>;
+  workflowStepRevisions: Map<string, number>;
   generation: number;
   connection?: Connection;
   unsubscribe?: () => void;
@@ -71,8 +71,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
   'reasoning-effort':
     'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
-  pipelines:
-    'Pipelines are not available on this computer yet. Update its Nesvo host, then reconnect.',
+  workflows:
+    'Workflows are not available on this computer yet. Update its Nesvo host, then reconnect.',
 };
 
 function requiredCapability(
@@ -80,11 +80,11 @@ function requiredCapability(
   input: unknown,
 ): HostCapability | null {
   if (
-    method === 'list-pipeline-definitions' ||
-    method === 'validate-pipeline-definitions'
+    method === 'list-workflow-definitions' ||
+    method === 'validate-workflow-definitions'
   )
     return null;
-  if (isPipelineMethod(method)) return 'pipelines';
+  if (isWorkflowMethod(method)) return 'workflows';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -92,7 +92,7 @@ function requiredCapability(
     'isolation' in input &&
     input.isolation
   )
-    return 'pipelines';
+    return 'workflows';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -131,8 +131,8 @@ export class ComputerManager {
       sessions: new Map(),
       reviews: new Map(),
       scheduledJobRevisions: new Map(),
-      pipelineRunRevisions: new Map(),
-      pipelineStepRevisions: new Map(),
+      workflowRunRevisions: new Map(),
+      workflowStepRevisions: new Map(),
       generation: 0,
     });
   }
@@ -160,8 +160,8 @@ export class ComputerManager {
           sessions: new Map(),
           reviews: new Map(),
           scheduledJobRevisions: new Map(),
-          pipelineRunRevisions: new Map(),
-          pipelineStepRevisions: new Map(),
+          workflowRunRevisions: new Map(),
+          workflowStepRevisions: new Map(),
           generation: 0,
         });
     } catch {
@@ -261,8 +261,8 @@ export class ComputerManager {
       sessions: new Map(),
       reviews: new Map(),
       scheduledJobRevisions: new Map(),
-      pipelineRunRevisions: new Map(),
-      pipelineStepRevisions: new Map(),
+      workflowRunRevisions: new Map(),
+      workflowStepRevisions: new Map(),
       generation: 0,
     };
     this.entries.set(id, entry);
@@ -409,7 +409,7 @@ export class ComputerManager {
   }
 
   private async dispatch(
-    method: ExecutableMethod | ScheduledJobMethod | PipelineMethod,
+    method: ExecutableMethod | ScheduledJobMethod | WorkflowMethod,
     input: unknown,
     hostId: string,
     requires?: HostCapability,
@@ -491,64 +491,64 @@ export class ComputerManager {
     }
   }
 
-  async executePipeline(
-    method: PipelineMethod,
+  async executeWorkflow(
+    method: WorkflowMethod,
     input: unknown,
     hostId: string,
   ) {
     const { entry, response } = await this.dispatch(method, input, hostId);
     const expected = {
-      'list-pipeline-definitions': 'pipeline-definitions',
-      'validate-pipeline-definitions': 'pipeline-definitions',
-      'save-pipeline-definition': 'pipeline-definitions',
-      'delete-pipeline-definition': 'pipeline-definitions',
-      'start-pipeline-task': 'pipeline-run',
-      'run-pipeline-steps': 'pipeline-run',
-      'decide-pipeline-gate': 'pipeline-run',
-      'skip-pipeline-step': 'pipeline-run',
-      'resume-pipeline-run': 'pipeline-run',
-      'resolve-pipeline-step': 'pipeline-run',
-      'stop-pipeline-run': 'pipeline-run',
-      'remove-pipeline-worktree': 'pipeline-run',
-      'list-pipeline-runs': 'pipeline-runs',
-      'get-pipeline-run': 'pipeline-run-detail',
-      'read-pipeline-evidence': 'pipeline-evidence',
-      'pipeline-metrics': 'pipeline-metrics',
-      'pipeline-assistant-send': 'pipeline-assistant-turn',
+      'list-workflow-definitions': 'workflow-definitions',
+      'validate-workflow-definitions': 'workflow-definitions',
+      'save-workflow-definition': 'workflow-definitions',
+      'delete-workflow-definition': 'workflow-definitions',
+      'start-workflow-task': 'workflow-run',
+      'run-workflow-steps': 'workflow-run',
+      'decide-workflow-gate': 'workflow-run',
+      'skip-workflow-step': 'workflow-run',
+      'resume-workflow-run': 'workflow-run',
+      'resolve-workflow-step': 'workflow-run',
+      'stop-workflow-run': 'workflow-run',
+      'remove-workflow-worktree': 'workflow-run',
+      'list-workflow-runs': 'workflow-runs',
+      'get-workflow-run': 'workflow-run-detail',
+      'read-workflow-evidence': 'workflow-evidence',
+      'workflow-metrics': 'workflow-metrics',
+      'workflow-assistant-send': 'workflow-assistant-turn',
     }[method];
     const definitionWrite =
-      (method === 'save-pipeline-definition' ||
-        method === 'delete-pipeline-definition') &&
-      (response.type === 'pipeline-definition-conflict' ||
-        response.type === 'pipeline-definition-refused');
+      (method === 'save-workflow-definition' ||
+        method === 'delete-workflow-definition') &&
+      (response.type === 'workflow-definition-conflict' ||
+        response.type === 'workflow-definition-refused');
     if (response.type !== expected && !definitionWrite)
       throw new Error('Unexpected host response.');
     switch (response.type) {
-      case 'pipeline-definitions':
+      case 'workflow-definitions':
         return response.catalog;
-      case 'pipeline-definition-conflict':
-      case 'pipeline-definition-refused':
+      case 'workflow-definition-conflict':
+      case 'workflow-definition-refused':
         return Object.fromEntries(
           Object.entries(response).filter(([key]) => key !== 'id'),
         );
-      case 'pipeline-run':
-        this.apply(entry, { type: 'pipeline-run-changed', run: response.run });
-        return { ...response.run, hostId } satisfies DesktopPipelineRun;
-      case 'pipeline-runs':
+      case 'workflow-run':
+        this.apply(entry, { type: 'workflow-run-changed', run: response.run });
+        return { ...response.run, hostId } satisfies DesktopWorkflowRun;
+      case 'workflow-runs':
         return {
           ...response.page,
           runs: response.page.runs.map(run => ({ ...run, hostId })),
-        } satisfies DesktopPipelineRunPage;
-      case 'pipeline-run-detail':
+        } satisfies DesktopWorkflowRunPage;
+      case 'workflow-run-detail':
         return {
           run: { ...response.detail.run, hostId },
           steps: response.detail.steps.map(step => ({ ...step, hostId })),
         };
-      case 'pipeline-evidence':
+      case 'workflow-evidence':
         return response.evidence;
-      case 'pipeline-metrics':
+      case 'workflow-metrics':
         return response.metrics;
-      case 'pipeline-assistant-turn':
+      case 'workflow-assistant-turn':
         return response.turn;
       default:
         throw new Error('Unexpected host response.');
@@ -707,8 +707,8 @@ export class ComputerManager {
     );
     entry.reviews = new Map(reviews.reviews.map(review => [review.id, review]));
     entry.scheduledJobRevisions = new Map();
-    entry.pipelineRunRevisions = new Map();
-    entry.pipelineStepRevisions = new Map();
+    entry.workflowRunRevisions = new Map();
+    entry.workflowStepRevisions = new Map();
     for (const event of entry.buffered ?? []) this.apply(entry, event, false);
     entry.buffered = undefined;
     entry.computer.instanceId = health.instanceId;
@@ -774,25 +774,25 @@ export class ComputerManager {
         });
       return;
     }
-    if (event.type === 'pipeline-run-changed') {
-      if (!this.advance(entry.pipelineRunRevisions, event.run)) return;
+    if (event.type === 'workflow-run-changed') {
+      if (!this.advance(entry.workflowRunRevisions, event.run)) return;
       if (publish)
         this.publish({
-          type: 'pipeline-run-changed',
+          type: 'workflow-run-changed',
           run: { ...event.run, hostId },
         });
       return;
     }
-    if (event.type === 'pipeline-step-changed') {
-      if (!this.advance(entry.pipelineStepRevisions, event.step)) return;
+    if (event.type === 'workflow-step-changed') {
+      if (!this.advance(entry.workflowStepRevisions, event.step)) return;
       if (publish)
         this.publish({
-          type: 'pipeline-step-changed',
+          type: 'workflow-step-changed',
           step: { ...event.step, hostId },
         });
       return;
     }
-    if (event.type === 'pipeline-assistant-proposal') {
+    if (event.type === 'workflow-assistant-proposal') {
       if (publish) this.publish({ ...event, hostId });
       return;
     }

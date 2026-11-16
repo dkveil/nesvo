@@ -5,7 +5,7 @@ import type {
   CreateSessionInput,
   DefinitionIssue,
   DesktopApi,
-  StartPipelineTaskInput,
+  StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
   directoryLabel,
@@ -26,11 +26,11 @@ import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
 import { PermissionPicker } from './permission-picker';
 import {
-  pipelineIssues,
+  workflowIssues,
   resolveGate,
-  type PipelineChoice,
-} from './pipeline-choice';
-import { PipelinePicker } from './pipeline-picker';
+  type WorkflowChoice,
+} from './workflow-choice';
+import { WorkflowPicker } from './workflow-picker';
 import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
 
@@ -51,14 +51,14 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   onManageComputers: () => void;
   busyReason: string;
-  hostApi: Pick<DesktopApi, 'discoverSkills' | 'pipelines'>;
+  hostApi: Pick<DesktopApi, 'discoverSkills' | 'workflows'>;
   onStart: (
     input: CreateSessionInput,
     text: string,
     skill: SelectedSkill | null,
   ) => Promise<void>;
-  onStartPipeline: (
-    input: StartPipelineTaskInput,
+  onStartWorkflow: (
+    input: StartWorkflowTaskInput,
   ) => Promise<'opened' | 'started'>;
 };
 
@@ -74,17 +74,17 @@ export function NewThread({
   busyReason,
   hostApi,
   onStart,
-  onStartPipeline,
+  onStartWorkflow,
 }: Props) {
   const [text, setText] = useState('');
   const [skill, setSkill] = useState<SelectedSkill | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
-  const [pipeline, setPipeline] = useState<PipelineChoice | null>(null);
+  const [workflow, setWorkflow] = useState<WorkflowChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
   const [startNotice, setStartNotice] = useState('');
-  const piped = !!pipeline?.pipelineName;
+  const piped = !!workflow?.workflowName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
   const mounted = useRef(true);
@@ -128,24 +128,24 @@ export function NewThread({
   const canSend =
     !pending &&
     !blockedReason &&
-    (pipeline?.pipelineName ? !!pipeline.specPath.trim() : !!text.trim());
-  const changePipeline = (next: PipelineChoice | null) => {
-    if (next?.pipelineName) setSkill(null);
-    setPipeline(next);
+    (workflow?.workflowName ? !!workflow.specPath.trim() : !!text.trim());
+  const changeWorkflow = (next: WorkflowChoice | null) => {
+    if (next?.workflowName) setSkill(null);
+    setWorkflow(next);
     setIssues([]);
     setError('');
     setStartNotice('');
   };
-  const startPipeline = async (choice: PipelineChoice) => {
+  const startWorkflow = async (choice: WorkflowChoice) => {
     const gate = resolveGate(choice, setup.provider, statuses);
     const title = text.trim()
       ? deriveThreadTitle(text.trim())
       : choice.specTitle;
     let outcome: 'opened' | 'started';
     try {
-      outcome = await onStartPipeline({
+      outcome = await onStartWorkflow({
         specPath: choice.specPath.trim(),
-        pipelineName: choice.pipelineName,
+        workflowName: choice.workflowName,
         ...(title ? { title: title.slice(0, 100) } : {}),
         provider: setup.provider,
         model,
@@ -158,15 +158,15 @@ export function NewThread({
         gateModel: gate.model,
       });
     } catch (failure) {
-      setError(`Could not start the pipeline task. ${errorDetail(failure)}`);
+      setError(`Could not start the workflow task. ${errorDetail(failure)}`);
       try {
-        const catalog = await hostApi.pipelines.validateDefinitions(
+        const catalog = await hostApi.workflows.validateDefinitions(
           setup.hostId,
           { directory: setup.directory.trim() },
         );
         if (mounted.current)
           setIssues(
-            pipelineIssues(catalog, choice.pipelineName, choice.specPath),
+            workflowIssues(catalog, choice.workflowName, choice.specPath),
           );
       } catch {
         return;
@@ -174,7 +174,7 @@ export function NewThread({
       return;
     }
     if (!mounted.current || outcome === 'opened') return;
-    setPipeline(null);
+    setWorkflow(null);
     setText('');
     setStartNotice(
       'The task started. Its session appears in the sidebar once this computer reports it.',
@@ -184,14 +184,14 @@ export function NewThread({
     resolveTyped: (draft: string) => Promise<TypedSubmission>,
   ) => {
     if (!canSend || submitting.current) return;
-    if (pipeline?.pipelineName) {
+    if (workflow?.workflowName) {
       submitting.current = true;
       setPending(true);
       setError('');
       setIssues([]);
       setStartNotice('');
       try {
-        await startPipeline(pipeline);
+        await startWorkflow(workflow);
       } finally {
         submitting.current = false;
         if (mounted.current) setPending(false);
@@ -360,11 +360,11 @@ export function NewThread({
                         className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
                         disabled={!canSend}
                         aria-label={
-                          piped ? 'Start pipeline task' : 'Send message'
+                          piped ? 'Start workflow task' : 'Send message'
                         }
                         title={
                           piped
-                            ? 'Start pipeline task (Enter)'
+                            ? 'Start workflow task (Enter)'
                             : 'Send message (Enter)'
                         }
                       >
@@ -383,7 +383,7 @@ export function NewThread({
                   onChange={hostId => {
                     if (hostId !== setup.hostId) {
                       setSkill(null);
-                      changePipeline(null);
+                      changeWorkflow(null);
                     }
                     onSetupChange({ ...setup, hostId });
                   }}
@@ -398,22 +398,22 @@ export function NewThread({
                   onChange={directory => {
                     if (directory !== setup.directory) {
                       setSkill(null);
-                      changePipeline(null);
+                      changeWorkflow(null);
                     }
                     onSetupChange({ ...setup, directory });
                   }}
                 />
-                <PipelinePicker
+                <WorkflowPicker
                   key={`${setup.hostId}:${setup.directory.trim()}`}
                   hostId={setup.hostId}
                   directory={setup.directory}
                   connected={connected}
                   authorProvider={setup.provider}
                   statuses={statuses}
-                  api={hostApi.pipelines}
-                  value={pipeline}
+                  api={hostApi.workflows}
+                  value={workflow}
                   disabled={pending}
-                  onChange={changePipeline}
+                  onChange={changeWorkflow}
                 />
                 <div className="flex-1" />
                 <PermissionPicker
@@ -441,7 +441,7 @@ export function NewThread({
               )}
               {issues.length > 0 && (
                 <ul
-                  aria-label="Pipeline issues"
+                  aria-label="Workflow issues"
                   className="space-y-1 px-1 text-xs leading-5 text-muted-foreground"
                 >
                   {issues.map((issue, index) => (

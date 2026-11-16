@@ -6,10 +6,10 @@ import { ComputerManager } from './computer-manager';
 import { mobileAccess } from './mobile-access';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
-  createPipelineDemo,
-  isPipelineDemoEnabled,
-  type PipelineDemo,
-} from './pipeline-demo';
+  createWorkflowDemo,
+  isWorkflowDemoEnabled,
+  type WorkflowDemo,
+} from './workflow-demo';
 import {
   colorSchemeSchema,
   createSessionSchema,
@@ -32,26 +32,26 @@ import {
   runScheduledJobNowSchema,
   saveScheduledJobSchema,
   setScheduledJobActiveSchema,
-  decidePipelineGateSchema,
-  deletePipelineDefinitionSchema,
-  getPipelineRunSchema,
-  listPipelineDefinitionsSchema,
-  listPipelineRunsSchema,
-  pipelineMetricsInputSchema,
-  pipelineAssistantSendSchema,
-  readPipelineEvidenceSchema,
-  removePipelineWorktreeSchema,
-  resolvePipelineStepSchema,
-  resumePipelineRunSchema,
-  runPipelineStepsSchema,
-  savePipelineDefinitionSchema,
-  skipPipelineStepSchema,
-  startPipelineTaskSchema,
-  stopPipelineRunSchema,
-  validatePipelineDefinitionsSchema,
+  decideWorkflowGateSchema,
+  deleteWorkflowDefinitionSchema,
+  getWorkflowRunSchema,
+  listWorkflowDefinitionsSchema,
+  listWorkflowRunsSchema,
+  workflowMetricsInputSchema,
+  workflowAssistantSendSchema,
+  readWorkflowEvidenceSchema,
+  removeWorkflowWorktreeSchema,
+  resolveWorkflowStepSchema,
+  resumeWorkflowRunSchema,
+  runWorkflowStepsSchema,
+  saveWorkflowDefinitionSchema,
+  skipWorkflowStepSchema,
+  startWorkflowTaskSchema,
+  stopWorkflowRunSchema,
+  validateWorkflowDefinitionsSchema,
   type AppliedColorScheme,
   type DesktopSession,
-  type PipelineMethod,
+  type WorkflowMethod,
   type WorkspaceEvent,
 } from '@nesvo/contracts';
 
@@ -78,25 +78,25 @@ const titleBarOptions = (
         trafficLightPosition: { x: 16, y: TITLE_BAR_HEIGHT / 2 - 7 },
       }
     : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() };
-const pipelineInputs = {
-  'list-pipeline-definitions': listPipelineDefinitionsSchema,
-  'validate-pipeline-definitions': validatePipelineDefinitionsSchema,
-  'start-pipeline-task': startPipelineTaskSchema,
-  'run-pipeline-steps': runPipelineStepsSchema,
-  'list-pipeline-runs': listPipelineRunsSchema,
-  'get-pipeline-run': getPipelineRunSchema,
-  'decide-pipeline-gate': decidePipelineGateSchema,
-  'skip-pipeline-step': skipPipelineStepSchema,
-  'resume-pipeline-run': resumePipelineRunSchema,
-  'resolve-pipeline-step': resolvePipelineStepSchema,
-  'stop-pipeline-run': stopPipelineRunSchema,
-  'save-pipeline-definition': savePipelineDefinitionSchema,
-  'delete-pipeline-definition': deletePipelineDefinitionSchema,
-  'remove-pipeline-worktree': removePipelineWorktreeSchema,
-  'read-pipeline-evidence': readPipelineEvidenceSchema,
-  'pipeline-metrics': pipelineMetricsInputSchema,
-  'pipeline-assistant-send': pipelineAssistantSendSchema,
-} satisfies Record<PipelineMethod, { parse: (input: unknown) => unknown }>;
+const workflowInputs = {
+  'list-workflow-definitions': listWorkflowDefinitionsSchema,
+  'validate-workflow-definitions': validateWorkflowDefinitionsSchema,
+  'start-workflow-task': startWorkflowTaskSchema,
+  'run-workflow-steps': runWorkflowStepsSchema,
+  'list-workflow-runs': listWorkflowRunsSchema,
+  'get-workflow-run': getWorkflowRunSchema,
+  'decide-workflow-gate': decideWorkflowGateSchema,
+  'skip-workflow-step': skipWorkflowStepSchema,
+  'resume-workflow-run': resumeWorkflowRunSchema,
+  'resolve-workflow-step': resolveWorkflowStepSchema,
+  'stop-workflow-run': stopWorkflowRunSchema,
+  'save-workflow-definition': saveWorkflowDefinitionSchema,
+  'delete-workflow-definition': deleteWorkflowDefinitionSchema,
+  'remove-workflow-worktree': removeWorkflowWorktreeSchema,
+  'read-workflow-evidence': readWorkflowEvidenceSchema,
+  'workflow-metrics': workflowMetricsInputSchema,
+  'workflow-assistant-send': workflowAssistantSendSchema,
+} satisfies Record<WorkflowMethod, { parse: (input: unknown) => unknown }>;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -175,12 +175,12 @@ void app.whenReady().then(async () => {
     if (window && !window.isDestroyed())
       window.webContents.send('nesvo:event', event);
   };
-  const pipelineDemo: PipelineDemo | null = isPipelineDemoEnabled(
+  const workflowDemo: WorkflowDemo | null = isWorkflowDemoEnabled(
     app.isPackaged,
   )
-    ? createPipelineDemo({
+    ? createWorkflowDemo({
         directory:
-          process.env.NESVO_PIPELINE_DEMO_DIRECTORY || app.getPath('userData'),
+          process.env.NESVO_WORKFLOW_DEMO_DIRECTORY || app.getPath('userData'),
         publish: send,
       })
     : null;
@@ -188,8 +188,8 @@ void app.whenReady().then(async () => {
     sessions: DesktopSession[],
     hostId: string | undefined,
   ) =>
-    pipelineDemo && (!hostId || hostId === 'local')
-      ? [...sessions, ...pipelineDemo.sessions()]
+    workflowDemo && (!hostId || hostId === 'local')
+      ? [...sessions, ...workflowDemo.sessions()]
       : sessions;
   computers.subscribe(event =>
     send(
@@ -430,16 +430,16 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  for (const method of Object.keys(pipelineInputs) as PipelineMethod[])
+  for (const method of Object.keys(workflowInputs) as WorkflowMethod[])
     ipcMain.handle(
       `nesvo:${method}`,
       (event, input: unknown, hostId: unknown) => {
         authorize(event);
-        const parsed = pipelineInputs[method].parse(input);
+        const parsed = workflowInputs[method].parse(input);
         const target = hostIdSchema.parse(hostId);
-        return pipelineDemo?.serves(method, parsed, target)
-          ? pipelineDemo.execute(method, parsed)
-          : computers.executePipeline(method, parsed, target);
+        return workflowDemo?.serves(method, parsed, target)
+          ? workflowDemo.execute(method, parsed)
+          : computers.executeWorkflow(method, parsed, target);
       },
     );
   ipcMain.handle(

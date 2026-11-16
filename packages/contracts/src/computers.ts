@@ -7,12 +7,12 @@ import {
   scheduledJobSchema,
 } from './scheduled-jobs';
 import {
-  pipelineRunDetailSchema,
-  pipelineRunPageSchema,
-  pipelineRunSchema,
-  pipelineStepRecordSchema,
-  pipelineAssistantProposalEventSchema,
-} from './pipelines';
+  workflowRunDetailSchema,
+  workflowRunPageSchema,
+  workflowRunSchema,
+  workflowStepRecordSchema,
+  workflowAssistantProposalEventSchema,
+} from './workflows';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
@@ -20,7 +20,7 @@ export type HostId = z.infer<typeof hostIdSchema>;
 export const hostCapabilitySchema = z.enum([
   'scheduled-jobs',
   'reasoning-effort',
-  'pipelines',
+  'workflows',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -109,21 +109,21 @@ export const desktopScheduledJobRunPageSchema =
   scheduledJobRunPageSchema.extend({
     runs: z.array(desktopScheduledJobRunSchema),
   });
-export const desktopPipelineRunSchema = pipelineRunSchema.extend({
+export const desktopWorkflowRunSchema = workflowRunSchema.extend({
   hostId: hostIdSchema,
 });
-export const desktopPipelineStepRecordSchema = pipelineStepRecordSchema.extend({
+export const desktopWorkflowStepRecordSchema = workflowStepRecordSchema.extend({
   hostId: hostIdSchema,
 });
-export const desktopPipelineRunPageSchema = pipelineRunPageSchema.extend({
-  runs: z.array(desktopPipelineRunSchema),
+export const desktopWorkflowRunPageSchema = workflowRunPageSchema.extend({
+  runs: z.array(desktopWorkflowRunSchema),
 });
-export const desktopPipelineRunDetailSchema = pipelineRunDetailSchema.extend({
-  run: desktopPipelineRunSchema,
-  steps: z.array(desktopPipelineStepRecordSchema),
+export const desktopWorkflowRunDetailSchema = workflowRunDetailSchema.extend({
+  run: desktopWorkflowRunSchema,
+  steps: z.array(desktopWorkflowStepRecordSchema),
 });
-export const desktopPipelineAssistantProposalSchema =
-  pipelineAssistantProposalEventSchema.extend({ hostId: hostIdSchema });
+export const desktopWorkflowAssistantProposalSchema =
+  workflowAssistantProposalEventSchema.extend({ hostId: hostIdSchema });
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
 export type DesktopReview = z.infer<typeof desktopReviewSchema>;
 export type DesktopScheduledJob = z.infer<typeof desktopScheduledJobSchema>;
@@ -134,15 +134,15 @@ export type DesktopScheduledJobRunPage = z.infer<
   typeof desktopScheduledJobRunPageSchema
 >;
 
-export type DesktopPipelineRun = z.infer<typeof desktopPipelineRunSchema>;
-export type DesktopPipelineStepRecord = z.infer<
-  typeof desktopPipelineStepRecordSchema
+export type DesktopWorkflowRun = z.infer<typeof desktopWorkflowRunSchema>;
+export type DesktopWorkflowStepRecord = z.infer<
+  typeof desktopWorkflowStepRecordSchema
 >;
-export type DesktopPipelineRunPage = z.infer<
-  typeof desktopPipelineRunPageSchema
+export type DesktopWorkflowRunPage = z.infer<
+  typeof desktopWorkflowRunPageSchema
 >;
-export type DesktopPipelineRunDetail = z.infer<
-  typeof desktopPipelineRunDetailSchema
+export type DesktopWorkflowRunDetail = z.infer<
+  typeof desktopWorkflowRunDetailSchema
 >;
 
 export const workspaceEventSchema = z.discriminatedUnion('type', [
@@ -173,15 +173,15 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
     run: desktopScheduledJobRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-run-changed'),
-    run: desktopPipelineRunSchema,
+    type: z.literal('workflow-run-changed'),
+    run: desktopWorkflowRunSchema,
   }),
   z.strictObject({
-    type: z.literal('pipeline-step-changed'),
-    step: desktopPipelineStepRecordSchema,
+    type: z.literal('workflow-step-changed'),
+    step: desktopWorkflowStepRecordSchema,
   }),
-  desktopPipelineAssistantProposalSchema.extend({
-    type: z.literal('pipeline-assistant-proposal'),
+  desktopWorkflowAssistantProposalSchema.extend({
+    type: z.literal('workflow-assistant-proposal'),
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

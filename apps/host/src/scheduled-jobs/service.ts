@@ -44,7 +44,7 @@ export type ScheduledJobRunLink = Pick<
   ScheduledJobRun,
   'sessionId' | 'runId'
 > &
-  Partial<Pick<ScheduledJobRun, 'pipelineRunId'>>;
+  Partial<Pick<ScheduledJobRun, 'workflowRunId'>>;
 
 export type ScheduledJobRunOutcome = Pick<
   ScheduledJobRun,
@@ -257,7 +257,7 @@ export class ScheduledJobService {
       missedCount: 0,
       sessionId: null,
       runId: null,
-      pipelineRunId: null,
+      workflowRunId: null,
       reviewId: null,
       resetAt: null,
       startedAt: at,
@@ -307,7 +307,7 @@ export class ScheduledJobService {
       ...outcome,
       sessionId: null,
       runId: null,
-      pipelineRunId: null,
+      workflowRunId: null,
       reviewId: null,
       resetAt: null,
       startedAt: starting ? at : null,

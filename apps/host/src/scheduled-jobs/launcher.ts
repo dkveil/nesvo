@@ -3,10 +3,10 @@ import {
   createSessionSchema,
   type CreateSessionInput,
   type ScheduledJob,
-  type PipelineRun,
+  type WorkflowRun,
   type ScheduledJobRun,
   type Session,
-  type StartPipelineTaskInput,
+  type StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
   SessionError,
@@ -14,7 +14,7 @@ import {
   type RunOutcome,
   type SessionService,
 } from '../sessions/service';
-import { PipelineRunError } from '../pipelines/runner';
+import { WorkflowRunError } from '../workflows/runner';
 import { FolderError, resolveFolder } from '../workspace/folder';
 import { isRepositoryRoot } from '../workspace/isolation';
 import { type ProviderUsageService } from '../providers/usage-service';
@@ -32,7 +32,7 @@ import {
 } from './service';
 
 const MINUTE_MS = 60_000;
-const PIPELINE_POLL_MS = 1_000;
+const WORKFLOW_POLL_MS = 1_000;
 const GATE_PROVIDERS = {
   claude: 'Codex',
   codex: 'Claude Code',
@@ -47,16 +47,16 @@ type LauncherSessions = Pick<
   'create' | 'send' | 'stop' | 'finished' | 'isBusy' | 'isIdleFor'
 >;
 
-export type ScheduledPipelines = {
+export type ScheduledWorkflows = {
   start: (
-    input: StartPipelineTaskInput,
+    input: StartWorkflowTaskInput,
     signal: AbortSignal,
-  ) => Promise<PipelineRun>;
-  getRun: (runId: string) => PipelineRun | undefined;
+  ) => Promise<WorkflowRun>;
+  getRun: (runId: string) => WorkflowRun | undefined;
   stop: (runId: string) => unknown;
 };
 
-const PIPELINE_SETTLED = new Set<PipelineRun['status']>([
+const WORKFLOW_SETTLED = new Set<WorkflowRun['status']>([
   'passed',
   'failed',
   'rejected',
@@ -147,8 +147,8 @@ const toRunOutcome = (
   return { status: 'failed', reason: null, reviewId: null, resetAt: null };
 };
 
-const toPipelineOutcome = (
-  status: PipelineRun['status'],
+const toWorkflowOutcome = (
+  status: WorkflowRun['status'],
   timedOut: boolean,
 ): ScheduledJobRunOutcome => {
   if (status === 'passed')
@@ -167,10 +167,10 @@ const toPipelineOutcome = (
   return { status: 'failed', reason: null, reviewId: null, resetAt: null };
 };
 
-const pipelineStartFailure = (error: unknown, directory: string): unknown => {
+const workflowStartFailure = (error: unknown, directory: string): unknown => {
   if (error instanceof SessionError && error.code === 'invalid-request')
     return new ScheduledJobLaunchError('catalog', error.message);
-  if (!(error instanceof PipelineRunError)) return error;
+  if (!(error instanceof WorkflowRunError)) return error;
   if (error.code === 'busy') return new SessionError('busy', error.message);
   if (error.code === 'invalid-request')
     return new ScheduledJobLaunchError('catalog', error.message);
@@ -192,7 +192,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     usage: Pick<ProviderUsageService, 'read'>,
     private readonly clock: DeadlineClock = systemClock,
     private readonly folders: typeof resolveFolder = resolveFolder,
-    private readonly pipelines: ScheduledPipelines | null = null,
+    private readonly workflows: ScheduledWorkflows | null = null,
     private readonly repositories: typeof isRepositoryRoot = isRepositoryRoot,
   ) {
     this.limits = new ProviderLimitGate(usage, () => this.clock.now());
@@ -209,10 +209,10 @@ export class SessionLauncher implements ScheduledJobLauncher {
     const directory = scheduledJob.directory
       ? await this.folder(scheduledJob.directory, signal)
       : '';
-    if (scheduledJob.pipeline)
-      return this.launchPipeline(
+    if (scheduledJob.workflow)
+      return this.launchWorkflow(
         scheduledJob,
-        scheduledJob.pipeline,
+        scheduledJob.workflow,
         directory,
         run,
         progress,
@@ -248,19 +248,19 @@ export class SessionLauncher implements ScheduledJobLauncher {
       );
   }
 
-  private async launchPipeline(
+  private async launchWorkflow(
     scheduledJob: ScheduledJob,
-    pipeline: NonNullable<ScheduledJob['pipeline']>,
+    workflow: NonNullable<ScheduledJob['workflow']>,
     directory: string,
     run: ScheduledJobRun,
     progress: ScheduledJobRunProgress,
   ): Promise<void> {
     const signal = this.controller.signal;
-    const pipelines = this.pipelines;
-    if (!pipelines)
+    const workflows = this.workflows;
+    if (!workflows)
       throw new ScheduledJobLaunchError(
         'catalog',
-        'Pipelines are not available on this host.',
+        'Workflows are not available on this host.',
       );
     const isolation =
       directory && (await this.repositories(directory, signal))
@@ -268,12 +268,12 @@ export class SessionLauncher implements ScheduledJobLauncher {
         : 'none';
     signal.throwIfAborted();
     this.ensureAvailable(run);
-    let started: PipelineRun;
+    let started: WorkflowRun;
     try {
-      started = await pipelines.start(
+      started = await workflows.start(
         {
-          specPath: pipeline.specPath,
-          pipelineName: pipeline.name,
+          specPath: workflow.specPath,
+          workflowName: workflow.name,
           provider: SESSION_PROVIDERS[scheduledJob.provider],
           model: scheduledJob.model,
           ...(scheduledJob.effort ? { effort: scheduledJob.effort } : {}),
@@ -286,14 +286,14 @@ export class SessionLauncher implements ScheduledJobLauncher {
         signal,
       );
     } catch (error) {
-      throw pipelineStartFailure(error, directory);
+      throw workflowStartFailure(error, directory);
     }
-    this.watchPipeline(scheduledJob, started.id, pipelines, progress);
+    this.watchWorkflow(scheduledJob, started.id, workflows, progress);
     try {
       progress.started({
         sessionId: started.sessionId,
         runId: null,
-        pipelineRunId: started.id,
+        workflowRunId: started.id,
       });
     } catch {
       return;
@@ -354,10 +354,10 @@ export class SessionLauncher implements ScheduledJobLauncher {
     }
   }
 
-  private watchPipeline(
+  private watchWorkflow(
     scheduledJob: ScheduledJob,
-    pipelineRunId: string,
-    pipelines: ScheduledPipelines,
+    workflowRunId: string,
+    workflows: ScheduledWorkflows,
     progress: ScheduledJobRunProgress,
   ): void {
     let timedOut = false;
@@ -365,7 +365,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     const deadline = this.clock.setTimer(() => {
       timedOut = true;
       try {
-        pipelines.stop(pipelineRunId);
+        workflows.stop(workflowRunId);
       } catch {
         return;
       }
@@ -373,30 +373,30 @@ export class SessionLauncher implements ScheduledJobLauncher {
     this.deadlines.add(deadline);
     const check = () => {
       this.deadlines.delete(poll);
-      const status = this.settledStatus(pipelines, pipelineRunId);
+      const status = this.settledStatus(workflows, workflowRunId);
       if (!status) return schedule();
       this.clock.clearTimer(deadline);
       this.deadlines.delete(deadline);
       try {
-        progress.finished(toPipelineOutcome(status, timedOut));
+        progress.finished(toWorkflowOutcome(status, timedOut));
       } catch {
         return;
       }
     };
     const schedule = () => {
-      poll = this.clock.setTimer(check, PIPELINE_POLL_MS);
+      poll = this.clock.setTimer(check, WORKFLOW_POLL_MS);
       this.deadlines.add(poll);
     };
     schedule();
   }
 
   private settledStatus(
-    pipelines: ScheduledPipelines,
-    pipelineRunId: string,
-  ): PipelineRun['status'] | null {
+    workflows: ScheduledWorkflows,
+    workflowRunId: string,
+  ): WorkflowRun['status'] | null {
     try {
-      const status = pipelines.getRun(pipelineRunId)?.status;
-      return status && PIPELINE_SETTLED.has(status) ? status : null;
+      const status = workflows.getRun(workflowRunId)?.status;
+      return status && WORKFLOW_SETTLED.has(status) ? status : null;
     } catch {
       return null;
     }

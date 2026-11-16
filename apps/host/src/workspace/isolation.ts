@@ -7,7 +7,7 @@ import {
   statSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { PipelineIsolation } from '@nesvo/contracts';
+import type { WorkflowIsolation } from '@nesvo/contracts';
 import {
   OwnedProcessError,
   runOwnedProcess,
@@ -354,7 +354,7 @@ export async function createTaskWorktree({
   slug,
   runId,
   signal,
-}: CreateTaskWorktreeParams): Promise<PipelineIsolation> {
+}: CreateTaskWorktreeParams): Promise<WorkflowIsolation> {
   if (signal.aborted) fail('cancelled', 'The Git operation was cancelled.');
   if (!TASK_SLUG_PATTERN.test(slug))
     fail('invalid-task', 'The task name must be a short lowercase slug.');
