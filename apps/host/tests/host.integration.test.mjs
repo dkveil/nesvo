@@ -13471,6 +13471,10 @@ test(
       join(agents, 'workflows', 'release.md'),
       '---\nname: release\nsteps: [check, publish-now]\n---\n',
     );
+    await write(
+      join(agents, 'workflows', 'later.md'),
+      '---\nname: later\nsteps: [check, publish-later, not-yet]\n---\n',
+    );
     const workflowText =
       '---\nname: default\ndescription: Check and approve\nsteps: [check, approve]\n---\n';
     const workflowPath = await write(
@@ -13713,6 +13717,7 @@ test(
             ['step', 'unsafe'],
             ['step', 'unsafe'],
             ['step', 'unsafe'],
+            ['step', 'unsafe'],
             [null, 'invalid'],
             [null, 'invalid'],
           ],
@@ -13720,6 +13725,8 @@ test(
         assert.match(refusals[3].issues[0].message, /"deploy"/);
         assert.match(refusals[4].issues[0].message, /"publish-now"/);
         await assert.rejects(stat(join(agents, 'steps', 'publish-now.md')));
+        assert.match(refusals[5].issues[0].message, /"publish-later"/);
+        await assert.rejects(stat(join(agents, 'steps', 'publish-later.md')));
         assert.match(
           await readFile(join(agents, 'steps', 'deploy.md'), 'utf8'),
           /^git push$/m,

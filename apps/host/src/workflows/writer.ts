@@ -375,14 +375,17 @@ async function guardedStepIssues(
         item => item.message,
       ),
     );
-    const involved = new Set(
-      unguardedExternalIssues(workflow, workflow.path, next, input.name).map(
-        item => item.message,
-      ),
+    const involved = unguardedExternalIssues(
+      workflow,
+      workflow.path,
+      next,
+      input.name,
     );
+    const reported = new Set(involved.map(item => item.message));
     issues.push(
+      ...involved,
       ...unguardedExternalIssues(workflow, workflow.path, next).filter(
-        item => involved.has(item.message) || !known.has(item.message),
+        item => !reported.has(item.message) && !known.has(item.message),
       ),
     );
   }

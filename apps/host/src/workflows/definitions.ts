@@ -890,14 +890,35 @@ export function checkGraph(
 export const EXTERNAL_GUARD_NOTE =
   'The assistant cannot save an external action without a preceding human step';
 
+function withPlaceholders(
+  workflow: GraphInput,
+  steps: ReadonlyMap<string, GraphStep>,
+  involving: string | null,
+): ReadonlyMap<string, GraphStep> | null {
+  if (workflow.steps.every(name => steps.has(name))) return steps;
+  const written = involving === null ? undefined : steps.get(involving);
+  if (!written) return null;
+  const filled = new Map(steps);
+  for (const name of workflow.steps)
+    if (!filled.has(name))
+      filled.set(name, {
+        type: 'command',
+        phase: written.phase,
+        effect: 'local',
+        body: '',
+      });
+  return filled;
+}
+
 export function unguardedExternalIssues(
   workflow: GraphInput,
   path: string,
   steps: ReadonlyMap<string, GraphStep>,
   involving: string | null = null,
 ): DefinitionIssue[] {
-  if (!workflow.steps.every(name => steps.has(name))) return [];
-  return resolveGraph(workflow, steps)
+  const known = withPlaceholders(workflow, steps, involving);
+  if (!known) return [];
+  return resolveGraph(workflow, known)
     .issues.filter(
       item =>
         item.rule === 'W2' &&

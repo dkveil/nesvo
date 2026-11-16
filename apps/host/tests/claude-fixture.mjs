@@ -659,6 +659,11 @@ if (args.length === 1 && args[0] === '--version') {
           'publish-now',
           '---\nname: publish-now\ntype: command\nphase: pre-push\neffect: external\n---\ngit push\n',
         ),
+        definitionChange(
+          'step',
+          'publish-later',
+          '---\nname: publish-later\ntype: command\nphase: pre-push\neffect: external\n---\ngit push\n',
+        ),
         definitionChange('step', '../escape', lintStep),
         { kind: 'step', op: 'rename' },
       ],
