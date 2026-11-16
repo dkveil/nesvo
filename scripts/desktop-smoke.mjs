@@ -2815,7 +2815,9 @@ try {
   assert.equal(await editor.locator('[data-editor-edge-label]').count(), 1);
   await addGraphStep('smoke-plan');
   await addGraphStep('smoke-publish', 'smoke-approve');
-  assert.equal(await edgeCount('smoke-approve -> smoke-publish'), 1);
+  await editor
+    .locator('[data-editor-edge="smoke-approve -> smoke-publish"]')
+    .waitFor();
   await editor.locator('[data-editor-inspector="node"]').waitFor();
   await fitGraph();
   await editor
@@ -2827,8 +2829,12 @@ try {
   await restartedPage.locator('[data-node-picker]').waitFor();
   await restartedPage.locator('[data-picker-step="smoke-format"]').click();
   await editor.locator('[data-editor-node="smoke-format"]').waitFor();
-  assert.equal(await edgeCount('smoke-check -> smoke-format'), 1);
-  assert.equal(await edgeCount('smoke-format -> smoke-lint'), 1);
+  await editor
+    .locator('[data-editor-edge="smoke-check -> smoke-format"]')
+    .waitFor();
+  await editor
+    .locator('[data-editor-edge="smoke-format -> smoke-lint"]')
+    .waitFor();
   assert.equal(await edgeCount('smoke-check -> smoke-lint'), 0);
   await editorShot('insert-dark');
   await editor.locator('[data-editor-node="smoke-format"]').hover();
@@ -2839,7 +2845,9 @@ try {
   assert.equal(await edgeCount('smoke-check -> smoke-format'), 0);
   await restartedPage.keyboard.press('Control+z');
   await editor.locator('[data-editor-node="smoke-format"]').waitFor();
-  assert.equal(await edgeCount('smoke-format -> smoke-lint'), 1);
+  await editor
+    .locator('[data-editor-edge="smoke-format -> smoke-lint"]')
+    .waitFor();
   await restartedPage.keyboard.press('Control+y');
   await editor
     .locator('[data-editor-node="smoke-format"]')
