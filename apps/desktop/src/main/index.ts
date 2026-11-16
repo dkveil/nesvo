@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron';
 import { startHost } from './host-client';
 import { ComputerManager } from './computer-manager';
 import { mobileAccess } from './mobile-access';
@@ -221,6 +221,15 @@ void app.whenReady().then(async () => {
       appliedColorScheme(),
     );
     return next;
+  });
+  ipcMain.handle('nesvo:open-external', async (event, url: unknown) => {
+    authorize(event);
+    if (typeof url !== 'string') throw new Error('Invalid link');
+    const target = new URL(url);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      throw new Error('Unsupported link protocol');
+    }
+    await shell.openExternal(target.href);
   });
   ipcMain.handle('nesvo:mobile-status', event => {
     authorize(event);

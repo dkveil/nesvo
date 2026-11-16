@@ -308,6 +308,9 @@ const api: DesktopApi = {
     return () =>
       ipcRenderer.removeListener('nesvo:applied-color-scheme', receive);
   },
+  openExternal: async url => {
+    await ipcRenderer.invoke('nesvo:open-external', url);
+  },
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),

@@ -693,6 +693,7 @@ export type DesktopApi = {
   onAppliedColorScheme: (
     listener: (scheme: AppliedColorScheme) => void,
   ) => () => void;
+  openExternal: (url: string) => Promise<void>;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;
