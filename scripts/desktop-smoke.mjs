@@ -2588,6 +2588,7 @@ try {
   await graphStep('smoke-plan', 'agent', 'plan', 'Plan the change.');
   await graphStep('smoke-lint', 'command', 'pre-done', 'echo lint');
   await graphStep('smoke-report', 'command', 'pre-done', 'echo report');
+  await graphStep('smoke-format', 'command', 'pre-done', 'echo format');
   await graphStep('smoke-approve', 'human', 'pre-push', 'Approve the release.');
   await graphStep(
     'smoke-publish',
@@ -2649,11 +2650,18 @@ try {
   await inspector
     .getByRole('textbox', { name: 'Name', exact: true })
     .fill('smoke-graph');
-  const addGraphStep = async name => {
-    await editor.getByRole('button', { name: 'Add step', exact: true }).click();
-    await restartedPage.locator(`[data-palette-step="${name}"]`).click();
+  const openPicker = async (from, when = 'success') => {
+    await editor
+      .locator(`[data-node-add="${from}"][data-node-add-when="${when}"]`)
+      .click();
+    await restartedPage.locator('[data-node-picker]').waitFor();
+  };
+  const addGraphStep = async (name, from = '__start') => {
+    await openPicker(from);
+    await restartedPage.locator(`[data-picker-step="${name}"]`).click();
     await editor.locator(`[data-editor-node="${name}"]`).waitFor();
   };
+  const edgeCount = id => editor.locator(`[data-editor-edge="${id}"]`).count();
   const fitGraph = () =>
     editor.getByRole('button', { name: 'Fit graph', exact: true }).click();
   const handleInfo = locator =>
@@ -2806,20 +2814,47 @@ try {
   );
   assert.equal(await editor.locator('[data-editor-edge-label]').count(), 1);
   await addGraphStep('smoke-plan');
-  await addGraphStep('smoke-publish');
-  await connectSteps('smoke-approve', 'smoke-publish');
-  await editor.locator('[data-editor-inspector="edge"]').waitFor();
+  await addGraphStep('smoke-publish', 'smoke-approve');
+  assert.equal(await edgeCount('smoke-approve -> smoke-publish'), 1);
+  await editor.locator('[data-editor-inspector="node"]').waitFor();
+  await fitGraph();
+  await editor
+    .locator('[data-editor-edge="smoke-check -> smoke-lint"]')
+    .hover({ force: true });
+  await editor
+    .locator('[data-edge-insert="smoke-check -> smoke-lint"]')
+    .click();
+  await restartedPage.locator('[data-node-picker]').waitFor();
+  await restartedPage.locator('[data-picker-step="smoke-format"]').click();
+  await editor.locator('[data-editor-node="smoke-format"]').waitFor();
+  assert.equal(await edgeCount('smoke-check -> smoke-format'), 1);
+  assert.equal(await edgeCount('smoke-format -> smoke-lint'), 1);
+  assert.equal(await edgeCount('smoke-check -> smoke-lint'), 0);
+  await editorShot('insert-dark');
+  await editor.locator('[data-editor-node="smoke-format"]').hover();
+  await editor.locator('[data-node-delete="smoke-format"]').click();
+  await editor
+    .locator('[data-editor-node="smoke-format"]')
+    .waitFor({ state: 'hidden' });
+  assert.equal(await edgeCount('smoke-check -> smoke-format'), 0);
+  await restartedPage.keyboard.press('Control+z');
+  await editor.locator('[data-editor-node="smoke-format"]').waitFor();
+  assert.equal(await edgeCount('smoke-format -> smoke-lint'), 1);
+  await restartedPage.keyboard.press('Control+y');
+  await editor
+    .locator('[data-editor-node="smoke-format"]')
+    .waitFor({ state: 'hidden' });
   await restartedPage.keyboard.press('Escape');
-  await editor.locator('[data-editor-inspector="workflow"]').waitFor();
+  await editor.locator('[data-editor-inspector]').waitFor({ state: 'hidden' });
   await fitGraph();
   await delay(300);
   await editorShot('fan-out-dark');
   await restartedPage.evaluate(() => window.nesvo.setColorScheme('light'));
   await delay(300);
   await editorShot('fan-out-light');
-  await editor.getByRole('button', { name: 'Add step', exact: true }).click();
+  await openPicker('__start');
   await restartedPage
-    .getByRole('listbox', { name: 'Catalog steps', exact: true })
+    .getByRole('listbox', { name: 'Node picker', exact: true })
     .waitFor();
   await editorShot('palette-light');
   await restartedPage.evaluate(() => window.nesvo.setColorScheme('dark'));
@@ -2875,10 +2910,8 @@ try {
     true,
   );
   await editorShot('inspector-workflow-dark');
-  await editor.getByRole('button', { name: 'Add step', exact: true }).click();
-  await restartedPage
-    .getByRole('button', { name: 'New step', exact: true })
-    .click();
+  await openPicker('__start');
+  await restartedPage.locator('[data-picker-new="command"]').click();
   await editor.locator('[data-editor-inspector="draft"]').waitFor();
   await inspector
     .getByRole('textbox', { name: 'Name', exact: true })
