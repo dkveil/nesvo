@@ -96,6 +96,10 @@ function resolveTurnSelection(
   return { model, effort };
 }
 
+function holdQueue(session: Session): void {
+  session.queue = session.queue.map(item => ({ ...item, held: true }));
+}
+
 export class SessionError extends Error {
   constructor(
     readonly code:
@@ -176,7 +180,7 @@ type LaunchTurn = {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
-  assistantPrompt?: string;
+  previousSelection?: TurnSelection;
 };
 
 export type RunOutcome = {
@@ -734,6 +738,7 @@ export class SessionService {
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, input.text);
+    const previousSelection = { model: session.model, effort: session.effort };
     session.model = selection.model;
     session.effort = selection.effort;
     this.prepareRun(
@@ -751,6 +756,7 @@ export class SessionService {
     this.launch(session, prompt, {
       skillId: input.skillId,
       skillHash: input.skillHash,
+      previousSelection,
     });
     return structuredClone(session);
   }
@@ -782,6 +788,7 @@ export class SessionService {
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort === undefined ? {} : { effort: input.effort }),
       createdAt: new Date().toISOString(),
+      held: false,
     });
     try {
       this.publish(session);
@@ -795,8 +802,11 @@ export class SessionService {
   cancelQueued(input: QueuedMessageRefInput): Session {
     const session = this.acceptingSession(input.sessionId);
     const queue = session.queue;
-    if (!queue.some(item => item.id === input.messageId))
+    if (!queue.some(item => item.id === input.messageId)) {
+      if (session.messages.some(message => message.id === input.messageId))
+        throw new SessionError('not-found', 'This message already started.');
       return structuredClone(session);
+    }
     session.queue = queue.filter(item => item.id !== input.messageId);
     try {
       this.publish(session);
@@ -851,7 +861,8 @@ export class SessionService {
 
   private startNextQueued(session: Session): void {
     const next = session.queue[0];
-    if (session.status !== 'completed' || !next || this.isBusy()) return;
+    if (session.status !== 'completed' || !next || next.held || this.isBusy())
+      return;
     try {
       this.send({
         sessionId: session.id,
@@ -1116,7 +1127,7 @@ export class SessionService {
       outputSchema,
       ephemeral,
       instructionsOnly,
-      assistantPrompt,
+      previousSelection,
     }: LaunchTurn,
   ): void {
     const inherited =
@@ -1189,6 +1200,15 @@ export class SessionService {
               controller.signal,
             );
           } catch (error) {
+            if (
+              previousSelection &&
+              !controller.signal.aborted &&
+              error instanceof SessionError &&
+              error.code === 'invalid-request'
+            ) {
+              session.model = previousSelection.model;
+              session.effort = previousSelection.effort;
+            }
             return controller.signal.aborted
               ? { status: 'stopped', error: null }
               : {
@@ -1368,6 +1388,7 @@ export class SessionService {
             : result.error;
         session.activity = null;
         session.pendingApprovals = [];
+        if (session.status !== 'completed') holdQueue(session);
         session.messages.at(-1)!.state = session.status;
         session.messages.at(-1)!.completedAt = new Date().toISOString();
         session.messages.at(-1)!.usage = result.usage ?? null;
@@ -1403,6 +1424,7 @@ export class SessionService {
           'The response could not be saved or finalized. Refresh the session before continuing.';
         session.activity = null;
         session.pendingApprovals = [];
+        holdQueue(session);
         session.messages.at(-1)!.state = 'failed';
         session.messages.at(-1)!.completedAt ??= new Date().toISOString();
         finishActivities(session, 'failed');

@@ -246,6 +246,10 @@ export class SessionStore {
         session.pendingApprovals = [];
         changed = true;
       }
+      if (session.queue.some(item => !item.held)) {
+        session.queue = session.queue.map(item => ({ ...item, held: true }));
+        changed = true;
+      }
       for (const activity of session.activities) {
         if (activity.status !== 'running') continue;
         activity.status = 'interrupted';

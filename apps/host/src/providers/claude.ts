@@ -793,14 +793,22 @@ export function startClaude(options: {
       };
       const thinkingBlocks = new Map<
         string,
-        { activity: ProviderActivity; text: string; emittedAt: number }
+        {
+          messageId: string;
+          index: number;
+          activity: ProviderActivity;
+          text: string;
+          emittedAt: number;
+        }
       >();
+      const thinkingId = (messageId: string, index: number) =>
+        `${messageId}:thinking:${index}`;
       const updateThinking = (
         messageId: string,
         index: number,
         change: { delta?: string; text?: string; done?: boolean },
       ) => {
-        const id = `${messageId}:thinking:${index}`;
+        const id = thinkingId(messageId, index);
         const previous = thinkingBlocks.get(id);
         if (previous?.activity.status === 'completed') return;
         const text = (
@@ -824,11 +832,38 @@ export function startClaude(options: {
           startedAt: previous?.activity.startedAt,
           detail: text || null,
         });
-        thinkingBlocks.set(id, { activity: next, text, emittedAt: now });
+        thinkingBlocks.set(id, {
+          messageId,
+          index,
+          activity: next,
+          text,
+          emittedAt: now,
+        });
         emit({ type: 'tool-activity', activity: next });
       };
-      const completeThinking = (messageId: string, index: number) =>
-        updateThinking(messageId, index, { done: true });
+      const completeThinking = (messageId: string, index: number) => {
+        if (thinkingBlocks.has(thinkingId(messageId, index)))
+          updateThinking(messageId, index, { done: true });
+      };
+      const completeRecordedThinking = (
+        messageId: string,
+        blocks: (RecordValue | null)[],
+      ) => {
+        const tracked = [...thinkingBlocks.values()].filter(
+          block => block.messageId === messageId,
+        );
+        if (tracked.length) {
+          for (const block of tracked) completeThinking(messageId, block.index);
+          return;
+        }
+        blocks.forEach((block, index) => {
+          if (block?.type !== 'thinking') return;
+          updateThinking(messageId, index, {
+            text: typeof block.thinking === 'string' ? block.thinking : '',
+            done: true,
+          });
+        });
+      };
       const consume = (serialized: string) => {
         if (!serialized.trim() || failure || stopped) return;
         let value: RecordValue | null;
@@ -936,12 +971,7 @@ export function startClaude(options: {
           const existing = messages.get(id);
           const blocks = message.content.map(object);
           for (const block of blocks) activity(block);
-          blocks.forEach((block, index) => {
-            if (block?.type !== 'thinking') return;
-            if (typeof block.thinking === 'string' && block.thinking)
-              updateThinking(id, index, { text: block.thinking });
-            completeThinking(id, index);
-          });
+          completeRecordedThinking(id, blocks);
           const text = blocks
             .filter(block => block?.type === 'text')
             .map(block => (typeof block?.text === 'string' ? block.text : ''))

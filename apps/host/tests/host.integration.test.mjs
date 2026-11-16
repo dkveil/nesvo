@@ -4593,14 +4593,14 @@ test(
 );
 
 test(
-  'host queues messages during a run, holds them after Stop and starts the next one after a completed run',
-  { timeout: 60_000 },
+  'host queues messages during a run, holds them after Stop and a restart, and starts the next one after a completed run',
+  { timeout: 90_000 },
   async t => {
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-queue-host-')),
     );
     const pidFile = join(directory, 'pids.json');
-    const host = launch(directory, pidFile);
+    let host = launch(directory, pidFile);
     t.after(async () => {
       if (host.child.exitCode === null) host.child.kill();
       await host.exited.catch(() => undefined);
@@ -4615,10 +4615,40 @@ test(
         directory: workspace,
       })
     ).session;
+    const listed = async () =>
+      (await host.request('list-sessions')).sessions.find(
+        value => value.id === session.id,
+      );
+    const settled = (check, description) =>
+      bounded(
+        (async () => {
+          while (true) {
+            const value = await listed();
+            if (check(value)) return value;
+            await delay(20);
+          }
+        })(),
+        description,
+      );
+    const startWhenIdle = messageId =>
+      bounded(
+        (async () => {
+          while (true) {
+            const response = await host.request('start-queued', {
+              sessionId: session.id,
+              messageId,
+            });
+            if (response.code !== 'busy') return response;
+            await delay(20);
+          }
+        })(),
+        'The queued message never started',
+      );
+    const holdMessageId = randomUUID();
     const held = (
       await host.request('send-message', {
         sessionId: session.id,
-        messageId: randomUUID(),
+        messageId: holdMessageId,
         text: 'fixture:hold',
       })
     ).session;
@@ -4629,11 +4659,12 @@ test(
       text,
     });
     const first = queued(randomUUID(), 'fixture:stream');
-    const second = queued(randomUUID(), 'Queued follow-up.');
+    const second = queued(randomUUID(), 'fixture:stream');
     const dropped = queued(randomUUID(), 'Dropped follow-up.');
     for (const input of [first, second, dropped]) {
       const response = await host.request('queue-message', input);
       assert.equal(response.type, 'session', JSON.stringify(response));
+      assert.equal(response.session.queue.at(-1).held, false);
     }
     const repeated = (await host.request('queue-message', first)).session;
     assert.equal(repeated.runId, held.runId);
@@ -4652,59 +4683,105 @@ test(
       [first.messageId, second.messageId],
     );
     assert.equal(cancelled.status, 'running');
+    const alreadyStarted = await host.request('cancel-queued', {
+      sessionId: session.id,
+      messageId: holdMessageId,
+    });
+    assert.equal(
+      alreadyStarted.code,
+      'not-found',
+      JSON.stringify(alreadyStarted),
+    );
+    assert.match(JSON.stringify(alreadyStarted), /already started/);
+    const unknown = await host.request('cancel-queued', {
+      sessionId: session.id,
+      messageId: randomUUID(),
+    });
+    assert.equal(unknown.type, 'session', JSON.stringify(unknown));
     await host.request('stop-run', {
       sessionId: session.id,
       runId: held.runId,
     });
-    await host.event(
-      value => value.id === session.id && value.status === 'stopped',
+    const stopped = await settled(
+      value =>
+        value.status === 'stopped' &&
+        value.queue.length === 2 &&
+        value.queue.every(item => item.held),
+      'The queue was not held after Stop',
     );
-    await delay(300);
-    const stopped = (await host.request('list-sessions')).sessions.find(
-      value => value.id === session.id,
+    assert.deepEqual(
+      stopped.queue.map(item => item.id),
+      [first.messageId, second.messageId],
     );
-    assert.equal(stopped.status, 'stopped');
-    assert.equal(stopped.queue.length, 2);
-    const started = await bounded(
-      (async () => {
-        while (true) {
-          const response = await host.request('start-queued', {
-            sessionId: session.id,
-            messageId: first.messageId,
-          });
-          if (response.code !== 'busy') return response;
-          await delay(20);
-        }
-      })(),
-      'The queued message never started',
+
+    await host.stop();
+    host = launch(directory, pidFile);
+    assert.equal((await host.request('health')).type, 'health');
+    const restarted = await listed();
+    assert.equal(restarted.status, 'stopped');
+    assert.equal(restarted.runId, held.runId);
+    assert.deepEqual(
+      restarted.queue.map(item => [item.id, item.held]),
+      [
+        [first.messageId, true],
+        [second.messageId, true],
+      ],
     );
+    assert.deepEqual(
+      restarted.messages
+        .filter(message => message.author === 'operator')
+        .map(message => message.id),
+      [holdMessageId],
+    );
+
+    const started = await startWhenIdle(first.messageId);
     assert.equal(started.type, 'session', JSON.stringify(started));
     assert.equal(started.session.status, 'running');
     assert.equal(started.session.messages.at(-2).id, first.messageId);
     assert.deepEqual(
-      started.session.queue.map(item => item.id),
-      [second.messageId],
+      started.session.queue.map(item => [item.id, item.held]),
+      [[second.messageId, true]],
     );
     const completed = await host.event(
       value =>
         value.runId === started.session.runId && value.status === 'completed',
     );
     assert.equal(agent(completed).body, 'Fixture streamed reply.');
+
+    const resumed = await startWhenIdle(second.messageId);
+    assert.equal(resumed.type, 'session', JSON.stringify(resumed));
+    assert.equal(resumed.session.status, 'running');
+    assert.equal(resumed.session.messages.at(-2).id, second.messageId);
+    assert.deepEqual(resumed.session.queue, []);
+    const third = queued(randomUUID(), 'Queued follow-up.');
+    const appended = await host.request('queue-message', third);
+    assert.equal(appended.type, 'session', JSON.stringify(appended));
+    assert.equal(appended.session.runId, resumed.session.runId);
+    assert.deepEqual(
+      appended.session.queue.map(item => [item.id, item.held]),
+      [[third.messageId, false]],
+    );
     const following = await host.event(
       value =>
         value.id === session.id &&
         value.status === 'running' &&
-        value.messages.some(message => message.id === second.messageId),
+        value.messages.some(message => message.id === third.messageId),
     );
     assert.deepEqual(following.queue, []);
     const finished = await host.event(
       value => value.runId === following.runId && value.status === 'completed',
     );
-    assert.equal(
-      finished.messages.filter(message => message.author === 'operator').length,
-      3,
+    assert.deepEqual(
+      finished.messages
+        .filter(message => message.author === 'operator')
+        .map(message => message.id),
+      [holdMessageId, first.messageId, second.messageId, third.messageId],
     );
     assert.deepEqual(finished.queue, []);
+    assert.equal(
+      finished.activities.some(activity => activity.kind === 'thinking'),
+      false,
+    );
     await host.stop();
   },
 );

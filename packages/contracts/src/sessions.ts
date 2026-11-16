@@ -136,6 +136,7 @@ export const queuedMessageSchema = z.strictObject({
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
   createdAt: z.iso.datetime(),
+  held: z.boolean().default(false),
 });
 export const queuedMessageRefSchema = z.strictObject({
   sessionId: z.uuid(),
