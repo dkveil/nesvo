@@ -8,8 +8,42 @@ import {
 
 type Props = { session: Session };
 
+function formatTokens(value: number | null) {
+  const count = value ?? 0;
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+}
+
+function tokenPair(input: number | null, output: number | null) {
+  return `${formatTokens(input)} in · ${formatTokens(output)} out`;
+}
+
+function sessionUsage(session: Session) {
+  const used = session.messages.flatMap(message =>
+    message.usage ? [{ author: message.author, usage: message.usage }] : [],
+  );
+  if (used.length === 0) return null;
+  const last = used.findLast(entry => entry.author === 'agent')?.usage;
+  const costs = used.flatMap(entry =>
+    entry.usage.costUsd === null ? [] : [entry.usage.costUsd],
+  );
+  const sum = (pick: (entry: (typeof used)[number]) => number | null) =>
+    used.reduce((total, entry) => total + (pick(entry) ?? 0), 0);
+  return {
+    last: last ? tokenPair(last.inputTokens, last.outputTokens) : null,
+    total: tokenPair(
+      sum(entry => entry.usage.inputTokens),
+      sum(entry => entry.usage.outputTokens),
+    ),
+    cost:
+      costs.length > 0
+        ? `$${costs.reduce((total, cost) => total + cost, 0).toFixed(2)}`
+        : null,
+  };
+}
+
 export function SessionDetails({ session }: Props) {
   const role = sessionRoleLabel(session);
+  const usage = sessionUsage(session);
   return (
     <div className="space-y-6 p-5">
       <section aria-label="Session details" className="space-y-4">
@@ -41,6 +75,29 @@ export function SessionDetails({ session }: Props) {
           </div>
         </dl>
       </section>
+      {usage && (
+        <section aria-label="Usage" className="space-y-4">
+          <h2 className="text-xs font-medium">Usage</h2>
+          <dl className="space-y-3 text-xs">
+            {usage.last && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Last turn</dt>
+                <dd>{usage.last}</dd>
+              </div>
+            )}
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Session</dt>
+              <dd>{usage.total}</dd>
+            </div>
+            {usage.cost && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Cost</dt>
+                <dd>{usage.cost}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
       {session.scope && (
         <section className="space-y-2">
           <h2 className="text-xs font-medium">Worker scope</h2>

@@ -151,6 +151,13 @@ export function SessionActivity({
   const label = offline
     ? `Last known: ${status === 'stopping' ? 'Stopping' : 'Working'}`
     : runLabel(status, elapsed, live);
+  const completedTime =
+    !live && !offline && completedAt
+      ? new Date(completedAt).toLocaleTimeString(undefined, {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '';
   const latest =
     items.findLast(item => item.status === 'running') ?? items.at(-1);
   const failures = items.filter(item => item.status === 'failed').length;
@@ -178,6 +185,14 @@ export function SessionActivity({
           >
             {label}
           </span>
+          {completedTime && (
+            <time
+              dateTime={completedAt ?? undefined}
+              className="shrink-0 text-[11px] tabular-nums"
+            >
+              {completedTime}
+            </time>
+          )}
           {summary && (
             <span className="min-w-0 truncate text-xs" title={summary}>
               {summary}
