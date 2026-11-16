@@ -39,6 +39,7 @@ export type AutomationInput = Omit<SaveScheduledJobInput, 'expectedRevision'>;
 export type StepInspectorProps = {
   step: StepDraft;
   mode: InspectorMode;
+  renamable?: boolean;
   usedBy: string[];
   skills: SkillSummary[];
   issues: InspectorIssue[];

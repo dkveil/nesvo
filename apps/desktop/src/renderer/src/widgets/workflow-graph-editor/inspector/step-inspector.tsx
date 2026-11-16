@@ -91,6 +91,7 @@ function PhaseWarning({
 export function StepInspectorForm({
   step,
   mode,
+  renamable = false,
   usedBy,
   skills,
   issues,
@@ -160,12 +161,16 @@ export function StepInspectorForm({
           id={fieldId('name')}
           label="Name"
           notes={notesOf('name')}
-          hint={mode === 'edit' ? 'The name is the file name and stays.' : null}
+          hint={
+            mode === 'edit' && !renamable
+              ? 'The name is the file name and stays.'
+              : null
+          }
         >
           <Input
             id={fieldId('name')}
             value={step.name}
-            readOnly={mode === 'edit'}
+            readOnly={mode === 'edit' && !renamable}
             autoComplete="off"
             spellCheck={false}
             maxLength={workflowDefinitionLimits.name}
@@ -176,7 +181,7 @@ export function StepInspectorForm({
             className={cn(
               inspectorInput,
               'font-mono',
-              mode === 'edit' && 'text-muted-foreground',
+              mode === 'edit' && !renamable && 'text-muted-foreground',
             )}
           />
         </Field>

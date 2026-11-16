@@ -20,7 +20,12 @@ import {
   type WorkflowStepRecord,
 } from '@/entities/workflow';
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
-import { stepDraftOf, usedBy, type NodeIssue } from '@/entities/workflow-graph';
+import {
+  isDraftStep,
+  stepDraftOf,
+  usedBy,
+  type NodeIssue,
+} from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { PanelAction, PanelHeader } from '@/shared/ui/panel';
@@ -172,9 +177,10 @@ export function InspectorPanel({
         )}
         {node && !showResult && (
           <StepInspector
-            key={node.id}
+            key={isDraftStep(node.step) ? 'draft-step' : node.id}
             step={stepDraftOf(node.step)}
             mode="edit"
+            renamable={isDraftStep(node.step)}
             usedBy={usedBy(state.catalog, node.id, document.name)}
             skills={skills}
             issues={toInspectorIssues(state.nodeIssues.get(node.id) ?? [])}
