@@ -1339,7 +1339,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      10,
+      11,
     );
     migrated.close();
     const reopened = open();
@@ -5536,7 +5536,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            10,
+            11,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -5619,11 +5619,11 @@ test(
       }
     });
 
-    await t.test('a version 11 database is refused', async () => {
+    await t.test('a version 12 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 11');
+      newer.exec('PRAGMA user_version = 12');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -5635,7 +5635,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          11,
+          12,
         );
       } finally {
         check.close();
@@ -8316,7 +8316,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        10,
+        11,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -8326,6 +8326,85 @@ test(
       assert.ok(indexes.includes('workflow_runs_status'));
     } finally {
       migrated.close();
+    }
+  },
+);
+
+test(
+  'a version 10 database gains the assistant change history and keeps its data',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-assistant-migration-')),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const outfile = join(directory, 'database.mjs');
+    await promisify(execFile)('bun', [
+      'build',
+      fileURLToPath(new URL('../src/database.ts', import.meta.url)),
+      '--target=node',
+      '--format=esm',
+      `--outfile=${outfile}`,
+    ]);
+    const { openDatabaseSync } = await import(pathToFileURL(outfile).href);
+    const data = join(directory, 'data');
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+    const created = openDatabaseSync(data);
+    created
+      .prepare(
+        'INSERT INTO sessions (id, document, updated_at) VALUES (?, ?, ?)',
+      )
+      .run(sessionId, JSON.stringify({ id: sessionId, messages: [] }), now);
+    created.exec('DROP TABLE assistant_changes; PRAGMA user_version = 10');
+    created.close();
+    const tables = database =>
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map(row => row.name);
+    const upgraded = openDatabaseSync(data);
+    try {
+      assert.equal(
+        upgraded.prepare('PRAGMA user_version').get().user_version,
+        11,
+      );
+      assert.ok(tables(upgraded).includes('assistant_changes'));
+      assert.equal(
+        JSON.parse(
+          upgraded
+            .prepare('SELECT document FROM sessions WHERE id = ?')
+            .get(sessionId).document,
+        ).id,
+        sessionId,
+      );
+      upgraded
+        .prepare(
+          "INSERT INTO assistant_changes (id, conversation_id, sequence, status, document, previous, created_at, updated_at) VALUES (?, ?, 1, 'applied', '{}', 'previous text', ?, ?)",
+        )
+        .run(randomUUID(), sessionId, now, now);
+      assert.throws(() =>
+        upgraded
+          .prepare(
+            "INSERT INTO assistant_changes (id, conversation_id, sequence, status, document, previous, created_at, updated_at) VALUES (?, ?, 1, 'applied', '{}', NULL, ?, ?)",
+          )
+          .run(randomUUID(), sessionId, now, now),
+      );
+    } finally {
+      upgraded.close();
+    }
+    const reopened = openDatabaseSync(data);
+    try {
+      assert.equal(
+        reopened
+          .prepare(
+            'SELECT previous FROM assistant_changes WHERE conversation_id = ?',
+          )
+          .get(sessionId).previous,
+        'previous text',
+      );
+    } finally {
+      reopened.close();
     }
   },
 );
