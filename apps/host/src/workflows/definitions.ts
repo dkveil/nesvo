@@ -887,6 +887,31 @@ export function checkGraph(
   };
 }
 
+export const EXTERNAL_GUARD_NOTE =
+  'The assistant cannot save an external action without a preceding human step';
+
+export function unguardedExternalIssues(
+  workflow: GraphInput,
+  path: string,
+  steps: ReadonlyMap<string, GraphStep>,
+  involving: string | null = null,
+): DefinitionIssue[] {
+  return resolveGraph(workflow, steps)
+    .issues.filter(
+      item =>
+        item.rule === 'W2' &&
+        (involving === null || item.steps.includes(involving)),
+    )
+    .map(item =>
+      issue(
+        path,
+        `${item.message}. ${EXTERNAL_GUARD_NOTE}`,
+        null,
+        'error',
+      ),
+    );
+}
+
 export function capIssues(issues: DefinitionIssue[]): DefinitionIssue[] {
   const limit = workflowDefinitionLimits.issues;
   if (issues.length <= limit) return issues;

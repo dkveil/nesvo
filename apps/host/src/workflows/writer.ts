@@ -5,6 +5,7 @@ import {
   type DefinitionKind,
   type DefinitionScope,
   type DefinitionWriteResult,
+  type GraphStep,
   type WorkflowDefinitionConflict,
   type WorkflowDefinitionRefused,
 } from '@nesvo/contracts';
@@ -32,6 +33,7 @@ import {
   pathKey,
   readDefinitionFile,
   resolveWriteRoots,
+  unguardedExternalIssues,
   type DefinitionFile,
 } from './definitions';
 
@@ -57,6 +59,11 @@ export type ActiveRunLookup = (target: {
   name: string;
   projectRoot: string;
 }) => string[];
+
+export type WriteOptions = {
+  guardExternal?: boolean;
+  onPrevious?: (file: DefinitionFile | null) => void;
+};
 
 type Location = {
   root: string;
@@ -272,6 +279,34 @@ function missingSteps(
     }));
 }
 
+function guardedStepIssues(
+  input: SaveDefinitionInput,
+  step: GraphStep,
+  catalog: DefinitionCatalog,
+): DefinitionIssue[] {
+  const effective = catalog.steps.find(item => item.name === input.name);
+  if (effective && effective.source.scope !== input.scope) return [];
+  const steps = new Map<string, GraphStep>(
+    catalog.steps.map(item => [item.name, item]),
+  );
+  steps.set(input.name, step);
+  return catalog.workflows
+    .filter(workflow => workflow.steps.some(item => item.name === input.name))
+    .flatMap(workflow =>
+      unguardedExternalIssues(
+        {
+          name: workflow.name,
+          steps: workflow.steps.map(item => item.name),
+          edges: workflow.edges,
+          layout: workflow.layout,
+        },
+        workflow.source.path,
+        steps,
+        input.name,
+      ),
+    );
+}
+
 function stepUsers(
   name: string,
   path: string,
@@ -403,6 +438,7 @@ export async function saveDefinition(
   input: SaveDefinitionInput,
   signal: AbortSignal,
   activeRuns?: ActiveRunLookup,
+  options: WriteOptions = {},
 ): Promise<DefinitionWriteResult> {
   requireName(input.name);
   const roots = await resolveWriteRoots(input.directory, signal);
@@ -446,25 +482,30 @@ export async function saveDefinition(
     if (input.kind === 'workflow') {
       const unresolved = missingSteps(checked.steps, catalog, path);
       if (unresolved.length) return refusedIssues(unresolved);
-      const graph = checkGraph(
-        {
-          name: input.name,
-          steps: checked.steps,
-          edges: checked.edges,
-          layout: checked.layout,
-        },
-        path,
-        checked.lines,
-        new Map(catalog.steps.map(step => [step.name, step])),
-      );
+      const workflow = {
+        name: input.name,
+        steps: checked.steps,
+        edges: checked.edges,
+        layout: checked.layout,
+      };
+      const steps = new Map(catalog.steps.map(step => [step.name, step]));
+      const graph = checkGraph(workflow, path, checked.lines, steps);
       const graphErrors = graph.issues.filter(
         item => item.severity === 'error',
       );
       if (graphErrors.length) return refusedIssues(graphErrors);
+      const unguarded = options.guardExternal
+        ? unguardedExternalIssues(workflow, path, steps)
+        : [];
+      if (unguarded.length) return refusedIssues(unguarded);
+    } else if (options.guardExternal && checked.step) {
+      const unguarded = guardedStepIssues(input, checked.step, catalog);
+      if (unguarded.length) return refusedIssues(unguarded);
     }
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
       return location ?? refusal(requested, 'The folder cannot be created.');
+    options.onPrevious?.(current.file);
     const outcome = await publish(
       legacy ? { ...input, expectedHash: null } : input,
       location,
@@ -483,6 +524,7 @@ export async function deleteDefinition(
   input: DeleteDefinitionInput,
   signal: AbortSignal,
   activeRuns?: ActiveRunLookup,
+  options: WriteOptions = {},
 ): Promise<DefinitionWriteResult> {
   requireName(input.name);
   const roots = await resolveWriteRoots(input.directory, signal);
@@ -521,6 +563,7 @@ export async function deleteDefinition(
     if (isRefusal(latest)) return latest;
     if (latest.file?.contentHash !== input.expectedHash)
       return conflict(input, path, latest.file);
+    options.onPrevious?.(latest.file);
     try {
       await unlink(path);
     } catch (error) {
