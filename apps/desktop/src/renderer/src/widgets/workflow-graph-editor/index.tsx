@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
@@ -207,7 +206,7 @@ export default function WorkflowGraphEditor({
     if (state.dirty) setClosing(true);
     else onClose();
   };
-  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+  const onKeyDown = (event: KeyboardEvent) => {
     const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     if (modifier && key === 's') {
@@ -239,13 +238,16 @@ export default function WorkflowGraphEditor({
       else state.select({ kind: 'none' });
     }
   };
+  useEffect(() => {
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
   return (
     <section
       ref={section}
       aria-label="Graph editor"
       data-graph-editor={state.document.name || 'new'}
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
-      onKeyDown={onKeyDown}
     >
       <ReactFlowProvider>
         <Toolbar

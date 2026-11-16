@@ -2872,6 +2872,8 @@ try {
       await readFile(join(workflowRoot, 'workflows', 'smoke-graph.md'), 'utf8')
     ).replace('---\n', '---\ndescription: Changed outside the editor.\n'),
   );
+  await editor.getByRole('button', { name: 'Settings', exact: true }).click();
+  await editor.locator('[data-editor-inspector="workflow"]').waitFor();
   await inspector
     .getByRole('textbox', { name: 'Description', exact: true })
     .fill('Changed inside the editor.');
