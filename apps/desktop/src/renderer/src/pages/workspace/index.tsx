@@ -199,6 +199,43 @@ export function Workspace() {
     }
     return result;
   };
+  const assistantAddedAutomations = (hostId: string) =>
+    assistantChangesFor(hostId)
+      .filter(
+        change =>
+          change.status === 'applied' &&
+          change.kind === 'automation' &&
+          change.op === 'create' &&
+          change.target.type === 'automation',
+      )
+      .map(change =>
+        change.target.type === 'automation' ? change.target.automationId : '',
+      );
+  const openAssistantChange = (hostId: string, change: AssistantChange) => {
+    if (change.target.type === 'automation') {
+      const job = automations.jobs.find(
+        item =>
+          item.hostId === hostId &&
+          change.target.type === 'automation' &&
+          item.id === change.target.automationId,
+      );
+      if (job) openAutomations(entityKey(job));
+      return;
+    }
+    if (change.kind === 'workflow')
+      void window.nesvo.workflows
+        .listDefinitions(hostId, { directory: change.directory })
+        .then(catalog => {
+          setWorkflowsSource({ hostId, directory: change.directory });
+          setWorkflowsEditor({
+            hostId,
+            directory: change.directory,
+            workflowName:
+              change.target.type === 'definition' ? change.target.name : null,
+            catalog,
+          });
+        });
+  };
   const assistantDock = (
     hostId: string,
     directory: string,
@@ -227,6 +264,7 @@ export function Workspace() {
           onOpenSession={sessionId => select(hostKey(sessionId, hostId))}
           onStop={sessionId => stopAssistantSession(hostId, sessionId)}
           onUndo={change => undoAssistantChange(hostId, change)}
+          onOpenChange={change => openAssistantChange(hostId, change)}
         />
       </Suspense>
     </div>
@@ -1811,6 +1849,15 @@ export function Workspace() {
                       onUndo={change =>
                         undoAssistantChange(workflowsEditor.hostId, change)
                       }
+                      onOpenChange={change => {
+                        if (
+                          change.kind === 'step' &&
+                          change.target.type === 'definition'
+                        )
+                          context.onFocusStep(change.target.name);
+                        else
+                          openAssistantChange(workflowsEditor.hostId, change);
+                      }}
                     />
                   </Suspense>
                 )}
@@ -1970,6 +2017,7 @@ export function Workspace() {
                 onSetActive={(job, active) =>
                   void setAutomationActive(job, active)
                 }
+                highlighted={assistantAddedAutomations(defaultAutomationHost)}
               />
               {assistantDock(
                 defaultAutomationHost,

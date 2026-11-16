@@ -29,6 +29,7 @@ type Props = {
   onOpen: (job: ScheduledJob) => void;
   onRunNow: (job: ScheduledJob) => void;
   onSetActive: (job: ScheduledJob, active: boolean) => void;
+  highlighted?: string[];
 };
 
 export function AutomationList({
@@ -45,6 +46,7 @@ export function AutomationList({
   onOpen,
   onRunNow,
   onSetActive,
+  highlighted = [],
 }: Props) {
   const now = useNow(30_000);
   const activeCount = jobs.filter(job => job.active).length;
@@ -91,6 +93,7 @@ export function AutomationList({
               const computer = computers.find(item => item.id === job.hostId);
               const blocked = runBlockedReason(job);
               const busy = !!pending[key];
+              const added = highlighted.includes(job.id);
               return (
                 <li
                   key={key}
@@ -117,6 +120,26 @@ export function AutomationList({
                       >
                         {job.name}
                       </button>
+                      {added && (
+                        <span
+                          data-added-by-assistant
+                          className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 text-info-foreground"
+                        >
+                          Added by assistant
+                        </span>
+                      )}
+                      {added && !job.active && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary"
+                          className="relative z-10 h-6"
+                          disabled={busy || computer?.status !== 'connected'}
+                          onClick={() => onSetActive(job, true)}
+                        >
+                          Enable
+                        </Button>
+                      )}
                     </div>
                     <p className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 pl-3.5 text-2xs leading-4 text-muted-foreground">
                       <span className="inline-flex items-center gap-1">

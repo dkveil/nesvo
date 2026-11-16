@@ -75,6 +75,7 @@ export type EditorDockContext = {
   document: WorkflowAssistantDocument | null;
   selection: string[];
   onApplied: () => void;
+  onFocusStep: (name: string) => void;
 };
 
 function EditorDock({
@@ -127,6 +128,20 @@ export default function WorkflowGraphEditor({
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [jobsVersion, setJobsVersion] = useState(0);
   const [addRequest, setAddRequest] = useState<AddRequest | null>(null);
+  const [reviewed, setReviewed] = useState<string[]>([]);
+  const freshAssistantAdded = useMemo(
+    () => assistantAdded.filter(name => !reviewed.includes(name)),
+    [assistantAdded, reviewed],
+  );
+  const markReviewed = (id: string) =>
+    setReviewed(current => (current.includes(id) ? current : [...current, id]));
+  const editorState = {
+    ...state,
+    select: (next: Parameters<typeof state.select>[0]) => {
+      if (next.kind === 'node') markReviewed(next.id);
+      state.select(next);
+    },
+  };
   useEffect(() => {
     onDirtyChange?.(state.dirty);
   }, [onDirtyChange, state.dirty]);
@@ -270,7 +285,7 @@ export default function WorkflowGraphEditor({
     >
       <ReactFlowProvider>
         <Toolbar
-          state={state}
+          state={editorState}
           directory={directory}
           statuses={statuses}
           issuesOpen={issuesOpen}
@@ -292,10 +307,10 @@ export default function WorkflowGraphEditor({
         <div className="flex min-h-0 min-w-0 flex-1">
           <div className="relative min-w-0 flex-1">
             <EditorCanvas
-              state={state}
+              state={editorState}
               runBadges={runBadges}
               automations={automations.length}
-              assistantAdded={assistantAdded}
+              assistantAdded={freshAssistantAdded}
               onRequestAdd={requestAdd}
             />
             {state.notice && (
@@ -318,12 +333,13 @@ export default function WorkflowGraphEditor({
                   document={savedDocument}
                   selection={dockSelection}
                   onApplied={() => void state.reload()}
+                  onFocusStep={name => state.select({ kind: 'node', id: name })}
                 />
               )}
             </div>
           </div>
           <InspectorPanel
-            state={state}
+            state={editorState}
             hostId={hostId}
             directory={directory}
             skills={skills}
