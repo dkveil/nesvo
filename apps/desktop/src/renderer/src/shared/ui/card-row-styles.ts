@@ -23,3 +23,6 @@ export const cardIconButton =
 
 export const cardSurface =
   'rounded-xl border border-(--popover-border) bg-card text-card-foreground';
+
+export const fieldSurface =
+  'rounded-xl border border-input bg-transparent text-card-foreground dark:bg-input/30';
