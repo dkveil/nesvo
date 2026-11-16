@@ -1752,6 +1752,12 @@ try {
       exact: true,
     });
   const reviewPanel = review => conversation.locator(`#review-${review.id}`);
+  const revealEarlierVersions = async () => {
+    const earlier = conversation.getByLabel(/^\d+ earlier versions?$/);
+    if (!(await earlier.count())) return;
+    const disclosure = earlier.locator('..');
+    if ((await disclosure.getAttribute('open')) === null) await earlier.click();
+  };
   const diffPanel = page.getByRole('region', {
     name: 'Saved result diff',
     exact: true,
@@ -1922,6 +1928,7 @@ try {
   assert.equal(correctedReview.decision, null);
   await openInbox();
   await openReviewSession(correctedReview);
+  await revealEarlierVersions();
   if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
@@ -2016,6 +2023,7 @@ try {
     .waitFor();
   await screenshot('-files');
   await closeWorkspaceFiles();
+  await revealEarlierVersions();
   if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
@@ -2130,6 +2138,7 @@ try {
   await page.getByRole('button', { name: 'Open sessions' }).click();
   await sidebar.getByRole('button', { name: /^Review changes/ }).click();
   await sidebar.waitFor({ state: 'hidden' });
+  await revealEarlierVersions();
   if ((await reviewPanel(correctedReview).getAttribute('open')) === null) {
     await reviewPanel(correctedReview)
       .getByLabel(`Open version ${correctedReview.version}`, { exact: true })
@@ -2183,6 +2192,7 @@ try {
   );
   await navigation.waitFor({ state: 'visible' });
   await navigation.getByRole('button', { name: /^Review changes/ }).click();
+  await revealEarlierVersions();
   if ((await reviewPanel(initialReview).getAttribute('open')) === null)
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
