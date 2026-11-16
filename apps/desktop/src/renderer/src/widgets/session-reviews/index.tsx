@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ArrowUpRight, ChevronDown } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   fileKindLabels,
   reviewDate,
@@ -244,27 +244,48 @@ export function SessionReviews({
   onOpenDiff,
   ...decisionProps
 }: Props) {
-  if (reviews.length === 0) return null;
+  const earlierDisclosure = useRef<HTMLDetailsElement>(null);
   const versions = [...reviews].sort(
     (left, right) =>
       right.version - left.version ||
       right.createdAt.localeCompare(left.createdAt),
   );
+  const [latest, ...earlier] = versions;
+  const focusedEarlier = earlier.some(review => review.id === focusedId);
+  useEffect(() => {
+    if (focusedEarlier && earlierDisclosure.current)
+      earlierDisclosure.current.open = true;
+  }, [focusedEarlier]);
+  if (reviews.length === 0) return null;
+  const earlierLabel = `${earlier.length} earlier ${earlier.length === 1 ? 'version' : 'versions'}`;
+  const renderVersion = (review: Review) => (
+    <ReviewVersion
+      key={review.id}
+      review={review}
+      allReviews={allReviews}
+      focused={review.id === focusedId}
+      onSession={onSession}
+      onOpenDiff={onOpenDiff}
+      {...decisionProps}
+    />
+  );
   return (
     <section aria-label="Session results" className="space-y-2 border-t pt-5">
       <h2 className="text-sm font-medium">Session results</h2>
       <div>
-        {versions.map(review => (
-          <ReviewVersion
-            key={review.id}
-            review={review}
-            allReviews={allReviews}
-            focused={review.id === focusedId}
-            onSession={onSession}
-            onOpenDiff={onOpenDiff}
-            {...decisionProps}
-          />
-        ))}
+        {latest && renderVersion(latest)}
+        {earlier.length > 0 && (
+          <details ref={earlierDisclosure} className="group/earlier">
+            <summary
+              aria-label={earlierLabel}
+              className="flex cursor-pointer list-none items-center gap-1.5 py-3 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
+            >
+              <ChevronRight className="size-3 transition-transform group-open/earlier:rotate-90" />
+              {earlierLabel}
+            </summary>
+            {earlier.map(renderVersion)}
+          </details>
+        )}
       </div>
     </section>
   );
