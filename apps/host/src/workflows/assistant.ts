@@ -1,43 +1,37 @@
 import {
+  ASSISTANT_CHANGE_FENCE,
+  assistantOperationSchema,
   createSessionSchema,
   workflowAssistantLimits,
   workflowAssistantProposalEventSchema,
-  workflowAssistantProposalJsonSchema,
-  workflowAssistantProposalSchema,
   type DefinitionCatalog,
   type DefinitionIssue,
   type DesktopEvent,
-  type GraphStep,
   type HostRequest,
-  type WorkflowAssistantChange,
+  type ScheduledJob,
   type WorkflowAssistantDocument,
-  type WorkflowAssistantProposal,
   type WorkflowAssistantProposalEvent,
   type WorkflowAssistantTurn,
-  type Provider,
   type Session,
 } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import {
   confirmCodexEffort,
   type RunFinished,
   type SessionService,
 } from '../sessions/service';
-import {
-  DefinitionError,
-  checkDocument,
-  checkGraph,
-  type DocumentCheck,
-  type WriteRoots,
-} from './definitions';
+import type { AssistantChanges, ChangeContext } from './assistant-changes';
+import { DefinitionError } from './definitions';
 import { filterResultText } from './evidence';
-import { checkFileText } from './writer';
-import { firstTurnText, laterTurnText, type AnswerPath } from './wrapper';
+import {
+  ASSISTANT_OPERATIONS_PER_TURN,
+  firstTurnText,
+  laterTurnText,
+} from './wrapper';
 
 const ASSISTANT_TITLE_PREFIX = 'Workflow assistant · ';
 const TITLE_LIMIT = 100;
-const FENCED_JSON = /^```json[ \t]*\n([\s\S]*?)^```[ \t]*$/m;
 
 export type AssistantSendInput = Extract<
   HostRequest,
@@ -52,7 +46,6 @@ type AssistantSessions = Pick<
   | 'sendWorkflowTurn'
   | 'turnState'
   | 'turnReply'
-  | 'finished'
   | 'draftDirectory'
 >;
 
@@ -61,15 +54,13 @@ type AssistantDefinitions = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<DefinitionCatalog>;
-  resolveWriteRoots: (
-    directory: string,
-    signal: AbortSignal,
-  ) => Promise<WriteRoots>;
 };
 
-type PendingTurn = { messageId: string; directory: string };
-
-type ChangeIssues = WorkflowAssistantProposalEvent['issues'][number];
+type PendingTurn = {
+  context: ChangeContext;
+  seen: number;
+  chain: Promise<void>;
+};
 
 export class WorkflowAssistantError extends Error {
   constructor(
@@ -87,6 +78,20 @@ export class WorkflowAssistantError extends Error {
 const bounded = (value: string, limit: number) =>
   value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 
+const CHANGE_BLOCK = new RegExp(
+  `^\`\`\`${ASSISTANT_CHANGE_FENCE}[ \\t]*\\r?\\n([\\s\\S]*?)^\`\`\`[ \\t]*$`,
+  'gm',
+);
+
+export const changeBlocks = (body: string): string[] =>
+  [...body.matchAll(CHANGE_BLOCK)].map(match => match[1] ?? '');
+
+const replyText = (body: string) =>
+  bounded(
+    filterResultText(body.replace(CHANGE_BLOCK, '').trim()),
+    workflowAssistantLimits.message,
+  );
+
 const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text);
@@ -95,74 +100,12 @@ const parseJson = (text: string): unknown => {
   }
 };
 
-const extractProposal = (
-  text: string,
-  structured?: unknown,
-): WorkflowAssistantProposal | null => {
-  const block = FENCED_JSON.exec(text)?.[1];
-  const candidate =
-    structured ?? (block === undefined ? parseJson(text) : parseJson(block));
-  const parsed = workflowAssistantProposalSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
-};
-
-const filterProposal = (
-  proposal: WorkflowAssistantProposal,
-): WorkflowAssistantProposal => ({
-  message: bounded(
-    filterResultText(proposal.message),
-    workflowAssistantLimits.message,
-  ),
-  changes: proposal.changes.map(change => ({
-    ...change,
-    summary: bounded(
-      filterResultText(change.summary),
-      workflowAssistantLimits.summary,
-    ),
-  })),
-});
-
 const issueAt = (path: string, message: string): DefinitionIssue => ({
   severity: 'error',
   path,
   line: null,
   message,
 });
-
-const isError = (issue: DefinitionIssue) => issue.severity === 'error';
-
-const answerPath = (provider: Provider): AnswerPath =>
-  provider === 'Claude Code' ? 'structured' : 'fenced';
-
-type ChangeCheck = {
-  change: WorkflowAssistantChange;
-  path: string;
-  checked: DocumentCheck | null;
-  issues: DefinitionIssue[];
-};
-
-const workflowIssues = (
-  { change, path, checked, issues }: ChangeCheck,
-  definitions: ReadonlyMap<string, GraphStep>,
-): DefinitionIssue[] => {
-  if (change.kind !== 'workflow' || !checked || issues.some(isError))
-    return [];
-  const missing = checked.steps
-    .filter(name => !definitions.has(name))
-    .map(name => issueAt(path, `Step "${name}" does not exist or is invalid`));
-  if (missing.length) return missing;
-  return checkGraph(
-    {
-      name: change.name,
-      steps: checked.steps,
-      edges: checked.edges,
-      layout: checked.layout,
-    },
-    path,
-    checked.lines,
-    definitions,
-  ).issues;
-};
 
 export class WorkflowAssistant {
   private readonly pending = new Map<string, PendingTurn>();
@@ -177,6 +120,8 @@ export class WorkflowAssistant {
       sessions: AssistantSessions;
       findSession: (sessionId: string) => Session | undefined;
       definitions: AssistantDefinitions;
+      changes: AssistantChanges;
+      automations: (directory: string) => ScheduledJob[];
       emit: (event: DesktopEvent) => void;
       signal: AbortSignal;
     },
@@ -198,6 +143,19 @@ export class WorkflowAssistant {
     }
   }
 
+  observe(session: Session): void {
+    const turn = this.pending.get(session.id);
+    if (!turn) return;
+    const runId = session.messages.find(
+      message =>
+        message.id === turn.context.messageId && message.author === 'operator',
+    )?.runId;
+    const reply = session.messages.find(
+      message => message.runId === runId && message.author === 'agent',
+    );
+    if (runId && reply) this.consume(turn, reply.body);
+  }
+
   async close(): Promise<void> {
     this.release();
     await Promise.all(this.work);
@@ -217,13 +175,13 @@ export class WorkflowAssistant {
         document && this.lastHash.get(existing.id) !== document.contentHash
           ? document
           : null;
-      const answer = answerPath(existing.provider);
+      await this.ports.changes.idle(existing.id);
       return this.deliver(
         existing.id,
         directory,
-        answer,
         laterTurnText({
-          answer,
+          automations: this.automations(directory),
+          changes: this.ports.changes.history(existing.id).changes,
           document: changed,
           selection,
           text: input.text,
@@ -246,20 +204,31 @@ export class WorkflowAssistant {
         origin: { kind: 'workflow-assistant' },
       });
     this.created.add(session.id);
-    const answer = answerPath(session.provider);
     return this.deliver(
       session.id,
       directory,
-      answer,
-      firstTurnText({ answer, catalog, document, selection, text: input.text }),
+      firstTurnText({
+        catalog,
+        automations: this.automations(directory),
+        document,
+        selection,
+        text: input.text,
+      }),
       document,
     );
+  }
+
+  private automations(directory: string): ScheduledJob[] {
+    try {
+      return this.ports.automations(directory);
+    } catch {
+      return [];
+    }
   }
 
   private deliver(
     sessionId: string,
     directory: string,
-    answer: AnswerPath,
     text: string,
     document: WorkflowAssistantDocument | null,
   ): WorkflowAssistantTurn {
@@ -270,16 +239,60 @@ export class WorkflowAssistant {
       text,
       readOnly: true,
       assistant: true,
-      ...(answer === 'structured'
-        ? { outputSchema: workflowAssistantProposalJsonSchema() }
-        : {}),
     });
     if (sent === 'busy') throw this.busy();
     if (document) this.lastHash.set(sessionId, document.contentHash);
-    this.pending.set(sessionId, { messageId, directory });
+    this.pending.set(sessionId, {
+      context: { conversationId: sessionId, messageId, directory },
+      seen: 0,
+      chain: Promise.resolve(),
+    });
     return { sessionId, messageId };
   }
 
+  private consume(turn: PendingTurn, body: string): void {
+    const blocks = changeBlocks(body);
+    for (; turn.seen < blocks.length; turn.seen++) {
+      const block = blocks[turn.seen] ?? '';
+      const index = turn.seen;
+      turn.chain = turn.chain.then(() => this.applyBlock(turn, block, index));
+    }
+  }
+
+  private async applyBlock(
+    turn: PendingTurn,
+    block: string,
+    index: number,
+  ): Promise<void> {
+    const refuse = (message: string) =>
+      this.ports.changes.refuse(turn.context, {
+        kind: null,
+        op: null,
+        target: null,
+        summary: '',
+        reason: 'invalid',
+        issues: [issueAt('', message)],
+      });
+    if (index >= ASSISTANT_OPERATIONS_PER_TURN) {
+      if (index === ASSISTANT_OPERATIONS_PER_TURN)
+        refuse(
+          `An answer can apply at most ${ASSISTANT_OPERATIONS_PER_TURN} changes; the remaining change blocks were ignored.`,
+        );
+      return;
+    }
+    const parsed = assistantOperationSchema.safeParse(parseJson(block));
+    if (!parsed.success) {
+      refuse(
+        `Change block ${index + 1} is not a valid change: ${parsed.error.issues[0]?.message ?? 'invalid JSON'}.`,
+      );
+      return;
+    }
+    await this.ports.changes
+      .apply(turn.context, parsed.data)
+      .catch(() =>
+        refuse(`Change block ${index + 1} could not be applied. Try again.`),
+      );
+  }
   private sessionInput(input: AssistantSendInput, directory: string) {
     const parsed = createSessionSchema.safeParse({
       title: bounded(
@@ -370,46 +383,34 @@ export class WorkflowAssistant {
   private finished(run: RunFinished): void {
     const turn = this.pending.get(run.sessionId);
     if (!turn) return;
-    const state = this.ports.sessions.turnState(run.sessionId, turn.messageId);
+    const state = this.ports.sessions.turnState(
+      run.sessionId,
+      turn.context.messageId,
+    );
     if (state === 'running') return;
     this.pending.delete(run.sessionId);
-    const announce = this.announce(
-      run,
-      turn,
-      state === 'completed',
-    ).catch(() => undefined);
+    const announce = this.announce(turn, state === 'completed').catch(
+      () => undefined,
+    );
     this.work.add(announce);
     void announce.finally(() => this.work.delete(announce));
   }
 
-  private async read(
-    run: RunFinished,
-    turn: PendingTurn,
-  ): Promise<WorkflowAssistantProposal | null> {
-    const reply = this.ports.sessions.turnReply(run.sessionId, turn.messageId);
-    const outcome = await this.ports.sessions
-      .finished(run.sessionId, run.runId)
-      .catch(() => null);
-    return extractProposal(reply ?? '', outcome?.structured);
-  }
-
-  private async announce(
-    run: RunFinished,
-    turn: PendingTurn,
-    completed: boolean,
-  ): Promise<void> {
-    const event = { sessionId: run.sessionId, messageId: turn.messageId };
-    const proposal = completed ? await this.read(run, turn) : null;
-    if (!proposal) {
-      this.publish({ ...event, status: 'invalid', proposal: null, issues: [] });
-      return;
-    }
-    const filtered = filterProposal(proposal);
+  private async announce(turn: PendingTurn, completed: boolean): Promise<void> {
+    const { conversationId: sessionId, messageId } = turn.context;
+    const reply = completed
+      ? this.ports.sessions.turnReply(sessionId, messageId)
+      : null;
+    if (reply !== null) this.consume(turn, reply);
+    await turn.chain;
+    await this.ports.changes.idle(sessionId);
     this.publish({
-      ...event,
-      status: 'ok',
-      proposal: filtered,
-      issues: await this.validate(filtered.changes, turn.directory),
+      sessionId,
+      messageId,
+      status: reply === null ? 'invalid' : 'ok',
+      proposal:
+        reply === null ? null : { message: replyText(reply), changes: [] },
+      issues: [],
     });
   }
 
@@ -427,76 +428,5 @@ export class WorkflowAssistant {
             issues: [],
           }),
     });
-  }
-
-  private async validate(
-    changes: readonly WorkflowAssistantChange[],
-    directory: string,
-  ): Promise<ChangeIssues[]> {
-    let roots: WriteRoots;
-    let catalog: DefinitionCatalog | null = null;
-    try {
-      roots = await this.ports.definitions.resolveWriteRoots(
-        directory,
-        this.ports.signal,
-      );
-      if (changes.some(change => change.kind === 'workflow'))
-        catalog = await this.ports.definitions.loadCatalog(
-          directory,
-          this.ports.signal,
-        );
-    } catch {
-      return changes.map((change, index) => ({
-        index,
-        issues: [
-          issueAt(
-            change.name,
-            'The host could not check this change. Ask the assistant again.',
-          ),
-        ],
-      }));
-    }
-    const checks = changes.map(change => {
-      const root = change.scope === 'global' ? roots.global : roots.project;
-      const path = join(root, `${change.kind}s`, `${change.name}.md`);
-      const text = checkFileText(change.document, root);
-      if (text.length) return { change, path, checked: null, issues: text };
-      const checked = checkDocument(change.kind, path, change.document);
-      const issues = [...checked.issues];
-      if (checked.name !== null && checked.name !== change.name)
-        issues.push(
-          issueAt(
-            path,
-            `Field "name" must be "${change.name}" to match the file name`,
-          ),
-        );
-      return { change, path, checked, issues };
-    });
-    const projectSteps = new Set(
-      catalog?.steps
-        .filter(step => step.source.scope === 'project')
-        .map(step => step.name),
-    );
-    const proposed = (scope: WorkflowAssistantChange['scope']) =>
-      checks.flatMap(check =>
-        check.change.scope === scope &&
-        check.checked?.step &&
-        !check.issues.some(isError) &&
-        !(scope === 'global' && projectSteps.has(check.change.name))
-          ? [[check.change.name, check.checked.step] as const]
-          : [],
-      );
-    const definitions = new Map<string, GraphStep>([
-      ...(catalog?.steps.map(step => [step.name, step] as const) ?? []),
-      ...proposed('global'),
-      ...proposed('project'),
-    ]);
-    return checks.map((check, index) => ({
-      index,
-      issues: [...check.issues, ...workflowIssues(check, definitions)].slice(
-        0,
-        workflowAssistantLimits.changeIssues,
-      ),
-    }));
   }
 }

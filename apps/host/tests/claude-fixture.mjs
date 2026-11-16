@@ -379,37 +379,82 @@ if (args.length === 1 && args[0] === '--version') {
       }) + '\n',
       { flag: 'a' },
     );
-  const assistantProposal = workflow => ({
-    message: 'Fixture proposal.',
-    changes: [
-      {
-        kind: 'step',
-        scope: 'project',
-        name: 'lint-check',
-        basedOnHash: null,
-        document:
-          '---\nname: lint-check\ntype: command\nphase: pre-done\ntimeout: 2m\n---\necho lint passed\n',
-        summary: 'Add a lint check. API_TOKEN=fixture-secret-value',
-      },
-      {
-        kind: 'workflow',
-        scope: 'project',
-        name: 'assistant-flow',
-        basedOnHash: null,
-        document: workflow,
-        summary: 'Add a workflow that lints and asks for approval.',
-      },
-    ],
+  const definitionPath = (kind, name) =>
+    join(process.cwd(), '.agents', 'workflows', `${kind}s`, `${name}.md`);
+  const fileHash = path =>
+    createHash('sha256').update(readFileSync(path)).digest('hex');
+  const changeBlock = operation =>
+    `\`\`\`nesvo-change\n${JSON.stringify(operation, null, 2)}\n\`\`\`\n\n`;
+  const definitionChange = (kind, name, document, extra = {}) => ({
+    kind,
+    op: 'create',
+    scope: 'project',
+    name,
+    basedOnHash: null,
+    document,
+    summary: `Add the ${name} ${kind}.`,
+    ...extra,
   });
-  const assistantAnswer = (workflow, fenced = false) => {
-    const proposal = assistantProposal(workflow);
-    const structured = values.has('--json-schema') && !fenced;
-    const text = structured
-      ? 'Proposal recorded.'
-      : `Here is the proposal.\n\n\`\`\`json\n${JSON.stringify(proposal, null, 2)}\n\`\`\`\n`;
-    start(text);
-    finish(text, false, structured ? { structured_output: proposal } : {});
+  const automationDraft = {
+    name: 'Nightly check',
+    prompt: 'Run the check workflow.',
+    provider: 'claude',
+    model: 'sonnet',
+    effort: null,
+    schedule: { kind: 'daily', time: '02:00' },
+    timeZone: 'UTC',
   };
+  const automationChange = (extra = {}) => ({
+    kind: 'automation',
+    op: 'create',
+    automationId: null,
+    basedOnRevision: null,
+    automation: automationDraft,
+    summary: 'Add a nightly check automation.',
+    ...extra,
+  });
+  const appeared = async path => {
+    for (let poll = 0; poll < 200; poll++) {
+      if (existsSync(path)) return true;
+      await setTimeout(25);
+    }
+    return false;
+  };
+  const liveAnswer = async (changes, reply, watch = false) => {
+    let text = '';
+    const write = more => {
+      text += more;
+      stream({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: more },
+      });
+    };
+    start('');
+    const seen = [];
+    for (const change of changes) {
+      write(changeBlock(change));
+      seen.push(
+        watch && change.kind !== 'automation' && change.op === 'create'
+          ? await appeared(definitionPath(change.kind, change.name))
+          : null,
+      );
+      await setTimeout(50);
+    }
+    write(reply);
+    if (process.env.NESVO_FIXTURE_PID_FILE)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_PID_FILE + '.assistant-live',
+        JSON.stringify({ command, seen }) + '\n',
+        { flag: 'a' },
+      );
+    finish(text);
+  };
+  const lintStep =
+    '---\nname: lint-check\ntype: command\nphase: pre-done\ntimeout: 2m\n---\necho lint passed\n';
+  const assistantWorkflow = edges =>
+    `---\nname: assistant-flow\ndescription: Lint, check and approve\nsteps: [lint-check, check, approve]\nedges: [${edges}]\n---\n`;
+  const [, automationId, automationRevision] = command.split(' ');
   const repairing = verdictMode && prompt.includes(REPAIR_NOTE);
   const verdict = (text, structured) => {
     start(text);
@@ -545,18 +590,99 @@ if (args.length === 1 && args[0] === '--version') {
         output_tokens: 350,
       },
     });
-  } else if (command === 'fixture:assistant-proposal') {
-    assistantAnswer(
-      '---\nname: assistant-flow\ndescription: Lint, check and approve\nsteps: [lint-check, check, approve]\nedges: ["lint-check -> check"]\n---\n',
+  } else if (command === 'fixture:assistant-live') {
+    await liveAnswer(
+      [
+        definitionChange('step', 'lint-check', lintStep, {
+          summary: 'Add a lint check. API_TOKEN=fixture-secret-value',
+        }),
+        definitionChange(
+          'workflow',
+          'assistant-flow',
+          assistantWorkflow('"lint-check -> check"'),
+        ),
+        automationChange(),
+      ],
+      'Added a lint check, a workflow and a disabled automation.',
+      true,
     );
   } else if (command === 'fixture:assistant-cross-phase') {
-    assistantAnswer(
-      '---\nname: assistant-flow\ndescription: Lint and approve\nsteps: [lint-check, check, approve]\nedges: ["lint-check -> approve"]\n---\n',
+    await liveAnswer(
+      [
+        definitionChange(
+          'workflow',
+          'cross-flow',
+          assistantWorkflow('"lint-check -> approve"').replace(
+            'assistant-flow',
+            'cross-flow',
+          ),
+        ),
+      ],
+      'Tried a cross-phase edge.',
     );
-  } else if (command === 'fixture:assistant-missing-step') {
-    assistantAnswer(
-      '---\nname: assistant-flow\ndescription: Lint and publish\nsteps: [lint-check, publish]\n---\n',
-      true,
+  } else if (command === 'fixture:assistant-unsafe') {
+    await liveAnswer(
+      [
+        definitionChange(
+          'step',
+          'push',
+          '---\nname: push\ntype: command\nphase: pre-push\neffect: external\n---\ngit push\n',
+        ),
+        definitionChange(
+          'workflow',
+          'publish-flow',
+          '---\nname: publish-flow\nsteps: [check, push]\n---\n',
+        ),
+        automationChange({
+          automation: { ...automationDraft, active: true },
+        }),
+        definitionChange('step', '../escape', lintStep),
+        { kind: 'step', op: 'rename' },
+      ],
+      'Tried unsafe changes.',
+    );
+  } else if (command === 'fixture:assistant-escape') {
+    await liveAnswer(
+      [
+        definitionChange(
+          'step',
+          'escape-step',
+          lintStep.replace('lint-check', 'escape-step'),
+        ),
+      ],
+      'Tried to write through a linked folder.',
+    );
+  } else if (command === 'fixture:assistant-update') {
+    const path = definitionPath('workflow', 'default');
+    await liveAnswer(
+      [
+        {
+          kind: 'workflow',
+          op: 'update',
+          scope: 'project',
+          name: 'default',
+          basedOnHash: fileHash(path),
+          document: readFileSync(path, 'utf8').replace(
+            'Check and approve',
+            'Check, then approve',
+          ),
+          summary: 'Clarify the description.',
+        },
+      ],
+      'Updated the description.',
+    );
+  } else if (command.startsWith('fixture:assistant-automation-update ')) {
+    await liveAnswer(
+      [
+        automationChange({
+          op: 'update',
+          automationId,
+          basedOnRevision: Number(automationRevision),
+          automation: { ...automationDraft, name: 'Renamed by assistant' },
+          summary: 'Rename the automation.',
+        }),
+      ],
+      'Renamed the automation.',
     );
   } else if (command === 'fixture:assistant-prose') {
     const text = 'I would add a lint step before the approval.';

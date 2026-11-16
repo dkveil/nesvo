@@ -88,6 +88,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   const observedReviews = [];
   const scheduledEvents = [];
   const workflowEvents = [];
+  const timeline = [];
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -102,6 +103,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   lines.on('line', line => {
     try {
       const message = JSON.parse(line);
+      if (!message.id) timeline.push(message);
       if (message.type === 'session-changed') {
         observed.push(message.session);
         const waiter = [...waiters].find(item => item.match(message.session));
@@ -164,6 +166,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
     observedReviews,
     scheduledEvents,
     workflowEvents,
+    timeline,
     request,
     send,
     error: () => stderr,
@@ -13427,13 +13430,15 @@ test(
 );
 
 test(
-  'the workflow assistant answers through a read-only session and validates proposals without writing files',
-  { timeout: 120_000 },
+  'the workflow assistant applies live changes through the host writers and undoes them exactly',
+  { timeout: 180_000 },
   async t => {
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-assistant-')),
     );
     const project = join(directory, 'project');
+    const linked = join(directory, 'linked');
+    const outside = join(directory, 'outside');
     const agents = join(project, '.agents', 'workflows');
     const pidFile = join(directory, 'pids.json');
     const write = async (path, content) => {
@@ -13442,6 +13447,9 @@ test(
       return path;
     };
     await mkdir(join(project, '.git'), { recursive: true });
+    await mkdir(join(linked, '.git'), { recursive: true });
+    await mkdir(join(linked, '.agents', 'workflows'), { recursive: true });
+    await mkdir(outside, { recursive: true });
     await mkdir(join(directory, 'global'), { recursive: true });
     await write(
       join(agents, 'steps', 'check.md'),
@@ -13453,7 +13461,20 @@ test(
     );
     const workflowText =
       '---\nname: default\ndescription: Check and approve\nsteps: [check, approve]\n---\n';
-    await write(join(agents, 'workflows', 'default.md'), workflowText);
+    const workflowPath = await write(
+      join(agents, 'workflows', 'default.md'),
+      workflowText,
+    );
+    let linkedFolder = true;
+    try {
+      await symlink(
+        outside,
+        join(linked, '.agents', 'workflows', 'steps'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+    } catch {
+      linkedFolder = false;
+    }
     const environment = {
       NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
       NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
@@ -13488,6 +13509,7 @@ test(
       };
       await visit(project);
       await visit(join(directory, 'global'));
+      await visit(outside);
       return files;
     };
     const before = await snapshot();
@@ -13528,17 +13550,49 @@ test(
         })(),
         () => `Proposal event timed out: ${host.error()}`,
       );
+    const changesOf = messageId =>
+      host.workflowEvents
+        .filter(
+          item =>
+            item.type === 'workflow-assistant-change' &&
+            item.change.messageId === messageId &&
+            item.change.status === 'applied',
+        )
+        .map(item => item.change);
+    const refusalsOf = messageId =>
+      host.workflowEvents
+        .filter(
+          item =>
+            item.type === 'workflow-assistant-change-refused' &&
+            item.refusal.messageId === messageId,
+        )
+        .map(item => item.refusal);
     const prompts = async () =>
       (await readFile(pidFile + '.assistant', 'utf8'))
         .trim()
         .split('\n')
         .map(line => JSON.parse(line));
+    const lastLive = async () =>
+      JSON.parse(
+        (await readFile(pidFile + '.assistant-live', 'utf8'))
+          .trim()
+          .split('\n')
+          .at(-1),
+      );
+    const jobs = async () =>
+      (await host.request('list-scheduled-jobs', {})).list.scheduledJobs;
     let sessionId;
+    let live;
+    const undo = changeId =>
+      host.request('workflow-assistant-undo', {
+        conversationId: sessionId,
+        changeId,
+      });
 
     await t.test(
-      'a new conversation creates a read-only session and emits a validated proposal',
+      'each change is written while the reply streams and announced before the turn ends',
       async () => {
-        const response = await send('fixture:assistant-proposal');
+        const response = await send('fixture:assistant-live');
         assert.equal(
           response.type,
           'workflow-assistant-turn',
@@ -13546,139 +13600,269 @@ test(
         );
         ({ sessionId } = response.turn);
         const event = await proposal(response.turn.messageId);
-        const sessions = (await host.request('list-sessions')).sessions;
-        const session = sessions.find(value => value.id === sessionId);
+        const session = (await host.request('list-sessions')).sessions.find(
+          value => value.id === sessionId,
+        );
         assert.equal(session.title, 'Workflow assistant · default');
         assert.equal(session.mode, 'read-only');
         assert.equal(session.delegationEnabled, false);
         assert.equal(session.workflowRunId, null);
-        assert.equal(session.directory, project);
         assert.equal(session.messages[0].origin, 'workflow');
-        assert.equal(event.sessionId, sessionId);
         assert.equal(event.status, 'ok');
-        assert.equal(event.proposal.changes.length, 2);
+        assert.deepEqual(event.proposal, {
+          message: 'Added a lint check, a workflow and a disabled automation.',
+          changes: [],
+        });
+        assert.deepEqual((await lastLive()).seen, [true, true, null]);
+        live = changesOf(response.turn.messageId);
         assert.deepEqual(
-          event.proposal.changes.map(change => [change.kind, change.name]),
+          live.map(change => [
+            change.sequence,
+            change.kind,
+            change.op,
+            change.before,
+            change.createdBy,
+            change.conversationId,
+            change.directory,
+          ]),
           [
-            ['step', 'lint-check'],
-            ['workflow', 'assistant-flow'],
+            [1, 'step', 'create', null, 'assistant', sessionId, project],
+            [2, 'workflow', 'create', null, 'assistant', sessionId, project],
+            [3, 'automation', 'create', null, 'assistant', sessionId, project],
           ],
         );
-        assert.deepEqual(event.issues, [
-          { index: 0, issues: [] },
-          { index: 1, issues: [] },
-        ]);
+        const lintPath = join(agents, 'steps', 'lint-check.md');
+        assert.deepEqual(live[0].target, {
+          type: 'definition',
+          root: 'project',
+          path: 'steps/lint-check.md',
+          name: 'lint-check',
+        });
+        assert.deepEqual(live[0].after, {
+          type: 'hash',
+          hash: hash(await readFile(lintPath)),
+        });
         assert.equal(
-          JSON.stringify(event).includes('fixture-secret-value'),
+          JSON.stringify(live).includes('fixture-secret-value'),
           false,
         );
+        const [job] = await jobs();
+        assert.equal(job.id, live[2].target.automationId);
+        assert.equal(job.active, false);
+        assert.equal(job.nextRunAt, null);
+        assert.equal(job.directory, project);
+        assert.deepEqual(live[2].after, { type: 'revision', revision: 1 });
+        const order = host.timeline.map(item =>
+          item.type === 'workflow-assistant-change'
+            ? `change:${item.change.sequence}`
+            : item.type === 'workflow-assistant-proposal'
+              ? `turn:${item.messageId}`
+              : item.type,
+        );
+        const at = name => order.indexOf(name);
+        assert.ok(at('change:1') < at('change:2'));
+        assert.ok(at('change:2') < at('change:3'));
+        assert.ok(
+          order.lastIndexOf('scheduled-job-changed', at('change:3')) >
+            at('change:2'),
+        );
+        assert.ok(at('change:3') < at(`turn:${response.turn.messageId}`));
+        const history = await host.request('workflow-assistant-changes', {
+          conversationId: sessionId,
+        });
+        assert.deepEqual(history.history.changes, live);
         const [recorded] = await prompts();
-        assert.equal(recorded.command, 'fixture:assistant-proposal');
-        assert.match(recorded.prompt, /Never create, edit or delete files/);
+        assert.equal(recorded.structured, false);
+        assert.match(recorded.prompt, /tagged nesvo-change/);
+        assert.match(recorded.prompt, /Never set active/);
         assert.match(
           recorded.prompt,
-          /\[begin catalog ([0-9a-f]+)\]\n[\s\S]*- check · command · pre-done · project · [0-9a-f]{64}\n[\s\S]*- default · project · [0-9a-f]{64}: check, approve; chain\n[\s\S]*\[end catalog \1\]/,
+          /\[begin catalog ([0-9a-f]+)\]\n[\s\S]*- default · project · [0-9a-f]{64}: check, approve; chain\n[\s\S]*\[end catalog \1\]/,
         );
         assert.match(
           recorded.prompt,
-          /\[begin open-document ([0-9a-f]+)\]\nkind: workflow\nscope: project\nname: default\nhash: [0-9a-f]{64}\n\n---\nname: default\n[\s\S]*\[end open-document \1\]/,
+          /\[begin automations ([0-9a-f]+)\]\n[\s\S]*- none\n\[end automations \1\]/,
         );
-        assert.match(
-          recorded.prompt,
-          /\[begin selection ([0-9a-f]+)\]\ncheck\n\[end selection \1\]/,
-        );
-        assert.match(
-          recorded.prompt,
-          /\[begin operator-request ([0-9a-f]+)\]\nfixture:assistant-proposal\n\[end operator-request \1\]/,
-        );
-        assert.equal(recorded.structured, true);
-        assert.match(
-          recorded.prompt,
-          /Return the proposal as your structured answer/,
-        );
-        assert.equal(agent(session).body, 'Proposal recorded.');
       },
     );
 
     await t.test(
-      'a continued conversation sends only the request and a changed document',
+      'unsafe, invalid and cross-phase changes are refused without writing',
       async () => {
-        const response = await send('fixture:assistant-missing-step', {
-          sessionId,
-        });
-        assert.equal(response.turn.sessionId, sessionId);
+        const response = await send('fixture:assistant-unsafe', { sessionId });
         const event = await proposal(response.turn.messageId);
         assert.equal(event.status, 'ok');
-        assert.deepEqual(event.issues[0], { index: 0, issues: [] });
+        const refusals = refusalsOf(response.turn.messageId);
         assert.deepEqual(
-          event.issues[1].issues.map(issue => [issue.severity, issue.message]),
-          [['error', 'Step "publish" does not exist or is invalid']],
+          refusals.map(refusal => [refusal.kind, refusal.reason]),
+          [
+            ['workflow', 'unsafe'],
+            ['automation', 'unsafe'],
+            [null, 'invalid'],
+            [null, 'invalid'],
+          ],
         );
-        const [first, second] = await prompts();
-        assert.equal(second.resumed, true);
-        assert.equal(second.structured, true);
-        assert.match(second.prompt, /structured answer/);
-        assert.ok(second.prompt.length < first.prompt.length);
-        assert.doesNotMatch(second.prompt, /\[begin catalog /);
-        assert.doesNotMatch(second.prompt, /\[begin open-document /);
-        assert.match(second.prompt, /\[begin operator-request [0-9a-f]+\]\n/);
-        const changedText = workflowText.replace(
-          'Check and approve',
-          'Check, then approve',
+        assert.match(
+          refusals[0].issues[0].message,
+          /"push" .*without a human step before it\. The assistant cannot save an external action/,
         );
-        await write(join(agents, 'workflows', 'default.md'), changedText);
-        before[join(agents, 'workflows', 'default.md')] =
-          Buffer.from(changedText).toString('base64');
-        const changed = await host.request('workflow-assistant-send', {
+        const [push] = changesOf(response.turn.messageId);
+        assert.equal(push.target.name, 'push');
+        await assert.rejects(
+          stat(join(agents, 'workflows', 'publish-flow.md')),
+        );
+        assert.equal((await jobs()).length, 1);
+        assert.equal((await undo(push.changeId)).result.status, 'undone');
+        const crossed = await send('fixture:assistant-cross-phase', {
           sessionId,
-          provider: 'Claude Code',
-          model: 'sonnet',
-          text: 'fixture:assistant-prose',
+        });
+        await proposal(crossed.turn.messageId);
+        const [cross] = refusalsOf(crossed.turn.messageId);
+        assert.equal(cross.reason, 'invalid');
+        assert.deepEqual(
+          cross.issues.map(issue => issue.message),
+          [
+            'Edge "lint-check -> approve" crosses phases; "lint-check" is pre-done and "approve" is pre-push',
+          ],
+        );
+        await assert.rejects(stat(join(agents, 'workflows', 'cross-flow.md')));
+      },
+    );
+
+    await t.test(
+      'a write through a linked definition folder is refused',
+      { skip: !linkedFolder },
+      async () => {
+        const response = await send('fixture:assistant-escape', {
           context: {
-            directory: project,
-            workflowName: 'default',
-            document: {
-              ...document,
-              contentHash: hash(changedText),
-              text: changedText,
-            },
+            directory: linked,
+            workflowName: null,
+            document: null,
+            selection: [],
           },
         });
-        const prose = await proposal(changed.turn.messageId);
-        assert.deepEqual(prose, {
-          type: 'workflow-assistant-proposal',
-          sessionId,
-          messageId: changed.turn.messageId,
-          status: 'invalid',
-          proposal: null,
-          issues: [],
-        });
-        const third = (await prompts())[2];
-        assert.match(
-          third.prompt,
-          /\[begin open-document [0-9a-f]+\]\n[\s\S]*Check, then approve/,
+        assert.equal(
+          response.type,
+          'workflow-assistant-turn',
+          response.message,
         );
-        assert.doesNotMatch(third.prompt, /\[begin catalog /);
+        await proposal(response.turn.messageId);
+        const [refusal] = refusalsOf(response.turn.messageId);
+        assert.equal(refusal.reason, 'invalid');
+        assert.match(
+          refusal.issues[0].message,
+          /Symbolic links are not written/,
+        );
+        assert.deepEqual(changesOf(response.turn.messageId), []);
+        assert.deepEqual(await readdir(outside), []);
       },
     );
 
     await t.test(
-      'a workflow edge between phases is reported for its change',
+      'undo restores the exact previous file and refuses after a newer edit',
       async () => {
-        const response = await send('fixture:assistant-cross-phase', {
-          sessionId,
+        const response = await send('fixture:assistant-update', { sessionId });
+        await proposal(response.turn.messageId);
+        const [updated] = changesOf(response.turn.messageId);
+        assert.equal(updated.op, 'update');
+        assert.deepEqual(updated.before, {
+          type: 'hash',
+          hash: hash(workflowText),
         });
-        const event = await proposal(response.turn.messageId);
-        assert.equal(event.status, 'ok');
-        assert.deepEqual(event.issues[0], { index: 0, issues: [] });
-        assert.deepEqual(
-          event.issues[1].issues.map(issue => [issue.severity, issue.message]),
-          [
-            [
-              'error',
-              'Edge "lint-check -> approve" crosses phases; "lint-check" is pre-done and "approve" is pre-push',
-            ],
-          ],
+        const assistantText = await readFile(workflowPath, 'utf8');
+        assert.match(assistantText, /Check, then approve/);
+        const operatorText = assistantText.replace('approve', 'approve now');
+        await writeFile(workflowPath, operatorText);
+        const conflict = await undo(updated.changeId);
+        assert.deepEqual(conflict.result, {
+          status: 'conflict',
+          changeId: updated.changeId,
+          current: { type: 'hash', hash: hash(operatorText) },
+          message:
+            'The file changed after this assistant change. Undo would overwrite newer content, so nothing was changed.',
+        });
+        assert.equal(await readFile(workflowPath, 'utf8'), operatorText);
+        await writeFile(workflowPath, assistantText);
+        const undone = await undo(updated.changeId);
+        assert.equal(undone.result.status, 'undone');
+        assert.equal(undone.result.change.status, 'undone');
+        assert.ok(undone.result.change.undoneAt);
+        assert.equal(await readFile(workflowPath, 'utf8'), workflowText);
+        assert.ok(
+          host.workflowEvents.some(
+            item =>
+              item.type === 'workflow-assistant-change' &&
+              item.change.changeId === updated.changeId &&
+              item.change.status === 'undone',
+          ),
+        );
+        const again = await undo(updated.changeId);
+        assert.equal(again.code, 'invalid-request');
+      },
+    );
+
+    await t.test(
+      'undo of a create is refused while a workflow uses the step and then removes what the assistant created',
+      async () => {
+        const [step, workflow, automation] = live;
+        const used = await undo(step.changeId);
+        assert.equal(used.result.status, 'refused');
+        assert.match(
+          used.result.issues[0].message,
+          /Step "lint-check" is used by workflow "assistant-flow"/,
+        );
+        for (const change of [workflow, step, automation])
+          assert.equal((await undo(change.changeId)).result.status, 'undone');
+        await assert.rejects(stat(join(agents, 'steps', 'lint-check.md')));
+        await assert.rejects(
+          stat(join(agents, 'workflows', 'assistant-flow.md')),
+        );
+        assert.deepEqual(await jobs(), []);
+      },
+    );
+
+    await t.test(
+      'an assistant edit saves an operator automation disabled and undo restores it',
+      async () => {
+        const id = randomUUID();
+        const saved = await host.request('save-scheduled-job', {
+          id,
+          expectedRevision: null,
+          name: 'Operator check',
+          prompt: 'Run the operator check.',
+          directory: project,
+          provider: 'claude',
+          model: 'sonnet',
+          effort: null,
+          mode: 'read-only',
+          schedule: { kind: 'daily', time: '03:00' },
+          timeZone: 'UTC',
+          active: true,
+        });
+        assert.equal(saved.type, 'scheduled-job', saved.message);
+        const response = await send(
+          `fixture:assistant-automation-update ${id} ${saved.scheduledJob.revision}`,
+          { sessionId },
+        );
+        await proposal(response.turn.messageId);
+        const [edited] = changesOf(response.turn.messageId);
+        assert.deepEqual(edited.before, { type: 'revision', revision: 1 });
+        const [changed] = await jobs();
+        assert.equal(changed.name, 'Renamed by assistant');
+        assert.equal(changed.active, false);
+        assert.equal((await undo(edited.changeId)).result.status, 'undone');
+        const [restored] = await jobs();
+        assert.equal(restored.name, 'Operator check');
+        assert.equal(restored.active, true);
+        assert.equal(restored.revision, 3);
+        assert.equal(
+          (
+            await host.request('delete-scheduled-job', {
+              id,
+              expectedRevision: restored.revision,
+            })
+          ).type,
+          'scheduled-job-deleted',
         );
       },
     );
@@ -13708,21 +13892,13 @@ test(
         );
         const pids = JSON.parse(await readFile(pidFile, 'utf8'));
         ownedPids.add(pids.pid).add(pids.childPid);
-        const listed = (await host.request('list-sessions')).sessions.length;
-        const busy = await send('fixture:assistant-proposal', { sessionId });
+        const busy = await send('fixture:assistant-prose', { sessionId });
         assert.deepEqual(busy, {
           type: 'error',
           id: busy.id,
           code: 'busy',
           message: 'Another session is working on this computer.',
         });
-        const fresh = await send('fixture:assistant-proposal');
-        assert.equal(fresh.code, 'busy');
-        assert.equal(fresh.message, busy.message);
-        assert.equal(
-          (await host.request('list-sessions')).sessions.length,
-          listed,
-        );
         await host.request('stop-run', {
           sessionId: other.id,
           runId: started.runId,
@@ -13730,14 +13906,10 @@ test(
         await host.event(
           value => value.id === other.id && value.status === 'stopped',
         );
-        const foreign = await send('fixture:assistant-proposal', {
+        const foreign = await send('fixture:assistant-prose', {
           sessionId: other.id,
         });
         assert.equal(foreign.code, 'invalid-request');
-        assert.equal(
-          foreign.message,
-          'This session is not a workflow assistant conversation on this computer.',
-        );
       },
     );
 
@@ -13745,7 +13917,6 @@ test(
       'an account limit and a stopped turn end with an invalid proposal',
       async () => {
         const limited = await send('fixture:limit', { sessionId });
-        assert.equal(limited.type, 'workflow-assistant-turn');
         assert.equal(
           (await proposal(limited.turn.messageId)).status,
           'invalid',
@@ -13760,26 +13931,19 @@ test(
         const pids = JSON.parse(await readFile(pidFile, 'utf8'));
         ownedPids.add(pids.pid).add(pids.childPid);
         await host.request('stop-run', { sessionId, runId: running.runId });
-        assert.deepEqual(await proposal(held.turn.messageId), {
-          type: 'workflow-assistant-proposal',
-          sessionId,
-          messageId: held.turn.messageId,
-          status: 'invalid',
-          proposal: null,
-          issues: [],
-        });
+        assert.equal((await proposal(held.turn.messageId)).status, 'invalid');
       },
     );
 
     await t.test(
-      'a Codex conversation runs read-only and a restarted host continues a conversation',
+      'a Codex conversation runs read-only and a restarted host keeps the change history',
       async () => {
         const codex = await send('Describe the workflow.', {
           provider: 'Codex',
           model: 'default',
         });
         assert.equal(codex.type, 'workflow-assistant-turn', codex.message);
-        assert.equal((await proposal(codex.turn.messageId)).status, 'invalid');
+        assert.equal((await proposal(codex.turn.messageId)).status, 'ok');
         const turns = (await readFile(pidFile + '.turns', 'utf8'))
           .trim()
           .split('\n')
@@ -13787,28 +13951,36 @@ test(
           .filter(turn => turn.prompt.includes('[begin operator-request '));
         assert.equal(turns.length, 1);
         assert.equal(turns[0].sandbox, 'readOnly');
-        assert.match(turns[0].prompt, /\[begin catalog [0-9a-f]+\]\n/);
-        assert.match(
-          turns[0].prompt,
-          /exactly one fenced code block tagged json/,
-        );
+        assert.match(turns[0].prompt, /tagged nesvo-change/);
+        const recorded = (
+          await host.request('workflow-assistant-changes', {
+            conversationId: sessionId,
+          })
+        ).history.changes;
         await host.stop();
         host = launch(join(directory, 'data'), pidFile);
+        assert.deepEqual(
+          (
+            await host.request('workflow-assistant-changes', {
+              conversationId: sessionId,
+            })
+          ).history.changes,
+          recorded,
+        );
         const resumed = await send('fixture:assistant-prose', { sessionId });
         assert.equal(resumed.type, 'workflow-assistant-turn', resumed.message);
-        assert.equal(resumed.turn.sessionId, sessionId);
-        assert.equal(
-          (await proposal(resumed.turn.messageId)).status,
-          'invalid',
-        );
+        assert.equal((await proposal(resumed.turn.messageId)).status, 'ok');
         const last = (await prompts()).at(-1);
         assert.equal(last.resumed, true);
-        assert.match(last.prompt, /\[begin open-document [0-9a-f]+\]\n/);
+        assert.match(
+          last.prompt,
+          /\[begin applied-changes [0-9a-f]+\]\n- undone · /,
+        );
         assert.doesNotMatch(last.prompt, /\[begin catalog /);
       },
     );
 
-    await t.test('no project or global file changed', async () => {
+    await t.test('every assistant change was undone exactly', async () => {
       assert.deepEqual(await snapshot(), before);
       await host.stop();
     });

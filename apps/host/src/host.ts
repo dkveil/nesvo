@@ -10,6 +10,7 @@ import {
   type HostMessage,
   type HostRequest,
   type HostResponse,
+  type Session,
   type SkillCatalog,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
@@ -33,8 +34,13 @@ import {
   inside as insideFolder,
   loadCatalog,
   loadSpec,
-  resolveWriteRoots,
 } from './workflows/definitions';
+import {
+  AssistantChangeError,
+  AssistantChanges,
+  automationsIn,
+} from './workflows/assistant-changes';
+import { AssistantChangeStore } from './workflows/assistant-change-store';
 import {
   WorkflowAssistant,
   WorkflowAssistantError,
@@ -78,6 +84,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'delete-workflow-definition',
   'remove-workflow-worktree',
   'workflow-assistant-send',
+  'workflow-assistant-undo',
   'resolve-workflow-step',
 ]);
 const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
@@ -96,6 +103,8 @@ const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
   'save-workflow-definition',
   'delete-workflow-definition',
   'workflow-assistant-send',
+  'workflow-assistant-undo',
+  'workflow-assistant-changes',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
@@ -129,9 +138,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
       };
       let wakeIdleRuns = () => {};
+      let observeAssistant: (session: Session) => void = () => {};
       const emitSessionEvent = (message: HostMessage) => {
         emit(message);
-        if (message.type === 'session-changed') wakeIdleRuns();
+        if (message.type !== 'session-changed') return;
+        wakeIdleRuns();
+        observeAssistant(message.session);
       };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
@@ -272,19 +284,63 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }),
         service => Effect.promise(() => service.close()),
       );
+      const activeRuns = (target: {
+        scope: string;
+        name: string;
+        projectRoot: string;
+      }) =>
+        workflowRunStore
+          .activeRunsForWorkflow(target.name, null)
+          .filter(
+            run =>
+              target.scope === 'global' ||
+              [run.projectRoot, run.directory].some(path =>
+                insideFolder(target.projectRoot, path),
+              ),
+          )
+          .map(run => run.id);
+      const assistantChanges = new AssistantChanges({
+        store: new AssistantChangeStore(database),
+        definitions: {
+          save: (input, options) =>
+            saveDefinition(
+              input,
+              probes.controller.signal,
+              activeRuns,
+              options,
+            ),
+          remove: (input, options) =>
+            deleteDefinition(
+              input,
+              probes.controller.signal,
+              activeRuns,
+              options,
+            ),
+        },
+        automations: {
+          list: () => scheduledJobs.list(),
+          save: input => scheduledJobs.save(input),
+          delete: input => scheduledJobs.delete(input),
+        },
+        emit,
+      });
       const assistant = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
             new WorkflowAssistant({
               sessions,
               findSession: id => store.get(id),
-              definitions: { loadCatalog, resolveWriteRoots },
+              definitions: { loadCatalog },
+              changes: assistantChanges,
+              automations: directory =>
+                automationsIn(scheduledJobs.list(), directory),
               emit,
               signal: probes.controller.signal,
             }),
         ),
         service => Effect.promise(() => service.close()),
       );
+      observeAssistant = session => assistant.observe(session);
       let evidenceRequests = 0;
       let workspaceRequests = 0;
       let skillRequests = 0;
@@ -590,6 +646,41 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void turn.finally(() => probes.pending.delete(turn));
           continue;
         }
+        if (request.method === 'workflow-assistant-undo') {
+          const undo = assistantChanges
+            .undo(request.input)
+            .then(result =>
+              send({ type: 'workflow-assistant-undo', id: request.id, result }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof AssistantChangeError
+                    ? error.code
+                    : 'unavailable',
+                message:
+                  error instanceof AssistantChangeError
+                    ? error.message
+                    : 'The change could not be undone. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(undo);
+          void undo.finally(() => probes.pending.delete(undo));
+          continue;
+        }
+        if (request.method === 'workflow-assistant-changes') {
+          yield* Effect.tryPromise(() =>
+            send({
+              type: 'workflow-assistant-changes',
+              id: request.id,
+              history: assistantChanges.history(request.input.conversationId),
+            }),
+          );
+          continue;
+        }
         if (request.method === 'read-workflow-evidence') {
           if (evidenceRequests >= 8) {
             yield* Effect.tryPromise(() =>
@@ -668,21 +759,6 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             );
             continue;
           }
-          const activeRuns = (target: {
-            scope: string;
-            name: string;
-            projectRoot: string;
-          }) =>
-            workflowRunStore
-              .activeRunsForWorkflow(target.name, null)
-              .filter(
-                run =>
-                  target.scope === 'global' ||
-                  [run.projectRoot, run.directory].some(path =>
-                    insideFolder(target.projectRoot, path),
-                  ),
-              )
-              .map(run => run.id);
           definitionWrites++;
           const writing: Promise<DefinitionWriteResult> =
             request.method === 'save-workflow-definition'
