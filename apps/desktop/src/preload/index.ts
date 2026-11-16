@@ -52,6 +52,10 @@ import {
   workflowMetricsInputSchema,
   workflowMetricsSchema,
   workflowAssistantSendSchema,
+  assistantChangeHistorySchema,
+  assistantUndoResultSchema,
+  assistantUndoSchema,
+  listAssistantChangesSchema,
   workflowAssistantTurnSchema,
   readWorkflowEvidenceSchema,
   removeWorkflowWorktreeSchema,
@@ -257,6 +261,22 @@ const workflows: DesktopApi['workflows'] = {
       await ipcRenderer.invoke(
         'nesvo:workflow-assistant-send',
         workflowAssistantSendSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  assistantUndo: async (hostId, input) =>
+    assistantUndoResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:workflow-assistant-undo',
+        assistantUndoSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  assistantChanges: async (hostId, conversationId) =>
+    assistantChangeHistorySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:workflow-assistant-changes',
+        listAssistantChangesSchema.parse({ conversationId }),
         hostIdSchema.parse(hostId),
       ),
     ),

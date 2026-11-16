@@ -39,6 +39,8 @@ import {
   listWorkflowRunsSchema,
   workflowMetricsInputSchema,
   workflowAssistantSendSchema,
+  assistantUndoSchema,
+  listAssistantChangesSchema,
   readWorkflowEvidenceSchema,
   removeWorkflowWorktreeSchema,
   resolveWorkflowStepSchema,
@@ -96,6 +98,8 @@ const workflowInputs = {
   'read-workflow-evidence': readWorkflowEvidenceSchema,
   'workflow-metrics': workflowMetricsInputSchema,
   'workflow-assistant-send': workflowAssistantSendSchema,
+  'workflow-assistant-undo': assistantUndoSchema,
+  'workflow-assistant-changes': listAssistantChangesSchema,
 } satisfies Record<WorkflowMethod, { parse: (input: unknown) => unknown }>;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)

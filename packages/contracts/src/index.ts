@@ -106,6 +106,15 @@ import {
   workflowAssistantProposalEventSchema,
   workflowAssistantSendSchema,
   workflowAssistantTurnSchema,
+  assistantChangeEventSchema,
+  assistantChangeHistorySchema,
+  assistantChangeRefusedEventSchema,
+  assistantUndoResultSchema,
+  assistantUndoSchema,
+  listAssistantChangesSchema,
+  type AssistantChangeHistory,
+  type AssistantUndoInput,
+  type AssistantUndoResult,
   type DecideWorkflowGateInput,
   type DefinitionCatalog,
   type DefinitionWriteResult,
@@ -169,6 +178,12 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   workflowAssistantProposalEventSchema.extend({
     type: z.literal('workflow-assistant-proposal'),
+  }),
+  assistantChangeEventSchema.extend({
+    type: z.literal('workflow-assistant-change'),
+  }),
+  assistantChangeRefusedEventSchema.extend({
+    type: z.literal('workflow-assistant-change-refused'),
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -350,6 +365,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     method: z.literal('workflow-assistant-send'),
     input: workflowAssistantSendSchema,
   }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('workflow-assistant-undo'),
+    input: assistantUndoSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('workflow-assistant-changes'),
+    input: listAssistantChangesSchema,
+  }),
 ]);
 
 export const hostHealthSchema = z.strictObject({
@@ -510,6 +535,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     turn: workflowAssistantTurnSchema,
   }),
   z.strictObject({
+    type: z.literal('workflow-assistant-undo'),
+    id: z.uuid(),
+    result: assistantUndoResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('workflow-assistant-changes'),
+    id: z.uuid(),
+    history: assistantChangeHistorySchema,
+  }),
+  z.strictObject({
     type: z.literal('error'),
     id: z.uuid().nullable(),
     code: z.enum([
@@ -627,6 +662,14 @@ export type WorkflowsApi = {
     hostId: HostId,
     input: WorkflowAssistantSendInput,
   ) => Promise<WorkflowAssistantTurn>;
+  assistantUndo: (
+    hostId: HostId,
+    input: AssistantUndoInput,
+  ) => Promise<AssistantUndoResult>;
+  assistantChanges: (
+    hostId: HostId,
+    conversationId: string,
+  ) => Promise<AssistantChangeHistory>;
 };
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;

@@ -12,6 +12,8 @@ import {
   workflowRunSchema,
   workflowStepRecordSchema,
   workflowAssistantProposalEventSchema,
+  assistantChangeEventSchema,
+  assistantChangeRefusedEventSchema,
 } from './workflows';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
@@ -182,6 +184,14 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   }),
   desktopWorkflowAssistantProposalSchema.extend({
     type: z.literal('workflow-assistant-proposal'),
+  }),
+  assistantChangeEventSchema.extend({
+    type: z.literal('workflow-assistant-change'),
+    hostId: hostIdSchema,
+  }),
+  assistantChangeRefusedEventSchema.extend({
+    type: z.literal('workflow-assistant-change-refused'),
+    hostId: hostIdSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),
