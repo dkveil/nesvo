@@ -518,6 +518,8 @@ export class ComputerManager {
       'read-workflow-evidence': 'workflow-evidence',
       'workflow-metrics': 'workflow-metrics',
       'workflow-assistant-send': 'workflow-assistant-turn',
+      'workflow-assistant-undo': 'workflow-assistant-undo',
+      'workflow-assistant-changes': 'workflow-assistant-changes',
     }[method];
     const definitionWrite =
       (method === 'save-workflow-definition' ||
@@ -553,6 +555,10 @@ export class ComputerManager {
         return response.metrics;
       case 'workflow-assistant-turn':
         return response.turn;
+      case 'workflow-assistant-undo':
+        return response.result;
+      case 'workflow-assistant-changes':
+        return response.history;
       default:
         throw new Error('Unexpected host response.');
     }
@@ -798,7 +804,11 @@ export class ComputerManager {
         });
       return;
     }
-    if (event.type === 'workflow-assistant-proposal') {
+    if (
+      event.type === 'workflow-assistant-proposal' ||
+      event.type === 'workflow-assistant-change' ||
+      event.type === 'workflow-assistant-change-refused'
+    ) {
       if (publish) this.publish({ ...event, hostId });
       return;
     }

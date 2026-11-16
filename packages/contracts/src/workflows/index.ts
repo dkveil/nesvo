@@ -4,4 +4,5 @@ export * from './runs';
 export * from './metrics';
 export * from './commands';
 export * from './assistant';
+export * from './assistant-changes';
 export * from './graph';
