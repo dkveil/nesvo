@@ -13705,7 +13705,7 @@ test(
         );
         assert.match(
           refusals[2].issues[0].message,
-          /"approve" in workflow "default" is declared external without a human step before it/,
+          /^Step "approve" has an external effect and a path reaches it without a human step\. The assistant cannot save/,
         );
         assert.match(
           await readFile(join(agents, 'steps', 'approve.md'), 'utf8'),
