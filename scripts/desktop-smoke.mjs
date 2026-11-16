@@ -2637,19 +2637,33 @@ try {
     .click();
   await workflowsView
     .getByRole('button', { name: 'New workflow', exact: true })
+    .first()
     .click();
+  const newWorkflowSheet = restartedPage.getByRole('dialog', {
+    name: 'New workflow',
+    exact: true,
+  });
+  await newWorkflowSheet.waitFor();
+  await newWorkflowSheet
+    .getByRole('textbox', { name: 'Name', exact: true })
+    .fill('smoke-graph');
+  await newWorkflowSheet
+    .getByRole('button', { name: 'Create and open', exact: true })
+    .click();
+  await newWorkflowSheet.waitFor({ state: 'hidden' });
   const editor = restartedPage.getByRole('region', {
     name: 'Graph editor',
     exact: true,
   });
   await editor.waitFor();
+  assert.equal(
+    await editor.getByRole('textbox', { name: 'Workflow name' }).inputValue(),
+    'smoke-graph',
+  );
   const inspector = editor.getByRole('complementary', {
     name: 'Inspector',
     exact: true,
   });
-  await inspector
-    .getByRole('textbox', { name: 'Name', exact: true })
-    .fill('smoke-graph');
   const openPicker = async (from, when = 'success') => {
     await editor
       .locator(`[data-node-add="${from}"][data-node-add-when="${when}"]`)

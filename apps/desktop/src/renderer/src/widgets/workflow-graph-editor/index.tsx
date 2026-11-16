@@ -42,13 +42,18 @@ import { IssuesStrip } from './issues-strip';
 import { NodePicker, type AddRequest } from './node-picker';
 import type { RunBadge } from './nodes';
 import { Toolbar } from './toolbar';
-import { useEditorState, type AddOrigin } from './use-editor-state';
+import {
+  useEditorState,
+  type AddOrigin,
+  type EditorDraftFields,
+} from './use-editor-state';
 
 type Props = {
   hostId: string;
   directory: string;
   workflowName: string | null;
   catalog: DefinitionCatalog;
+  draft?: EditorDraftFields;
   api: DesktopApi['workflows'];
   scheduledJobsApi: DesktopApi['scheduledJobs'];
   computers: Computer[];
@@ -89,6 +94,7 @@ export default function WorkflowGraphEditor({
   directory,
   workflowName,
   catalog,
+  draft,
   api,
   scheduledJobsApi,
   computers,
@@ -108,6 +114,7 @@ export default function WorkflowGraphEditor({
     directory,
     workflowName,
     catalog,
+    draft,
     api,
   });
   const section = useRef<HTMLElement>(null);
