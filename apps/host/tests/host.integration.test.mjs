@@ -13705,7 +13705,10 @@ test(
         assert.deepEqual(history.history.changes, live);
         const [recorded] = await prompts();
         assert.equal(recorded.structured, false);
-        assert.match(recorded.prompt, /tagged nesvo-change/);
+        assert.match(
+          recorded.prompt,
+          /a line ```nesvo-change, then one JSON object/,
+        );
         assert.match(recorded.prompt, /Never set active/);
         assert.match(
           recorded.prompt,
@@ -13717,8 +13720,32 @@ test(
         );
         assert.match(
           recorded.prompt,
-          /\[begin view ([0-9a-f]+)\]\nNot stated\.\n\[end view \1\]/,
+          /\[begin view ([0-9a-f]+)\]\nNot stated\. By default, create or change workflows and the steps they use\.\n\[end view \1\]/,
         );
+        assert.equal(recorded.permissionMode, 'default');
+        assert.match(recorded.systemPrompt, /This is not a planning session/);
+        assert.match(
+          recorded.prompt,
+          /Every change MUST be a nesvo-change block; prose or other fences change nothing\./,
+        );
+        const contracts = await loadScheduledJobContracts(directory);
+        const examples = [
+          ...recorded.prompt.matchAll(/^```nesvo-change\n(.+)\n```$/gm),
+        ].map(match => JSON.parse(match[1]));
+        assert.deepEqual(
+          examples.map(example => [example.kind, example.op]),
+          [
+            ['step', 'create'],
+            ['workflow', 'create'],
+            ['automation', 'create'],
+          ],
+        );
+        for (const example of examples)
+          assert.equal(
+            contracts.assistantOperationSchema.safeParse(example).success,
+            true,
+          );
+        assert.match(examples[1].document, /edges: \["lint -> report"/);
       },
     );
 
@@ -13783,6 +13810,65 @@ test(
           ],
         );
         await assert.rejects(stat(join(agents, 'workflows', 'cross-flow.md')));
+      },
+    );
+
+    const repairRequests = async () =>
+      (await host.request('list-sessions')).sessions
+        .find(value => value.id === sessionId)
+        .messages.filter(
+          message =>
+            message.author === 'operator' &&
+            message.body.startsWith(
+              'Your reply changed nothing. Re-emit the intended changes as nesvo-change blocks only.',
+            ),
+        ).length;
+
+    await t.test(
+      'a reply that only describes definitions gets one repair turn that applies its change blocks',
+      async () => {
+        const before = await repairRequests();
+        const response = await send('fixture:assistant-plan-reply', {
+          sessionId,
+        });
+        const event = await proposal(response.turn.messageId);
+        assert.equal(event.status, 'ok');
+        assert.equal(event.proposal.message, 'Re-emitted the change.');
+        assert.equal(await repairRequests(), before + 1);
+        const [repaired] = changesOf(response.turn.messageId);
+        assert.equal(repaired.target.name, 'repaired-step');
+        assert.deepEqual(refusalsOf(response.turn.messageId), []);
+        assert.equal((await undo(repaired.changeId)).result.status, 'undone');
+      },
+    );
+
+    await t.test(
+      'a repair turn that still changes nothing ends with an invalid refusal, and a question gets no repair',
+      async () => {
+        const before = await repairRequests();
+        const response = await send(
+          'fixture:assistant-plan-stubborn create a workflow',
+          { sessionId },
+        );
+        const event = await proposal(response.turn.messageId);
+        assert.equal(event.status, 'invalid');
+        assert.equal(await repairRequests(), before + 1);
+        assert.deepEqual(changesOf(response.turn.messageId), []);
+        assert.deepEqual(
+          refusalsOf(response.turn.messageId).map(refusal => [
+            refusal.reason,
+            refusal.issues[0].message,
+          ]),
+          [
+            [
+              'invalid',
+              'The assistant wrote no change block, even after it was asked again, so nothing changed. Ask again and name the change you want.',
+            ],
+          ],
+        );
+        const question = await send('fixture:assistant-prose', { sessionId });
+        assert.equal((await proposal(question.turn.messageId)).status, 'ok');
+        assert.equal(await repairRequests(), before + 1);
       },
     );
 
@@ -14064,7 +14150,10 @@ test(
           .filter(turn => turn.prompt.includes('[begin operator-request '));
         assert.equal(turns.length, 1);
         assert.equal(turns[0].sandbox, 'readOnly');
-        assert.match(turns[0].prompt, /tagged nesvo-change/);
+        assert.match(
+          turns[0].prompt,
+          /a line ```nesvo-change, then one JSON object/,
+        );
         const recorded = (
           await host.request('workflow-assistant-changes', {
             conversationId: sessionId,

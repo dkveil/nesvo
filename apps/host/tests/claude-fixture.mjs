@@ -26,6 +26,7 @@ const flags = [
   '--no-session-persistence',
   '--json-schema',
   '--setting-sources',
+  '--append-system-prompt',
 ];
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
@@ -159,10 +160,13 @@ if (args.length === 1 && args[0] === '--version') {
   for (const flag of switches)
     if (flag !== '--no-session-persistence')
       assert.equal(values.get(flag), true, flag);
+  assert.equal(
+    values.get('--permission-mode'),
+    values.has('--append-system-prompt') ? 'default' : 'plan',
+  );
   for (const [flag, expected] of [
     ['--input-format', 'text'],
     ['--output-format', 'stream-json'],
-    ['--permission-mode', 'plan'],
     ['--permission-prompts', 'none'],
     ['--tools', 'Read,Glob,Grep'],
     ['--allowedTools', 'Read,Glob,Grep'],
@@ -375,6 +379,8 @@ if (args.length === 1 && args[0] === '--version') {
         resumed,
         command,
         structured: values.has('--json-schema'),
+        permissionMode: values.get('--permission-mode'),
+        systemPrompt: values.get('--append-system-prompt') ?? null,
         prompt,
       }) + '\n',
       { flag: 'a' },
@@ -674,9 +680,41 @@ if (args.length === 1 && args[0] === '--version') {
       JSON.stringify(
         definitionChange('step', name, lintStep.replace('lint-check', name)),
       );
-    const text = `\`\`\`nesvo-change\n${step('glued-one')}\n\`\`\`Then the second:\`\`\`nesvo-change\n${step('glued-two')}\n\`\`\`\nAdded two steps.`;
+    const text = `\`\`\`nesvo-change\n${step('glued-one')}\n\`\`\`Then the second:\`\`\`json NESVO_CHANGE\n${step('glued-two')}\n\`\`\`\nAdded two steps.`;
     start(text);
     finish(text);
+  } else if (
+    command.startsWith('fixture:assistant-plan-reply') ||
+    command.startsWith('fixture:assistant-plan-stubborn')
+  ) {
+    writeFileSync(
+      join(process.cwd(), `.nesvo-fixture-repair-${sessionId}`),
+      command.startsWith('fixture:assistant-plan-reply') ? 'fix' : 'stubborn',
+    );
+    const text = command.startsWith('fixture:assistant-plan-reply')
+      ? 'Plan mode is active, so I am not writing any changes yet.\n\n**Plan (scope: project)**\n\n```md\n---\nname: typecheck\ntype: command\nphase: pre-done\n---\nnpx tsc --noEmit\n```\n\n```md\n---\nname: demo-check\nsteps: [typecheck, unit-tests, lint]\n---\n```\n\nApprove the plan and I will write the files.'
+      : 'I would create a workflow with three command steps once you confirm.';
+    start(text);
+    finish(text);
+  } else if (command.startsWith('Your reply changed nothing.')) {
+    const marker = join(process.cwd(), `.nesvo-fixture-repair-${sessionId}`);
+    const mode = existsSync(marker) ? readFileSync(marker, 'utf8') : 'stubborn';
+    if (mode === 'fix')
+      await liveAnswer(
+        [
+          definitionChange(
+            'step',
+            'repaired-step',
+            lintStep.replace('lint-check', 'repaired-step'),
+          ),
+        ],
+        'Re-emitted the change.',
+      );
+    else {
+      const text = 'I would still rather describe the plan first.';
+      start(text);
+      finish(text);
+    }
   } else if (command === 'fixture:assistant-escape') {
     await liveAnswer(
       [
