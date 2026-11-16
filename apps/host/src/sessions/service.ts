@@ -110,6 +110,7 @@ export type WorkflowTurn = {
   ephemeral?: boolean;
   instructionsOnly?: boolean;
   assistant?: boolean;
+  assistantPrompt?: string;
 };
 
 export type SessionServiceOptions = {
@@ -143,6 +144,7 @@ type LaunchTurn = {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
+  assistantPrompt?: string;
 };
 
 export type RunOutcome = {
@@ -284,6 +286,7 @@ export class SessionService {
       outputSchema: turn.outputSchema,
       ephemeral,
       instructionsOnly: turn.instructionsOnly,
+      assistantPrompt: turn.assistant ? turn.assistantPrompt : undefined,
     });
     return 'sent';
   }
@@ -953,6 +956,7 @@ export class SessionService {
       outputSchema,
       ephemeral,
       instructionsOnly,
+      assistantPrompt,
     }: LaunchTurn,
   ): void {
     const inherited =
@@ -1140,6 +1144,7 @@ export class SessionService {
                   : {}),
                 ...(ephemeral ? { ephemeral } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
+                ...(assistantPrompt ? { assistantPrompt } : {}),
                 sessionId: session.providerSessionId!,
               });
         return provider.done;

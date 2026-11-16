@@ -643,6 +643,7 @@ export function startClaude(options: {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
+  assistantPrompt?: string;
   onEvent: (event: ClaudeEvent) => void;
 }): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
   let stopped = false;
@@ -677,7 +678,7 @@ export function startClaude(options: {
         '--verbose',
         '--include-partial-messages',
         '--permission-mode',
-        'plan',
+        options.assistantPrompt ? 'default' : 'plan',
         '--permission-prompts',
         'none',
         '--tools',
@@ -695,6 +696,8 @@ export function startClaude(options: {
       if (options.model !== 'default') args.push('--model', options.model);
       if (options.ephemeral) args.push('--no-session-persistence');
       if (options.instructionsOnly) args.push('--setting-sources', '');
+      if (options.assistantPrompt)
+        args.push('--append-system-prompt', options.assistantPrompt);
       if (options.outputSchema)
         args.push('--json-schema', JSON.stringify(options.outputSchema));
       if (stopped) return { status: 'stopped', error: null };
