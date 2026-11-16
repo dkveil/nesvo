@@ -75,7 +75,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/shared/ui/sheet';
-import { Conversation } from '@/widgets/conversation';
+import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
@@ -458,6 +458,13 @@ export function Workspace() {
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
   >({});
+  const [modelSelections, setModelSelections] = useState<
+    Record<string, ModelSelection | null>
+  >({});
+  const clearModelSelection = (key: string, sent: ModelSelection | null) =>
+    setModelSelections(previous =>
+      sent && previous[key] === sent ? { ...previous, [key]: null } : previous,
+    );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -473,7 +480,13 @@ export function Workspace() {
   const sendAttempts = useRef<
     Record<
       string,
-      { text: string; skillId?: string; skillHash?: string; messageId: string }
+      {
+        text: string;
+        skillId?: string;
+        skillHash?: string;
+        selection: ModelSelection | null;
+        messageId: string;
+      }
     >
   >({});
   const stopping = useRef(new Set<string>());
@@ -795,6 +808,7 @@ export function Workspace() {
     skill: SelectedSkill | null,
     onAcknowledge: () => void,
     queued = false,
+    selection: ModelSelection | null = null,
   ) => {
     const sessionId = target.id;
     const sessionKey = entityKey(target);
@@ -805,9 +819,17 @@ export function Workspace() {
     const attempt =
       prior?.text === text &&
       prior.skillId === skillId &&
-      prior.skillHash === skillHash
+      prior.skillHash === skillHash &&
+      prior.selection?.model === selection?.model &&
+      prior.selection?.effort === selection?.effort
         ? prior
-        : { text, skillId, skillHash, messageId: crypto.randomUUID() };
+        : {
+            text,
+            skillId,
+            skillHash,
+            selection,
+            messageId: crypto.randomUUID(),
+          };
     sendAttempts.current[sessionKey] = attempt;
     sendingRef.current = true;
     setSending(true);
@@ -824,6 +846,9 @@ export function Workspace() {
         text,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
+        ...(selection
+          ? { model: selection.model, effort: selection.effort }
+          : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -867,17 +892,39 @@ export function Workspace() {
     if (!text || text.length > 32000) return;
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
+    const selection = modelSelections[sessionKey] ?? null;
     await deliver(
       selected,
       text,
       skill,
       () => {
+        clearModelSelection(sessionKey, selection);
         if ((draftVersions.current[sessionKey] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
         }
       },
       !!activeRun,
+      selection,
+    );
+  };
+  const resend = async () => {
+    if (!selected || sendingRef.current || connection !== 'ready' || activeRun)
+      return;
+    const last = selected.messages.findLast(
+      message => message.author === 'operator',
+    );
+    if (!last) return;
+    const sessionKey = entityKey(selected);
+    const selection = modelSelections[sessionKey] ?? null;
+    delete sendAttempts.current[sessionKey];
+    await deliver(
+      selected,
+      last.body,
+      null,
+      () => clearModelSelection(sessionKey, selection),
+      false,
+      selection,
     );
   };
   const changeQueued = async (
@@ -909,8 +956,16 @@ export function Workspace() {
     messageId: string,
     text: string,
   ) => {
-    if (await changeQueued(target, messageId, 'cancel'))
-      changeDraft(entityKey(target), text);
+    const entry = target.queue.find(item => item.id === messageId);
+    if (!(await changeQueued(target, messageId, 'cancel'))) return;
+    const key = entityKey(target);
+    changeDraft(key, text);
+    const model = entry?.model;
+    if (model)
+      setModelSelections(previous => ({
+        ...previous,
+        [key]: { model, effort: entry.effort ?? null },
+      }));
   };
   const startThread = async (
     input: CreateSessionInput,
@@ -2289,6 +2344,18 @@ export function Workspace() {
                 }
                 onQueuedEdit={(messageId, text) =>
                   void editQueued(selected, messageId, text)
+                }
+                onResend={() => void resend()}
+                statuses={store.providerStates(selectedHostId)}
+                onRefreshProvider={provider =>
+                  void store.refreshProvider(provider, selectedHostId)
+                }
+                pendingSelection={modelSelections[selectedKey] ?? null}
+                onSelectModel={selection =>
+                  setModelSelections(previous => ({
+                    ...previous,
+                    [selectedKey]: selection,
+                  }))
                 }
               />
             </div>

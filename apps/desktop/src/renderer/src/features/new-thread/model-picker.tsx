@@ -22,6 +22,11 @@ type Props = {
   effort: string;
   statuses: ProviderStates;
   disabled?: boolean;
+  lockedProvider?: boolean;
+  triggerLabel?: string;
+  displayLabel?: string;
+  hint?: string;
+  triggerClassName?: string;
   onChange: (provider: Provider, model: string, effort: string) => void;
   onRefreshProvider: (provider: Provider) => void;
 };
@@ -32,6 +37,11 @@ export function ModelPicker({
   effort,
   statuses,
   disabled = false,
+  lockedProvider = false,
+  triggerLabel = 'Choose model',
+  displayLabel,
+  hint,
+  triggerClassName,
   onChange,
   onRefreshProvider,
 }: Props) {
@@ -53,9 +63,10 @@ export function ModelPicker({
   const currentLabel = model
     ? (models.find(option => option.id === model)?.label ?? modelLabel(model))
     : 'No model';
+  const shownLabel = displayLabel ?? currentLabel;
   const chipLabel = effort
-    ? `${currentLabel} · ${effortLabel(effort)}`
-    : currentLabel;
+    ? `${shownLabel} · ${effortLabel(effort)}`
+    : shownLabel;
   const previewModel = active?.id ?? model;
   const previewLabel =
     models.find(option => option.id === previewModel)?.label ??
@@ -123,15 +134,23 @@ export function ModelPicker({
       <PopoverTrigger asChild>
         <ComposerChip
           disabled={disabled}
-          aria-label="Choose model"
-          title={`${provider} · ${chipLabel}`}
-          className="h-7 gap-1.5 text-[13px] text-foreground"
+          aria-label={triggerLabel}
+          title={`${provider} · ${chipLabel}${hint ? ` · ${hint}` : ''}`}
+          className={cn(
+            'h-7 gap-1.5 text-[13px] text-foreground',
+            triggerClassName,
+          )}
         >
           <ProviderGlyph provider={provider} />
-          <span className="truncate font-semibold">{currentLabel}</span>
+          <span className="truncate font-semibold">{shownLabel}</span>
           {effort && (
             <span className="shrink-0 text-muted-foreground">
               {effortLabel(effort)}
+            </span>
+          )}
+          {hint && (
+            <span className="shrink-0 font-normal text-muted-foreground/70">
+              · {hint}
             </span>
           )}
         </ComposerChip>
@@ -148,48 +167,52 @@ export function ModelPicker({
           search.current?.focus();
         }}
       >
-        <div
-          role="radiogroup"
-          aria-label="Provider"
-          className="flex w-10 shrink-0 flex-col items-center gap-1 border-r py-1.5"
-        >
-          {providers.map(item => {
-            const itemState = statuses[item];
-            const ready = itemState.status?.status === 'ready';
-            return (
-              <button
-                key={item}
-                id={`thread-provider-${providerSlugs[item]}`}
-                type="button"
-                role="radio"
-                aria-checked={item === provider}
-                aria-label={item}
-                tabIndex={item === provider ? 0 : -1}
-                title={providerStatusLabel(item, itemState)}
-                onKeyDown={onProviderKeyDown}
-                onClick={() => selectProvider(item)}
-                className={cn(
-                  'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
-                  'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                  'after:absolute after:top-1.5 after:-right-1.5 after:h-4 after:w-0.5 after:rounded-full after:bg-transparent',
-                  item === provider && 'text-foreground after:bg-primary',
-                )}
-              >
-                <ProviderGlyph
-                  provider={item}
-                  className="size-4 text-current"
-                />
-                <span
-                  aria-hidden="true"
+        {!lockedProvider && (
+          <div
+            role="radiogroup"
+            aria-label="Provider"
+            className="flex w-10 shrink-0 flex-col items-center gap-1 border-r py-1.5"
+          >
+            {providers.map(item => {
+              const itemState = statuses[item];
+              const ready = itemState.status?.status === 'ready';
+              return (
+                <button
+                  key={item}
+                  id={`thread-provider-${providerSlugs[item]}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={item === provider}
+                  aria-label={item}
+                  tabIndex={item === provider ? 0 : -1}
+                  title={providerStatusLabel(item, itemState)}
+                  onKeyDown={onProviderKeyDown}
+                  onClick={() => selectProvider(item)}
                   className={cn(
-                    'absolute top-0.5 right-0.5 size-1.5 rounded-full',
-                    ready ? 'bg-success-foreground' : 'bg-muted-foreground/50',
+                    'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
+                    'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                    'after:absolute after:top-1.5 after:-right-1.5 after:h-4 after:w-0.5 after:rounded-full after:bg-transparent',
+                    item === provider && 'text-foreground after:bg-primary',
                   )}
-                />
-              </button>
-            );
-          })}
-        </div>
+                >
+                  <ProviderGlyph
+                    provider={item}
+                    className="size-4 text-current"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'absolute top-0.5 right-0.5 size-1.5 rounded-full',
+                      ready
+                        ? 'bg-success-foreground'
+                        : 'bg-muted-foreground/50',
+                    )}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="mx-2 mt-1.5 flex h-8 items-center gap-2 border-b px-1 text-muted-foreground transition-colors duration-150 focus-within:border-ring">
             <Search className="size-3.5 shrink-0" aria-hidden="true" />
