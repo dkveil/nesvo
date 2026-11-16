@@ -26,6 +26,8 @@ import { DefinitionError } from './definitions';
 import { filterResultText } from './evidence';
 import {
   ASSISTANT_OPERATIONS_PER_TURN,
+  ASSISTANT_SYSTEM_PROMPT,
+  REPAIR_TEXT,
   firstTurnText,
   laterTurnText,
 } from './wrapper';
@@ -58,7 +60,12 @@ type AssistantDefinitions = {
 
 type PendingTurn = {
   context: ChangeContext;
+  request: string;
+  reply: string;
   seen: number;
+  valid: number;
+  repaired: boolean;
+  firstReply: string | null;
   chain: Promise<void>;
 };
 
@@ -78,20 +85,46 @@ export class WorkflowAssistantError extends Error {
 const bounded = (value: string, limit: number) =>
   value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 
-const CHANGE_OPENING = `\`\`\`${ASSISTANT_CHANGE_FENCE}`;
-const CHANGE_BLOCK = new RegExp(
-  `${CHANGE_OPENING}[ \\t]*\\r?\\n([\\s\\S]*?)^\`\`\``,
-  'gm',
+const CHANGE_FENCE_NAME = ASSISTANT_CHANGE_FENCE.replace('-', '[-_]?');
+const CHANGE_OPENING = new RegExp(
+  `\`\`\`(?:json[ \\t]+)?${CHANGE_FENCE_NAME}(?:[ \\t]+json)?[ \\t]*\\r?\\n`,
+  'gi',
 );
+const CHANGE_BLOCK = new RegExp(
+  `${CHANGE_OPENING.source}([\\s\\S]*?)^\`\`\``,
+  'gim',
+);
+const FENCED = /^```[^\n]*\n([\s\S]*?)^```/gm;
+const DEFINITION_TEXT =
+  /^---[ \t]*$[\s\S]*?^name:[ \t]*\S[\s\S]*?^(?:type|steps):|^steps:[ \t]*\[/m;
+const CHANGE_REQUEST = [
+  /\b(?:create|add|make|build|set up|change|update|edit|modify|rename|delete|remove|insert|schedule|connect|replace)\b/i,
+  /(?:^|[^\p{L}])(?:dodaj|utw[oó]rz|stw[oó]rz|zr[oó]b|zmie[nń]|usu[nń]|popraw|ustaw|zaplanuj)/iu,
+];
 
 export const changeBlocks = (body: string): string[] =>
   [...body.matchAll(CHANGE_BLOCK)].map(match => match[1] ?? '');
 
-const openings = (body: string) => body.split(CHANGE_OPENING).length - 1;
+const openings = (body: string) => [...body.matchAll(CHANGE_OPENING)].length;
+
+const describesDefinitions = (body: string) =>
+  [...body.matchAll(FENCED)].some(match => DEFINITION_TEXT.test(match[1] ?? ''));
+
+const needsRepair = (request: string, reply: string) =>
+  CHANGE_REQUEST.some(pattern => pattern.test(request)) ||
+  describesDefinitions(reply);
+
+const NOTHING_CHANGED =
+  'The assistant wrote no change block, even after it was asked again, so nothing changed. Ask again and name the change you want.';
 
 const replyText = (body: string) =>
   bounded(
-    filterResultText(body.replace(CHANGE_BLOCK, '').trim()),
+    filterResultText(
+      body
+        .replace(CHANGE_BLOCK, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim(),
+    ),
     workflowAssistantLimits.message,
   );
 
@@ -151,8 +184,7 @@ export class WorkflowAssistant {
     const turn = this.pending.get(session.id);
     if (!turn) return;
     const runId = session.messages.find(
-      message =>
-        message.id === turn.context.messageId && message.author === 'operator',
+      message => message.id === turn.reply && message.author === 'operator',
     )?.runId;
     const reply = session.messages.find(
       message => message.runId === runId && message.author === 'agent',
@@ -196,6 +228,7 @@ export class WorkflowAssistant {
           text: input.text,
         }),
         changed,
+        input.text,
       );
     }
     const sessionInput = existing ? null : this.sessionInput(input, directory);
@@ -225,6 +258,7 @@ export class WorkflowAssistant {
         text: input.text,
       }),
       document,
+      input.text,
     );
   }
 
@@ -241,23 +275,33 @@ export class WorkflowAssistant {
     directory: string,
     text: string,
     document: WorkflowAssistantDocument | null,
+    request: string,
   ): WorkflowAssistantTurn {
     const messageId = randomUUID();
-    const sent = this.ports.sessions.sendWorkflowTurn({
+    if (this.sendTurn(sessionId, messageId, text) === 'busy') throw this.busy();
+    if (document) this.lastHash.set(sessionId, document.contentHash);
+    this.pending.set(sessionId, {
+      context: { conversationId: sessionId, messageId, directory },
+      request,
+      reply: messageId,
+      seen: 0,
+      valid: 0,
+      repaired: false,
+      firstReply: null,
+      chain: Promise.resolve(),
+    });
+    return { sessionId, messageId };
+  }
+
+  private sendTurn(sessionId: string, messageId: string, text: string) {
+    return this.ports.sessions.sendWorkflowTurn({
       sessionId,
       messageId,
       text,
       readOnly: true,
       assistant: true,
+      assistantPrompt: ASSISTANT_SYSTEM_PROMPT,
     });
-    if (sent === 'busy') throw this.busy();
-    if (document) this.lastHash.set(sessionId, document.contentHash);
-    this.pending.set(sessionId, {
-      context: { conversationId: sessionId, messageId, directory },
-      seen: 0,
-      chain: Promise.resolve(),
-    });
-    return { sessionId, messageId };
   }
 
   private consume(turn: PendingTurn, body: string): void {
@@ -291,6 +335,7 @@ export class WorkflowAssistant {
       return;
     }
     const parsed = assistantOperationSchema.safeParse(parseJson(block));
+    if (parsed.success) turn.valid++;
     if (!parsed.success) {
       refuse(
         `Change block ${index + 1} is not a valid change: ${parsed.error.issues[0]?.message ?? 'invalid JSON'}.`,
@@ -393,10 +438,7 @@ export class WorkflowAssistant {
   private finished(run: RunFinished): void {
     const turn = this.pending.get(run.sessionId);
     if (!turn) return;
-    const state = this.ports.sessions.turnState(
-      run.sessionId,
-      turn.context.messageId,
-    );
+    const state = this.ports.sessions.turnState(run.sessionId, turn.reply);
     if (state === 'running') return;
     this.pending.delete(run.sessionId);
     const announce = this.announce(turn, state === 'completed').catch(
@@ -414,34 +456,80 @@ export class WorkflowAssistant {
   private async announce(turn: PendingTurn, completed: boolean): Promise<void> {
     const { conversationId: sessionId, messageId } = turn.context;
     const reply = completed
-      ? this.ports.sessions.turnReply(sessionId, messageId)
+      ? this.ports.sessions.turnReply(sessionId, turn.reply)
       : null;
     if (reply !== null) {
       this.consume(turn, reply);
       if (openings(reply) > changeBlocks(reply).length)
-        this.ports.changes.refuse(turn.context, {
-          kind: null,
-          op: null,
-          target: null,
-          summary: '',
-          reason: 'invalid',
-          issues: [
-            issueAt(
-              '',
-              'A change block was not closed, so it was not applied.',
-            ),
-          ],
-        });
+        this.refuseTurn(
+          turn,
+          'A change block was not closed, so it was not applied.',
+        );
     }
     await turn.chain;
     await this.ports.changes.idle(sessionId);
+    if (reply !== null && turn.valid === 0) {
+      if (!turn.repaired && needsRepair(turn.request, reply)) {
+        if (this.repair(turn, reply)) return;
+      } else if (turn.repaired) {
+        this.refuseTurn(turn, NOTHING_CHANGED);
+        this.publish({
+          sessionId,
+          messageId,
+          status: 'invalid',
+          proposal: null,
+          issues: [],
+        });
+        return;
+      }
+    }
+    const message = [reply, turn.firstReply]
+      .map(text => (text === null ? '' : replyText(text)))
+      .find(text => text.length > 0);
     this.publish({
       sessionId,
       messageId,
       status: reply === null ? 'invalid' : 'ok',
-      proposal:
-        reply === null ? null : { message: replyText(reply), changes: [] },
+      proposal: reply === null ? null : { message: message ?? '', changes: [] },
       issues: [],
+    });
+  }
+
+  private repair(turn: PendingTurn, reply: string): boolean {
+    const repairId = randomUUID();
+    const { conversationId: sessionId } = turn.context;
+    let sent: 'sent' | 'busy';
+    try {
+      sent = this.sendTurn(sessionId, repairId, REPAIR_TEXT);
+    } catch {
+      sent = 'busy';
+    }
+    if (sent === 'busy') {
+      this.refuseTurn(
+        turn,
+        'The assistant wrote no change block and the repair turn could not start, so nothing changed.',
+      );
+      return false;
+    }
+    this.pending.set(sessionId, {
+      ...turn,
+      reply: repairId,
+      seen: 0,
+      repaired: true,
+      firstReply: reply,
+      chain: Promise.resolve(),
+    });
+    return true;
+  }
+
+  private refuseTurn(turn: PendingTurn, message: string): void {
+    this.ports.changes.refuse(turn.context, {
+      kind: null,
+      op: null,
+      target: null,
+      summary: '',
+      reason: 'invalid',
+      issues: [issueAt('', message)],
     });
   }
 
