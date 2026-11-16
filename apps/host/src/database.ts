@@ -229,7 +229,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         );
       if (version < 10 && version >= 8) renameWorkflowDocumentKeys(database);
       database.exec(
-        "CREATE TABLE IF NOT EXISTS assistant_changes (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence > 0), status TEXT NOT NULL CHECK (status IN ('applied', 'undone')), document TEXT NOT NULL CHECK (json_valid(document)), previous TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (conversation_id, sequence))",
+        "CREATE TABLE IF NOT EXISTS assistant_changes (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK (sequence > 0), status TEXT NOT NULL CHECK (status IN ('applied', 'undone')), document TEXT NOT NULL CHECK (json_valid(document)), previous TEXT, definitions_root TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (conversation_id, sequence))",
       );
       database.exec('PRAGMA user_version = 11; COMMIT');
     } catch (error) {

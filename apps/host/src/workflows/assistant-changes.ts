@@ -75,7 +75,7 @@ type Refusal = Pick<
 type Applied = Pick<
   AssistantChange,
   'kind' | 'op' | 'target' | 'before' | 'after' | 'summary'
-> & { previous: string | null };
+> & { previous: string | null; root: string | null };
 
 export class AssistantChangeError extends Error {
   constructor(
@@ -257,7 +257,7 @@ export class AssistantChanges {
   }
 
   private record(context: ChangeContext, applied: Applied): AssistantChange {
-    const { previous, ...fields } = applied;
+    const { previous, root, ...fields } = applied;
     const change = assistantChangeSchema.parse({
       conversationId: context.conversationId,
       messageId: context.messageId,
@@ -271,7 +271,7 @@ export class AssistantChanges {
       status: 'applied',
       undoneAt: null,
     });
-    this.ports.store.insert(change, previous);
+    this.ports.store.insert(change, previous, root);
     this.ports.emit({ type: 'workflow-assistant-change', change });
     return change;
   }
@@ -292,10 +292,12 @@ export class AssistantChanges {
     if (operation.op !== 'delete' && operation.document === null)
       return invalid('A create or update needs the complete document.');
     let previous: DefinitionFile | null = null;
+    let root: string | null = null;
     const options: WriteOptions = {
       guardExternal: true,
-      onPrevious: file => {
+      onPrevious: (file, folder) => {
         previous = file;
+        root = folder;
       },
     };
     const base = {
@@ -366,6 +368,7 @@ export class AssistantChanges {
           : { type: 'hash', hash: hashOf(operation.document!) },
       summary: operation.summary,
       previous: replaced?.text ?? null,
+      root,
     };
   }
 
@@ -440,6 +443,7 @@ export class AssistantChanges {
         after: null,
         summary: operation.summary,
         previous: JSON.stringify(current),
+        root: null,
       };
     }
     if (!operation.automation)
@@ -491,6 +495,7 @@ export class AssistantChanges {
       after: { type: 'revision', revision: job.revision },
       summary: operation.summary,
       previous: current ? JSON.stringify(current) : null,
+      root: null,
     };
   }
 
@@ -498,7 +503,7 @@ export class AssistantChanges {
     const stored = this.ports.store.get(input.conversationId, input.changeId);
     if (!stored)
       throw new AssistantChangeError('not-found', 'Change not found.');
-    const { change, previous } = stored;
+    const { change, previous, root } = stored;
     if (change.status === 'undone')
       throw new AssistantChangeError(
         'invalid-request',
@@ -507,7 +512,7 @@ export class AssistantChanges {
     const outcome =
       change.target.type === 'automation'
         ? this.undoAutomation(change, change.target.automationId, previous)
-        : await this.undoDefinition(change, change.target, previous);
+        : await this.undoDefinition(change, change.target, previous, root);
     if (outcome) return outcome;
     const undone = assistantChangeSchema.parse({
       ...change,
@@ -523,7 +528,20 @@ export class AssistantChanges {
     change: AssistantChange,
     target: DefinitionTarget,
     previous: string | null,
+    root: string | null,
   ): Promise<AssistantUndoResult | null> {
+    if (!root)
+      return {
+        status: 'refused',
+        changeId: change.changeId,
+        issues: [
+          issueAt(
+            target.path,
+            'The definitions folder of this change was not recorded, so it cannot be undone here.',
+          ),
+        ],
+      };
+    const options: WriteOptions = { expectedRoot: root };
     const base = {
       directory: change.directory,
       scope: target.root,
@@ -536,7 +554,7 @@ export class AssistantChanges {
       if (change.op === 'create')
         result = await this.ports.definitions.remove(
           { ...base, expectedHash: afterHash! },
-          {},
+          options,
         );
       else
         result = await this.ports.definitions.save(
@@ -545,7 +563,7 @@ export class AssistantChanges {
             document: previous ?? '',
             expectedHash: change.op === 'update' ? afterHash : null,
           },
-          {},
+          options,
         );
     } catch (error) {
       return {

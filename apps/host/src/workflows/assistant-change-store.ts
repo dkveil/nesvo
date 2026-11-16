@@ -8,6 +8,7 @@ import {
 export type StoredAssistantChange = {
   change: AssistantChange;
   previous: string | null;
+  root: string | null;
 };
 
 export class AssistantChangeStore {
@@ -22,10 +23,14 @@ export class AssistantChangeStore {
     return Number(row?.last ?? 0) + 1;
   }
 
-  insert(change: AssistantChange, previous: string | null): void {
+  insert(
+    change: AssistantChange,
+    previous: string | null,
+    root: string | null,
+  ): void {
     this.database
       .prepare(
-        'INSERT INTO assistant_changes (id, conversation_id, sequence, status, document, previous, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO assistant_changes (id, conversation_id, sequence, status, document, previous, definitions_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         change.changeId,
@@ -34,6 +39,7 @@ export class AssistantChangeStore {
         change.status,
         JSON.stringify(change),
         previous,
+        root,
         change.at,
         change.at,
       );
@@ -53,13 +59,15 @@ export class AssistantChangeStore {
   get(conversationId: string, changeId: string): StoredAssistantChange | null {
     const row = this.database
       .prepare(
-        'SELECT document, previous FROM assistant_changes WHERE id = ? AND conversation_id = ?',
+        'SELECT document, previous, definitions_root FROM assistant_changes WHERE id = ? AND conversation_id = ?',
       )
       .get(changeId, conversationId);
     if (!row) return null;
     return {
       change: assistantChangeSchema.parse(JSON.parse(String(row.document))),
       previous: row.previous === null ? null : String(row.previous),
+      root:
+        row.definitions_root === null ? null : String(row.definitions_root),
     };
   }
 

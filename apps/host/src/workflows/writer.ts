@@ -67,7 +67,8 @@ export type ActiveRunLookup = (target: {
 
 export type WriteOptions = {
   guardExternal?: boolean;
-  onPrevious?: (file: DefinitionFile | null) => void;
+  onPrevious?: (file: DefinitionFile | null, root: string) => void;
+  expectedRoot?: string;
 };
 
 type Location = {
@@ -125,6 +126,29 @@ function conflict(
     currentHash: current?.contentHash ?? null,
     document: current?.text ?? null,
   };
+}
+
+async function movedRoot(
+  requested: string,
+  expected: string | undefined,
+): Promise<WorkflowDefinitionRefused | null> {
+  if (!expected) return null;
+  let resolved: string;
+  try {
+    resolved = await realpath(requested);
+  } catch (error) {
+    if (!missing(error)) return unavailable(error);
+    return refusal(
+      expected,
+      `The definitions folder ${expected} where this change was made no longer exists.`,
+    );
+  }
+  return pathKey(resolved) === pathKey(expected)
+    ? null
+    : refusal(
+        expected,
+        `The definitions folder now resolves to ${resolved}, not ${expected} where this change was made.`,
+      );
 }
 
 function requireName(name: string) {
@@ -543,6 +567,8 @@ export async function saveDefinition(
   if (issues.some(item => item.severity === 'error'))
     return refusedIssues(issues);
   return exclusive(pathKey(requested), async () => {
+    const moved = await movedRoot(requested, options.expectedRoot);
+    if (moved) return moved;
     const existing = await prepareFolder(input, roots, false);
     if (existing && 'type' in existing) return existing;
     const path = existing?.path ?? plannedPath;
@@ -598,7 +624,15 @@ export async function saveDefinition(
     const location = await prepareFolder(input, roots, true);
     if (!location || 'type' in location)
       return location ?? refusal(requested, 'The folder cannot be created.');
-    options.onPrevious?.(current.file);
+    if (
+      options.expectedRoot &&
+      pathKey(location.root) !== pathKey(options.expectedRoot)
+    )
+      return refusal(
+        options.expectedRoot,
+        `The definitions folder now resolves to ${location.root}, not ${options.expectedRoot} where this change was made.`,
+      );
+    options.onPrevious?.(current.file, location.root);
     const outcome = await publish(
       legacy ? { ...input, expectedHash: null } : input,
       location,
@@ -623,6 +657,8 @@ export async function deleteDefinition(
   const roots = await resolveWriteRoots(input.directory, signal);
   const requested = input.scope === 'global' ? roots.global : roots.project;
   return exclusive(pathKey(requested), async () => {
+    const moved = await movedRoot(requested, options.expectedRoot);
+    if (moved) return moved;
     const location = await prepareFolder(input, roots, false);
     if (location && 'type' in location) return location;
     const plannedPath = join(requested, `${input.kind}s`, `${input.name}.md`);
@@ -656,7 +692,10 @@ export async function deleteDefinition(
     if (isRefusal(latest)) return latest;
     if (latest.file?.contentHash !== input.expectedHash)
       return conflict(input, path, latest.file);
-    options.onPrevious?.(latest.file);
+    options.onPrevious?.(
+      latest.file,
+      location?.root ?? (await realpath(requested).catch(() => requested)),
+    );
     try {
       await unlink(path);
     } catch (error) {
