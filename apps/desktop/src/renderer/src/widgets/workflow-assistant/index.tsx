@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import {
+  errorDetail,
   ProviderGlyph,
   providers,
   type Provider,
@@ -85,6 +86,8 @@ type Props = {
   onStop: (sessionId: string) => Promise<void>;
   onUndo: (change: AssistantChange) => Promise<AssistantUndoResult>;
   onOpenChange?: (change: AssistantChange) => void;
+  canOpenChange?: (change: AssistantChange) => boolean;
+  onLoadChanges?: (conversationId: string) => Promise<void>;
 };
 
 const textLimit = 8000;
@@ -176,6 +179,8 @@ export default function WorkflowAssistantDock({
   onStop,
   onUndo,
   onOpenChange,
+  canOpenChange,
+  onLoadChanges,
 }: Props) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [size, setSize] = useState<AssistantSize>(readSize);
@@ -185,6 +190,7 @@ export default function WorkflowAssistantDock({
   >({});
   const [draft, setDraft] = useState('');
   const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState('');
   const [decisions, setDecisions] = useState<Record<string, ProposalDecision>>(
     {},
   );
@@ -245,9 +251,21 @@ export default function WorkflowAssistantDock({
     change => change.status === 'applied',
   ).length;
   const lastChangeId = assistant.changes.at(-1)?.changeId ?? '';
+  const callbacks = useRef({ onApplied, onLoadChanges });
   useEffect(() => {
-    if (lastChangeId) onApplied();
-  }, [lastChangeId, onApplied]);
+    callbacks.current = { onApplied, onLoadChanges };
+  });
+  const seenChangeId = useRef(lastChangeId);
+  useEffect(() => {
+    if (!lastChangeId || seenChangeId.current === lastChangeId) return;
+    seenChangeId.current = lastChangeId;
+    callbacks.current.onApplied();
+  }, [lastChangeId]);
+  const conversationId = assistant.sessionId;
+  useEffect(() => {
+    if (!conversationId) return;
+    void callbacks.current.onLoadChanges?.(conversationId);
+  }, [conversationId, hostId]);
   useEffect(() => {
     if (collapsed || historyOpen) return;
     list.current?.scrollTo({ top: list.current.scrollHeight });
@@ -278,8 +296,11 @@ export default function WorkflowAssistantDock({
   const stop = async () => {
     if (!assistant.session) return;
     setStopping(true);
+    setStopError('');
     try {
       await onStop(assistant.session.id);
+    } catch (error) {
+      setStopError(errorDetail(error));
     } finally {
       setStopping(false);
     }
@@ -303,6 +324,11 @@ export default function WorkflowAssistantDock({
     }
     event.preventDefault();
     toggle(true);
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLButtonElement>('[data-assistant-toggle]')
+        ?.focus(),
+    );
   };
   const resizeStart = useRef<{
     pointer: { x: number; y: number };
@@ -433,7 +459,13 @@ export default function WorkflowAssistantDock({
                     <ChangeCard
                       change={change}
                       onUndo={onUndo}
-                      onOpen={onOpenChange}
+                      onOpen={
+                        onOpenChange &&
+                        change.op !== 'delete' &&
+                        (canOpenChange?.(change) ?? true)
+                          ? onOpenChange
+                          : undefined
+                      }
                     />
                   </li>
                 ))}
@@ -530,17 +562,6 @@ export default function WorkflowAssistantDock({
       style={{ width: size.width, height: size.height }}
       className="glass-popover relative flex max-h-[calc(100vh-7rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border"
     >
-      <button
-        type="button"
-        aria-label="Resize assistant"
-        title="Drag to resize. Arrow keys resize too."
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-        onKeyDown={onResizeKeyDown}
-        className="absolute top-0 left-0 z-10 size-4 cursor-nwse-resize rounded-tl-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
       <header className="flex h-11 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3.5">
         <Sparkles
           className="size-4 shrink-0 text-muted-foreground"
@@ -594,6 +615,17 @@ export default function WorkflowAssistantDock({
           </PanelAction>
         </div>
       </header>
+      <button
+        type="button"
+        aria-label="Resize assistant"
+        title="Drag to resize. Arrow keys resize too."
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={onResizePointerUp}
+        onPointerCancel={onResizePointerUp}
+        onKeyDown={onResizeKeyDown}
+        className="absolute top-0 left-0 z-10 size-4 cursor-nwse-resize rounded-tl-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
       {historyOpen ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           <h3 className="px-2 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -693,12 +725,12 @@ export default function WorkflowAssistantDock({
           void submit();
         }}
       >
-        {assistant.notice && (
+        {(assistant.notice || stopError) && (
           <p
             role="alert"
             className="px-1 text-2xs leading-4 text-destructive [overflow-wrap:anywhere]"
           >
-            {assistant.notice}
+            {assistant.notice || stopError}
           </p>
         )}
         <div className="glass-composer rounded-2xl border px-3 pt-2.5 pb-2 transition-colors duration-150 focus-within:border-input">

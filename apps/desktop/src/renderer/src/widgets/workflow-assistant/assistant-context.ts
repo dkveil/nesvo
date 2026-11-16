@@ -10,7 +10,7 @@ export type AssistantContext = {
 };
 
 export const assistantArea = (context: AssistantContext) =>
-  context.view === 'automations' ? 'automations' : '';
+  context.view === 'workflows' ? '' : context.view;
 
 export const assistantSubject = (context: AssistantContext) => {
   if (context.view === 'automations') return 'Automations';
