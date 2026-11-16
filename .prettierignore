@@ -42,6 +42,7 @@
 !scripts/desktop-smoke.mjs
 !scripts/remote-smoke.mjs
 !scripts/mobile-smoke.mjs
+!scripts/generate-brand-assets.mjs
 !scripts/remote-smoke/
 !scripts/remote-smoke/**
 !docs/
