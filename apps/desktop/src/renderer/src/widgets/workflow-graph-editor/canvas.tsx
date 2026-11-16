@@ -42,6 +42,7 @@ type Props = {
   state: EditorState;
   runBadges: Map<string, RunBadge> | null;
   automations: number;
+  assistantAdded: string[];
   onRequestAdd: (origin: AddOrigin, event: ReactMouseEvent) => void;
 };
 
@@ -67,6 +68,7 @@ export function EditorCanvas({
   state,
   runBadges,
   automations,
+  assistantAdded,
   onRequestAdd,
 }: Props) {
   const { document, selection, nodeIssues } = state;
@@ -145,6 +147,7 @@ export function EditorCanvas({
           editor: node,
           issues: nodeIssues.get(node.id) ?? [],
           run: runBadges?.get(node.id) ?? null,
+          addedByAssistant: assistantAdded.includes(node.id),
           freeSuccess: !used?.has('success') && !used?.has('any'),
           freeFailure: !used?.has('failure') && !used?.has('any'),
           onAdd: (when, event) =>
@@ -164,6 +167,7 @@ export function EditorCanvas({
     selection,
     nodeIssues,
     runBadges,
+    assistantAdded,
     measured,
     outgoing,
     onRequestAdd,

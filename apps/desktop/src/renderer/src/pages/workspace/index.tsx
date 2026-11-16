@@ -35,6 +35,8 @@ import {
 } from '@/entities/session';
 import { showsRunStatus } from '@/entities/workflow';
 import type { EditorTarget } from '@/widgets/workflow-definitions';
+import type { AssistantContext } from '@/widgets/workflow-assistant';
+import type { AssistantChange } from '@nesvo/contracts';
 import {
   NewWorkflowSheet,
   type NewWorkflowDraft,
@@ -159,6 +161,81 @@ export function Workspace() {
     hostId: string;
     directory: string;
   } | null>(null);
+  const [definitionsRefresh, setDefinitionsRefresh] = useState(0);
+  const assistantChangesFor = (hostId: string) =>
+    store.assistantChanges[hostId] ?? [];
+  const assistantRefusalsFor = (hostId: string) =>
+    store.assistantRefusals[hostId] ?? [];
+  const assistantAdded = (hostId: string, kind: AssistantChange['kind']) =>
+    assistantChangesFor(hostId)
+      .filter(
+        change =>
+          change.status === 'applied' &&
+          change.kind === kind &&
+          change.op === 'create' &&
+          change.target.type === 'definition',
+      )
+      .map(change =>
+        change.target.type === 'definition' ? change.target.name : '',
+      );
+  const stopAssistantSession = async (hostId: string, sessionId: string) => {
+    const session = store.sessions.find(
+      item => item.id === sessionId && item.hostId === hostId,
+    );
+    if (!session?.runId) return;
+    await desktopApi(hostId).stopRun({ sessionId, runId: session.runId });
+  };
+  const undoAssistantChange = async (
+    hostId: string,
+    change: AssistantChange,
+  ) => {
+    const result = await window.nesvo.workflows.assistantUndo(hostId, {
+      conversationId: change.conversationId,
+      changeId: change.changeId,
+    });
+    if (result.status === 'undone') {
+      store.recordAssistantChange(hostId, result.change);
+      if (result.change.kind === 'automation') void automations.reload(hostId);
+      else setDefinitionsRefresh(version => version + 1);
+    }
+    return result;
+  };
+  const assistantDock = (
+    hostId: string,
+    directory: string,
+    context: AssistantContext,
+    onApplied: () => void,
+  ) => (
+    <div
+      data-slot="editor-dock"
+      className="pointer-events-none absolute right-3 bottom-3 z-10 [&>*]:pointer-events-auto"
+    >
+      <Suspense fallback={null}>
+        <WorkflowAssistantDock
+          hostId={hostId}
+          directory={directory}
+          context={context}
+          statuses={store.providerStates(hostId)}
+          computers={store.computers}
+          sessions={store.sessions}
+          proposals={store.assistantProposals}
+          changes={assistantChangesFor(hostId)}
+          refusals={assistantRefusalsFor(hostId)}
+          onRefreshProvider={provider =>
+            void store.refreshProvider(provider, hostId)
+          }
+          onApplied={onApplied}
+          onOpenSession={sessionId => select(hostKey(sessionId, hostId))}
+          onStop={sessionId => stopAssistantSession(hostId, sessionId)}
+          onUndo={change => undoAssistantChange(hostId, change)}
+        />
+      </Suspense>
+    </div>
+  );
+  const refreshAfterAssistant = (hostId: string) => {
+    setDefinitionsRefresh(version => version + 1);
+    void automations.reload(hostId);
+  };
   const createWorkflow = async (draft: NewWorkflowDraft) => {
     const catalog = await window.nesvo.workflows.listDefinitions(draft.hostId, {
       directory: draft.directory,
@@ -1713,24 +1790,42 @@ export function Workspace() {
                 runOverlay={editorRunOverlay}
                 onInbox={openInbox}
                 onSession={select}
+                assistantAdded={assistantAdded(workflowsEditor.hostId, 'step')}
                 dock={context => (
                   <Suspense fallback={null}>
                     <WorkflowAssistantDock
-                      {...context}
                       hostId={workflowsEditor.hostId}
                       directory={workflowsEditor.directory}
+                      context={{
+                        view: 'editor',
+                        workflowName: context.workflowName,
+                        document: context.document,
+                        selection: context.selection,
+                      }}
                       statuses={store.providerStates(workflowsEditor.hostId)}
                       computers={store.computers}
                       sessions={store.sessions}
                       proposals={store.assistantProposals}
+                      changes={assistantChangesFor(workflowsEditor.hostId)}
+                      refusals={assistantRefusalsFor(workflowsEditor.hostId)}
                       onRefreshProvider={provider =>
                         void store.refreshProvider(
                           provider,
                           workflowsEditor.hostId,
                         )
                       }
+                      onApplied={() => {
+                        context.onApplied();
+                        void automations.reload(workflowsEditor.hostId);
+                      }}
                       onOpenSession={sessionId =>
                         select(hostKey(sessionId, workflowsEditor.hostId))
+                      }
+                      onStop={sessionId =>
+                        stopAssistantSession(workflowsEditor.hostId, sessionId)
+                      }
+                      onUndo={change =>
+                        undoAssistantChange(workflowsEditor.hostId, change)
                       }
                     />
                   </Suspense>
@@ -1745,20 +1840,38 @@ export function Workspace() {
                 </p>
               }
             >
-              <WorkflowDefinitions
-                computers={store.computers}
-                hostId={workflowsSource.hostId}
-                directory={workflowsSource.directory}
-                api={window.nesvo.workflows}
-                onEdit={target => {
-                  setWorkflowsSource({
-                    hostId: target.hostId,
-                    directory: target.directory,
-                  });
-                  setWorkflowsEditor(target);
-                }}
-                onCreate={setNewWorkflow}
-              />
+              <div className="relative flex min-h-0 min-w-0 flex-1">
+                <WorkflowDefinitions
+                  computers={store.computers}
+                  hostId={workflowsSource.hostId}
+                  directory={workflowsSource.directory}
+                  api={window.nesvo.workflows}
+                  refreshToken={definitionsRefresh}
+                  highlighted={assistantAdded(
+                    workflowsSource.hostId,
+                    'workflow',
+                  )}
+                  onEdit={target => {
+                    setWorkflowsSource({
+                      hostId: target.hostId,
+                      directory: target.directory,
+                    });
+                    setWorkflowsEditor(target);
+                  }}
+                  onCreate={setNewWorkflow}
+                />
+                {assistantDock(
+                  workflowsSource.hostId,
+                  workflowsSource.directory,
+                  {
+                    view: 'workflows',
+                    workflowName: null,
+                    document: null,
+                    selection: [],
+                  },
+                  () => refreshAfterAssistant(workflowsSource.hostId),
+                )}
+              </div>
             </Suspense>
           ) : inbox ? (
             <ReviewInbox
@@ -1850,29 +1963,42 @@ export function Workspace() {
               onRetryRuns={() => void automations.loadRuns(automationJob)}
             />
           ) : automationView === 'list' ? (
-            <AutomationList
-              jobs={automations.jobs}
-              computers={store.computers}
-              latestRun={latestRun}
-              loading={automations.loading}
-              notices={automationNotices}
-              pending={automationPending}
-              errors={automationErrors}
-              createBlockedReason={
-                automationComputers.some(computer =>
-                  store.hostReady(computer.id),
-                )
-                  ? ''
-                  : 'Connect a computer that supports automations.'
-              }
-              runBlockedReason={runBlockedReason}
-              onCreate={createAutomation}
-              onOpen={job => openAutomations(entityKey(job))}
-              onRunNow={job => void runAutomationNow(job)}
-              onSetActive={(job, active) =>
-                void setAutomationActive(job, active)
-              }
-            />
+            <div className="relative flex min-h-0 min-w-0 flex-1">
+              <AutomationList
+                jobs={automations.jobs}
+                computers={store.computers}
+                latestRun={latestRun}
+                loading={automations.loading}
+                notices={automationNotices}
+                pending={automationPending}
+                errors={automationErrors}
+                createBlockedReason={
+                  automationComputers.some(computer =>
+                    store.hostReady(computer.id),
+                  )
+                    ? ''
+                    : 'Connect a computer that supports automations.'
+                }
+                runBlockedReason={runBlockedReason}
+                onCreate={createAutomation}
+                onOpen={job => openAutomations(entityKey(job))}
+                onRunNow={job => void runAutomationNow(job)}
+                onSetActive={(job, active) =>
+                  void setAutomationActive(job, active)
+                }
+              />
+              {assistantDock(
+                defaultAutomationHost,
+                '',
+                {
+                  view: 'automations',
+                  workflowName: null,
+                  document: null,
+                  selection: [],
+                },
+                () => refreshAfterAssistant(defaultAutomationHost),
+              )}
+            </div>
           ) : selected ? (
             <div
               className={`flex min-h-0 min-w-0 flex-1 ${visiblePanel ? 'max-[1200px]:hidden' : ''}`}

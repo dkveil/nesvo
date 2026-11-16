@@ -62,6 +62,8 @@ type Props = {
   api: Pick<WorkflowsApi, 'listDefinitions'>;
   onEdit?: (target: EditorTarget) => void;
   onCreate?: (source: { hostId: string; directory: string }) => void;
+  refreshToken?: number;
+  highlighted?: string[];
 };
 
 type CatalogState =
@@ -243,6 +245,8 @@ export default function WorkflowDefinitions({
   api,
   onEdit,
   onCreate,
+  refreshToken = 0,
+  highlighted = [],
 }: Props) {
   const [hostId, setHostId] = useState(initialHostId);
   const [directory, setDirectory] = useState(initialDirectory);
@@ -304,6 +308,12 @@ export default function WorkflowDefinitions({
         },
       );
   }, [api]);
+  const seenToken = useRef(refreshToken);
+  useEffect(() => {
+    if (seenToken.current === refreshToken) return;
+    seenToken.current = refreshToken;
+    load(hostId, directory);
+  });
   const catalog = state.status === 'loaded' ? state.catalog : null;
   const selected =
     catalog?.workflows.find(workflow => workflow.name === selectedName) ??
@@ -464,6 +474,14 @@ export default function WorkflowDefinitions({
                         <span className="min-w-0 flex-1 truncate">
                           {workflow.name}
                         </span>
+                        {highlighted.includes(workflow.name) && (
+                          <span
+                            data-added-by-assistant
+                            className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 font-normal text-info-foreground"
+                          >
+                            Added by assistant
+                          </span>
+                        )}
                         {count > 0 && (
                           <span className="shrink-0 text-2xs font-normal text-warning-foreground tabular-nums">
                             {count} {count === 1 ? 'issue' : 'issues'}
