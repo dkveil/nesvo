@@ -2527,6 +2527,14 @@ try {
         window.smokeAssistantChanges.push(event);
     });
   });
+  for (const [name, type, phase, body] of [
+    ['check', 'command', 'pre-done', 'echo check'],
+    ['approve', 'human', 'pre-push', 'Approve the change.'],
+  ])
+    await writeFile(
+      join(workflowRoot, 'steps', `${name}.md`),
+      `---\nname: ${name}\ntype: ${type}\nphase: ${phase}\n---\n${body}\n`,
+    );
   const assistantTurn = await workflowCall('assistantSend', 'local', {
     sessionId: null,
     provider: 'Claude Code',
