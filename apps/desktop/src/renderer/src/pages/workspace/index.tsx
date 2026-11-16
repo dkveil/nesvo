@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -127,6 +128,28 @@ const WorkflowGraphEditor = lazy(
   () => import('@/widgets/workflow-graph-editor'),
 );
 
+const samePlace = (left: string, right: string) =>
+  left.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+  right.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+const assistantAddedNames = (
+  changes: AssistantChange[],
+  kind: AssistantChange['kind'],
+  directory: string,
+) =>
+  changes
+    .filter(
+      change =>
+        change.status === 'applied' &&
+        change.kind === kind &&
+        change.op === 'create' &&
+        change.target.type === 'definition' &&
+        samePlace(change.directory, directory),
+    )
+    .map(change =>
+      change.target.type === 'definition' ? change.target.name : '',
+    );
+
 export function Workspace() {
   const store = useSessions();
   const [location] = useState(readWorkspaceLocation);
@@ -165,18 +188,41 @@ export function Workspace() {
     store.assistantChanges[hostId] ?? [];
   const assistantRefusalsFor = (hostId: string) =>
     store.assistantRefusals[hostId] ?? [];
-  const assistantAdded = (hostId: string, kind: AssistantChange['kind']) =>
-    assistantChangesFor(hostId)
-      .filter(
-        change =>
-          change.status === 'applied' &&
-          change.kind === kind &&
-          change.op === 'create' &&
-          change.target.type === 'definition',
-      )
-      .map(change =>
-        change.target.type === 'definition' ? change.target.name : '',
+  const editorAssistantAdded = useMemo(
+    () =>
+      workflowsEditor
+        ? assistantAddedNames(
+            store.assistantChanges[workflowsEditor.hostId] ?? [],
+            'step',
+            workflowsEditor.directory,
+          )
+        : [],
+    [store.assistantChanges, workflowsEditor],
+  );
+  const listAssistantAdded = useMemo(
+    () =>
+      assistantAddedNames(
+        store.assistantChanges[workflowsSource.hostId] ?? [],
+        'workflow',
+        workflowsSource.directory,
+      ),
+    [store.assistantChanges, workflowsSource],
+  );
+  const loadAssistantChanges = async (
+    hostId: string,
+    conversationId: string,
+  ) => {
+    try {
+      const history = await window.nesvo.workflows.assistantChanges(
+        hostId,
+        conversationId,
       );
+      for (const change of history.changes)
+        store.recordAssistantChange(hostId, change);
+    } catch {
+      return;
+    }
+  };
   const stopAssistantSession = async (hostId: string, sessionId: string) => {
     const session = store.sessions.find(
       item => item.id === sessionId && item.hostId === hostId,
@@ -211,6 +257,12 @@ export function Workspace() {
       .map(change =>
         change.target.type === 'automation' ? change.target.automationId : '',
       );
+  const canOpenAssistantChange =
+    (inEditor: boolean) => (change: AssistantChange) =>
+      change.op !== 'delete' &&
+      (change.kind === 'workflow' ||
+        change.kind === 'automation' ||
+        (inEditor && change.kind === 'step'));
   const openAssistantChange = (hostId: string, change: AssistantChange) => {
     if (change.target.type === 'automation') {
       const job = automations.jobs.find(
@@ -222,19 +274,33 @@ export function Workspace() {
       if (job) openAutomations(entityKey(job));
       return;
     }
-    if (change.kind === 'workflow')
+    if (change.kind !== 'workflow' || change.target.type !== 'definition')
+      return;
+    const name = change.target.name;
+    guardEditor(() => {
       void window.nesvo.workflows
         .listDefinitions(hostId, { directory: change.directory })
         .then(catalog => {
+          navigationVersion.current += 1;
+          setPanel(null);
+          setDiffTarget(null);
+          setCreating(false);
+          setInbox(false);
+          setAutomation('');
+          setWorkflowsView(true);
+          setNavigationOpen(false);
           setWorkflowsSource({ hostId, directory: change.directory });
           setWorkflowsEditor({
             hostId,
             directory: change.directory,
-            workflowName:
-              change.target.type === 'definition' ? change.target.name : null,
+            workflowName: catalog.workflows.some(item => item.name === name)
+              ? name
+              : null,
             catalog,
           });
-        });
+        })
+        .catch(() => undefined);
+    });
   };
   const assistantDock = (
     hostId: string,
@@ -265,6 +331,10 @@ export function Workspace() {
           onStop={sessionId => stopAssistantSession(hostId, sessionId)}
           onUndo={change => undoAssistantChange(hostId, change)}
           onOpenChange={change => openAssistantChange(hostId, change)}
+          canOpenChange={canOpenAssistantChange(false)}
+          onLoadChanges={conversationId =>
+            loadAssistantChanges(hostId, conversationId)
+          }
         />
       </Suspense>
     </div>
@@ -1787,6 +1857,7 @@ export function Workspace() {
               }
             >
               <WorkflowGraphEditor
+                key={`${workflowsEditor.hostId}:${workflowsEditor.directory}:${workflowsEditor.workflowName ?? ''}`}
                 hostId={workflowsEditor.hostId}
                 directory={workflowsEditor.directory}
                 workflowName={workflowsEditor.workflowName}
@@ -1812,7 +1883,7 @@ export function Workspace() {
                 runOverlay={editorRunOverlay}
                 onInbox={openInbox}
                 onSession={select}
-                assistantAdded={assistantAdded(workflowsEditor.hostId, 'step')}
+                assistantAdded={editorAssistantAdded}
                 dock={context => (
                   <Suspense fallback={null}>
                     <WorkflowAssistantDock
@@ -1846,8 +1917,20 @@ export function Workspace() {
                       onStop={sessionId =>
                         stopAssistantSession(workflowsEditor.hostId, sessionId)
                       }
-                      onUndo={change =>
-                        undoAssistantChange(workflowsEditor.hostId, change)
+                      onUndo={async change => {
+                        const result = await undoAssistantChange(
+                          workflowsEditor.hostId,
+                          change,
+                        );
+                        if (result.status === 'undone') context.onApplied();
+                        return result;
+                      }}
+                      canOpenChange={canOpenAssistantChange(true)}
+                      onLoadChanges={conversationId =>
+                        loadAssistantChanges(
+                          workflowsEditor.hostId,
+                          conversationId,
+                        )
                       }
                       onOpenChange={change => {
                         if (
@@ -1878,10 +1961,8 @@ export function Workspace() {
                   directory={workflowsSource.directory}
                   api={window.nesvo.workflows}
                   refreshToken={definitionsRefresh}
-                  highlighted={assistantAdded(
-                    workflowsSource.hostId,
-                    'workflow',
-                  )}
+                  highlighted={listAssistantAdded}
+                  onSourceChange={setWorkflowsSource}
                   onEdit={target => {
                     setWorkflowsSource({
                       hostId: target.hostId,

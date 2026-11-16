@@ -134,6 +134,7 @@ export function AutomationList({
                           size="xs"
                           variant="secondary"
                           className="relative z-10 h-6"
+                          aria-label={`Enable ${job.name}`}
                           disabled={busy || computer?.status !== 'connected'}
                           onClick={() => onSetActive(job, true)}
                         >

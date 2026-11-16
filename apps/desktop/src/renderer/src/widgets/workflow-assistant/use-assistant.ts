@@ -145,10 +145,15 @@ export function useAssistant({
     () => (sessionKey ? readTurns(sessionKey) : []),
     [sessionKey],
   );
-  const conversations: AssistantConversation[] =
+  const listed: AssistantConversation[] =
     conversationsState.scope === scope
       ? conversationsState.list
       : readConversations(scope);
+  const conversations = listed.filter(
+    item =>
+      item.sessionId === sessionId ||
+      readTurns(hostKey(item.sessionId, hostId)).length > 0,
+  );
   const turns = turnsBySession[sessionKey] ?? storedTurns;
   const continuing =
     !!session &&

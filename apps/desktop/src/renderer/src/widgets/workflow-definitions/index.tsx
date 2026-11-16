@@ -64,6 +64,7 @@ type Props = {
   onCreate?: (source: { hostId: string; directory: string }) => void;
   refreshToken?: number;
   highlighted?: string[];
+  onSourceChange?: (source: { hostId: string; directory: string }) => void;
 };
 
 type CatalogState =
@@ -247,6 +248,7 @@ export default function WorkflowDefinitions({
   onCreate,
   refreshToken = 0,
   highlighted = [],
+  onSourceChange,
 }: Props) {
   const [hostId, setHostId] = useState(initialHostId);
   const [directory, setDirectory] = useState(initialDirectory);
@@ -256,10 +258,12 @@ export default function WorkflowDefinitions({
     initialConnected ? { status: 'loading' } : { status: 'idle' },
   );
   const [selectedName, setSelectedName] = useState('');
+  const [reviewed, setReviewed] = useState<string[]>([]);
   const request = useRef(0);
   const computer = computers.find(item => item.id === hostId);
   const connected = computer?.status === 'connected';
   const load = (targetHost: string, targetDirectory: string) => {
+    onSourceChange?.({ hostId: targetHost, directory: targetDirectory.trim() });
     const current = ++request.current;
     if (
       computers.find(item => item.id === targetHost)?.status !== 'connected'
@@ -464,7 +468,14 @@ export default function WorkflowDefinitions({
                         title={[workflow.description, phaseCounts(workflow)]
                           .filter(Boolean)
                           .join(' · ')}
-                        onClick={() => setSelectedName(workflow.name)}
+                        onClick={() => {
+                          setSelectedName(workflow.name);
+                          setReviewed(current =>
+                            current.includes(workflow.name)
+                              ? current
+                              : [...current, workflow.name],
+                          );
+                        }}
                         className={cn(
                           cardRowAction,
                           'min-w-0 flex-1 aria-pressed:bg-highlight',
@@ -474,14 +485,15 @@ export default function WorkflowDefinitions({
                         <span className="min-w-0 flex-1 truncate">
                           {workflow.name}
                         </span>
-                        {highlighted.includes(workflow.name) && (
-                          <span
-                            data-added-by-assistant
-                            className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 font-normal text-info-foreground"
-                          >
-                            Added by assistant
-                          </span>
-                        )}
+                        {highlighted.includes(workflow.name) &&
+                          !reviewed.includes(workflow.name) && (
+                            <span
+                              data-added-by-assistant
+                              className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 font-normal text-info-foreground"
+                            >
+                              Added by assistant
+                            </span>
+                          )}
                         {count > 0 && (
                           <span className="shrink-0 text-2xs font-normal text-warning-foreground tabular-nums">
                             {count} {count === 1 ? 'issue' : 'issues'}

@@ -3116,7 +3116,9 @@ try {
   );
   await invalidTurn.waitFor({ timeout: 30_000 });
   await invalidTurn
-    .getByText('The assistant returned no proposal.', { exact: true })
+    .getByText('The assistant answered without a change it could apply.', {
+      exact: true,
+    })
     .waitFor();
   await invalidTurn
     .getByRole('button', { name: 'Show reply', exact: true })

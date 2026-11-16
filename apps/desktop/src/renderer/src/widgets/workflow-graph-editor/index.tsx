@@ -233,6 +233,12 @@ export default function WorkflowGraphEditor({
   const onKeyDown = (event: KeyboardEvent) => {
     const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
+    if (event.defaultPrevented) return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest('[data-assistant-dock]')
+    )
+      return;
     if (modifier && key === 's') {
       event.preventDefault();
       if (state.dirty && !state.validation.hasErrors) void state.save();
@@ -329,11 +335,17 @@ export default function WorkflowGraphEditor({
               {dock && (
                 <EditorDock
                   render={dock}
-                  workflowName={savedDocument?.name ?? workflowName}
+                  workflowName={
+                    savedDocument?.name ??
+                    workflowName ??
+                    (state.document.name || null)
+                  }
                   document={savedDocument}
                   selection={dockSelection}
                   onApplied={() => void state.reload()}
-                  onFocusStep={name => state.select({ kind: 'node', id: name })}
+                  onFocusStep={name =>
+                    editorState.select({ kind: 'node', id: name })
+                  }
                 />
               )}
             </div>
