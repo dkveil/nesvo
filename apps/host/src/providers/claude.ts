@@ -6,6 +6,7 @@ import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import {
+  activityLimits,
   type ClaudeStatus,
   type ProviderUsage,
   type TurnUsage,
@@ -77,6 +78,7 @@ const requiredFlags = [
 const maxLineBytes = 1024 * 1024;
 const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
+const thinkingEmitIntervalMs = 250;
 const probeTimeoutMs = 5_000;
 const runTimeoutMs = 10 * 60_000;
 const cleanupTimeoutMs = 4_000;
@@ -789,6 +791,44 @@ export function startClaude(options: {
           emit({ type: 'tool-activity', activity: next });
         }
       };
+      const thinkingBlocks = new Map<
+        string,
+        { activity: ProviderActivity; text: string; emittedAt: number }
+      >();
+      const updateThinking = (
+        messageId: string,
+        index: number,
+        change: { delta?: string; text?: string; done?: boolean },
+      ) => {
+        const id = `${messageId}:thinking:${index}`;
+        const previous = thinkingBlocks.get(id);
+        if (previous?.activity.status === 'completed') return;
+        const text = (
+          change.text ?? (previous?.text ?? '') + (change.delta ?? '')
+        ).slice(0, activityLimits.detail + 1);
+        const now = Date.now();
+        const done = change.done === true;
+        if (
+          previous &&
+          !done &&
+          now - previous.emittedAt < thinkingEmitIntervalMs
+        ) {
+          previous.text = text;
+          return;
+        }
+        const next = makeActivity({
+          id,
+          kind: 'thinking',
+          title: 'Thinking',
+          status: done ? 'completed' : 'running',
+          startedAt: previous?.activity.startedAt,
+          detail: text || null,
+        });
+        thinkingBlocks.set(id, { activity: next, text, emittedAt: now });
+        emit({ type: 'tool-activity', activity: next });
+      };
+      const completeThinking = (messageId: string, index: number) =>
+        updateThinking(messageId, index, { done: true });
       const consume = (serialized: string) => {
         if (!serialized.trim() || failure || stopped) return;
         let value: RecordValue | null;
@@ -834,6 +874,13 @@ export function startClaude(options: {
               activity(block);
               if (block?.type === 'text' && typeof block.text === 'string')
                 message.blocks.set(event.index, block.text);
+              if (block?.type === 'thinking')
+                updateThinking(currentMessage, event.index, {
+                  text:
+                    typeof block.thinking === 'string' ? block.thinking : '',
+                });
+            } else if (event.type === 'content_block_stop') {
+              completeThinking(currentMessage, event.index);
             } else if (event.type === 'content_block_delta') {
               const delta = object(event.delta);
               if (
@@ -845,6 +892,13 @@ export function startClaude(options: {
                   (message.blocks.get(event.index) ?? '') + delta.text,
                 );
               }
+              if (
+                delta?.type === 'thinking_delta' &&
+                typeof delta.thinking === 'string'
+              )
+                updateThinking(currentMessage, event.index, {
+                  delta: delta.thinking,
+                });
             }
             message.text = [...message.blocks.entries()]
               .sort(([left], [right]) => left - right)
@@ -882,6 +936,12 @@ export function startClaude(options: {
           const existing = messages.get(id);
           const blocks = message.content.map(object);
           for (const block of blocks) activity(block);
+          blocks.forEach((block, index) => {
+            if (block?.type !== 'thinking') return;
+            if (typeof block.thinking === 'string' && block.thinking)
+              updateThinking(id, index, { text: block.thinking });
+            completeThinking(id, index);
+          });
           const text = blocks
             .filter(block => block?.type === 'text')
             .map(block => (typeof block?.text === 'string' ? block.text : ''))

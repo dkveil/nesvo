@@ -12,7 +12,14 @@ export const activityLimits = {
 export const sessionActivitySchema = z.strictObject({
   id: z.string().min(1).max(200),
   runId: z.uuid(),
-  kind: z.enum(['command', 'file-change', 'read', 'search', 'tool']),
+  kind: z.enum([
+    'command',
+    'file-change',
+    'read',
+    'search',
+    'tool',
+    'thinking',
+  ]),
   title: z.string().min(1).max(200),
   status: z.enum([
     'running',
