@@ -2817,7 +2817,7 @@ try {
   await addGraphStep('smoke-publish', 'smoke-approve');
   await editor
     .locator('[data-editor-edge="smoke-approve -> smoke-publish"]')
-    .waitFor();
+    .waitFor({ state: 'attached' });
   await editor.locator('[data-editor-inspector="node"]').waitFor();
   await fitGraph();
   await editor
@@ -2831,10 +2831,10 @@ try {
   await editor.locator('[data-editor-node="smoke-format"]').waitFor();
   await editor
     .locator('[data-editor-edge="smoke-check -> smoke-format"]')
-    .waitFor();
+    .waitFor({ state: 'attached' });
   await editor
     .locator('[data-editor-edge="smoke-format -> smoke-lint"]')
-    .waitFor();
+    .waitFor({ state: 'attached' });
   assert.equal(await edgeCount('smoke-check -> smoke-lint'), 0);
   await editorShot('insert-dark');
   await editor.locator('[data-editor-node="smoke-format"]').hover();
@@ -2847,7 +2847,7 @@ try {
   await editor.locator('[data-editor-node="smoke-format"]').waitFor();
   await editor
     .locator('[data-editor-edge="smoke-format -> smoke-lint"]')
-    .waitFor();
+    .waitFor({ state: 'attached' });
   await restartedPage.keyboard.press('Control+y');
   await editor
     .locator('[data-editor-node="smoke-format"]')
