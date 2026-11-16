@@ -1,9 +1,12 @@
 import '@xyflow/react/dist/base.css';
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
@@ -13,14 +16,14 @@ import type {
   DesktopApi,
   WorkflowAssistantDocument,
   ScheduledJob,
+  StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
   latestAttempts,
   type WorkflowRun,
   type WorkflowStepRecord,
-  type StepDisplayState,
 } from '@/entities/workflow';
-import type { ProviderStates } from '@/entities/session';
+import type { Provider, ProviderStates } from '@/entities/session';
 import { toFileText } from '@/entities/workflow-graph';
 import { Button } from '@/shared/ui/button';
 import {
@@ -37,8 +40,10 @@ import { ConflictDialog } from './conflict-dialog';
 import type { SkillSummary } from './inspector';
 import { InspectorPanel } from './inspector-panel';
 import { IssuesStrip } from './issues-strip';
+import { NodePicker, type AddRequest } from './node-picker';
+import type { RunBadge } from './nodes';
 import { Toolbar } from './toolbar';
-import { useEditorState } from './use-editor-state';
+import { useEditorState, type AddOrigin } from './use-editor-state';
 
 type Props = {
   hostId: string;
@@ -52,6 +57,8 @@ type Props = {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onDiscoverSkills?: (directory: string) => Promise<SkillSummary[]>;
+  onRefreshProvider?: (provider: Provider) => void;
+  onRun?: (input: StartWorkflowTaskInput) => Promise<void>;
   runOverlay?: { run: WorkflowRun; steps: WorkflowStepRecord[] };
   onInbox?: (target: InboxTarget) => void;
   onSession?: (key: string) => void;
@@ -90,6 +97,8 @@ export default function WorkflowGraphEditor({
   onClose,
   onDirtyChange,
   onDiscoverSkills,
+  onRefreshProvider = () => {},
+  onRun,
   runOverlay,
   onInbox = () => {},
   onSession = () => {},
@@ -102,12 +111,14 @@ export default function WorkflowGraphEditor({
     catalog,
     api,
   });
+  const section = useRef<HTMLElement>(null);
   const [issuesOpen, setIssuesOpen] = useState(false);
-  const [overlayOn, setOverlayOn] = useState(false);
+  const [overlayOn, setOverlayOn] = useState(true);
   const [closing, setClosing] = useState(false);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [jobsVersion, setJobsVersion] = useState(0);
+  const [addRequest, setAddRequest] = useState<AddRequest | null>(null);
   useEffect(() => {
     onDirtyChange?.(state.dirty);
   }, [onDirtyChange, state.dirty]);
@@ -141,14 +152,18 @@ export default function WorkflowGraphEditor({
     () => jobs.filter(job => job.workflow?.name === state.document.name),
     [jobs, state.document.name],
   );
-  const runStates = useMemo(() => {
+  const runBadges = useMemo(() => {
     if (!overlayOn || !runOverlay) return null;
     const latest = latestAttempts(runOverlay.steps);
-    const states = new Map<string, StepDisplayState>();
+    const badges = new Map<string, RunBadge>();
     runOverlay.run.workflow.steps.forEach((step, index) => {
-      states.set(step.name, latest.get(index)?.state ?? 'pending');
+      const record = latest.get(index);
+      badges.set(step.name, {
+        state: record?.state ?? 'pending',
+        attempts: record ? Math.max(record.attempt, 1) : 0,
+      });
     });
-    return states;
+    return badges;
   }, [overlayOn, runOverlay]);
   const savedDocument = useMemo<WorkflowAssistantDocument | null>(
     () =>
@@ -167,23 +182,66 @@ export default function WorkflowGraphEditor({
     () => (state.selection.kind === 'node' ? [state.selection.id] : []),
     [state.selection],
   );
+  const { document } = state;
+  const requestAdd = useCallback(
+    (origin: AddOrigin, event: ReactMouseEvent) => {
+      const frame = section.current?.getBoundingClientRect();
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const anchor = {
+        x: rect.right - (frame?.left ?? 0),
+        y: rect.top + rect.height / 2 - (frame?.top ?? 0),
+      };
+      const sourceId =
+        origin.kind === 'after'
+          ? origin.id
+          : origin.kind === 'edge'
+            ? document.edges.find(edge => edge.id === origin.id)?.from
+            : undefined;
+      const phase =
+        document.nodes.find(node => node.id === sourceId)?.step.phase ?? null;
+      setAddRequest({ origin, phase, anchor });
+    },
+    [document],
+  );
   const requestClose = () => {
     if (state.dirty) setClosing(true);
     else onClose();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    const modifier = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    if (modifier && key === 's') {
       event.preventDefault();
       if (state.dirty && !state.validation.hasErrors) void state.save();
       return;
     }
-    if (event.key === 'Escape' && !isTextTarget(event.target)) {
+    if (isTextTarget(event.target)) return;
+    if (modifier && key === 'z') {
       event.preventDefault();
-      state.select({ kind: 'workflow' });
+      if (event.shiftKey) state.redo();
+      else state.undo();
+      return;
+    }
+    if (modifier && key === 'y') {
+      event.preventDefault();
+      state.redo();
+      return;
+    }
+    if (modifier && key === 'd') {
+      event.preventDefault();
+      if (state.selection.kind === 'node')
+        state.duplicateNode(state.selection.id);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (addRequest) setAddRequest(null);
+      else state.select({ kind: 'none' });
     }
   };
   return (
     <section
+      ref={section}
       aria-label="Graph editor"
       data-graph-editor={state.document.name || 'new'}
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
@@ -192,7 +250,8 @@ export default function WorkflowGraphEditor({
       <ReactFlowProvider>
         <Toolbar
           state={state}
-          catalogSteps={state.catalog.steps}
+          directory={directory}
+          statuses={statuses}
           issuesOpen={issuesOpen}
           onToggleIssues={() => setIssuesOpen(value => !value)}
           overlay={{
@@ -200,6 +259,8 @@ export default function WorkflowGraphEditor({
             on: overlayOn,
             onToggle: () => setOverlayOn(value => !value),
           }}
+          onRefreshProvider={onRefreshProvider}
+          onRun={onRun ?? null}
           onClose={requestClose}
         />
         <IssuesStrip
@@ -211,8 +272,9 @@ export default function WorkflowGraphEditor({
           <div className="relative min-w-0 flex-1">
             <EditorCanvas
               state={state}
-              runStates={runStates}
+              runBadges={runBadges}
               automations={automations.length}
+              onRequestAdd={requestAdd}
             />
             {state.notice && (
               <p
@@ -259,6 +321,17 @@ export default function WorkflowGraphEditor({
           />
         </div>
       </ReactFlowProvider>
+      <NodePicker
+        request={addRequest}
+        steps={state.catalog.steps}
+        inWorkflow={document.nodes.map(node => node.id)}
+        onPickStep={(step, origin) => state.addCatalogStep(step, origin)}
+        onNewStep={(type, phase, origin) =>
+          state.startDraft({ type, phase: phase ?? undefined, origin })
+        }
+        onAddSchedule={() => state.select({ kind: 'start' })}
+        onClose={() => setAddRequest(null)}
+      />
       <ConflictDialog
         conflict={state.conflict}
         onResolve={choice => void state.resolveConflict(choice)}

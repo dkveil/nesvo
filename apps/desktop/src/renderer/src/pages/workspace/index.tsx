@@ -1656,6 +1656,16 @@ export function Workspace() {
                 onClose={() => setWorkflowsEditor(null)}
                 onDirtyChange={setEditorDirty}
                 onDiscoverSkills={discoverEditorSkills}
+                onRefreshProvider={provider =>
+                  void store.refreshProvider(provider, workflowsEditor.hostId)
+                }
+                onRun={async input => {
+                  const run = await window.nesvo.workflows.startTask(
+                    workflowsEditor.hostId,
+                    input,
+                  );
+                  store.mergeWorkflowRuns([run]);
+                }}
                 runOverlay={editorRunOverlay}
                 onInbox={openInbox}
                 onSession={select}

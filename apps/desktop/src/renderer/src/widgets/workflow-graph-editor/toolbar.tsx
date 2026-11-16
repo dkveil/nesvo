@@ -1,30 +1,32 @@
-import { useReactFlow, useViewport } from '@xyflow/react';
 import {
   CircleX,
   Eye,
-  LayoutGrid,
-  Maximize,
-  Minus,
-  Plus,
+  Redo2,
   Save,
+  Settings2,
   ShieldCheck,
   TriangleAlert,
+  Undo2,
   Workflow,
   X,
 } from 'lucide-react';
-import type { ResolvedStep } from '@nesvo/contracts';
+import type { StartWorkflowTaskInput } from '@nesvo/contracts';
 import { cn } from 'cn';
+import type { Provider, ProviderStates } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { PanelAction } from '@/shared/ui/panel';
-import { Palette } from './palette';
+import { RunPopover } from './run-popover';
 import type { EditorState } from './use-editor-state';
 
 type Props = {
   state: EditorState;
-  catalogSteps: ResolvedStep[];
+  directory: string;
+  statuses: ProviderStates;
   issuesOpen: boolean;
   onToggleIssues: () => void;
   overlay: { available: boolean; on: boolean; onToggle: () => void };
+  onRefreshProvider: (provider: Provider) => void;
+  onRun: ((input: StartWorkflowTaskInput) => Promise<void>) | null;
   onClose: () => void;
 };
 
@@ -32,66 +34,123 @@ const scopeLabels = { global: 'Global', project: 'Project' } as const;
 
 export function Toolbar({
   state,
-  catalogSteps,
+  directory,
+  statuses,
   issuesOpen,
   onToggleIssues,
   overlay,
+  onRefreshProvider,
+  onRun,
   onClose,
 }: Props) {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const { zoom } = useViewport();
   const errors = state.issues.filter(i => i.severity === 'error').length;
   const warnings = state.issues.length - errors;
+  const settingsOpen = state.selection.kind === 'workflow';
+  const saveState = state.saving
+    ? 'Saving…'
+    : state.dirty
+      ? 'Unsaved changes'
+      : state.document.hash
+        ? 'Saved'
+        : 'Not saved yet';
+  const runBlocked = state.dirty
+    ? 'Save the workflow before running it.'
+    : !state.document.hash
+      ? 'Save the workflow before running it.'
+      : state.validation.hasErrors
+        ? 'Fix the errors before running.'
+        : null;
   return (
     <div
       role="toolbar"
       aria-label="Graph editor"
-      className="flex h-10 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3"
+      className="flex h-11 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3"
     >
       <Workflow
         className="size-4 shrink-0 text-muted-foreground"
         aria-hidden="true"
       />
-      <h2 className="min-w-0 truncate text-[13px] font-semibold">
-        {state.document.name || 'New workflow'}
-      </h2>
+      <input
+        aria-label="Workflow name"
+        data-editor-name
+        value={state.document.name}
+        placeholder="Untitled workflow"
+        spellCheck={false}
+        onChange={event =>
+          state.setWorkflowFields({ name: event.target.value })
+        }
+        className="h-7 w-56 min-w-0 rounded-md bg-transparent px-1.5 text-[13px] font-semibold text-foreground transition-colors duration-100 outline-none placeholder:font-normal placeholder:text-muted-foreground hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+      />
       <span className="shrink-0 rounded-full border px-1.5 text-2xs leading-4 text-muted-foreground">
         {scopeLabels[state.document.scope]}
       </span>
-      {state.dirty && (
+      <span
+        role="status"
+        data-editor-save-state={
+          state.saving ? 'saving' : state.dirty ? 'unsaved' : 'saved'
+        }
+        className="flex shrink-0 items-center gap-1.5 pl-1 text-2xs text-muted-foreground"
+      >
         <span
-          role="status"
-          aria-label="Unsaved changes"
-          title="Unsaved changes"
-          className="size-1.5 shrink-0 rounded-full bg-warning-foreground"
+          aria-hidden="true"
+          className={cn(
+            'size-1.5 rounded-full',
+            state.dirty ? 'bg-warning-foreground' : 'bg-success-foreground',
+            !state.dirty && !state.document.hash && 'bg-muted-foreground',
+          )}
         />
-      )}
-      <div className="ml-3 flex items-center gap-1">
-        <Palette
-          steps={catalogSteps}
-          inWorkflow={state.document.nodes.map(node => node.id)}
-          onAdd={state.addCatalogStep}
-          onNew={state.startDraft}
-        />
+        {saveState}
+      </span>
+      <div className="ml-auto flex items-center gap-0.5">
+        <PanelAction
+          aria-label="Undo"
+          title="Undo (Ctrl+Z)"
+          disabled={!state.canUndo}
+          onClick={state.undo}
+        >
+          <Undo2 />
+        </PanelAction>
+        <PanelAction
+          aria-label="Redo"
+          title="Redo (Ctrl+Y)"
+          disabled={!state.canRedo}
+          onClick={state.redo}
+        >
+          <Redo2 />
+        </PanelAction>
+        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
+        {overlay.available && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={overlay.on}
+            className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+            onClick={overlay.onToggle}
+          >
+            <Eye />
+            Last run
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 text-muted-foreground"
-          disabled={state.document.nodes.length === 0}
-          onClick={state.autoLayoutAll}
+          aria-pressed={settingsOpen}
+          className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+          onClick={() =>
+            state.select(settingsOpen ? { kind: 'none' } : { kind: 'workflow' })
+          }
         >
-          <LayoutGrid />
-          Auto-layout
+          <Settings2 />
+          Settings
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
           aria-pressed={issuesOpen}
-          className={cn(
-            'h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground',
-          )}
+          className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
           onClick={onToggleIssues}
         >
           <ShieldCheck />
@@ -109,47 +168,17 @@ export function Toolbar({
             </span>
           )}
         </Button>
-        {overlay.available && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-pressed={overlay.on}
-            className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
-            onClick={overlay.onToggle}
-          >
-            <Eye />
-            Show last run
-          </Button>
+        {onRun && (
+          <RunPopover
+            workflowName={state.document.name}
+            directory={directory}
+            specs={state.catalog.specs}
+            statuses={statuses}
+            blockedReason={runBlocked}
+            onRefreshProvider={onRefreshProvider}
+            onRun={onRun}
+          />
         )}
-      </div>
-      <div className="ml-auto flex items-center gap-0.5">
-        <PanelAction aria-label="Zoom out" onClick={() => void zoomOut()}>
-          <Minus />
-        </PanelAction>
-        <span className="w-9 text-center text-2xs text-muted-foreground tabular-nums">
-          {Math.round(zoom * 100)}%
-        </span>
-        <PanelAction aria-label="Zoom in" onClick={() => void zoomIn()}>
-          <Plus />
-        </PanelAction>
-        <PanelAction
-          aria-label="Fit graph"
-          onClick={() => void fitView({ padding: 0.25, maxZoom: 1 })}
-        >
-          <Maximize />
-        </PanelAction>
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 text-muted-foreground"
-          disabled={!state.dirty || state.saving}
-          onClick={state.discard}
-        >
-          Discard
-        </Button>
         <Button
           type="button"
           size="sm"
@@ -161,6 +190,7 @@ export function Toolbar({
           <Save />
           {state.saving ? 'Saving…' : 'Save'}
         </Button>
+        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
         <PanelAction aria-label="Close graph editor" onClick={onClose}>
           <X />
         </PanelAction>

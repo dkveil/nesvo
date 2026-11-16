@@ -4,6 +4,7 @@ import {
   Play,
   SquarePen,
   X,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import type {
@@ -21,6 +22,7 @@ import {
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { stepDraftOf, usedBy, type NodeIssue } from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
+import { Button } from '@/shared/ui/button';
 import { PanelAction, PanelHeader } from '@/shared/ui/panel';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
 import {
@@ -79,6 +81,7 @@ export function InspectorPanel({
   onSession,
 }: Props) {
   const { selection, document } = state;
+  if (selection.kind === 'none') return null;
   const node =
     selection.kind === 'node'
       ? document.nodes.find(item => item.id === selection.id)
@@ -93,36 +96,35 @@ export function InspectorPanel({
           step => step.definition.name === node.id,
         )
       : undefined;
+  const showResult = !!runStep && !!overlay && runStep.state !== 'pending';
   const header: { icon: LucideIcon; title: string; meta?: string } =
     selection.kind === 'draft'
       ? { icon: SquarePen, title: 'New step' }
       : node
         ? {
-            icon: runStep ? Play : SquarePen,
-            title: runStep ? 'Last run' : 'Step',
+            icon: showResult ? Play : SquarePen,
+            title: showResult ? 'Last run' : 'Step',
             meta: node.id,
           }
         : edge
           ? { icon: GitBranch, title: 'Connection', meta: edge.id }
           : selection.kind === 'start'
-            ? { icon: Play, title: 'Start' }
+            ? { icon: Zap, title: 'Start' }
             : { icon: FileText, title: 'Workflow' };
   const workflowIssues = state.issues.filter(issue => issue.steps.length === 0);
   return (
     <aside
       aria-label="Inspector"
       data-editor-inspector={selection.kind}
-      className="flex w-80 shrink-0 flex-col border-l"
+      className="flex w-80 shrink-0 flex-col border-l bg-background animate-in duration-200 fade-in-0 slide-in-from-right-4 motion-reduce:animate-none"
     >
       <PanelHeader icon={header.icon} title={header.title} meta={header.meta}>
-        {selection.kind !== 'workflow' && (
-          <PanelAction
-            aria-label="Close inspector"
-            onClick={() => state.select({ kind: 'workflow' })}
-          >
-            <X />
-          </PanelAction>
-        )}
+        <PanelAction
+          aria-label="Close inspector"
+          onClick={() => state.select({ kind: 'none' })}
+        >
+          <X />
+        </PanelAction>
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {selection.kind === 'draft' && state.pendingDraft && (
@@ -137,7 +139,7 @@ export function InspectorPanel({
             onDelete={state.cancelDraft}
           />
         )}
-        {node && runStep && overlay && (
+        {node && showResult && overlay && runStep && (
           <div className="space-y-3 px-3 py-3">
             <div className="flex items-center gap-2 text-xs">
               <StepStateIcon state={runStep.state} className="size-4" />
@@ -146,6 +148,7 @@ export function InspectorPanel({
               </span>
               <span className="shrink-0 text-2xs text-muted-foreground">
                 {phaseLabels[node.step.phase]}
+                {runStep.attempts > 1 ? ` · attempt ${runStep.attempts}` : ''}
               </span>
             </div>
             <StepResult
@@ -156,9 +159,18 @@ export function InspectorPanel({
               onInbox={onInbox}
               onSession={onSession}
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
+              onClick={() => state.select({ kind: 'none' })}
+            >
+              Close
+            </Button>
           </div>
         )}
-        {node && !runStep && (
+        {node && !showResult && (
           <StepInspector
             key={node.id}
             step={stepDraftOf(node.step)}

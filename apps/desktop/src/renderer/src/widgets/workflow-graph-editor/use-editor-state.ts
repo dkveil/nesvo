@@ -6,20 +6,23 @@ import type {
   WorkflowsApi,
   ResolvedStep,
   StepPhase,
+  StepType,
 } from '@nesvo/contracts';
 import { stepDefinitionSchema } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import {
   applyDraft,
   autoLayout,
-  clampToLane,
   connectionRefusal,
   editorEdge,
   fromCatalog,
   isDraftStep,
   newDocument,
   newDraftStep,
-  placeAtLaneEnd,
+  placeAfter,
+  placeAtPhaseEnd,
+  placeBelow,
+  placeBetween,
   stepDefinitionOf,
   stepFileText,
   stepHash,
@@ -32,15 +35,22 @@ import {
   type EdgeCondition,
   type EditorDocument,
   type EditorNode,
+  type Position,
   type StepDraft,
 } from '@/entities/workflow-graph';
 import type { InspectorIssue } from './inspector';
 
 export type Selection =
+  | { kind: 'none' }
   | { kind: 'workflow' }
   | { kind: 'start' }
   | { kind: 'draft' }
   | { kind: 'node'; id: string }
+  | { kind: 'edge'; id: string };
+
+export type AddOrigin =
+  | { kind: 'start' }
+  | { kind: 'after'; id: string; when: EdgeCondition }
   | { kind: 'edge'; id: string };
 
 export type Conflict = {
@@ -57,7 +67,14 @@ type Params = {
   api: Pick<WorkflowsApi, 'saveDefinition' | 'listDefinitions'>;
 };
 
+type DraftOptions = {
+  type?: StepType;
+  phase?: StepPhase;
+  origin?: AddOrigin;
+};
+
 const NOTICE_MS = 5000;
+const HISTORY_LIMIT = 100;
 
 const fileStem = (path: string) =>
   (path.split(/[\\/]/).at(-1) ?? path).replace(/\.md$/i, '');
@@ -118,6 +135,90 @@ const renameNode = (
   return { ...document, edges, ...withLayout(nodes) };
 };
 
+const withDocumentNodes = (
+  document: EditorDocument,
+  nodes: EditorNode[],
+): EditorDocument => ({ ...document, ...withLayout(nodes) });
+
+const rehashed = (
+  step: EditorNode['step'],
+  hash: string | null,
+): EditorNode['step'] => {
+  if (isDraftStep(step)) return { ...step, hash };
+  if (hash === null)
+    return {
+      ...stepDefinitionOf(step),
+      draft: true,
+      scope: step.source.scope,
+      hash,
+    };
+  return { ...step, source: { ...step.source, contentHash: hash } };
+};
+
+const copyName = (base: string, taken: (name: string) => boolean) => {
+  const stem = base.replace(/-copy(-\d+)?$/, '');
+  let candidate = `${stem}-copy`;
+  for (let index = 2; taken(candidate); index += 1)
+    candidate = `${stem}-copy-${index}`;
+  return candidate;
+};
+
+type Insertion = {
+  document: EditorDocument;
+  notice: string | null;
+  selectEdge: string | null;
+};
+
+const insertNode = (
+  document: EditorDocument,
+  step: EditorNode['step'],
+  origin: AddOrigin | undefined,
+): Insertion => {
+  const id = step.name;
+  const sourceId =
+    origin?.kind === 'after'
+      ? origin.id
+      : origin?.kind === 'edge'
+        ? document.edges.find(edge => edge.id === origin.id)?.from
+        : undefined;
+  const source = document.nodes.find(node => node.id === sourceId);
+  const splitEdge =
+    origin?.kind === 'edge'
+      ? document.edges.find(edge => edge.id === origin.id)
+      : undefined;
+  const target = splitEdge
+    ? document.nodes.find(node => node.id === splitEdge.to)
+    : undefined;
+  const position: Position =
+    source && target
+      ? placeBetween(document.nodes, source, target)
+      : source
+        ? placeAfter(document.nodes, source)
+        : placeAtPhaseEnd(document.nodes, step.phase);
+  const node: EditorNode = { id, step, position, issues: [] };
+  const base = withDocumentNodes(document, [...document.nodes, node]);
+  if (!source) return { document: base, notice: null, selectEdge: null };
+  const when =
+    origin?.kind === 'after' ? origin.when : (splitEdge?.when ?? 'success');
+  const incoming = { from: source.id, to: id, when };
+  const refusal = connectionRefusal(base, incoming);
+  if (refusal)
+    return {
+      document: base,
+      notice: `Added "${id}" without a connection. ${refusal}`,
+      selectEdge: null,
+    };
+  const first = editorEdge(incoming);
+  let edges = [...base.edges, first];
+  if (splitEdge && target) {
+    edges = edges.filter(edge => edge.id !== splitEdge.id);
+    const outgoing = { from: id, to: target.id, when: 'success' as const };
+    if (!connectionRefusal({ ...base, edges }, outgoing))
+      edges.push(editorEdge(outgoing));
+  }
+  return { document: { ...base, edges }, notice: null, selectEdge: null };
+};
+
 export function useEditorState({
   hostId,
   directory,
@@ -129,10 +230,20 @@ export function useEditorState({
   const [initial, setInitial] = useState(() =>
     initialDocument(initialCatalog, workflowName),
   );
-  const [document, setDocument] = useState(initial);
+  const [document, setDocumentState] = useState(initial);
+  const documentRef = useRef(initial);
+  const history = useRef<{ past: EditorDocument[]; future: EditorDocument[] }>({
+    past: [],
+    future: [],
+  });
+  const [historySize, setHistorySize] = useState({ past: 0, future: 0 });
+  const dragSnapshot = useRef<EditorDocument | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [selection, setSelection] = useState<Selection>({ kind: 'workflow' });
+  const [selection, setSelection] = useState<Selection>(
+    workflowName ? { kind: 'none' } : { kind: 'workflow' },
+  );
   const [pendingDraft, setPendingDraft] = useState<StepDraft | null>(null);
+  const [draftOrigin, setDraftOrigin] = useState<AddOrigin | undefined>();
   const [draftProblems, setDraftProblems] = useState<InspectorIssue[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -181,51 +292,81 @@ export function useEditorState({
     [],
   );
 
-  const mutate = useCallback(
-    (update: (current: EditorDocument) => EditorDocument) => {
-      setDocument(update);
-      setDirty(true);
-      setHostIssues([]);
-    },
-    [],
-  );
+  const syncHistorySize = () =>
+    setHistorySize({
+      past: history.current.past.length,
+      future: history.current.future.length,
+    });
+
+  const replaceDocument = useCallback((next: EditorDocument) => {
+    documentRef.current = next;
+    setDocumentState(next);
+  }, []);
+
+  const resetHistory = () => {
+    history.current = { past: [], future: [] };
+    dragSnapshot.current = null;
+    syncHistorySize();
+  };
+
+  const remember = (snapshot: EditorDocument) => {
+    history.current.past.push(snapshot);
+    if (history.current.past.length > HISTORY_LIMIT)
+      history.current.past.shift();
+    history.current.future = [];
+    syncHistorySize();
+  };
+
+  const mutate = (
+    update: (current: EditorDocument) => EditorDocument,
+    options: { transient?: boolean } = {},
+  ) => {
+    const current = documentRef.current;
+    const next = update(current);
+    if (next === current) return;
+    if (!options.transient) remember(current);
+    replaceDocument(next);
+    setDirty(true);
+    setHostIssues([]);
+  };
 
   const select = useCallback((next: Selection) => {
     setSelection(next);
     if (next.kind !== 'draft') {
       setPendingDraft(null);
+      setDraftOrigin(undefined);
       setDraftProblems([]);
     }
   }, []);
 
-  const setWorkflowFields = (fields: {
-    name: string;
-    description: string;
-    body: string;
-  }) => mutate(current => ({ ...current, ...fields }));
+  const setWorkflowFields = (
+    fields: Partial<{ name: string; description: string; body: string }>,
+  ) => mutate(current => ({ ...current, ...fields }));
 
-  const addCatalogStep = (step: ResolvedStep) => {
-    if (document.nodes.some(node => node.id === step.name)) {
+  const applyInsertion = (insertion: Insertion, id: string) => {
+    mutate(() => insertion.document);
+    if (insertion.notice) showNotice(insertion.notice);
+    setRevealId(id);
+    setSelection({ kind: 'node', id });
+  };
+
+  const addCatalogStep = (step: ResolvedStep, origin?: AddOrigin) => {
+    if (documentRef.current.nodes.some(node => node.id === step.name)) {
       showNotice(`Step "${step.name}" is already in this workflow.`);
       return;
     }
-    mutate(current =>
-      withDocumentNodes(current, [
-        ...current.nodes,
-        {
-          id: step.name,
-          step,
-          position: placeAtLaneEnd(current.nodes, step.phase),
-          issues: [],
-        },
-      ]),
-    );
-    setRevealId(step.name);
-    select({ kind: 'node', id: step.name });
+    applyInsertion(insertNode(documentRef.current, step, origin), step.name);
   };
 
-  const startDraft = () => {
-    setPendingDraft(newDraftStep(document.scope));
+  const startDraft = (options: DraftOptions = {}) => {
+    const draft = newDraftStep(documentRef.current.scope);
+    setPendingDraft({
+      ...draft,
+      type: options.type ?? draft.type,
+      phase: options.phase ?? draft.phase,
+      skill: null,
+    });
+    setDraftOrigin(options.origin);
     setDraftProblems([]);
     setSelection({ kind: 'draft' });
   };
@@ -238,7 +379,7 @@ export function useEditorState({
   const commitDraft = () => {
     if (!pendingDraft) return;
     const problems = draftIssues(pendingDraft);
-    if (document.nodes.some(node => node.id === pendingDraft.name))
+    if (documentRef.current.nodes.some(node => node.id === pendingDraft.name))
       problems.push({
         severity: 'error',
         path: '',
@@ -251,7 +392,7 @@ export function useEditorState({
         severity: 'error',
         path: '',
         line: null,
-        message: `A step named "${pendingDraft.name}" already exists; add it from the palette.`,
+        message: `A step named "${pendingDraft.name}" already exists; add it from the node picker.`,
         field: 'name',
       });
     if (problems.length) {
@@ -264,36 +405,29 @@ export function useEditorState({
       scope: pendingDraft.scope,
       hash: null,
     };
-    mutate(current =>
-      withDocumentNodes(current, [
-        ...current.nodes,
-        {
-          id: step.name,
-          step,
-          position: placeAtLaneEnd(current.nodes, step.phase),
-          issues: [],
-        },
-      ]),
-    );
+    const insertion = insertNode(documentRef.current, step, draftOrigin);
     setPendingDraft(null);
+    setDraftOrigin(undefined);
     setDraftProblems([]);
-    setRevealId(step.name);
-    setSelection({ kind: 'node', id: step.name });
+    applyInsertion(insertion, step.name);
   };
 
-  const cancelDraft = () => select({ kind: 'workflow' });
+  const cancelDraft = () => select({ kind: 'none' });
 
   const updateStep = (id: string, draft: StepDraft) => {
-    const node = document.nodes.find(item => item.id === id);
+    const node = documentRef.current.nodes.find(item => item.id === id);
     if (!node) return;
     const wanted = isDraftStep(node.step) && draft.name !== id;
     const taken =
       wanted &&
-      (document.nodes.some(item => item.id === draft.name) ||
+      (documentRef.current.nodes.some(item => item.id === draft.name) ||
         catalog.steps.some(step => step.name === draft.name));
     const renamed = wanted && !taken;
     const nextId = renamed ? draft.name : id;
     const phaseChanged = draft.phase !== node.step.phase;
+    const hadEdges = documentRef.current.edges.some(
+      edge => edge.from === id || edge.to === id,
+    );
     mutate(current => {
       const base = renamed ? renameNode(current, id, nextId) : current;
       const nodes = base.nodes.map(item =>
@@ -305,7 +439,7 @@ export function useEditorState({
                 name: isDraftStep(item.step) ? draft.name : item.step.name,
               }),
               position: phaseChanged
-                ? placeAtLaneEnd(
+                ? placeAtPhaseEnd(
                     base.nodes.filter(other => other.id !== nextId),
                     draft.phase,
                   )
@@ -318,7 +452,7 @@ export function useEditorState({
         : base.edges;
       return { ...base, edges, ...withLayout(nodes) };
     });
-    if (phaseChanged && document.edges.some(e => e.from === id || e.to === id))
+    if (phaseChanged && hadEdges)
       showNotice(
         `Connections of "${nextId}" were removed because the step moved to another phase.`,
       );
@@ -332,37 +466,83 @@ export function useEditorState({
       ...withLayout(current.nodes.filter(node => node.id !== id)),
     }));
     setSelection(current =>
-      current.kind === 'node' && current.id === id
-        ? { kind: 'workflow' }
-        : current,
+      current.kind === 'node' && current.id === id ? { kind: 'none' } : current,
     );
   };
 
-  const moveNode = (id: string, position: { x: number; y: number }) =>
-    mutate(current =>
-      withDocumentNodes(
-        current,
-        current.nodes.map(node =>
-          node.id === id ? { ...node, position } : node,
-        ),
-      ),
-    );
-
-  const settleNode = (id: string, position: { x: number; y: number }) => {
-    const node = document.nodes.find(item => item.id === id);
+  const duplicateNode = (id: string) => {
+    const current = documentRef.current;
+    const node = current.nodes.find(item => item.id === id);
     if (!node) return;
-    const phase: StepPhase = node.step.phase;
-    const y = clampToLane(phase, position.y);
-    if (y !== position.y)
-      showNotice(
-        'Steps stay in their phase lane. Change the phase in the step inspector.',
-      );
-    moveNode(id, { x: Math.round(position.x), y: Math.round(y) });
+    const name = copyName(
+      id,
+      candidate =>
+        current.nodes.some(item => item.id === candidate) ||
+        catalog.steps.some(step => step.name === candidate),
+    );
+    const step = {
+      ...stepDefinitionOf(node.step),
+      name,
+      draft: true as const,
+      scope: stepScope(node.step),
+      hash: null,
+    };
+    const copy: EditorNode = {
+      id: name,
+      step,
+      position: placeBelow(current.nodes, node),
+      issues: [],
+    };
+    mutate(doc => withDocumentNodes(doc, [...doc.nodes, copy]));
+    setRevealId(name);
+    setSelection({ kind: 'node', id: name });
   };
 
-  const connect = (from: string, to: string) => {
-    const edge = { from, to, when: 'success' as const };
-    const refusal = connectionRefusal(document, edge);
+  const moveNode = (id: string, position: Position) => {
+    if (!dragSnapshot.current) dragSnapshot.current = documentRef.current;
+    mutate(
+      current =>
+        withDocumentNodes(
+          current,
+          current.nodes.map(node =>
+            node.id === id ? { ...node, position } : node,
+          ),
+        ),
+      { transient: true },
+    );
+  };
+
+  const settleNode = (id: string, position: Position) => {
+    const snapshot = dragSnapshot.current;
+    dragSnapshot.current = null;
+    if (snapshot) remember(snapshot);
+    mutate(
+      current =>
+        withDocumentNodes(
+          current,
+          current.nodes.map(node =>
+            node.id === id
+              ? {
+                  ...node,
+                  position: {
+                    x: Math.round(position.x),
+                    y: Math.round(position.y),
+                  },
+                }
+              : node,
+          ),
+        ),
+      { transient: true },
+    );
+  };
+
+  const connect = (
+    from: string,
+    to: string,
+    when: EdgeCondition = 'success',
+  ) => {
+    const edge = { from, to, when };
+    const refusal = connectionRefusal(documentRef.current, edge);
     if (refusal) {
       showNotice(refusal);
       return;
@@ -373,10 +553,10 @@ export function useEditorState({
   };
 
   const setEdgeWhen = (id: string, when: EdgeCondition) => {
-    const edge = document.edges.find(item => item.id === id);
+    const edge = documentRef.current.edges.find(item => item.id === id);
     if (!edge || edge.when === when) return;
     const next = editorEdge({ from: edge.from, to: edge.to, when });
-    if (document.edges.some(item => item.id === next.id)) {
+    if (documentRef.current.edges.some(item => item.id === next.id)) {
       showNotice(`Edge "${next.id}" is already in this workflow.`);
       return;
     }
@@ -393,9 +573,7 @@ export function useEditorState({
       edges: current.edges.filter(edge => edge.id !== id),
     }));
     setSelection(current =>
-      current.kind === 'edge' && current.id === id
-        ? { kind: 'workflow' }
-        : current,
+      current.kind === 'edge' && current.id === id ? { kind: 'none' } : current,
     );
   };
 
@@ -411,12 +589,33 @@ export function useEditorState({
       );
     });
 
+  const undo = () => {
+    const previous = history.current.past.pop();
+    if (!previous) return;
+    history.current.future.push(documentRef.current);
+    syncHistorySize();
+    replaceDocument(previous);
+    setDirty(true);
+    setHostIssues([]);
+  };
+
+  const redo = () => {
+    const next = history.current.future.pop();
+    if (!next) return;
+    history.current.past.push(documentRef.current);
+    syncHistorySize();
+    replaceDocument(next);
+    setDirty(true);
+    setHostIssues([]);
+  };
+
   const discard = () => {
-    setDocument(initial);
+    replaceDocument(initial);
+    resetHistory();
     setDirty(false);
     setHostIssues([]);
     setBanner(null);
-    select({ kind: 'workflow' });
+    select({ kind: 'none' });
   };
 
   const adoptCatalog = (next: DefinitionCatalog, name: string) => {
@@ -425,7 +624,8 @@ export function useEditorState({
     if (!workflow) return;
     const rebuilt = fromCatalog(workflow, next);
     setInitial(rebuilt);
-    setDocument(rebuilt);
+    replaceDocument(rebuilt);
+    resetHistory();
     setDirty(false);
   };
 
@@ -455,7 +655,7 @@ export function useEditorState({
     setBanner(null);
     try {
       let current = catalog;
-      let snapshot = document;
+      let snapshot = documentRef.current;
       for (const node of stepsToWrite(snapshot, current)) {
         const result = await api.saveDefinition(hostId, {
           directory,
@@ -484,10 +684,10 @@ export function useEditorState({
               item.id === node.id ? { ...item, step: saved } : item,
             ),
           );
-          setDocument(doc =>
+          replaceDocument(
             withDocumentNodes(
-              doc,
-              doc.nodes.map(item =>
+              documentRef.current,
+              documentRef.current.nodes.map(item =>
                 item.id === node.id ? { ...item, step: saved } : item,
               ),
             ),
@@ -542,10 +742,11 @@ export function useEditorState({
               ? current.steps.filter(item => item.name !== name)
               : current.steps,
         }));
+      const current = documentRef.current;
       if (kind === 'workflow')
-        setDocument(current => ({ ...current, hash: response.currentHash }));
+        replaceDocument({ ...current, hash: response.currentHash });
       else
-        setDocument(current =>
+        replaceDocument(
           withDocumentNodes(
             current,
             current.nodes.map(node =>
@@ -567,13 +768,14 @@ export function useEditorState({
           adoptCatalog(next, name);
           select({ kind: 'workflow' });
         } else {
-          setDocument(current => ({ ...current, hash: null }));
+          replaceDocument({ ...documentRef.current, hash: null });
           setDirty(true);
         }
         return;
       }
       const step = next.steps.find(item => item.name === name);
-      setDocument(current =>
+      const current = documentRef.current;
+      replaceDocument(
         withDocumentNodes(
           current,
           current.nodes.map(node =>
@@ -613,12 +815,17 @@ export function useEditorState({
     addCatalogStep,
     updateStep,
     removeNode,
+    duplicateNode,
     moveNode,
     settleNode,
     connect,
     setEdgeWhen,
     removeEdge,
     autoLayoutAll,
+    undo,
+    redo,
+    canUndo: historySize.past > 0,
+    canRedo: historySize.future > 0,
     discard,
     save,
     reload,
@@ -629,25 +836,5 @@ export function useEditorState({
     resolveConflict,
   };
 }
-
-const withDocumentNodes = (
-  document: EditorDocument,
-  nodes: EditorNode[],
-): EditorDocument => ({ ...document, ...withLayout(nodes) });
-
-const rehashed = (
-  step: EditorNode['step'],
-  hash: string | null,
-): EditorNode['step'] => {
-  if (isDraftStep(step)) return { ...step, hash };
-  if (hash === null)
-    return {
-      ...stepDefinitionOf(step),
-      draft: true,
-      scope: step.source.scope,
-      hash,
-    };
-  return { ...step, source: { ...step.source, contentHash: hash } };
-};
 
 export type EditorState = ReturnType<typeof useEditorState>;
