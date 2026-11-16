@@ -1,6 +1,7 @@
 import {
   isValidElement,
   memo,
+  useDeferredValue,
   useEffect,
   useRef,
   useState,
@@ -155,7 +156,7 @@ function MarkdownLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
       className="underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground"
       onClick={event => {
         event.preventDefault();
-        void window.nesvo?.openExternal(url);
+        void window.nesvo?.openExternal(url)?.catch(() => undefined);
       }}
     >
       {children}
@@ -285,6 +286,7 @@ export const MessageBody = memo(function MessageBody({
   body: string;
   className?: string;
 }) {
+  const deferredBody = useDeferredValue(body);
   return (
     <div
       className={cn('min-w-0 space-y-3 [overflow-wrap:anywhere]', className)}
@@ -294,7 +296,7 @@ export const MessageBody = memo(function MessageBody({
         rehypePlugins={rehypePlugins}
         components={components}
       >
-        {body}
+        {deferredBody}
       </Markdown>
     </div>
   );

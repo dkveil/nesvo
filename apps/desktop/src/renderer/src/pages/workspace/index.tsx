@@ -459,6 +459,16 @@ export function Workspace() {
   useEffect(() => writeDrafts(drafts), [drafts]);
   const [seen, setSeen] = useState<Record<string, number>>(readSeen);
   useEffect(() => writeSeen(seen), [seen]);
+  const [seenSeeded, setSeenSeeded] = useState(false);
+  if (!seenSeeded && store.sessions.length > 0) {
+    setSeenSeeded(true);
+    if (Object.keys(seen).length === 0)
+      setSeen(
+        Object.fromEntries(
+          store.sessions.map(session => [entityKey(session), session.revision]),
+        ),
+      );
+  }
   const [selectedSkills, setSelectedSkills] = useState<
     Record<string, SelectedSkill | null>
   >({});

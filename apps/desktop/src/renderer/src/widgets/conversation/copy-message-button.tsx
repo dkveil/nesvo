@@ -11,14 +11,17 @@ export function CopyMessageButton({ body }: Props) {
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const copy = () => {
-    void navigator.clipboard.writeText(body).then(() => {
-      setCopied(true);
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(
-        () => setCopied(false),
-        COPIED_RESET_MS,
-      );
-    });
+    void navigator.clipboard
+      .writeText(body)
+      .then(() => {
+        setCopied(true);
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(
+          () => setCopied(false),
+          COPIED_RESET_MS,
+        );
+      })
+      .catch(() => undefined);
   };
   return (
     <Button

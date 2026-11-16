@@ -103,6 +103,7 @@ const workflowInputs = {
   'workflow-assistant-undo': assistantUndoSchema,
   'workflow-assistant-changes': listAssistantChangesSchema,
 } satisfies Record<WorkflowMethod, { parse: (input: unknown) => unknown }>;
+const MAX_EXTERNAL_URL_LENGTH = 2048;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -111,6 +112,7 @@ const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
 void app.whenReady().then(async () => {
   if (!ownsInstance) return;
+  app.setAppUserModelId('app.nesvo.desktop');
   nativeTheme.themeSource = readColorScheme(app.getPath('userData'));
   const host = startHost(join(app.getPath('userData'), 'host'));
   const computers = new ComputerManager(app.getPath('userData'), host);
@@ -148,7 +150,8 @@ void app.whenReady().then(async () => {
     next.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     next.webContents.on('will-navigate', event => event.preventDefault());
     next.webContents.session.setPermissionRequestHandler(
-      (_contents, _permission, callback) => callback(false),
+      (_contents, permission, callback) =>
+        callback(permission === 'notifications'),
     );
     const applyColors = () => {
       if (next.isDestroyed()) return;
@@ -226,7 +229,13 @@ void app.whenReady().then(async () => {
   ipcMain.handle('nesvo:open-external', async (event, url: unknown) => {
     authorize(event);
     if (typeof url !== 'string') throw new Error('Invalid link');
-    const target = new URL(url);
+    if (url.length > MAX_EXTERNAL_URL_LENGTH) throw new Error('Invalid link');
+    let target: URL;
+    try {
+      target = new URL(url);
+    } catch {
+      throw new Error('Invalid link');
+    }
     if (target.protocol !== 'http:' && target.protocol !== 'https:') {
       throw new Error('Unsupported link protocol');
     }

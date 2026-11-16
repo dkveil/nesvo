@@ -213,8 +213,21 @@ export function Conversation({
     .filter(message => message.author === 'operator')
     .map(message => message.body);
   const limitReached = draft.length >= MESSAGE_MAX_LENGTH;
+  const lastMessage = session.messages.at(-1);
+  const lastOperator = session.messages.findLast(
+    message => message.author === 'operator',
+  );
   const canResend =
-    !running && session.messages.some(message => message.author === 'operator');
+    !running &&
+    !!lastOperator &&
+    !lastOperator.skill &&
+    !lastOperator.skillId &&
+    lastMessage?.author === 'agent' &&
+    (lastMessage.state === 'failed' || lastMessage.state === 'interrupted');
+  const queueStartError =
+    session.status === 'completed' && session.queue.length > 0
+      ? session.error
+      : '';
   const ModeIcon = session.mode === 'supervised' ? Pencil : Lock;
   const HostIcon = session.hostId === 'local' ? Monitor : Server;
   const runStarts = new Map(
@@ -596,10 +609,7 @@ export function Conversation({
                       aria-hidden="true"
                       className="h-px flex-1 bg-border"
                     />
-                    <p
-                      role="status"
-                      className="text-[11px] text-muted-foreground"
-                    >
+                    <p className="text-[11px] text-muted-foreground">
                       {selectionChange}
                     </p>
                     <span
@@ -706,28 +716,30 @@ export function Conversation({
               </Fragment>
             );
           })}
-          {session.error && session.status !== 'interrupted' && (
-            <section
-              role="alert"
-              aria-label="Failed run"
-              className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3"
-            >
-              <p className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">
-                {session.error}
-              </p>
-              {canResend && (
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={!canSend || sending}
-                  onClick={onResend}
-                >
-                  Resend last message
-                </Button>
-              )}
-            </section>
-          )}
+          {session.error &&
+            session.status !== 'interrupted' &&
+            session.status !== 'completed' && (
+              <section
+                role="alert"
+                aria-label="Failed run"
+                className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3"
+              >
+                <p className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">
+                  {session.error}
+                </p>
+                {canResend && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={!canSend || sending}
+                    onClick={onResend}
+                  >
+                    Resend last message
+                  </Button>
+                )}
+              </section>
+            )}
           {session.status === 'interrupted' && (
             <section
               aria-label="Interrupted run"
@@ -769,14 +781,20 @@ export function Conversation({
           {delegations}
           {session.queue.length > 0 && (
             <section aria-label="Queued messages" className="space-y-3">
+              {queueStartError && (
+                <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                  {queueStartError}
+                </p>
+              )}
               {session.queue.map(entry => (
                 <article
                   key={entry.id}
                   aria-label="Queued message"
+                  title={entry.held ? 'Waiting for Send now' : undefined}
                   className="flex flex-col items-end gap-1"
                 >
                   <span className="text-[11px] text-muted-foreground">
-                    Queued
+                    {entry.held ? 'Held' : 'Queued'}
                   </span>
                   <MessageBody
                     body={entry.text}
