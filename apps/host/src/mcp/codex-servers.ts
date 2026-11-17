@@ -4,9 +4,25 @@ import { parse } from 'smol-toml';
 import { z } from 'zod';
 import { mcpLimits } from '@nesvo/contracts';
 import { readConfigFile } from './config-file';
-import { describeServer, type McpEndpoint, type McpEntry } from './server-summary';
+import {
+  canonicalJson,
+  definitionFingerprint,
+  describeServer,
+  type McpEndpoint,
+  type McpEntry,
+} from './server-summary';
 
 const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
+const IDENTITY_FIELDS = [
+  'command',
+  'args',
+  'env',
+  'env_vars',
+  'url',
+  'bearer_token_env_var',
+  'http_headers',
+  'env_http_headers',
+] as const;
 
 const configSchema = z.looseObject({
   mcp_servers: z.record(z.string(), z.unknown()).optional(),
@@ -20,7 +36,7 @@ const serverSchema = z.looseObject({
 export const codexHome = (): string =>
   process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
 
-export const codexEndpoint = (value: unknown): McpEndpoint | null => {
+const codexEndpoint = (value: unknown): McpEndpoint | null => {
   const parsed = serverSchema.safeParse(value);
   if (!parsed.success) return null;
   const { command, url } = parsed.data;
@@ -29,25 +45,45 @@ export const codexEndpoint = (value: unknown): McpEndpoint | null => {
   return null;
 };
 
-const codexEntry = (name: string, value: unknown): McpEntry => {
+export const sameCodexServer = (
+  expected: Record<string, unknown>,
+  effective: unknown,
+): boolean => {
+  if (effective === null || typeof effective !== 'object') return false;
+  const actual = effective as Record<string, unknown>;
+  return (
+    actual.enabled !== false &&
+    IDENTITY_FIELDS.every(
+      field => canonicalJson(expected[field]) === canonicalJson(actual[field]),
+    )
+  );
+};
+
+const codexEntry = (key: Buffer, name: string, value: unknown): McpEntry => {
   const endpoint = codexEndpoint(value);
   const disabled = serverSchema.safeParse(value).data?.enabled === false;
+  const definition =
+    endpoint && value !== null && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : null;
   return {
     server: describeServer({
       name,
       scope: 'user',
       endpoint,
-      problem: !endpoint
+      fingerprint: definition ? definitionFingerprint(key, definition) : null,
+      problem: !definition
         ? 'This server definition could not be read.'
         : disabled
           ? 'This server is turned off in the Codex configuration.'
           : null,
     }),
-    definition: null,
+    definition,
   };
 };
 
 export const discoverCodexServers = async (
+  key: Buffer,
   signal?: AbortSignal,
 ): Promise<{ entries: McpEntry[]; issues: string[] }> => {
   const file = await readConfigFile(
@@ -74,7 +110,7 @@ export const discoverCodexServers = async (
   }
   return {
     entries: Object.entries(table ?? {})
-      .map(([name, value]) => codexEntry(name, value))
+      .map(([name, value]) => codexEntry(key, name, value))
       .slice(0, mcpLimits.listed),
     issues: [],
   };

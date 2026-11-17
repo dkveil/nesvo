@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import {
   MCP_SERVER_NAME_PATTERN,
   mcpLimits,
@@ -21,8 +21,6 @@ export type McpEntry = {
 const UNSAFE_NAME_PROBLEM =
   'This server name cannot be passed to the provider safely. Use letters, digits, hyphens or underscores.';
 
-const withoutQuery = (url: string): string => url.split(/[?#]/)[0] ?? '';
-
 const commandName = (command: string): string | null => {
   const trimmed = command.trim();
   const quoted = /^"([^"]+)"/.exec(trimmed)?.[1];
@@ -40,27 +38,37 @@ const urlHost = (url: string): string | null => {
   }
 };
 
-export const endpointFingerprint = (endpoint: McpEndpoint): string =>
-  createHash('sha256')
-    .update(
-      JSON.stringify([
-        endpoint.transport,
-        endpoint.command,
-        endpoint.url === null ? null : withoutQuery(endpoint.url),
-      ]),
-    )
-    .digest('hex');
+export const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map(
+        key =>
+          `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
+};
+
+export const definitionFingerprint = (
+  key: Buffer,
+  definition: unknown,
+): string =>
+  createHmac('sha256', key).update(canonicalJson(definition)).digest('hex');
 
 export const describeServer = ({
   name,
   scope,
   endpoint,
   problem,
+  fingerprint,
 }: {
   name: string;
   scope: McpScope;
   endpoint: McpEndpoint | null;
   problem: string | null;
+  fingerprint: string | null;
 }): McpServer => {
   const nameProblem = MCP_SERVER_NAME_PATTERN.test(name)
     ? null
@@ -76,8 +84,7 @@ export const describeServer = ({
       : endpoint.transport === 'stdio'
         ? endpoint.command && commandName(endpoint.command)
         : endpoint.url && urlHost(endpoint.url),
-    fingerprint:
-      endpoint && !finalProblem ? endpointFingerprint(endpoint) : null,
+    fingerprint: endpoint && !finalProblem ? fingerprint : null,
     problem: finalProblem,
   };
 };

@@ -3,7 +3,12 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { mcpLimits, type McpScope } from '@nesvo/contracts';
 import { readConfigFile } from './config-file';
-import { describeServer, type McpEndpoint, type McpEntry } from './server-summary';
+import {
+  definitionFingerprint,
+  describeServer,
+  type McpEndpoint,
+  type McpEntry,
+} from './server-summary';
 
 const MAX_GLOBAL_CONFIG_BYTES = 32 * 1024 * 1024;
 const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
@@ -13,7 +18,10 @@ const serverTableSchema = z.record(z.string(), z.unknown());
 const globalConfigSchema = z.looseObject({
   mcpServers: serverTableSchema.optional(),
   projects: z
-    .record(z.string(), z.looseObject({ mcpServers: serverTableSchema.optional() }))
+    .record(
+      z.string(),
+      z.looseObject({ mcpServers: serverTableSchema.optional() }),
+    )
     .optional(),
 });
 const projectConfigSchema = z.looseObject({
@@ -39,35 +47,46 @@ const projectKey = (path: string): string => {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 };
 
+const claudeEndpoint = (
+  value: unknown,
+): { endpoint: McpEndpoint; definition: Record<string, unknown> } | null => {
+  const stdio = stdioSchema.safeParse(value);
+  if (stdio.success)
+    return {
+      endpoint: { transport: 'stdio', command: stdio.data.command, url: null },
+      definition: stdio.data,
+    };
+  const remote = remoteSchema.safeParse(value);
+  if (remote.success)
+    return {
+      endpoint: {
+        transport: remote.data.type,
+        command: null,
+        url: remote.data.url,
+      },
+      definition: remote.data,
+    };
+  return null;
+};
+
 const claudeEntry = (
+  key: Buffer,
   name: string,
   scope: McpScope,
   value: unknown,
 ): McpEntry => {
-  const stdio = stdioSchema.safeParse(value);
-  if (stdio.success) {
-    const endpoint: McpEndpoint = {
-      transport: 'stdio',
-      command: stdio.data.command,
-      url: null,
-    };
+  const parsed = claudeEndpoint(value);
+  if (parsed)
     return {
-      server: describeServer({ name, scope, endpoint, problem: null }),
-      definition: stdio.data,
+      server: describeServer({
+        name,
+        scope,
+        endpoint: parsed.endpoint,
+        problem: null,
+        fingerprint: definitionFingerprint(key, parsed.definition),
+      }),
+      definition: parsed.definition,
     };
-  }
-  const remote = remoteSchema.safeParse(value);
-  if (remote.success) {
-    const endpoint: McpEndpoint = {
-      transport: remote.data.type,
-      command: null,
-      url: remote.data.url,
-    };
-    return {
-      server: describeServer({ name, scope, endpoint, problem: null }),
-      definition: remote.data,
-    };
-  }
   const type =
     value !== null && typeof value === 'object' && 'type' in value
       ? value.type
@@ -77,6 +96,7 @@ const claudeEntry = (
       name,
       scope,
       endpoint: null,
+      fingerprint: null,
       problem:
         typeof type === 'string' && !['stdio', 'http', 'sse'].includes(type)
           ? 'Nesvo can pass only stdio, HTTP and SSE servers to Claude Code.'
@@ -87,14 +107,16 @@ const claudeEntry = (
 };
 
 const entriesOf = (
+  key: Buffer,
   table: Record<string, unknown> | undefined,
   scope: McpScope,
 ): McpEntry[] =>
   Object.entries(table ?? {}).map(([name, value]) =>
-    claudeEntry(name, scope, value),
+    claudeEntry(key, name, scope, value),
   );
 
 const readGlobal = async (
+  key: Buffer,
   directory: string,
   issues: string[],
   signal?: AbortSignal,
@@ -123,12 +145,13 @@ const readGlobal = async (
     ([path]) => projectKey(path) === wanted,
   )?.[1];
   return [
-    ...entriesOf(parsed.mcpServers, 'user'),
-    ...entriesOf(local?.mcpServers, 'local'),
+    ...entriesOf(key, parsed.mcpServers, 'user'),
+    ...entriesOf(key, local?.mcpServers, 'local'),
   ];
 };
 
 const readProject = async (
+  key: Buffer,
   directory: string,
   issues: string[],
   signal?: AbortSignal,
@@ -145,7 +168,7 @@ const readProject = async (
       try {
         const result = projectConfigSchema.safeParse(JSON.parse(file.text));
         if (!result.success) throw new Error();
-        for (const entry of entriesOf(result.data.mcpServers, 'project'))
+        for (const entry of entriesOf(key, result.data.mcpServers, 'project'))
           if (!entries.has(entry.server.key))
             entries.set(entry.server.key, entry);
       } catch {
@@ -161,13 +184,14 @@ const readProject = async (
 };
 
 export const discoverClaudeServers = async (
+  key: Buffer,
   directory: string,
   signal?: AbortSignal,
 ): Promise<{ entries: McpEntry[]; issues: string[] }> => {
   const issues: string[] = [];
   const [global, project] = await Promise.all([
-    readGlobal(directory, issues, signal),
-    readProject(directory, issues, signal),
+    readGlobal(key, directory, issues, signal),
+    readProject(key, directory, issues, signal),
   ]);
   return {
     entries: [...global, ...project].slice(0, mcpLimits.listed),

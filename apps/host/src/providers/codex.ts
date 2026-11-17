@@ -16,8 +16,7 @@ import {
   type ProviderUsage,
   type TurnUsage,
 } from '@nesvo/contracts';
-import { codexEndpoint } from '../mcp/codex-servers';
-import { endpointFingerprint } from '../mcp/server-summary';
+import { sameCodexServer } from '../mcp/codex-servers';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
 import {
@@ -1307,7 +1306,10 @@ export function startCodex(options: {
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   instructionsOnly?: boolean;
-  mcp?: { servers: Readonly<Record<string, string>>; hooks: boolean };
+  mcp?: {
+    servers: Readonly<Record<string, Record<string, unknown>>>;
+    hooks: boolean;
+  };
 }): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
@@ -1944,15 +1946,10 @@ export function startCodex(options: {
           'Codex has an MCP server name that cannot be safely isolated.',
         );
       const enabledServers = options.mcp?.servers ?? {};
-      for (const [name, fingerprint] of Object.entries(enabledServers)) {
+      for (const [name, definition] of Object.entries(enabledServers)) {
         if (!Object.hasOwn(configuredServers, name))
           throw new Error(mcpMissingMessage(name));
-        const endpoint = codexEndpoint(configuredServers[name]);
-        if (
-          !endpoint ||
-          object(configuredServers[name])?.enabled === false ||
-          endpointFingerprint(endpoint) !== fingerprint
-        )
+        if (!sameCodexServer(definition, configuredServers[name]))
           throw new Error(mcpChangedMessage(name));
       }
       const disabledServers = Object.fromEntries(

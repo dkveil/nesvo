@@ -27,11 +27,14 @@ import {
   type RespondApprovalInput,
   type SkillReference,
   type SessionInterruption,
+  type McpServerList,
   type SetSessionMcpInput,
   type TurnUsage,
 } from '@nesvo/contracts';
+import { readFingerprintKey } from '../mcp/fingerprint-key';
 import {
   McpError,
+  listMcpServers,
   prepareTurnMcp,
   resolveMcpSelection,
   type TurnMcp,
@@ -305,6 +308,7 @@ export class SessionService {
   private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
+  private mcpKey?: Buffer;
   private checkingOut = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
@@ -839,6 +843,19 @@ export class SessionService {
     return structuredClone(current);
   }
 
+  async mcpServers(
+    provider: Session['provider'],
+    directory: string,
+    signal: AbortSignal,
+  ): Promise<McpServerList> {
+    return listMcpServers(this.fingerprintKey(), provider, directory, signal);
+  }
+
+  private fingerprintKey(): Buffer {
+    this.mcpKey ??= readFingerprintKey(this.directory);
+    return this.mcpKey;
+  }
+
   private async confirmMcp(
     provider: Session['provider'],
     directory: string,
@@ -847,6 +864,7 @@ export class SessionService {
   ): Promise<Session['mcp']> {
     try {
       return await resolveMcpSelection(
+        this.fingerprintKey(),
         provider,
         directory,
         { servers: selection.servers, hooks: selection.hooks },
@@ -1705,6 +1723,7 @@ export class SessionService {
                 text: 'Checking MCP servers…',
               });
             turnMcp = await prepareTurnMcp(
+              this.fingerprintKey(),
               session.provider,
               session.directory,
               session.mcp,
@@ -1742,7 +1761,7 @@ export class SessionService {
                 ...(turnMcp
                   ? {
                       mcp: {
-                        servers: turnMcp.fingerprints,
+                        servers: turnMcp.definitions,
                         hooks: turnMcp.hooks,
                       },
                     }

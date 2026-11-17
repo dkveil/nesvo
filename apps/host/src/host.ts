@@ -34,7 +34,6 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
-import { listMcpServers } from './mcp/service';
 import { WorkflowRunStore } from './workflows/store';
 import {
   DefinitionError,
@@ -593,11 +592,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             continue;
           }
           mcpRequests++;
-          const discovery = listMcpServers(
-            target.provider,
-            target.directory,
-            probes.controller.signal,
-          )
+          const discovery = sessions
+            .mcpServers(
+              target.provider,
+              target.directory,
+              probes.controller.signal,
+            )
             .then(list => send({ type: 'mcp-servers', id: request.id, list }))
             .catch(() =>
               send({
