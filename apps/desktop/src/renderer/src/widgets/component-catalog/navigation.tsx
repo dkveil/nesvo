@@ -15,6 +15,7 @@ import { DiffStat, FileGlyph } from '@/entities/file-change';
 import { StatusIcon } from '@/entities/status';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { CountBadge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Disclosure, NativeDisclosure } from '@/shared/ui/disclosure';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
@@ -329,6 +330,27 @@ function RowSpecimens() {
               </span>
             </ListRow>
           ))}
+        </div>
+      </StateCaption>
+      <StateCaption label="block · multi-line with decisions">
+        <div className="w-full rounded-control border bg-card p-1">
+          <ListRow density="block" columns="minmax(0,1fr) auto">
+            <div className="min-w-0 space-y-1">
+              <Button variant="link" size="inline" className="text-foreground">
+                Sample session
+              </Button>
+              <p className="line-clamp-2 text-muted-foreground">
+                A wrapped summary of the request that needs a decision.
+              </p>
+              <p className="text-2xs text-muted-foreground">
+                Result · v2 · Pending
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 self-center">
+              <Button variant="secondary">Accept</Button>
+              <Button variant="ghost">Decline</Button>
+            </div>
+          </ListRow>
         </div>
       </StateCaption>
     </div>

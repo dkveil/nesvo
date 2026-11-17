@@ -78,6 +78,14 @@ export function ActionsSection() {
             </Button>
           </SpecimenRow>
         ))}
+        <SpecimenRow label="inline">
+          <p className="text-ui text-muted-foreground">
+            Sample session is running ·{' '}
+            <Button variant="link" size="inline">
+              Stop
+            </Button>
+          </p>
+        </SpecimenRow>
       </Specimen>
       <Specimen
         title="Button · states"

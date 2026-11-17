@@ -1,7 +1,7 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import { cn } from '@/shared/lib/cn';
 
-type ListRowDensity = 'tree' | 'compact' | 'two-line' | 'grid';
+type ListRowDensity = 'tree' | 'compact' | 'two-line' | 'grid' | 'block';
 type ListRowSize = 'md' | 'sm';
 
 type ListRowProps = Omit<ComponentProps<'div'>, 'title' | 'onClick'> & {
@@ -34,12 +34,14 @@ const densityClasses: Record<ListRowSize, Record<ListRowDensity, string>> = {
     compact: 'h-7 gap-2 text-ui',
     'two-line': 'min-h-11 gap-2.5 py-1 text-ui',
     grid: 'grid h-8 items-center gap-3 text-ui',
+    block: 'grid items-start gap-x-5 gap-y-1 py-2.5 text-ui',
   },
   sm: {
     tree: 'h-5.5 gap-1.5 text-xs',
     compact: 'h-7 gap-1.5 text-xs',
     'two-line': 'min-h-10 items-start gap-1.5 py-1 text-xs',
     grid: 'grid h-7 items-center gap-3 text-xs',
+    block: 'grid items-start gap-x-5 gap-y-1 py-2.5 text-xs',
   },
 };
 
@@ -86,78 +88,76 @@ export function ListRow({
     'aria-controls': ariaControls,
   };
   const inset = BASE_INSET_PX + level * TREE_INDENT_PX;
-  const content =
-    density === 'grid' ? (
-      children
-    ) : (
-      <>
-        {leading && (
+  const laidOut = density === 'grid' || density === 'block';
+  const content = laidOut ? (
+    children
+  ) : (
+    <>
+      {leading && (
+        <span
+          className={cn(
+            'flex shrink-0 items-center [&_svg:not([class*=size-])]:size-3.5',
+            sidebar ? 'text-sidebar-icon' : 'text-muted-foreground',
+            twoLine && size === 'sm' && 'h-4',
+          )}
+        >
+          {leading}
+        </span>
+      )}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex min-w-0 items-center gap-1.5">
           <span
             className={cn(
-              'flex shrink-0 items-center [&_svg:not([class*=size-])]:size-3.5',
-              sidebar ? 'text-sidebar-icon' : 'text-muted-foreground',
-              twoLine && size === 'sm' && 'h-4',
+              'min-w-0 flex-1 truncate',
+              twoLine && 'font-medium',
+              sidebar && 'text-sidebar-foreground',
+              heading && [
+                'font-medium',
+                sidebar
+                  ? 'text-sidebar-muted-foreground group-hover/row:text-sidebar-foreground'
+                  : 'text-muted-foreground group-hover/row:text-foreground',
+              ],
             )}
           >
-            {leading}
+            {title ?? children}
           </span>
-        )}
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5">
+          {meta && twoLine && (
             <span
               className={cn(
-                'min-w-0 flex-1 truncate',
-                twoLine && 'font-medium',
-                sidebar && 'text-sidebar-foreground',
-                heading && [
-                  'font-medium',
-                  sidebar
-                    ? 'text-sidebar-muted-foreground group-hover/row:text-sidebar-foreground'
-                    : 'text-muted-foreground group-hover/row:text-foreground',
-                ],
+                'flex shrink-0 items-center gap-1 text-2xs leading-4 tabular-nums',
+                mutedText,
+                overlay && hiddenWhileActionsShow,
               )}
             >
-              {title ?? children}
-            </span>
-            {meta && twoLine && (
-              <span
-                className={cn(
-                  'flex shrink-0 items-center gap-1 text-2xs leading-4 tabular-nums',
-                  mutedText,
-                  overlay && hiddenWhileActionsShow,
-                )}
-              >
-                {meta}
-              </span>
-            )}
-          </span>
-          {description && twoLine && (
-            <span className={cn('truncate text-2xs', mutedText)}>
-              {description}
+              {meta}
             </span>
           )}
         </span>
-        {trailing && (
-          <span
-            className={cn(
-              'flex shrink-0 items-center gap-1.5 text-2xs tabular-nums',
-              mutedText,
-              overlay && hiddenWhileActionsShow,
-            )}
-          >
-            {trailing}
+        {description && twoLine && (
+          <span className={cn('truncate text-2xs', mutedText)}>
+            {description}
           </span>
         )}
-      </>
-    );
+      </span>
+      {trailing && (
+        <span
+          className={cn(
+            'flex shrink-0 items-center gap-1.5 text-2xs tabular-nums',
+            mutedText,
+            overlay && hiddenWhileActionsShow,
+          )}
+        >
+          {trailing}
+        </span>
+      )}
+    </>
+  );
   const layout = cn(
     'flex min-w-0 flex-1 items-center text-left',
     densityClasses[size][density],
   );
   const gridStyle: CSSProperties | undefined =
-    density === 'grid' && columns
-      ? { gridTemplateColumns: columns }
-      : undefined;
+    laidOut && columns ? { gridTemplateColumns: columns } : undefined;
   return (
     <div
       data-slot="list-row"
