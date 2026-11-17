@@ -1,5 +1,15 @@
 # Platform verification
 
+## R5-G Automations scenario evidence
+
+The principal desktop scenario and the Linux daemon case were extended for Automations on the Linux VPS used for development (Xvfb, Electron with its embedded Node, provider fixtures, isolated profile). They check Run now with an accepted result, a restart with two missed occurrences recorded as one skipped run, a provider limit shown as unavailable with its reset time, a refused second instance, and an unattended daemon run that a later client receives once. See [testing.md](testing.md) for the exact assertions. These are fixture runs: they do not show successful real model output, subscription access or behavior on Windows and macOS.
+
+Pending evidence, recorded separately and not automated:
+
+- Windows, real Codex: one read-only automation scheduled a few minutes ahead on the Windows PC, a scheduled run with its session, saved result and acceptance. The earlier Codex fixture run on Windows did not confirm process closure and showed as failed, so this needs a real run to show whether closure is confirmed.
+- VPS daemon: one scheduled run on the real `nesvo-host-r4` while the desktop is disconnected, then a reconnect that shows the completed run and the pending result without replay. This needs separate owner consent to deploy the current bundle with its schema migrations to that host and restart the service, with a database backup first. Until then the desktop hides Automations for a host that does not report the capability.
+- Real Claude: one read-only attempt. An account-limit outcome is recorded as `unavailable/limit` and is not counted as success.
+
 ## Agent step structured output
 
 On November 14 the structured-verdict capabilities of the installed providers on the Linux VPS were checked without a model turn on the real accounts. Claude Code 2.1.311 lists `--json-schema`, `--no-session-persistence`, `--setting-sources` and `--bare` in `--help`; with an empty configuration directory and an invalid API key the CLI accepted `--setting-sources ""` together with `--json-schema`, listed `StructuredOutput` beside Read, Glob and Grep in its init frame and ended with an API error, so no tokens were used and no `structured_output` was observed. `--bare` restricted authentication to an API key and is not used. Codex 0.167.0's generated app-server protocol schema documents `outputSchema` on `turn/start` as constraining the final assistant message. Every agent step check in the repository uses the provider fixtures; no successful real verdict from either provider is claimed, and the open real-Claude evidence of P2 is unchanged.
