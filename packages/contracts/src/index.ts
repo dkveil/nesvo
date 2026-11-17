@@ -121,6 +121,13 @@ import {
   type SaveScheduledJobInput,
 } from './scheduled-jobs';
 import {
+  listMcpServersSchema,
+  mcpServerListSchema,
+  type ListMcpServersInput,
+  type McpServerList,
+} from './mcp';
+import { setSessionMcpSchema, type SetSessionMcpInput } from './mcp-selection';
+import {
   discoverSkillsSchema,
   skillCatalogSchema,
   type DiscoverSkillsInput,
@@ -217,6 +224,8 @@ export * from './reviews';
 export * from './workspace';
 export * from './history-search';
 export * from './skills';
+export * from './mcp';
+export * from './mcp-selection';
 export * from './computers';
 export * from './provider-usage';
 export * from './costs';
@@ -311,6 +320,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('discover-skills'),
     input: discoverSkillsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-mcp-servers'),
+    input: listMcpServersSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-session-mcp'),
+    input: setSessionMcpSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -653,6 +672,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('skills'),
     id: z.uuid(),
     catalog: skillCatalogSchema,
+  }),
+  z.strictObject({
+    type: z.literal('mcp-servers'),
+    id: z.uuid(),
+    list: mcpServerListSchema,
   }),
   z.strictObject({
     type: z.literal('workspace-directory'),
@@ -1000,6 +1024,14 @@ export type DesktopApi = {
     input: HistorySearchInput,
     hostId?: HostId,
   ) => Promise<HistorySearchPage>;
+  listMcpServers: (
+    input: ListMcpServersInput,
+    hostId?: HostId,
+  ) => Promise<McpServerList>;
+  setSessionMcp: (
+    input: SetSessionMcpInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
     hostId?: HostId,

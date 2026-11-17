@@ -7,6 +7,11 @@ import {
   reasoningEffortSchema,
 } from './reasoning-effort';
 import { skillHashSchema, skillReferenceSchema } from './skills';
+import {
+  mcpSelectionSchema,
+  messageMcpSchema,
+  sessionMcpSchema,
+} from './mcp-selection';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -127,6 +132,7 @@ export const createSessionSchema = z
     effort: reasoningEffortSchema.optional(),
     isolation: sessionIsolationSchema.optional(),
     groupId: z.uuid().optional(),
+    mcp: mcpSelectionSchema.optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -237,6 +243,7 @@ export const sessionMessageSchema = z.strictObject({
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.nullable().default(null),
+  mcp: messageMcpSchema.nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -258,6 +265,7 @@ export const sessionSchema = z.strictObject({
   workflowRunId: z.uuid().nullable().default(null),
   workflowStepId: z.uuid().nullable().default(null),
   workflow: sessionWorkflowSchema.nullable().default(null),
+  mcp: sessionMcpSchema.default({ servers: [], hooks: false }),
   pullRequest: pullRequestReferenceSchema.nullable().default(null),
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
