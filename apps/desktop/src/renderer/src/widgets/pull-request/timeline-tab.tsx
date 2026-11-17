@@ -6,12 +6,14 @@ import {
   MessageSquareShare,
   Reply,
 } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
-import { shortSha } from '@/entities/pull-request';
+import { RelativeTime, shortSha } from '@/entities/pull-request';
 import { MessageBody } from '@/widgets/conversation/message-body';
-import { formatRelativeTime } from '@/shared/lib/relative-time';
+import { Badge, type BadgeTone } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { ListRow } from '@/shared/ui/list-row';
 import { CommentBox } from './comment-box';
+import { DisabledHint } from './disabled-hint';
 import { replyQuote, type TimelineDiscussion } from './session-prompt';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
@@ -39,23 +41,16 @@ type TimelineTabProps = {
   onSend: (item: TimelineDiscussion) => void;
 };
 
-const ENTRY_ACTION =
-  'h-6 text-2xs text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed';
+const REVIEW_STATE_TONES: Record<ReviewState, BadgeTone> = {
+  approved: 'success',
+  'changes-requested': 'error',
+  commented: 'neutral',
+  dismissed: 'neutral',
+  pending: 'neutral',
+};
 
 const itemKey = (item: PullRequestTimelineItem) =>
   item.kind === 'commit' ? `commit:${item.oid}` : `${item.kind}:${item.id}`;
-
-function When({ at, now }: { at: string; now: number }) {
-  return (
-    <time
-      dateTime={at}
-      title={new Date(at).toLocaleString()}
-      className="shrink-0 text-2xs text-muted-foreground tabular-nums"
-    >
-      {formatRelativeTime(at, now)}
-    </time>
-  );
-}
 
 type TimelineEntryProps = {
   item: PullRequestTimelineItem;
@@ -76,52 +71,51 @@ function TimelineEntry({
 }: TimelineEntryProps) {
   if (item.kind === 'commit')
     return (
-      <li className="flex h-6 items-center gap-2 px-1 text-xs">
-        <GitCommitHorizontal
-          aria-hidden="true"
-          className="size-3.5 shrink-0 text-muted-foreground"
+      <li>
+        <ListRow
+          leading={<GitCommitHorizontal />}
+          title={
+            <>
+              <code className="font-mono text-2xs text-muted-foreground">
+                {shortSha(item.oid)}
+              </code>{' '}
+              {item.headline}
+            </>
+          }
+          trailing={
+            <>
+              <span className="max-w-24 truncate">{item.author}</span>
+              <RelativeTime at={item.createdAt} now={now} />
+            </>
+          }
         />
-        <code className="shrink-0 font-mono text-2xs text-muted-foreground">
-          {shortSha(item.oid)}
-        </code>
-        <span className="min-w-0 flex-1 truncate" title={item.headline}>
-          {item.headline}
-        </span>
-        <span className="max-w-24 shrink-0 truncate text-2xs text-muted-foreground">
-          {item.author}
-        </span>
-        <When at={item.createdAt} now={now} />
       </li>
     );
   const author = item.author?.login ?? 'unknown';
   return (
-    <li className="rounded-lg border bg-card">
-      <div className="flex h-7 items-center gap-2 border-b px-3 text-xs">
+    <li className="rounded-surface border bg-card">
+      <div className="flex h-8 items-center gap-2 border-b px-3 text-xs">
         <MessageSquare
           aria-hidden="true"
           className="size-3.5 shrink-0 text-muted-foreground"
         />
         <span className="min-w-0 truncate font-medium">{author}</span>
         {item.author?.isBot && (
-          <span className="text-2xs text-muted-foreground">bot</span>
+          <Badge size="xs" appearance="outline">
+            bot
+          </Badge>
         )}
         {item.kind === 'review' && (
-          <span
-            className={cn(
-              'rounded-full px-1.5 text-2xs leading-4',
-              item.state === 'approved' && 'bg-accent text-success-foreground',
-              item.state === 'changes-requested' &&
-                'bg-accent text-error-foreground',
-              item.state !== 'approved' &&
-                item.state !== 'changes-requested' &&
-                'bg-accent text-muted-foreground',
-            )}
-          >
+          <Badge size="xs" tone={REVIEW_STATE_TONES[item.state]}>
             {REVIEW_STATE_LABELS[item.state]}
-          </span>
+          </Badge>
         )}
         <span className="flex-1" />
-        <When at={item.createdAt} now={now} />
+        <RelativeTime
+          at={item.createdAt}
+          now={now}
+          className="shrink-0 text-2xs text-muted-foreground tabular-nums"
+        />
       </div>
       {item.body.trim() ? (
         <>
@@ -130,30 +124,36 @@ function TimelineEntry({
             className="px-3 pt-2 text-xs leading-5"
           />
           <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              disabled={!!replyReason}
-              title={replyReason || 'Quote this in a new comment'}
-              onClick={() => onReply(item)}
-              className={ENTRY_ACTION}
+            <DisabledHint
+              reason={replyReason}
+              hint="Quote this in a new comment"
             >
-              <Reply />
-              Reply
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              disabled={!!sendReason}
-              title={sendReason || 'Put this into the session composer'}
-              onClick={() => onSend(item)}
-              className={ENTRY_ACTION}
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                disabled={!!replyReason}
+                onClick={() => onReply(item)}
+              >
+                <Reply />
+                Reply
+              </Button>
+            </DisabledHint>
+            <DisabledHint
+              reason={sendReason}
+              hint="Put this into the session composer"
             >
-              <MessageSquareShare />
-              Send to session
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                disabled={!!sendReason}
+                onClick={() => onSend(item)}
+              >
+                <MessageSquareShare />
+                Send to session
+              </Button>
+            </DisabledHint>
           </div>
         </>
       ) : (
@@ -225,7 +225,7 @@ ${quoted}`
           ))}
         </ol>
       ) : (
-        <p className="text-xs text-muted-foreground">No activity yet.</p>
+        <EmptyState size="sm" icon={MessageSquare} title="No activity yet." />
       )}
       <CommentBox
         label="Comment"

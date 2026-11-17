@@ -1,14 +1,13 @@
 import { useState, type ReactNode } from 'react';
 import type { PullRequest, PullRequestCheck } from '@nesvo/contracts';
-import {
-  CircleCheck,
-  CircleDot,
-  CircleMinus,
-  CircleX,
-  ExternalLink,
-} from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { StatusIcon, type StatusKind } from '@/entities/status';
 import { MessageBody } from '@/widgets/conversation/message-body';
+import { Badge } from '@/shared/ui/badge';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { SectionLabel } from '@/shared/ui/section-label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { CommentBox } from './comment-box';
 import { openExternal } from './open-external';
@@ -48,49 +47,26 @@ function Section({
 }) {
   return (
     <section className="space-y-1.5">
-      <h3 className="flex items-center justify-between gap-2 text-2xs font-medium text-muted-foreground">
+      <SectionLabel action={aside} className="px-0">
         {title}
-        {aside}
-      </h3>
+      </SectionLabel>
       {children}
     </section>
   );
 }
 
-function CheckGlyph({ check }: { check: PullRequestCheck }) {
-  if (check.status !== 'completed')
-    return (
-      <CircleDot
-        aria-hidden="true"
-        className="size-3.5 shrink-0 text-warning-foreground"
-      />
-    );
-  if (check.conclusion === 'success')
-    return (
-      <CircleCheck
-        aria-hidden="true"
-        className="size-3.5 shrink-0 text-success-foreground"
-      />
-    );
+const checkStatus = (check: PullRequestCheck): StatusKind => {
+  if (check.status !== 'completed') return 'pending';
+  if (check.conclusion === 'success') return 'success';
   if (
     check.conclusion === 'failure' ||
     check.conclusion === 'timed-out' ||
     check.conclusion === 'action-required' ||
     check.conclusion === 'cancelled'
   )
-    return (
-      <CircleX
-        aria-hidden="true"
-        className="size-3.5 shrink-0 text-error-foreground"
-      />
-    );
-  return (
-    <CircleMinus
-      aria-hidden="true"
-      className="size-3.5 shrink-0 text-muted-foreground"
-    />
-  );
-}
+    return 'error';
+  return 'idle';
+};
 
 const checkLabel = (check: PullRequestCheck) =>
   check.status === 'completed'
@@ -124,6 +100,7 @@ export function SummaryTab({
             decision && (
               <span
                 className={cn(
+                  'text-2xs',
                   pullRequest.reviewDecision === 'approved' &&
                     'text-success-foreground',
                   pullRequest.reviewDecision === 'changes-requested' &&
@@ -138,11 +115,8 @@ export function SummaryTab({
           {pullRequest.reviewers.length > 0 ? (
             <ul className="flex flex-wrap gap-1">
               {pullRequest.reviewers.map(reviewer => (
-                <li
-                  key={reviewer.login}
-                  className="rounded-md bg-accent px-1.5 py-0.5 text-2xs"
-                >
-                  {reviewer.login}
+                <li key={reviewer.login}>
+                  <Badge>{reviewer.login}</Badge>
                 </li>
               ))}
             </ul>
@@ -154,11 +128,8 @@ export function SummaryTab({
           {pullRequest.labels.length > 0 ? (
             <ul className="flex flex-wrap gap-1">
               {pullRequest.labels.map(label => (
-                <li
-                  key={label}
-                  className="rounded-full border px-1.5 py-0.5 text-2xs text-muted-foreground"
-                >
-                  {label}
+                <li key={label}>
+                  <Badge appearance="outline">{label}</Badge>
                 </li>
               ))}
             </ul>
@@ -169,29 +140,32 @@ export function SummaryTab({
       </div>
       {pullRequest.checkRuns.length > 0 && (
         <Section title={`Checks · ${pullRequest.checkRuns.length}`}>
-          <ul className="space-y-px">
+          <ul className="-mx-2 space-y-px">
             {pullRequest.checkRuns.map((check, index) => (
-              <li
-                key={`${check.name}:${index}`}
-                className="group flex h-6 items-center gap-2 rounded-md px-1.5 text-xs transition-colors duration-100 hover:bg-accent"
-              >
-                <CheckGlyph check={check} />
-                <span className="min-w-0 flex-1 truncate" title={check.name}>
-                  {check.name}
-                </span>
-                <span className="shrink-0 text-2xs text-muted-foreground capitalize">
-                  {checkLabel(check)}
-                </span>
-                {check.url && (
-                  <button
-                    type="button"
-                    aria-label={`Open check ${check.name}`}
-                    onClick={() => check.url && openExternal(check.url)}
-                    className="flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity duration-100 outline-none group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <ExternalLink className="size-3" aria-hidden="true" />
-                  </button>
-                )}
+              <li key={`${check.name}:${index}`}>
+                <ListRow
+                  leading={
+                    <StatusIcon
+                      status={checkStatus(check)}
+                      className="size-3.5"
+                    />
+                  }
+                  title={check.name}
+                  trailing={
+                    <span className="capitalize">{checkLabel(check)}</span>
+                  }
+                  actions={
+                    check.url && (
+                      <IconButton
+                        label={`Open check ${check.name}`}
+                        size={20}
+                        onClick={() => check.url && openExternal(check.url)}
+                      >
+                        <ExternalLink />
+                      </IconButton>
+                    )
+                  }
+                />
               </li>
             ))}
           </ul>
@@ -199,10 +173,7 @@ export function SummaryTab({
       )}
       <Section title="Description">
         {pullRequest.body.trim() ? (
-          <MessageBody
-            body={pullRequest.body}
-            className="text-[13px] leading-6"
-          />
+          <MessageBody body={pullRequest.body} className="text-ui leading-6" />
         ) : (
           <p className="text-xs text-muted-foreground">No description.</p>
         )}
