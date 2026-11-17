@@ -1,9 +1,7 @@
-import { Tooltip } from 'radix-ui';
-import { cn } from '@/shared/lib/cn';
 import type { Provider } from '@/entities/session';
-import { TooltipContent } from '@/shared/ui/tooltip';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { IndicatorTooltip } from './indicator-tooltip';
-import { UsageBar } from './usage-bar';
 import { UsageRing } from './usage-ring';
 import {
   allowanceLevel,
@@ -14,7 +12,7 @@ import {
   type UsageState,
 } from './usage-state';
 
-export type UsageLayout = 'row' | 'column' | 'bars' | 'account';
+export type UsageLayout = 'row' | 'column' | 'account';
 
 type Props = {
   provider: Provider;
@@ -47,47 +45,32 @@ export function UsageIndicator({
       : 'unavailable';
   const label = `${provider} limits: ${summary}${connected ? '' : ', offline'}`;
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <button
-          type="button"
-          aria-label={label}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <IconButton
+          label={label}
+          tooltip={false}
+          tone="sidebar"
+          shape="round"
           aria-haspopup="dialog"
           aria-expanded={expanded}
           data-provider-indicator={provider}
           data-usage-state={indicator}
           data-usage-stale={indicator === 'stale'}
-          className={cn(
-            'transition-[background-color,scale] duration-150 ease-out outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:scale-[0.97] aria-expanded:bg-sidebar-row-selected',
-            layout === 'bars'
-              ? 'flex h-7 w-full items-center rounded-md px-1.5'
-              : 'grid size-7 place-items-center rounded-full',
-          )}
           onClick={event => onOpen(event.currentTarget)}
         >
-          {layout === 'bars' ? (
-            <UsageBar
-              provider={provider}
-              remaining={shown}
-              level={level}
-              state={indicator}
-            />
-          ) : (
-            <UsageRing
-              provider={provider}
-              remaining={shown}
-              level={level}
-              state={indicator}
-            />
-          )}
-        </button>
-      </Tooltip.Trigger>
+          <UsageRing
+            provider={provider}
+            remaining={shown}
+            level={level}
+            state={indicator}
+          />
+        </IconButton>
+      </TooltipTrigger>
       <TooltipContent
-        side={layout === 'row' ? 'top' : layout === 'column' ? 'right' : 'left'}
-        align="center"
-        collisionPadding={12}
+        side={layout === 'row' ? 'top' : 'right'}
         variant="panel"
-        className="w-80"
+        className="w-72"
       >
         <IndicatorTooltip
           provider={provider}
@@ -96,6 +79,6 @@ export function UsageIndicator({
           now={now}
         />
       </TooltipContent>
-    </Tooltip.Root>
+    </Tooltip>
   );
 }

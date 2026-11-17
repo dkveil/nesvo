@@ -1,4 +1,5 @@
 import type { Provider } from '@/entities/session';
+import { Meter } from '@/shared/ui/progress';
 import {
   formatPercent,
   formatResetTime,
@@ -103,20 +104,12 @@ export function UsageDetails({
                     {formatPercent(Math.max(0, 100 - window.usedPercent))} left
                   </span>
                 </div>
-                <div
-                  role="progressbar"
-                  aria-label={`${provider} ${window.label} used`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.min(100, window.usedPercent)}
+                <Meter
+                  label={`${provider} ${window.label} used`}
+                  value={Math.min(100, window.usedPercent)}
+                  stale={outdated}
                   aria-valuetext={`${formatPercent(window.usedPercent)} used${outdated ? ', stale observation' : ''}`}
-                  className={`h-1 overflow-hidden rounded-full bg-secondary ${outdated ? 'opacity-50' : ''}`}
-                >
-                  <div
-                    className="h-full bg-foreground/70"
-                    style={{ width: `${Math.min(100, window.usedPercent)}%` }}
-                  />
-                </div>
+                />
                 <p className="text-2xs text-muted-foreground tabular-nums">
                   {window.resetsAt ? (
                     <>

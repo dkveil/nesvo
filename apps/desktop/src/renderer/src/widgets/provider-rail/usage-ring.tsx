@@ -1,5 +1,6 @@
 import { cn } from '@/shared/lib/cn';
 import { ProviderGlyph, type Provider } from '@/entities/session';
+import { StatusDot } from '@/shared/ui/status-dot';
 import type { AllowanceLevel, IndicatorState } from './usage-state';
 
 type Props = {
@@ -45,7 +46,7 @@ export function UsageRing({ provider, remaining, level, state }: Props) {
             strokeDasharray={RING_CIRCUMFERENCE}
             strokeDashoffset={offset}
             className={cn(
-              'transition-[stroke-dashoffset] duration-300 ease-out',
+              'transition-[stroke-dashoffset] duration-slow ease-out',
               state === 'offline'
                 ? 'stroke-muted-foreground/60'
                 : [
@@ -65,16 +66,11 @@ export function UsageRing({ provider, remaining, level, state }: Props) {
           state === 'current' ? 'text-foreground' : 'text-muted-foreground',
         )}
       />
-      {state === 'offline' && (
-        <span
-          aria-hidden="true"
-          className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-sidebar bg-muted-foreground"
-        />
-      )}
-      {state === 'stale' && (
-        <span
-          aria-hidden="true"
-          className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-sidebar bg-warning-foreground"
+      {(state === 'offline' || state === 'stale') && (
+        <StatusDot
+          tone={state === 'offline' ? 'neutral' : 'warning'}
+          ringClassName="border-sidebar"
+          className="absolute -right-0.5 -bottom-0.5"
         />
       )}
     </span>

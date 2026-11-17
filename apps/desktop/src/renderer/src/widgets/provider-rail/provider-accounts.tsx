@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { providers, type Provider } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
 import { UsageDetails } from './usage-details';
 import { useUsageClock } from './use-usage-clock';
 import type { UsageState } from './usage-state';
@@ -43,23 +43,14 @@ export function ProviderAccounts({
             {connected ? '' : ' · Offline'}
           </span>
         </h2>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="text-muted-foreground hover:text-foreground"
-          aria-label="Refresh limits"
-          title="Refresh limits"
+        <IconButton
+          label="Refresh limits"
+          size={24}
           disabled={!connected || loading}
           onClick={onRefresh}
         >
-          <RefreshCw
-            className={cn(
-              'size-3',
-              loading && 'animate-spin motion-reduce:animate-none',
-            )}
-          />
-        </Button>
+          <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
+        </IconButton>
       </header>
       {children}
       <div className="divide-y">
