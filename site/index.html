@@ -23,592 +23,105 @@
     <script src="main.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to content</a>
+    <main class="stage">
+      <h1 class="wordmark">
+        <svg
+          viewBox="18 18 372 64"
+          role="img"
+          aria-label="Nesvo"
+          focusable="false"
+        >
+          <g fill="currentColor" fill-rule="evenodd">
+            <g transform="translate(18 18)">
+              <path class="letter" d="M0 64V0H40L64 24V64H44V32L32 20H20V64Z" />
+            </g>
+            <g transform="translate(96 18)">
+              <path
+                class="letter"
+                d="M0 0H44L60 16H20V24H50V40H20V48H60V64H0Z"
+              />
+            </g>
+            <g transform="translate(170 18)">
+              <path
+                class="letter"
+                d="M16 0H64V16H20V24H48L64 40V48L48 64H0V48H44V40H16L0 24V16Z"
+              />
+            </g>
+            <g transform="translate(248 18)">
+              <path
+                class="letter"
+                d="M0 0H20V32L32 44L44 32V0H64V40L40 64H24L0 40Z"
+              />
+            </g>
+            <g transform="translate(326 18)">
+              <path
+                class="letter"
+                d="M0 0H40L64 24V64H24L0 40ZM20 20V32L32 44H44V32L32 20Z"
+              />
+            </g>
+          </g>
+        </svg>
+      </h1>
 
-    <header class="site-header">
-      <div class="container header-inner">
-        <a class="header-brand" href="#top" aria-label="Nesvo home">
-          <svg
-            class="header-mark"
-            viewBox="0 0 100 100"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path
-              transform="translate(18 18)"
-              fill="currentColor"
-              d="M0 64V0H40L64 24V64H44V32L32 20H20V64Z"
-            />
-          </svg>
-        </a>
-        <nav class="header-nav" aria-label="Primary">
-          <a href="#features">Features</a>
-          <a href="#first-launch">First launch</a>
-          <a href="https://github.com/dkveil/nesvo">GitHub</a>
-        </nav>
-      </div>
-    </header>
+      <p class="tagline">
+        A desktop app to run and supervise AI coding sessions with the Claude
+        Code and Codex CLIs you already use.
+      </p>
 
-    <main id="main">
-      <section class="hero" id="top" aria-labelledby="hero-title">
-        <div class="container hero-inner">
-          <h1 id="hero-title" class="hero-wordmark">
-            <svg
-              viewBox="0 0 408 100"
-              role="img"
-              aria-label="Nesvo"
-              focusable="false"
-            >
-              <g fill="currentColor" fill-rule="evenodd">
-                <path
-                  transform="translate(18 18)"
-                  d="M0 64V0H40L64 24V64H44V32L32 20H20V64Z"
-                />
-                <path
-                  transform="translate(96 18)"
-                  d="M0 0H44L60 16H20V24H50V40H20V48H60V64H0Z"
-                />
-                <path
-                  transform="translate(170 18)"
-                  d="M16 0H64V16H20V24H48L64 40V48L48 64H0V48H44V40H16L0 24V16Z"
-                />
-                <path
-                  transform="translate(248 18)"
-                  d="M0 0H20V32L32 44L44 32V0H64V40L40 64H24L0 40Z"
-                />
-                <path
-                  transform="translate(326 18)"
-                  d="M0 0H40L64 24V64H24L0 40ZM20 20V32L32 44H44V32L32 20Z"
-                />
+      <section class="download" data-download aria-label="Download">
+        <a
+          class="download-button"
+          href="/releases"
+          data-primary
+          data-state="idle"
+        >
+          <span class="download-glow" aria-hidden="true"></span>
+          <span class="download-tile" aria-hidden="true">
+            <svg class="glyph" viewBox="0 0 64 64" focusable="false">
+              <g class="glyph-mark" fill="currentColor">
+                <path class="glyph-stem" d="M0 0H20V64H0Z" />
+                <path class="glyph-arch" d="M20 0H40L64 24V32H44L32 20H20Z" />
+                <path class="glyph-leg" d="M44 32H64V64H44Z" />
               </g>
+              <path
+                class="glyph-arrow"
+                fill="currentColor"
+                d="M22 4H42V34H56L32 58L8 34H22Z"
+              />
             </svg>
-          </h1>
-          <p class="hero-lead">
-            Run and supervise AI coding sessions from one calm desktop app.
-          </p>
-          <p class="hero-sub">
-            Nesvo works with the Claude Code and Codex CLIs you already have
-            installed and signed in. You choose the permissions, review every
-            result and stay in control.
-          </p>
+          </span>
+          <span class="download-text">
+            <span class="download-label" data-label>Download Nesvo</span>
+            <span class="download-detail" data-detail>Windows and macOS</span>
+          </span>
+          <span class="download-sweep" aria-hidden="true"></span>
+        </a>
 
-          <div class="download" data-download>
-            <a
-              class="button button-primary"
-              data-primary-download
-              href="https://github.com/dkveil/nesvo/releases/latest/download/Nesvo-macOS-arm64.dmg"
-            >
-              <span class="button-icon" aria-hidden="true">
-                <svg viewBox="0 0 16 16" focusable="false">
-                  <path
-                    d="M8 2v8m0 0-3-3m3 3 3-3M3 13h10"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
-              <span data-primary-label>Download for macOS</span>
-            </a>
-            <p class="download-meta">
-              <span data-primary-detail>Apple silicon</span>
-              <span aria-hidden="true">·</span>
-              <span>Latest release</span>
-            </p>
-            <p class="download-intel" data-intel-note>
-              On an Intel Mac?
-              <a
-                href="https://github.com/dkveil/nesvo/releases/latest/download/Nesvo-macOS-x64.dmg"
-                >Download for Intel</a
-              >
-            </p>
-            <ul class="download-other" aria-label="All downloads">
-              <li data-platform="windows">
-                <a
-                  href="https://github.com/dkveil/nesvo/releases/latest/download/Nesvo-Windows-Setup.exe"
-                  >Windows <span class="muted">x64</span></a
-                >
-              </li>
-              <li data-platform="mac-arm">
-                <a
-                  href="https://github.com/dkveil/nesvo/releases/latest/download/Nesvo-macOS-arm64.dmg"
-                  >macOS <span class="muted">Apple silicon</span></a
-                >
-              </li>
-              <li data-platform="mac-intel">
-                <a
-                  href="https://github.com/dkveil/nesvo/releases/latest/download/Nesvo-macOS-x64.dmg"
-                  >macOS <span class="muted">Intel</span></a
-                >
-              </li>
-              <li>
-                <a href="https://github.com/dkveil/nesvo/releases"
-                  >All releases</a
-                >
-              </li>
-              <li>
-                <a href="https://github.com/dkveil/nesvo">View on GitHub</a>
-              </li>
-            </ul>
-          </div>
-        </div>
+        <p class="download-alt" data-intel hidden>
+          Intel Mac? <a href="/download/mac-intel">Get the Intel build</a>
+        </p>
 
-        <div class="container">
-          <figure class="preview">
-            <svg
-              class="preview-art"
-              viewBox="0 0 1120 640"
-              role="img"
-              aria-labelledby="preview-caption"
-              focusable="false"
-            >
-              <rect
-                class="pv-window"
-                x="0.5"
-                y="0.5"
-                width="1119"
-                height="639"
-                rx="14"
-              />
-              <rect class="pv-rail" x="1" y="1" width="56" height="638" />
-              <line class="pv-divider" x1="57" y1="1" x2="57" y2="639" />
-              <rect
-                class="pv-chip"
-                x="17"
-                y="24"
-                width="24"
-                height="24"
-                rx="6"
-              />
-              <rect
-                class="pv-dot"
-                x="21"
-                y="84"
-                width="16"
-                height="16"
-                rx="4"
-              />
-              <rect
-                class="pv-dot"
-                x="21"
-                y="120"
-                width="16"
-                height="16"
-                rx="4"
-              />
-              <rect
-                class="pv-dot"
-                x="21"
-                y="156"
-                width="16"
-                height="16"
-                rx="4"
-              />
-              <circle class="pv-dot" cx="29" cy="604" r="10" />
+        <nav class="platforms" aria-label="Other downloads">
+          <a href="/download/windows" data-platform-link="windows">Windows</a>
+          <a href="/download/mac" data-platform-link="mac">macOS</a>
+          <a href="/download/mac-intel" data-platform-link="mac-intel"
+            >Intel Mac</a
+          >
+          <span class="platforms-divider" aria-hidden="true"></span>
+          <a href="/github">GitHub</a>
+          <a href="/releases" data-platform-link="other">All releases</a>
+        </nav>
 
-              <line class="pv-divider" x1="297" y1="1" x2="297" y2="639" />
-              <rect
-                class="pv-line strong"
-                x="81"
-                y="28"
-                width="96"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-row selected"
-                x="73"
-                y="68"
-                width="208"
-                height="36"
-                rx="8"
-              />
-              <rect
-                class="pv-line strong"
-                x="89"
-                y="81"
-                width="132"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="89"
-                y="125"
-                width="150"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="89"
-                y="161"
-                width="112"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="89"
-                y="197"
-                width="138"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line faint"
-                x="81"
-                y="249"
-                width="64"
-                height="8"
-                rx="4"
-              />
-              <rect
-                class="pv-line"
-                x="89"
-                y="281"
-                width="122"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="89"
-                y="317"
-                width="96"
-                height="10"
-                rx="5"
-              />
-
-              <rect
-                class="pv-line strong"
-                x="345"
-                y="40"
-                width="220"
-                height="12"
-                rx="6"
-              />
-              <rect
-                class="pv-bubble"
-                x="736"
-                y="96"
-                width="336"
-                height="64"
-                rx="16"
-              />
-              <rect
-                class="pv-line strong"
-                x="760"
-                y="116"
-                width="248"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line strong"
-                x="760"
-                y="136"
-                width="164"
-                height="10"
-                rx="5"
-              />
-
-              <rect
-                class="pv-line"
-                x="345"
-                y="200"
-                width="560"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="345"
-                y="222"
-                width="604"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="345"
-                y="244"
-                width="420"
-                height="10"
-                rx="5"
-              />
-
-              <rect
-                class="pv-card"
-                x="345"
-                y="284"
-                width="560"
-                height="116"
-                rx="12"
-              />
-              <rect
-                class="pv-accent"
-                x="369"
-                y="308"
-                width="10"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line strong"
-                x="391"
-                y="308"
-                width="180"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line faint"
-                x="369"
-                y="336"
-                width="420"
-                height="8"
-                rx="4"
-              />
-              <rect
-                class="pv-line faint"
-                x="369"
-                y="354"
-                width="360"
-                height="8"
-                rx="4"
-              />
-              <rect
-                class="pv-pill accent"
-                x="781"
-                y="364"
-                width="100"
-                height="24"
-                rx="12"
-              />
-              <rect
-                class="pv-pill"
-                x="669"
-                y="364"
-                width="100"
-                height="24"
-                rx="12"
-              />
-
-              <rect
-                class="pv-line"
-                x="345"
-                y="436"
-                width="520"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-line"
-                x="345"
-                y="458"
-                width="300"
-                height="10"
-                rx="5"
-              />
-
-              <rect
-                class="pv-composer"
-                x="345"
-                y="532"
-                width="727"
-                height="76"
-                rx="16"
-              />
-              <rect
-                class="pv-line faint"
-                x="369"
-                y="556"
-                width="240"
-                height="10"
-                rx="5"
-              />
-              <rect
-                class="pv-pill"
-                x="369"
-                y="580"
-                width="72"
-                height="16"
-                rx="8"
-              />
-              <circle class="pv-send" cx="1040" cy="584" r="14" />
-            </svg>
-            <figcaption id="preview-caption" class="visually-hidden">
-              An abstract outline of the Nesvo window: a narrow utility rail, a
-              session sidebar and a conversation with an approval card and a
-              composer.
-            </figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section class="section" id="features" aria-labelledby="features-title">
-        <div class="container">
-          <h2 id="features-title" class="section-title">What it does</h2>
-          <ul class="features">
-            <li class="feature">
-              <h3>Conversation-first sessions</h3>
-              <p>
-                Each session is a focused conversation with Claude Code or Codex
-                in a project folder, with its history stored on the computer
-                that runs it.
-              </p>
-            </li>
-            <li class="feature">
-              <h3>Explicit permissions</h3>
-              <p>
-                Pick the permission mode the provider supports for every
-                session. Nothing widens silently, and requests the app cannot
-                ask about are refused visibly.
-              </p>
-            </li>
-            <li class="feature">
-              <h3>One inbox for decisions</h3>
-              <p>
-                Approve operations, accept or correct saved results and decide
-                on proposed workers from a single list.
-              </p>
-            </li>
-            <li class="feature">
-              <h3>Workers, workflows and automations</h3>
-              <p>
-                See every worker a session proposes, assign saved workflows and
-                schedule automations that report back to the inbox.
-              </p>
-            </li>
-            <li class="feature">
-              <h3>Files, skills and pull requests</h3>
-              <p>
-                Browse session files, invoke skills with <kbd>/</kbd> and review
-                GitHub pull requests without leaving the app.
-              </p>
-            </li>
-            <li class="feature">
-              <h3>Local, SSH and mobile</h3>
-              <p>
-                Run sessions on this computer or on a server over SSH, and
-                follow them from the mobile companion, now in preview.
-              </p>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="how-title">
-        <div class="container">
-          <h2 id="how-title" class="section-title">How it works</h2>
-          <ol class="steps">
-            <li class="step">
-              <span class="step-number" aria-hidden="true">1</span>
-              <h3>Install the app</h3>
-              <p>Download Nesvo for Windows or macOS and open it.</p>
-            </li>
-            <li class="step">
-              <span class="step-number" aria-hidden="true">2</span>
-              <h3>Sign in as usual</h3>
-              <p>
-                Sign in to Claude Code and/or Codex in your terminal. Nesvo uses
-                that login and never asks for an API key.
-              </p>
-            </li>
-            <li class="step">
-              <span class="step-number" aria-hidden="true">3</span>
-              <h3>Start a session</h3>
-              <p>
-                Choose a folder, pick a permission mode and send your first
-                message.
-              </p>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      <section
-        class="section"
-        id="requirements"
-        aria-labelledby="requirements-title"
-      >
-        <div class="container split">
-          <h2 id="requirements-title" class="section-title">Requirements</h2>
-          <dl class="specs">
-            <div>
-              <dt>System</dt>
-              <dd>Windows 10 or 11 (x64), or macOS 12 or later</dd>
-            </div>
-            <div>
-              <dt>Provider</dt>
-              <dd>Claude Code or Codex CLI, installed and signed in</dd>
-            </div>
-            <div>
-              <dt>Optional</dt>
-              <dd>GitHub CLI, signed in, for pull requests</dd>
-            </div>
-          </dl>
-        </div>
-      </section>
-
-      <section
-        class="section"
-        id="first-launch"
-        aria-labelledby="first-launch-title"
-      >
-        <div class="container split">
-          <div>
-            <h2 id="first-launch-title" class="section-title">First launch</h2>
-            <p class="section-note">
-              Builds are not code-signed yet and do not update automatically.
-              Your system will ask for confirmation the first time. Download new
-              versions from this page.
-            </p>
-          </div>
-          <div class="launch">
-            <div class="launch-item">
-              <h3>Windows</h3>
-              <p>
-                If you see <q>Windows protected your PC</q>, select
-                <strong>More info</strong>, then <strong>Run anyway</strong>.
-              </p>
-            </div>
-            <div class="launch-item">
-              <h3>macOS</h3>
-              <p>
-                If macOS says the app is damaged or from an unidentified
-                developer, right-click Nesvo in Applications and choose
-                <strong>Open</strong>. Or run this in Terminal:
-              </p>
-              <pre
-                class="code"
-                tabindex="0"
-                aria-label="Terminal command"
-              ><code>xattr -dr com.apple.quarantine /Applications/Nesvo.app</code></pre>
-            </div>
-          </div>
-        </div>
+        <p class="first-launch" data-note role="status" aria-live="polite"></p>
       </section>
     </main>
 
-    <footer class="site-footer">
-      <div class="container footer-inner">
-        <p>© 2026 Damian Kądziela</p>
-        <ul class="footer-links">
-          <li>
-            <a href="https://github.com/dkveil/nesvo/blob/master/LICENSE"
-              >MIT License</a
-            >
-          </li>
-          <li><a href="https://github.com/dkveil/nesvo">GitHub</a></li>
-          <li>
-            <a href="https://github.com/dkveil/nesvo/releases">Releases</a>
-          </li>
-        </ul>
-      </div>
+    <footer class="footer">
+      <span>Unsigned builds without automatic updates.</span>
+      <a href="https://github.com/dkveil/nesvo/blob/master/LICENSE"
+        >MIT License</a
+      >
+      <span>© 2026 Damian Kądziela</span>
     </footer>
   </body>
 </html>
