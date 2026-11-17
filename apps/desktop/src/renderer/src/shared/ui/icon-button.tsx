@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Hint } from '@/shared/ui/tooltip';
 
 type IconButtonSize = 16 | 20 | 24 | 28 | 32;
@@ -58,7 +58,7 @@ export function IconButton({
             'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-error-foreground aria-expanded:bg-accent',
         ],
         appearance === 'send' &&
-          "rounded-full bg-primary text-primary-foreground enabled:hover:bg-primary/90 disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg:not([class*='size-'])]:size-4",
+          "rounded-full bg-primary text-primary-foreground [--focus-ring-color:var(--primary-foreground)] enabled:hover:bg-primary/90 disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

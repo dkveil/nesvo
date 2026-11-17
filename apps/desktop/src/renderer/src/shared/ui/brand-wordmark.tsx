@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 const LETTERS = [
   { x: 0, d: 'M0 64V0H40L64 24V64H44V32L32 20H20V64Z' },

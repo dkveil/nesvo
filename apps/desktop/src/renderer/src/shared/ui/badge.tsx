@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Slot } from 'radix-ui';
 
 type BadgeTone =
@@ -18,7 +18,7 @@ const softTones: Record<BadgeTone, string> = {
   success: 'bg-success-foreground/12 text-success-foreground',
   warning: 'bg-warning-foreground/14 text-warning-foreground',
   error: 'bg-error-foreground/12 text-error-foreground',
-  accent: 'bg-primary/14 text-primary dark:text-info-foreground',
+  accent: 'bg-foreground text-background',
 };
 
 const outlineTones: Record<BadgeTone, string> = {
@@ -27,7 +27,7 @@ const outlineTones: Record<BadgeTone, string> = {
   success: 'border-success-foreground/40 text-success-foreground',
   warning: 'border-warning-foreground/40 text-warning-foreground',
   error: 'border-error-foreground/40 text-error-foreground',
-  accent: 'border-primary/50 text-primary dark:text-info-foreground',
+  accent: 'border-foreground/50 text-foreground',
 };
 
 function Badge({

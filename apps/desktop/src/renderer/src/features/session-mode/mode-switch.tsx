@@ -1,7 +1,7 @@
 import { useId, useState, type KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
 import type { SessionMode } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   ModeIcon,
   modeDescription,

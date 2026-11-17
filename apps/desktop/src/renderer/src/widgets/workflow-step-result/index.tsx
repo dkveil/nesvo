@@ -9,7 +9,7 @@ import {
   ScrollText,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import {
   formatDuration,

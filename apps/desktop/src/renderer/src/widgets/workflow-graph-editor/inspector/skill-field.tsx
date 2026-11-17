@@ -1,6 +1,6 @@
 import { useId, useState, type KeyboardEvent } from 'react';
 import { workflowDefinitionLimits } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Input } from '@/shared/ui/input';
 import {
   describedBy,

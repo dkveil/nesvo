@@ -7,7 +7,7 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Plus, Trash2 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   edgeTones,
   edgeWhenLabels,

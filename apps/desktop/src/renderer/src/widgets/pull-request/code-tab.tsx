@@ -6,7 +6,7 @@ import type {
   PullRequestThreads,
 } from '@nesvo/contracts';
 import { ChevronRight, MessageSquareShare, WrapText } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { DiffStat, FileGlyph, StatusLetter } from '@/entities/file-change';
 import { Button } from '@/shared/ui/button';
 import { InlineNotice } from '@/shared/ui/inline-notice';

@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { DropPlacement } from './housekeeping';
 
 export const dropIndicatorClass = (

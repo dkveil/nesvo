@@ -6,7 +6,7 @@ import type {
   SkillEntry,
 } from '@nesvo/contracts';
 import { BookOpen, ChevronRight, RefreshCw, X } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { PanelAction, PanelHeader, PanelSearch } from '@/shared/ui/panel';

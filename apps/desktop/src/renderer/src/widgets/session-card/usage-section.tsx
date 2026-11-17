@@ -1,5 +1,5 @@
 import { Tooltip } from 'radix-ui';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { ProviderGlyph, providers, type Provider } from '@/entities/session';
 import { IndicatorTooltip } from '@/widgets/provider-rail/indicator-tooltip';
 import {

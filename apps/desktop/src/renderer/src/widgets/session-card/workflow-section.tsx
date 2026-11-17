@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { WorkflowsApi } from '@nesvo/contracts';
 import { ChevronDown } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   canResumeRun,
   isStepComplete,

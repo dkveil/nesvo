@@ -6,7 +6,7 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail, modelLabel, ProviderGlyph } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { cardIcon, cardSurface } from '@/shared/ui/card-row-styles';

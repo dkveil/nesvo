@@ -1,5 +1,5 @@
 import { useEffect, type ComponentProps, type ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Tooltip as TooltipPrimitive } from 'radix-ui';
 import { KeyCombo } from '@/shared/ui/kbd';
 

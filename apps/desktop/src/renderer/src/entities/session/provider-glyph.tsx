@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { Provider } from './index';
 
 export type ProviderGlyphProps = ComponentProps<'svg'> & {

@@ -1,6 +1,6 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { CircleX, TriangleAlert } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Label } from '@/shared/ui/label';
 import { notesId, type FieldNote } from './field-notes';
 

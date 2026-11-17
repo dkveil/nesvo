@@ -4,7 +4,7 @@ import {
   type ColorScheme,
   type DesktopApi,
 } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import { SettingsSection } from '@/shared/ui/settings-section';
 

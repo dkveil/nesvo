@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { statusTones, toneText, type StatusKind, type Tone } from './tone';
 
 const statusIcons: Record<StatusKind, LucideIcon> = {

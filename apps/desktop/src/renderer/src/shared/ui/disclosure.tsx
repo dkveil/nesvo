@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Collapsible } from 'radix-ui';
 
 type DisclosureProps = Omit<

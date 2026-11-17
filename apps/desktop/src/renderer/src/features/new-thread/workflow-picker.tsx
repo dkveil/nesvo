@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { Check, RefreshCw, Workflow } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { DefinitionCatalog, WorkflowsApi } from '@nesvo/contracts';
 import {
   errorDetail,

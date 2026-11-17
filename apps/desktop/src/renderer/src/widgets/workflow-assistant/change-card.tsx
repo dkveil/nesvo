@@ -13,7 +13,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 

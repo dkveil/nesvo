@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { PullRequestThread } from '@nesvo/contracts';
 import { ChevronRight, MessageSquareShare } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { MessageBody } from '@/widgets/conversation/message-body';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { Button } from '@/shared/ui/button';

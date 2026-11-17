@@ -5,7 +5,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ArrowUp } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Spinner } from '@/shared/ui/spinner';
 

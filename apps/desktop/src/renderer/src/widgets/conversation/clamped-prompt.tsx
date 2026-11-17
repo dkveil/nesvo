@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type Props = { children: ReactNode };
 

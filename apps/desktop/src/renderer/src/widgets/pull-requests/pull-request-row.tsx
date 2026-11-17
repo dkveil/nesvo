@@ -1,5 +1,5 @@
 import type { PullRequestSummary } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   ChecksIcon,
   PullRequestStateIcon,

@@ -7,7 +7,7 @@ import type {
   WorkflowDefinitionConflict,
 } from '@nesvo/contracts';
 import { Check, CircleX, RefreshCw, TriangleAlert } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   fromCatalog,
   stepDefinitionOf,

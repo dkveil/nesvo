@@ -1,5 +1,5 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type ListRowDensity = 'tree' | 'compact' | 'two-line' | 'grid';
 

@@ -5,7 +5,7 @@ import {
   scheduledJobLimits,
   type TaskSpecSummary,
 } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail, type ProviderStates } from '@/entities/session';
 import { ModelPicker } from '@/features/new-thread/model-picker';
 import { Button } from '@/shared/ui/button';

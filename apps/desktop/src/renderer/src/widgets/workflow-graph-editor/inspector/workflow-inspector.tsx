@@ -3,7 +3,7 @@ import {
   workflowDefinitionLimits,
   workflowDefinitionSchema,
 } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Badge } from '@/shared/ui/badge';
 import { Input } from '@/shared/ui/input';
 import { Textarea } from '@/shared/ui/textarea';

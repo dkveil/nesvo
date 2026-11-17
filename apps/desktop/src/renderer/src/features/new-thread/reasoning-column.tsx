@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { ProviderState } from '@/entities/session';
 import { effortLabel } from '@/entities/session';
 import { modelEfforts } from './reasoning-effort';

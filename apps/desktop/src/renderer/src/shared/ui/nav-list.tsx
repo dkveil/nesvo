@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type NavListProps = ComponentProps<'nav'> & { label: string };
 

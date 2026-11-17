@@ -108,7 +108,7 @@ import {
 } from '@/widgets/settings';
 import { AutomationDetail, AutomationList } from '@/widgets/automations';
 import type { ScheduledJob, ScheduledJobRun } from '@/entities/scheduled-job';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';

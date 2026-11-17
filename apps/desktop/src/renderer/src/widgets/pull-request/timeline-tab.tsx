@@ -6,7 +6,7 @@ import {
   MessageSquareShare,
   Reply,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { shortSha } from '@/entities/pull-request';
 import { MessageBody } from '@/widgets/conversation/message-body';
 import { formatRelativeTime } from '@/shared/lib/relative-time';

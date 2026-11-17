@@ -1,6 +1,6 @@
 import { CalendarClock, Pause, Play, Plus, Zap } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   formatUntil,
   isActiveRun,

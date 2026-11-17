@@ -15,7 +15,7 @@ import Markdown, {
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy, WrapText } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 
 const HIGHLIGHT_LIMIT_CHARACTERS = 20_000;

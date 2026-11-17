@@ -10,7 +10,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   formatDuration,
   formatOccurrence,

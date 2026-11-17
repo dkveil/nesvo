@@ -1,7 +1,7 @@
 import type { FormEvent, ReactNode, Ref } from 'react';
 import { pullRequestLimits } from '@nesvo/contracts';
 import { ArrowUp, LoaderCircle } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import { ActionFeedback } from './action-feedback';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';

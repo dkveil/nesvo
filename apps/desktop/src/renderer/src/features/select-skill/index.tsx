@@ -15,7 +15,7 @@ import type {
 } from '@nesvo/contracts';
 import { BookOpen, RefreshCw } from 'lucide-react';
 import { Popover } from 'radix-ui';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { errorDetail, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {

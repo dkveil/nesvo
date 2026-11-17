@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type BarTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 

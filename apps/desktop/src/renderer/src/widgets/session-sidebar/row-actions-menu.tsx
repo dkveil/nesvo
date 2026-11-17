@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { MoreHorizontal } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   DropdownMenu,
   DropdownMenuContent,

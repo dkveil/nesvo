@@ -11,7 +11,7 @@ import {
   LoaderCircle,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { stepStateTones, toneText, type StepDisplayState } from './index';
 
 const stateIcons: Record<StepDisplayState, LucideIcon> = {

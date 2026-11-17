@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { LoaderCircle } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type SpinnerProps = ComponentProps<'svg'> & {
   size?: 'sm' | 'md';

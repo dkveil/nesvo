@@ -1,6 +1,6 @@
 import type { WorkflowsApi } from '@nesvo/contracts';
 import { Popover } from 'radix-ui';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   phaseLabels,
   stepDuration,

@@ -4,7 +4,7 @@ import {
   stepTypeSchema,
   type StepPhase,
 } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { phaseLabels, phaseOrder } from '@/entities/workflow';
 import type { StepDraft } from '@/entities/workflow-graph';
 import { Badge } from '@/shared/ui/badge';

@@ -1,5 +1,5 @@
 import type { PullRequestFile } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 export type FileChangeStatus = PullRequestFile['status'];
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
 
 const COPIED_FEEDBACK_MS = 1500;

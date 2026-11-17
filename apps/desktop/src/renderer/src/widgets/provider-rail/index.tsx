@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { UserRound } from 'lucide-react';
 import { Popover, Tooltip } from 'radix-ui';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { providers, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { ProviderAccounts } from './provider-accounts';

@@ -5,7 +5,7 @@ import {
   type PullRequestListScope,
 } from '@nesvo/contracts';
 import { GitPullRequest, Link2, RefreshCw } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   parseReferenceInput,
   pullRequestsUnavailableReason,

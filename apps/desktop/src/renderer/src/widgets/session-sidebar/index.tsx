@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { entityKey } from '@/shared/lib/host-key';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';

@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import type { StartWorkflowTaskInput } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { Provider, ProviderStates } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { PanelAction } from '@/shared/ui/panel';

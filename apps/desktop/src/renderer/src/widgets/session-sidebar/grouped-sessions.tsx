@@ -16,7 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { SessionGroup } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {

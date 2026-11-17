@@ -9,7 +9,7 @@ import {
   Settings2,
   type LucideIcon,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type FileKind = { match: RegExp; icon: LucideIcon; tone: string };
 

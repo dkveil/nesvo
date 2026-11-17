@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ExternalLink, RefreshCw, Workflow } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { DefinitionCatalog, Session } from '@nesvo/contracts';
 import { errorDetail, type Provider } from '@/entities/session';
 import { ComposerChip } from '@/features/new-thread/composer-chip';

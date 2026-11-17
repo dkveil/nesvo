@@ -1,5 +1,5 @@
 import { CircleX, TriangleAlert } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { DocumentIssue } from '@/entities/workflow-graph';
 
 type Props = {

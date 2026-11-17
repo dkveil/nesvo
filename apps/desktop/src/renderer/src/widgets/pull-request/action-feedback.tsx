@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import type { ActionState } from './use-pull-request-actions';
 

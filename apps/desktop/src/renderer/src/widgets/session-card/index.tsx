@@ -7,7 +7,7 @@ import {
 } from 'react';
 import type { Computer } from '@nesvo/contracts';
 import { FolderOpen, GitBranch, Monitor, Play, Server } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
 import { directoryLabel, type Session } from '@/entities/session';
 import {

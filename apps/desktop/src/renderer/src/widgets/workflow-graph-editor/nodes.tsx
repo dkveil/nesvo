@@ -8,7 +8,7 @@ import {
 } from '@xyflow/react';
 import { CircleX, Copy, Plus, Trash2, TriangleAlert, Zap } from 'lucide-react';
 import type { StepType } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   phaseLabels,
   stepStateLabels,

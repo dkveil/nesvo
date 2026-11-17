@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Check, FolderPlus, Inbox } from 'lucide-react';
 import type { SessionGroup } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   Dialog,
   DialogContent,

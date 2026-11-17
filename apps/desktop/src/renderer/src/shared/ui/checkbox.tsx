@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { Check, Minus } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Checkbox as CheckboxPrimitive } from 'radix-ui';
 
 export function Checkbox({

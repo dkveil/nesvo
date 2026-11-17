@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent } from 'react';
 import { Check, Cloud, Monitor, Plus } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { ComposerChip } from './composer-chip';
 

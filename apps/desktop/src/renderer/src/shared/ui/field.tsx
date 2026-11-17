@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { CircleX, TriangleAlert } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Label } from '@/shared/ui/label';
 
 type FieldMessage = { severity: 'error' | 'warning'; message: string };

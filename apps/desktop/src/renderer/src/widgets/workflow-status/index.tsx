@@ -1,5 +1,5 @@
 import { Workflow } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   runStatusLabel,
   runStatusTones,

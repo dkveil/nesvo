@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GitBranch as GitBranchIcon } from 'lucide-react';
 import type { DesktopApi, GitBranch } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type Props = {
   hostId: string;

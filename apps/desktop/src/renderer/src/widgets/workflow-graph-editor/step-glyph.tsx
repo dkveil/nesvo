@@ -1,6 +1,6 @@
 import { Bot, Hand, Terminal, Zap, type LucideIcon } from 'lucide-react';
 import type { StepType } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 const glyphs: Record<StepType, LucideIcon> = {
   command: Terminal,

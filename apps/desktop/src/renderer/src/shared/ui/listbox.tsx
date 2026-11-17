@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Check } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { menuItem, menuLabel } from '@/shared/ui/menu-styles';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SearchField } from '@/shared/ui/search-field';

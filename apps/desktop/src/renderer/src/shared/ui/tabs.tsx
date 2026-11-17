@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { X } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 type TabOption<T extends string> = {
   value: T;

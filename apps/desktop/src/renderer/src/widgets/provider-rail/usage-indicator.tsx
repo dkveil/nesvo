@@ -1,5 +1,5 @@
 import { Tooltip } from 'radix-ui';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { Provider } from '@/entities/session';
 import { TooltipContent } from '@/shared/ui/tooltip';
 import { IndicatorTooltip } from './indicator-tooltip';

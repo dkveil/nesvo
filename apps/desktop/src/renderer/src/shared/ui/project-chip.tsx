@@ -1,5 +1,5 @@
 import type { ComponentProps, CSSProperties } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 const PROJECT_CHIP_COLORS = 6;
 

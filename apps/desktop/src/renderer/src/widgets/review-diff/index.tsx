@@ -19,7 +19,7 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { PanelAction, PanelHeader } from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';

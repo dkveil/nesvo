@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { ProviderGlyph, type Provider } from '@/entities/session';
 import {
   formatPercent,

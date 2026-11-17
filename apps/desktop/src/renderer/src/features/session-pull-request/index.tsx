@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import type { PullRequestReference } from '@nesvo/contracts';
 import { GitPullRequest, Search } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   parseReferenceInput,
   PullRequestStateIcon,

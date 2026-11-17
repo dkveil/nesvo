@@ -8,7 +8,7 @@ import {
   Server,
   Square,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type {
   DesktopApi,
   ReasoningEffort,

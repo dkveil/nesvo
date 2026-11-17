@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { providers, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { UsageDetails } from './usage-details';

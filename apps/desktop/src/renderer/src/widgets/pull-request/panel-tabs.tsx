@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 export type PanelTab = 'summary' | 'timeline' | 'code';
 

@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import type { CreateSessionInput } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   ModeIcon,
   modeDescription,

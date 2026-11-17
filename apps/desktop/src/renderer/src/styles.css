@@ -352,7 +352,7 @@
   outline: none;
   &:focus-visible,
   &[data-preview-focus] {
-    outline: 1.5px solid var(--ring);
+    outline: 1.5px solid var(--focus-ring-color, var(--ring));
     outline-offset: -1.5px;
   }
 }
@@ -361,7 +361,7 @@
   outline: none;
   &:has(:focus-visible),
   &[data-preview-focus] {
-    outline: 1.5px solid var(--ring);
+    outline: 1.5px solid var(--focus-ring-color, var(--ring));
     outline-offset: -1.5px;
   }
 }
@@ -370,7 +370,7 @@
   outline: none;
   &:focus-visible,
   &[data-preview-focus] {
-    outline: 1.5px solid var(--ring);
+    outline: 1.5px solid var(--focus-ring-color, var(--ring));
     outline-offset: 2px;
   }
 }

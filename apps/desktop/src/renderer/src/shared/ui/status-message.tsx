@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { CircleCheck, CircleX, Info, TriangleAlert } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Spinner } from '@/shared/ui/spinner';
 
 type StatusTone = 'info' | 'error' | 'warning' | 'success' | 'loading';

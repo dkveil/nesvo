@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import { Plug, RefreshCw } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   mcpServerNameOf,
   type ListMcpServersInput,

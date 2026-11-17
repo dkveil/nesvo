@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { Search, X } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
 import { KeyCombo } from '@/shared/ui/kbd';
 

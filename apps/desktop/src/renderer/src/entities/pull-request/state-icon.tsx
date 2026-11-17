@@ -5,7 +5,7 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import type { PullRequestVisualState } from './index';
 
 const STATE_ICONS = {

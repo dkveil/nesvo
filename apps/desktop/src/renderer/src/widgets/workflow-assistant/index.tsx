@@ -23,7 +23,7 @@ import {
   Square,
   SquarePen,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import {
   errorDetail,
   ProviderGlyph,

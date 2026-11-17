@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { workflowDefinitionLimits, stepNeedSchema } from '@nesvo/contracts';
 import { X } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';

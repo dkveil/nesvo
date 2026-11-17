@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ResolvedStep, StepPhase, StepType } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { phaseLabels } from '@/entities/workflow';
 import { PanelSearch } from '@/shared/ui/panel';
 import { Popover, PopoverAnchor, PopoverContent } from '@/shared/ui/popover';

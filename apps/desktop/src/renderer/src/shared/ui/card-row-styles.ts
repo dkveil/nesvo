@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 
 export const cardRow =
   'flex h-6.75 w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-ui font-medium text-foreground';

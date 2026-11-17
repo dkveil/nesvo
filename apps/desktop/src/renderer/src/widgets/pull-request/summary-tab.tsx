@@ -7,7 +7,7 @@ import {
   CircleX,
   ExternalLink,
 } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/shared/lib/cn';
 import { MessageBody } from '@/widgets/conversation/message-body';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { CommentBox } from './comment-box';
