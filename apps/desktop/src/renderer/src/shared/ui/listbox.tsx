@@ -17,7 +17,7 @@ import { SearchField } from '@/shared/ui/search-field';
 type ListboxOption<T extends string> = {
   value: T;
   label: string;
-  description?: string;
+  description?: ReactNode;
   icon?: ReactNode;
   trailing?: ReactNode;
   group?: string;
@@ -44,7 +44,7 @@ type ListboxProps<T extends string> = {
 };
 
 const matches = <T extends string>(option: ListboxOption<T>, query: string) =>
-  `${option.label} ${option.description ?? ''} ${option.keywords ?? ''}`
+  `${option.label} ${typeof option.description === 'string' ? option.description : ''} ${option.keywords ?? ''}`
     .toLocaleLowerCase()
     .includes(query.trim().toLocaleLowerCase());
 
