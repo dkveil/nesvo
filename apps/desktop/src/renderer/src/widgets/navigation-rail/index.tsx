@@ -10,9 +10,9 @@ import {
   SquarePen,
   Workflow,
 } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
-import { Button } from '@/shared/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
+import { CountBadge } from '@/shared/ui/badge';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
   sidebarOpen: boolean;
@@ -37,48 +37,21 @@ type Props = {
   usage?: ReactNode;
 };
 
-type RailButtonProps = ComponentProps<typeof Button> & {
-  label: string;
-  hint?: string;
-  shortcut?: string;
-  active?: boolean;
-};
+type RailButtonProps = Omit<
+  ComponentProps<typeof IconButton>,
+  'size' | 'tone' | 'current' | 'marker' | 'tooltipSide'
+> & { active?: boolean };
 
-function RailButton({
-  label,
-  hint = label,
-  shortcut,
-  active = false,
-  className,
-  children,
-  ...props
-}: RailButtonProps) {
+function RailButton({ active = false, ...props }: RailButtonProps) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          aria-current={active ? 'page' : undefined}
-          className={cn(
-            'relative size-8 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground',
-            'before:absolute before:top-1/2 before:-left-1.5 before:h-4 before:w-0.5 before:-translate-y-1/2 before:scale-y-0 before:rounded-full before:bg-foreground before:transition-transform before:duration-150 before:ease-out',
-            '[&>svg]:transition-transform [&>svg]:duration-150 [&>svg]:ease-out hover:[&>svg]:scale-110',
-            active &&
-              'bg-sidebar-row-selected text-sidebar-foreground before:scale-y-100',
-            className,
-          )}
-          {...props}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="right" shortcut={shortcut}>
-        {hint}
-      </TooltipContent>
-    </Tooltip>
+    <IconButton
+      size={32}
+      tone="sidebar"
+      tooltipSide="right"
+      current={active}
+      marker
+      {...props}
+    />
   );
 }
 
@@ -105,85 +78,76 @@ export function NavigationRail({
   usage,
 }: Props) {
   return (
-    <>
-      <nav
-        aria-label="Primary"
-        className="flex h-full w-(--rail-width) shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pb-2"
-      >
-        <div className="drag-region flex h-(--shell-topbar-height) w-full shrink-0 items-center justify-center">
+    <nav
+      aria-label="Primary"
+      className="flex h-full w-(--rail-width) shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pb-2"
+    >
+      <div className="drag-region flex h-(--shell-topbar-height) w-full shrink-0 items-center justify-center">
+        <RailButton
+          ref={sidebarToggleRef}
+          label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          shortcut="Ctrl B"
+          aria-pressed={sidebarOpen}
+          onClick={onToggleSidebar}
+        >
+          <PanelLeft />
+        </RailButton>
+      </div>
+      <div className="flex flex-col items-center gap-1">
+        {!sidebarOpen && (
+          <RailButton label="New session" onClick={onCreate}>
+            <SquarePen />
+          </RailButton>
+        )}
+        <RailButton label="Inbox" active={inbox} onClick={onInbox}>
+          <Inbox />
+          {pendingActions > 0 && (
+            <CountBadge
+              count={pendingActions}
+              aria-label={`${pendingActions} pending items`}
+              className="absolute -top-0.5 -right-0.5"
+            />
+          )}
+        </RailButton>
+        {automationsAvailable && onAutomations && (
           <RailButton
-            ref={sidebarToggleRef}
-            label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-            shortcut="Ctrl B"
-            aria-pressed={sidebarOpen}
-            onClick={onToggleSidebar}
+            label="Automations"
+            active={automations}
+            onClick={onAutomations}
           >
-            <PanelLeft className="size-4" />
+            <CalendarClock />
           </RailButton>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          {!sidebarOpen && (
-            <RailButton label="New session" onClick={onCreate}>
-              <SquarePen className="size-4" />
-            </RailButton>
-          )}
-          <RailButton label="Inbox" active={inbox} onClick={onInbox}>
-            <Inbox className="size-4" />
-            {pendingActions > 0 && (
-              <span
-                aria-label={`${pendingActions} pending items`}
-                className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-2xs leading-none font-semibold text-background tabular-nums"
-              >
-                {pendingActions}
-              </span>
-            )}
-          </RailButton>
-          {automationsAvailable && onAutomations && (
-            <RailButton
-              label="Automations"
-              active={automations}
-              onClick={onAutomations}
-            >
-              <CalendarClock className="size-4" />
-            </RailButton>
-          )}
+        )}
+        <RailButton label="Workflows" active={workflows} onClick={onWorkflows}>
+          <Workflow />
+        </RailButton>
+        {onPullRequests && (
           <RailButton
-            label="Workflows"
-            active={workflows}
-            onClick={onWorkflows}
+            label="Pull requests"
+            active={pullRequests}
+            onClick={onPullRequests}
           >
-            <Workflow className="size-4" />
+            <GitPullRequest />
           </RailButton>
-          {onPullRequests && (
-            <RailButton
-              label="Pull requests"
-              active={pullRequests}
-              onClick={onPullRequests}
-            >
-              <GitPullRequest className="size-4" />
-            </RailButton>
-          )}
-          {onCosts && (
-            <RailButton label="Costs" active={costs} onClick={onCosts}>
-              <ChartNoAxesColumn className="size-4" />
-            </RailButton>
-          )}
-        </div>
-        <div className="min-h-0 flex-1" />
-        <div className="flex flex-col items-center gap-1">
-          {usage}
-          <RailButton label="Settings" onClick={onSettings}>
-            <Settings className="size-4" />
+        )}
+        {onCosts && (
+          <RailButton label="Costs" active={costs} onClick={onCosts}>
+            <ChartNoAxesColumn />
           </RailButton>
-          <RailButton
-            label="Computers"
-            hint={`Computers · ${hostName}`}
-            onClick={onComputers}
-          >
-            <Monitor className="size-4" />
+        )}
+      </div>
+      <div className="min-h-0 flex-1" />
+      <div className="flex flex-col items-center gap-1">
+        {usage}
+        <RailButton label="Settings" onClick={onSettings}>
+          <Settings />
+        </RailButton>
+        <Hint label={`Computers · ${hostName}`} side="right">
+          <RailButton label="Computers" tooltip={false} onClick={onComputers}>
+            <Monitor />
           </RailButton>
-        </div>
-      </nav>
-    </>
+        </Hint>
+      </div>
+    </nav>
   );
 }
