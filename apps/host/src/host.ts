@@ -20,6 +20,8 @@ import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { HistorySearch } from './sessions/history-search';
+import { SessionGroupStore } from './sessions/group-store';
+import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
 import { PullRequests } from './pull-requests';
 import { PullRequestError } from './process/github-cli';
@@ -77,6 +79,14 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'send-message',
   'queue-message',
   'assign-session-workflow',
+  'create-session-group',
+  'update-session-group',
+  'move-session-group',
+  'delete-session-group',
+  'move-session',
+  'rename-session',
+  'set-session-pinned',
+  'set-session-archived',
   'cancel-queued',
   'start-queued',
   'stop-run',
@@ -148,6 +158,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         index => Effect.sync(() => index.close()),
       );
       const store = new SessionStore(database);
+      const groupStore = new SessionGroupStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
       const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
@@ -184,6 +195,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                     : undefined;
                   return run ? runEnvironment(run) : undefined;
                 },
+                isKnownGroup: groupId => !!groupStore.get(groupId),
                 isHeldByWorkflow: review => {
                   const runId = store.get(review.sessionId)?.workflowRunId;
                   return (
@@ -212,6 +224,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             await Promise.all(state.pending);
           }),
       );
+      const housekeeping = new SessionHousekeeping(sessions, groupStore, emit);
       const pullRequests = new PullRequests(
         probes.controller.signal,
         id => store.get(id),
@@ -1123,6 +1136,60 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.create(request.input),
+              };
+            if (request.method === 'list-session-groups')
+              return {
+                type: 'session-groups',
+                id: request.id,
+                list: housekeeping.list(),
+              };
+            if (request.method === 'create-session-group')
+              return {
+                type: 'session-groups',
+                id: request.id,
+                list: housekeeping.createGroup(request.input),
+              };
+            if (request.method === 'update-session-group')
+              return {
+                type: 'session-groups',
+                id: request.id,
+                list: housekeeping.updateGroup(request.input),
+              };
+            if (request.method === 'move-session-group')
+              return {
+                type: 'session-groups',
+                id: request.id,
+                list: housekeeping.moveGroup(request.input),
+              };
+            if (request.method === 'delete-session-group')
+              return {
+                type: 'session-groups',
+                id: request.id,
+                list: housekeeping.deleteGroup(request.input),
+              };
+            if (request.method === 'move-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: housekeeping.moveSession(request.input),
+              };
+            if (request.method === 'rename-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: housekeeping.renameSession(request.input),
+              };
+            if (request.method === 'set-session-pinned')
+              return {
+                type: 'session',
+                id: request.id,
+                session: housekeeping.setPinned(request.input),
+              };
+            if (request.method === 'set-session-archived')
+              return {
+                type: 'session',
+                id: request.id,
+                session: housekeeping.setArchived(request.input),
               };
             if (request.method === 'send-message')
               return {

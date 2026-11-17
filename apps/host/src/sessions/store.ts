@@ -133,6 +133,10 @@ export class SessionStore {
       delegations: [],
       workflow: null,
       pullRequest: null,
+      groupId: input.groupId ?? null,
+      order: 0,
+      pinned: false,
+      archivedAt: null,
       ...originLinks(origin, input),
     };
     this.save(session);
@@ -143,12 +147,17 @@ export class SessionStore {
     this.saveMany([session]);
   }
 
-  saveMany(sessions: Session[], writeRelated?: () => void): void {
+  saveMany(
+    sessions: Session[],
+    writeRelated?: () => void,
+    { touch = true }: { touch?: boolean } = {},
+  ): void {
+    const now = new Date().toISOString();
     const next = sessions.map(session =>
       sessionSchema.parse({
         ...session,
         revision: session.revision + 1,
-        updatedAt: new Date().toISOString(),
+        updatedAt: touch ? now : session.updatedAt,
       }),
     );
     this.database.exec('BEGIN IMMEDIATE');
@@ -214,6 +223,10 @@ export class SessionStore {
       updatedAt: now,
       messages: [],
       queue: [],
+      groupId: null,
+      order: 0,
+      pinned: false,
+      archivedAt: null,
     };
   }
 

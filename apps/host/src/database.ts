@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
 import { installHistoryIndex } from './sessions/history-index';
 
-const DATABASE_VERSION = 12;
+const DATABASE_VERSION = 13;
 
 export const ownDataDirectory = (directory: string) =>
   Effect.acquireRelease(
@@ -238,7 +238,13 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         database.exec(
           'ALTER TABLE assistant_changes ADD COLUMN definitions_root TEXT',
         );
-      installHistoryIndex(database, version < DATABASE_VERSION);
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS session_groups (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES session_groups(id), name TEXT NOT NULL, sort_order INTEGER NOT NULL, defaults TEXT NOT NULL CHECK (json_valid(defaults)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+      );
+      database.exec(
+        'CREATE INDEX IF NOT EXISTS session_groups_parent ON session_groups (parent_id, sort_order)',
+      );
+      installHistoryIndex(database, version < 12);
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
     } catch (error) {
       database.exec('ROLLBACK');

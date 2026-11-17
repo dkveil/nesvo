@@ -225,6 +225,7 @@ export type SessionServiceOptions = {
     session: Session,
   ) => Readonly<Record<string, string>> | undefined;
   isHeldByWorkflow?: (review: Review) => boolean;
+  isKnownGroup?: (groupId: string) => boolean;
 };
 
 export const GATE_PENDING_MESSAGE =
@@ -691,6 +692,11 @@ export class SessionService {
     input: CreateSessionInput,
     options: { isolatedDirectory?: string; origin?: SessionOrigin } = {},
   ): Session {
+    if (input.groupId && !this.options.isKnownGroup?.(input.groupId))
+      throw new SessionError(
+        'invalid-request',
+        'The session group no longer exists. Refresh the sidebar and try again.',
+      );
     let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
       directory = join(this.directory, 'workspaces', randomUUID());
@@ -865,6 +871,51 @@ export class SessionService {
       throw error;
     }
     return structuredClone(session);
+  }
+
+  isRunning(sessionId: string): boolean {
+    const session =
+      this.active.get(sessionId)?.session ?? this.store.get(sessionId);
+    return (
+      this.active.has(sessionId) ||
+      session?.status === 'running' ||
+      session?.status === 'stopping'
+    );
+  }
+
+  amend(
+    sessionIds: string[],
+    change: (sessions: Session[]) => void,
+    writeRelated?: () => void,
+  ): Session[] {
+    const targets = [...new Set(sessionIds)].map(id => {
+      const session =
+        this.active.get(id)?.session ??
+        this.unsaved.get(id) ??
+        this.store.get(id);
+      if (!session) throw new SessionError('not-found', 'Session not found.');
+      return session;
+    });
+    const previous = targets.map(
+      ({ title, groupId, order, pinned, archivedAt }) => ({
+        title,
+        groupId,
+        order,
+        pinned,
+        archivedAt,
+      }),
+    );
+    try {
+      change(targets);
+      this.store.saveMany(targets, writeRelated, { touch: false });
+    } catch (error) {
+      targets.forEach((session, index) =>
+        Object.assign(session, previous[index]),
+      );
+      throw error;
+    }
+    for (const session of targets) this.emitSession(session);
+    return targets.map(session => structuredClone(session));
   }
 
   async withPullRequestCheckout(
