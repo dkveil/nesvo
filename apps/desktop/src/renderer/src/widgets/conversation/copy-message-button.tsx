@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
 
 const COPIED_RESET_MS = 1500;
 
@@ -24,16 +24,8 @@ export function CopyMessageButton({ body }: Props) {
       .catch(() => undefined);
   };
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-xs"
-      className="text-muted-foreground"
-      aria-label="Copy message"
-      title={copied ? 'Copied' : 'Copy message'}
-      onClick={copy}
-    >
-      {copied ? <Check /> : <Copy />}
-    </Button>
+    <IconButton label="Copy message" size={24} onClick={copy}>
+      {copied ? <Check className="text-success-foreground" /> : <Copy />}
+    </IconButton>
   );
 }

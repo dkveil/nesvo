@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { cn } from '@/shared/lib/cn';
+import { Button } from '@/shared/ui/button';
 
 type Props = { children: ReactNode };
 
@@ -21,14 +22,16 @@ export function ClampedPrompt({ children }: Props) {
           />
         )}
       </div>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="xs"
         aria-expanded={expanded}
-        className="text-xs text-muted-foreground hover:text-foreground focus-visible:underline"
+        className="text-muted-foreground"
         onClick={() => setExpanded(value => !value)}
       >
         {expanded ? 'Show less' : 'Show more'}
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDown,
-  ArrowUp,
+  BookOpen,
   FolderOpen,
   ListEnd,
   Monitor,
@@ -28,9 +28,20 @@ import {
   type Session,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { Chip } from '@/shared/ui/chip';
+import { CodeBlock } from '@/shared/ui/code-block';
+import {
+  Composer,
+  ComposerInput,
+  ComposerSend,
+  ComposerToolbar,
+} from '@/shared/ui/composer';
+import { IconButton } from '@/shared/ui/icon-button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import { Textarea } from '@/shared/ui/textarea';
+import { Separator } from '@/shared/ui/separator';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
@@ -301,20 +312,21 @@ export function Conversation({
     if (message.author === 'agent' && !firstAgents.has(message.runId))
       firstAgents.set(message.runId, message.id);
   const queueButton = (
-    <Button
-      type="submit"
-      size="icon-sm"
-      className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-      disabled={!draft.trim() || !canQueue}
-      aria-label="Queue message"
-      title={
+    <Hint
+      label={
         running
           ? 'Send when this turn ends'
           : 'Keep queued until you choose Send now'
       }
     >
-      <ListEnd />
-    </Button>
+      <ComposerSend
+        label="Queue message"
+        tooltip={false}
+        disabled={!draft.trim() || !canQueue}
+      >
+        <ListEnd />
+      </ComposerSend>
+    </Hint>
   );
   const composer = (
     <SelectSkill
@@ -365,16 +377,14 @@ export function Conversation({
             Message
           </label>
           {anchor(
-            <div className="glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input">
+            <Composer className="z-10">
               {selectedSkill && (
                 <SelectedSkillChip
                   skill={selectedSkill}
                   onRemove={() => onSkillChange(null)}
                 />
               )}
-              <Textarea
-                variant="ghost"
-                size="lg"
+              <ComposerInput
                 ref={messageInput}
                 id="message-input"
                 {...inputAria}
@@ -472,154 +482,146 @@ export function Conversation({
                   onDraft(event.target.value);
                 }}
                 maxLength={MESSAGE_MAX_LENGTH}
-                className="max-h-48 min-h-11 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-sm leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent"
               />
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <ModeSwitch
-                    provider={session.provider}
-                    modes={modes}
-                    mode={session.mode}
-                    pendingMode={pendingMode}
-                    disabled={!connected}
-                    readOnlyReason={modeLockedReason}
-                    onChange={chooseMode}
-                  />
-                  {workflowChip}
-                  {mcpChip}
-                  <span
-                    role="status"
-                    className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground"
-                  >
-                    {otherRun
-                      ? (otherRunLabel ?? 'Another session is working')
-                      : running && draft.trim()
-                        ? 'Will send when this turn ends'
-                        : sending
-                          ? 'Sending…'
-                          : session.delegations.some(
-                                delegation =>
-                                  delegation.runId === session.runId &&
-                                  delegation.status === 'pending',
-                              )
-                            ? 'Worker approval needed'
-                            : session.pendingApprovals.length > 0
-                              ? 'Approval needed'
-                              : modeNotice}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <ModelPicker
-                    provider={session.provider}
-                    model={pendingSelection?.model ?? session.model}
-                    effort={
-                      (pendingSelection
-                        ? pendingSelection.effort
-                        : session.effort) ?? ''
-                    }
-                    statuses={statuses}
-                    disabled={!connected}
-                    lockedProvider
-                    triggerLabel="Change model"
-                    displayLabel={
-                      pendingSelection
-                        ? labelFor(pendingSelection.model)
-                        : model
-                    }
-                    hint={pendingSelection ? 'next turn' : undefined}
-                    triggerClassName="min-w-0 px-1.5 text-xs"
-                    onChange={(_provider, nextModel, nextEffort) =>
-                      chooseModel(nextModel, nextEffort)
-                    }
-                    onRefreshProvider={onRefreshProvider}
-                  />
-                  {running && !!draft.trim() && queueButton}
-                  {running ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="h-7 rounded-full px-2.5"
-                      disabled={!connected || session.status === 'stopping'}
-                      onClick={onStop}
-                      aria-label={stopLabel}
-                      title={
-                        groupRun
-                          ? 'Stop this session and its workers'
-                          : 'Stop this session'
+              <ComposerToolbar
+                start={
+                  <>
+                    <ModeSwitch
+                      provider={session.provider}
+                      modes={modes}
+                      mode={session.mode}
+                      pendingMode={pendingMode}
+                      disabled={!connected}
+                      readOnlyReason={modeLockedReason}
+                      onChange={chooseMode}
+                    />
+                    {workflowChip}
+                    {mcpChip}
+                    <span role="status" className="min-w-0 truncate">
+                      {otherRun
+                        ? (otherRunLabel ?? 'Another session is working')
+                        : running && draft.trim()
+                          ? 'Will send when this turn ends'
+                          : sending
+                            ? 'Sending…'
+                            : session.delegations.some(
+                                  delegation =>
+                                    delegation.runId === session.runId &&
+                                    delegation.status === 'pending',
+                                )
+                              ? 'Worker approval needed'
+                              : session.pendingApprovals.length > 0
+                                ? 'Approval needed'
+                                : modeNotice}
+                    </span>
+                  </>
+                }
+                end={
+                  <>
+                    <ModelPicker
+                      provider={session.provider}
+                      model={pendingSelection?.model ?? session.model}
+                      effort={
+                        (pendingSelection
+                          ? pendingSelection.effort
+                          : session.effort) ?? ''
                       }
-                    >
-                      <Square className="fill-current" />
-                      {session.status === 'stopping'
-                        ? groupRun
-                          ? 'Stopping group…'
-                          : 'Stopping…'
-                        : stopLabel}
-                    </Button>
-                  ) : otherRun ? (
-                    queueButton
-                  ) : (
-                    <Button
-                      type="submit"
-                      size="icon-sm"
-                      className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-                      disabled={!draft.trim() || !canSend}
-                      aria-label="Send message"
-                      title="Send message"
-                    >
-                      <ArrowUp />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>,
+                      statuses={statuses}
+                      disabled={!connected}
+                      lockedProvider
+                      triggerLabel="Change model"
+                      displayLabel={
+                        pendingSelection
+                          ? labelFor(pendingSelection.model)
+                          : model
+                      }
+                      hint={pendingSelection ? 'next turn' : undefined}
+                      triggerClassName="min-w-0 px-1.5 text-xs"
+                      onChange={(_provider, nextModel, nextEffort) =>
+                        chooseModel(nextModel, nextEffort)
+                      }
+                      onRefreshProvider={onRefreshProvider}
+                    />
+                    {running && !!draft.trim() && queueButton}
+                    {running ? (
+                      <Hint
+                        label={
+                          groupRun
+                            ? 'Stop this session and its workers'
+                            : 'Stop this session'
+                        }
+                      >
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full"
+                          disabled={!connected || session.status === 'stopping'}
+                          onClick={onStop}
+                          aria-label={stopLabel}
+                        >
+                          <Square className="fill-current" />
+                          {session.status === 'stopping'
+                            ? groupRun
+                              ? 'Stopping group…'
+                              : 'Stopping…'
+                            : stopLabel}
+                        </Button>
+                      </Hint>
+                    ) : otherRun ? (
+                      queueButton
+                    ) : (
+                      <ComposerSend
+                        disabled={!draft.trim() || !canSend}
+                        shortcut="Enter"
+                      />
+                    )}
+                  </>
+                }
+              />
+            </Composer>,
           )}
           {notice}
           {(limitReached || pasteTruncated) && (
-            <p
-              role="status"
-              className="px-3 text-[11px] leading-5 text-muted-foreground"
-            >
+            <StatusMessage className="px-3">
               Message limit reached (32,000 characters). Shorten it or split it
               into several messages.
-            </p>
+            </StatusMessage>
           )}
-          <div className="flex min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground">
-            <span
-              className="flex h-7 max-w-40 min-w-0 items-center gap-1.5 px-1.5"
-              title={computerName}
-            >
-              <HostIcon className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="truncate">{computerName}</span>
-            </span>
-            <span
-              className="flex h-7 min-w-0 items-center gap-1.5 px-1.5"
-              title={session.directory}
-              aria-label={`Working directory: ${session.directory}`}
-            >
-              <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="truncate">
-                {directoryLabel(session.directory)}
-              </span>
-            </span>
+          <div className="flex min-w-0 items-center gap-1 px-2">
+            <Hint label={computerName}>
+              <Chip
+                interactive={false}
+                icon={<HostIcon aria-hidden="true" />}
+                className="max-w-40"
+              >
+                <span>{computerName}</span>
+              </Chip>
+            </Hint>
+            <Hint label={session.directory}>
+              <Chip
+                interactive={false}
+                icon={<FolderOpen aria-hidden="true" />}
+                aria-label={`Working directory: ${session.directory}`}
+                className="shrink"
+              >
+                <span>{directoryLabel(session.directory)}</span>
+              </Chip>
+            </Hint>
             <span className="flex-1" />
-            <span
+            <Chip
+              interactive={false}
+              icon={<ModeIcon mode={session.mode} aria-hidden="true" />}
               data-session-mode={session.mode}
-              className="flex h-7 shrink-0 items-center gap-1.5 px-1.5"
             >
-              <ModeIcon
-                mode={session.mode}
-                className="size-3.5"
-                aria-hidden="true"
-              />
-              {modeLabel(session.provider, session.mode)}
-            </span>
+              <span>{modeLabel(session.provider, session.mode)}</span>
+            </Chip>
           </div>
           {!connected && (
-            <p className="px-3 text-[11px] leading-5 text-muted-foreground">
+            <StatusMessage className="px-3">
               Offline snapshot. Work may still be running. Reconnect to send
               messages or decisions.
-            </p>
+            </StatusMessage>
           )}
         </form>
       )}
@@ -714,21 +716,7 @@ export function Conversation({
             const selectionChange = selectionChanges.get(message.id);
             return (
               <Fragment key={message.id}>
-                {selectionChange && (
-                  <div className="flex items-center gap-3">
-                    <span
-                      aria-hidden="true"
-                      className="h-px flex-1 bg-border"
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      {selectionChange}
-                    </p>
-                    <span
-                      aria-hidden="true"
-                      className="h-px flex-1 bg-border"
-                    />
-                  </div>
-                )}
+                {selectionChange && <Separator label={selectionChange} />}
                 <article
                   id={`message-${message.id}`}
                   data-message-id={message.id}
@@ -744,7 +732,10 @@ export function Conversation({
                   <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
                     {message.author === 'operator' &&
                       (message.skill || message.skillId) && (
-                        <span
+                        <Chip
+                          interactive={false}
+                          size="sm"
+                          icon={<BookOpen aria-hidden="true" />}
                           aria-label={
                             message.skill
                               ? `Requested skill: ${message.skill.name}`
@@ -770,20 +761,22 @@ export function Conversation({
                                   .join('\n')
                               : 'A skill was requested, but its source was not resolved.'
                           }
-                          className="max-w-[70%] truncate rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                          className="max-w-[70%] bg-highlight"
                         >
-                          {message.skill?.name ?? 'Requested skill'}
+                          <span>
+                            {message.skill?.name ?? 'Requested skill'}
+                          </span>
                           {message.skill?.delivery === 'instructions' && (
-                            <span className="ml-2">Shared instructions</span>
+                            <span>Shared instructions</span>
                           )}
-                        </span>
+                        </Chip>
                       )}
                     {message.author === 'agent' &&
                       message.state !== 'completed' &&
                       !showActivity && (
-                        <span className="text-[11px] font-normal text-muted-foreground">
-                          {statusLabels[message.state]}
-                        </span>
+                        <Chip interactive={false} size="sm">
+                          <span>{statusLabels[message.state]}</span>
+                        </Chip>
                       )}
                   </div>
                   {message.costWarning && (
@@ -826,9 +819,9 @@ export function Conversation({
                     </div>
                   )}
                   {message.interruption && message.runId !== session.runId && (
-                    <p className="text-xs text-muted-foreground">
+                    <StatusMessage tone="warning">
                       {interruptionLabels[message.interruption.reason]}
-                    </p>
+                    </StatusMessage>
                   )}
                 </article>
               </Fragment>
@@ -837,14 +830,14 @@ export function Conversation({
           {session.error &&
             session.status !== 'interrupted' &&
             session.status !== 'completed' && (
-              <section
-                role="alert"
-                aria-label="Failed run"
-                className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3"
-              >
-                <p className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">
+              <section aria-label="Failed run" className="space-y-2">
+                <StatusMessage
+                  tone="error"
+                  variant="notice"
+                  className="whitespace-pre-wrap"
+                >
                   {session.error}
-                </p>
+                </StatusMessage>
                 {canResend && (
                   <Button
                     type="button"
@@ -859,19 +852,16 @@ export function Conversation({
               </section>
             )}
           {session.status === 'interrupted' && (
-            <section
-              aria-label="Interrupted run"
-              className="space-y-2 rounded-xl border px-4 py-3"
-            >
-              <p className="text-xs font-medium">
-                {session.interruption
-                  ? interruptionLabels[session.interruption.reason]
-                  : 'This run was interrupted'}
-              </p>
-              <p className="text-xs leading-5 text-muted-foreground">
+            <section aria-label="Interrupted run" className="space-y-2">
+              <StatusMessage tone="warning" variant="notice">
+                <span className="block font-medium text-foreground">
+                  {session.interruption
+                    ? interruptionLabels[session.interruption.reason]
+                    : 'This run was interrupted'}
+                </span>
                 {session.error ||
                   'The last outcome is unconfirmed. Review the current state before continuing.'}
-              </p>
+              </StatusMessage>
               <div className="flex flex-wrap gap-2">
                 {canResend && (
                   <Button
@@ -900,20 +890,25 @@ export function Conversation({
           {session.queue.length > 0 && (
             <section aria-label="Queued messages" className="space-y-3">
               {queueStartError && (
-                <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                <StatusMessage
+                  tone="warning"
+                  variant="notice"
+                  className="whitespace-pre-wrap"
+                >
                   {queueStartError}
-                </p>
+                </StatusMessage>
               )}
               {session.queue.map(entry => (
                 <article
                   key={entry.id}
                   aria-label="Queued message"
-                  title={entry.held ? 'Waiting for Send now' : undefined}
                   className="flex flex-col items-end gap-1"
                 >
-                  <span className="text-[11px] text-muted-foreground">
-                    {entry.held ? 'Held' : 'Queued'}
-                  </span>
+                  <Hint label={entry.held ? 'Waiting for Send now' : ''}>
+                    <Chip interactive={false} size="sm">
+                      <span>{entry.held ? 'Held' : 'Queued'}</span>
+                    </Chip>
+                  </Hint>
                   <MessageBody
                     body={entry.text}
                     className="max-w-[85%] rounded-2xl border border-dashed px-3.5 py-2 text-sm leading-6"
@@ -968,9 +963,9 @@ export function Conversation({
                 key={`${session.runId}/${approval.id}`}
                 id={`approval-${approval.id}`}
                 aria-label="Operation approval"
-                className="space-y-3 rounded-xl border bg-card/70 p-4"
+                className="space-y-3 rounded-surface border bg-card p-4"
               >
-                <p className="text-xs text-muted-foreground">
+                <p className="text-2xs text-muted-foreground">
                   {approval.kind === 'command'
                     ? 'Command approval'
                     : 'File approval'}
@@ -978,16 +973,18 @@ export function Conversation({
                 <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
                   {approval.title}
                 </h2>
-                <pre className="max-h-60 overflow-auto rounded-lg border bg-code-background p-3 font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {approval.detail}
-                </pre>
+                <CodeBlock
+                  code={approval.detail}
+                  wrap
+                  maxHeightClassName="max-h-60"
+                  className="[overflow-wrap:anywhere]"
+                />
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   Working directory: {approval.directory ?? session.directory}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="md"
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'accept')}
                   >
@@ -995,7 +992,6 @@ export function Conversation({
                   </Button>
                   <Button
                     type="button"
-                    size="md"
                     variant="outline"
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'decline')}
@@ -1003,24 +999,25 @@ export function Conversation({
                     Deny
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <StatusMessage tone={pending ? 'loading' : 'info'}>
                   {pending
                     ? 'Sending decision…'
                     : enabled
                       ? 'Applies to this operation only.'
                       : 'This request is inactive. Refresh the connection to check its status.'}
-                </p>
+                </StatusMessage>
               </section>
             );
           })}
           {results}
           {error && (
-            <p
-              role="alert"
-              className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
+            <StatusMessage
+              tone="error"
+              variant="notice"
+              className="whitespace-pre-wrap"
             >
               {error}
-            </p>
+            </StatusMessage>
           )}
           <div ref={bottom} />
         </div>
@@ -1030,7 +1027,7 @@ export function Conversation({
           <h2 className="text-2xl font-normal tracking-tight sm:text-3xl">
             What would you like to work on?
           </h2>
-          <p className="truncate text-[13px] font-semibold">
+          <p className="truncate text-ui font-semibold">
             {directoryLabel(session.directory)}
           </p>
         </div>
@@ -1042,16 +1039,15 @@ export function Conversation({
         )}
       >
         {jumpSessionId === session.id && !empty && (
-          <button
-            type="button"
-            aria-label="Scroll to end"
-            className="absolute -top-9 left-1/2 z-20 inline-flex h-7 -translate-x-1/2 items-center gap-1.5 rounded-full border bg-background/90 px-3 text-xs text-muted-foreground shadow-sm backdrop-blur hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+          <IconButton
+            label="Scroll to end"
+            shape="round"
+            className="glass-popover absolute -top-9 left-1/2 z-20 -translate-x-1/2 border"
             onMouseDown={event => event.preventDefault()}
             onClick={scrollToEnd}
           >
-            <ArrowDown className="size-3.5" aria-hidden="true" />
-            Scroll to end
-          </button>
+            <ArrowDown />
+          </IconButton>
         )}
         {composer}
       </div>

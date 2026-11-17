@@ -16,7 +16,8 @@ import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy, WrapText } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import { Button } from '@/shared/ui/button';
+import { Checkbox } from '@/shared/ui/checkbox';
+import { IconButton } from '@/shared/ui/icon-button';
 
 const HIGHLIGHT_LIMIT_CHARACTERS = 20_000;
 const COPIED_FEEDBACK_MS = 1_500;
@@ -103,32 +104,26 @@ function CodeBlock({ children, node }: ComponentProps<'pre'> & ExtraProps) {
   return (
     <figure
       aria-label={language ? `Code: ${language}` : 'Code'}
-      className="overflow-hidden rounded-lg border bg-code-background"
+      className="overflow-hidden rounded-surface border bg-code-background"
     >
       <figcaption className="flex h-8 items-center justify-between gap-2 pr-1 pl-3 text-2xs text-muted-foreground">
         <span className="truncate font-mono">{language || 'text'}</span>
         <span className="flex items-center gap-0.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-foreground"
-            aria-label={copied ? 'Copied' : 'Copy code'}
+          <IconButton
+            label={copied ? 'Copied' : 'Copy code'}
+            size={24}
             onClick={handleCopy}
           >
-            {copied ? <Check /> : <Copy />}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
-            aria-label="Wrap code lines"
-            aria-pressed={wrap}
+            {copied ? <Check className="text-success-foreground" /> : <Copy />}
+          </IconButton>
+          <IconButton
+            label="Wrap code lines"
+            size={24}
+            pressed={wrap}
             onClick={() => setWrap(value => !value)}
           >
             <WrapText />
-          </Button>
+          </IconButton>
         </span>
       </figcaption>
       <pre
@@ -214,15 +209,15 @@ const components: Components = {
       {children}
     </li>
   ),
-  input: ({ type, checked }) => (
-    <input
-      type={type}
-      checked={checked}
-      disabled
-      readOnly
-      className="mr-2 size-3.5 translate-y-0.5 accent-foreground"
-    />
-  ),
+  input: ({ type, checked }) =>
+    type === 'checkbox' ? (
+      <Checkbox
+        checked={!!checked}
+        aria-readonly
+        tabIndex={-1}
+        className="pointer-events-none mr-2 inline-grid translate-y-0.5"
+      />
+    ) : null,
   blockquote: ({ children }) => (
     <blockquote className="space-y-3 border-l-2 pl-3 text-muted-foreground">
       {children}
