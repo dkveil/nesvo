@@ -24,12 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { BudgetDialog } from './budget-dialog';
 import { actionLabels, periodLabels, scopeLabels } from './labels';
 
@@ -188,7 +183,7 @@ export function CostsView({
     computers.find(item => item.id === 'local');
   const hostId = computer?.id ?? 'local';
   return (
-    <TooltipProvider>
+    <>
       <section
         aria-label="Costs"
         className="min-h-0 min-w-0 flex-1 overflow-y-auto"
@@ -246,7 +241,7 @@ export function CostsView({
           )}
         </div>
       </section>
-    </TooltipProvider>
+    </>
   );
 }
 

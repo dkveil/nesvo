@@ -42,12 +42,7 @@ import type { ScheduledJob } from '@/entities/scheduled-job';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { dropIndicatorClass } from './drop-indicator';
 import { GroupedSessions } from './grouped-sessions';
 import type { RowDecoration, SidebarHousekeeping } from './housekeeping';
@@ -518,7 +513,7 @@ export function SessionSidebar({
     ];
   };
   return (
-    <TooltipProvider>
+    <>
       <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
         <div className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-2 pl-[calc(0.5rem+var(--titlebar-inset-left))]">
           {inline && onCollapse && (
@@ -903,6 +898,6 @@ export function SessionSidebar({
           </div>
         )}
       </div>
-    </TooltipProvider>
+    </>
   );
 }

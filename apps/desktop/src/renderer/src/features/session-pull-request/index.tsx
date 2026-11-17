@@ -11,12 +11,7 @@ import {
 import { errorDetail, type Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { useLinkedState } from './use-linked-state';
 
 type SessionPullRequestProps = {
@@ -55,7 +50,7 @@ export function SessionPullRequest({
   const [error, setError] = useState('');
   if (linked)
     return (
-      <TooltipProvider>
+      <>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -77,7 +72,7 @@ export function SessionPullRequest({
           </TooltipTrigger>
           <TooltipContent side="bottom">{linked.repository}</TooltipContent>
         </Tooltip>
-      </TooltipProvider>
+      </>
     );
   if (unavailableReason) return null;
   const link = async (reference: PullRequestReference) => {
@@ -127,7 +122,7 @@ export function SessionPullRequest({
     void link(reference);
   };
   return (
-    <TooltipProvider>
+    <>
       <Popover
         open={open}
         onOpenChange={value => {
@@ -259,6 +254,6 @@ export function SessionPullRequest({
           </form>
         </PopoverContent>
       </Popover>
-    </TooltipProvider>
+    </>
   );
 }

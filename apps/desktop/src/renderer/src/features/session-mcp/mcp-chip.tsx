@@ -13,12 +13,7 @@ import { ComposerChip } from '@/features/new-thread/composer-chip';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { Switch } from '@/shared/ui/switch';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { scopeLabels, transportLabels } from './mcp-labels';
 
 type Props = {
@@ -116,7 +111,7 @@ export function McpChip({
         ? `Not available in ${readOnlyMode} mode`
         : 'MCP servers and hooks');
   return (
-    <TooltipProvider>
+    <>
       <Popover
         open={open && !unsupported}
         onOpenChange={next => {
@@ -305,6 +300,6 @@ export function McpChip({
           </div>
         </PopoverContent>
       </Popover>
-    </TooltipProvider>
+    </>
   );
 }

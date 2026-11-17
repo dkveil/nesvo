@@ -27,12 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { PullRequestRow } from './pull-request-row';
 import { usePullRequestList } from './use-pull-request-list';
 
@@ -114,7 +109,7 @@ export function PullRequestsView({
   };
   const items = result.list?.items ?? [];
   return (
-    <TooltipProvider>
+    <>
       <ScrollArea className="min-h-0 min-w-0 flex-1">
         <section
           aria-label="Pull requests"
@@ -336,6 +331,6 @@ export function PullRequestsView({
           )}
         </section>
       </ScrollArea>
-    </TooltipProvider>
+    </>
   );
 }

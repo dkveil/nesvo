@@ -12,12 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/shared/ui/button';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 
 type Props = {
   sidebarOpen: boolean;
@@ -110,7 +105,7 @@ export function NavigationRail({
   usage,
 }: Props) {
   return (
-    <TooltipProvider>
+    <>
       <nav
         aria-label="Primary"
         className="flex h-full w-(--rail-width) shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pb-2"
@@ -189,6 +184,6 @@ export function NavigationRail({
           </RailButton>
         </div>
       </nav>
-    </TooltipProvider>
+    </>
   );
 }

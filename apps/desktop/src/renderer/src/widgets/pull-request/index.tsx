@@ -33,12 +33,7 @@ import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelAction } from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelSurface } from '@/shared/ui/panel-styles';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { CheckoutControl } from './checkout-control';
 import { CodeTab } from './code-tab';
 import { MergeControl } from './merge-control';
@@ -276,7 +271,7 @@ export default function PullRequestPanel({
   const state = data ? visualState(data) : null;
   const hint = data ? mergeHint(data) : null;
   return (
-    <TooltipProvider>
+    <>
       <section
         role="region"
         aria-label={`Pull request ${reference.repository} #${reference.number}`}
@@ -594,6 +589,6 @@ export default function PullRequestPanel({
           </>
         )}
       </section>
-    </TooltipProvider>
+    </>
   );
 }
