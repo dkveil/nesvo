@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pullRequestReferenceSchema } from './pull-requests';
 import { activityLimits, sessionActivitySchema } from './activities';
 import {
   effortSupportSchema,
@@ -255,6 +256,7 @@ export const sessionSchema = z.strictObject({
   workflowRunId: z.uuid().nullable().default(null),
   workflowStepId: z.uuid().nullable().default(null),
   workflow: sessionWorkflowSchema.nullable().default(null),
+  pullRequest: pullRequestReferenceSchema.nullable().default(null),
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),

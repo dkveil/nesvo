@@ -144,8 +144,33 @@ import {
   type WorkflowAssistantSendInput,
   type WorkflowAssistantTurn,
 } from './workflows';
+import {
+  actOnPullRequestSchema,
+  findSessionPullRequestSchema,
+  linkSessionPullRequestSchema,
+  listPullRequestsSchema,
+  pullRequestActionResultSchema,
+  pullRequestFilesSchema,
+  pullRequestListSchema,
+  pullRequestReferenceSchema,
+  pullRequestSchema,
+  pullRequestThreadsSchema,
+  readPullRequestSchema,
+  type ActOnPullRequestInput,
+  type FindSessionPullRequestInput,
+  type LinkSessionPullRequestInput,
+  type ListPullRequestsInput,
+  type PullRequest,
+  type PullRequestActionResult,
+  type PullRequestFiles,
+  type PullRequestList,
+  type PullRequestReference,
+  type PullRequestThreads,
+  type ReadPullRequestInput,
+} from './pull-requests';
 
 export * from './sessions';
+export * from './pull-requests';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -259,6 +284,41 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('assign-session-workflow'),
     input: assignSessionWorkflowSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-pull-requests'),
+    input: listPullRequestsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-pull-request'),
+    input: readPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-pull-request-files'),
+    input: readPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-pull-request-threads'),
+    input: readPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('act-on-pull-request'),
+    input: actOnPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('link-session-pull-request'),
+    input: linkSessionPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('find-session-pull-request'),
+    input: findSessionPullRequestSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -516,6 +576,36 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session'),
     id: z.uuid(),
     session: sessionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-list'),
+    id: z.uuid(),
+    list: pullRequestListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request'),
+    id: z.uuid(),
+    pullRequest: pullRequestSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-files'),
+    id: z.uuid(),
+    files: pullRequestFilesSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-threads'),
+    id: z.uuid(),
+    threads: pullRequestThreadsSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-action'),
+    id: z.uuid(),
+    result: pullRequestActionResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-reference'),
+    id: z.uuid(),
+    reference: pullRequestReferenceSchema.nullable(),
   }),
   z.strictObject({
     type: z.literal('scheduled-jobs'),
@@ -780,6 +870,34 @@ export type DesktopApi = {
     input: AssignSessionWorkflowInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  listPullRequests: (
+    input: ListPullRequestsInput,
+    hostId?: HostId,
+  ) => Promise<PullRequestList>;
+  readPullRequest: (
+    input: ReadPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<PullRequest>;
+  readPullRequestFiles: (
+    input: ReadPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<PullRequestFiles>;
+  readPullRequestThreads: (
+    input: ReadPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<PullRequestThreads>;
+  actOnPullRequest: (
+    input: ActOnPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<PullRequestActionResult>;
+  linkSessionPullRequest: (
+    input: LinkSessionPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  findSessionPullRequest: (
+    input: FindSessionPullRequestInput,
+    hostId?: HostId,
+  ) => Promise<PullRequestReference | null>;
   queueMessage: (
     input: SendMessageInput,
     hostId?: HostId,
