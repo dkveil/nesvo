@@ -263,6 +263,49 @@ const sameAttachmentIds = (
   left.length === right.length &&
   left.every((attachment, index) => attachment.id === right[index]?.id);
 
+const sameSubmission = (
+  entry: {
+    text: string;
+    skillId?: string;
+    skillHash?: string;
+    attachments: readonly MessageAttachment[];
+  },
+  input: SendMessageInput,
+): boolean =>
+  entry.text === input.text &&
+  entry.skillId === input.skillId &&
+  entry.skillHash === input.skillHash &&
+  sameAttachmentIds(entry.attachments, input.attachments ?? []);
+
+const reusedMessageId = () =>
+  new SessionError('invalid-request', 'This message ID is already in use.');
+
+const repeatedMessage = (
+  session: Session,
+  input: SendMessageInput,
+): boolean => {
+  const existing = session.messages.find(
+    message => message.id === input.messageId,
+  );
+  if (!existing) return false;
+  if (
+    existing.author !== 'operator' ||
+    !sameSubmission({ ...existing, text: existing.body }, input)
+  )
+    throw reusedMessageId();
+  return true;
+};
+
+const repeatedQueueEntry = (
+  session: Session,
+  input: SendMessageInput,
+): boolean => {
+  const existing = session.queue.find(item => item.id === input.messageId);
+  if (!existing) return false;
+  if (!sameSubmission(existing, input)) throw reusedMessageId();
+  return true;
+};
+
 export const GATE_PENDING_MESSAGE =
   'This result is waiting for its workflow gate';
 
@@ -841,23 +884,7 @@ export class SessionService {
         'invalid-request',
         'This session records a workflow gate and does not accept messages. Start a new session to continue the work.',
       );
-    const existing = session.messages.find(
-      message => message.id === input.messageId,
-    );
-    if (existing) {
-      if (
-        existing.author !== 'operator' ||
-        existing.body !== input.text ||
-        existing.skillId !== input.skillId ||
-        existing.skillHash !== input.skillHash ||
-        !sameAttachmentIds(existing.attachments, input.attachments ?? [])
-      )
-        throw new SessionError(
-          'invalid-request',
-          'This message ID is already in use.',
-        );
-      return structuredClone(session);
-    }
+    if (repeatedMessage(session, input)) return structuredClone(session);
     if (this.isBusy())
       throw new SessionError(
         'busy',
@@ -962,10 +989,7 @@ export class SessionService {
         'A skill snapshot requires a selected skill.',
       );
     resolveTurnSelection(session, input);
-    if (
-      session.queue.some(item => item.id === input.messageId) ||
-      session.messages.some(message => message.id === input.messageId)
-    )
+    if (repeatedQueueEntry(session, input) || repeatedMessage(session, input))
       return structuredClone(session);
     if (!this.isBusy()) return this.send(input);
     this.stagedAttachments(session.id, input);

@@ -4709,6 +4709,14 @@ test(
       repeated.queue.map(item => [item.id, item.text]),
       [first, second, dropped].map(item => [item.messageId, item.text]),
     );
+    for (const conflicting of [
+      { ...first, text: 'A different follow-up.' },
+      queued(holdMessageId, 'Another text for a started message.'),
+    ]) {
+      const refused = await host.request('queue-message', conflicting);
+      assert.equal(refused.code, 'invalid-request', JSON.stringify(refused));
+      assert.equal(refused.message, 'This message ID is already in use.');
+    }
     const cancelled = (
       await host.request('cancel-queued', {
         sessionId: session.id,
