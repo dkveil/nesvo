@@ -25,6 +25,7 @@ import type {
 import {
   ChevronRight,
   ChevronsDownUp,
+  FileText,
   FolderOpen,
   RefreshCw,
   WrapText,
@@ -33,13 +34,24 @@ import {
 import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { ListRow } from '@/shared/ui/list-row';
 import {
   PANEL_MIN_WIDTH_PX,
   usePanelWidth,
 } from '@/shared/lib/use-panel-width';
-import { PanelAction, PanelSearch } from '@/shared/ui/panel';
+import {
+  Panel,
+  PanelAction,
+  PanelHeader,
+  PanelSearch,
+  Toolbar,
+} from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
+import { panelSurface } from '@/shared/ui/panel-styles';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { FileGlyph } from './file-glyph';
 
 type Props = {
@@ -59,10 +71,18 @@ type DirectoryState = {
   loading: boolean;
 };
 
-const TREE_INDENT_PX = 12;
-const TREE_INSET_PX = 6;
+const MAX_TREE_LEVEL = 12;
+const TABS_ID = 'workspace-files';
 
 const fileName = (path: string) => path.split('/').at(-1) ?? path;
+
+function TreeNote({ children }: { children: ReactNode }) {
+  return (
+    <li className="px-2 py-1 text-2xs leading-4 text-muted-foreground">
+      {children}
+    </li>
+  );
+}
 
 function Directory({
   path,
@@ -97,18 +117,15 @@ function Directory({
   }, [api, path, sessionId]);
   if (state.loading)
     return (
-      <p role="status" className="px-3 py-1.5 text-2xs text-muted-foreground">
+      <StatusMessage tone="loading" className="px-2 py-1">
         Loading folder…
-      </p>
+      </StatusMessage>
     );
   if (state.error)
     return (
-      <p
-        role="alert"
-        className="px-3 py-1.5 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-      >
+      <StatusMessage tone="error" className="px-2 py-1">
         {state.error}
-      </p>
+      </StatusMessage>
     );
   return (
     <ul className="min-w-0">
@@ -117,27 +134,30 @@ function Directory({
         const isDirectory = entry.kind === 'directory';
         return (
           <li key={entry.path}>
-            <button
-              type="button"
-              aria-label={
-                isDirectory
-                  ? `${open ? 'Collapse' : 'Expand'} ${entry.path}`
-                  : `Open file ${entry.path}`
-              }
+            <ListRow
+              density="tree"
+              level={Math.min(level, MAX_TREE_LEVEL)}
+              selected={!isDirectory && selectedPath === entry.path}
               aria-expanded={isDirectory ? open : undefined}
-              aria-pressed={
-                isDirectory ? undefined : selectedPath === entry.path
+              leading={
+                isDirectory ? (
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={cn(
+                      'transition-transform duration-base ease-out',
+                      open && 'rotate-90',
+                    )}
+                  />
+                ) : (
+                  <FileGlyph name={entry.name} />
+                )
               }
-              title={entry.path}
-              style={{
-                paddingLeft:
-                  TREE_INSET_PX + Math.min(level, 12) * TREE_INDENT_PX,
+              title={entry.name}
+              mainProps={{
+                'aria-label': isDirectory
+                  ? `${open ? 'Collapse' : 'Expand'} ${entry.path}`
+                  : `Open file ${entry.path}`,
               }}
-              className={cn(
-                panelRow,
-                'flex h-[1.375rem] w-full min-w-0 items-center gap-1.5 pr-2 text-xs text-foreground/85',
-                'aria-pressed:bg-accent aria-pressed:ring-1 aria-pressed:ring-ring/60 aria-pressed:ring-inset',
-              )}
               onClick={() =>
                 isDirectory
                   ? setExpanded(previous =>
@@ -147,20 +167,7 @@ function Directory({
                     )
                   : onSelect(entry.path)
               }
-            >
-              {isDirectory ? (
-                <ChevronRight
-                  aria-hidden="true"
-                  className={cn(
-                    'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out',
-                    open && 'rotate-90',
-                  )}
-                />
-              ) : (
-                <FileGlyph name={entry.name} />
-              )}
-              <span className="truncate">{entry.name}</span>
-            </button>
+            />
             {isDirectory && open && (
               <Directory
                 path={entry.path}
@@ -174,18 +181,12 @@ function Directory({
           </li>
         );
       })}
-      {state.data?.entries.length === 0 && (
-        <li className="px-3 py-1.5 text-2xs text-muted-foreground">
-          Empty folder
-        </li>
-      )}
+      {state.data?.entries.length === 0 && <TreeNote>Empty folder</TreeNote>}
       {state.data?.truncated && (
-        <li
-          title={state.data.detail ?? undefined}
-          className="px-3 py-1.5 text-2xs leading-5 text-muted-foreground"
-        >
+        <TreeNote>
           Some entries could not be listed.
-        </li>
+          {state.data.detail ? ` ${state.data.detail}` : ''}
+        </TreeNote>
       )}
     </ul>
   );
@@ -227,60 +228,43 @@ function SearchResults({
   }, [api, query, sessionId]);
   if (state.error)
     return (
-      <p
-        role="alert"
-        className="px-3 py-1.5 text-xs text-destructive [overflow-wrap:anywhere]"
-      >
+      <StatusMessage tone="error" className="px-2 py-1">
         {state.error}
-      </p>
+      </StatusMessage>
     );
   if (!state.data)
     return (
-      <p role="status" className="px-3 py-1.5 text-2xs text-muted-foreground">
+      <StatusMessage tone="loading" className="px-2 py-1">
         Searching…
-      </p>
+      </StatusMessage>
     );
   return (
     <ul aria-label="File search results" className="min-w-0">
       {state.data.matches.map((entry: WorkspaceEntry) => (
         <li key={entry.path}>
-          <button
-            type="button"
-            aria-label={`Open file ${entry.path}`}
-            aria-pressed={selectedPath === entry.path}
-            title={entry.path}
+          <ListRow
+            density="two-line"
+            selected={selectedPath === entry.path}
+            leading={<FileGlyph name={entry.name} />}
+            title={entry.name}
+            description={entry.path}
+            mainProps={{ 'aria-label': `Open file ${entry.path}` }}
             onClick={() => onSelect(entry.path)}
-            className={cn(
-              panelRow,
-              'flex w-full min-w-0 items-start gap-1.5 px-2 py-1 text-xs',
-            )}
-          >
-            <FileGlyph name={entry.name} className="mt-0.5" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-foreground">
-                {entry.name}
-              </span>
-              <span className="block truncate text-2xs text-muted-foreground">
-                {entry.path}
-              </span>
-            </span>
-          </button>
+          />
         </li>
       ))}
       {state.data.matches.length === 0 && (
-        <li className="px-3 py-1.5 text-2xs text-muted-foreground">
+        <TreeNote>
           {state.data.truncated
             ? 'No matches in scanned files'
             : 'No matching files'}
-        </li>
+        </TreeNote>
       )}
       {state.data.truncated && (
-        <li
-          title={state.data.detail ?? undefined}
-          className="px-3 py-1.5 text-2xs leading-5 text-muted-foreground"
-        >
+        <TreeNote>
           Partial results. Browse folders for more.
-        </li>
+          {state.data.detail ? ` ${state.data.detail}` : ''}
+        </TreeNote>
       )}
     </ul>
   );
@@ -296,9 +280,9 @@ class PreviewBoundary extends Component<
   }
   override render() {
     return this.state.failed ? (
-      <pre className="h-full overflow-auto p-3 text-xs leading-5">
-        <code>{this.props.text}</code>
-      </pre>
+      <div className="h-full overflow-auto p-3">
+        <CodeBlock code={this.props.text} maxHeightClassName="max-h-none" />
+      </div>
     ) : (
       this.props.children
     );
@@ -374,28 +358,32 @@ function FilePreview({
     <section
       aria-label="File preview"
       data-file-path={path}
-      className="h-full min-h-0 min-w-0 animate-in overflow-hidden duration-150 fade-in-0"
+      className="h-full min-h-0 min-w-0 animate-in overflow-hidden duration-base ease-out fade-in-0"
     >
       {state.error ? (
-        <p
-          role="alert"
-          className="p-4 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-        >
+        <StatusMessage tone="error" className="p-4">
           {state.error}
-        </p>
+        </StatusMessage>
       ) : !state.file ? (
-        <p role="status" className="p-4 text-xs text-muted-foreground">
+        <StatusMessage tone="loading" className="p-4">
           Loading file…
-        </p>
+        </StatusMessage>
       ) : state.file.status !== 'text' ? (
-        <p className="p-4 text-xs leading-6 text-muted-foreground">
-          {state.file.detail ??
+        <EmptyState
+          size="sm"
+          icon={FileText}
+          title={
+            state.file.status === 'binary' ? 'Binary file' : 'File too large'
+          }
+          description={
+            state.file.detail ??
             (state.file.status === 'binary'
               ? 'This file cannot be previewed as text.'
-              : 'This file is too large to preview.')}
-        </p>
+              : 'This file is too large to preview.')
+          }
+        />
       ) : state.file.text === '' ? (
-        <p className="p-4 text-xs text-muted-foreground">Empty file</p>
+        <EmptyState size="sm" icon={FileText} title="Empty file" />
       ) : (
         <SourceCode file={state.file} wrap={wrap} />
       )}
@@ -479,10 +467,9 @@ export default function WorkspaceFiles({
           : 'min-w-0 flex-1',
       )}
     >
-      <div className="flex h-8 shrink-0 items-center gap-0.5 px-1">
+      <Toolbar label="File tools" bordered={false}>
         <PanelAction
-          aria-label="Refresh files"
-          title="Refresh files and preview"
+          label="Refresh files"
           onClick={() => setRefresh(value => value + 1)}
         >
           <RefreshCw />
@@ -493,20 +480,16 @@ export default function WorkspaceFiles({
           maxLength={100}
           value={query}
           onChange={event => setQuery(event.target.value)}
-          className="h-7 min-w-0 flex-1 bg-transparent px-1.5 [&_input]:text-xs [&>svg]:hidden"
+          className="min-w-0 flex-1"
         />
         <PanelAction
-          aria-label="Collapse folders"
-          title="Collapse folders"
+          label="Collapse folders"
           onClick={() => setCollapse(value => value + 1)}
         >
           <ChevronsDownUp />
         </PanelAction>
-      </div>
-      <div
-        className="min-h-0 flex-1 overflow-y-auto px-1 pb-1"
-        title="Generated and private entries are excluded. Symbolic links are not followed."
-      >
+      </Toolbar>
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-1">
         {query.trim() ? (
           <SearchResults
             key={`${refresh}:${query.trim()}`}
@@ -526,11 +509,15 @@ export default function WorkspaceFiles({
             selectedPath={path}
           />
         )}
+        <p className="px-2 pt-3 pb-1 text-2xs leading-4 text-muted-foreground">
+          Generated and private entries are excluded. Symbolic links are not
+          followed.
+        </p>
       </div>
     </nav>
   );
   return (
-    <section
+    <Panel
       aria-label="Workspace files"
       data-session-id={session.id}
       data-editing={editing}
@@ -538,138 +525,101 @@ export default function WorkspaceFiles({
       style={panelStyle}
       className={cn(
         panelSurface,
-        'transition-[width] duration-150 ease-out motion-reduce:transition-none',
+        'transition-[width] duration-slow ease-out',
         resizing && 'transition-none',
       )}
     >
       <PanelResizer label="Resize files panel" {...resizer} />
-      <header className="drag-region flex h-(--shell-topbar-height) shrink-0 items-stretch border-b pr-(--panel-edge-inset)">
-        <div
-          role="tablist"
-          aria-label="Open files"
-          className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]"
-        >
-          {!editing && (
-            <h2 className="flex min-w-0 shrink-0 items-center gap-1.5 pl-3 text-xs font-semibold">
-              <FolderOpen
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-              Files
-              <span className="sr-only">Current workspace</span>
-              <span
-                className="min-w-0 truncate font-normal text-muted-foreground"
-                title={session.directory}
-              >
-                {name}
-              </span>
-            </h2>
-          )}
-          {tabs.map(tab => {
-            const active = tab === path;
-            return (
-              <div
-                key={tab}
-                data-active={active}
-                title={tab}
-                className={cn(
-                  'group relative flex max-w-52 shrink-0 animate-in items-center border-r pr-1 text-xs text-muted-foreground transition-colors duration-100 fade-in-0 slide-in-from-left-1 hover:bg-accent hover:text-foreground',
-                  active &&
-                    'bg-accent text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/60',
-                )}
-                onAuxClick={event => {
-                  if (event.button === 1) closeTab(tab);
-                }}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  className="flex h-full min-w-0 items-center gap-1.5 pr-1 pl-3 outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-                  onClick={() => setPath(tab)}
-                >
-                  <FileGlyph name={fileName(tab)} />
-                  <span className="truncate">{fileName(tab)}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Close tab ${tab}`}
-                  className={cn(
-                    'flex size-5 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity duration-100 outline-none group-hover:opacity-100 hover:bg-highlight focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
-                    active && 'opacity-100',
-                  )}
-                  onClick={() => closeTab(tab)}
-                >
-                  <X className="size-3" aria-hidden="true" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        <div className="flex shrink-0 items-center gap-0.5 px-1.5">
-          {savedVersion !== undefined && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              aria-label={`Open saved result version ${savedVersion}`}
-              onClick={onSavedDiff}
-              className="h-7 text-muted-foreground hover:text-foreground"
-            >
-              Result v{savedVersion}
-            </Button>
-          )}
-          {editing && (
-            <PanelAction
-              aria-label="Wrap file lines"
-              aria-pressed={wrap}
-              onClick={() => setWrap(value => !value)}
-            >
-              <WrapText />
-            </PanelAction>
-          )}
-          <PanelAction
-            ref={closeButton}
-            aria-label="Close files"
-            onClick={onClose}
+      <PanelHeader
+        titleBar
+        icon={FolderOpen}
+        title="Files"
+        meta={
+          !editing && (
+            <>
+              <span className="sr-only">Current workspace </span>
+              <span>{name}</span>
+            </>
+          )
+        }
+      >
+        {savedVersion !== undefined && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-muted-foreground"
+            aria-label={`Open saved result version ${savedVersion}`}
+            onClick={onSavedDiff}
           >
-            <X className="size-4" />
+            Result v{savedVersion}
+          </Button>
+        )}
+        {editing && (
+          <PanelAction
+            label="Wrap file lines"
+            aria-pressed={wrap}
+            onClick={() => setWrap(value => !value)}
+          >
+            <WrapText />
           </PanelAction>
-        </div>
-      </header>
+        )}
+        <PanelAction ref={closeButton} label="Close files" onClick={onClose}>
+          <X className="size-4" />
+        </PanelAction>
+      </PanelHeader>
       {editing && (
-        <nav
-          aria-label="File path"
-          className="flex h-7 shrink-0 items-center gap-1.5 overflow-hidden border-b px-3 text-2xs whitespace-nowrap text-muted-foreground"
-        >
-          <span>Current workspace</span>
-          <ChevronRight
-            className="size-3 shrink-0 opacity-60"
-            aria-hidden="true"
+        <>
+          <Tabs
+            variant="editor"
+            label="Open files"
+            idPrefix={TABS_ID}
+            value={path}
+            onChange={setPath}
+            onClose={closeTab}
+            options={tabs.map(tab => ({
+              value: tab,
+              label: fileName(tab),
+              icon: <FileGlyph name={fileName(tab)} />,
+              closable: true,
+            }))}
           />
-          <span title={session.directory}>{name}</span>
-          {segments.map((segment, index) => (
-            <Fragment key={`${index}:${segment}`}>
-              <ChevronRight
-                className="size-3 shrink-0 opacity-60"
-                aria-hidden="true"
-              />
-              <span
-                className={cn(
-                  'truncate',
-                  index === segments.length - 1 &&
-                    'font-medium text-foreground',
-                )}
-              >
-                {segment}
-              </span>
-            </Fragment>
-          ))}
-        </nav>
+          <nav
+            aria-label="File path"
+            className="flex h-7 shrink-0 items-center gap-1.5 overflow-hidden border-b px-3 text-2xs whitespace-nowrap text-muted-foreground"
+          >
+            <span>Current workspace</span>
+            <ChevronRight
+              className="size-3 shrink-0 opacity-60"
+              aria-hidden="true"
+            />
+            <span>{name}</span>
+            {segments.map((segment, index) => (
+              <Fragment key={`${index}:${segment}`}>
+                <ChevronRight
+                  className="size-3 shrink-0 opacity-60"
+                  aria-hidden="true"
+                />
+                <span
+                  className={cn(
+                    'truncate',
+                    index === segments.length - 1 &&
+                      'font-medium text-foreground',
+                  )}
+                >
+                  {segment}
+                </span>
+              </Fragment>
+            ))}
+          </nav>
+        </>
       )}
       <div className="flex min-h-0 min-w-0 flex-1">
         {editing && (
-          <div className="min-h-0 min-w-0 flex-1">
+          <TabPanel
+            idPrefix={TABS_ID}
+            value={path}
+            className="min-h-0 min-w-0 flex-1"
+          >
             <FilePreview
               key={`${path}:${refresh}`}
               path={path}
@@ -677,10 +627,10 @@ export default function WorkspaceFiles({
               api={api}
               wrap={wrap}
             />
-          </div>
+          </TabPanel>
         )}
         {tree}
       </div>
-    </section>
+    </Panel>
   );
 }
