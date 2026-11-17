@@ -23,12 +23,16 @@ import type {
 import {
   ArrowLeft,
   BookOpen,
+  FileCode2,
   FolderOpen,
   Gauge,
+  GitPullRequest,
+  History,
   Menu,
   PanelRight,
   Plus,
   SquareDashed,
+  WifiOff,
 } from 'lucide-react';
 import {
   directoryLabel,
@@ -71,6 +75,8 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -81,6 +87,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/shared/ui/sheet';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
@@ -127,6 +134,7 @@ import { useAttention } from './use-attention';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
+import { PanelPlaceholder } from './panel-placeholder';
 import { SidebarResizer } from './sidebar-resizer';
 import {
   clampSidebarWidth,
@@ -1755,16 +1763,17 @@ export function Workspace() {
   const automationBusy = (session: Session, reportKey = '') => (
     <>
       {automationLabel(session)} is running ·{' '}
-      <button
+      <Button
         type="button"
-        className="font-medium text-foreground underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        variant="link"
+        size="inline"
         disabled={
           session.status !== 'running' || !store.hostReady(session.hostId)
         }
         onClick={() => void stopAutomation(session, reportKey)}
       >
         {session.status === 'stopping' ? 'Stopping…' : 'Stop'}
-      </button>
+      </Button>
     </>
   );
   const automationComputers = store.computers.filter(supportsScheduledJobs);
@@ -2119,17 +2128,16 @@ ${text}`
           </div>
           <Sheet open={navigationOpen} onOpenChange={setNavigationOpen}>
             <SheetTrigger asChild>
-              <Button
+              <IconButton
                 ref={navigationToggle}
-                variant="ghost"
-                size="icon"
+                size={32}
                 className="md:hidden"
-                aria-label="Open sessions"
+                label="Open sessions"
               >
                 <Menu />
-              </Button>
+              </IconButton>
             </SheetTrigger>
-            <SheetContent side="left" className="w-72 gap-0 p-0">
+            <SheetContent side="left" className="w-72">
               <SheetHeader className="sr-only">
                 <SheetTitle>Navigation</SheetTitle>
                 <SheetDescription>Sessions and inbox.</SheetDescription>
@@ -2141,24 +2149,19 @@ ${text}`
             <BrandWordmark className="hidden pr-2 select-none md:block" />
           )}
           {parentSession && !browsing && !creating && (
-            <Button
-              variant="ghost"
-              size="icon-md"
-              aria-label="Back to parent session"
-              title={`Back to: ${parentSession.title}`}
+            <IconButton
+              size={32}
+              label="Back to parent session"
               onClick={() => select(entityKey(parentSession))}
             >
               <ArrowLeft />
-            </Button>
+            </IconButton>
           )}
           <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-1">
-            <ol className="flex min-w-0 items-center gap-2 text-[13px]">
+            <ol className="flex min-w-0 items-center gap-2 text-ui">
               {breadcrumbDirectory !== null && (
                 <>
-                  <li
-                    className="hidden max-w-80 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex"
-                    title={breadcrumbDirectory || 'Isolated folder'}
-                  >
+                  <li className="hidden max-w-80 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex">
                     {breadcrumbDirectory ? (
                       <ProjectChip
                         label={directoryLabel(breadcrumbDirectory)}
@@ -2192,13 +2195,14 @@ ${text}`
               {automationView === 'detail' && (
                 <>
                   <li className="shrink-0">
-                    <button
+                    <Button
                       type="button"
-                      className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      variant="ghost"
+                      className="font-normal text-muted-foreground"
                       onClick={() => openAutomations()}
                     >
                       Automations
-                    </button>
+                    </Button>
                   </li>
                   <li aria-hidden="true" className="text-muted-foreground/60">
                     /
@@ -2209,7 +2213,7 @@ ${text}`
                 aria-current="page"
                 className="flex min-w-0 items-center gap-3"
               >
-                <h1 className="truncate text-[13px] font-semibold">
+                <h1 className="truncate text-ui font-semibold">
                   {costsView
                     ? 'Costs'
                     : creating
@@ -2234,7 +2238,7 @@ ${text}`
                   !creating &&
                   selected &&
                   sessionRoleLabel(selected) && (
-                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                    <span className="hidden text-2xs text-muted-foreground sm:inline">
                       {sessionRoleLabel(selected)}
                     </span>
                   )}
@@ -2256,10 +2260,7 @@ ${text}`
             </ol>
           </nav>
           {!browsing && !creating && selected && (
-            <span
-              className="max-w-32 truncate text-[11px] text-muted-foreground"
-              title={selectedComputer?.name}
-            >
+            <span className="max-w-32 truncate text-2xs text-muted-foreground">
               {selectedHostId !== 'local'
                 ? (selectedComputer?.name ?? 'Remote')
                 : ''}
@@ -2271,19 +2272,18 @@ ${text}`
             selected &&
             selected.status !== 'ready' &&
             !showsRunStatus(selected, selectedRun) && (
-              <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+              <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">
                 {sessionStatusLabel(selected)}
               </span>
             )}
-          <Button
-            variant="ghost"
-            size="icon-md"
+          <IconButton
+            size={32}
             className="md:hidden"
-            aria-label="New session"
+            label="New session"
             onClick={openCreate}
           >
             <Plus />
-          </Button>
+          </IconButton>
           {cardRun ? (
             <WorkflowStatus
               run={cardRun}
@@ -2291,29 +2291,22 @@ ${text}`
               onToggle={toggleCard}
             />
           ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-md"
-              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
-              aria-label="Session details"
-              title="Session details"
-              aria-pressed={cardOpen}
+            <IconButton
+              size={32}
+              label="Session details"
+              pressed={cardOpen}
               aria-controls={cardOpen ? 'session-card' : undefined}
               data-session-card-trigger
               onClick={event => toggleCard(event.currentTarget)}
             >
-              <Gauge className="size-4" />
-            </Button>
+              <Gauge />
+            </IconButton>
           )}
           {!browsing && !creating && selected && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-md"
-              aria-label="Open skills"
-              title="Shared library"
-              aria-pressed={panel === 'skills'}
+            <IconButton
+              size={32}
+              label="Open skills"
+              pressed={panel === 'skills'}
               onClick={() => {
                 diffTrigger.current =
                   document.activeElement instanceof HTMLElement
@@ -2322,42 +2315,31 @@ ${text}`
                 setCardOpen(false);
                 setPanel('skills');
               }}
-              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
             >
-              <BookOpen className="size-4" />
-            </Button>
+              <BookOpen />
+            </IconButton>
           )}
           {!browsing && !creating && selected && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-md"
-              aria-label="Open files"
-              title="Workspace files"
-              aria-pressed={panel === 'files'}
+            <IconButton
+              size={32}
+              label="Open files"
+              pressed={panel === 'files'}
               onClick={openFiles}
-              className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
             >
-              <FolderOpen className="size-4" />
-            </Button>
+              <FolderOpen />
+            </IconButton>
           )}
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-md"
-                  className="text-muted-foreground"
-                  aria-label="Open context"
-                  title="Session context"
-                >
-                  <PanelRight className="size-4" />
-                </Button>
+                <IconButton size={32} label="Open context">
+                  <PanelRight />
+                </IconButton>
               </SheetTrigger>
-              <SheetContent className="gap-0 bg-card">
-                <SheetHeader className="border-b px-5 py-4">
-                  <SheetTitle className="text-sm">Context</SheetTitle>
-                  <SheetDescription className="text-xs">
+              <SheetContent>
+                <SheetHeader>
+                  <SheetTitle>Context</SheetTitle>
+                  <SheetDescription>
                     Session details and access.
                   </SheetDescription>
                 </SheetHeader>
@@ -2370,34 +2352,22 @@ ${text}`
         </header>
         {store.error && (
           <div className="flex max-h-32 shrink-0 flex-wrap items-center gap-3 overflow-y-auto border-b px-5 py-2.5">
-            <p
-              role="alert"
-              className="min-w-0 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-            >
-              {store.error}
-            </p>
-            <Button
-              size="md"
-              variant="ghost"
-              onClick={() => window.location.reload()}
-            >
+            <StatusMessage tone="error">{store.error}</StatusMessage>
+            <Button variant="ghost" onClick={() => window.location.reload()}>
               Reload window
             </Button>
           </div>
         )}
         {providerIssue && selected && (
           <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-2">
-            <p
-              role={providerIssue.error ? 'alert' : 'status'}
-              className="text-xs text-muted-foreground [overflow-wrap:anywhere]"
-            >
+            <StatusMessage tone={providerIssue.error ? 'error' : 'warning'}>
               {providerIssue.error ||
                 providerStatusLabel(selected.provider, providerIssue)}
-            </p>
+            </StatusMessage>
             <Button
-              size="sm"
+              size="xs"
               variant="ghost"
-              className="h-6 text-xs text-muted-foreground"
+              className="text-muted-foreground"
               onClick={() => setSettingsPage('general')}
             >
               View status
@@ -2469,9 +2439,9 @@ ${text}`
           ) : workflowsView && workflowsEditor ? (
             <Suspense
               fallback={
-                <p role="status" className="p-6 text-xs text-muted-foreground">
+                <StatusMessage tone="loading" className="p-6">
                   Loading the graph editor…
-                </p>
+                </StatusMessage>
               }
             >
               <WorkflowGraphEditor
@@ -2567,9 +2537,9 @@ ${text}`
           ) : workflowsView ? (
             <Suspense
               fallback={
-                <p role="status" className="p-6 text-xs text-muted-foreground">
+                <StatusMessage tone="loading" className="p-6">
                   Loading workflows…
-                </p>
+                </StatusMessage>
               }
             >
               <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -2664,18 +2634,14 @@ ${text}`
                   : '';
               }}
               notice={runningAutomations.map(session => (
-                <p
-                  key={entityKey(session)}
-                  role="status"
-                  className="mb-3 px-3 text-2xs text-muted-foreground"
-                >
-                  {automationBusy(session)}
+                <div key={entityKey(session)} className="mb-3 space-y-1 px-2">
+                  <StatusMessage>{automationBusy(session)}</StatusMessage>
                   {automationErrors[automationErrorKey(session)] && (
-                    <span role="alert" className="block text-destructive">
+                    <StatusMessage tone="error">
                       {automationErrors[automationErrorKey(session)]}
-                    </span>
+                    </StatusMessage>
                   )}
-                </p>
+                </div>
               ))}
             />
           ) : automationView === 'detail' && automationJob ? (
@@ -2758,7 +2724,10 @@ ${text}`
             </div>
           ) : selected ? (
             <div
-              className={`flex min-h-0 min-w-0 flex-1 ${visiblePanel ? 'max-[1200px]:hidden' : ''}`}
+              className={cn(
+                'flex min-h-0 min-w-0 flex-1',
+                visiblePanel && 'max-[1200px]:hidden',
+              )}
             >
               <Conversation
                 key={selectedKey}
@@ -2967,17 +2936,20 @@ ${text}`
             </div>
           ) : (
             <section
-              className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center"
+              className="flex flex-1 items-center justify-center"
               aria-label="Sessions"
             >
-              <h2 className="text-2xl font-medium tracking-tight">
-                {store.loading ? 'Loading sessions…' : 'History is unavailable'}
-              </h2>
-              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-                {store.loading
-                  ? 'Loading your local history.'
-                  : 'Reconnect to load your saved sessions.'}
-              </p>
+              <EmptyState
+                icon={History}
+                title={
+                  store.loading ? 'Loading sessions…' : 'History is unavailable'
+                }
+                description={
+                  store.loading
+                    ? 'Loading your local history.'
+                    : 'Reconnect to load your saved sessions.'
+                }
+              />
             </section>
           )}
         </main>
@@ -2987,25 +2959,32 @@ ${text}`
         !creating &&
         selected &&
         !store.hostReady(selectedHostId) && (
-          <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-background p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
-            <p>
-              This computer is offline. Current files and skills are
-              unavailable; saved conversations and result diffs remain readable.
-            </p>
-            <Button size="lg" variant="outline" onClick={closeDiff}>
-              Close panel
-            </Button>
-          </aside>
+          <PanelPlaceholder
+            kind={panel === 'files' ? 'files-tree' : 'skills'}
+            icon={panel === 'files' ? FolderOpen : BookOpen}
+            title={panel === 'files' ? 'Files' : 'Shared library'}
+          >
+            <EmptyState
+              size="sm"
+              icon={WifiOff}
+              title="This computer is offline"
+              description="Current files and skills are unavailable; saved conversations and result diffs remain readable."
+              action={
+                <Button variant="outline" onClick={closeDiff}>
+                  Close panel
+                </Button>
+              }
+            />
+          </PanelPlaceholder>
         )}
       {panel === 'diff' && !creating && diffReview && diffTarget && (
         <Suspense
           fallback={
-            <aside
-              role="status"
-              className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
-            >
-              Loading saved diff…
-            </aside>
+            <PanelPlaceholder kind="diff" icon={FileCode2} title="Saved diff">
+              <StatusMessage tone="loading" className="p-3">
+                Loading saved diff…
+              </StatusMessage>
+            </PanelPlaceholder>
           }
         >
           <ReviewDiff
@@ -3027,12 +3006,15 @@ ${text}`
         store.hostReady(selectedHostId) && (
           <Suspense
             fallback={
-              <aside
-                role="status"
-                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+              <PanelPlaceholder
+                kind="files-tree"
+                icon={FolderOpen}
+                title="Files"
               >
-                Loading files…
-              </aside>
+                <StatusMessage tone="loading" className="p-3">
+                  Loading files…
+                </StatusMessage>
+              </PanelPlaceholder>
             }
           >
             <WorkspaceFiles
@@ -3052,12 +3034,15 @@ ${text}`
         pullRequestApi(pullRequestTarget.hostId) && (
           <Suspense
             fallback={
-              <aside
-                role="status"
-                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+              <PanelPlaceholder
+                kind="pull-request"
+                icon={GitPullRequest}
+                title="Pull request"
               >
-                Loading pull request…
-              </aside>
+                <StatusMessage tone="loading" className="p-3">
+                  Loading pull request…
+                </StatusMessage>
+              </PanelPlaceholder>
             }
           >
             <PullRequestPanel
@@ -3080,12 +3065,15 @@ ${text}`
         store.hostReady(selectedHostId) && (
           <Suspense
             fallback={
-              <aside
-                role="status"
-                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+              <PanelPlaceholder
+                kind="skills"
+                icon={BookOpen}
+                title="Shared library"
               >
-                Loading skills…
-              </aside>
+                <StatusMessage tone="loading" className="p-3">
+                  Loading skills…
+                </StatusMessage>
+              </PanelPlaceholder>
             }
           >
             <SessionSkills
@@ -3196,10 +3184,8 @@ ${text}`
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              Leave the graph editor?
-            </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogTitle>Leave the graph editor?</DialogTitle>
+            <DialogDescription>
               The workflow has unsaved changes. Leaving drops the edits made
               since the last save.
             </DialogDescription>
