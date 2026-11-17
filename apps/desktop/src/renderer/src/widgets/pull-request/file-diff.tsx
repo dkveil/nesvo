@@ -1,5 +1,6 @@
 import {
   Component,
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -7,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  AnnotationSide,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -75,22 +77,35 @@ class DiffBoundary extends Component<
   }
 }
 
-const stopPointerDown = (element: HTMLButtonElement | null) => {
-  if (!element) return;
-  const stop = (event: PointerEvent) => event.stopPropagation();
-  element.addEventListener('pointerdown', stop);
-  return () => element.removeEventListener('pointerdown', stop);
-};
-
 function GutterCommentButton({ onPress }: { onPress: () => void }) {
+  const latestPress = useRef(onPress);
+  useLayoutEffect(() => {
+    latestPress.current = onPress;
+  });
+  const pressOnPointerDown = useCallback(
+    (element: HTMLButtonElement | null) => {
+      if (!element) return;
+      const press = (event: PointerEvent) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        event.preventDefault();
+        latestPress.current();
+      };
+      element.addEventListener('pointerdown', press);
+      return () => element.removeEventListener('pointerdown', press);
+    },
+    [],
+  );
   return (
     <button
-      ref={stopPointerDown}
+      ref={pressOnPointerDown}
       type="button"
       aria-label="Comment on this line"
       title="Comment on this line. Shift-click another line number to select a range."
-      onClick={onPress}
-      className="my-0.5 mr-0.5 flex size-4 animate-in cursor-pointer items-center justify-center rounded-sm bg-primary text-primary-foreground shadow-xs duration-150 ease-out fade-in-0 zoom-in-90 outline-none hover:bg-primary/85 focus-visible:ring-1 focus-visible:ring-ring motion-reduce:animate-none"
+      onClick={event => {
+        if (event.detail === 0) onPress();
+      }}
+      className="relative z-10 my-0.5 mr-0.5 flex size-4 animate-in cursor-pointer items-center justify-center rounded-sm bg-primary text-primary-foreground shadow-xs duration-150 ease-out fade-in-0 zoom-in-90 outline-none hover:bg-primary/85 focus-visible:ring-1 focus-visible:ring-ring motion-reduce:animate-none"
     >
       <Plus aria-hidden="true" className="size-3" strokeWidth={2.5} />
     </button>
@@ -121,6 +136,10 @@ export function PatchDiff({
   renderDraft,
 }: PatchDiffProps) {
   const [selection, setSelection] = useState<SelectedLineRange | null>(null);
+  const lastHovered = useRef<{
+    lineNumber: number;
+    side: AnnotationSide;
+  } | null>(null);
   const latest = useRef({ draft, onDraftRange });
   useLayoutEffect(() => {
     latest.current = { draft, onDraftRange };
@@ -165,6 +184,12 @@ export function PatchDiff({
       tokenizeMaxLineLength: 1000,
       enableGutterUtility: showGutter,
       enableLineSelection: commentable,
+      onLineEnter: line => {
+        lastHovered.current = {
+          lineNumber: line.lineNumber,
+          side: line.annotationSide,
+        };
+      },
       onLineSelected: range => {
         if (!latest.current.draft) setSelection(range);
         else if (range) latest.current.onDraftRange(lineRangeOf(range));
@@ -192,7 +217,7 @@ export function PatchDiff({
             ? getHoveredLine => (
                 <GutterCommentButton
                   onPress={() => {
-                    const hovered = getHoveredLine();
+                    const hovered = getHoveredLine() ?? lastHovered.current;
                     const range =
                       selection ??
                       (hovered
