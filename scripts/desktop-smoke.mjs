@@ -1302,6 +1302,114 @@ try {
       await messageEditor.press('Shift+Tab');
     await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
+    const pendingPrompt = name =>
+      conversation
+        .getByRole('group', { name, exact: true })
+        .and(conversation.locator('[data-prompt-status="pending"]'));
+    const question = pendingPrompt('Question from the agent');
+    await send('fixture:question');
+    await question.waitFor();
+    await conversation
+      .getByText('Waiting for your answer', { exact: true })
+      .waitFor();
+    await navigation
+      .getByRole('button', { name: /^Workspace analysis .*Needs an answer/ })
+      .waitFor();
+    await openInbox();
+    const promptRow = page.getByRole('article', {
+      name: 'Question from the agent: Workspace analysis',
+      exact: true,
+    });
+    await promptRow
+      .getByRole('radio', { name: 'vitest', exact: true })
+      .waitFor();
+    await screenshot('-prompt-inbox');
+    await promptRow
+      .getByRole('button', {
+        name: 'Open session: Workspace analysis',
+        exact: true,
+      })
+      .click();
+    const sendAnswers = question.getByRole('button', {
+      name: 'Send answers',
+      exact: true,
+    });
+    assert.equal(await sendAnswers.isDisabled(), true);
+    await question
+      .getByRole('radiogroup', {
+        name: 'Which test runner should I use?',
+        exact: true,
+      })
+      .getByRole('radio', { name: 'vitest', exact: true })
+      .check();
+    const checks = question.getByRole('group', {
+      name: 'Which checks should run?',
+      exact: true,
+    });
+    for (const label of ['lint', 'types'])
+      await checks.getByRole('checkbox', { name: label, exact: true }).check();
+    await screenshot('-prompt-question');
+    await sendAnswers.click();
+    await message('Fixture answers: vitest | lint, types.').waitFor();
+    await conversation
+      .locator('[data-prompt-status="answered"]')
+      .getByText('lint, types', { exact: true })
+      .waitFor();
+    await waitState(modeTarget.id, 'completed');
+    await modeSwitch.click();
+    await modeDialog.getByRole('radio', { name: 'Plan', exact: true }).click();
+    await modeDialog.waitFor({ state: 'hidden' });
+    await send('fixture:plan');
+    const plan = pendingPrompt('Plan from the agent');
+    await plan
+      .getByRole('heading', { name: 'Proposed plan', exact: true })
+      .waitFor();
+    await plan
+      .getByRole('textbox', { name: 'Feedback', exact: true })
+      .fill('Also document it.');
+    await plan
+      .getByRole('button', { name: 'Keep planning', exact: true })
+      .click();
+    await plan
+      .getByRole('heading', { name: 'Revised plan 2', exact: true })
+      .waitFor();
+    await screenshot('-prompt-plan');
+    await plan
+      .getByRole('button', {
+        name: 'Accept and continue in Accept edits',
+        exact: true,
+      })
+      .click();
+    await message('Proceed with the accepted plan.').waitFor();
+    await conversation
+      .getByText('Mode changed to Accept edits', { exact: true })
+      .nth(1)
+      .waitFor();
+    const deadline = Date.now() + 20_000;
+    let continued = await sessionByTitle('Workspace analysis');
+    while (
+      Date.now() < deadline &&
+      !(
+        continued.status === 'completed' &&
+        continued.messages.at(-2)?.body === 'Proceed with the accepted plan.'
+      )
+    ) {
+      await delay(100);
+      continued = await sessionByTitle('Workspace analysis');
+    }
+    assert.equal(continued.status, 'completed');
+    assert.equal(continued.mode, 'accept-edits');
+    assert.equal(continued.messages.at(-2).mode, 'accept-edits');
+    assert.deepEqual(
+      continued.prompts
+        .filter(item => item.kind === 'plan')
+        .sort((left, right) => left.planRound - right.planRound)
+        .map(item => [item.planRound, item.status]),
+      [
+        [1, 'revised'],
+        [2, 'accepted'],
+      ],
+    );
     await openNewThread();
   }
   assert.equal(
