@@ -19,6 +19,17 @@ import {
   readWorkspaceFileSchema,
   readGitBranchSchema,
   gitBranchSchema,
+  listPullRequestsSchema,
+  readPullRequestSchema,
+  actOnPullRequestSchema,
+  linkSessionPullRequestSchema,
+  findSessionPullRequestSchema,
+  pullRequestListSchema,
+  pullRequestSchema,
+  pullRequestFilesSchema,
+  pullRequestThreadsSchema,
+  pullRequestActionResultSchema,
+  pullRequestReferenceSchema,
   workspaceDirectorySchema,
   workspaceSearchSchema,
   workspaceFileSchema,
@@ -500,6 +511,64 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
+  listPullRequests: async (input, hostId) =>
+    pullRequestListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-pull-requests',
+        listPullRequestsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readPullRequest: async (input, hostId) =>
+    pullRequestSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-pull-request',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readPullRequestFiles: async (input, hostId) =>
+    pullRequestFilesSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-pull-request-files',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readPullRequestThreads: async (input, hostId) =>
+    pullRequestThreadsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-pull-request-threads',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  actOnPullRequest: async (input, hostId) =>
+    pullRequestActionResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:act-on-pull-request',
+        actOnPullRequestSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  linkSessionPullRequest: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:link-session-pull-request',
+        linkSessionPullRequestSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  findSessionPullRequest: async (input, hostId) =>
+    pullRequestReferenceSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:find-session-pull-request',
+          findSessionPullRequestSchema.parse(input),
+          route(hostId),
+        ),
+      ),
   readGitBranch: async (input, hostId) =>
     gitBranchSchema.parse(
       await ipcRenderer.invoke(

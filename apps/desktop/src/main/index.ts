@@ -29,6 +29,11 @@ import {
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
   readGitBranchSchema,
+  listPullRequestsSchema,
+  readPullRequestSchema,
+  actOnPullRequestSchema,
+  linkSessionPullRequestSchema,
+  findSessionPullRequestSchema,
   discoverSkillsSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -363,6 +368,83 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'discover-skills',
         discoverSkillsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:list-pull-requests',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-pull-requests',
+        listPullRequestsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-pull-request',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-pull-request',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-pull-request-files',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-pull-request-files',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-pull-request-threads',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-pull-request-threads',
+        readPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:act-on-pull-request',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'act-on-pull-request',
+        actOnPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:link-session-pull-request',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'link-session-pull-request',
+        linkSessionPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:find-session-pull-request',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'find-session-pull-request',
+        findSessionPullRequestSchema.parse(input),
         route(hostId),
       );
     },

@@ -4,6 +4,11 @@ import { utilityProcess } from 'electron';
 import {
   hostMessageSchema,
   hostRequestSchema,
+  type ListPullRequestsInput,
+  type ReadPullRequestInput,
+  type ActOnPullRequestInput,
+  type LinkSessionPullRequestInput,
+  type FindSessionPullRequestInput,
   type CreateSessionInput,
   type DecideDelegationInput,
   type DecideWorkerPlanInput,
@@ -85,13 +90,19 @@ export function startHost(directory: string) {
         },
         method === 'discover-skills' ||
           method === 'start-workflow-task' ||
-          method === 'workflow-assistant-send'
+          method === 'workflow-assistant-send' ||
+          method === 'act-on-pull-request'
           ? 60000
           : method === 'provider-usage'
             ? 40000
             : method === 'claude-status' ||
                 method === 'codex-status' ||
-                method === 'create-session'
+                method === 'create-session' ||
+                method === 'list-pull-requests' ||
+                method === 'read-pull-request' ||
+                method === 'read-pull-request-files' ||
+                method === 'read-pull-request-threads' ||
+                method === 'find-session-pull-request'
               ? 30000
               : 15000,
       );
@@ -183,6 +194,48 @@ export function startHost(directory: string) {
       if (response.type !== 'workspace-search')
         throw new Error('Unexpected host response');
       return response.search;
+    },
+    listPullRequests: async (input: ListPullRequestsInput) => {
+      const response = await request('list-pull-requests', input);
+      if (response.type !== 'pull-request-list')
+        throw new Error('Unexpected host response');
+      return response.list;
+    },
+    readPullRequest: async (input: ReadPullRequestInput) => {
+      const response = await request('read-pull-request', input);
+      if (response.type !== 'pull-request')
+        throw new Error('Unexpected host response');
+      return response.pullRequest;
+    },
+    readPullRequestFiles: async (input: ReadPullRequestInput) => {
+      const response = await request('read-pull-request-files', input);
+      if (response.type !== 'pull-request-files')
+        throw new Error('Unexpected host response');
+      return response.files;
+    },
+    readPullRequestThreads: async (input: ReadPullRequestInput) => {
+      const response = await request('read-pull-request-threads', input);
+      if (response.type !== 'pull-request-threads')
+        throw new Error('Unexpected host response');
+      return response.threads;
+    },
+    actOnPullRequest: async (input: ActOnPullRequestInput) => {
+      const response = await request('act-on-pull-request', input);
+      if (response.type !== 'pull-request-action')
+        throw new Error('Unexpected host response');
+      return response.result;
+    },
+    linkSessionPullRequest: async (input: LinkSessionPullRequestInput) => {
+      const response = await request('link-session-pull-request', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    findSessionPullRequest: async (input: FindSessionPullRequestInput) => {
+      const response = await request('find-session-pull-request', input);
+      if (response.type !== 'pull-request-reference')
+        throw new Error('Unexpected host response');
+      return response.reference;
     },
     readWorkspaceFile: async (input: ReadWorkspaceFileInput) => {
       const response = await request('read-workspace-file', input);

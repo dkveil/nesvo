@@ -71,6 +71,16 @@ type Entry = {
   removing?: boolean;
 };
 
+const pullRequestResponses = {
+  'list-pull-requests': 'pull-request-list',
+  'read-pull-request': 'pull-request',
+  'read-pull-request-files': 'pull-request-files',
+  'read-pull-request-threads': 'pull-request-threads',
+  'act-on-pull-request': 'pull-request-action',
+  'link-session-pull-request': 'session',
+  'find-session-pull-request': 'pull-request-reference',
+} as const;
+
 const capabilityUpdates: Record<HostCapability, string> = {
   'scheduled-jobs':
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
@@ -82,6 +92,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without the new permission modes. Update the host, then reconnect.',
   'session-workflow':
     'This computer runs an older Nesvo host that cannot assign a workflow to a session. Update the host, then reconnect.',
+  'pull-requests':
+    'This computer runs an older Nesvo host without GitHub pull requests. Update the host, then reconnect.',
   'git-branch':
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
 };
@@ -90,6 +102,7 @@ function requiredCapability(
   method: HostRequest['method'],
   input: unknown,
 ): HostCapability | null {
+  if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'assign-session-workflow') return 'session-workflow';
   if (
@@ -597,6 +610,7 @@ export class ComputerManager {
       'search-workspace-files': 'workspace-search',
       'read-workspace-file': 'workspace-file',
       'read-git-branch': 'git-branch',
+      ...pullRequestResponses,
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
@@ -616,6 +630,18 @@ export class ComputerManager {
         return response.search;
       case 'workspace-file':
         return response.file;
+      case 'pull-request-list':
+        return response.list;
+      case 'pull-request':
+        return response.pullRequest;
+      case 'pull-request-files':
+        return response.files;
+      case 'pull-request-threads':
+        return response.threads;
+      case 'pull-request-action':
+        return response.result;
+      case 'pull-request-reference':
+        return response.reference;
       case 'git-branch':
         return response.branch;
       case 'session':

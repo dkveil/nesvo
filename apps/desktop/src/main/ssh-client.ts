@@ -228,13 +228,19 @@ export function connectSshHost(
         },
         method === 'discover-skills' ||
           method === 'start-workflow-task' ||
-          method === 'workflow-assistant-send'
+          method === 'workflow-assistant-send' ||
+          method === 'act-on-pull-request'
           ? 60_000
           : method === 'provider-usage'
             ? 40_000
             : method === 'claude-status' ||
                 method === 'codex-status' ||
-                method === 'create-session'
+                method === 'create-session' ||
+                method === 'list-pull-requests' ||
+                method === 'read-pull-request' ||
+                method === 'read-pull-request-files' ||
+                method === 'read-pull-request-threads' ||
+                method === 'find-session-pull-request'
               ? 30_000
               : 15_000,
       );
