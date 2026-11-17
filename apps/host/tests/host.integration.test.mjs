@@ -16609,7 +16609,6 @@ test(
 
 test(
   'staged attachments reach the provider input and oversized files refuse the turn',
-  'host stages, validates and records message attachments',
   { timeout: 60_000 },
   async t => {
     const directory = await realpath(
@@ -16631,10 +16630,6 @@ test(
         }
       }
       await bounded(host.exited, 'Test host did not exit');
-    const host = launch(directory, join(directory, 'pids.json'));
-    t.after(async () => {
-      if (host.child.exitCode === null) host.child.kill();
-      await host.exited.catch(() => undefined);
       await rm(directory, {
         recursive: true,
         force: true,
@@ -16734,6 +16729,27 @@ test(
         path: join(directory, 'attachments', codex.id, codexImage.id),
       },
     ]);
+  },
+);
+
+test(
+  'host stages, validates and records message attachments',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-attachments-')),
+    );
+    const host = launch(directory, join(directory, 'pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
     const session = (
       await host.request('create-session', {
         title: 'Attachments',
