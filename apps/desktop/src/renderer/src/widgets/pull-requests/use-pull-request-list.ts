@@ -23,9 +23,12 @@ type Settled =
   | { key: string; list: PullRequestList; error: '' }
   | { key: string; list: null; error: string };
 
+type LoadedList = { source: string; list: PullRequestList };
+
 type UsePullRequestListResult = {
   status: 'idle' | 'loading' | 'ready' | 'error';
   list: PullRequestList | null;
+  hostId: string;
   error: string;
 };
 
@@ -39,15 +42,10 @@ export function usePullRequestList({
   refresh,
 }: UsePullRequestListParams): UsePullRequestListResult {
   const [settled, setSettled] = useState<Settled | null>(null);
-  const [lastList, setLastList] = useState<PullRequestList | null>(null);
+  const [lastList, setLastList] = useState<LoadedList | null>(null);
   const enabled = !!api && (!!directory || !!repository);
-  const key = JSON.stringify([
-    hostId,
-    repository || directory,
-    scope,
-    query,
-    refresh,
-  ]);
+  const source = JSON.stringify([hostId, repository || directory, scope]);
+  const key = JSON.stringify([source, query, refresh]);
   useEffect(() => {
     if (!api || (!directory && !repository)) return;
     let current = true;
@@ -62,7 +60,7 @@ export function usePullRequestList({
           list => {
             if (!current) return;
             setSettled({ key, list, error: '' });
-            setLastList(list);
+            setLastList({ source, list });
           },
           failure => {
             if (current)
@@ -76,11 +74,16 @@ export function usePullRequestList({
       current = false;
       window.clearTimeout(timer);
     };
-  }, [api, directory, repository, scope, query, key]);
-  if (!enabled) return { status: 'idle', list: null, error: '' };
+  }, [api, directory, repository, scope, query, source, key]);
+  if (!enabled) return { status: 'idle', list: null, hostId, error: '' };
   if (settled?.key !== key)
-    return { status: 'loading', list: lastList, error: '' };
+    return {
+      status: 'loading',
+      list: lastList?.source === source ? lastList.list : null,
+      hostId,
+      error: '',
+    };
   return settled.list
-    ? { status: 'ready', list: settled.list, error: '' }
-    : { status: 'error', list: null, error: settled.error };
+    ? { status: 'ready', list: settled.list, hostId, error: '' }
+    : { status: 'error', list: null, hostId, error: settled.error };
 }

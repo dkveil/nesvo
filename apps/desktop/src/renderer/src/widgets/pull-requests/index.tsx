@@ -311,12 +311,12 @@ export function PullRequestsView({
                     pullRequest={item}
                     now={now}
                     selected={
-                      openTarget?.hostId === hostId &&
+                      openTarget?.hostId === result.hostId &&
                       sameReference(openTarget.reference, item)
                     }
                     onOpen={() =>
                       onOpen({
-                        hostId,
+                        hostId: result.hostId,
                         reference: {
                           repository: item.repository,
                           number: item.number,
