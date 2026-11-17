@@ -3483,7 +3483,9 @@ try {
   await restartApplication();
   const upcomingOccurrence = Date.parse(readAutomationRow().nextRunAt);
   assert.ok(upcomingOccurrence > Date.now());
-  seedNextRunAt(new Date(upcomingOccurrence - 2 * 86_400_000).toISOString());
+  const missedFrom = new Date(upcomingOccurrence);
+  missedFrom.setDate(missedFrom.getDate() - 2);
+  seedNextRunAt(missedFrom.toISOString());
   const missedPage = await relaunchApplication();
   await missedPage
     .getByRole('button', { name: 'Automations', exact: true })
@@ -3535,7 +3537,7 @@ try {
   );
   await restartApplication();
   await writeFile(usageControl, JSON.stringify({ 'Claude Code': 'exhausted' }));
-  seedNextRunAt(new Date(Date.now() - 30_000).toISOString());
+  seedNextRunAt(new Date(Date.now() - 10_000).toISOString());
   const limitedPage = await relaunchApplication();
   await limitedPage
     .getByRole('button', { name: 'Automations', exact: true })
