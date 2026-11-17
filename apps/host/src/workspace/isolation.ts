@@ -348,6 +348,28 @@ export async function isRepositoryRoot(
   }
 }
 
+export async function isGitHubRepositoryRoot(
+  directory: string,
+  repository: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!(await isRepositoryRoot(directory, signal))) return false;
+  const remotes = await runGit({
+    args: ['remote', '-v'],
+    cwd: directory,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+    untranslated: true,
+  });
+  if (remotes.code !== 0 || remotes.outputTruncated) return false;
+  const fetchRemote =
+    /^\S+\t(?:(?:https?|ssh|git):\/\/(?:[^/\s@]+@)?github\.com(?::\d+)?\/|(?:[^/\s@]+@)?github\.com:)([a-z0-9-]+\/[a-z0-9._-]+) \(fetch\)$/i;
+  return remotes.stdout.split(/\r?\n/).some(line => {
+    const name = fetchRemote.exec(line)?.[1]?.replace(/\.git$/i, '');
+    return name?.toLowerCase() === repository.toLowerCase();
+  });
+}
+
 export async function createTaskWorktree({
   projectDirectory,
   dataDirectory,

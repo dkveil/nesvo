@@ -17,6 +17,10 @@ import { z } from 'zod';
 import { GitHubCli, PullRequestError } from './process/github-cli';
 import { resolveFolder } from './workspace/folder';
 import {
+  isGitHubRepositoryRoot,
+  WorkspaceIsolationError,
+} from './workspace/isolation';
+import {
   detail,
   detailFields,
   detailSchema,
@@ -518,6 +522,20 @@ export class PullRequests {
       case 'checkout':
         await this.checkoutWorkspace(action.sessionId, async session => {
           const cwd = await this.sessionFolder(session);
+          const valid = await isGitHubRepositoryRoot(
+            cwd,
+            reference.repository,
+            AbortSignal.any([this.signal, signal]),
+          ).catch((error: unknown) => {
+            if (error instanceof WorkspaceIsolationError)
+              throw new PullRequestError('unavailable', error.message);
+            throw error;
+          });
+          if (!valid)
+            throw new PullRequestError(
+              'invalid-request',
+              `This session folder is not the root of a checkout of ${reference.repository}.`,
+            );
           await this.gh.run(['pr', 'checkout', ...prArgs], { ...options, cwd });
         });
         detail = 'Pull request checked out.';

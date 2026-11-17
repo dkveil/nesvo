@@ -16256,9 +16256,10 @@ test(
   async t => {
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-pull-requests-'));
     const workspace = join(directory, 'project');
+    const nested = join(workspace, 'nested');
     const noPullRequest = join(directory, 'no-pr');
     const fixture = join(directory, 'gh-fixture.cjs');
-    await mkdir(workspace);
+    await mkdir(nested, { recursive: true });
     await mkdir(noPullRequest);
     await writeFile(fixture, `(${githubCliFixture.toString()})();\n`);
     const hosts = [];
@@ -16270,6 +16271,14 @@ test(
       }
       await rm(directory, { recursive: true, force: true });
     });
+    const git = promisify(execFile);
+    for (const [cwd, url] of [
+      [workspace, 'git@github.com:OCTO/Project.git'],
+      [noPullRequest, 'https://github.com/octo/other.git'],
+    ]) {
+      await git('git', ['init', '--quiet'], { cwd });
+      await git('git', ['remote', 'add', 'origin', url], { cwd });
+    }
     const open = (gh = fixture) => {
       const host = launch(directory, join(directory, 'pids.json'), {
         NESVO_GH_EXECUTABLE: gh,
@@ -16590,6 +16599,19 @@ test(
     await request('stop-run', { sessionId, runId: running.session.runId });
     await host.event(
       session => session.id === sessionId && session.status === 'stopped',
+    );
+    const subfolder = await create(nested);
+    for (const session of [subfolder.session, legacy.session]) {
+      const refused = await action({ ...checkout, sessionId: session.id });
+      assert.equal(refused.code, 'invalid-request');
+      assert.equal(
+        refused.message,
+        'This session folder is not the root of a checkout of octo/project.',
+      );
+    }
+    assert.equal(
+      (await calls()).some(call => call.args[1] === 'checkout'),
+      false,
     );
     const failedCheckout = await action(checkout, 43);
     assert.equal(failedCheckout.code, 'unavailable');
