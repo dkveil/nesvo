@@ -10,6 +10,7 @@ import {
   SquarePen,
   Workflow,
 } from 'lucide-react';
+import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { CountBadge } from '@/shared/ui/badge';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Hint } from '@/shared/ui/tooltip';
@@ -86,7 +87,7 @@ export function NavigationRail({
         <RailButton
           ref={sidebarToggleRef}
           label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          shortcut="Ctrl B"
+          shortcut={shortcutKeys('toggleSidebar')}
           aria-pressed={sidebarOpen}
           onClick={onToggleSidebar}
         >
@@ -95,7 +96,11 @@ export function NavigationRail({
       </div>
       <div className="flex flex-col items-center gap-1">
         {!sidebarOpen && (
-          <RailButton label="New session" onClick={onCreate}>
+          <RailButton
+            label="New session"
+            shortcut={shortcutKeys('newSession')}
+            onClick={onCreate}
+          >
             <SquarePen />
           </RailButton>
         )}
@@ -139,7 +144,11 @@ export function NavigationRail({
       <div className="min-h-0 flex-1" />
       <div className="flex flex-col items-center gap-1">
         {usage}
-        <RailButton label="Settings" onClick={onSettings}>
+        <RailButton
+          label="Settings"
+          shortcut={shortcutKeys('settings')}
+          onClick={onSettings}
+        >
           <Settings />
         </RailButton>
         <Hint label={`Computers · ${hostName}`} side="right">

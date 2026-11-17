@@ -39,6 +39,7 @@ import {
   errorDetail,
   providerModes,
   providerStatusLabel,
+  sessionFilterKeys,
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
@@ -62,6 +63,8 @@ import {
 } from '@/features/edit-automation';
 import { ManageComputers } from '@/features/manage-computers';
 import { HistorySearchDialog } from '@/features/search-history';
+import { CommandPalette, type PaletteMode } from '@/features/command-palette';
+import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
@@ -112,6 +115,7 @@ import { ProviderAccounts, ProviderUsage } from '@/widgets/provider-rail';
 import {
   AppearanceSettings,
   GeneralSettings,
+  KeyboardShortcutsSettings,
   Settings,
   type SettingsPage,
 } from '@/widgets/settings';
@@ -136,6 +140,18 @@ import { useAttention } from './use-attention';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
+import {
+  readSessionFilter,
+  saveSessionFilter,
+} from './session-filter-preference';
+import {
+  focusSidebarSession,
+  isSidebarSessionFocused,
+  sidebarSection,
+  sidebarSessionKeys,
+} from './sidebar-order';
+import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
+import { paletteSessions, workspaceCommands } from './workspace-commands';
 import { PanelPlaceholder } from './panel-placeholder';
 import { SidebarResizer } from './sidebar-resizer';
 import {
@@ -211,6 +227,12 @@ export function Workspace() {
   >({});
   const runRequests = useRef<Record<string, { id: string; at: string }>>({});
   const [sessionTarget, setSessionTarget] = useState('');
+  const [palette, setPalette] = useState<{
+    mode: PaletteMode;
+    returnFocus: HTMLElement | null;
+  } | null>(null);
+  const [sessionFilter, setSessionFilter] = useState(readSessionFilter);
+  const lastSelection = useRef({ current: '', previous: '' });
   const [historySearch, setHistorySearch] = useState<{
     query: string;
     returnFocus: HTMLElement | null;
@@ -895,34 +917,28 @@ export function Workspace() {
         },
     );
   }, []);
+  const openPalette = useCallback((mode: PaletteMode) => {
+    const focused = document.activeElement;
+    setPalette(
+      current =>
+        current ?? {
+          mode,
+          returnFocus: focused instanceof HTMLElement ? focused : null,
+        },
+    );
+  }, []);
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.repeat ||
-        event.isComposing ||
-        !(event.ctrlKey || event.metaKey) ||
-        event.altKey
-      )
-        return;
-      const key = event.key.toLowerCase();
-      if ((key === 'k' && !event.shiftKey) || (key === 'f' && event.shiftKey)) {
-        event.preventDefault();
-        openHistorySearch();
-        return;
-      }
-      if (
-        event.shiftKey ||
-        key !== 'b' ||
-        !window.matchMedia('(min-width: 768px)').matches
-      )
-        return;
-      event.preventDefault();
-      toggleSidebar(!readSidebarOpen());
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [openHistorySearch, toggleSidebar]);
+    saveSessionFilter(sessionFilter);
+  }, [sessionFilter]);
+  useEffect(() => {
+    const last = lastSelection.current;
+    if (!selectedKey || selectedKey === last.current) return;
+    lastSelection.current = { current: selectedKey, previous: last.current };
+  }, [selectedKey]);
+  const filterKeys = useMemo(
+    () => sessionFilterKeys(store.sessions, store.reviews, store.workflowRuns),
+    [store.sessions, store.reviews, store.workflowRuns],
+  );
   const panelTrigger = () =>
     cardOpen
       ? cardTrigger.current
@@ -2059,6 +2075,140 @@ ${text}`
     onAutomations: () => openAutomations(),
     pullRequests: pullRequestsView,
     onPullRequests: pullRequestsAvailable ? openPullRequests : undefined,
+    filter: sessionFilter,
+    filterKeys,
+    onFilterChange: setSessionFilter,
+  };
+  const sessionOrder = () => {
+    const visible = sidebarSessionKeys();
+    if (visible.length > 0) return visible;
+    return store.sessions
+      .filter(
+        session =>
+          !session.archivedAt &&
+          !session.scheduledJobId &&
+          (sessionFilter === 'all' ||
+            filterKeys[sessionFilter].has(entityKey(session))),
+      )
+      .map(entityKey);
+  };
+  const goToSession = (key: string) => {
+    const followFocus = isSidebarSessionFocused();
+    select(key);
+    if (followFocus)
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => focusSidebarSession(key)),
+      );
+  };
+  const stepSession = (direction: 1 | -1) => {
+    const order = sessionOrder();
+    const index = order.indexOf(selectedKey);
+    const next =
+      index === -1
+        ? order[direction === 1 ? 0 : order.length - 1]
+        : order[index + direction];
+    if (next) goToSession(next);
+  };
+  const nextNeedsMe = () => {
+    const needs = filterKeys['needs-me'];
+    const visible = sidebarSessionKeys();
+    const order = [
+      ...visible,
+      ...store.sessions.map(entityKey).filter(key => !visible.includes(key)),
+    ].filter(key => needs.has(key));
+    const next = order[(order.indexOf(selectedKey) + 1) % order.length];
+    if (next && (next !== selectedKey || browsing || creating))
+      goToSession(next);
+  };
+  const lastSession = () => {
+    const key = lastSelection.current.previous;
+    if (key && store.sessions.some(session => entityKey(session) === key))
+      goToSession(key);
+  };
+  const isWide = () => window.matchMedia('(min-width: 768px)').matches;
+  const jumpToSection = (index: number) => {
+    const jump = () => {
+      const target = sidebarSection(index);
+      const key = target?.sessionKey;
+      if (!key) {
+        target?.heading?.focus();
+        return;
+      }
+      select(key);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => focusSidebarSession(key)),
+      );
+    };
+    if (readSidebarOpen() || !isWide()) {
+      jump();
+      return;
+    }
+    setSidebarOpen(true);
+    requestAnimationFrame(() => requestAnimationFrame(jump));
+  };
+  const sessionPanels = !browsing && !creating && !!selected;
+  const openSkills = () => {
+    diffTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setCardOpen(false);
+    setPanel('skills');
+  };
+  useWorkspaceShortcuts({
+    openPalette,
+    openHistorySearch: () => openHistorySearch(),
+    toggleSidebar: () => {
+      if (isWide()) toggleSidebar(!readSidebarOpen());
+    },
+    newSession: openCreate,
+    openSettings: () => setSettingsPage('general'),
+    openFiles: () => {
+      if (sessionPanels) openFiles();
+    },
+    stepSession,
+    nextNeedsMe,
+    lastSession,
+    jumpToSection,
+    focusComposer: () => {
+      const composer = document.getElementById('message-input');
+      if (!composer) return false;
+      composer.focus();
+      return true;
+    },
+  });
+  const paletteCommands = () => {
+    const latestReview = selected
+      ? store.reviews
+          .filter(
+            review =>
+              review.sessionId === selected.id &&
+              review.hostId === selectedHostId,
+          )
+          .sort((a, b) => b.version - a.version)[0]
+      : undefined;
+    return workspaceCommands({
+      newSession: openCreate,
+      inbox: openInbox,
+      workflows: openWorkflows,
+      automations:
+        automationComputers.length > 0 ? () => openAutomations() : undefined,
+      pullRequests: pullRequestsAvailable ? openPullRequests : undefined,
+      costs: window.nesvo ? openCosts : undefined,
+      settings: () => setSettingsPage('general'),
+      shortcuts: () => setSettingsPage('shortcuts'),
+      toggleSidebar: isWide() ? () => toggleSidebar(!sidebarOpen) : undefined,
+      files: sessionPanels ? openFiles : undefined,
+      diff:
+        sessionPanels && latestReview
+          ? () => openDiff(latestReview.id)
+          : undefined,
+      skills: sessionPanels ? openSkills : undefined,
+      searchHistory: () => openHistorySearch(),
+      nextNeedsMe,
+      needsMeCount: filterKeys['needs-me'].size,
+      lastSession,
+    });
   };
   const readBranch = window.nesvo
     ? (hostId: string, directory: string) =>
@@ -2101,6 +2251,21 @@ ${text}`
       : null;
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background">
+      {palette && (
+        <CommandPalette
+          initialMode={palette.mode}
+          returnFocus={palette.returnFocus}
+          commands={paletteCommands()}
+          sessions={paletteSessions(
+            store.sessions,
+            store.computers,
+            store.groups,
+            filterKeys,
+          )}
+          onOpenSession={goToSession}
+          onClose={() => setPalette(null)}
+        />
+      )}
       {historySearch && (
         <HistorySearchDialog
           computers={store.computers}
@@ -2362,6 +2527,7 @@ ${text}`
             size={32}
             className="md:hidden"
             label="New session"
+            shortcut={shortcutKeys('newSession')}
             onClick={openCreate}
           >
             <Plus />
@@ -2389,14 +2555,7 @@ ${text}`
               size={32}
               label="Open skills"
               pressed={panel === 'skills'}
-              onClick={() => {
-                diffTrigger.current =
-                  document.activeElement instanceof HTMLElement
-                    ? document.activeElement
-                    : null;
-                setCardOpen(false);
-                setPanel('skills');
-              }}
+              onClick={openSkills}
             >
               <BookOpen />
             </IconButton>
@@ -2405,6 +2564,7 @@ ${text}`
             <IconButton
               size={32}
               label="Open files"
+              shortcut={shortcutKeys('files')}
               pressed={panel === 'files'}
               onClick={openFiles}
             >
@@ -3270,6 +3430,8 @@ ${text}`
               />
             ) : page === 'appearance' ? (
               <AppearanceSettings api={desktopApi()} />
+            ) : page === 'shortcuts' ? (
+              <KeyboardShortcutsSettings />
             ) : page === 'computers' ? (
               <ManageComputers
                 computers={store.computers}
