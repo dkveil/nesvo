@@ -1,20 +1,26 @@
 import {
-  CircleX,
   Eye,
   Redo2,
   Save,
   Settings2,
   ShieldCheck,
-  TriangleAlert,
   Undo2,
   Workflow,
   X,
 } from 'lucide-react';
 import type { StartWorkflowTaskInput } from '@nesvo/contracts';
-import { cn } from '@/shared/lib/cn';
 import type { Provider, ProviderStates } from '@/entities/session';
+import { StatusIcon } from '@/entities/status';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { PanelAction } from '@/shared/ui/panel';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Input } from '@/shared/ui/input';
+import {
+  Toolbar as ToolbarRow,
+  ToolbarSeparator,
+  ToolbarSpacer,
+} from '@/shared/ui/panel';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { RunPopover } from './run-popover';
 import type { EditorState } from './use-editor-state';
 
@@ -61,16 +67,13 @@ export function Toolbar({
         ? 'Fix the errors before running.'
         : null;
   return (
-    <div
-      role="toolbar"
-      aria-label="Graph editor"
-      className="flex h-11 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3"
-    >
+    <ToolbarRow label="Graph editor" className="h-10 gap-1.5 pr-1.5 pl-3">
       <Workflow
         className="size-4 shrink-0 text-muted-foreground"
         aria-hidden="true"
       />
-      <input
+      <Input
+        variant="ghost"
         aria-label="Workflow name"
         data-editor-name
         value={state.document.name}
@@ -79,11 +82,11 @@ export function Toolbar({
         onChange={event =>
           state.setWorkflowFields({ name: event.target.value })
         }
-        className="h-7 w-56 min-w-0 rounded-md bg-transparent px-1.5 text-[13px] font-semibold text-foreground transition-colors duration-100 outline-none placeholder:font-normal placeholder:text-muted-foreground hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+        className="focus-ring w-56 rounded-control px-1.5 font-semibold placeholder:font-normal hover:bg-accent focus-visible:bg-accent"
       />
-      <span className="shrink-0 rounded-full border px-1.5 text-2xs leading-4 text-muted-foreground">
+      <Badge appearance="outline" size="xs">
         {scopeLabels[state.document.scope]}
-      </span>
+      </Badge>
       <span
         role="status"
         data-editor-save-state={
@@ -91,41 +94,43 @@ export function Toolbar({
         }
         className="flex shrink-0 items-center gap-1.5 pl-1 text-2xs text-muted-foreground"
       >
-        <span
-          aria-hidden="true"
-          className={cn(
-            'size-1.5 rounded-full',
-            state.dirty ? 'bg-warning-foreground' : 'bg-success-foreground',
-            !state.dirty && !state.document.hash && 'bg-muted-foreground',
-          )}
+        <StatusDot
+          tone={
+            state.dirty
+              ? 'warning'
+              : state.document.hash
+                ? 'success'
+                : 'neutral'
+          }
         />
         {saveState}
       </span>
-      <div className="ml-auto flex items-center gap-0.5">
-        <PanelAction
-          aria-label="Undo"
-          title="Undo (Ctrl+Z)"
+      <ToolbarSpacer />
+      <div className="flex items-center gap-0.5">
+        <IconButton
+          label="Undo"
+          shortcut="Ctrl Z"
           disabled={!state.canUndo}
           onClick={state.undo}
         >
           <Undo2 />
-        </PanelAction>
-        <PanelAction
-          aria-label="Redo"
-          title="Redo (Ctrl+Y)"
+        </IconButton>
+        <IconButton
+          label="Redo"
+          shortcut="Ctrl Y"
           disabled={!state.canRedo}
           onClick={state.redo}
         >
           <Redo2 />
-        </PanelAction>
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
+        </IconButton>
+        <ToolbarSeparator />
         {overlay.available && (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             aria-pressed={overlay.on}
-            className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+            selected={overlay.on}
+            className="text-muted-foreground"
             onClick={overlay.onToggle}
           >
             <Eye />
@@ -135,9 +140,9 @@ export function Toolbar({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
           aria-pressed={settingsOpen}
-          className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+          selected={settingsOpen}
+          className="text-muted-foreground"
           onClick={() =>
             state.select(settingsOpen ? { kind: 'none' } : { kind: 'workflow' })
           }
@@ -148,22 +153,22 @@ export function Toolbar({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
           aria-pressed={issuesOpen}
-          className="h-7 text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
+          selected={issuesOpen}
+          className="text-muted-foreground"
           onClick={onToggleIssues}
         >
           <ShieldCheck />
           Validate
           {errors > 0 && (
             <span className="inline-flex items-center gap-0.5 text-error-foreground tabular-nums">
-              <CircleX className="size-3" />
+              <StatusIcon status="error" />
               {errors}
             </span>
           )}
           {warnings > 0 && (
             <span className="inline-flex items-center gap-0.5 text-warning-foreground tabular-nums">
-              <TriangleAlert className="size-3" />
+              <StatusIcon status="warning" />
               {warnings}
             </span>
           )}
@@ -181,8 +186,6 @@ export function Toolbar({
         )}
         <Button
           type="button"
-          size="sm"
-          className="h-7"
           title="Save (Ctrl+S)"
           disabled={!state.dirty || state.saving || state.validation.hasErrors}
           onClick={() => void state.save()}
@@ -190,11 +193,11 @@ export function Toolbar({
           <Save />
           {state.saving ? 'Saving…' : 'Save'}
         </Button>
-        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
-        <PanelAction aria-label="Close graph editor" onClick={onClose}>
+        <ToolbarSeparator />
+        <IconButton label="Close graph editor" onClick={onClose}>
           <X />
-        </PanelAction>
+        </IconButton>
       </div>
-    </div>
+    </ToolbarRow>
   );
 }

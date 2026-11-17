@@ -305,7 +305,7 @@ export function EditorCanvas({
           pannable
           zoomable
           position="bottom-right"
-          className="!m-3 !mb-16 rounded-lg border shadow-(--popover-shadow)"
+          className="!m-3 !mb-16 rounded-surface border shadow-(--popover-shadow)"
           nodeColor={node =>
             node.type === 'start' ? 'var(--primary)' : 'var(--muted-foreground)'
           }

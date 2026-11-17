@@ -14,6 +14,7 @@ import {
 } from '@/features/new-thread/reasoning-effort';
 import { resolveGate } from '@/features/new-thread/workflow-choice';
 import { Button } from '@/shared/ui/button';
+import { Field } from '@/shared/ui/field';
 import { Label } from '@/shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import {
@@ -23,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
 
 type Props = {
@@ -116,64 +118,45 @@ export function RunPopover({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7"
-          aria-label="Run workflow"
-          title="Start a task through this workflow"
-        >
+        <Button type="button" variant="outline" aria-label="Run workflow">
           <Play />
           Run
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-80 space-y-3 p-3"
+        size="md"
+        className="space-y-3"
         aria-label="Run workflow"
       >
         <div className="space-y-1">
-          <h3 className="text-xs font-semibold">Run {workflowName}</h3>
+          <h3 className="text-ui font-semibold">Run {workflowName}</h3>
           <p className="text-2xs leading-4 text-muted-foreground">
             Starts one task session from a spec. The author works read-only; the
             checks run when its turn ends.
           </p>
         </div>
-        <div className="space-y-1">
-          <Label
-            htmlFor={`${id}-spec`}
-            className="text-2xs text-muted-foreground"
-          >
-            Task spec
-          </Label>
-          <Select
-            value={chosenSpec?.source.path ?? ''}
-            onValueChange={setSpecPath}
-            disabled={mine.length === 0}
-          >
-            <SelectTrigger
-              id={`${id}-spec`}
-              size="md"
-              className="w-full text-xs"
+        <Field id={`${id}-spec`} label="Task spec">
+          <div>
+            <Select
+              value={chosenSpec?.source.path ?? ''}
+              onValueChange={setSpecPath}
+              disabled={mine.length === 0}
             >
-              <SelectValue placeholder="No spec for this workflow" />
-            </SelectTrigger>
-            <SelectContent>
-              {mine.map(spec => (
-                <SelectItem
-                  key={spec.source.path}
-                  value={spec.source.path}
-                  className="text-xs"
-                >
-                  {specLabel(spec)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <span className="text-2xs text-muted-foreground">Author</span>
+              <SelectTrigger id={`${id}-spec`} className="w-full">
+                <SelectValue placeholder="No spec for this workflow" />
+              </SelectTrigger>
+              <SelectContent>
+                {mine.map(spec => (
+                  <SelectItem key={spec.source.path} value={spec.source.path}>
+                    {specLabel(spec)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </Field>
+        <Field id={`${id}-author`} label="Author" as="span">
           <div className="flex items-center gap-2">
             <ModelPicker
               provider={current.provider}
@@ -189,9 +172,9 @@ export function RunPopover({
               Gate: {gate.provider}
             </span>
           </div>
-        </div>
+        </Field>
         <div className="flex items-center justify-between gap-3">
-          <Label htmlFor={`${id}-isolation`} className="text-xs">
+          <Label htmlFor={`${id}-isolation`} className="text-ui font-normal">
             Isolate in a Git worktree
           </Label>
           <Switch
@@ -201,18 +184,13 @@ export function RunPopover({
           />
         </div>
         {(reason || failure) && (
-          <p
-            role={failure ? 'alert' : 'status'}
-            className="text-2xs leading-4 text-muted-foreground [overflow-wrap:anywhere]"
-          >
+          <StatusMessage tone={failure ? 'error' : 'info'}>
             {failure || reason}
-          </p>
+          </StatusMessage>
         )}
         <div className="flex justify-end">
           <Button
             type="button"
-            size="sm"
-            className="h-7"
             disabled={!!reason || starting}
             onClick={() => void start()}
           >

@@ -8,6 +8,7 @@ import {
 } from '@xyflow/react';
 import { Plus, Trash2 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { IconButton } from '@/shared/ui/icon-button';
 import {
   edgeTones,
   edgeWhenLabels,
@@ -24,8 +25,7 @@ export type ConditionEdgeData = {
 };
 export type ConditionEdge = Edge<ConditionEdgeData, 'condition'>;
 
-const action =
-  'flex size-6 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-xs transition-[color,border-color,transform] duration-100 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring enabled:active:scale-95 [&_svg]:size-3.5';
+const action = 'border bg-card shadow-xs';
 
 export function ConditionEdgeView({
   id,
@@ -79,35 +79,33 @@ export function ConditionEdgeView({
               data-editor-edge-actions={id}
               className="nodrag nopan pointer-events-auto flex items-center gap-1"
             >
-              <button
-                type="button"
+              <IconButton
+                size={24}
+                shape="round"
                 data-edge-insert={id}
-                aria-label={`Insert a step into ${id}`}
-                title="Insert a step here"
-                className={cn(action, 'hover:border-foreground')}
+                label={`Insert a step into ${id}`}
+                className={cn(action, 'enabled:hover:border-foreground')}
                 onClick={event => {
                   event.stopPropagation();
                   data?.onInsert(event);
                 }}
               >
                 <Plus aria-hidden="true" />
-              </button>
-              <button
-                type="button"
+              </IconButton>
+              <IconButton
+                size={24}
+                shape="round"
+                tone="danger"
                 data-edge-delete={id}
-                aria-label={`Remove connection ${id}`}
-                title="Remove connection"
-                className={cn(
-                  action,
-                  'hover:border-error-foreground hover:text-error-foreground',
-                )}
+                label={`Remove connection ${id}`}
+                className={cn(action, 'enabled:hover:border-error-foreground')}
                 onClick={event => {
                   event.stopPropagation();
                   data?.onDelete();
                 }}
               >
                 <Trash2 aria-hidden="true" />
-              </button>
+              </IconButton>
             </div>
           )}
           {when !== 'success' && (

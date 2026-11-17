@@ -3,10 +3,12 @@ import { phaseLabels } from '@/entities/workflow';
 import {
   phaseFrames,
   phaseTones,
-  toneColor,
   type EditorNode,
   type PhaseFrame,
 } from '@/entities/workflow-graph';
+import { Badge } from '@/shared/ui/badge';
+import { StatusDot } from '@/shared/ui/status-dot';
+import { dotTones } from './tone-dot';
 
 type Props = { nodes: readonly EditorNode[] };
 
@@ -30,7 +32,7 @@ export function PhaseFrames({ nodes }: Props) {
           key={frame.phase}
           aria-hidden="true"
           data-phase-frame={frame.phase}
-          className="pointer-events-none absolute rounded-2xl border border-dashed border-foreground/15"
+          className="pointer-events-none absolute rounded-composer border border-dashed border-foreground/15"
           style={{
             transform: `translate(${frame.x}px, ${frame.y}px)`,
             width: frame.width,
@@ -38,10 +40,7 @@ export function PhaseFrames({ nodes }: Props) {
           }}
         >
           <span className="absolute top-1.5 left-3 flex items-center gap-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-            <span
-              className="size-1.5 rounded-full"
-              style={{ background: toneColor[phaseTones[frame.phase]] }}
-            />
+            <StatusDot tone={dotTones[phaseTones[frame.phase]]} />
             {phaseLabels[frame.phase]}
           </span>
         </div>
@@ -56,9 +55,12 @@ export function PhaseFrames({ nodes }: Props) {
           }}
         >
           <span className="h-full w-px border-l border-dashed border-border" />
-          <span className="absolute top-1/2 -translate-y-1/2 rounded-full border bg-background px-2 text-2xs leading-4 whitespace-nowrap text-muted-foreground">
+          <Badge
+            appearance="outline"
+            className="absolute top-1/2 -translate-y-1/2 border-border bg-background"
+          >
             Author turn
-          </span>
+          </Badge>
         </div>
       )}
     </ViewportPortal>

@@ -1,4 +1,5 @@
 import { Button } from '@/shared/ui/button';
+import { CodeBlock } from '@/shared/ui/code-block';
 import {
   Dialog,
   DialogContent,
@@ -20,10 +21,10 @@ export function ConflictDialog({ conflict, onResolve }: Props) {
     <Dialog open={!!conflict} onOpenChange={() => {}}>
       <DialogContent showCloseButton={false} className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-base">
+          <DialogTitle>
             {deleted ? 'File removed on disk' : 'File changed on disk'}
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription>
             {conflict?.kind === 'step' ? 'Step' : 'Workflow'} "{conflict?.name}"{' '}
             {deleted
               ? 'no longer exists on disk. Your edits are kept and the next save creates the file again.'
@@ -31,9 +32,11 @@ export function ConflictDialog({ conflict, onResolve }: Props) {
           </DialogDescription>
         </DialogHeader>
         {conflict?.response.document && (
-          <pre className="max-h-64 overflow-auto rounded-md bg-code-background px-3 py-2 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {conflict.response.document}
-          </pre>
+          <CodeBlock
+            code={conflict.response.document}
+            wrap
+            maxHeightClassName="max-h-64"
+          />
         )}
         <DialogFooter>
           {!deleted && (

@@ -6,7 +6,7 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react';
-import { CircleX, Copy, Plus, Trash2, TriangleAlert, Zap } from 'lucide-react';
+import { Copy, Plus, Trash2, Zap } from 'lucide-react';
 import type { StepType } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -18,14 +18,22 @@ import {
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import {
   isDraftStep,
+  NODE_HEIGHT_PX,
+  NODE_WIDTH_PX,
   phaseTones,
-  toneColor,
+  START_NODE_WIDTH_PX,
   type EdgeCondition,
   type EditorNode,
   type NodeIssue,
 } from '@/entities/workflow-graph';
+import { StatusIcon } from '@/entities/status';
+import { Badge } from '@/shared/ui/badge';
+import { IconButton } from '@/shared/ui/icon-button';
+import { StatusDot } from '@/shared/ui/status-dot';
+import { AddedByAssistantBadge } from '@/widgets/workflow-assistant/added-by-assistant-badge';
 import { HOVER_LINGER_MS } from './canvas-types';
 import { StepGlyph } from './step-glyph';
+import { dotTones } from './tone-dot';
 
 export type RunBadge = { state: StepDisplayState; attempts: number };
 
@@ -55,16 +63,17 @@ export type PlaceholderNode = Node<PlaceholderNodeData, 'placeholder'>;
 export type EditorCanvasNode = StepNode | StartNode | PlaceholderNode;
 
 const handleClass =
-  '!size-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground transition-colors duration-100';
+  '!size-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground transition-colors duration-fast ease-out';
 
 const card =
-  'group/node relative flex h-16 w-[220px] items-center gap-2.5 rounded-xl border bg-card pr-3 pl-2 text-left shadow-xs transition-[border-color,box-shadow] duration-100';
+  'group/node relative flex items-center gap-2.5 rounded-overlay border bg-card pr-3 pl-2 text-left shadow-xs transition-[border-color,box-shadow] duration-fast ease-out';
+
+const stepNodeSize = { width: NODE_WIDTH_PX, height: NODE_HEIGHT_PX };
+
+const startNodeSize = { width: START_NODE_WIDTH_PX, height: NODE_HEIGHT_PX };
 
 const tile =
-  'flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent text-muted-foreground';
-
-const addButton =
-  'nodrag nopan absolute flex size-5 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-xs transition-[color,border-color,opacity,transform] duration-100 outline-none hover:border-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring enabled:active:scale-95 [&_svg]:size-3';
+  'flex size-10 shrink-0 items-center justify-center rounded-surface bg-accent text-muted-foreground';
 
 const stepDetail = (step: EditorNode['step']) => {
   if (step.type === 'human') return 'Waits for your decision';
@@ -104,16 +113,21 @@ function AddButton({
   onClick: (event: ReactMouseEvent) => void;
 }) {
   return (
-    <button
-      type="button"
+    <IconButton
+      size={20}
+      shape="round"
+      tone={when === 'failure' ? 'danger' : 'default'}
       data-node-add={id}
       data-node-add-when={when}
-      aria-label={
+      label={
         when === 'failure'
           ? `Add a step after ${id} fails`
           : `Add a step after ${id}`
       }
-      className={cn(addButton, className)}
+      className={cn(
+        'nodrag nopan absolute border bg-card shadow-xs transition-[color,background-color,opacity,scale]',
+        className,
+      )}
       onPointerDown={event => event.stopPropagation()}
       onClick={event => {
         event.stopPropagation();
@@ -121,7 +135,7 @@ function AddButton({
       }}
     >
       <Plus aria-hidden="true" />
-    </button>
+    </IconButton>
   );
 }
 
@@ -156,34 +170,33 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
           aria-label={`Actions for ${step.name}`}
           onMouseEnter={enter}
           onMouseLeave={leave}
-          className="flex items-center gap-0.5 rounded-lg border bg-card p-0.5 shadow-(--popover-shadow)"
+          className="flex items-center gap-0.5 rounded-surface border bg-card p-0.5 shadow-(--popover-shadow)"
         >
-          <button
-            type="button"
+          <IconButton
+            size={24}
             data-node-duplicate={editor.id}
-            aria-label={`Duplicate ${step.name}`}
-            title="Duplicate (Ctrl+D)"
-            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            label={`Duplicate ${step.name}`}
+            shortcut="Ctrl D"
             onClick={event => {
               event.stopPropagation();
               data.onDuplicate();
             }}
           >
-            <Copy className="size-3.5" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+            <Copy aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            size={24}
+            tone="danger"
             data-node-delete={editor.id}
-            aria-label={`Remove ${step.name} from the workflow`}
-            title="Remove from workflow (Delete)"
-            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none hover:bg-accent hover:text-error-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            label={`Remove ${step.name} from the workflow`}
+            shortcut="Delete"
             onClick={event => {
               event.stopPropagation();
               data.onDelete();
             }}
           >
-            <Trash2 className="size-3.5" aria-hidden="true" />
-          </button>
+            <Trash2 aria-hidden="true" />
+          </IconButton>
         </div>
       </NodeToolbar>
       <div
@@ -196,6 +209,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             ? `${step.name} · ${stepStateLabels[run.state]}`
             : issues.map(issue => issue.message).join('\n') || undefined
         }
+        style={stepNodeSize}
         className={cn(
           card,
           selected && 'border-ring shadow-[0_0_0_1px_var(--ring)]',
@@ -204,26 +218,20 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
         )}
       >
         <span className={cn(tile, typeTileTone[step.type])}>
-          <StepGlyph type={step.type} className="size-[18px] text-current" />
+          <StepGlyph type={step.type} className="size-4.5 text-current" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="min-w-0 truncate text-[13px] leading-[18px] font-medium">
+            <span className="min-w-0 truncate text-ui font-medium">
               {step.name}
             </span>
             {isDraftStep(step) && (
-              <span className="shrink-0 rounded-full border px-1.5 text-[10px] leading-4 text-muted-foreground">
+              <Badge appearance="outline" size="xs">
                 New
-              </span>
+              </Badge>
             )}
             {addedByAssistant && !isDraftStep(step) && (
-              <span
-                data-added-by-assistant
-                title="Added by the assistant"
-                className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 text-info-foreground"
-              >
-                Assistant
-              </span>
+              <AddedByAssistantBadge />
             )}
           </div>
           <div className="truncate text-2xs leading-4 text-muted-foreground">
@@ -249,7 +257,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
                   aria-label={`${errors} ${errors === 1 ? 'error' : 'errors'}`}
                   className="inline-flex items-center gap-0.5 text-error-foreground"
                 >
-                  <CircleX className="size-3" />
+                  <StatusIcon status="error" />
                   {errors}
                 </span>
               )}
@@ -259,17 +267,13 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
                   aria-label={`${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`}
                   className="inline-flex items-center gap-0.5 text-warning-foreground"
                 >
-                  <TriangleAlert className="size-3" />
+                  <StatusIcon status="warning" />
                   {warnings}
                 </span>
               )}
             </span>
           ) : (
-            <span
-              aria-hidden="true"
-              className="size-2 rounded-full"
-              style={{ background: toneColor[tone] }}
-            />
+            <StatusDot size="md" tone={dotTones[tone]} />
           )}
         </div>
         <Handle
@@ -302,7 +306,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
           <span
             aria-hidden="true"
             className={cn(
-              'pointer-events-none absolute left-[calc(100%+9px)] top-[76%] -translate-y-1/2 text-[10px] leading-none text-error-foreground transition-opacity duration-100',
+              'pointer-events-none absolute left-[calc(100%+9px)] top-[76%] -translate-y-1/2 text-micro leading-none text-error-foreground transition-opacity duration-fast ease-out',
               hovered || selected || !freeFailure ? 'opacity-100' : 'opacity-0',
             )}
             style={{
@@ -329,7 +333,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             id={editor.id}
             when="failure"
             className={cn(
-              'top-[76%] left-[calc(100%+12px)] -translate-y-1/2 hover:border-error-foreground hover:text-error-foreground',
+              'top-[76%] left-[calc(100%+12px)] -translate-y-1/2 enabled:hover:border-error-foreground',
               hovered || selected
                 ? 'opacity-100'
                 : 'pointer-events-none opacity-0',
@@ -353,17 +357,18 @@ export function StartNodeView({ data, selected }: NodeProps<StartNode>) {
       data-editor-start
       onMouseEnter={enter}
       onMouseLeave={leave}
+      style={startNodeSize}
       className={cn(
-        'group/node relative flex h-16 w-[200px] items-center gap-2.5 rounded-l-2xl rounded-r-xl border bg-card pr-3 pl-2 shadow-xs transition-[border-color,box-shadow] duration-100',
+        'group/node relative flex items-center gap-2.5 rounded-l-composer rounded-r-overlay border bg-card pr-3 pl-2 shadow-xs transition-[border-color,box-shadow] duration-fast ease-out',
         selected && 'border-ring shadow-[0_0_0_1px_var(--ring)]',
         !selected && hovered && 'border-foreground/25',
       )}
     >
       <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/12 text-primary">
-        <Zap aria-hidden="true" className="size-[18px]" />
+        <Zap aria-hidden="true" className="size-4.5" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] leading-[18px] font-medium">Start</div>
+        <div className="text-ui font-medium">Start</div>
         <div className="truncate text-2xs leading-4 text-muted-foreground">
           {triggers}
         </div>
@@ -392,15 +397,14 @@ export function PlaceholderNodeView({ data }: NodeProps<PlaceholderNode>) {
       type="button"
       data-add-first
       onClick={data.onAdd}
-      className="nodrag nopan flex h-16 w-[220px] items-center gap-3 rounded-xl border border-dashed border-input bg-card/40 pr-3 pl-2 text-left text-muted-foreground transition-[border-color,color,background-color] duration-100 outline-none hover:border-foreground/40 hover:bg-card hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+      style={stepNodeSize}
+      className="nodrag nopan focus-ring flex items-center gap-3 rounded-overlay border border-dashed border-input bg-card/40 pr-3 pl-2 text-left text-muted-foreground transition-[border-color,color,background-color] duration-fast ease-out enabled:hover:border-foreground/40 enabled:hover:bg-card enabled:hover:text-foreground"
     >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-dashed border-current/40">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-surface border border-dashed border-current/40">
         <Plus aria-hidden="true" className="size-5" />
       </span>
       <span className="min-w-0">
-        <span className="block text-[13px] leading-[18px] font-medium">
-          Add first step
-        </span>
+        <span className="block text-ui font-medium">Add first step</span>
         <span className="block text-2xs leading-4">
           A check, an agent, an approval or an action
         </span>

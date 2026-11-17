@@ -323,7 +323,7 @@ export default function WorkflowGraphEditor({
               <p
                 role="alert"
                 data-editor-notice
-                className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-md border bg-card px-3 py-1.5 text-xs text-card-foreground shadow-(--popover-shadow) [overflow-wrap:anywhere]"
+                className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-surface border bg-card px-3 py-1.5 text-xs text-card-foreground shadow-(--popover-shadow) [overflow-wrap:anywhere]"
               >
                 {state.notice}
               </p>
@@ -389,10 +389,8 @@ export default function WorkflowGraphEditor({
       <Dialog open={closing} onOpenChange={setClosing}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              Discard unsaved changes?
-            </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogTitle>Discard unsaved changes?</DialogTitle>
+            <DialogDescription>
               The workflow file was not written. Closing the editor drops the
               edits made since the last save.
             </DialogDescription>

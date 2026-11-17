@@ -1,5 +1,4 @@
-import { CircleX, TriangleAlert } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
+import { StatusIcon } from '@/entities/status';
 import type { DocumentIssue } from '@/entities/workflow-graph';
 
 type Props = {
@@ -19,7 +18,7 @@ export function IssuesStrip({ issues, banner, open }: Props) {
     >
       {banner && (
         <p className="flex items-center gap-2 text-error-foreground [overflow-wrap:anywhere]">
-          <CircleX className="size-3.5 shrink-0" aria-hidden="true" />
+          <StatusIcon status="error" className="size-3.5" />
           {banner}
         </p>
       )}
@@ -27,19 +26,15 @@ export function IssuesStrip({ issues, banner, open }: Props) {
         <ul className="max-h-32 space-y-0.5 overflow-y-auto">
           {issues.map((issue, index) => {
             const error = issue.severity === 'error';
-            const Icon = error ? CircleX : TriangleAlert;
             return (
               <li
                 key={`${issue.message}-${index}`}
                 className="flex items-start gap-2 leading-5"
               >
-                <Icon
-                  role="img"
-                  aria-label={error ? 'Error' : 'Warning'}
-                  className={cn(
-                    'mt-1 size-3.5 shrink-0',
-                    error ? 'text-error-foreground' : 'text-warning-foreground',
-                  )}
+                <StatusIcon
+                  status={error ? 'error' : 'warning'}
+                  label={error ? 'Error' : 'Warning'}
+                  className="mt-1 size-3.5"
                 />
                 <span className="min-w-0 [overflow-wrap:anywhere]">
                   {issue.message}
