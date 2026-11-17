@@ -8,6 +8,7 @@ import { workflowIssues } from '@/features/new-thread/workflow-choice';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import {
+  assignedWorkflowListed,
   rootLabels,
   sameWorkflow,
   workflowRoots,
@@ -82,6 +83,8 @@ export function SessionWorkflowChip({
     );
   };
   const catalog = state.status === 'loaded' ? state.catalog : null;
+  const missing =
+    !!assigned && !!catalog && !assignedWorkflowListed(catalog, assigned);
   const choose = (workflow: AssignedWorkflow | null) => {
     setOpen(false);
     if (!sameWorkflow(workflow, assigned)) onAssign(workflow);
@@ -153,6 +156,14 @@ export function SessionWorkflowChip({
         {state.status === 'loading' && !catalog && (
           <p role="status" className="px-1 text-xs text-muted-foreground">
             Reading workflows…
+          </p>
+        )}
+        {missing && assigned && (
+          <p
+            role="alert"
+            className="px-1 text-xs text-warning-foreground [overflow-wrap:anywhere]"
+          >
+            {`${assigned.name} is no longer available in the ${rootLabels[assigned.root].toLowerCase()} workflows. Pick another workflow or None; the next run will not start with it.`}
           </p>
         )}
         {catalog && (

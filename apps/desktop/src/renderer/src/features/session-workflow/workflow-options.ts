@@ -19,3 +19,11 @@ export const workflowsInRoot = (
   catalog: DefinitionCatalog,
   root: WorkflowRoot,
 ) => catalog.workflows.filter(workflow => workflow.source.scope === root);
+
+export const assignedWorkflowListed = (
+  catalog: DefinitionCatalog,
+  assigned: AssignedWorkflow,
+) =>
+  workflowsInRoot(catalog, assigned.root).some(
+    workflow => workflow.name === assigned.name,
+  );
