@@ -13,6 +13,8 @@ import {
   type AssignSessionWorkflowInput,
   type LinkSessionPullRequestInput,
   type CreateSessionInput,
+  type FinishSessionWorktreeInput,
+  type ReadSessionWorktreeInput,
   type DecideDelegationInput,
   type DecideReviewInput,
   type DecideWorkerPlanInput,
@@ -66,6 +68,13 @@ import {
   type WorkspaceSnapshot,
 } from '../review/workspace';
 import { loadCatalog } from '../workflows/definitions';
+import { resolveFolder } from '../workspace/folder';
+import {
+  createSessionWorktree,
+  readSessionWorktreeStatus,
+  removeSessionWorktree,
+  worktreeSlug,
+} from '../workspace/isolation';
 
 export async function confirmCodexEffort(
   model: string,
@@ -310,6 +319,7 @@ export class SessionService {
   private closing = false;
   private mcpKey?: Buffer;
   private checkingOut = false;
+  private removingWorktree = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
 
@@ -467,6 +477,7 @@ export class SessionService {
     return (
       this.closing ||
       this.checkingOut ||
+      this.removingWorktree ||
       this.active.size > 0 ||
       !!this.reviewDecision
     );
@@ -730,8 +741,14 @@ export class SessionService {
       isolatedDirectory?: string;
       origin?: SessionOrigin;
       mcp?: Session['mcp'];
+      worktree?: { id: string; metadata: NonNullable<Session['worktree']> };
     } = {},
   ): Session {
+    if (input.isolation && !options.worktree)
+      throw new SessionError(
+        'invalid-request',
+        'Prepare the session worktree before creating the session.',
+      );
     if (input.groupId && !this.options.isKnownGroup?.(input.groupId))
       throw new SessionError(
         'invalid-request',
@@ -753,6 +770,7 @@ export class SessionService {
       directory,
       options.origin,
       options.mcp,
+      options.worktree,
     );
     this.emitSession(session);
     return session;
@@ -819,7 +837,127 @@ export class SessionService {
           signal,
         )
       : undefined;
-    return this.create(input, mcp ? { mcp } : {});
+    if (!input.isolation) return this.create(input, mcp ? { mcp } : {});
+    const project = await resolveFolder(input.directory, signal);
+    const id = randomUUID();
+    const { worktree, branch, base, projectDirectory } =
+      await createSessionWorktree({
+        projectDirectory: project,
+        dataDirectory: this.directory,
+        slug: worktreeSlug(input.title, 'session'),
+        runId: id,
+        branch: input.isolation.branch,
+        signal,
+      });
+    try {
+      if (this.closing)
+        throw new SessionError('busy', 'The host is shutting down.');
+      return this.create(input, {
+        mcp,
+        isolatedDirectory: worktree,
+        worktree: {
+          id,
+          metadata: { projectDirectory, branch, base, state: 'active' },
+        },
+      });
+    } catch (error) {
+      try {
+        await removeSessionWorktree({
+          projectDirectory,
+          dataDirectory: this.directory,
+          worktree,
+          signal,
+        });
+      } catch {
+        throw new SessionError(
+          'unavailable',
+          `The session could not be saved. The worktree at ${worktree} and branch ${branch} were retained.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private sessionWorktree(sessionId: string) {
+    const session =
+      this.active.get(sessionId)?.session ?? this.store.get(sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    if (!session.worktree)
+      throw new SessionError(
+        'invalid-request',
+        'This session has no managed worktree.',
+      );
+    return {
+      session,
+      metadata: session.worktree,
+      location: {
+        projectDirectory: session.worktree.projectDirectory,
+        dataDirectory: this.directory,
+        worktree: session.directory,
+      },
+    };
+  }
+
+  async readWorktree(input: ReadSessionWorktreeInput, signal: AbortSignal) {
+    const { metadata, location } = this.sessionWorktree(input.sessionId);
+    return metadata.state === 'removed'
+      ? { dirty: false }
+      : readSessionWorktreeStatus({ ...location, signal });
+  }
+
+  async finishWorktree(
+    input: FinishSessionWorktreeInput,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const { session, metadata, location } = this.sessionWorktree(
+      input.sessionId,
+    );
+    if (this.isBusy() || this.unsaved.size)
+      throw new SessionError(
+        'busy',
+        'Wait for active work on this computer to finish before finishing a worktree.',
+      );
+    if (metadata.state === 'removed') return session;
+    if (input.action.kind !== 'remove') {
+      if (metadata.state === 'active')
+        this.markWorktreeFinished(session, 'kept');
+      return session;
+    }
+    this.removingWorktree = true;
+    try {
+      await removeSessionWorktree({
+        ...location,
+        force: input.action.force,
+        signal,
+      });
+      const current = this.sessionWorktree(session.id).session;
+      this.markWorktreeFinished(current, 'removed');
+      return current;
+    } finally {
+      this.removingWorktree = false;
+    }
+  }
+
+  private markWorktreeFinished(
+    session: Session,
+    state: 'kept' | 'removed',
+  ): void {
+    session.worktree = { ...session.worktree!, state };
+    holdQueue(session);
+    this.publish(session);
+  }
+
+  private ensureWorktreeOpen(session: Session): void {
+    const worktree =
+      session.worktree ??
+      (session.parentId
+        ? this.store.get(session.parentId)?.worktree
+        : undefined);
+    if (worktree && worktree.state !== 'active')
+      throw new SessionError(
+        'invalid-request',
+        'This worktree session is finished.',
+      );
   }
 
   async setMcp(
@@ -937,6 +1075,7 @@ export class SessionService {
         );
       return structuredClone(session);
     }
+    this.ensureWorktreeOpen(session);
     if (this.isBusy())
       throw new SessionError(
         'busy',
@@ -1053,6 +1192,7 @@ export class SessionService {
     const session =
       this.active.get(sessionId)?.session ?? this.store.get(sessionId);
     if (!session) throw new SessionError('not-found', 'Session not found.');
+    this.ensureWorktreeOpen(session);
     if (
       session.status === 'running' ||
       session.status === 'stopping' ||
@@ -1124,6 +1264,7 @@ export class SessionService {
 
   queue(input: SendMessageInput): Session {
     const session = this.acceptingSession(input.sessionId);
+    this.ensureWorktreeOpen(session);
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
@@ -1528,6 +1669,7 @@ export class SessionService {
     skillHash?: string,
     origin: 'workflow' | null = null,
   ): void {
+    this.ensureWorktreeOpen(session);
     const now = new Date();
     const budget = this.options.checkCostBudgets?.(session, now);
     if (budget?.refusal) {

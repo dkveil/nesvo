@@ -121,6 +121,28 @@ export const sessionIsolationSchema = z.strictObject({
     .regex(SESSION_BRANCH_PATTERN, 'Use a valid Git branch name.')
     .optional(),
 });
+export const sessionWorktreeSchema = z.strictObject({
+  projectDirectory: z.string().min(1).max(4096),
+  branch: z.string().min(1).max(200).regex(SESSION_BRANCH_PATTERN),
+  base: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
+  state: z.enum(['active', 'kept', 'removed']),
+});
+export const readSessionWorktreeSchema = z.strictObject({
+  sessionId: z.uuid(),
+});
+export const sessionWorktreeStatusSchema = z.strictObject({
+  dirty: z.boolean(),
+});
+export const finishSessionWorktreeSchema = readSessionWorktreeSchema.extend({
+  action: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('keep') }),
+    z.strictObject({ kind: z.literal('pull-request') }),
+    z.strictObject({
+      kind: z.literal('remove'),
+      force: z.boolean().default(false),
+    }),
+  ]),
+});
 export const createSessionSchema = z
   .strictObject({
     title: z.string().trim().min(1).max(100),
@@ -270,6 +292,7 @@ export const sessionSchema = z.strictObject({
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),
+  worktree: sessionWorktreeSchema.optional(),
   status: sessionStateSchema,
   error: z.string().nullable(),
   interruption: sessionInterruptionSchema.nullable().optional(),
@@ -323,6 +346,14 @@ export const codexStatusSchema = claudeStatusSchema.extend({
 });
 
 export type SessionIsolation = z.infer<typeof sessionIsolationSchema>;
+export type SessionWorktree = z.infer<typeof sessionWorktreeSchema>;
+export type ReadSessionWorktreeInput = z.infer<
+  typeof readSessionWorktreeSchema
+>;
+export type SessionWorktreeStatus = z.infer<typeof sessionWorktreeStatusSchema>;
+export type FinishSessionWorktreeInput = z.infer<
+  typeof finishSessionWorktreeSchema
+>;
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;

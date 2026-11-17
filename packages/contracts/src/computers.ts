@@ -25,6 +25,7 @@ export const hostCapabilitySchema = z.enum([
   'reasoning-effort',
   'workflows',
   'git-branch',
+  'session-worktrees',
   'permission-modes',
   'session-workflow',
   'pull-requests',

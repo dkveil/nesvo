@@ -667,6 +667,7 @@ test(
         'reasoning-effort',
         'workflows',
         'git-branch',
+        'session-worktrees',
         'permission-modes',
         'session-workflow',
         'pull-requests',
@@ -5216,6 +5217,7 @@ test(
       'reasoning-effort',
       'workflows',
       'git-branch',
+      'session-worktrees',
       'permission-modes',
       'session-workflow',
       'pull-requests',
@@ -5701,41 +5703,6 @@ test(
         }
       },
     );
-
-    await t.test('isolated sessions answer unavailable', async () => {
-      for (const input of [
-        {
-          title: 'Isolated',
-          provider: 'Claude Code',
-          model: 'sonnet',
-          mode: 'read-only',
-          directory,
-          isolation: { kind: 'worktree' },
-        },
-        {
-          title: 'Isolated with effort',
-          provider: 'Codex',
-          model: 'gpt-5.5',
-          mode: 'supervised',
-          effort: 'high',
-          directory,
-          isolation: { kind: 'worktree', branch: 'nesvo/isolated' },
-        },
-      ]) {
-        const response = await host.request('create-session', input);
-        assert.deepEqual(
-          response,
-          {
-            type: 'error',
-            id: response.id,
-            code: 'unavailable',
-            message: 'Workspace isolation is not available on this host yet.',
-          },
-          input.title,
-        );
-      }
-      assert.deepEqual((await host.request('list-sessions')).sessions, []);
-    });
 
     await t.test('unknown workflow request fields are invalid', async () => {
       for (const input of [{ directory, recursive: true }, { directory: 42 }])
@@ -16388,6 +16355,191 @@ test(
     await writeFile(join(directory, 'release'), '');
     assert.deepEqual(await Promise.all(active), Array(6).fill(''));
     assert.equal(await replacement, 'replacement');
+  },
+);
+
+test(
+  'Interactive session worktrees isolate turns and finish explicitly across restarts',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-session-worktrees-')),
+    );
+    const project = join(directory, 'project');
+    const nested = join(project, 'nested');
+    const data = join(directory, 'data');
+    const launchLog = join(directory, 'turns.jsonl');
+    const hosts = [];
+    const open = () => {
+      const host = launch(data, join(directory, 'pids.json'), {
+        NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      });
+      hosts.push(host);
+      return host;
+    };
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+    });
+    await mkdir(nested, { recursive: true });
+    const git = async (cwd, ...args) =>
+      (
+        await promisify(execFile)(
+          'git',
+          [
+            '-c',
+            'user.name=Nesvo Test',
+            '-c',
+            'user.email=test@example.invalid',
+            '-c',
+            'commit.gpgsign=false',
+            ...args,
+          ],
+          { cwd },
+        )
+      ).stdout.trim();
+    await git(project, 'init', '--quiet', '--initial-branch=main');
+    await writeFile(join(nested, 'note.txt'), 'original\n');
+    await writeFile(join(project, '.gitignore'), '.env\n');
+    await writeFile(join(project, '.env'), 'LOCAL_ONLY=1\n');
+    await git(project, 'add', '.');
+    await git(project, 'commit', '-qm', 'Initial commit');
+    const base = await git(project, 'rev-parse', 'HEAD');
+
+    let host = open();
+    const request = (method, input) => host.request(method, input);
+    const create = (isolation, path = nested) =>
+      request('create-session', {
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'read-only',
+        directory: path,
+        title: 'Isolate session',
+        isolation,
+      });
+    assert.ok(
+      (await request('health')).health.capabilities.includes(
+        'session-worktrees',
+      ),
+    );
+    assert.equal((await create({ kind: 'worktree' }, directory)).type, 'error');
+    assert.equal(
+      (await create({ kind: 'worktree', branch: 'bad/.ref' })).type,
+      'error',
+    );
+    const result = await create({ kind: 'worktree' });
+    assert.equal(result.type, 'session', JSON.stringify(result));
+    const { session } = result;
+    const sessionId = session.id;
+    const branch = `nesvo/isolate-session-${sessionId.slice(0, 8)}`;
+    assert.deepEqual(session.worktree, {
+      projectDirectory: project,
+      branch,
+      base,
+      state: 'active',
+    });
+    assert.equal(
+      session.directory,
+      join(
+        data,
+        'session-worktrees',
+        `${sessionId.slice(0, 8)}-isolate-session`,
+      ),
+    );
+    assert.equal(
+      await git(session.directory, 'branch', '--show-current'),
+      branch,
+    );
+    assert.equal(await git(project, 'branch', '--show-current'), 'main');
+    await assert.rejects(stat(join(session.directory, '.env')), {
+      code: 'ENOENT',
+    });
+    const status = () => request('read-session-worktree', { sessionId });
+    const finish = action =>
+      request('finish-session-worktree', { sessionId, action });
+    assert.equal((await status()).worktree.dirty, false);
+    const send = text =>
+      request('send-message', { sessionId, text, messageId: randomUUID() });
+    assert.equal((await send('fixture:hold')).type, 'session');
+    assert.equal((await finish({ kind: 'keep' })).code, 'busy');
+    await host.event(
+      row =>
+        row.id === sessionId &&
+        agent(row)?.body.includes('Fixture is waiting.'),
+    );
+    const fixture = JSON.parse((await readFile(launchLog, 'utf8')).trim());
+    assert.equal(await realpath(fixture.cwd), session.directory);
+    const current = (await request('list-sessions')).sessions.find(
+      row => row.id === sessionId,
+    );
+    await request('stop-run', { sessionId, runId: current.runId });
+    await host.event(
+      session => session.id === sessionId && session.status === 'stopped',
+    );
+    await host.stop();
+
+    host = open();
+    assert.deepEqual(
+      (await request('list-sessions')).sessions[0].worktree,
+      session.worktree,
+    );
+    await writeFile(join(session.directory, 'untracked.txt'), 'unsaved\n');
+    assert.equal((await status()).worktree.dirty, true);
+    assert.equal(
+      (await finish({ kind: 'remove', force: false })).type,
+      'error',
+    );
+    const kept = await finish({ kind: 'keep' });
+    assert.equal(kept.session.worktree.state, 'kept');
+    assert.equal((await stat(session.directory)).isDirectory(), true);
+    assert.equal((await send('Do not reopen')).type, 'error');
+    await host.stop();
+
+    host = open();
+    assert.equal(
+      (await request('list-sessions')).sessions[0].worktree.state,
+      'kept',
+    );
+    const removed = await finish({ kind: 'remove', force: true });
+    assert.equal(removed.session.worktree.state, 'removed');
+    assert.equal(
+      (await finish({ kind: 'remove', force: true })).session.revision,
+      removed.session.revision,
+    );
+    await assert.rejects(stat(session.directory), { code: 'ENOENT' });
+    assert.equal(await git(project, 'rev-parse', branch), base);
+    await host.stop();
+
+    host = open();
+    assert.equal(
+      (await request('list-sessions')).sessions[0].worktree.state,
+      'removed',
+    );
+    const custom = await create({ kind: 'worktree', branch: 'feature/custom' });
+    assert.equal(custom.session.worktree.branch, 'feature/custom');
+    assert.equal(
+      (await create({ kind: 'worktree', branch: 'feature/custom' })).type,
+      'error',
+    );
+    const handoff = await request('finish-session-worktree', {
+      sessionId: custom.session.id,
+      action: { kind: 'pull-request' },
+    });
+    assert.equal(handoff.session.worktree.state, 'kept');
+    const cleanRemoval = await request('finish-session-worktree', {
+      sessionId: custom.session.id,
+      action: { kind: 'remove' },
+    });
+    assert.equal(cleanRemoval.session.worktree.state, 'removed');
+    assert.equal(await git(project, 'rev-parse', 'feature/custom'), base);
+    assert.equal(
+      (await finish({ kind: 'pull-request' })).session.worktree.state,
+      'removed',
+    );
   },
 );
 

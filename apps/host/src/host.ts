@@ -30,6 +30,7 @@ import { PullRequestError } from './process/github-cli';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { FolderError, resolveFolder } from './workspace/folder';
 import { GitBranchError, readGitBranch } from './workspace/git-branch';
+import { WorkspaceIsolationError } from './workspace/isolation';
 import {
   discoverDirectorySkills,
   discoverSessionSkills,
@@ -79,6 +80,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'link-session-pull-request',
   'create-session',
   'adopt-conversation',
+  'finish-session-worktree',
   'send-message',
   'queue-message',
   'assign-session-workflow',
@@ -133,6 +135,23 @@ const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
+
+const worktreeFailure = (error: unknown, message: string) => ({
+  code:
+    error instanceof SessionError
+      ? error.code
+      : error instanceof FolderError
+        ? ('invalid-directory' as const)
+        : error instanceof WorkspaceIsolationError
+          ? ('invalid-request' as const)
+          : ('unavailable' as const),
+  message:
+    error instanceof SessionError ||
+    error instanceof FolderError ||
+    error instanceof WorkspaceIsolationError
+      ? error.message
+      : message,
+});
 
 const definitionErrorCode = (error: unknown) => {
   if (!(error instanceof DefinitionError)) return 'unavailable' as const;
@@ -395,6 +414,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       let conversationRequests = 0;
       let workspaceRequests = 0;
+      let worktreeRequests = 0;
       let skillRequests = 0;
       let mcpRequests = 0;
       let definitionRequests = 0;
@@ -423,9 +443,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           isWorkflowMethod(request.method) &&
           !SERVED_WORKFLOW_METHODS.has(request.method)
             ? 'Workflows are not available on this host yet.'
-            : request.method === 'create-session' && request.input.isolation
-              ? 'Workspace isolation is not available on this host yet.'
-              : null;
+            : null;
         if (unavailable) {
           yield* Effect.tryPromise(() =>
             send({
@@ -506,27 +524,61 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (
-          request.method === 'create-session' &&
-          (request.input.effort || request.input.mcp)
+          (request.method === 'create-session' &&
+            (request.input.effort ||
+              request.input.mcp ||
+              request.input.isolation)) ||
+          request.method === 'read-session-worktree' ||
+          request.method === 'finish-session-worktree'
         ) {
-          const creation = sessions
-            .createWithEffort(request.input, probes.controller.signal)
-            .then(session => send({ type: 'session', id: request.id, session }))
+          const worktree =
+            request.method !== 'create-session' || !!request.input.isolation;
+          if (worktree && worktreeRequests >= 4) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: 'Worktree operations are busy. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          if (worktree) worktreeRequests++;
+          const signal = probes.controller.signal;
+          const operation = async (): Promise<HostResponse> => {
+            if (request.method === 'read-session-worktree')
+              return {
+                type: 'session-worktree-status',
+                id: request.id,
+                worktree: await sessions.readWorktree(request.input, signal),
+              };
+            const session =
+              request.method === 'finish-session-worktree'
+                ? await sessions.finishWorktree(request.input, signal)
+                : await sessions.createWithEffort(request.input, signal);
+            return { type: 'session', id: request.id, session };
+          };
+          const pending = operation()
+            .then(send)
             .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
-                code:
-                  error instanceof SessionError ? error.code : 'unavailable',
-                message:
-                  error instanceof SessionError
-                    ? error.message
-                    : 'The session could not be created. Refresh Codex and try again.',
+                ...worktreeFailure(
+                  error,
+                  worktree
+                    ? 'The worktree operation could not be completed. Refresh the session and try again.'
+                    : 'The session could not be created. Refresh the provider and try again.',
+                ),
               }),
             )
             .catch(() => undefined);
-          probes.pending.add(creation);
-          void creation.finally(() => probes.pending.delete(creation));
+          probes.pending.add(pending);
+          void pending.finally(() => {
+            if (worktree) worktreeRequests--;
+            probes.pending.delete(pending);
+          });
           continue;
         }
         if (request.method === 'set-session-mcp') {

@@ -36,10 +36,20 @@ const FORWARDED_ENVIRONMENT = [
   'LC_MESSAGES',
 ] as const;
 
+export function worktreeSlug(title: string, fallback: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, '');
+  return slug || fallback;
+}
+
 export type WorkspaceIsolationErrorCode =
   | 'invalid-project'
   | 'invalid-data-directory'
   | 'invalid-task'
+  | 'invalid-branch'
   | 'not-a-repository'
   | 'not-repository-root'
   | 'no-base-commit'
@@ -275,13 +285,23 @@ async function branchExists(
   return fail('git-failed', gitMessage(result));
 }
 
-function worktreesRoot(dataDirectory: string, create: boolean): string | null {
+function worktreesRoot(
+  dataDirectory: string,
+  create: boolean,
+  rootName = 'worktrees',
+): string | null {
   const data = realDirectory(dataDirectory);
   if (!data)
     fail('invalid-data-directory', 'The data directory does not exist.');
-  const root = join(data, 'worktrees');
+  const root = join(data, rootName);
   if (create) mkdirSync(root, { recursive: true });
-  return realDirectory(root);
+  const resolved = realDirectory(root);
+  if (resolved && resolved !== root)
+    fail(
+      'invalid-data-directory',
+      'The worktree directory must be inside the data directory.',
+    );
+  return resolved;
 }
 
 function parseWorktreeList(output: string): TaskWorktree[] {
@@ -370,27 +390,51 @@ export async function isGitHubRepositoryRoot(
   });
 }
 
-export async function createTaskWorktree({
-  projectDirectory,
-  dataDirectory,
-  slug,
-  runId,
-  signal,
-}: CreateTaskWorktreeParams): Promise<WorkflowIsolation> {
+export function createTaskWorktree(input: CreateTaskWorktreeParams) {
+  return createWorktree(input, 'worktrees').then(
+    ({ worktree, branch, base }) => ({
+      worktree,
+      branch,
+      base,
+    }),
+  );
+}
+
+const SESSION_ROOT = 'session-worktrees';
+
+export function createSessionWorktree(
+  input: CreateTaskWorktreeParams & { branch?: string },
+) {
+  return createWorktree(input, SESSION_ROOT);
+}
+
+async function createWorktree(
+  {
+    projectDirectory,
+    dataDirectory,
+    slug,
+    runId,
+    signal,
+    branch: requestedBranch,
+  }: CreateTaskWorktreeParams & { branch?: string },
+  rootName: string,
+): Promise<WorkflowIsolation & { projectDirectory: string }> {
   if (signal.aborted) fail('cancelled', 'The Git operation was cancelled.');
   if (!TASK_SLUG_PATTERN.test(slug))
     fail('invalid-task', 'The task name must be a short lowercase slug.');
   if (!RUN_ID_PATTERN.test(runId))
     fail('invalid-task', 'The run identifier is invalid.');
   const project = projectPath(projectDirectory);
-  const root = worktreesRoot(dataDirectory, false);
-  if (root && isInside(root, project))
+  const roots = ['worktrees', SESSION_ROOT].map(name =>
+    worktreesRoot(dataDirectory, false, name),
+  );
+  if (roots.some(root => root && isInside(root, project)))
     fail(
       'nested-worktree',
       'The project directory is a task worktree. Start the task from the original project.',
     );
   const repository = await repositoryRoot(project, signal);
-  if (repository !== project)
+  if (rootName === 'worktrees' && repository !== project)
     fail(
       'not-repository-root',
       'Choose the top-level directory of the Git repository.',
@@ -402,8 +446,18 @@ export async function createTaskWorktree({
     );
   const base = await headCommit(repository, signal);
   const shortId = runId.slice(0, 8).toLowerCase();
-  const branch = `nesvo/${slug}-${shortId}`;
-  const worktreeRoot = worktreesRoot(dataDirectory, true);
+  const branch = requestedBranch ?? `nesvo/${slug}-${shortId}`;
+  if (requestedBranch) {
+    const checked = await runGit({
+      args: ['check-ref-format', '--branch', branch],
+      cwd: repository,
+      timeoutMs: GIT_QUERY_TIMEOUT_MS,
+      signal,
+    });
+    if (checked.code !== 0 || checked.stdout.trim() !== branch)
+      fail('invalid-branch', 'Use a valid Git branch name.');
+  }
+  const worktreeRoot = worktreesRoot(dataDirectory, true, rootName);
   if (!worktreeRoot)
     fail(
       'invalid-data-directory',
@@ -434,7 +488,91 @@ export async function createTaskWorktree({
     throw error;
   }
   if (result.code !== 0) fail('git-failed', gitMessage(result));
-  return { worktree: realPathOf(worktree), branch, base };
+  return {
+    worktree: realPathOf(worktree),
+    branch,
+    base,
+    projectDirectory: repository,
+  };
+}
+
+type SessionWorktreeLocation = ListTaskWorktreesParams & { worktree: string };
+
+async function registeredSessionWorktree({
+  dataDirectory,
+  projectDirectory,
+  worktree,
+  signal,
+}: SessionWorktreeLocation): Promise<TaskWorktree | undefined> {
+  const root = worktreesRoot(dataDirectory, false, SESSION_ROOT);
+  if (
+    !isAbsolute(worktree) ||
+    (root && (root === worktree || !isInside(root, worktree))) ||
+    realPathOf(worktree) !== worktree
+  )
+    fail(
+      'not-a-task-worktree',
+      'This path is outside the managed session worktrees.',
+    );
+  const target = root
+    ? (await registeredWorktrees(projectPath(projectDirectory), signal)).find(
+        entry => entry.worktree === worktree,
+      )
+    : undefined;
+  if (!target && pathExists(worktree))
+    fail(
+      'not-a-task-worktree',
+      'This path is no longer a registered session worktree.',
+    );
+  return target;
+}
+
+export async function readSessionWorktreeStatus(
+  input: SessionWorktreeLocation,
+) {
+  const target = await registeredSessionWorktree(input);
+  return {
+    dirty:
+      target && !target.prunable
+        ? await worktreeDirty(target.worktree, input.signal)
+        : false,
+  };
+}
+
+async function worktreeDirty(
+  worktree: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const result = await runGit({
+    args: [
+      '--no-optional-locks',
+      'status',
+      '--porcelain',
+      '--untracked-files=normal',
+      '--ignored=matching',
+      '--ignore-submodules=none',
+    ],
+    cwd: worktree,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  if (result.code !== 0) fail('git-failed', gitMessage(result));
+  return result.stdout.length > 0 || result.outputTruncated;
+}
+
+export async function removeSessionWorktree(input: RemoveTaskWorktreeParams) {
+  const target = await registeredSessionWorktree(input);
+  if (!target) return;
+  if (
+    !input.force &&
+    !target.prunable &&
+    (await worktreeDirty(target.worktree, input.signal))
+  )
+    fail(
+      'dirty-worktree',
+      'The worktree has uncommitted changes. Commit them or explicitly confirm removal.',
+    );
+  await removeWorktree(input, target);
 }
 
 export async function listTaskWorktrees({
@@ -469,6 +607,16 @@ export async function removeTaskWorktree({
       'not-a-task-worktree',
       'This directory is not a task worktree of the project.',
     );
+  return removeWorktree(
+    { projectDirectory, dataDirectory, worktree, force, signal },
+    target,
+  );
+}
+
+async function removeWorktree(
+  { projectDirectory, force, signal }: RemoveTaskWorktreeParams,
+  target: TaskWorktree,
+): Promise<TaskWorktree> {
   const result = await runGit({
     args: [
       'worktree',

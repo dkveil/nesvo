@@ -51,6 +51,9 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   createSessionSchema,
+  readSessionWorktreeSchema,
+  sessionWorktreeStatusSchema,
+  finishSessionWorktreeSchema,
   sendMessageSchema,
   assignSessionWorkflowSchema,
   queuedMessageRefSchema,
@@ -62,6 +65,9 @@ import {
   type ClaudeStatus,
   type CodexStatus,
   type CreateSessionInput,
+  type ReadSessionWorktreeInput,
+  type SessionWorktreeStatus,
+  type FinishSessionWorktreeInput,
   type SendMessageInput,
   type AssignSessionWorkflowInput,
   type QueuedMessageRefInput,
@@ -373,6 +379,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('create-session'),
     input: createSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-worktree'),
+    input: readSessionWorktreeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('finish-session-worktree'),
+    input: finishSessionWorktreeSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -722,6 +738,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     branch: gitBranchSchema,
   }),
   z.strictObject({
+    type: z.literal('session-worktree-status'),
+    id: z.uuid(),
+    worktree: sessionWorktreeStatusSchema,
+  }),
+  z.strictObject({
     type: z.literal('reviews'),
     id: z.uuid(),
     reviews: z.array(reviewSchema),
@@ -1053,6 +1074,14 @@ export type DesktopApi = {
   ) => Promise<McpServerList>;
   setSessionMcp: (
     input: SetSessionMcpInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  readSessionWorktree: (
+    input: ReadSessionWorktreeInput,
+    hostId?: HostId,
+  ) => Promise<SessionWorktreeStatus>;
+  finishSessionWorktree: (
+    input: FinishSessionWorktreeInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   listWorkspaceDirectory: (

@@ -333,11 +333,20 @@ export class PullRequests {
   async find(sessionId: string): Promise<PullRequestReference | null> {
     const session = this.getSession(sessionId);
     if (!session) throw new PullRequestError('not-found', 'Session not found.');
+    const worktree = session.worktree;
     const result = await this.gh.json(
       currentPullRequestSchema,
-      ['pr', 'view', '--json', 'number,url'],
+      [
+        'pr',
+        'view',
+        ...(worktree ? [worktree.branch] : []),
+        '--json',
+        'number,url',
+      ],
       {
-        cwd: await this.sessionFolder(session),
+        cwd: worktree
+          ? await resolveFolder(worktree.projectDirectory, this.signal)
+          : await this.sessionFolder(session),
         inferHost: true,
         noCurrentPullRequest: true,
       },

@@ -131,13 +131,19 @@ export class SessionStore {
     directory: string,
     origin: SessionOrigin = { kind: 'operator' },
     mcp: SessionMcp = { servers: [], hooks: false },
+    worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
     const now = new Date().toISOString();
+    const sessionInput = { ...input };
+    delete sessionInput.isolation;
     const session: Session = {
-      ...input,
+      ...sessionInput,
       mcp,
       effort: input.effort ?? null,
-      id: origin.kind === 'import' ? origin.sessionId : randomUUID(),
+      id:
+        worktree?.id ??
+        (origin.kind === 'import' ? origin.sessionId : randomUUID()),
+      ...(worktree ? { worktree: worktree.metadata } : {}),
       role: 'standalone',
       providerSessionId:
         origin.kind === 'import'

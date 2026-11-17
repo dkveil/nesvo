@@ -95,7 +95,7 @@ export const listPullRequestsSchema = z
     directory: pathSchema.optional(),
     repository: githubRepositorySchema.optional(),
     scope: pullRequestListScopeSchema.default('open'),
-    query: z.string().trim().max(200).optional(),
+    query: z.string().trim().max(205).optional(),
   })
   .refine(value => !!value.directory || !!value.repository, {
     message: 'Choose a repository or a project folder.',

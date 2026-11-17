@@ -31,6 +31,7 @@ import {
   WorkspaceIsolationError,
   createTaskWorktree,
   removeTaskWorktree,
+  worktreeSlug,
 } from '../workspace/isolation';
 import {
   DefinitionError,
@@ -54,7 +55,6 @@ export const PLAN_INSTRUCTION =
 export const IMPLEMENT_INSTRUCTION = 'Implement the task as planned.';
 
 const PLAN_TEXT_LIMIT = 60_000;
-const TASK_SLUG_LENGTH = 40;
 const SNAPSHOT_FILE = /^([0-9a-f-]{36})\.md$/;
 
 type AuthorSessions = Pick<
@@ -214,15 +214,6 @@ export const bindRunEvents = (
 const bounded = (value: string, limit: number) =>
   value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 
-export const taskSlug = (title: string): string => {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, TASK_SLUG_LENGTH)
-    .replace(/^-+|-+$/g, '');
-  return slug || 'task';
-};
-
 const isolationFailure = (error: WorkspaceIsolationError) =>
   new WorkflowRunError(
     error.code === 'timed-out' ||
@@ -329,7 +320,7 @@ export class WorkflowTasks {
         isolation = await this.worktrees.create({
           projectDirectory: projectRoot,
           dataDirectory: this.ports.dataDirectory,
-          slug: taskSlug(title),
+          slug: worktreeSlug(title, 'task'),
           runId,
           signal,
         });
