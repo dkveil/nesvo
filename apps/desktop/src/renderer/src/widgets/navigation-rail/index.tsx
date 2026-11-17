@@ -117,9 +117,11 @@ export function NavigationRail({
           </RailButton>
         </div>
         <div className="flex flex-col items-center gap-1">
-          <RailButton label="New session" onClick={onCreate}>
-            <SquarePen className="size-4" />
-          </RailButton>
+          {!sidebarOpen && (
+            <RailButton label="New session" onClick={onCreate}>
+              <SquarePen className="size-4" />
+            </RailButton>
+          )}
           <RailButton label="Inbox" active={inbox} onClick={onInbox}>
             <Inbox className="size-4" />
             {pendingActions > 0 && (

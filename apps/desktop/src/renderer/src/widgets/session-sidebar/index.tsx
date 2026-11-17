@@ -469,19 +469,17 @@ export function SessionSidebar({
               </button>
             )}
           </div>
-          {inline && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              aria-label="New session"
-              title="New session"
-              onClick={onCreate}
-            >
-              <SquarePen className="size-4" />
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            aria-label="New session"
+            title="New session"
+            onClick={onCreate}
+          >
+            <SquarePen className="size-4" />
+          </Button>
         </div>
         {inline && (
           <>
