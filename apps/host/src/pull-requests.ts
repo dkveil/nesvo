@@ -374,6 +374,7 @@ export class PullRequests {
     typeof actOnPullRequestSchema
   >): Promise<PullRequestActionResult> {
     const prArgs = referenceArgs(reference);
+    const endpoint = `repos/${reference.repository}/pulls/${reference.number}`;
     const signal = AbortSignal.timeout(60_000);
     const options = { mutation: true, signal, maxOutputBytes: 64 * 1024 };
     let detail: string;
@@ -467,20 +468,52 @@ export class PullRequests {
         }
         break;
       }
-      case 'merge':
+      case 'line-comment': {
+        const side = action.side.toUpperCase();
         await this.gh.run(
           [
-            'pr',
-            'merge',
-            ...prArgs,
-            `--${action.method}`,
-            '--match-head-commit',
-            action.expectedHeadSha,
-            ...(action.deleteBranch ? ['--delete-branch'] : []),
+            'api',
+            '--method',
+            'POST',
+            `${endpoint}/comments`,
+            '--input',
+            '-',
+            '--silent',
           ],
-          options,
+          {
+            ...options,
+            apiAction: 'line-comment',
+            stdin: JSON.stringify({
+              body: action.body,
+              commit_id: action.commitId,
+              path: action.path,
+              side,
+              line: action.line,
+              ...(action.startLine === null
+                ? {}
+                : { start_line: action.startLine, start_side: side }),
+            }),
+          },
         );
-        detail = 'Merge request submitted to GitHub.';
+        detail = 'Line comment posted.';
+        break;
+      }
+      case 'merge':
+        await this.gh.json(
+          z.object({ merged: z.literal(true) }),
+          [
+            'api',
+            '--method',
+            'PUT',
+            `${endpoint}/merge`,
+            '-f',
+            `merge_method=${action.method}`,
+            '-f',
+            `sha=${action.expectedHeadSha}`,
+          ],
+          { ...options, apiAction: 'merge' },
+        );
+        detail = 'Pull request merged.';
         break;
       case 'checkout':
         await this.checkoutWorkspace(action.sessionId, async session => {

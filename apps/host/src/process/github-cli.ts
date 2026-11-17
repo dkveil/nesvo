@@ -106,7 +106,11 @@ const graphErrors = z.object({
     .min(1),
 });
 
-function ghError(code: number | null, stderr: string, matchingHead: boolean) {
+function ghError(
+  code: number | null,
+  stderr: string,
+  apiAction?: GhOptions['apiAction'],
+) {
   if (
     code === 4 ||
     /gh auth login|authentication required|bad credentials|http 401|requires authentication/i.test(
@@ -114,16 +118,6 @@ function ghError(code: number | null, stderr: string, matchingHead: boolean) {
     )
   )
     return new PullRequestError('unavailable', signIn);
-  if (
-    matchingHead &&
-    /head (?:sha|branch|commit).*(?:match|chang|modif|up to date)|(?:match|chang|modif).*head (?:sha|branch|commit)/i.test(
-      stderr,
-    )
-  )
-    return new PullRequestError(
-      'invalid-request',
-      'The pull request head changed. Refresh and review the current commit before merging.',
-    );
   if (
     /no pull requests found|could not resolve to (?:a |an )?(?:repository|pullrequest)|could not find (?:a |the )?(?:pull request|repository)|http 404|repository not found/i.test(
       stderr,
@@ -147,11 +141,30 @@ function ghError(code: number | null, stderr: string, matchingHead: boolean) {
     )
     .replace(/(https?:\/\/)[^\s/]+@/gi, '$1[redacted]@')
     .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[redacted]')
-    .trim()
-    .slice(0, 300);
+    .trim();
+  if (apiAction === 'merge' && detail?.endsWith('(HTTP 409)'))
+    return new PullRequestError(
+      'invalid-request',
+      'The pull request head moved since you reviewed it. Refresh and review again.',
+    );
+  if (apiAction === 'merge' && detail?.endsWith('(HTTP 405)')) {
+    const message = detail
+      .replace(/^gh: /, '')
+      .replace(/\s*\(HTTP 405\)$/, '')
+      .slice(0, 300);
+    return new PullRequestError(
+      'invalid-request',
+      `GitHub refused the merge: ${message || 'An immediate merge is unavailable.'}`,
+    );
+  }
+  if (apiAction === 'line-comment' && detail?.endsWith('(HTTP 422)'))
+    return new PullRequestError(
+      'invalid-request',
+      'GitHub could not comment on the selected line or commit. Refresh the diff and select a changed line or range.',
+    );
   return new PullRequestError(
     'unavailable',
-    detail || 'The GitHub CLI command failed.',
+    detail?.slice(0, 300) || 'The GitHub CLI command failed.',
   );
 }
 
@@ -160,6 +173,7 @@ type GhOptions = {
   inferHost?: boolean;
   stdin?: string;
   mutation?: boolean;
+  apiAction?: 'merge' | 'line-comment';
   maxOutputBytes?: number;
   noCurrentPullRequest?: boolean;
   signal?: AbortSignal;
@@ -226,11 +240,7 @@ export class GitHubCli {
           /^no pull requests found for branch\b/im.test(result.stderr)
         )
           return null;
-        throw ghError(
-          result.code,
-          result.stderr,
-          args.includes('--match-head-commit'),
-        );
+        throw ghError(result.code, result.stderr, options.apiAction);
       }
       if (result.outputTruncated && (!options.mutation || args[0] === 'api'))
         throw new PullRequestError(
@@ -277,7 +287,7 @@ export class GitHubCli {
             'not-found',
             'The GitHub repository or pull request was not found.',
           );
-        throw ghError(null, first.message, false);
+        throw ghError(null, first.message);
       }
     }
     const parsed = schema.safeParse(value);

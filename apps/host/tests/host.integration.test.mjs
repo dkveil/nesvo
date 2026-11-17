@@ -16221,11 +16221,19 @@ function githubCliFixture() {
         ],
       });
     }
-  } else if (args[1] === 'merge') {
-    if (args.includes('b'.repeat(40))) {
-      console.error(
-        'GraphQL: Head sha changed since the pull request was reviewed.',
-      );
+  } else if (args[0] === 'api' && args[3]?.endsWith('/merge')) {
+    if (args.includes(`sha=${'b'.repeat(40)}`)) {
+      console.error('gh: Head branch was modified (HTTP 409)');
+      process.exitCode = 1;
+    } else if (args[3].includes('/43/')) {
+      console.error('gh: The base branch requires a merge queue (HTTP 405)');
+      process.exitCode = 1;
+    } else {
+      json({ merged: true });
+    }
+  } else if (args[0] === 'api' && args[3]?.endsWith('/comments')) {
+    if (JSON.parse(stdin).line === 99) {
+      console.error('gh: Validation Failed (HTTP 422)');
       process.exitCode = 1;
     }
   } else if (args[1] === 'checkout' && args[2] === '43') {
@@ -16375,7 +16383,6 @@ test(
       action: 'merge',
       method: 'squash',
       expectedHeadSha: 'a'.repeat(40),
-      deleteBranch: true,
     };
     const merged = await Promise.all([
       action(merge, 42, actionId),
@@ -16387,19 +16394,67 @@ test(
       (await action(merge, 42, actionId)).result,
       merged[0].result,
     );
-    const mergeCalls = (await calls()).filter(call => call.args[1] === 'merge');
+    const mergeCalls = (await calls()).filter(call =>
+      call.args[3]?.endsWith('/merge'),
+    );
     assert.equal(mergeCalls.length, 1);
-    assert.deepEqual(mergeCalls[0].args.slice(-4), [
-      '--squash',
-      '--match-head-commit',
-      merge.expectedHeadSha,
-      '--delete-branch',
+    assert.deepEqual(mergeCalls[0].args, [
+      'api',
+      '--method',
+      'PUT',
+      'repos/octo/project/pulls/42/merge',
+      '-f',
+      'merge_method=squash',
+      '-f',
+      `sha=${merge.expectedHeadSha}`,
     ]);
     const stale = await action({ ...merge, expectedHeadSha: 'b'.repeat(40) });
     assert.equal(stale.code, 'invalid-request');
-    assert.match(stale.message, /head changed/i);
+    assert.match(stale.message, /head moved.*Refresh and review again/);
+    const requiresQueue = await action(merge, 43);
+    assert.equal(requiresQueue.code, 'invalid-request');
+    assert.equal(
+      requiresQueue.message,
+      'GitHub refused the merge: The base branch requires a merge queue',
+    );
 
     const body = '--flag-like message\nNext line';
+    const lineComment = {
+      action: 'line-comment',
+      commitId: merge.expectedHeadSha,
+      path: 'src/new.ts',
+      side: 'left',
+      line: 8,
+      body,
+    };
+    for (const startLine of [null, 5]) {
+      const response = await action({ ...lineComment, startLine });
+      assert.equal(response.type, 'pull-request-action');
+      assert.equal(response.result.action, 'line-comment');
+      const call = (await calls()).at(-1);
+      assert.deepEqual(call.args, [
+        'api',
+        '--method',
+        'POST',
+        'repos/octo/project/pulls/42/comments',
+        '--input',
+        '-',
+        '--silent',
+      ]);
+      assert.deepEqual(JSON.parse(call.stdin), {
+        body,
+        commit_id: lineComment.commitId,
+        path: lineComment.path,
+        line: lineComment.line,
+        side: 'LEFT',
+        ...(startLine === null
+          ? {}
+          : { start_line: startLine, start_side: 'LEFT' }),
+      });
+    }
+    const invalidLine = await action({ ...lineComment, line: 99 });
+    assert.equal(invalidLine.code, 'invalid-request');
+    assert.match(invalidLine.message, /Refresh the diff/);
     assert.equal(
       (await action({ action: 'comment', body })).type,
       'pull-request-action',
@@ -16450,8 +16505,11 @@ test(
       assert.equal(call.args.includes(body), false);
     }
     assert.equal(
-      JSON.parse(recorded.find(call => call.args.includes('--input')).stdin)
-        .variables.body,
+      JSON.parse(
+        recorded.find(
+          call => call.args[1] === 'graphql' && call.args.includes('--input'),
+        ).stdin,
+      ).variables.body,
       body,
     );
     assert.equal(
