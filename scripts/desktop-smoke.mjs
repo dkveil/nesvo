@@ -67,6 +67,7 @@ const launchApplication = () =>
     env,
     timeout: 30000,
   });
+let smokeFailure;
 const providerPids = new Set();
 const alive = pid => {
   try {
@@ -3747,6 +3748,7 @@ try {
     }),
   );
 } catch (error) {
+  smokeFailure = error;
   const failurePage = application?.windows()[0];
   if (failurePage) {
     const state = await failurePage
@@ -3775,13 +3777,22 @@ try {
   }
   throw error;
 } finally {
-  await application?.close();
-  if (hostPid) await waitDead(hostPid);
-  await Promise.all([...providerPids].map(waitDead));
-  await rm(directory, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 100,
-  });
+  try {
+    await application?.close();
+    if (hostPid) await waitDead(hostPid);
+    await Promise.all([...providerPids].map(waitDead));
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  } catch (cleanupError) {
+    if (!smokeFailure) throw cleanupError;
+    console.error(
+      JSON.stringify({
+        cleanupFailure: String(cleanupError?.message ?? cleanupError),
+      }),
+    );
+  }
 }
