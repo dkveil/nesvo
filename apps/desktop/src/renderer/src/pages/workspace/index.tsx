@@ -32,6 +32,7 @@ import {
 import {
   directoryLabel,
   errorDetail,
+  pendingPrompt,
   providerModes,
   providerStatusLabel,
   sessionRoleLabel,
@@ -83,6 +84,8 @@ import {
   SheetTrigger,
 } from '@/shared/ui/sheet';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
+import { MessageBody } from '@/widgets/conversation/message-body';
+import { PromptCards, useAnswerPrompt } from '@/features/answer-prompt';
 import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
@@ -605,6 +608,27 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('attachments');
+  const supportsPrompts = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('prompts');
+  const promptAnswers = useAnswerPrompt({
+    submit: (input, hostId) => desktopApi(hostId).answerPrompt(input),
+    onAnswered: session => store.merge([session]),
+    onFailure: hostId => store.recover(hostId),
+  });
+  const promptsEnabled = (hostId: string) =>
+    store.hostReady(hostId) &&
+    !store.loading &&
+    !store.error &&
+    supportsPrompts(hostId);
+  const promptsInactiveReason = (hostId: string) =>
+    store.hostReady(hostId) && !supportsPrompts(hostId)
+      ? 'Update the Nesvo host on this computer to answer.'
+      : 'Reconnect to answer.';
+  const renderPlan = (plan: string) => (
+    <MessageBody body={plan} className="text-sm leading-6" />
+  );
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -701,6 +725,7 @@ export function Workspace() {
             session.status,
           ) ||
           session.pendingApprovals.length > 0 ||
+          !!pendingPrompt(session) ||
           session.delegations.some(
             item => item.status === 'pending' || item.status === 'plan-ready',
           )
@@ -2622,6 +2647,21 @@ export function Workspace() {
                     live={live && store.hostReady(selectedHostId)}
                     offline={live && !store.hostReady(selectedHostId)}
                     truncated={selected.activityTruncatedRunIds.includes(runId)}
+                    waiting={live && pendingPrompt(selected)?.runId === runId}
+                  />
+                )}
+                prompts={runId => (
+                  <PromptCards
+                    session={selected}
+                    runId={runId}
+                    controller={promptAnswers}
+                    enabled={promptsEnabled(selectedHostId)}
+                    inactiveReason={promptsInactiveReason(selectedHostId)}
+                    modes={providerModes(
+                      selected.provider,
+                      selectedProviderState?.status,
+                    )}
+                    renderPlan={renderPlan}
                   />
                 )}
                 focusTarget={sessionTarget}

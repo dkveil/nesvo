@@ -24,6 +24,7 @@ import {
   modelLabel,
   providerStatusLabel,
   directoryLabel,
+  pendingPrompt,
   statusLabels,
   type Provider,
   type ProviderStates,
@@ -81,6 +82,7 @@ type Props = {
   workers: Session[];
   delegations: ReactNode;
   results: ReactNode;
+  prompts: (runId: string) => ReactNode;
   activity: (
     runId: string,
     startedAt: string | null,
@@ -136,6 +138,7 @@ export function Conversation({
   workers,
   delegations,
   results,
+  prompts,
   activity,
   draft,
   selectedSkill,
@@ -251,6 +254,12 @@ export function Conversation({
     ) ||
       workers.some(worker => worker.parentRunId === session.runId));
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
+  const waitingPrompt = pendingPrompt(session);
+  const waitingHint = waitingPrompt
+    ? waitingPrompt.kind === 'plan'
+      ? 'A plan is waiting for your decision'
+      : 'A question is waiting for your answer'
+    : '';
   const empty =
     session.messages.length === 0 &&
     !running &&
@@ -353,6 +362,9 @@ export function Conversation({
       .filter(message => message.author === 'operator')
       .map(message => [message.runId, message.createdAt]),
   );
+  const lastOfRun = new Map<string, string>();
+  for (const message of session.messages)
+    lastOfRun.set(message.runId, message.id);
   const firstAgents = new Map<string, string>();
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
@@ -365,9 +377,11 @@ export function Conversation({
       disabled={!hasContent || !canQueue}
       aria-label="Queue message"
       title={
-        running
-          ? 'Send when this turn ends'
-          : 'Keep queued until you choose Send now'
+        waitingHint
+          ? `${waitingHint}. This message sends when the turn ends.`
+          : running
+            ? 'Send when this turn ends'
+            : 'Keep queued until you choose Send now'
       }
     >
       <ListEnd />
@@ -613,19 +627,23 @@ export function Conversation({
                   >
                     {otherRun
                       ? (otherRunLabel ?? 'Another session is working')
-                      : running && hasContent
-                        ? 'Will send when this turn ends'
-                        : sending
-                          ? 'Sending…'
-                          : session.delegations.some(
-                                delegation =>
-                                  delegation.runId === session.runId &&
-                                  delegation.status === 'pending',
-                              )
-                            ? 'Worker approval needed'
-                            : session.pendingApprovals.length > 0
-                              ? 'Approval needed'
-                              : modeNotice}
+                      : waitingHint
+                        ? hasContent
+                          ? `${waitingHint}; this message sends when the turn ends`
+                          : waitingHint
+                        : running && hasContent
+                          ? 'Will send when this turn ends'
+                          : sending
+                            ? 'Sending…'
+                            : session.delegations.some(
+                                  delegation =>
+                                    delegation.runId === session.runId &&
+                                    delegation.status === 'pending',
+                                )
+                              ? 'Worker approval needed'
+                              : session.pendingApprovals.length > 0
+                                ? 'Approval needed'
+                                : modeNotice}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -961,6 +979,8 @@ export function Conversation({
                     </p>
                   )}
                 </article>
+                {lastOfRun.get(message.runId) === message.id &&
+                  prompts(message.runId)}
               </Fragment>
             );
           })}

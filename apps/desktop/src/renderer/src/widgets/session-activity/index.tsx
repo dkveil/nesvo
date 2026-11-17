@@ -36,6 +36,7 @@ type Props = {
   live: boolean;
   truncated: boolean;
   offline?: boolean;
+  waiting?: boolean;
 };
 
 const icons = {
@@ -191,6 +192,7 @@ export function SessionActivity({
   live,
   truncated,
   offline = false,
+  waiting = false,
 }: Props) {
   const [visibility] = useToolVisibility();
   const region = useRef<HTMLElement>(null);
@@ -222,9 +224,11 @@ export function SessionActivity({
     startedAt && (completedAt || live)
       ? elapsedLabel(startedAt, completedAt, now)
       : '';
-  const label = offline
-    ? `Last known: ${status === 'stopping' ? 'Stopping' : 'Working'}`
-    : runLabel(status, elapsed, live);
+  const label = waiting
+    ? 'Waiting for your answer'
+    : offline
+      ? `Last known: ${status === 'stopping' ? 'Stopping' : 'Working'}`
+      : runLabel(status, elapsed, live);
   const completedTime =
     !live && !offline && completedAt
       ? new Date(completedAt).toLocaleTimeString(undefined, {
@@ -260,7 +264,7 @@ export function SessionActivity({
           <ChevronRight className="activity-caret size-3 shrink-0 group-open/activity:rotate-90" />
           <span
             className="activity-shimmer shrink-0 tabular-nums"
-            data-animate={live && visible}
+            data-animate={live && visible && !waiting}
           >
             {label}
           </span>
