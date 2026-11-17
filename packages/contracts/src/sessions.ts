@@ -232,6 +232,7 @@ export const sessionMessageSchema = z.strictObject({
   skill: skillReferenceSchema.optional(),
   interruption: sessionInterruptionSchema.nullable().optional(),
   usage: turnUsageSchema.nullable().default(null),
+  costWarning: z.string().max(2000).optional(),
   origin: z.literal('workflow').nullable().default(null),
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),

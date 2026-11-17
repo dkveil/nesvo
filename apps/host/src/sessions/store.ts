@@ -7,6 +7,7 @@ import {
   type Session,
   type Delegation,
 } from '@nesvo/contracts';
+import { saveCostTurn } from '../cost-store';
 
 export type WorkflowSessionOrigin = {
   kind: 'workflow';
@@ -165,7 +166,7 @@ export class SessionStore {
       const statement = this.database.prepare(
         'INSERT INTO sessions (id, document, updated_at, workflow_run_id, workflow_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, (SELECT id FROM workflow_runs WHERE id = ?), (SELECT id FROM workflow_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, workflow_run_id = excluded.workflow_run_id, workflow_step_id = excluded.workflow_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
       );
-      for (const session of next)
+      for (const session of next) {
         statement.run(
           session.id,
           JSON.stringify(session),
@@ -175,6 +176,8 @@ export class SessionStore {
           session.scheduledJobId,
           session.scheduledJobRunId,
         );
+        saveCostTurn(this.database, session);
+      }
       writeRelated?.();
       this.database.exec('COMMIT');
     } catch (error) {

@@ -54,6 +54,12 @@ import {
   workspaceEventSchema,
   providerUsageInputSchema,
   providerUsageSchema,
+  readCostsSchema,
+  costReportSchema,
+  costBudgetListSchema,
+  createCostBudgetSchema,
+  costBudgetSchema,
+  deleteCostBudgetSchema,
   mobileDeviceSchema,
   mobileGatewayStatusSchema,
   mobilePairingSchema,
@@ -362,6 +368,42 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:provider-usage',
         providerUsageInputSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readCosts: async (input, hostId) =>
+    costReportSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-costs',
+        readCostsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listCostBudgets: async hostId =>
+    costBudgetListSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-cost-budgets', route(hostId)),
+    ),
+  createCostBudget: async (input, hostId) =>
+    costBudgetSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:create-cost-budget',
+        createCostBudgetSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  updateCostBudget: async (input, hostId) =>
+    costBudgetSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:update-cost-budget',
+        costBudgetSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteCostBudget: async (input, hostId) =>
+    deleteCostBudgetSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-cost-budget',
+        deleteCostBudgetSchema.parse(input),
         route(hostId),
       ),
     ),

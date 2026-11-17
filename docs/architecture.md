@@ -57,6 +57,14 @@ Each agent message carries `usage`, a `turnUsage` record with input, output and 
 
 Codex app-server 0.167.0 sends `thread/tokenUsage/updated` notifications during a turn with a `last` and a cumulative `total` breakdown, and `turn/completed` carries the turn's `durationMs`. The adapter takes the change in `total` from just before the turn's first update to its last update, which is the turn's own consumption even on a resumed thread. The protocol reports no dollar cost for a turn, so Codex `costUsd` stays `null`; a separate thread usage request with credit and dollar estimates exists but is not used.
 
+## Costs and budgets
+
+D72 adds the `costs` host capability. SQLite schema v12 indexes one row per session and run from the stored agent messages. Migration fills the index from existing history. The host writes each new turn and its final provider-reported cost in the same transactions as the session snapshots. Running turns and any turns with missing cost contribute to the unknown-cost count. A reported zero remains a reported amount.
+
+The Costs rail entry opens the report for one computer. The host groups current calendar day, week or month spend by the turn's start date in the requested IANA time zone, through the current day. Weeks begin on Monday. Reports include daily buckets, group totals by session, provider or directory, and up to ten sessions ordered by reported cost.
+
+The host owns its budget rules and calculates their periods in its local time zone. Directory rules match the stored working directory exactly. When reported spend reaches a rule's limit, the next turn either starts with a durable budget warning or is refused before the request is recorded or sent to the provider. The same check applies to operator messages, queued turns, review corrections, worker turns, workflows and automations. Budget changes apply to subsequent turn starts. Unknown amounts are excluded from reported spend.
+
 ## Process boundaries
 
 ```text

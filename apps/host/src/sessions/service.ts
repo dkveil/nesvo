@@ -185,6 +185,12 @@ export class SessionError extends Error {
   }
 }
 
+class BudgetRefusal extends SessionError {
+  constructor(message: string) {
+    super('invalid-request', message);
+  }
+}
+
 type ActiveRun = {
   session: Session;
   handle: ReturnType<typeof startClaude> | ReturnType<typeof startCodex>;
@@ -221,6 +227,13 @@ export type WorkflowTurn = {
 };
 
 export type SessionServiceOptions = {
+  checkCostBudgets?: (
+    session: Session,
+    now: Date,
+  ) => {
+    warning?: string;
+    refusal?: string;
+  };
   environment?: (
     session: Session,
   ) => Readonly<Record<string, string>> | undefined;
@@ -1110,6 +1123,7 @@ export class SessionService {
         mode: next.mode,
       });
     } catch (error) {
+      if (error instanceof BudgetRefusal) holdQueue(session);
       session.error =
         error instanceof SessionError
           ? error.message
@@ -1399,11 +1413,14 @@ export class SessionService {
     skillHash?: string,
     origin: 'workflow' | null = null,
   ): void {
+    const now = new Date();
+    const budget = this.options.checkCostBudgets?.(session, now);
+    if (budget?.refusal) throw new BudgetRefusal(budget.refusal);
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
       session.providerSessionId =
         session.provider === 'Claude Code' ? randomUUID() : null;
-    const createdAt = new Date().toISOString();
+    const createdAt = now.toISOString();
     session.runId = runId;
     session.status = 'running';
     session.error = null;
@@ -1436,6 +1453,7 @@ export class SessionService {
         createdAt,
         completedAt: null,
         usage: null,
+        ...(budget?.warning ? { costWarning: budget.warning } : {}),
         origin: null,
         model: null,
         effort: null,

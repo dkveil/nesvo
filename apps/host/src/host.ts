@@ -15,6 +15,7 @@ import {
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { openDatabase, ownDataDirectory } from './database';
+import { CostStore } from './cost-store';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
@@ -159,6 +160,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       const store = new SessionStore(database);
       const groupStore = new SessionGroupStore(database);
+      const costs = new CostStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
       const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
@@ -189,6 +191,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 workflowRunStore.interruptActiveRuns(at);
               },
               {
+                checkCostBudgets: (session, now) => costs.check(session, now),
                 environment: session => {
                   const run = session.workflowRunId
                     ? workflowRunStore.getRun(session.workflowRunId)
@@ -1107,6 +1110,51 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         const response = yield* Effect.sync((): HostResponse => {
           try {
+            if (request.method === 'read-costs')
+              return {
+                type: 'costs',
+                id: request.id,
+                report: costs.read(request.input),
+              };
+            if (request.method === 'list-cost-budgets')
+              return {
+                type: 'cost-budgets',
+                id: request.id,
+                list: costs.list(),
+              };
+            if (request.method === 'create-cost-budget') {
+              const budget = costs.create(request.input);
+              if (!budget)
+                throw new SessionError(
+                  'invalid-request',
+                  'This computer already has 100 budgets.',
+                );
+              return { type: 'cost-budget', id: request.id, budget };
+            }
+            if (request.method === 'update-cost-budget') {
+              if (!costs.update(request.input))
+                throw new SessionError(
+                  'not-found',
+                  'This budget no longer exists.',
+                );
+              return {
+                type: 'cost-budget',
+                id: request.id,
+                budget: request.input,
+              };
+            }
+            if (request.method === 'delete-cost-budget') {
+              if (!costs.delete(request.input.id))
+                throw new SessionError(
+                  'not-found',
+                  'This budget no longer exists.',
+                );
+              return {
+                type: 'cost-budget-deleted',
+                id: request.id,
+                deleted: request.input,
+              };
+            }
             if (request.method === 'link-session-pull-request')
               return {
                 type: 'session',

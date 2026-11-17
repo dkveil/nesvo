@@ -258,6 +258,260 @@ async function processesGone(pids, tracked) {
 }
 
 const agent = session => session.messages.at(-1);
+
+test(
+  'Cost reports use local calendar dates and budgets gate only new turns',
+  { timeout: 45_000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-costs-'));
+    const path = join(directory, 'nesvo.sqlite');
+    const open = () =>
+      launch(directory, join(directory, 'pids.json'), { TZ: 'UTC' });
+    let host = open();
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.stdin.end();
+          await bounded(host.exited, 'Cost fixture host did not exit');
+        }
+      }
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const request = (method, input) => host.request(method, input);
+    const create = async (title, provider) => {
+      const response = await request('create-session', {
+        title,
+        provider,
+        model: 'default',
+        mode: 'read-only',
+        directory,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const claude = await create('Reported costs', 'Claude Code');
+    const codex = await create('Unknown costs', 'Codex');
+    await host.stop();
+
+    const now = Date.now();
+    const seeds = [
+      { hours: 0.01, session: claude, cost: 0 },
+      { hours: 2, session: claude, cost: 0.25 },
+      { hours: 5, session: codex, cost: null },
+      { hours: 9, session: claude, cost: 0.5 },
+      { hours: 12, session: codex, cost: null },
+      { hours: 17, session: claude, cost: 1 },
+      { hours: 21, session: codex, cost: null },
+      { hours: 27, session: claude, cost: 2 },
+    ].map(seed => ({
+      ...seed,
+      createdAt: new Date(now - seed.hours * 3_600_000).toISOString(),
+    }));
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        'DROP TABLE cost_turns; DROP TABLE cost_budgets; PRAGMA user_version = 11',
+      );
+      const update = database.prepare(
+        'UPDATE sessions SET document = ? WHERE id = ?',
+      );
+      for (const session of [claude, codex]) {
+        const turns = seeds.filter(seed => seed.session.id === session.id);
+        const messages = turns.map(({ createdAt, cost }) => ({
+          id: randomUUID(),
+          runId: randomUUID(),
+          author: 'agent',
+          body: 'Stored reply',
+          state: 'completed',
+          createdAt,
+          completedAt: createdAt,
+          ...(cost === null
+            ? {}
+            : {
+                usage: {
+                  inputTokens: 12,
+                  outputTokens: 3,
+                  cachedInputTokens: null,
+                  durationMs: null,
+                  costUsd: cost,
+                  source: 'provider-report',
+                },
+              }),
+        }));
+        update.run(JSON.stringify({ ...session, messages }), session.id);
+      }
+    } finally {
+      database.close();
+    }
+
+    host = open();
+    const invalid = await host.send(
+      JSON.stringify({
+        id: randomUUID(),
+        method: 'read-costs',
+        input: { range: 'day', groupBy: 'provider', timeZone: '+01:00' },
+      }),
+    );
+    assert.equal(invalid.code, 'invalid-request');
+    const dates = [];
+    for (const timeZone of ['UTC', 'Pacific/Kiritimati']) {
+      const format = new Intl.DateTimeFormat('sv-SE', {
+        timeZone,
+        dateStyle: 'short',
+      });
+      const date = format.format(Date.now());
+      dates.push(date);
+      const { report } = await request('read-costs', {
+        range: 'day',
+        groupBy: 'provider',
+        timeZone,
+      });
+      const expectedFor = turns => {
+        const reported = turns.filter(seed => seed.cost !== null);
+        return {
+          reportedCostUsd: reported.length
+            ? reported.reduce((sum, seed) => sum + seed.cost, 0)
+            : null,
+          turnCount: turns.length,
+          unknownCostTurns: turns.length - reported.length,
+        };
+      };
+      const expected = seeds.filter(
+        seed => format.format(new Date(seed.createdAt)) === date,
+      );
+      assert.deepEqual(report.totals, expectedFor(expected));
+      assert.deepEqual(report.buckets, [{ date, ...report.totals }]);
+      for (const provider of ['Claude Code', 'Codex']) {
+        const turns = expected.filter(
+          seed => seed.session.provider === provider,
+        );
+        assert.deepEqual(
+          report.groups.find(group => group.key === provider),
+          turns.length ? { key: provider, ...expectedFor(turns) } : undefined,
+        );
+      }
+    }
+    const month = (
+      await request('read-costs', {
+        range: 'month',
+        groupBy: 'directory',
+        timeZone: 'UTC',
+      })
+    ).report;
+    assert.equal(month.buckets[0].date, dates[0].slice(0, 8) + '01');
+    assert.equal(month.buckets.at(-1).date, dates[0]);
+    const week = (
+      await request('read-costs', {
+        range: 'week',
+        groupBy: 'session',
+        timeZone: 'UTC',
+      })
+    ).report;
+    assert.equal(new Date(week.buckets[0].date).getUTCDay(), 1);
+    assert.equal(
+      week.topSessions.find(session => session.sessionId === claude.id)?.title,
+      claude.title,
+    );
+
+    const send = (text, messageId = randomUUID()) =>
+      request('send-message', { sessionId: claude.id, messageId, text });
+    const finished = (runId, status) =>
+      host.event(
+        session =>
+          session.id === claude.id &&
+          session.runId === runId &&
+          session.status === status,
+      );
+    const before = (
+      await request('read-costs', {
+        range: 'day',
+        groupBy: 'session',
+        timeZone: 'UTC',
+      })
+    ).report.totals;
+    const first = await send('fixture:stream');
+    const completed = await finished(first.session.runId, 'completed');
+    assert.equal(agent(completed).usage.costUsd, 0.0421);
+    const after = (
+      await request('read-costs', {
+        range: 'day',
+        groupBy: 'session',
+        timeZone: 'UTC',
+      })
+    ).report.totals;
+    assert.ok(
+      Math.abs(
+        after.reportedCostUsd - ((before.reportedCostUsd ?? 0) + 0.0421),
+      ) < 1e-10,
+    );
+    assert.equal(after.turnCount, before.turnCount + 1);
+    assert.equal(after.unknownCostTurns, before.unknownCostTurns);
+
+    const active = await send('fixture:hold');
+    assert.equal(active.session.status, 'running');
+    const refusal = await request('create-cost-budget', {
+      scope: 'computer',
+      period: 'day',
+      limitUsd: 0.04,
+      action: 'refuse-new-turns',
+    });
+    assert.equal(refusal.type, 'cost-budget');
+    const running = (await request('list-sessions')).sessions.find(
+      session => session.id === claude.id,
+    );
+    assert.equal(running.status, 'running');
+    assert.equal(running.runId, active.session.runId);
+    await request('stop-run', { sessionId: claude.id, runId: running.runId });
+    await finished(running.runId, 'stopped');
+    const messageId = randomUUID();
+    const refused = await send('fixture:stream', messageId);
+    assert.equal(refused.type, 'error');
+    assert.match(refused.message, /New turn refused/);
+    assert.ok(refused.message.includes(refusal.budget.id.slice(0, 8)));
+    assert.equal(
+      (await request('list-sessions')).sessions.find(
+        session => session.id === claude.id,
+      ).runId,
+      running.runId,
+    );
+
+    const warning = {
+      ...refusal.budget,
+      scope: 'session',
+      target: claude.id,
+      action: 'warn',
+    };
+    assert.deepEqual(
+      (await request('update-cost-budget', warning)).budget,
+      warning,
+    );
+    const warned = await send('fixture:stream', messageId);
+    assert.equal(warned.type, 'session');
+    assert.match(agent(warned.session).costWarning, /Budget limit reached/);
+    const done = await finished(warned.session.runId, 'completed');
+    assert.equal(agent(done).costWarning, agent(warned.session).costWarning);
+    const snapshot = (await request('list-cost-budgets')).list;
+    assert.equal(snapshot.timeZone, 'UTC');
+    assert.deepEqual(snapshot.budgets[0].budget, warning);
+    assert.ok(snapshot.budgets[0].totals.reportedCostUsd >= 0.0842);
+
+    await host.stop();
+    host = open();
+    assert.deepEqual((await request('list-cost-budgets')).list, snapshot);
+    const restored = (await request('list-sessions')).sessions.find(
+      session => session.id === claude.id,
+    );
+    assert.equal(agent(restored).costWarning, agent(done).costWarning);
+    assert.equal(
+      (await request('delete-cost-budget', { id: warning.id })).type,
+      'cost-budget-deleted',
+    );
+    assert.deepEqual((await request('list-cost-budgets')).list.budgets, []);
+  },
+);
+
 const unreportedUsage = {
   inputTokens: null,
   outputTokens: null,
@@ -373,6 +627,7 @@ test(
         'pull-requests',
         'history-search',
         'session-groups',
+        'costs',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -1356,7 +1611,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      12,
+      14,
     );
     migrated.close();
     const reopened = open();
@@ -4919,6 +5174,7 @@ test(
       'pull-requests',
       'history-search',
       'session-groups',
+      'costs',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -5846,7 +6102,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            12,
+            14,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -5933,7 +6189,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 13');
+      newer.exec('PRAGMA user_version = 15');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -5945,7 +6201,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          13,
+          15,
         );
       } finally {
         check.close();
@@ -8626,7 +8882,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        13,
+        14,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -8677,7 +8933,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        13,
+        14,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -16935,7 +17191,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      13,
+      14,
     );
     database
       .prepare(
@@ -17298,7 +17554,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 13);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 14);
     } finally {
       check.close();
     }

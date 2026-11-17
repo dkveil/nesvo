@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import {
+  costBudgetListSchema,
+  costBudgetSchema,
+  costReportSchema,
+  createCostBudgetSchema,
+  deleteCostBudgetSchema,
+  readCostsSchema,
+  type CostBudget,
+  type CostBudgetList,
+  type CostReport,
+  type CreateCostBudgetInput,
+  type ReadCostsInput,
+} from './costs';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import type { AppliedColorScheme, ColorScheme } from './appearance';
 import {
@@ -206,6 +219,7 @@ export * from './history-search';
 export * from './skills';
 export * from './computers';
 export * from './provider-usage';
+export * from './costs';
 export * from './mobile';
 export * from './scheduled-jobs';
 export * from './appearance';
@@ -256,6 +270,27 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
 
 export const hostRequestSchema = z.discriminatedUnion('method', [
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-costs'),
+    input: readCostsSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-cost-budgets') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('create-cost-budget'),
+    input: createCostBudgetSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('update-cost-budget'),
+    input: costBudgetSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-cost-budget'),
+    input: deleteCostBudgetSchema,
+  }),
   z.strictObject({ id: z.uuid(), method: z.literal('health') }),
   z.strictObject({ id: z.uuid(), method: z.literal('shutdown') }),
   z.strictObject({ id: z.uuid(), method: z.literal('claude-status') }),
@@ -590,6 +625,26 @@ export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
 export const hostResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({
+    type: z.literal('costs'),
+    id: z.uuid(),
+    report: costReportSchema,
+  }),
+  z.strictObject({
+    type: z.literal('cost-budgets'),
+    id: z.uuid(),
+    list: costBudgetListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('cost-budget'),
+    id: z.uuid(),
+    budget: costBudgetSchema,
+  }),
+  z.strictObject({
+    type: z.literal('cost-budget-deleted'),
+    id: z.uuid(),
+    deleted: deleteCostBudgetSchema,
+  }),
+  z.strictObject({
     type: z.literal('provider-usage'),
     id: z.uuid(),
     usage: providerUsageSchema,
@@ -912,6 +967,17 @@ export type DesktopApi = {
     input: ProviderUsageInput,
     hostId?: HostId,
   ) => Promise<ProviderUsage>;
+  readCosts: (input: ReadCostsInput, hostId?: HostId) => Promise<CostReport>;
+  listCostBudgets: (hostId?: HostId) => Promise<CostBudgetList>;
+  createCostBudget: (
+    input: CreateCostBudgetInput,
+    hostId?: HostId,
+  ) => Promise<CostBudget>;
+  updateCostBudget: (input: CostBudget, hostId?: HostId) => Promise<CostBudget>;
+  deleteCostBudget: (
+    input: { id: string },
+    hostId?: HostId,
+  ) => Promise<{ id: string }>;
   listComputers: () => Promise<Computer[]>;
   addComputer: (input: SshComputerInput) => Promise<Computer>;
   connectComputer: (hostId: HostId) => Promise<Computer>;

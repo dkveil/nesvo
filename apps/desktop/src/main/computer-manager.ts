@@ -93,7 +93,17 @@ const sessionGroupResponses = {
   'set-session-archived': 'session',
 } as const;
 
+const costResponses = {
+  'read-costs': 'costs',
+  'list-cost-budgets': 'cost-budgets',
+  'create-cost-budget': 'cost-budget',
+  'update-cost-budget': 'cost-budget',
+  'delete-cost-budget': 'cost-budget-deleted',
+} as const;
+
 const capabilityUpdates: Record<HostCapability, string> = {
+  costs:
+    'Costs are unavailable on this computer. Update its Nesvo host, then reconnect.',
   'scheduled-jobs':
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
   'reasoning-effort':
@@ -118,6 +128,7 @@ function requiredCapability(
   method: HostRequest['method'],
   input: unknown,
 ): HostCapability | null {
+  if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'search-history') return 'history-search';
@@ -639,10 +650,19 @@ export class ComputerManager {
       'search-history': 'history-search',
       ...sessionGroupResponses,
       ...pullRequestResponses,
+      ...costResponses,
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
     switch (response.type) {
+      case 'costs':
+        return response.report;
+      case 'cost-budgets':
+        return response.list;
+      case 'cost-budget':
+        return response.budget;
+      case 'cost-budget-deleted':
+        return response.deleted;
       case 'provider-usage':
         return response.usage;
       case 'health':

@@ -47,6 +47,10 @@ import {
   hostIdSchema,
   sshComputerInputSchema,
   providerUsageInputSchema,
+  readCostsSchema,
+  createCostBudgetSchema,
+  costBudgetSchema,
+  deleteCostBudgetSchema,
   mobileDeviceSchema,
   deleteScheduledJobSchema,
   listScheduledJobRunsSchema,
@@ -305,6 +309,31 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  ipcMain.handle('nesvo:list-cost-budgets', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-cost-budgets', undefined, route(hostId));
+  });
+  const costCommands = {
+    'read-costs': readCostsSchema,
+    'create-cost-budget': createCostBudgetSchema,
+    'update-cost-budget': costBudgetSchema,
+    'delete-cost-budget': deleteCostBudgetSchema,
+  } as const;
+  for (const method of Object.keys(costCommands) as Array<
+    keyof typeof costCommands
+  >) {
+    ipcMain.handle(
+      `nesvo:${method}`,
+      (event, input: unknown, hostId: unknown) => {
+        authorize(event);
+        return computers.execute(
+          method,
+          costCommands[method].parse(input),
+          route(hostId),
+        );
+      },
+    );
+  }
   ipcMain.handle(
     'nesvo:provider-usage',
     (event, input: unknown, hostId: unknown) => {
