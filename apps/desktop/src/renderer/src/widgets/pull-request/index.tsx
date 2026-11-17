@@ -246,7 +246,7 @@ export default function PullRequestPanel({
           'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]',
         )}
       >
-        <header className="flex h-10 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3">
+        <header className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 border-b pr-[calc(0.375rem+var(--panel-edge-inset))] pl-3">
           {state ? (
             <PullRequestStateIcon state={state} />
           ) : (
