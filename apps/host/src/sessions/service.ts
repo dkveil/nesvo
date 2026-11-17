@@ -1896,16 +1896,18 @@ export class SessionService {
         mode: session.mode,
       });
     } catch (error) {
-      session.error = `The accepted plan could not continue automatically. ${
+      const reason = `The accepted plan could not continue automatically. ${
         error instanceof SessionError
           ? error.message
           : 'Send a message to continue.'
       }`;
-      try {
-        this.publish(session);
-      } catch {
-        return;
-      }
+      const runId = session.runId;
+      session.error = reason;
+      this.publishQuietly(session);
+      this.startNextQueued(session);
+      if (session.runId !== runId || session.error === reason) return;
+      session.error = reason;
+      this.publishQuietly(session);
     }
   }
 

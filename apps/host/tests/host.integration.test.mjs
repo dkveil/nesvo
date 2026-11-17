@@ -16510,6 +16510,98 @@ test(
 );
 
 test(
+  'an accepted plan that cannot continue still tries the next queued message',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-plan-continue-')),
+    );
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const host = launch(directory, join(directory, 'fixture-pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await bounded(host.exited, 'Test host did not exit');
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const created = await host.request('create-session', {
+      title: 'Removed folder',
+      model: 'sonnet',
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const session = created.session;
+    const sent = await host.request('send-message', {
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text: 'fixture:plan-remove-folder',
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const runId = sent.session.runId;
+    const waiting = await host.event(
+      value =>
+        value.id === session.id &&
+        value.prompts.some(
+          prompt => prompt.runId === runId && prompt.status === 'pending',
+        ),
+    );
+    const queuedId = randomUUID();
+    const queued = await host.request('queue-message', {
+      sessionId: session.id,
+      messageId: queuedId,
+      text: 'fixture:continue',
+      mode: 'read-only',
+    });
+    assert.equal(queued.type, 'session', JSON.stringify(queued));
+    assert.deepEqual(
+      queued.session.queue.map(item => [item.id, item.held]),
+      [[queuedId, false]],
+    );
+    const plan = waiting.prompts.find(prompt => prompt.status === 'pending');
+    const accepted = await host.request('answer-prompt', {
+      sessionId: session.id,
+      runId,
+      promptId: plan.id,
+      answer: { kind: 'plan', decision: 'accept', mode: 'accept-edits' },
+    });
+    assert.equal(accepted.type, 'session', JSON.stringify(accepted));
+    const missingFolder =
+      'The directory does not exist or cannot be accessed. Enter its absolute path.';
+    const attempted = await host.event(
+      value => value.id === session.id && value.error === missingFolder,
+    );
+    assert.equal(attempted.runId, runId);
+    assert.equal(attempted.queue[0].id, queuedId);
+    const settled = await host.event(
+      value =>
+        value.id === session.id &&
+        value.revision > attempted.revision &&
+        value.error ===
+          `The accepted plan could not continue automatically. ${missingFolder}`,
+    );
+    assert.equal(settled.runId, runId);
+    assert.equal(settled.status, 'completed');
+    assert.equal(settled.mode, 'accept-edits');
+    assert.deepEqual(
+      settled.queue.map(item => [item.id, item.held]),
+      [[queuedId, false]],
+    );
+  },
+);
+
+test(
   'failed runs carry a typed failure reason that clears on the next run',
   { timeout: 120_000 },
   async t => {

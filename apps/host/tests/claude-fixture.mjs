@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
 
@@ -1056,6 +1056,15 @@ if (args.length === 1 && args[0] === '--version') {
     });
     setInterval(() => {}, 1000);
     await new Promise(() => {});
+  } else if (command === 'fixture:plan-remove-folder') {
+    const accepted = await proposePlan(1, '## Plan\nRemove the folder.');
+    assert.match(accepted.message, /^The operator accepted the plan/);
+    const folder = process.cwd();
+    process.chdir(dirname(folder));
+    rmSync(folder, { recursive: true, force: true });
+    const text = 'Fixture removed its folder after the accepted plan.';
+    start(text);
+    finish(text);
   } else if (command === 'fixture:bash') {
     const failing = {
       type: 'tool_use',
