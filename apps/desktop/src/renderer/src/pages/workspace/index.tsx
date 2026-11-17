@@ -88,6 +88,7 @@ import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { NavigationRail } from '@/widgets/navigation-rail';
+import { CostsView } from '@/widgets/costs';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import { useHousekeeping } from './use-housekeeping';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
@@ -180,6 +181,7 @@ export function Workspace() {
   const [location] = useState(readWorkspaceLocation);
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
+  const [costsView, setCostsView] = useState(false);
   const [automation, setAutomation] = useState(location.automation);
   const [editor, setEditor] = useState<{
     initial: AutomationValues;
@@ -321,6 +323,7 @@ export function Workspace() {
           setDiffTarget(null);
           setCreating(false);
           setInbox(false);
+          setCostsView(false);
           setAutomation('');
           setWorkflowsView(true);
           setPullRequestsView(false);
@@ -372,6 +375,7 @@ export function Workspace() {
           setDiffTarget(null);
           setCreating(false);
           setInbox(false);
+          setCostsView(false);
           setAutomation('');
           setWorkflowsView(true);
           setPullRequestsView(false);
@@ -497,7 +501,8 @@ export function Workspace() {
   };
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
-  const browsing = inbox || workflowsView || pullRequestsView || !!automation;
+  const browsing =
+    inbox || costsView || workflowsView || pullRequestsView || !!automation;
   const editorHostId = workflowsEditor?.hostId ?? '';
   const discoverEditorSkills = useCallback(
     async (directory: string): Promise<SkillSummary[]> => {
@@ -691,8 +696,7 @@ export function Workspace() {
     store.sessions[0];
   const selectedKey = selected ? entityKey(selected) : '';
   const selectedRevision = selected?.revision ?? 0;
-  const selectedVisible =
-    !inbox && !creating && !workflowsView && !pullRequestsView && !automation;
+  const selectedVisible = !browsing && !creating;
   const markSeen = useCallback(() => {
     if (!selectedKey || !selectedVisible || !document.hasFocus()) return;
     setSeen(previous => {
@@ -950,6 +954,7 @@ export function Workspace() {
     setSessionTarget(targetId);
     setMessageTarget(null);
     setInbox(false);
+    setCostsView(false);
     setWorkflowsView(false);
     setPullRequestsView(false);
     setAutomation('');
@@ -963,6 +968,7 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(true);
+    setCostsView(false);
     setWorkflowsView(false);
     setPullRequestsView(false);
     setAutomation('');
@@ -980,6 +986,7 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
+    setCostsView(false);
     setWorkflowsEditor(null);
     setAutomation('');
     setWorkflowsView(true);
@@ -993,6 +1000,7 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
+    setCostsView(false);
     setWorkflowsEditor(null);
     setWorkflowsView(false);
     setAutomation('');
@@ -1014,6 +1022,7 @@ export function Workspace() {
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
+    setCostsView(false);
     setWorkflowsEditor(null);
     setWorkflowsView(false);
     setPullRequestsView(false);
@@ -1051,11 +1060,28 @@ export function Workspace() {
     setPanel(null);
     setDiffTarget(null);
     setInbox(false);
+    setCostsView(false);
     setWorkflowsView(false);
     setPullRequestsView(false);
     setAutomation('');
     setCreating(true);
   };
+  const openCosts = () =>
+    guardEditor(() => {
+      navigationVersion.current += 1;
+      setPanel(null);
+      setDiffTarget(null);
+      setCreating(false);
+      setInbox(false);
+      setWorkflowsEditor(null);
+      setWorkflowsView(false);
+      setPullRequestsView(false);
+      setAutomation('');
+      setNavigationOpen(false);
+      setDetailsOpen(false);
+      setCardOpen(false);
+      setCostsView(true);
+    });
   const changeDraft = (id: string, value: string) => {
     draftVersions.current[id] = (draftVersions.current[id] ?? 0) + 1;
     setDrafts(previous => ({ ...previous, [id]: value }));
@@ -1927,7 +1953,7 @@ ${text}`
         0,
       ),
     selectedId:
-      creating || workflowsView || pullRequestsView || automation
+      creating || costsView || workflowsView || pullRequestsView || automation
         ? ''
         : selectedKey,
     unreadKeys,
@@ -2007,6 +2033,8 @@ ${text}`
           onAutomations={sidebarProps.onAutomations}
           pullRequests={sidebarProps.pullRequests}
           onPullRequests={sidebarProps.onPullRequests}
+          costs={costsView}
+          onCosts={window.nesvo ? openCosts : undefined}
           onSettings={sidebarProps.onSettings}
           onComputers={sidebarProps.onComputers}
           usage={
@@ -2155,23 +2183,25 @@ ${text}`
                 className="flex min-w-0 items-center gap-3"
               >
                 <h1 className="truncate text-[13px] font-semibold">
-                  {creating
-                    ? creationGroupName
-                      ? `New thread · ${creationGroupName}`
-                      : 'New thread'
-                    : workflowsView
-                      ? workflowsEditor
-                        ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`
-                        : 'Workflows'
-                      : pullRequestsView
-                        ? 'Pull requests'
-                        : inbox
-                          ? 'Inbox'
-                          : automationView === 'detail'
-                            ? automationJob?.name
-                            : automationView === 'list'
-                              ? 'Automations'
-                              : (selected?.title ?? 'New thread')}
+                  {costsView
+                    ? 'Costs'
+                    : creating
+                      ? creationGroupName
+                        ? `New thread · ${creationGroupName}`
+                        : 'New thread'
+                      : workflowsView
+                        ? workflowsEditor
+                          ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`
+                          : 'Workflows'
+                        : pullRequestsView
+                          ? 'Pull requests'
+                          : inbox
+                            ? 'Inbox'
+                            : automationView === 'detail'
+                              ? automationJob?.name
+                              : automationView === 'list'
+                                ? 'Automations'
+                                : (selected?.title ?? 'New thread')}
                 </h1>
                 {!browsing &&
                   !creating &&
@@ -2564,6 +2594,14 @@ ${text}`
                 onOpen={openPullRequest}
               />
             </div>
+          ) : costsView ? (
+            <CostsView
+              api={window.nesvo}
+              computers={store.computers}
+              sessions={store.sessions}
+              initialHostId={selectedHostId}
+              onSession={select}
+            />
           ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}

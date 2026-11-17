@@ -5,6 +5,7 @@ import {
   statusLabels,
   type Session,
 } from '@/entities/session';
+import { formatCost } from '@/shared/lib/format-cost';
 
 type Props = { session: Session };
 
@@ -21,23 +22,28 @@ function sessionUsage(session: Session) {
   const used = session.messages.flatMap(message =>
     message.usage ? [{ author: message.author, usage: message.usage }] : [],
   );
-  if (used.length === 0) return null;
+  const turns = session.messages.filter(message => message.author === 'agent');
+  if (turns.length === 0) return null;
   const last = used.findLast(entry => entry.author === 'agent')?.usage;
-  const costs = used.flatMap(entry =>
-    entry.usage.costUsd === null ? [] : [entry.usage.costUsd],
-  );
+  const costs = turns
+    .map(turn =>
+      turn.usage?.source === 'provider-report' ? turn.usage.costUsd : null,
+    )
+    .filter(cost => cost !== null);
   const sum = (pick: (entry: (typeof used)[number]) => number | null) =>
     used.reduce((total, entry) => total + (pick(entry) ?? 0), 0);
   return {
     last: last ? tokenPair(last.inputTokens, last.outputTokens) : null,
-    total: tokenPair(
-      sum(entry => entry.usage.inputTokens),
-      sum(entry => entry.usage.outputTokens),
+    total: used.length
+      ? tokenPair(
+          sum(entry => entry.usage.inputTokens),
+          sum(entry => entry.usage.outputTokens),
+        )
+      : null,
+    cost: formatCost(
+      costs.length ? costs.reduce((total, cost) => total + cost, 0) : null,
     ),
-    cost:
-      costs.length > 0
-        ? `$${costs.reduce((total, cost) => total + cost, 0).toFixed(2)}`
-        : null,
+    unknown: turns.length - costs.length,
   };
 }
 
@@ -85,17 +91,23 @@ export function SessionDetails({ session }: Props) {
                 <dd>{usage.last}</dd>
               </div>
             )}
-            <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Session</dt>
-              <dd>{usage.total}</dd>
-            </div>
-            {usage.cost && (
+            {usage.total && (
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Cost</dt>
-                <dd>{usage.cost}</dd>
+                <dt className="text-muted-foreground">Session</dt>
+                <dd>{usage.total}</dd>
               </div>
             )}
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Reported cost</dt>
+              <dd className="text-right">{usage.cost}</dd>
+            </div>
           </dl>
+          {usage.unknown > 0 && (
+            <p className="text-right text-xs text-muted-foreground">
+              {usage.unknown} {usage.unknown === 1 ? 'turn' : 'turns'} without
+              reported cost
+            </p>
+          )}
         </section>
       )}
       {session.scope && (

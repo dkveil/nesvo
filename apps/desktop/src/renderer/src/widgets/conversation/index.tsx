@@ -28,6 +28,7 @@ import {
   type Session,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { InlineNotice } from '@/shared/ui/inline-notice';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
@@ -773,6 +774,11 @@ export function Conversation({
                         </span>
                       )}
                   </div>
+                  {message.costWarning && (
+                    <InlineNotice className="bg-accent">
+                      {message.costWarning}
+                    </InlineNotice>
+                  )}
                   {showActivity &&
                     activity(
                       message.runId,

@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode, RefObject } from 'react';
 import {
+  ChartNoAxesColumn,
   CalendarClock,
   GitPullRequest,
   Inbox,
@@ -34,6 +35,8 @@ type Props = {
   onAutomations?: () => void;
   pullRequests?: boolean;
   onPullRequests?: () => void;
+  costs?: boolean;
+  onCosts?: () => void;
   onSettings: () => void;
   onComputers: () => void;
   usage?: ReactNode;
@@ -100,6 +103,8 @@ export function NavigationRail({
   onAutomations,
   pullRequests = false,
   onPullRequests,
+  costs = false,
+  onCosts,
   onSettings,
   onComputers,
   usage,
@@ -161,6 +166,11 @@ export function NavigationRail({
               onClick={onPullRequests}
             >
               <GitPullRequest className="size-4" />
+            </RailButton>
+          )}
+          {onCosts && (
+            <RailButton label="Costs" active={costs} onClick={onCosts}>
+              <ChartNoAxesColumn className="size-4" />
             </RailButton>
           )}
         </div>
