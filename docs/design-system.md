@@ -173,7 +173,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`.
 
-**Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, a second muted `description` line (up to two lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions.
+**Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, muted `description` lines under the title (a string clamps to two lines; a node renders its own lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions.
 
 **SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow is a title, a `text-xs` description and trailing controls; put status lines in the description as StatusMessage.
 

@@ -59,8 +59,12 @@ function DisclosureRow({ title, meta, icon, description }: DisclosureRowProps) {
       >
         <span className="truncate">{title}</span>
         {description && (
-          <span className="line-clamp-2 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-            {description}
+          <span className="flex flex-col text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+            {typeof description === 'string' ? (
+              <span className="line-clamp-2">{description}</span>
+            ) : (
+              description
+            )}
           </span>
         )}
       </span>
