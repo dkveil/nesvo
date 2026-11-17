@@ -288,9 +288,13 @@ The lazy-loaded workspace-files widget opens folders on demand, debounces filena
 
 The desktop sends pull request commands to the selected computer and requires its `pull-requests` capability. The host runs the installed GitHub CLI without a shell. Structured CLI and API responses are validated and bounded before they reach Electron. The CLI uses its own login and credential store on that computer. Nesvo forwards the configuration and platform environment needed to locate those resources and keeps GitHub credentials out of its own storage and subprocess environment. Comment and review bodies travel over stdin.
 
-Explicit GitHub actions carry an action ID. The host retains each in-flight or settled result, including failures, for the lifetime of the process. The bounded history refuses new actions when full so that retained IDs stay effective. Reconnecting refreshes state without replaying operations. Merge gives GitHub the exact reviewed head SHA to match. Checkout validates the target session folder and holds the session runner idle until the GitHub CLI exits.
+Explicit GitHub actions carry an action ID bound to the normalized pull request reference and action. Retries with the same ID and request share the in-flight or settled result, including failures. The host retains up to 4,096 entries in memory and evicts the oldest settled entry when it needs room. Reconnecting refreshes state without replaying operations.
+
+Merge uses the immediate GitHub REST endpoint with the reviewed head SHA and confirmed method. GitHub enforces its branch rules and can refuse an immediate merge. Checkout requires the canonical session folder to be the Git worktree root with a GitHub fetch remote matching the pull request base repository. The host holds the session runner idle through verification and checkout. Line review comments identify a commit, file, side and line or range in the diff.
 
 A session's pull request reference lives in its SQLite session document. Changing the link publishes a session update. Branch discovery reads the current association on demand and stores it only when the operator links it.
+
+Like `permission-modes` and `session-workflow`, `pull-requests` extends the capability enum under host protocol version 1. Current desktops gate pull request commands on this capability, and the session schema defaults an omitted `pullRequest` to null. Earlier desktops can reject the new capability or session field during strict parsing, so update the desktop and remote host together.
 
 ## Shared skill library
 
