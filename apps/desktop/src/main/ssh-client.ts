@@ -211,8 +211,8 @@ export function connectSshHost(
       });
       const line = JSON.stringify(payload) + '\n';
       if (
-        Buffer.byteLength(line) > 1024 * 1024 ||
-        child.stdin.writableLength + Buffer.byteLength(line) > 2 * 1024 * 1024
+        Buffer.byteLength(line) > 8 * 1024 * 1024 ||
+        child.stdin.writableLength + Buffer.byteLength(line) > 16 * 1024 * 1024
       ) {
         reject(new Error('This request exceeds the connection limit.'));
         return;

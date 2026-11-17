@@ -36,7 +36,7 @@ The bridge never reconnects or retries commands automatically. If a connection i
 ## Bounds and trust
 
 - At most 8 connected clients, 32 pending requests per client and 128 pending requests in the runtime, including detached requests.
-- A handshake must arrive within 10 seconds. Incoming JSONL frames are limited to 1 MiB; malformed or oversized frames close only that client.
+- A handshake must arrive within 10 seconds. Incoming JSONL frames are limited to 8 MiB so a staged attachment fits in one request; malformed or oversized frames close only that client.
 - Invalid request shapes return a private error. Reusing an in-flight transport ID closes that connection to avoid ambiguous replies.
 - Outbound frames/buffers are limited to 64 MiB. A slow or oversized connection is disconnected instead of blocking provider persistence or other clients. Large histories may need pagination before exceeding this prototype bound.
 - The entire OS user is the trust boundary. Clients of that user can read and act on its sessions. Separate users/tenants, web access, pairing tokens, migration and cross-host delegation are not implemented.

@@ -366,7 +366,7 @@ test(
       otherErrors,
     );
     const oversize = await connect(instanceId);
-    oversize.raw('x'.repeat(1024 * 1024 + 1));
+    oversize.raw('x'.repeat(8 * 1024 * 1024 + 1));
     assert.equal(
       (await oversize.next(message => message.type === 'connection-error'))
         .code,

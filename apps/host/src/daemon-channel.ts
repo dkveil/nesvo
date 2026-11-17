@@ -2,7 +2,7 @@ import { lstat, mkdir, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { type Socket } from 'node:net';
 
-export const requestFrameLimit = 1024 * 1024;
+export const requestFrameLimit = 8 * 1024 * 1024;
 export const responseFrameLimit = 64 * 1024 * 1024;
 
 export async function privateDirectory(directory: string, create = false) {
