@@ -2168,10 +2168,9 @@ try {
   );
   await sidebarResizer.dblclick();
   assert.equal(await sidebarResizer.getAttribute('aria-valuenow'), '256');
-  const sidebarToggle = page.getByRole('button', {
-    name: 'Toggle sidebar',
-    exact: true,
-  });
+  const sidebarToggle = page
+    .getByRole('navigation', { name: 'Primary', exact: true })
+    .getByRole('button', { name: /^(Collapse|Expand) sidebar$/ });
   await sidebarToggle.click();
   await navigation.waitFor({ state: 'hidden' });
   assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'false');
