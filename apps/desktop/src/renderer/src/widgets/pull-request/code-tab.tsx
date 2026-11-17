@@ -7,7 +7,7 @@ import type {
 } from '@nesvo/contracts';
 import { ChevronRight, MessageSquareShare, WrapText } from 'lucide-react';
 import { cn } from 'cn';
-import { FileGlyph } from '@/widgets/workspace-files/file-glyph';
+import { DiffStat, FileGlyph, StatusLetter } from '@/entities/file-change';
 import { Button } from '@/shared/ui/button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelAction } from '@/shared/ui/panel';
@@ -21,47 +21,9 @@ import type { Resource } from './use-resource';
 
 const DEFAULT_OPEN_FILES = 25;
 
-const STATUS_GLYPHS: Record<
-  PullRequestFile['status'],
-  { letter: string; tone: string; label: string }
-> = {
-  added: { letter: 'A', tone: 'text-success-foreground', label: 'Added' },
-  removed: { letter: 'D', tone: 'text-error-foreground', label: 'Deleted' },
-  modified: { letter: 'M', tone: 'text-warning-foreground', label: 'Modified' },
-  renamed: { letter: 'R', tone: 'text-info-foreground', label: 'Renamed' },
-  copied: { letter: 'C', tone: 'text-info-foreground', label: 'Copied' },
-  changed: { letter: 'M', tone: 'text-warning-foreground', label: 'Changed' },
-  unchanged: { letter: '·', tone: 'text-muted-foreground', label: 'Unchanged' },
-};
-
 const fileName = (path: string) => path.split('/').at(-1) ?? path;
 
 const folderOf = (path: string) => path.split('/').slice(0, -1).join('/');
-
-function StatusLetter({ status }: { status: PullRequestFile['status'] }) {
-  const glyph = STATUS_GLYPHS[status];
-  return (
-    <span
-      title={glyph.label}
-      aria-label={glyph.label}
-      className={cn(
-        'w-2.5 shrink-0 text-center font-mono text-2xs font-semibold',
-        glyph.tone,
-      )}
-    >
-      {glyph.letter}
-    </span>
-  );
-}
-
-function Counts({ file }: { file: PullRequestFile }) {
-  return (
-    <span className="flex shrink-0 gap-1.5 font-mono text-2xs tabular-nums">
-      <span className="text-success-foreground">+{file.additions}</span>
-      <span className="text-error-foreground">−{file.deletions}</span>
-    </span>
-  );
-}
 
 type CodeTabProps = {
   files: Resource<PullRequestFiles>;
@@ -381,7 +343,10 @@ export function CodeTab({
                       {fileThreads.length} threads
                     </span>
                   )}
-                  <Counts file={file} />
+                  <DiffStat
+                    additions={file.additions}
+                    deletions={file.deletions}
+                  />
                   <label className="flex shrink-0 cursor-pointer items-center gap-1 text-2xs text-muted-foreground">
                     <input
                       type="checkbox"

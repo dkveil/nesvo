@@ -1,7 +1,6 @@
 import type { ComponentProps } from 'react';
-import { CircleCheck, CircleDot, CircleX } from 'lucide-react';
 import type { PullRequestSummary } from '@nesvo/contracts';
-import { cn } from 'cn';
+import { StatusIcon, type StatusKind } from '@/entities/status';
 
 const CHECK_LABELS = {
   pending: 'Checks pending',
@@ -9,32 +8,23 @@ const CHECK_LABELS = {
   failing: 'Checks failing',
 } as const;
 
-type ChecksIconProps = ComponentProps<'svg'> & {
+const CHECK_STATUS: Record<keyof typeof CHECK_LABELS, StatusKind> = {
+  pending: 'pending',
+  passing: 'success',
+  failing: 'error',
+};
+
+type ChecksIconProps = Omit<ComponentProps<'svg'>, 'children'> & {
   checks: PullRequestSummary['checks'];
 };
 
-export function ChecksIcon({ checks, className, ...props }: ChecksIconProps) {
+export function ChecksIcon({ checks, ...props }: ChecksIconProps) {
   if (checks === 'none') return null;
-  const Icon =
-    checks === 'passing'
-      ? CircleCheck
-      : checks === 'failing'
-        ? CircleX
-        : CircleDot;
   return (
-    <Icon
-      role="img"
-      aria-label={CHECK_LABELS[checks]}
-      className={cn(
-        'size-3 shrink-0',
-        checks === 'passing' && 'text-success-foreground',
-        checks === 'failing' && 'text-error-foreground',
-        checks === 'pending' && 'text-warning-foreground',
-        className,
-      )}
+    <StatusIcon
+      status={CHECK_STATUS[checks]}
+      label={CHECK_LABELS[checks]}
       {...props}
-    >
-      <title>{CHECK_LABELS[checks]}</title>
-    </Icon>
+    />
   );
 }

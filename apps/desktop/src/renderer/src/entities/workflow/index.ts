@@ -7,6 +7,7 @@ import type {
   StepPhase,
 } from '@nesvo/contracts';
 import { sessionStatusLabel, type Session } from '@/entities/session';
+import type { Tone as WorkflowTone } from '@/entities/status';
 
 export type {
   DefinitionCatalog,
@@ -24,15 +25,7 @@ export type {
   TaskSpecSummary,
 } from '@nesvo/contracts';
 
-export type WorkflowTone = 'success' | 'error' | 'warning' | 'info' | 'muted';
-
-export const toneText: Record<WorkflowTone, string> = {
-  success: 'text-success-foreground',
-  error: 'text-error-foreground',
-  warning: 'text-warning-foreground',
-  info: 'text-info-foreground',
-  muted: 'text-muted-foreground',
-};
+export { toneText, type Tone as WorkflowTone } from '@/entities/status';
 
 export const phaseLabels: Record<StepPhase, string> = {
   plan: 'Plan',

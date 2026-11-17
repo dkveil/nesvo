@@ -28,6 +28,7 @@ import {
   ProviderGlyph,
   sessionRoleLabel,
   sessionStatusLabel,
+  statusTones,
   type Session,
 } from '@/entities/session';
 import {
@@ -88,13 +89,6 @@ type Props = {
   currentHostId?: string;
 };
 
-const statusTone: Partial<Record<Session['status'], string>> = {
-  running: 'text-info-foreground',
-  stopping: 'text-info-foreground',
-  completed: 'text-success-foreground',
-  failed: 'text-error-foreground',
-};
-
 const navButtonClass =
   'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset';
 
@@ -133,10 +127,13 @@ function SessionStatus({
       </time>
     );
   const label = sessionStatusLabel(session);
+  const sessionTone = statusTones[session.status];
   const tone =
     label === 'Needs approval'
-      ? 'text-warning-foreground'
-      : (statusTone[session.status] ?? 'text-sidebar-muted-foreground');
+      ? toneText.warning
+      : sessionTone
+        ? toneText[sessionTone]
+        : 'text-sidebar-muted-foreground';
   return (
     <span className={cn('inline-flex items-center gap-1 font-medium', tone)}>
       {session.status === 'completed' && (
