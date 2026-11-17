@@ -19,8 +19,9 @@ export function Panel({ className, ...props }: ComponentProps<'section'>) {
 
 type PanelHeaderProps = {
   icon?: LucideIcon;
+  leading?: ReactNode;
   titleBar?: boolean;
-  title: string;
+  title: ReactNode;
   meta?: ReactNode;
   children?: ReactNode;
   className?: string;
@@ -28,6 +29,7 @@ type PanelHeaderProps = {
 
 export function PanelHeader({
   icon: Icon,
+  leading,
   titleBar = false,
   title,
   meta,
@@ -50,7 +52,15 @@ export function PanelHeader({
           aria-hidden="true"
         />
       )}
-      <h2 className="shrink-0 text-ui font-semibold">{title}</h2>
+      {leading}
+      <h2
+        className={cn(
+          'text-ui font-semibold',
+          meta ? 'shrink-0' : 'min-w-0 truncate',
+        )}
+      >
+        {title}
+      </h2>
       {meta && (
         <span className="min-w-0 truncate text-xs text-muted-foreground">
           {meta}

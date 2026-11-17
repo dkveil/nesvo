@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Files,
   Folder,
+  GitPullRequest,
   Maximize2,
   RefreshCw,
   WrapText,
@@ -164,6 +165,28 @@ export function SurfacesSection() {
               Collapse all
             </Button>
           </Toolbar>
+        </Panel>
+        <Panel className="w-full max-w-md overflow-hidden rounded-control border">
+          <PanelHeader
+            leading={
+              <GitPullRequest
+                aria-hidden="true"
+                className="size-3.5 shrink-0 text-success-foreground"
+              />
+            }
+            title={
+              <>
+                <span className="font-normal text-muted-foreground">
+                  sample/a-long-repository-name
+                </span>{' '}
+                #42
+              </>
+            }
+          >
+            <PanelAction aria-label="Close">
+              <X />
+            </PanelAction>
+          </PanelHeader>
         </Panel>
       </Specimen>
       <Specimen title="Composer" source="shared/ui/composer.tsx">
