@@ -1,6 +1,10 @@
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 import { cn } from '@/shared/lib/cn';
 
+type DataAttributes = {
+  [key: `data-${string}`]: string | number | boolean | undefined;
+};
+
 type ListRowDensity = 'tree' | 'compact' | 'two-line' | 'grid' | 'block';
 type ListRowSize = 'md' | 'sm';
 
@@ -22,7 +26,8 @@ type ListRowProps = Omit<ComponentProps<'div'>, 'title' | 'onClick'> & {
   columns?: string;
   dropIndicator?: 'before' | 'after' | 'inside' | null;
   onClick?: ComponentProps<'button'>['onClick'];
-  mainProps?: Omit<ComponentProps<'button'>, 'children' | 'onClick'>;
+  mainProps?: Omit<ComponentProps<'button'>, 'children' | 'onClick'> &
+    DataAttributes;
 };
 
 const TREE_INDENT_PX = 12;
