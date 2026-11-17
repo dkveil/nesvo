@@ -126,3 +126,13 @@ export function activitySummary(items: SessionActivity[]) {
   if (remaining) labels.push(`+${remaining} more`);
   return labels.join(' · ');
 }
+
+export const commandOutputParts = (item: SessionActivity) => {
+  const separator = item.output.lastIndexOf('\n\n');
+  if (item.exitCode !== 0 || separator < 0)
+    return { stdout: item.output, stderr: '' };
+  const stderr = item.output.slice(separator + 2);
+  return stderr.trim()
+    ? { stdout: item.output.slice(0, separator), stderr }
+    : { stdout: item.output, stderr: '' };
+};

@@ -9,16 +9,20 @@ import {
   Terminal,
   Wrench,
 } from 'lucide-react';
+import { cn } from 'cn';
 import type { Session } from '@nesvo/contracts';
 import {
   activityBatches,
   activityStatusLabels,
   activitySummary,
   batchLabel,
+  commandOutputParts,
   elapsedLabel,
+  ExitCodeBadge,
   runLabel,
   type SessionActivity as Activity,
 } from '@/entities/activity';
+import { Badge } from '@/shared/ui/badge';
 
 type Props = {
   runId: string;
@@ -42,6 +46,12 @@ const icons = {
 
 function ActivityItem({ item }: { item: Activity }) {
   const Icon = item.status === 'failed' ? CircleAlert : icons[item.kind];
+  const declined = item.status === 'declined';
+  const command =
+    item.kind === 'command' && item.detail
+      ? (item.detail.split('\n')[0] ?? '')
+      : '';
+  const output = commandOutputParts(item);
   return (
     <details
       data-activity-id={item.id}
@@ -54,14 +64,46 @@ function ActivityItem({ item }: { item: Activity }) {
         className="flex cursor-pointer list-none items-start gap-2 rounded-md px-1.5 py-1 text-[13px] leading-5 text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset group-open/activity-item:text-foreground [&::-webkit-details-marker]:hidden"
       >
         <Icon
-          className={`mt-0.5 size-3.5 shrink-0 ${item.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
+          className={cn(
+            'mt-0.5 size-3.5 shrink-0 text-muted-foreground',
+            item.status === 'failed' && 'text-destructive',
+          )}
         />
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-          {item.title}
+        <span className="min-w-0 flex-1">
+          {command ? (
+            <code
+              className="block truncate font-mono text-xs leading-5"
+              title={command}
+            >
+              {command}
+            </code>
+          ) : (
+            <span className="block [overflow-wrap:anywhere]">{item.title}</span>
+          )}
+          {declined && item.detail && !command && (
+            <span
+              aria-label="Refusal detail"
+              className="line-clamp-2 text-xs text-muted-foreground [overflow-wrap:anywhere]"
+            >
+              {item.detail}
+            </span>
+          )}
         </span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {activityStatusLabels[item.status]}
-        </span>
+        {item.kind === 'command' && item.exitCode !== null && (
+          <ExitCodeBadge code={item.exitCode} className="mt-0.5" />
+        )}
+        {declined ? (
+          <Badge
+            variant="outline"
+            className="mt-0.5 h-4 rounded-sm px-1 text-2xs leading-none font-normal text-muted-foreground"
+          >
+            Refused
+          </Badge>
+        ) : (
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {activityStatusLabels[item.status]}
+          </span>
+        )}
         <ChevronRight className="activity-caret mt-1 size-3 shrink-0 text-muted-foreground group-open/activity-item:rotate-90" />
       </summary>
       <div className="ml-5.5 space-y-2 border-l pl-3 pt-1 pb-3">
@@ -93,7 +135,7 @@ function ActivityItem({ item }: { item: Activity }) {
             {item.detail}
           </p>
         )}
-        {item.detail && item.kind !== 'thinking' && (
+        {item.detail && item.kind !== 'thinking' && (command || !declined) && (
           <pre
             aria-label="Activity details"
             className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
@@ -106,7 +148,22 @@ function ActivityItem({ item }: { item: Activity }) {
             aria-label="Command output"
             className="max-h-56 overflow-auto rounded-lg border bg-code-background p-3 font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
           >
-            {item.output}
+            {output.stdout && (
+              <span data-output-stream="stdout" className="block">
+                {output.stdout}
+              </span>
+            )}
+            {output.stderr && (
+              <span
+                data-output-stream="stderr"
+                className={cn(
+                  'block text-muted-foreground',
+                  output.stdout && 'mt-2 border-t border-dashed pt-2',
+                )}
+              >
+                {output.stderr}
+              </span>
+            )}
           </pre>
         )}
         {item.truncated && (
@@ -172,6 +229,7 @@ export function SessionActivity({
     ? items.findLast(item => item.status === 'running')
     : undefined;
   const failures = items.filter(item => item.status === 'failed').length;
+  const refusals = items.filter(item => item.status === 'declined').length;
   const summary = live ? '' : activitySummary(items);
   const batches = activityBatches(items);
   return (
@@ -219,6 +277,9 @@ export function SessionActivity({
             <span className="shrink-0 text-[11px] text-destructive">
               {failures} failed
             </span>
+          )}
+          {refusals > 0 && (
+            <span className="shrink-0 text-[11px]">{refusals} refused</span>
           )}
         </summary>
         <div className="mt-1.5 ml-1.5 max-h-80 space-y-px overflow-y-auto border-l pl-2.5">
