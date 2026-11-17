@@ -1,5 +1,6 @@
 import type { FormEvent, ReactNode, Ref } from 'react';
 import { pullRequestLimits } from '@nesvo/contracts';
+import { ArrowUp, LoaderCircle } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/shared/ui/button';
 import { ActionFeedback } from './action-feedback';
@@ -44,11 +45,12 @@ export function CommentBox({
     event.preventDefault();
     if (canSubmit && !locked && !blockedReason) onSubmit();
   };
+  const disabled = !canSubmit || locked || !!blockedReason;
   return (
     <form
       onSubmit={submit}
       className={cn(
-        'rounded-lg border bg-card transition-colors duration-150 ease-out focus-within:border-ring/60',
+        'glass-composer animate-in rounded-xl border px-3 pt-2.5 pb-2 duration-150 ease-out fade-in-0 slide-in-from-top-0.5 focus-within:border-input motion-reduce:animate-none',
         className,
       )}
     >
@@ -60,11 +62,12 @@ export function CommentBox({
         maxLength={pullRequestLimits.commentLength}
         disabled={locked || !!blockedReason}
         autoFocus={autoFocus}
+        rows={1}
         onChange={event => onChange(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
             event.preventDefault();
-            if (canSubmit && !locked && !blockedReason) onSubmit();
+            if (!disabled) onSubmit();
           }
           if (event.key === 'Escape' && onCancel && !locked) {
             event.preventDefault();
@@ -72,15 +75,13 @@ export function CommentBox({
             onCancel();
           }
         }}
-        className="field-sizing-content block max-h-60 min-h-16 w-full resize-none bg-transparent px-3 pt-2 text-xs leading-5 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
+        className="field-sizing-content block max-h-60 min-h-10 w-full resize-none bg-transparent px-0.5 font-sans text-[13px] leading-5 text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-60"
       />
-      <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
-        {controls}
-        <span className="min-w-0 flex-1">
+      <div className="mt-1.5 flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-2xs text-muted-foreground">
+          {controls}
           {blockedReason ? (
-            <span className="text-2xs text-muted-foreground">
-              {blockedReason}
-            </span>
+            <span className="truncate">{blockedReason}</span>
           ) : (
             <ActionFeedback state={state} />
           )}
@@ -92,18 +93,24 @@ export function CommentBox({
             size="xs"
             disabled={locked}
             onClick={onCancel}
-            className="text-muted-foreground"
+            className="h-6 px-2 text-xs text-muted-foreground enabled:hover:text-foreground"
           >
             Cancel
           </Button>
         )}
         <Button
           type="submit"
-          size="xs"
-          disabled={!canSubmit || locked || !!blockedReason}
-          className="disabled:cursor-not-allowed"
+          size="icon-sm"
+          disabled={disabled}
+          aria-label={pending ? 'Sending' : submitLabel}
+          title={`${submitLabel} (Ctrl+Enter)`}
+          className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
         >
-          {pending ? 'Sending…' : submitLabel}
+          {pending ? (
+            <LoaderCircle className="animate-spin motion-reduce:animate-none" />
+          ) : (
+            <ArrowUp />
+          )}
         </Button>
       </div>
     </form>

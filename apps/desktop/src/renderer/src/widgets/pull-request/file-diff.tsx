@@ -207,7 +207,7 @@ export function PatchDiff({
         lineAnnotations={annotations}
         selectedLines={selectedLines}
         renderAnnotation={annotation => (
-          <div className="px-2 font-sans">
+          <div className="bg-code-background px-3 py-2 font-sans">
             {annotation.metadata.threads.map(thread => renderThread(thread))}
             {annotation.metadata.draft && renderDraft()}
           </div>

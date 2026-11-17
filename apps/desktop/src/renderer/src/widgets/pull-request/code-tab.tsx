@@ -174,7 +174,7 @@ export function CodeTab({
         onCancel={() => setDraft(null)}
         controls={
           <span className="text-2xs text-muted-foreground">
-            Shift-click a line number to extend the range.
+            Shift-click a line to extend
           </span>
         }
         autoFocus
