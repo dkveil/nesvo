@@ -186,7 +186,7 @@ export function ListRow({
           style={{ paddingLeft: inset, ...gridStyle, ...mainProps?.style }}
           className={cn(
             layout,
-            'focus-ring h-full self-stretch rounded-control pr-2 disabled:cursor-not-allowed',
+            'focus-ring self-stretch rounded-control pr-2 disabled:cursor-not-allowed',
             mainProps?.className,
           )}
         >

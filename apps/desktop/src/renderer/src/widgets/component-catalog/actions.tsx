@@ -156,7 +156,7 @@ export function ActionsSection() {
             </IconButton>
           </StateCaption>
           <StateCaption label="expanded">
-            <IconButton label="Menu" aria-expanded>
+            <IconButton label="Menu" aria-haspopup="menu" aria-expanded>
               <MoreHorizontal />
             </IconButton>
           </StateCaption>

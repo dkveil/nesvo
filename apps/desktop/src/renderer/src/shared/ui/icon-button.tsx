@@ -58,11 +58,11 @@ export function IconButton({
           'relative before:absolute before:top-1/2 before:-left-1.5 before:h-4 before:w-0.5 before:-translate-y-1/2 before:scale-y-0 before:rounded-full before:bg-foreground before:transition-transform before:duration-base before:ease-out data-selected:before:scale-y-100',
         appearance === 'ghost' && [
           tone === 'default' &&
-            'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground data-selected:bg-highlight data-selected:text-foreground',
+            'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground [&[aria-haspopup]]:aria-expanded:bg-accent [&[aria-haspopup]]:aria-expanded:text-foreground data-selected:bg-highlight data-selected:text-foreground',
           tone === 'sidebar' &&
-            'text-sidebar-icon enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground aria-expanded:bg-sidebar-row-hover aria-expanded:text-sidebar-foreground data-selected:bg-sidebar-row-selected data-selected:text-sidebar-foreground',
+            'text-sidebar-icon enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground [&[aria-haspopup]]:aria-expanded:bg-sidebar-row-hover [&[aria-haspopup]]:aria-expanded:text-sidebar-foreground data-selected:bg-sidebar-row-selected data-selected:text-sidebar-foreground',
           tone === 'danger' &&
-            'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-error-foreground aria-expanded:bg-accent',
+            'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-error-foreground [&[aria-haspopup]]:aria-expanded:bg-accent',
         ],
         appearance === 'send' &&
           "rounded-full bg-primary text-primary-foreground [--focus-ring-color:var(--primary-foreground)] enabled:hover:bg-primary/90 disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg:not([class*='size-'])]:size-4",

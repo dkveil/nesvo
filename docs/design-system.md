@@ -94,7 +94,7 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 
 **Selected.** Styling keys off one attribute, `data-selected`, set by the `selected` (or `pressed`) prop. The ARIA attribute follows the role: `aria-current="page"` for navigation (NavItem), `aria-current="true"` for list rows, `aria-selected` for tabs and listbox options, `aria-pressed` for toggle buttons (IconButton `pressed`, SegmentedControl in toggle mode), `aria-checked` for radios. Selected uses `bg-highlight` (sidebar tone: `bg-sidebar-row-selected` with its shadow).
 
-**Expanded.** Triggers that open a menu or popover show `bg-accent` through `aria-expanded` or `data-state=open`.
+**Expanded.** Triggers that open a menu or popover show `bg-accent` through `aria-expanded` or `data-state=open`. IconButton applies it only with `aria-haspopup` (set by menu, popover and dialog triggers), so disclosure toggles that carry `aria-expanded` keep their idle look.
 
 **Disabled.** `opacity-50` and `cursor-not-allowed`; no hover. Disabled send buttons use the `send-idle` colours at full opacity instead.
 
