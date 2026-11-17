@@ -17,12 +17,12 @@ export function SettingsSection({
   return (
     <section aria-label={title} className="space-y-2.5">
       <header className="flex min-h-7 items-center justify-between gap-3 px-3">
-        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+        <h2 className="text-title font-semibold tracking-tight">{title}</h2>
         {action}
       </header>
       <div
         className={cn(
-          'divide-y rounded-lg border bg-card text-card-foreground',
+          'divide-y rounded-surface border bg-card text-card-foreground',
           className,
         )}
       >
@@ -53,7 +53,7 @@ export function SettingsRow({
       )}
     >
       <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="text-[13px] font-medium [overflow-wrap:anywhere]">
+        <div className="text-ui font-medium [overflow-wrap:anywhere]">
           {title}
         </div>
         {description && (
