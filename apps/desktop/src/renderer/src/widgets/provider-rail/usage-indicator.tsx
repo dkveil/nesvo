@@ -1,6 +1,7 @@
 import { Tooltip } from 'radix-ui';
 import { cn } from 'cn';
 import type { Provider } from '@/entities/session';
+import { TooltipContent } from '@/shared/ui/tooltip';
 import { IndicatorTooltip } from './indicator-tooltip';
 import { UsageBar } from './usage-bar';
 import { UsageRing } from './usage-ring';
@@ -81,24 +82,19 @@ export function UsageIndicator({
           )}
         </button>
       </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content
-          side={
-            layout === 'row' ? 'top' : layout === 'column' ? 'right' : 'left'
-          }
-          align="center"
-          sideOffset={8}
-          collisionPadding={12}
-          className="glass-popover z-50 w-80 rounded-md border px-3 py-2 text-xs text-popover-foreground"
-        >
-          <IndicatorTooltip
-            provider={provider}
-            state={state}
-            indicator={indicator}
-            now={now}
-          />
-        </Tooltip.Content>
-      </Tooltip.Portal>
+      <TooltipContent
+        side={layout === 'row' ? 'top' : layout === 'column' ? 'right' : 'left'}
+        align="center"
+        collisionPadding={12}
+        className="block w-80 px-3 py-2 font-normal select-text"
+      >
+        <IndicatorTooltip
+          provider={provider}
+          state={state}
+          indicator={indicator}
+          now={now}
+        />
+      </TooltipContent>
     </Tooltip.Root>
   );
 }
