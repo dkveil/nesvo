@@ -1017,6 +1017,10 @@ try {
     directory,
   );
   const navigation = page.getByRole('navigation', { name: 'Sessions' });
+  const primaryNavigation = page.getByRole('navigation', {
+    name: 'Primary',
+    exact: true,
+  });
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   assert.equal(
     await page
@@ -2171,16 +2175,28 @@ try {
   );
   await sidebarResizer.dblclick();
   assert.equal(await sidebarResizer.getAttribute('aria-valuenow'), '256');
-  const sidebarToggle = page
-    .getByRole('navigation', { name: 'Primary', exact: true })
-    .getByRole('button', { name: /^(Collapse|Expand) sidebar$/ });
+  const sidebarToggle = primaryNavigation.getByRole('button', {
+    name: /^(Collapse|Expand) sidebar$/,
+  });
+  assert.equal(
+    await sidebarToggle.getAttribute('aria-label'),
+    'Collapse sidebar',
+  );
   await sidebarToggle.click();
   await navigation.waitFor({ state: 'hidden' });
   assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'false');
+  assert.equal(
+    await sidebarToggle.getAttribute('aria-label'),
+    'Expand sidebar',
+  );
   await waitForFocus(sidebarToggle);
   await page.keyboard.press('Control+b');
   await navigation.waitFor({ state: 'visible' });
   assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'true');
+  assert.equal(
+    await sidebarToggle.getAttribute('aria-label'),
+    'Collapse sidebar',
+  );
   await waitForFocus(sidebarToggle);
   await messageEditor.press('Control+b');
   await navigation.waitFor({ state: 'hidden' });
@@ -2458,6 +2474,9 @@ try {
     byId(await restartedPage.evaluate(() => window.nesvo.listReviews())),
     byId(restored.reviews),
   );
+  await restartedDiff
+    .getByRole('button', { name: 'Close diff', exact: true })
+    .focus();
   await restartedPage.keyboard.press('Escape');
   await restartedDiff.waitFor({ state: 'hidden' });
   await restartedPage.getByRole('button', { name: /^Inbox/ }).click();
