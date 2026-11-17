@@ -1,5 +1,6 @@
-import { X } from 'lucide-react';
-import { Button } from '@/shared/ui/button';
+import { BookOpen, X } from 'lucide-react';
+import { Chip } from '@/shared/ui/chip';
+import { IconButton } from '@/shared/ui/icon-button';
 import type { SelectedSkill } from './index';
 
 type Props = {
@@ -9,8 +10,11 @@ type Props = {
 
 export function SelectedSkillChip({ skill, onRemove }: Props) {
   return (
-    <div className="mb-2 flex items-center gap-1">
-      <span
+    <div className="mb-2 flex min-w-0 items-center gap-0.5">
+      <Chip
+        interactive={false}
+        size="sm"
+        icon={<BookOpen aria-hidden="true" />}
         aria-label={`Selected skill: ${skill.name}`}
         title={[
           skill.description,
@@ -25,25 +29,16 @@ export function SelectedSkillChip({ skill, onRemove }: Props) {
         ]
           .filter(Boolean)
           .join('\n')}
-        className="max-w-[calc(100%-2rem)] truncate rounded-md border bg-secondary/60 px-2 py-1 text-xs"
+        className="bg-highlight text-foreground"
       >
-        {skill.name}
+        <span>{skill.name}</span>
         {skill.delivery === 'instructions' && (
-          <span className="ml-2 text-muted-foreground">
-            Shared instructions
-          </span>
+          <span className="text-muted-foreground">Shared instructions</span>
         )}
-      </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-6 text-muted-foreground"
-        aria-label="Remove skill"
-        onClick={onRemove}
-      >
-        <X className="size-3" />
-      </Button>
+      </Chip>
+      <IconButton label="Remove skill" size={24} onClick={onRemove}>
+        <X />
+      </IconButton>
     </div>
   );
 }

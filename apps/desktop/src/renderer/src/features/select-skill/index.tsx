@@ -13,11 +13,16 @@ import type {
   SkillEntry,
   SkillReference,
 } from '@nesvo/contracts';
-import { BookOpen, RefreshCw } from 'lucide-react';
-import { Popover } from 'radix-ui';
-import { cn } from '@/shared/lib/cn';
+import { RefreshCw } from 'lucide-react';
 import { errorDetail, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Listbox } from '@/shared/ui/listbox';
+import { listboxOptionId } from '@/shared/ui/listbox-option-id';
+import { Popover, PopoverAnchor, PopoverContent } from '@/shared/ui/popover';
+import { SearchField } from '@/shared/ui/search-field';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import {
   rankSkills,
   resolveTypedSkill,
@@ -42,7 +47,6 @@ export type TypedSubmission =
   | { status: 'error' };
 
 type Controls = {
-  trigger: ReactNode;
   anchor: (node: ReactNode) => ReactNode;
   notice: ReactNode;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
@@ -132,11 +136,9 @@ export function SelectSkill({
   const selectable = skills.filter(skill => !unavailableReason(skill, catalog));
   const active =
     selectable.find(skill => skill.id === activeId) ?? selectable[0];
-  const activeIndex = active
-    ? skills.findIndex(skill => skill.id === active.id)
-    : -1;
-  const activeOptionId =
-    activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
+  const activeOptionId = active
+    ? listboxOptionId(listId, active.id)
+    : undefined;
   const fetchCatalog = () => requestCatalog(api, scope);
   useEffect(() => {
     if (!open) return;
@@ -153,12 +155,6 @@ export function SelectSkill({
       live = false;
     };
   }, [api, open, scopeKey, refresh]);
-  useEffect(() => {
-    if (open && activeOptionId)
-      document
-        .getElementById(activeOptionId)
-        ?.scrollIntoView({ block: 'nearest' });
-  }, [open, activeOptionId]);
   const close = () => {
     setManualOpen(false);
     setDismissedDraft(draft);
@@ -202,7 +198,8 @@ export function SelectSkill({
     }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!open || event.nativeEvent.isComposing) return;
+    if (!open || event.defaultPrevented || event.nativeEvent.isComposing)
+      return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -240,7 +237,7 @@ export function SelectSkill({
     setRefresh(value => value + 1);
   };
   return (
-    <Popover.Root
+    <Popover
       open={open}
       onOpenChange={next => {
         if (next) {
@@ -250,30 +247,11 @@ export function SelectSkill({
       }}
     >
       {children({
-        trigger: (
-          <Popover.Trigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="text-muted-foreground"
-              aria-label="Choose skill"
-              disabled={!enabled}
-              title="Choose skill (type / in the message)"
-            >
-              <BookOpen className="size-3.5" />
-              <span className="hidden sm:inline">Skills</span>
-            </Button>
-          </Popover.Trigger>
-        ),
-        anchor: node => <Popover.Anchor asChild>{node}</Popover.Anchor>,
+        anchor: node => <PopoverAnchor asChild>{node}</PopoverAnchor>,
         notice: typedError ? (
-          <p
-            role="alert"
-            className="px-1 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-          >
+          <StatusMessage tone="error" variant="notice">
             {typedError}
-          </p>
+          </StatusMessage>
         ) : null,
         onKeyDown,
         onInput: () => {
@@ -294,168 +272,120 @@ export function SelectSkill({
             }
           : { 'data-skill-input': true },
       })}
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
-          align="start"
-          sideOffset={8}
-          collisionPadding={{ top: 56, right: 12, bottom: 12, left: 12 }}
-          aria-label="Skill menu"
-          className="z-50 flex max-h-[min(22rem,var(--radix-popover-content-available-height))] w-(--radix-popover-trigger-width) min-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"
-          onOpenAutoFocus={event => {
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionPadding={{ top: 56, right: 12, bottom: 12, left: 12 }}
+        aria-label="Skill menu"
+        surface="solid"
+        size="trigger"
+        padding="none"
+        className="flex max-h-[min(22rem,var(--radix-popover-content-available-height))] flex-col overflow-hidden"
+        onOpenAutoFocus={event => {
+          event.preventDefault();
+          if (manualOpen) filter.current?.focus();
+        }}
+        onCloseAutoFocus={event => event.preventDefault()}
+        onInteractOutside={event => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest('[data-skill-input]')
+          )
             event.preventDefault();
-            if (manualOpen) filter.current?.focus();
-          }}
-          onCloseAutoFocus={event => event.preventDefault()}
-          onInteractOutside={event => {
-            if (
-              event.target instanceof Element &&
-              event.target.closest('[data-skill-input]')
-            )
-              event.preventDefault();
-          }}
-          onKeyDown={onKeyDown}
-        >
-          {manualOpen && (
-            <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
-              <span
-                aria-hidden="true"
-                className="pl-1 text-sm text-muted-foreground"
-              >
-                /
-              </span>
-              <input
-                ref={filter}
-                aria-label="Filter skills"
-                placeholder="Find a skill"
-                value={manualQuery ?? ''}
-                onChange={event => setManualQuery(event.target.value)}
-                maxLength={256}
-                className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
-                aria-controls={listId}
-                aria-activedescendant={activeOptionId}
-                aria-autocomplete="list"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-6 text-muted-foreground"
-                aria-label="Refresh skill choices"
-                title="Refresh skill choices"
-                disabled={loading}
-                onClick={reload}
-              >
-                <RefreshCw className="size-3" />
-              </Button>
-            </div>
-          )}
-          {loading && (
-            <p
-              role="status"
-              className="px-3 py-2.5 text-xs text-muted-foreground"
+        }}
+        onKeyDown={onKeyDown}
+      >
+        {manualOpen && (
+          <div className="flex shrink-0 items-center border-b pr-1.5">
+            <SearchField
+              ref={filter}
+              variant="underline"
+              containerClassName="flex-1 border-b-0"
+              aria-label="Filter skills"
+              placeholder="Find a skill"
+              value={manualQuery ?? ''}
+              onChange={event => setManualQuery(event.target.value)}
+              onClear={() => setManualQuery('')}
+              maxLength={256}
+              aria-controls={listId}
+              aria-activedescendant={activeOptionId}
+              aria-autocomplete="list"
+            />
+            <IconButton
+              label="Refresh skill choices"
+              size={24}
+              disabled={loading}
+              onClick={reload}
             >
-              Loading skills…
-            </p>
-          )}
-          {error && (
-            <div className="flex items-center gap-2 px-3 py-2.5">
-              <p
-                role="alert"
-                className="min-w-0 flex-1 text-xs text-destructive [overflow-wrap:anywhere]"
-              >
-                {error}
-              </p>
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={reload}
-              >
-                Retry skill discovery
-              </Button>
-            </div>
-          )}
-          <div
-            id={listId}
-            role="listbox"
-            aria-label="Skills"
-            className="min-h-0 overflow-y-auto p-1"
-          >
-            {skills.map((skill, index) => {
-              const reason = unavailableReason(skill, catalog);
-              const selected = active?.id === skill.id;
-              const source = [
-                skill.origins?.join(', '),
-                sourceLabels[skill.source],
-              ]
-                .filter(Boolean)
-                .join(' · ');
-              return (
-                <div
-                  key={skill.id}
-                  id={`${listId}-${index}`}
-                  role="option"
-                  aria-label={skill.name}
-                  aria-selected={selected}
-                  aria-disabled={!!reason}
-                  tabIndex={-1}
-                  data-skill-command={skillCommand(skill)}
-                  title={[
-                    skill.name,
-                    skill.description,
-                    source,
-                    reason ||
-                      (skill.invocation === 'instructions'
-                        ? 'Shared instructions'
-                        : 'Native skill'),
-                    skill.path,
-                    skill.contentHash,
-                    skill.detail,
-                  ]
-                    .filter(Boolean)
-                    .join('\n')}
-                  onMouseDown={event => event.preventDefault()}
-                  onMouseMove={() => {
-                    if (!reason && !selected) setActiveId(skill.id);
-                  }}
-                  onClick={() => choose(skill)}
-                  className={cn(
-                    'flex h-8 min-w-0 items-center gap-2 rounded-lg px-2.5 text-[13px] transition-colors duration-100',
-                    reason ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
-                    selected && 'bg-accent',
-                  )}
-                >
-                  <span className="shrink-0 font-semibold">
-                    /{skillCommand(skill)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                    {reason || skill.description || 'No description provided.'}
-                  </span>
-                  <span className="hidden shrink-0 text-[11px] text-muted-foreground/70 sm:inline">
-                    {source}
-                  </span>
-                </div>
-              );
-            })}
-            {catalog && !skills.length && (
-              <p className="px-2.5 py-2 text-xs text-muted-foreground">
-                {query
-                  ? `No skill matches /${query}.`
-                  : 'No skills are available here.'}
-              </p>
-            )}
+              <RefreshCw />
+            </IconButton>
           </div>
-          {catalog && (catalog.truncated || catalog.issues.length > 0) && (
-            <p
-              className="shrink-0 border-t px-3 py-1.5 text-[11px] text-muted-foreground"
-              title={catalog.issues.map(issue => issue.message).join('\n')}
+        )}
+        {loading && (
+          <StatusMessage tone="loading" className="px-3 py-2.5">
+            Loading skills…
+          </StatusMessage>
+        )}
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-2">
+            <StatusMessage tone="error" className="flex-1">
+              {error}
+            </StatusMessage>
+            <Button type="button" size="xs" variant="outline" onClick={reload}>
+              Retry skill discovery
+            </Button>
+          </div>
+        )}
+        {catalog && (
+          <Listbox
+            id={listId}
+            label="Skills"
+            options={skills.map(skill => {
+              const reason = unavailableReason(skill, catalog);
+              return {
+                value: skill.id,
+                label: `/${skillCommand(skill)}`,
+                ariaLabel: skill.name,
+                description:
+                  reason || skill.description || 'No description provided.',
+                trailing: [
+                  skill.origins?.join(', '),
+                  sourceLabels[skill.source],
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+                disabled: !!reason,
+              };
+            })}
+            value={active?.id ?? null}
+            active={active?.id ?? null}
+            onActiveChange={next => {
+              if (next) setActiveId(next);
+            }}
+            onSelect={id => {
+              const skill = skills.find(item => item.id === id);
+              if (skill) choose(skill);
+            }}
+            emptyText={
+              query
+                ? `No skill matches /${query}.`
+                : 'No skills are available here.'
+            }
+            className="min-h-0 flex-1"
+          />
+        )}
+        {catalog && (catalog.truncated || catalog.issues.length > 0) && (
+          <Hint label={catalog.issues.map(issue => issue.message).join(' · ')}>
+            <StatusMessage
+              tone="warning"
+              className="shrink-0 border-t px-3 py-1.5"
             >
               Some sources could not be included. Open Skills for details.
-            </p>
-          )}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+            </StatusMessage>
+          </Hint>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
