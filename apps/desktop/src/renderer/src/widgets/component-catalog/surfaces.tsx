@@ -32,9 +32,15 @@ import {
   ToolbarSpacer,
 } from '@/shared/ui/panel';
 import { ListRow } from '@/shared/ui/list-row';
+import { ResizeHandle } from '@/shared/ui/resize-handle';
 import { Separator } from '@/shared/ui/separator';
 import { FileGlyph } from '@/entities/file-change';
-import { CatalogSection, Specimen, StateCaption } from './specimen';
+import {
+  CatalogSection,
+  Specimen,
+  SpecimenRow,
+  StateCaption,
+} from './specimen';
 
 const SAMPLE_CODE = `export function greet(name: string) {
   return \`Hello, \${name}\`;
@@ -106,6 +112,107 @@ function Composers() {
         </div>
       </StateCaption>
     </div>
+  );
+}
+
+const SAMPLE_EDGE_MIN_PX = 160;
+const SAMPLE_EDGE_MAX_PX = 320;
+const SAMPLE_CORNER_MIN_PX = 120;
+const SAMPLE_CORNER_MAX_PX = 240;
+const SAMPLE_STEP_PX = 16;
+
+const clampSample = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+function ResizeHandles() {
+  const [width, setWidth] = useState(224);
+  const [box, setBox] = useState({ width: 176, height: 128 });
+  const [edgeStart, setEdgeStart] = useState(width);
+  const [boxStart, setBoxStart] = useState(box);
+  const resizeEdge = (next: number) =>
+    setWidth(clampSample(next, SAMPLE_EDGE_MIN_PX, SAMPLE_EDGE_MAX_PX));
+  const resizeBox = (next: { width: number; height: number }) =>
+    setBox({
+      width: clampSample(
+        next.width,
+        SAMPLE_CORNER_MIN_PX,
+        SAMPLE_CORNER_MAX_PX,
+      ),
+      height: clampSample(
+        next.height,
+        SAMPLE_CORNER_MIN_PX,
+        SAMPLE_CORNER_MAX_PX,
+      ),
+    });
+  return (
+    <SpecimenRow label="edge · corner · focus" className="items-end gap-8">
+      <StateCaption label={`edge · ${width}px · ← →`}>
+        <div
+          style={{ width }}
+          className="relative h-28 rounded-surface border bg-background"
+        >
+          <ResizeHandle
+            label="Resize sample panel"
+            hint="Drag to resize"
+            edge="right"
+            aria-valuenow={width}
+            aria-valuemin={SAMPLE_EDGE_MIN_PX}
+            aria-valuemax={SAMPLE_EDGE_MAX_PX}
+            onResizeStart={() => setEdgeStart(width)}
+            onResize={offset => resizeEdge(edgeStart + offset.x)}
+            onStep={direction =>
+              resizeEdge(width + direction.x * SAMPLE_STEP_PX)
+            }
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label={`corner · ${box.width}×${box.height} · arrows`}>
+        <div
+          style={box}
+          className="relative rounded-overlay border bg-background"
+        >
+          <ResizeHandle
+            variant="corner"
+            corner="top-left"
+            label="Resize sample dock"
+            hint="Drag to resize. Arrow keys resize too."
+            onResizeStart={() => setBoxStart(box)}
+            onResize={offset =>
+              resizeBox({
+                width: boxStart.width - offset.x,
+                height: boxStart.height - offset.y,
+              })
+            }
+            onStep={direction =>
+              resizeBox({
+                width: box.width - direction.x * SAMPLE_STEP_PX,
+                height: box.height - direction.y * SAMPLE_STEP_PX,
+              })
+            }
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="edge · focus">
+        <div className="relative h-28 w-24 rounded-surface border bg-background">
+          <ResizeHandle
+            label="Focused sample handle"
+            edge="right"
+            data-preview-focus=""
+            onResize={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="corner · focus">
+        <div className="relative size-28 rounded-overlay border bg-background">
+          <ResizeHandle
+            variant="corner"
+            label="Focused sample corner"
+            data-preview-focus=""
+            onResize={() => undefined}
+          />
+        </div>
+      </StateCaption>
+    </SpecimenRow>
   );
 }
 
@@ -217,6 +324,9 @@ export function SurfacesSection() {
           <Separator label="Mode changed to Accept edits" />
         </Specimen>
       </div>
+      <Specimen title="ResizeHandle" source="shared/ui/resize-handle.tsx">
+        <ResizeHandles />
+      </Specimen>
     </CatalogSection>
   );
 }

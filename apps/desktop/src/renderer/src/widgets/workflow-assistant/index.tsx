@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type {
   AssistantChange,
@@ -48,6 +47,7 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { PanelHeader } from '@/shared/ui/panel';
+import { ResizeHandle, type ResizeOffset } from '@/shared/ui/resize-handle';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -100,6 +100,7 @@ type Props = {
 };
 
 const textLimit = 8000;
+const ASSISTANT_RESIZE_STEP_PX = 24;
 
 function lastAuthor(sessions: DesktopSession[], hostId: string) {
   return (
@@ -332,47 +333,24 @@ export default function WorkflowAssistantDock({
         ?.focus(),
     );
   };
-  const resizeStart = useRef<{
-    pointer: { x: number; y: number };
-    size: AssistantSize;
-  } | null>(null);
-  const onResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    resizeStart.current = {
-      pointer: { x: event.clientX, y: event.clientY },
-      size,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const onResizePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const start = resizeStart.current;
-    if (!start) return;
-    setSize(
-      clampSize({
-        width: start.size.width + (start.pointer.x - event.clientX),
-        height: start.size.height + (start.pointer.y - event.clientY),
-      }),
-    );
-  };
-  const onResizePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!resizeStart.current) return;
-    resizeStart.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-    saveSize(size);
-  };
-  const onResizeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const step = 24;
-    const delta = {
-      ArrowLeft: { width: step, height: 0 },
-      ArrowRight: { width: -step, height: 0 },
-      ArrowUp: { width: 0, height: step },
-      ArrowDown: { width: 0, height: -step },
-    }[event.key];
-    if (!delta) return;
-    event.preventDefault();
+  const resizeStart = useRef<AssistantSize>(size);
+  const draggedSize = useRef<AssistantSize | null>(null);
+  const resizeBy = (offset: ResizeOffset) => {
     const next = clampSize({
-      width: size.width + delta.width,
-      height: size.height + delta.height,
+      width: resizeStart.current.width - offset.x,
+      height: resizeStart.current.height - offset.y,
+    });
+    draggedSize.current = next;
+    setSize(next);
+  };
+  const finishResize = () => {
+    if (draggedSize.current) saveSize(draggedSize.current);
+    draggedSize.current = null;
+  };
+  const stepSize = (direction: ResizeOffset) => {
+    const next = clampSize({
+      width: size.width - direction.x * ASSISTANT_RESIZE_STEP_PX,
+      height: size.height - direction.y * ASSISTANT_RESIZE_STEP_PX,
     });
     setSize(next);
     saveSize(next);
@@ -600,16 +578,18 @@ export default function WorkflowAssistantDock({
           <ChevronDown />
         </IconButton>
       </PanelHeader>
-      <button
-        type="button"
-        aria-label="Resize assistant"
-        title="Drag to resize. Arrow keys resize too."
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-        onKeyDown={onResizeKeyDown}
-        className="focus-ring absolute top-0 left-0 z-10 size-4 cursor-nwse-resize rounded-tl-overlay"
+      <ResizeHandle
+        variant="corner"
+        corner="top-left"
+        label="Resize assistant"
+        hint="Drag to resize. Arrow keys resize too."
+        onResizeStart={() => {
+          resizeStart.current = size;
+        }}
+        onResize={resizeBy}
+        onResizeEnd={finishResize}
+        onStep={stepSize}
+        className="z-10"
       />
       {historyOpen ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
