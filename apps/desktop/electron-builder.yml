@@ -9,6 +9,7 @@ files:
   - '!node_modules/**/*'
 asar: true
 npmRebuild: false
+publish: null
 extraFiles:
   - from: ../../LICENSE
     to: LICENSE.nesvo
@@ -17,12 +18,26 @@ extraFiles:
   - from: THIRD_PARTY_DIFF_LICENSES.txt
     to: THIRD_PARTY_DIFF_LICENSES.txt
 win:
-  target: zip
+  target:
+    - zip
+    - target: nsis
+      arch: x64
   icon: build/icon.ico
+nsis:
+  artifactName: Nesvo-Windows-Setup.${ext}
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
 mac:
-  target: zip
+  target: [zip, dmg]
   icon: build/icon.icns
   identity: null
+  hardenedRuntime: false
+  notarize: false
+dmg:
+  artifactName: Nesvo-macOS-${arch}.${ext}
+  sign: false
 linux:
   target: tar.gz
   executableName: nesvo
