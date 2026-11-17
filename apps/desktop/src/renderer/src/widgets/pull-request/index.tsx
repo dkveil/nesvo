@@ -124,7 +124,9 @@ export default function PullRequestPanel({
         !event.defaultPrevented &&
         !(
           event.target instanceof Element &&
-          event.target.closest('[role="dialog"],[role="menu"]')
+          event.target.closest(
+            '[role="dialog"],[role="menu"],textarea,input:not([type="checkbox"]),[contenteditable="true"]',
+          )
         )
       ) {
         event.preventDefault();

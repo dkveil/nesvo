@@ -16,19 +16,27 @@ type Indicator = { left: number; width: number };
 export function PanelTabs({ value, options, onChange }: PanelTabsProps) {
   const list = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<Indicator | null>(null);
+  const layoutKey = options
+    .map(option => `${option.value}:${option.label}:${option.count ?? ''}`)
+    .join('|');
   useLayoutEffect(() => {
     const measure = () => {
       const active = list.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      if (active)
-        setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+      if (!active) return;
+      const next = { left: active.offsetLeft, width: active.offsetWidth };
+      setIndicator(previous =>
+        previous?.left === next.left && previous.width === next.width
+          ? previous
+          : next,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
     if (list.current) observer.observe(list.current);
     return () => observer.disconnect();
-  }, [value, options]);
+  }, [value, layoutKey]);
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     const index = options.findIndex(option => option.value === value);

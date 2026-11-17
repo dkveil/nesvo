@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import type { PullRequestReference } from '@nesvo/contracts';
 import {
   visualState,
@@ -8,7 +8,10 @@ import {
 
 const STATE_CACHE_MS = 60_000;
 
-const cache = new Map<string, { state: PullRequestVisualState; at: number }>();
+type CachedState = { state: PullRequestVisualState | null; at: number };
+
+const cache = new Map<string, CachedState>();
+const pending = new Set<string>();
 
 type UseLinkedStateParams = {
   hostId: string;
@@ -26,27 +29,30 @@ export function useLinkedState({
   const key = reference
     ? `${hostId}/${reference.repository}#${reference.number}`
     : '';
-  const [loaded, setLoaded] = useState<{
-    key: string;
-    state: PullRequestVisualState;
-  } | null>(null);
+  const [loaded, setLoaded] = useState<CachedState & { key: string }>();
+  const read = useEffectEvent(() =>
+    reference ? api.readPullRequest(reference) : Promise.reject(),
+  );
   useEffect(() => {
-    if (!reference || !enabled) return;
+    if (!key || !enabled || pending.has(key)) return;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < STATE_CACHE_MS) return;
     let current = true;
-    void api.readPullRequest(reference).then(
-      pullRequest => {
-        const state = visualState(pullRequest);
-        cache.set(key, { state, at: Date.now() });
-        if (current) setLoaded({ key, state });
-      },
-      () => undefined,
+    pending.add(key);
+    const settle = (state: PullRequestVisualState | null) => {
+      const entry = { state, at: Date.now() };
+      cache.set(key, entry);
+      pending.delete(key);
+      if (current) setLoaded({ key, ...entry });
+    };
+    void read().then(
+      pullRequest => settle(visualState(pullRequest)),
+      () => settle(null),
     );
     return () => {
       current = false;
     };
-  }, [api, enabled, key, reference]);
+  }, [enabled, key]);
   if (!key) return null;
   if (loaded?.key === key) return loaded.state;
   return cache.get(key)?.state ?? null;

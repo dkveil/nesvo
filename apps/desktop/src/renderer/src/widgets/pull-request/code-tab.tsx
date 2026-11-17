@@ -119,12 +119,10 @@ export function CodeTab({
       '(prefers-reduced-motion: reduce)',
     ).matches;
     requestAnimationFrame(() =>
-      sections.current
-        .get(path)
-        ?.scrollIntoView({
-          block: 'start',
-          behavior: reduced ? 'auto' : 'smooth',
-        }),
+      sections.current.get(path)?.scrollIntoView({
+        block: 'start',
+        behavior: reduced ? 'auto' : 'smooth',
+      }),
     );
   };
   const toggleViewed = (path: string) => {
