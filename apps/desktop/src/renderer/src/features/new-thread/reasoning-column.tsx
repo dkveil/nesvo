@@ -1,7 +1,9 @@
 import { Check } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
 import type { ProviderState } from '@/entities/session';
 import { effortLabel } from '@/entities/session';
+import { ListRow } from '@/shared/ui/list-row';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import { modelEfforts } from './reasoning-effort';
 
 type Props = {
@@ -35,9 +37,11 @@ export function ReasoningColumn({
       data-effort-support={support?.status ?? 'unknown'}
       className="flex w-40 shrink-0 flex-col border-l"
     >
-      <div className="mx-2 mt-1.5 flex h-8 shrink-0 items-center justify-between gap-2 border-b px-1 text-xs">
-        <span className="font-medium text-muted-foreground">Reasoning</span>
-        <span className="min-w-0 truncate text-2xs text-secondary-label">
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <span className="text-xs font-medium text-muted-foreground">
+          Reasoning
+        </span>
+        <span className="min-w-0 truncate text-2xs text-muted-foreground">
           {modelLabel}
         </span>
       </div>
@@ -51,39 +55,37 @@ export function ReasoningColumn({
             const isDefault = option.id === efforts.defaultEffort;
             const isSelected = option.id === selected;
             return (
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={isSelected}
-                data-effort={option.id}
-                data-default={isDefault || undefined}
-                title={option.description || undefined}
-                onClick={() => onChoose(option.id)}
-                className={cn(
-                  'flex h-7 items-center gap-1.5 rounded-sm px-2 text-left text-[13px] font-medium text-foreground/85 transition-colors duration-100 outline-none',
-                  'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                  isSelected && 'text-foreground',
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">
-                  {effortLabel(option.id)}
-                </span>
-                {isDefault && (
-                  <span className="shrink-0 text-2xs font-normal text-secondary-label">
-                    Default
-                  </span>
-                )}
-                {isSelected && (
-                  <Check className="size-3.5 shrink-0" aria-hidden="true" />
-                )}
-              </button>
+              <Hint key={option.id} label={option.description} side="right">
+                <ListRow
+                  selected={isSelected}
+                  title={effortLabel(option.id)}
+                  trailing={
+                    <>
+                      {isDefault && 'Default'}
+                      {isSelected && (
+                        <Check
+                          aria-hidden="true"
+                          className="size-3.5 text-foreground"
+                        />
+                      )}
+                    </>
+                  }
+                  onClick={() => onChoose(option.id)}
+                  mainProps={{
+                    'aria-pressed': isSelected,
+                    'aria-current': undefined,
+                    ...{
+                      'data-effort': option.id,
+                      'data-default': isDefault || undefined,
+                    },
+                  }}
+                />
+              </Hint>
             );
           })}
         </div>
       ) : (
-        <p className="px-3 py-3 text-[11px] leading-5 text-muted-foreground">
-          {notice}
-        </p>
+        <StatusMessage className="px-3 py-3">{notice}</StatusMessage>
       )}
     </div>
   );

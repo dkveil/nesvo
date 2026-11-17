@@ -1,18 +1,21 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
-import { Check, RefreshCw, Search } from 'lucide-react';
+import { useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
   effortLabel,
   modelLabel,
-  providerSlugs,
   providers,
   ProviderGlyph,
   providerStatusLabel,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Listbox } from '@/shared/ui/listbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { StatusDot } from '@/shared/ui/status-dot';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { ComposerChip } from './composer-chip';
 import { ReasoningColumn } from './reasoning-column';
 
@@ -46,33 +49,16 @@ export function ModelPicker({
   onRefreshProvider,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [activeId, setActiveId] = useState('');
-  const search = useRef<HTMLInputElement>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const state = statuses[provider];
   const models = state.status?.models ?? [];
-  const visible = models.filter(option =>
-    `${option.label} ${option.id}`
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase()),
-  );
-  const active =
-    visible.find(option => option.id === activeId) ??
-    visible.find(option => option.id === model) ??
-    visible[0];
-  const currentLabel = model
-    ? (models.find(option => option.id === model)?.label ?? modelLabel(model))
-    : 'No model';
-  const shownLabel = displayLabel ?? currentLabel;
+  const labelOf = (id: string) =>
+    models.find(option => option.id === id)?.label ?? modelLabel(id);
+  const shownLabel = displayLabel ?? (model ? labelOf(model) : 'No model');
   const chipLabel = effort
     ? `${shownLabel} · ${effortLabel(effort)}`
     : shownLabel;
-  const previewModel = active?.id ?? model;
-  const previewLabel =
-    models.find(option => option.id === previewModel)?.label ??
-    modelLabel(previewModel);
-  const listId = 'thread-model-options';
-  const optionId = (id: string) => `${listId}-${id.replace(/[^\w-]/g, '_')}`;
+  const previewModel = activeId ?? model;
   const choose = (id: string) => {
     onChange(provider, id, effort);
     setOpen(false);
@@ -84,51 +70,14 @@ export function ModelPicker({
   const selectProvider = (next: Provider) => {
     const nextModels = statuses[next].status?.models ?? [];
     onChange(next, nextModels[0]?.id ?? '', '');
-    setQuery('');
-    setActiveId('');
-  };
-  const onProviderKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    event.preventDefault();
-    const index = providers.indexOf(provider);
-    const offset = event.key === 'ArrowDown' ? 1 : -1;
-    const next =
-      providers[(index + offset + providers.length) % providers.length];
-    if (next) {
-      selectProvider(next);
-      document
-        .getElementById(`thread-provider-${providerSlugs[next]}`)
-        ?.focus();
-    }
-  };
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing) return;
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      if (!visible.length) return;
-      const index = visible.findIndex(option => option.id === active?.id);
-      const offset = event.key === 'ArrowDown' ? 1 : -1;
-      const next = visible[(index + offset + visible.length) % visible.length];
-      if (next) {
-        setActiveId(next.id);
-        document
-          .getElementById(optionId(next.id))
-          ?.scrollIntoView({ block: 'nearest' });
-      }
-    } else if (event.key === 'Enter' && active) {
-      event.preventDefault();
-      choose(active.id);
-    }
+    setActiveId(null);
   };
   return (
     <Popover
       open={open}
       onOpenChange={next => {
         setOpen(next);
-        if (next) {
-          setQuery('');
-          setActiveId('');
-        }
+        if (next) setActiveId(null);
       }}
     >
       <PopoverTrigger asChild>
@@ -136,166 +85,109 @@ export function ModelPicker({
           disabled={disabled}
           aria-label={triggerLabel}
           title={`${provider} · ${chipLabel}${hint ? ` · ${hint}` : ''}`}
-          className={cn(
-            'h-7 gap-1.5 text-[13px] text-foreground',
-            triggerClassName,
-          )}
+          icon={<ProviderGlyph provider={provider} />}
+          className={cn('text-ui text-foreground', triggerClassName)}
         >
-          <ProviderGlyph provider={provider} />
-          <span className="truncate font-semibold">{shownLabel}</span>
+          <span className="font-semibold">{shownLabel}</span>
           {effort && (
             <span className="shrink-0 text-muted-foreground">
               {effortLabel(effort)}
             </span>
           )}
           {hint && (
-            <span className="shrink-0 font-normal text-muted-foreground/70">
-              · {hint}
-            </span>
+            <span className="shrink-0 text-muted-foreground">· {hint}</span>
           )}
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
         side="top"
         align="end"
-        sideOffset={10}
         collisionPadding={12}
         aria-label="Model"
-        className="flex w-[min(30rem,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0"
-        onOpenAutoFocus={event => {
-          event.preventDefault();
-          search.current?.focus();
-        }}
+        surface="solid"
+        size="lg"
+        padding="none"
+        className="flex max-h-[min(22rem,var(--radix-popover-content-available-height))] overflow-hidden"
       >
         {!lockedProvider && (
-          <div
-            role="radiogroup"
-            aria-label="Provider"
-            className="flex w-10 shrink-0 flex-col items-center gap-1 border-r py-1.5"
-          >
-            {providers.map(item => {
-              const itemState = statuses[item];
-              const ready = itemState.status?.status === 'ready';
-              return (
-                <button
-                  key={item}
-                  id={`thread-provider-${providerSlugs[item]}`}
-                  type="button"
-                  role="radio"
-                  aria-checked={item === provider}
-                  aria-label={item}
-                  tabIndex={item === provider ? 0 : -1}
-                  title={providerStatusLabel(item, itemState)}
-                  onKeyDown={onProviderKeyDown}
-                  onClick={() => selectProvider(item)}
-                  className={cn(
-                    'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
-                    'hover:bg-highlight hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                    'after:absolute after:top-1.5 after:-right-1.5 after:h-4 after:w-0.5 after:rounded-full after:bg-transparent',
-                    item === provider && 'text-foreground after:bg-primary',
-                  )}
-                >
-                  <ProviderGlyph
-                    provider={item}
-                    className="size-4 text-current"
-                  />
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'absolute top-0.5 right-0.5 size-1.5 rounded-full',
-                      ready
-                        ? 'bg-success-foreground'
-                        : 'bg-muted-foreground/50',
-                    )}
-                  />
-                </button>
-              );
-            })}
+          <div className="shrink-0 border-r p-1">
+            <SegmentedControl
+              label="Provider"
+              size="md"
+              iconOnly
+              orientation="vertical"
+              value={provider}
+              onChange={selectProvider}
+              options={providers.map(item => ({
+                value: item,
+                label: item,
+                title: providerStatusLabel(item, statuses[item]),
+                icon: (
+                  <span className="relative flex">
+                    <ProviderGlyph provider={item} className="text-current" />
+                    <StatusDot
+                      tone={
+                        statuses[item].status?.status === 'ready'
+                          ? 'success'
+                          : 'neutral'
+                      }
+                      className="absolute -top-1 -right-1"
+                    />
+                  </span>
+                ),
+              }))}
+            />
           </div>
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="mx-2 mt-1.5 flex h-8 items-center gap-2 border-b px-1 text-muted-foreground transition-colors duration-150 focus-within:border-ring">
-            <Search className="size-3.5 shrink-0" aria-hidden="true" />
-            <input
-              ref={search}
-              type="text"
-              role="combobox"
-              aria-label="Search models"
-              aria-controls={listId}
-              aria-expanded="true"
-              aria-autocomplete="list"
-              aria-activedescendant={active ? optionId(active.id) : undefined}
-              placeholder="Search models…"
-              value={query}
-              onChange={event => {
-                setQuery(event.target.value);
-                setActiveId('');
-              }}
-              onKeyDown={onKeyDown}
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
-            />
-          </div>
-          <ul
-            id={listId}
-            role="listbox"
-            aria-label="Models"
-            className="max-h-64 overflow-y-auto p-1"
-          >
-            {visible.map(option => (
-              <li
-                key={option.id}
-                id={optionId(option.id)}
-                role="option"
-                aria-selected={option.id === model}
-                data-active={option.id === active?.id || undefined}
-                onMouseEnter={() => setActiveId(option.id)}
-                onClick={() => choose(option.id)}
-                className={cn(
-                  'flex h-7 cursor-pointer items-center gap-2 rounded-sm px-2 text-[13px] font-medium',
-                  'data-active:bg-highlight data-active:text-foreground',
-                )}
-              >
-                <ProviderGlyph provider={provider} />
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {option.id === model && (
-                  <Check className="size-3.5 shrink-0" aria-hidden="true" />
-                )}
-              </li>
-            ))}
-            {visible.length === 0 && (
-              <li className="px-2 py-3 text-xs text-muted-foreground">
-                {models.length === 0
-                  ? 'No models reported yet.'
-                  : 'No matching models.'}
-              </li>
-            )}
-          </ul>
-          <div className="flex h-9 items-center justify-between gap-2 border-t px-3 text-[11px] text-muted-foreground">
-            <span role="status" className="min-w-0 truncate">
+          <Listbox
+            key={provider}
+            label="Models"
+            searchable
+            autoFocus
+            searchPlaceholder="Search models…"
+            emptyText={
+              models.length === 0
+                ? 'No models reported yet.'
+                : 'No matching models.'
+            }
+            options={models.map(option => ({
+              value: option.id,
+              label: option.label,
+              keywords: option.id,
+              icon: <ProviderGlyph provider={provider} />,
+            }))}
+            value={model}
+            onActiveChange={setActiveId}
+            onSelect={choose}
+            className="min-h-0 flex-1"
+          />
+          <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-t pr-1.5 pl-3">
+            <StatusMessage
+              tone={state.error ? 'error' : 'info'}
+              icon={false}
+              className="min-w-0 truncate"
+            >
               {state.error || providerStatusLabel(provider, state)}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Refresh ${provider} status`}
-              title={`Refresh ${provider} status`}
+            </StatusMessage>
+            <IconButton
+              label={`Refresh ${provider} status`}
+              size={24}
               disabled={state.loading}
               onClick={() => onRefreshProvider(provider)}
             >
               <RefreshCw
                 className={cn(
-                  'size-3',
                   state.loading && 'animate-spin motion-reduce:animate-none',
                 )}
               />
-            </Button>
+            </IconButton>
           </div>
         </div>
         <ReasoningColumn
           state={state}
           model={previewModel}
-          modelLabel={previewLabel}
+          modelLabel={labelOf(previewModel)}
           selected={previewModel === model ? effort : ''}
           onChoose={chooseEffort}
         />
