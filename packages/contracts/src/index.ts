@@ -52,6 +52,26 @@ import {
   type DecideWorkerPlanInput,
 } from './sessions';
 import {
+  createSessionGroupSchema,
+  deleteSessionGroupSchema,
+  moveSessionGroupSchema,
+  moveSessionSchema,
+  renameSessionSchema,
+  sessionGroupListSchema,
+  setSessionArchivedSchema,
+  setSessionPinnedSchema,
+  updateSessionGroupSchema,
+  type CreateSessionGroupInput,
+  type DeleteSessionGroupInput,
+  type MoveSessionGroupInput,
+  type MoveSessionInput,
+  type RenameSessionInput,
+  type SessionGroupList,
+  type SetSessionArchivedInput,
+  type SetSessionPinnedInput,
+  type UpdateSessionGroupInput,
+} from './session-groups';
+import {
   reviewSchema,
   decideReviewSchema,
   type DecideReviewInput,
@@ -176,6 +196,7 @@ import {
 } from './pull-requests';
 
 export * from './sessions';
+export * from './session-groups';
 export * from './pull-requests';
 export * from './reasoning-effort';
 export * from './activities';
@@ -197,6 +218,10 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('review-changed'), review: reviewSchema }),
   z.strictObject({ type: z.literal('host-disconnected') }),
+  z.strictObject({
+    type: z.literal('session-groups-changed'),
+    list: sessionGroupListSchema,
+  }),
   z.strictObject({
     type: z.literal('scheduled-job-changed'),
     scheduledJob: scheduledJobSchema,
@@ -296,6 +321,47 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('assign-session-workflow'),
     input: assignSessionWorkflowSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-session-groups') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('create-session-group'),
+    input: createSessionGroupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('update-session-group'),
+    input: updateSessionGroupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('move-session-group'),
+    input: moveSessionGroupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-session-group'),
+    input: deleteSessionGroupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('move-session'),
+    input: moveSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('rename-session'),
+    input: renameSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-session-pinned'),
+    input: setSessionPinnedSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-session-archived'),
+    input: setSessionArchivedSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -595,6 +661,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     session: sessionSchema,
   }),
   z.strictObject({
+    type: z.literal('session-groups'),
+    id: z.uuid(),
+    list: sessionGroupListSchema,
+  }),
+  z.strictObject({
     type: z.literal('pull-request-list'),
     id: z.uuid(),
     list: pullRequestListSchema,
@@ -889,6 +960,39 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   assignSessionWorkflow: (
     input: AssignSessionWorkflowInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  listSessionGroups: (hostId?: HostId) => Promise<SessionGroupList>;
+  createSessionGroup: (
+    input: CreateSessionGroupInput,
+    hostId?: HostId,
+  ) => Promise<SessionGroupList>;
+  updateSessionGroup: (
+    input: UpdateSessionGroupInput,
+    hostId?: HostId,
+  ) => Promise<SessionGroupList>;
+  moveSessionGroup: (
+    input: MoveSessionGroupInput,
+    hostId?: HostId,
+  ) => Promise<SessionGroupList>;
+  deleteSessionGroup: (
+    input: DeleteSessionGroupInput,
+    hostId?: HostId,
+  ) => Promise<SessionGroupList>;
+  moveSession: (
+    input: MoveSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  renameSession: (
+    input: RenameSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  setSessionPinned: (
+    input: SetSessionPinnedInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  setSessionArchived: (
+    input: SetSessionArchivedInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   listPullRequests: (

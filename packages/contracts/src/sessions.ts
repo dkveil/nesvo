@@ -126,6 +126,7 @@ export const createSessionSchema = z
     directory: z.string().trim().max(4096),
     effort: reasoningEffortSchema.optional(),
     isolation: sessionIsolationSchema.optional(),
+    groupId: z.uuid().optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -279,6 +280,10 @@ export const sessionSchema = z.strictObject({
   updatedAt: z.iso.datetime(),
   messages: z.array(sessionMessageSchema),
   queue: z.array(queuedMessageSchema).max(sessionQueueLimit).default([]),
+  groupId: z.uuid().nullable().default(null),
+  order: z.number().int().default(0),
+  pinned: z.boolean().default(false),
+  archivedAt: z.iso.datetime().nullable().default(null),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([

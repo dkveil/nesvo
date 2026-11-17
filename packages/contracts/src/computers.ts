@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sessionSchema } from './sessions';
 import { reviewSchema } from './reviews';
+import { sessionGroupListSchema } from './session-groups';
 import {
   scheduledJobRunPageSchema,
   scheduledJobRunSchema,
@@ -28,6 +29,7 @@ export const hostCapabilitySchema = z.enum([
   'session-workflow',
   'pull-requests',
   'history-search',
+  'session-groups',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -197,6 +199,11 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   assistantChangeRefusedEventSchema.extend({
     type: z.literal('workflow-assistant-change-refused'),
     hostId: hostIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-groups-changed'),
+    hostId: hostIdSchema,
+    list: sessionGroupListSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),
