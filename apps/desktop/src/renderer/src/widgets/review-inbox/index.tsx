@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 import type {
   DecideDelegationInput,
   RespondApprovalInput,
@@ -24,7 +24,9 @@ import {
   type ReviewDecisionProps,
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
+import { EmptyState } from '@/shared/ui/empty-state';
 import { Label } from '@/shared/ui/label';
+import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
   Select,
@@ -33,6 +35,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 
 type Props = ReviewDecisionProps & {
   reviews: Review[];
@@ -71,6 +75,130 @@ type ActionRow =
       at: string;
       id: string;
     };
+
+const ROW_COLUMNS = 'minmax(0,1fr) auto';
+
+function FullText({ text, children }: { text: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent variant="panel" className="whitespace-pre-wrap">
+        {text}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+type ActionItemProps = Omit<ComponentProps<'article'>, 'title'> & {
+  title: string;
+  onOpen: () => void;
+  location: string;
+  summary: ReactNode;
+  meta: ReactNode;
+};
+
+function ActionItem({
+  title,
+  onOpen,
+  location,
+  summary,
+  meta,
+  children,
+  ...props
+}: ActionItemProps) {
+  return (
+    <article {...props}>
+      <ListRow density="block" columns={ROW_COLUMNS} className="px-1">
+        <div className="min-w-0 space-y-1">
+          <Button
+            variant="link"
+            size="inline"
+            className="max-w-full justify-start text-ui text-foreground"
+            aria-label={`Open session: ${title}`}
+            onClick={onOpen}
+          >
+            <span className="truncate">{title}</span>
+            <ArrowUpRight className="size-3 text-muted-foreground" />
+          </Button>
+          {location && (
+            <p className="text-2xs text-muted-foreground">{location}</p>
+          )}
+          {summary}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+            {meta}
+          </div>
+        </div>
+        {children}
+      </ListRow>
+    </article>
+  );
+}
+
+function Directory({ path }: { path: string }) {
+  return (
+    <FullText text={path}>
+      <span className="truncate" aria-label={`Working directory: ${path}`}>
+        {directoryLabel(path)}
+      </span>
+    </FullText>
+  );
+}
+
+function Decisions({
+  accept,
+  decline,
+  enabled,
+  onDecide,
+}: {
+  accept: string;
+  decline: string;
+  enabled: boolean;
+  onDecide: (decision: 'accept' | 'decline') => void;
+}) {
+  return (
+    <div className="col-start-2 row-start-1 flex flex-wrap items-center gap-1.5 self-center">
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={!enabled}
+        onClick={() => onDecide('accept')}
+      >
+        {accept}
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={!enabled}
+        onClick={() => onDecide('decline')}
+      >
+        {decline}
+      </Button>
+    </div>
+  );
+}
+
+function OperationStatus({
+  deciding,
+  error,
+}: {
+  deciding: boolean;
+  error: string | undefined;
+}) {
+  return (
+    <>
+      {deciding && (
+        <StatusMessage tone="loading" className="col-span-full">
+          Sending decision…
+        </StatusMessage>
+      )}
+      {error && (
+        <StatusMessage tone="error" className="col-span-full">
+          {error}
+        </StatusMessage>
+      )}
+    </>
+  );
+}
 
 function approvalPreview(approval: Session['pendingApprovals'][number]) {
   const fallback = compactPreview(approval.detail, 360);
@@ -182,29 +310,12 @@ export function ReviewInbox({
     (left, right) =>
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
   );
-  const sessionLink = (sessionId: string, title: string, target: string) => (
-    <button
-      type="button"
-      className="inline-flex max-w-full items-center gap-1.5 text-left text-sm font-medium text-foreground hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      aria-label={`Open session: ${title}`}
-      onClick={() => onSession(sessionId, target)}
-    >
-      <span className="truncate">{title}</span>
-      <ArrowUpRight className="size-3 shrink-0 text-muted-foreground" />
-    </button>
-  );
-  const directory = (path: string) => (
-    <span
-      className="truncate"
-      title={path}
-      aria-label={`Working directory: ${path}`}
-    >
-      {directoryLabel(path)}
-    </span>
-  );
-  const rowClass =
-    'grid grid-cols-1 items-start gap-x-5 gap-y-2 rounded-lg px-3 py-3 transition-colors duration-100 hover:bg-accent focus-within:bg-accent md:grid-cols-[minmax(0,1fr)_auto]';
-  const actionClass = 'flex flex-wrap items-center gap-1.5 self-center';
+  const location = (hostId: string) => {
+    const online = isOperationEnabled({ hostId });
+    if (hostId === 'local' && computers.length <= 1 && online) return '';
+    const name = computers.find(item => item.id === hostId)?.name ?? hostId;
+    return online ? name : `${name} · Offline snapshot`;
+  };
   return (
     <ScrollArea className="min-h-0 min-w-0 flex-1">
       <section
@@ -220,68 +331,53 @@ export function ReviewInbox({
                 ? 'items'
                 : 'pending'}
           </span>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="inbox-filter" className="sr-only">
-              View
-            </Label>
-            <Select
-              value={filter}
-              onValueChange={value => {
-                if (
-                  value === 'pending' ||
-                  value === 'history' ||
-                  value === 'all'
-                )
-                  setFilter(value);
-              }}
-            >
-              <SelectTrigger
-                id="inbox-filter"
-                size="sm"
-                className="h-7 w-28 border-transparent bg-transparent text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground dark:bg-transparent dark:hover:bg-accent"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="history">History</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Label htmlFor="inbox-filter" className="sr-only">
+            View
+          </Label>
+          <Select
+            value={filter}
+            onValueChange={value => {
+              if (value === 'pending' || value === 'history' || value === 'all')
+                setFilter(value);
+            }}
+          >
+            <SelectTrigger id="inbox-filter" variant="ghost" className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="history">History</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {notice}
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3 px-3">
-            <p
-              role="alert"
-              className="text-xs text-destructive [overflow-wrap:anywhere]"
-            >
-              {error}
-            </p>
-            <Button size="md" variant="ghost" onClick={onRefresh}>
+            <StatusMessage tone="error">{error}</StatusMessage>
+            <Button variant="ghost" onClick={onRefresh}>
               Refresh results
             </Button>
           </div>
         )}
         {loading && (
-          <p role="status" className="px-3 py-3 text-xs text-muted-foreground">
+          <StatusMessage tone="loading" className="px-3 py-3">
             Loading results…
-          </p>
+          </StatusMessage>
         )}
         {filter !== 'history' &&
           decisionProps.blockedReason &&
           reviews.some(review => review.status === 'pending') && (
-            <p className="mb-3 px-3 text-2xs text-muted-foreground">
+            <StatusMessage className="mb-3 px-3">
               {decisionProps.blockedReason}
-            </p>
+            </StatusMessage>
           )}
         {filter !== 'history' &&
           !operationEnabled &&
           rows.some(row => row.type !== 'review') && (
-            <p className="mb-3 px-3 text-2xs text-muted-foreground">
+            <StatusMessage className="mb-3 px-3">
               Reconnect to respond to pending requests.
-            </p>
+            </StatusMessage>
           )}
         {rows.length > 0 ? (
           <div className="space-y-px">
@@ -295,34 +391,37 @@ export function ReviewInbox({
                       session.id === review.sessionId &&
                       session.hostId === review.hostId,
                   )?.title ?? review.title;
+                const reviewError =
+                  decisionProps.decisionErrors[entityKey(review)];
                 return (
-                  <article
+                  <ActionItem
                     key={`review/${row.id}`}
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
                     data-host-id={review.hostId}
-                    className={rowClass}
-                  >
-                    <div className="min-w-0 space-y-1">
-                      {sessionLink(
+                    title={title}
+                    onOpen={() =>
+                      onSession(
                         hostKey(review.sessionId, review.hostId),
-                        title,
                         `review-${review.id}`,
-                      )}
-                      {(review.hostId !== 'local' ||
-                        computers.length > 1 ||
-                        !isOperationEnabled({ hostId: review.hostId })) && (
-                        <p className="text-2xs text-muted-foreground">
-                          {computers.find(item => item.id === review.hostId)
-                            ?.name ?? review.hostId}
-                          {!isOperationEnabled({ hostId: review.hostId })
-                            ? ' · Offline snapshot'
-                            : ''}
+                      )
+                    }
+                    location={location(review.hostId)}
+                    summary={
+                      <>
+                        <p className="line-clamp-2 text-ui text-muted-foreground [overflow-wrap:anywhere]">
+                          {reviewPreview(review)}
                         </p>
-                      )}
-                      <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-                        {reviewPreview(review)}
-                      </p>
-                      <p className="flex flex-wrap gap-x-2 gap-y-1 text-2xs leading-4 text-muted-foreground">
+                        {review.decision?.feedback && (
+                          <FullText text={review.decision.feedback}>
+                            <p className="line-clamp-1 text-2xs text-muted-foreground">
+                              {compactPreview(review.decision.feedback, 200)}
+                            </p>
+                          </FullText>
+                        )}
+                      </>
+                    }
+                    meta={
+                      <>
                         {origin && (
                           <span
                             data-origin="automation"
@@ -341,16 +440,9 @@ export function ReviewInbox({
                         <time dateTime={review.createdAt}>
                           {reviewDate(review.createdAt)}
                         </time>
-                      </p>
-                      {review.decision?.feedback && (
-                        <p
-                          className="line-clamp-1 text-2xs text-muted-foreground"
-                          title={review.decision.feedback}
-                        >
-                          {compactPreview(review.decision.feedback, 200)}
-                        </p>
-                      )}
-                    </div>
+                      </>
+                    }
+                  >
                     {review.status === 'pending' ? (
                       <ReviewDecision
                         compact
@@ -358,59 +450,42 @@ export function ReviewInbox({
                         {...decisionProps}
                       />
                     ) : (
-                      decisionProps.decisionErrors[entityKey(review)] && (
-                        <p
-                          role="alert"
-                          className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
-                        >
-                          {decisionProps.decisionErrors[entityKey(review)]}
-                        </p>
+                      reviewError && (
+                        <StatusMessage tone="error" className="col-span-full">
+                          {reviewError}
+                        </StatusMessage>
                       )
                     )}
-                  </article>
+                  </ActionItem>
                 );
               }
               const { session } = row;
-              const computerName =
-                computers.find(item => item.id === session.hostId)?.name ??
-                session.hostId;
+              const operationError = operationErrors[entityKey(session)];
               if (row.type === 'approval') {
                 const { approval } = row;
                 const deciding = !!approvalPending[row.id];
                 const enabled =
                   operationEnabled && isOperationEnabled(session) && !deciding;
-                const preview = approvalPreview(approval) || approval.title;
                 return (
-                  <article
+                  <ActionItem
                     key={`approval/${row.id}`}
                     aria-label={`Operation approval: ${session.title}`}
                     data-approval-id={approval.id}
                     data-host-id={session.hostId}
-                    className={rowClass}
-                  >
-                    <div className="min-w-0 space-y-1">
-                      {sessionLink(
-                        entityKey(session),
-                        session.title,
-                        `approval-${approval.id}`,
-                      )}
-                      {(session.hostId !== 'local' ||
-                        computers.length > 1 ||
-                        !isOperationEnabled(session)) && (
-                        <p className="text-2xs text-muted-foreground">
-                          {computerName}
-                          {!isOperationEnabled(session)
-                            ? ' · Offline snapshot'
-                            : ''}
+                    title={session.title}
+                    onOpen={() =>
+                      onSession(entityKey(session), `approval-${approval.id}`)
+                    }
+                    location={location(session.hostId)}
+                    summary={
+                      <FullText text={`${approval.title}\n${approval.detail}`}>
+                        <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
+                          {approvalPreview(approval) || approval.title}
                         </p>
-                      )}
-                      <p
-                        className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
-                        title={`${approval.title}\n${approval.detail}`}
-                      >
-                        {preview}
-                      </p>
-                      <p className="flex items-center gap-2 text-2xs leading-4 text-muted-foreground">
+                      </FullText>
+                    }
+                    meta={
+                      <>
                         <span className="shrink-0">
                           {approval.kind === 'command'
                             ? 'Command approval'
@@ -418,70 +493,34 @@ export function ReviewInbox({
                           · {session.provider}
                         </span>
                         <span>·</span>
-                        {directory(approval.directory ?? session.directory)}
-                      </p>
-                    </div>
-                    <div className={actionClass}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 px-2.5 text-[13px] font-normal"
-                        disabled={!enabled}
-                        onClick={() => {
-                          if (session.runId)
-                            onApproval(
-                              {
-                                sessionId: session.id,
-                                runId: session.runId,
-                                requestId: approval.id,
-                                decision: 'accept',
-                              },
-                              session.hostId,
-                            );
-                        }}
-                      >
-                        Allow once
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-[13px] font-normal text-muted-foreground"
-                        disabled={!enabled}
-                        onClick={() => {
-                          if (session.runId)
-                            onApproval(
-                              {
-                                sessionId: session.id,
-                                runId: session.runId,
-                                requestId: approval.id,
-                                decision: 'decline',
-                              },
-                              session.hostId,
-                            );
-                        }}
-                      >
-                        Deny
-                      </Button>
-                    </div>
-                    {deciding && (
-                      <p
-                        role="status"
-                        className="col-span-full text-2xs text-muted-foreground"
-                      >
-                        Sending decision…
-                      </p>
-                    )}
-                    {operationErrors[entityKey(session)] && (
-                      <p
-                        role="alert"
-                        className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
-                      >
-                        {operationErrors[entityKey(session)]}
-                      </p>
-                    )}
-                  </article>
+                        <Directory
+                          path={approval.directory ?? session.directory}
+                        />
+                      </>
+                    }
+                  >
+                    <Decisions
+                      accept="Allow once"
+                      decline="Deny"
+                      enabled={enabled}
+                      onDecide={decision => {
+                        if (session.runId)
+                          onApproval(
+                            {
+                              sessionId: session.id,
+                              runId: session.runId,
+                              requestId: approval.id,
+                              decision,
+                            },
+                            session.hostId,
+                          );
+                      }}
+                    />
+                    <OperationStatus
+                      deciding={deciding}
+                      error={operationError}
+                    />
+                  </ActionItem>
                 );
               }
               const { delegation } = row;
@@ -489,132 +528,80 @@ export function ReviewInbox({
               const enabled =
                 operationEnabled && isOperationEnabled(session) && !deciding;
               return (
-                <article
+                <ActionItem
                   key={`delegation/${row.id}`}
                   aria-label={`Start worker: ${delegation.title}`}
                   data-host-id={session.hostId}
-                  className={rowClass}
-                >
-                  <div className="min-w-0 space-y-1">
-                    {sessionLink(
-                      entityKey(session),
-                      session.title,
-                      `delegation-${delegation.id}`,
-                    )}
-                    {(session.hostId !== 'local' ||
-                      computers.length > 1 ||
-                      !isOperationEnabled(session)) && (
-                      <p className="text-2xs text-muted-foreground">
-                        {computerName}
-                        {!isOperationEnabled(session)
-                          ? ' · Offline snapshot'
-                          : ''}
+                  title={session.title}
+                  onOpen={() =>
+                    onSession(entityKey(session), `delegation-${delegation.id}`)
+                  }
+                  location={location(session.hostId)}
+                  summary={
+                    <FullText text={delegation.task}>
+                      <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
+                        {delegation.title}:{' '}
+                        {compactPreview(delegation.task, 180)}
                       </p>
-                    )}
-                    <p
-                      className="line-clamp-2 text-[13px] leading-5 [overflow-wrap:anywhere]"
-                      title={delegation.task}
-                    >
-                      {delegation.title}: {compactPreview(delegation.task, 180)}
-                    </p>
-                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs leading-4 text-muted-foreground">
+                    </FullText>
+                  }
+                  meta={
+                    <>
                       <span>
                         Worker · {delegation.provider} ·{' '}
                         {modelLabel(delegation.model)} ·{' '}
                         {modeLabel(delegation.provider, delegation.mode)}
                       </span>
-                      <span
-                        title={delegation.scope}
-                        aria-label={`Scope: ${delegation.scope}`}
-                        className="max-w-40 truncate"
-                      >
-                        {delegation.scope}
-                      </span>
-                      {directory(delegation.directory)}
-                    </p>
-                  </div>
-                  <div className={actionClass}>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      className="h-7 px-2.5 text-[13px] font-normal"
-                      disabled={!enabled}
-                      onClick={() => {
-                        if (session.runId)
-                          onDelegation(
-                            {
-                              sessionId: session.id,
-                              runId: session.runId,
-                              delegationId: delegation.id,
-                              decision: 'accept',
-                            },
-                            session.hostId,
-                          );
-                      }}
-                    >
-                      Approve worker
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-[13px] font-normal text-muted-foreground"
-                      disabled={!enabled}
-                      onClick={() => {
-                        if (session.runId)
-                          onDelegation(
-                            {
-                              sessionId: session.id,
-                              runId: session.runId,
-                              delegationId: delegation.id,
-                              decision: 'decline',
-                            },
-                            session.hostId,
-                          );
-                      }}
-                    >
-                      Decline
-                    </Button>
-                  </div>
-                  {deciding && (
-                    <p
-                      role="status"
-                      className="col-span-full text-2xs text-muted-foreground"
-                    >
-                      Sending decision…
-                    </p>
-                  )}
-                  {operationErrors[entityKey(session)] && (
-                    <p
-                      role="alert"
-                      className="col-span-full text-xs text-destructive [overflow-wrap:anywhere]"
-                    >
-                      {operationErrors[entityKey(session)]}
-                    </p>
-                  )}
-                </article>
+                      <FullText text={delegation.scope}>
+                        <span
+                          aria-label={`Scope: ${delegation.scope}`}
+                          className="max-w-40 truncate"
+                        >
+                          {delegation.scope}
+                        </span>
+                      </FullText>
+                      <Directory path={delegation.directory} />
+                    </>
+                  }
+                >
+                  <Decisions
+                    accept="Approve worker"
+                    decline="Decline"
+                    enabled={enabled}
+                    onDecide={decision => {
+                      if (session.runId)
+                        onDelegation(
+                          {
+                            sessionId: session.id,
+                            runId: session.runId,
+                            delegationId: delegation.id,
+                            decision,
+                          },
+                          session.hostId,
+                        );
+                    }}
+                  />
+                  <OperationStatus deciding={deciding} error={operationError} />
+                </ActionItem>
               );
             })}
           </div>
         ) : (
           !loading &&
           !error && (
-            <div className="flex min-h-80 flex-col items-center justify-center gap-2 text-center">
-              <span className="mb-2 flex size-10 items-center justify-center rounded-xl border bg-card text-muted-foreground">
-                <Inbox className="size-4.5" aria-hidden="true" />
-              </span>
-              <h2 className="text-[15px] font-semibold tracking-tight">
-                {filter === 'history'
+            <EmptyState
+              icon={Inbox}
+              title={
+                filter === 'history'
                   ? 'No past decisions'
-                  : 'You are all caught up'}
-              </h2>
-              <p className="max-w-sm text-xs leading-5 text-muted-foreground">
-                {filter === 'history'
+                  : 'You are all caught up'
+              }
+              description={
+                filter === 'history'
                   ? 'Decisions and feedback will appear here.'
-                  : 'Requests and completed results will appear here.'}
-              </p>
-            </div>
+                  : 'Requests and completed results will appear here.'
+              }
+            />
           )
         )}
       </section>
