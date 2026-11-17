@@ -750,8 +750,13 @@ if (args.length === 1 && args[0] === '--version') {
       type: 'result',
       subtype: 'error_during_execution',
       is_error: true,
-      result: 'API Error: Connection error (ECONNRESET).',
+      errors: ['API Error: Connection error (ECONNRESET).'],
     });
+  } else if (command === 'fixture:result-fail-wording') {
+    const text =
+      'The authentication module fails on network timeouts; please run login checks.';
+    start(text);
+    finish(text, true);
   } else if (command === 'fixture:result-fail') {
     start('Fixture unsuccessful result.');
     startRead();

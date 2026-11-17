@@ -3,11 +3,11 @@ import type { SessionFailure } from '@nesvo/contracts';
 export type FailureKind = SessionFailure['kind'];
 
 const signInPattern =
-  /not logged in|authentication|unauthenticated|please run .*login|invalid api key|\b401\b/i;
+  /not logged in|please run `?\/?(?:claude )?(?:auth )?login`?|invalid api key|authentication_error|authentication_failed|\b401\b/i;
 const networkPattern =
-  /ECONNRESET|ENOTFOUND|ETIMEDOUT|fetch failed|network|socket hang up|\b503\b|\b529\b|overloaded/i;
+  /ECONNRESET|ENOTFOUND|ETIMEDOUT|fetch failed|socket hang up|network error|\b503\b|\b529\b|overloaded_error/i;
 
-export function textFailureKind(text: string): FailureKind | null {
+export function errorFailureKind(text: string): FailureKind | null {
   if (signInPattern.test(text)) return 'sign-in';
   if (networkPattern.test(text)) return 'network';
   return null;

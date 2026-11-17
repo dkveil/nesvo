@@ -28,7 +28,7 @@ import {
 import {
   ProviderFailureError,
   sessionFailure,
-  textFailureKind,
+  errorFailureKind,
   type FailureKind,
 } from './failure';
 import {
@@ -112,7 +112,7 @@ function codexFailure(
   if (/timed out after ten minutes/.test(message))
     return sessionFailure('timeout', message);
   if (/codex login/i.test(message)) return sessionFailure('sign-in', message);
-  return sessionFailure(textFailureKind(message) ?? 'provider', message);
+  return sessionFailure(errorFailureKind(message) ?? 'provider', message);
 }
 
 type Executable = { command: string; prefix: string[] };

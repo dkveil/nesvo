@@ -16691,6 +16691,11 @@ test(
       kind: 'provider',
       resetsAt: null,
     });
+    await failed(claude, 'fixture:result-fail-wording', {
+      kind: 'provider',
+      message:
+        'The authentication module fails on network timeouts; please run login checks.',
+    });
     const crashed = await failed(
       await create('Claude Code', 'sonnet'),
       'fixture:crash',
@@ -16710,7 +16715,7 @@ test(
       recovered.messages.filter(
         message => message.author === 'agent' && message.failure,
       ).length,
-      4,
+      5,
     );
 
     const codex = await create('Codex', 'fixture-codex');

@@ -27,7 +27,7 @@ import {
 import {
   ProviderFailureError,
   sessionFailure,
-  textFailureKind,
+  errorFailureKind,
   type FailureKind,
 } from './failure';
 import { claudeUsageResult } from './claude-usage';
@@ -1081,7 +1081,7 @@ export function startClaude(options: {
       };
       const reportProviderFailure = (message: string, evidence: string) => {
         providerFailure = safeMessage(message);
-        providerFailureKind = textFailureKind(evidence) ?? 'provider';
+        providerFailureKind = errorFailureKind(evidence) ?? 'provider';
       };
       const armTimeout = () => {
         clearTimeout(timer);
@@ -1632,7 +1632,7 @@ export function startClaude(options: {
                 'Claude did not complete the turn.',
             );
             providerFailureKind =
-              (reported ? textFailureKind(reported) : null) ?? previousKind;
+              (errors ? errorFailureKind(errors) : null) ?? previousKind;
           } else if (!lastText && !providerFailure && !rateLimitFailure) {
             const fallback =
               typeof value.result === 'string' && value.result
@@ -1791,7 +1791,7 @@ export function startClaude(options: {
           ? `Claude Code exited with code ${exit.code}: ${output}`
           : `Claude Code exited with code ${exit.code}.`;
         throw new ProviderFailureError(
-          sessionFailure(textFailureKind(output) ?? 'crash', message, {
+          sessionFailure(errorFailureKind(output) ?? 'crash', message, {
             exitCode: exit.code,
             detail: stderr.trim()
               ? safeMessage(stderr.trim().slice(-4000))
