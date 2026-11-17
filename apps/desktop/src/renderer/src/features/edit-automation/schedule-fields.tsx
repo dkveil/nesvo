@@ -3,13 +3,11 @@ import {
   formatOccurrence,
   listTimeZones,
   previewSchedule,
-  scheduleKindLabels,
-  scheduleKinds,
   weekdayNames,
   weekdayOrder,
 } from '@/entities/scheduled-job';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import {
   Select,
   SelectContent,
@@ -17,13 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import { SegmentedControl } from '@/shared/ui/segmented-control';
 import {
   scheduleOf,
   type AutomationErrors,
   type AutomationValues,
 } from './automation-form';
-import { FieldError } from './field-error';
+import { errorMessages, messagesId } from './field-messages';
+import { RepeatField } from './repeat-field';
 
 type Props = {
   values: AutomationValues;
@@ -59,24 +57,20 @@ export function ScheduleFields({
     : [values.timeZone, ...timeZones];
   const preview = previewText(values);
   return (
-    <fieldset className="space-y-3" disabled={disabled}>
-      <legend className="mb-2 text-xs font-medium">Schedule</legend>
-      <SegmentedControl
-        label="Repeat"
-        size="md"
-        fullWidth
+    <fieldset className="space-y-4" disabled={disabled}>
+      <legend className="sr-only">Schedule</legend>
+      <RepeatField
+        id="automation-repeat"
         value={values.scheduleKind}
-        options={scheduleKinds.map(kind => ({
-          value: kind,
-          label: scheduleKindLabels[kind],
-        }))}
+        disabled={disabled}
         onChange={scheduleKind => onChange({ scheduleKind })}
       />
       {values.scheduleKind === 'interval' ? (
-        <div className="space-y-1.5">
-          <Label htmlFor="automation-minutes" className="text-xs">
-            Every N minutes (min {SCHEDULED_JOB_MIN_INTERVAL_MINUTES})
-          </Label>
+        <Field
+          id="automation-minutes"
+          label={`Every N minutes (min ${SCHEDULED_JOB_MIN_INTERVAL_MINUTES})`}
+          messages={errorMessages(errors.minutes)}
+        >
           <Input
             size="md"
             id="automation-minutes"
@@ -84,22 +78,16 @@ export function ScheduleFields({
             inputMode="numeric"
             value={values.minutes}
             aria-invalid={!!errors.minutes}
-            aria-describedby={
-              errors.minutes ? 'automation-minutes-error' : undefined
-            }
+            aria-describedby={messagesId('automation-minutes', errors.minutes)}
             onChange={event => onChange({ minutes: event.target.value })}
             onBlur={() => onBlur('minutes')}
-            className="h-8 w-32 text-[13px]"
+            className="w-32"
           />
-          <FieldError id="automation-minutes-error" message={errors.minutes} />
-        </div>
+        </Field>
       ) : (
         <div className="flex flex-wrap items-start gap-3">
           {values.scheduleKind === 'weekly' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="automation-weekday" className="text-xs">
-                Day
-              </Label>
+            <Field id="automation-weekday" label="Day">
               <Select
                 value={String(values.weekday)}
                 onValueChange={value => onChange({ weekday: Number(value) })}
@@ -107,7 +95,7 @@ export function ScheduleFields({
                 <SelectTrigger
                   id="automation-weekday"
                   size="md"
-                  className="w-36 text-[13px]"
+                  className="w-36"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -119,12 +107,13 @@ export function ScheduleFields({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </Field>
           )}
-          <div className="space-y-1.5">
-            <Label htmlFor="automation-time" className="text-xs">
-              Time
-            </Label>
+          <Field
+            id="automation-time"
+            label="Time"
+            messages={errorMessages(errors.time)}
+          >
             <Input
               size="md"
               id="automation-time"
@@ -132,21 +121,29 @@ export function ScheduleFields({
               type="time"
               value={values.time}
               aria-invalid={!!errors.time}
-              aria-describedby={
-                errors.time ? 'automation-time-error' : undefined
-              }
+              aria-describedby={messagesId('automation-time', errors.time)}
               onChange={event => onChange({ time: event.target.value })}
               onBlur={() => onBlur('time')}
-              className="h-8 w-28 text-[13px]"
+              className="w-28"
             />
-            <FieldError id="automation-time-error" message={errors.time} />
-          </div>
+          </Field>
         </div>
       )}
-      <div className="space-y-1.5">
-        <Label htmlFor="automation-time-zone" className="text-xs">
-          Time zone
-        </Label>
+      <Field
+        id="automation-time-zone"
+        label="Time zone"
+        messages={errorMessages(errors.timeZone)}
+        hint={
+          <>
+            {preview && (
+              <span role="status" className="block tabular-nums">
+                {preview}
+              </span>
+            )}
+            Missed runs are skipped, never caught up.
+          </>
+        }
+      >
         <Select
           value={values.timeZone}
           onValueChange={value => {
@@ -157,12 +154,13 @@ export function ScheduleFields({
           <SelectTrigger
             id="automation-time-zone"
             data-field="timeZone"
-            aria-describedby={
-              errors.timeZone ? 'automation-time-zone-error' : undefined
-            }
+            aria-describedby={messagesId(
+              'automation-time-zone',
+              errors.timeZone,
+            )}
             size="md"
             aria-invalid={!!errors.timeZone}
-            className="w-full max-w-64 text-[13px]"
+            className="w-full max-w-64"
           >
             <SelectValue />
           </SelectTrigger>
@@ -174,19 +172,7 @@ export function ScheduleFields({
             ))}
           </SelectContent>
         </Select>
-        <FieldError id="automation-time-zone-error" message={errors.timeZone} />
-      </div>
-      {preview && (
-        <p
-          role="status"
-          className="text-2xs leading-4 text-muted-foreground tabular-nums"
-        >
-          {preview}
-        </p>
-      )}
-      <p className="text-2xs leading-4 text-muted-foreground">
-        Missed runs are skipped, never caught up.
-      </p>
+      </Field>
     </fieldset>
   );
 }

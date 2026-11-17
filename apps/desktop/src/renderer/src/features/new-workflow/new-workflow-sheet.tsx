@@ -8,10 +8,10 @@ import {
 import { errorDetail } from '@/entities/session';
 import { HostPicker } from '@/features/new-thread/host-picker';
 import { LocationPicker } from '@/features/new-thread/location-picker';
-import { FieldError } from '@/features/edit-automation/field-error';
+import { errorMessages } from '@/features/edit-automation/field-messages';
 import { Button } from '@/shared/ui/button';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
   Sheet,
@@ -21,6 +21,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/shared/ui/sheet';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Textarea } from '@/shared/ui/textarea';
 
 export type NewWorkflowDraft = {
@@ -138,12 +140,12 @@ export function NewWorkflowSheet({
       }}
     >
       <SheetContent
-        className="w-full gap-0 bg-card p-0 sm:max-w-md"
+        className="w-full sm:max-w-md"
         aria-describedby={`${id}-description`}
       >
-        <SheetHeader className="border-b px-5 py-4">
-          <SheetTitle className="text-sm">New workflow</SheetTitle>
-          <SheetDescription id={`${id}-description`} className="text-xs">
+        <SheetHeader>
+          <SheetTitle>New workflow</SheetTitle>
+          <SheetDescription id={`${id}-description`}>
             A graph of steps that checks a task. The graph editor opens with
             these details and writes the file when you save.
           </SheetDescription>
@@ -158,11 +160,17 @@ export function NewWorkflowSheet({
           }}
         >
           <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-5 px-5 py-4">
-              <div className="space-y-1.5">
-                <Label htmlFor={`${id}-name`} className="text-xs">
-                  Name
-                </Label>
+            <div className="space-y-4 px-5 py-4">
+              <Field
+                id={`${id}-name`}
+                label="Name"
+                hint={
+                  visibleNameError
+                    ? undefined
+                    : 'The name is the file name and stays.'
+                }
+                messages={errorMessages(visibleNameError)}
+              >
                 <Input
                   size="md"
                   id={`${id}-name`}
@@ -174,32 +182,25 @@ export function NewWorkflowSheet({
                   spellCheck={false}
                   aria-invalid={!!visibleNameError}
                   aria-describedby={
-                    visibleNameError ? `${id}-name-error` : `${id}-name-hint`
+                    visibleNameError ? `${id}-name-messages` : `${id}-name-hint`
                   }
                   disabled={pending}
                   onChange={event => setName(event.target.value)}
                   onBlur={() => setTouched(true)}
-                  className="h-8 font-mono text-[13px]"
+                  className="font-mono"
                 />
-                <FieldError
-                  id={`${id}-name-error`}
-                  message={visibleNameError}
-                />
-                {!visibleNameError && (
-                  <p
-                    id={`${id}-name-hint`}
-                    className="text-2xs leading-4 text-muted-foreground"
-                  >
-                    The name is the file name and stays.
-                  </p>
+              </Field>
+              <Field
+                id={`${id}-description-field`}
+                label="Description"
+                messages={errorMessages(
+                  descriptionTooLong
+                    ? `At most ${workflowDefinitionLimits.description} characters.`
+                    : '',
                 )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={`${id}-description-field`} className="text-xs">
-                  Description
-                </Label>
+              >
                 <Textarea
-                  size="lg"
+                  size="md"
                   id={`${id}-description-field`}
                   value={description}
                   maxLength={workflowDefinitionLimits.description + 1}
@@ -207,19 +208,18 @@ export function NewWorkflowSheet({
                   aria-invalid={descriptionTooLong}
                   disabled={pending}
                   onChange={event => setDescription(event.target.value)}
-                  className="min-h-16 text-[13px] leading-5"
                 />
-                <FieldError
-                  id={`${id}-description-error`}
-                  message={
-                    descriptionTooLong
-                      ? `At most ${workflowDefinitionLimits.description} characters.`
-                      : ''
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium">Computer and folder</span>
+              </Field>
+              <Field
+                id={`${id}-location`}
+                label="Computer and folder"
+                as="span"
+                hint={
+                  trimmedDirectory
+                    ? 'The project is the nearest folder with .git at or above this folder.'
+                    : 'Without a folder the workflow is saved globally.'
+                }
+              >
                 <div className="flex min-w-0 flex-wrap items-center gap-1">
                   <HostPicker
                     computers={computers}
@@ -237,99 +237,68 @@ export function NewWorkflowSheet({
                     onChange={setDirectory}
                   />
                 </div>
-                <p className="text-2xs leading-4 text-muted-foreground">
-                  {trimmedDirectory
-                    ? 'The project is the nearest folder with .git at or above this folder.'
-                    : 'Without a folder the workflow is saved globally.'}
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium">Scope</span>
-                <div
-                  role="radiogroup"
-                  aria-label="Scope"
-                  className="flex gap-1"
-                >
-                  {scopeOptions.map(option => {
-                    const disabled =
-                      pending ||
-                      (option.value === 'project' && !trimmedDirectory);
-                    const checked = effectiveScope === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={checked}
-                        disabled={disabled}
-                        title={
-                          option.value === 'project' && !trimmedDirectory
-                            ? 'Choose a folder to save in the project.'
-                            : option.hint
-                        }
-                        onClick={() => setScope(option.value)}
-                        className={
-                          checked
-                            ? 'h-7 rounded-md border border-ring bg-highlight px-2.5 text-xs font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring'
-                            : 'h-7 rounded-md border px-2.5 text-xs text-muted-foreground transition-colors duration-100 outline-none enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
-                        }
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-2xs leading-4 text-muted-foreground">
-                  {
-                    scopeOptions.find(option => option.value === effectiveScope)
-                      ?.hint
-                  }
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={`${id}-notes`} className="text-xs">
-                  Notes
-                </Label>
+              </Field>
+              <Field
+                id={`${id}-scope`}
+                label="Scope"
+                as="span"
+                hint={
+                  scopeOptions.find(option => option.value === effectiveScope)
+                    ?.hint
+                }
+              >
+                <SegmentedControl
+                  label="Scope"
+                  value={effectiveScope}
+                  disabled={pending}
+                  options={scopeOptions.map(option => ({
+                    value: option.value,
+                    label: option.label,
+                    disabled: option.value === 'project' && !trimmedDirectory,
+                    title:
+                      option.value === 'project' && !trimmedDirectory
+                        ? 'Choose a folder to save in the project.'
+                        : option.hint,
+                  }))}
+                  onChange={setScope}
+                />
+              </Field>
+              <Field id={`${id}-notes`} label="Notes">
                 <Textarea
-                  size="lg"
+                  size="md"
                   id={`${id}-notes`}
                   value={body}
                   maxLength={workflowDefinitionLimits.body}
                   placeholder="Free text kept below the frontmatter of the workflow file."
                   disabled={pending}
                   onChange={event => setBody(event.target.value)}
-                  className="min-h-20 text-[13px] leading-5"
+                  className="min-h-20"
                 />
-              </div>
+              </Field>
             </div>
           </ScrollArea>
-          <SheetFooter className="gap-2 border-t px-5 py-3">
+          <SheetFooter className="flex-wrap">
             {(error || blockedReason) && (
-              <p
-                role="alert"
-                className="text-xs text-destructive [overflow-wrap:anywhere]"
-              >
+              <StatusMessage tone="error" className="w-full">
                 {error || blockedReason}
-              </p>
+              </StatusMessage>
             )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="md"
-                disabled={pending}
-                onClick={onClose}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                size="md"
-                disabled={pending || !!blockedReason}
-              >
-                {pending ? 'Opening…' : 'Create and open'}
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="md"
+              disabled={pending}
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="md"
+              disabled={pending || !!blockedReason}
+            >
+              {pending ? 'Opening…' : 'Create and open'}
+            </Button>
           </SheetFooter>
         </form>
       </SheetContent>

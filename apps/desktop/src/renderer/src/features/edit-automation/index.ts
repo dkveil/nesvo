@@ -5,3 +5,4 @@ export {
   newAutomationValues,
   type AutomationValues,
 } from './automation-form';
+export { RepeatField } from './repeat-field';

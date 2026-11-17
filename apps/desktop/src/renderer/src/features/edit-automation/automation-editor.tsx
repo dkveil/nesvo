@@ -14,7 +14,9 @@ import {
   modelEfforts,
   resolveEffort,
 } from '@/features/new-thread/reasoning-effort';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -26,6 +28,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/shared/ui/sheet';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
 import { Textarea } from '@/shared/ui/textarea';
 import {
@@ -36,7 +39,7 @@ import {
   type AutomationField,
   type AutomationValues,
 } from './automation-form';
-import { FieldError } from './field-error';
+import { errorMessages, messagesId } from './field-messages';
 import { ScheduleFields } from './schedule-fields';
 
 type SaveInput = Omit<SaveScheduledJobInput, 'expectedRevision'>;
@@ -135,6 +138,14 @@ export function AutomationEditor({
         : !connected
           ? `${computer.name} is offline. Connect it to save this automation.`
           : '';
+  const locationHints = [
+    values.hostId === 'local' ? 'Runs only while Nesvo is open.' : '',
+    values.workflow
+      ? 'A workflow automation stays in the project of its workflow.'
+      : editing
+        ? 'An automation stays on the computer it was created on.'
+        : '',
+  ].filter(Boolean);
   const touch = (field: AutomationField) =>
     setTouched(previous =>
       previous.includes(field) ? previous : [...previous, field],
@@ -195,12 +206,12 @@ export function AutomationEditor({
         if (!open && !pending) onClose();
       }}
     >
-      <SheetContent className="w-full gap-0 bg-card p-0 sm:max-w-md">
-        <SheetHeader className="border-b px-5 py-4">
-          <SheetTitle className="text-sm">
+      <SheetContent className="w-full sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle>
             {editing ? 'Edit automation' : 'New automation'}
           </SheetTitle>
-          <SheetDescription className="text-xs">
+          <SheetDescription>
             {values.workflow
               ? 'Runs a workflow on a schedule. Each run is a workflow run with its result in the Inbox.'
               : 'Runs a read-only prompt on a schedule. Each run is a session with its result in the Inbox.'}
@@ -216,11 +227,12 @@ export function AutomationEditor({
           }}
         >
           <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-5 px-5 py-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="automation-name" className="text-xs">
-                  Name
-                </Label>
+            <div className="space-y-4 px-5 py-4">
+              <Field
+                id="automation-name"
+                label="Name"
+                messages={errorMessages(visible('name'))}
+              >
                 <Input
                   size="md"
                   id="automation-name"
@@ -230,58 +242,62 @@ export function AutomationEditor({
                   maxLength={120}
                   placeholder="Morning summary"
                   aria-invalid={!!visible('name')}
-                  aria-describedby={
-                    visible('name') ? 'automation-name-error' : undefined
-                  }
+                  aria-describedby={messagesId(
+                    'automation-name',
+                    visible('name'),
+                  )}
                   disabled={pending}
                   onChange={event => change({ name: event.target.value })}
                   onBlur={() => touch('name')}
-                  className="h-8 text-[13px]"
                 />
-                <FieldError
-                  id="automation-name-error"
-                  message={visible('name')}
-                />
-              </div>
+              </Field>
               {values.workflow ? (
-                <div className="space-y-1.5">
-                  <span className="text-xs font-medium">Workflow</span>
+                <Field id="automation-workflow" label="Workflow" as="span">
                   <p
                     data-field="workflow"
-                    className="text-[13px] text-muted-foreground [overflow-wrap:anywhere]"
+                    className="text-ui text-muted-foreground [overflow-wrap:anywhere]"
                   >
                     {values.workflow.name} · {values.workflow.specPath}
                   </p>
-                </div>
+                </Field>
               ) : (
-                <div className="space-y-1.5">
-                  <Label htmlFor="automation-prompt" className="text-xs">
-                    Prompt
-                  </Label>
+                <Field
+                  id="automation-prompt"
+                  label="Prompt"
+                  messages={errorMessages(visible('prompt'))}
+                >
                   <Textarea
-                    size="lg"
+                    size="md"
                     id="automation-prompt"
                     data-field="prompt"
                     value={values.prompt}
                     maxLength={9000}
                     placeholder="Summarize what changed since yesterday."
                     aria-invalid={!!visible('prompt')}
-                    aria-describedby={
-                      visible('prompt') ? 'automation-prompt-error' : undefined
-                    }
+                    aria-describedby={messagesId(
+                      'automation-prompt',
+                      visible('prompt'),
+                    )}
                     disabled={pending}
                     onChange={event => change({ prompt: event.target.value })}
                     onBlur={() => touch('prompt')}
-                    className="min-h-24 text-[13px] leading-5"
+                    className="min-h-24"
                   />
-                  <FieldError
-                    id="automation-prompt-error"
-                    message={visible('prompt')}
-                  />
-                </div>
+                </Field>
               )}
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium">Computer and folder</span>
+              <Field
+                id="automation-location"
+                label="Computer and folder"
+                as="span"
+                hint={
+                  locationHints.length > 0 &&
+                  locationHints.map(hint => (
+                    <span key={hint} className="block">
+                      {hint}
+                    </span>
+                  ))
+                }
+              >
                 <div className="flex min-w-0 flex-wrap items-center gap-1">
                   <HostPicker
                     computers={computers}
@@ -299,32 +315,27 @@ export function AutomationEditor({
                     onChange={directory => change({ directory })}
                   />
                 </div>
-                {values.hostId === 'local' && (
-                  <p className="text-2xs leading-4 text-muted-foreground">
-                    Runs only while Nesvo is open.
-                  </p>
-                )}
-                {values.workflow ? (
-                  <p className="text-2xs leading-4 text-muted-foreground">
-                    A workflow automation stays in the project of its workflow.
-                  </p>
-                ) : (
-                  editing && (
-                    <p className="text-2xs leading-4 text-muted-foreground">
-                      An automation stays on the computer it was created on.
-                    </p>
-                  )
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium">Model and access</span>
+              </Field>
+              <Field
+                id="automation-model"
+                label="Model and access"
+                as="span"
+                hint={accessDetail[values.provider]}
+                messages={[
+                  ...errorMessages(visible('model')),
+                  ...(catalogNotice
+                    ? [{ severity: 'warning' as const, message: catalogNotice }]
+                    : []),
+                ]}
+              >
                 <div
                   className="flex min-w-0 flex-wrap items-center gap-2"
                   data-field="model"
                   tabIndex={-1}
-                  aria-describedby={
-                    visible('model') ? 'automation-model-error' : undefined
-                  }
+                  aria-describedby={messagesId(
+                    'automation-model',
+                    visible('model'),
+                  )}
                 >
                   <ModelPicker
                     provider={values.provider}
@@ -343,27 +354,12 @@ export function AutomationEditor({
                       onRefreshProvider(provider, values.hostId)
                     }
                   />
-                  <span
-                    className="inline-flex items-center gap-1 rounded-sm border px-1.5 text-2xs leading-5 font-medium"
-                    title={accessDetail[values.provider]}
-                  >
-                    <Lock className="size-2.5" aria-hidden="true" />
+                  <Badge appearance="outline">
+                    <Lock aria-hidden="true" />
                     Read-only
-                  </span>
+                  </Badge>
                 </div>
-                <p className="text-2xs leading-4 text-muted-foreground">
-                  {accessDetail[values.provider]}
-                </p>
-                {catalogNotice && (
-                  <p className="text-2xs leading-4 text-warning-foreground">
-                    {catalogNotice}
-                  </p>
-                )}
-                <FieldError
-                  id="automation-model-error"
-                  message={visible('model')}
-                />
-              </div>
+              </Field>
               <ScheduleFields
                 values={values}
                 errors={{
@@ -375,10 +371,11 @@ export function AutomationEditor({
                 onChange={change}
                 onBlur={touch}
               />
-              <div className="space-y-1.5">
-                <Label htmlFor="automation-timeout" className="text-xs">
-                  Time limit (minutes)
-                </Label>
+              <Field
+                id="automation-timeout"
+                label="Time limit (minutes)"
+                messages={errorMessages(visible('timeoutMinutes'))}
+              >
                 <Input
                   size="md"
                   id="automation-timeout"
@@ -386,25 +383,23 @@ export function AutomationEditor({
                   inputMode="numeric"
                   value={values.timeoutMinutes}
                   aria-invalid={!!visible('timeoutMinutes')}
-                  aria-describedby={
-                    visible('timeoutMinutes')
-                      ? 'automation-timeout-error'
-                      : undefined
-                  }
+                  aria-describedby={messagesId(
+                    'automation-timeout',
+                    visible('timeoutMinutes'),
+                  )}
                   disabled={pending}
                   onChange={event =>
                     change({ timeoutMinutes: event.target.value })
                   }
                   onBlur={() => touch('timeoutMinutes')}
-                  className="h-8 w-24 text-[13px]"
+                  className="w-24"
                 />
-                <FieldError
-                  id="automation-timeout-error"
-                  message={visible('timeoutMinutes')}
-                />
-              </div>
+              </Field>
               <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="automation-editor-active" className="text-xs">
+                <Label
+                  htmlFor="automation-editor-active"
+                  className="text-2xs text-muted-foreground"
+                >
                   Active
                 </Label>
                 <Switch
@@ -416,13 +411,13 @@ export function AutomationEditor({
               </div>
             </div>
           </ScrollArea>
-          <SheetFooter className="gap-2 border-t px-5 py-3">
+          <SheetFooter className="flex-wrap">
             {stale && (
-              <div role="alert" className="space-y-2 text-xs">
-                <p className="text-destructive">
+              <div className="flex w-full items-center justify-between gap-2">
+                <StatusMessage tone="error">
                   This automation changed on {computer?.name ?? 'its computer'}.
                   Reload to edit the latest version.
-                </p>
+                </StatusMessage>
                 <Button
                   type="button"
                   size="xs"
@@ -434,36 +429,31 @@ export function AutomationEditor({
               </div>
             )}
             {(error || blockedReason) && (
-              <p
-                role="alert"
-                className="text-xs text-destructive [overflow-wrap:anywhere]"
-              >
+              <StatusMessage tone="error" className="w-full">
                 {error || blockedReason}
-              </p>
+              </StatusMessage>
             )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="md"
-                disabled={pending}
-                onClick={onClose}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                size="md"
-                disabled={
-                  pending ||
-                  !!blockedReason ||
-                  stale ||
-                  errors.prompt === SKILL_PROMPT_MESSAGE
-                }
-              >
-                {pending ? 'Saving…' : 'Save'}
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="md"
+              disabled={pending}
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="md"
+              disabled={
+                pending ||
+                !!blockedReason ||
+                stale ||
+                errors.prompt === SKILL_PROMPT_MESSAGE
+              }
+            >
+              {pending ? 'Saving…' : 'Save'}
+            </Button>
           </SheetFooter>
         </form>
       </SheetContent>
