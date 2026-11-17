@@ -33,8 +33,13 @@ export const statusLabels: Record<Session['status'], string> = {
   interrupted: 'Interrupted',
 };
 
+const IPC_ERROR_PREFIX =
+  /^Error invoking remote method '[^']+': (?:\w*Error: )?/;
+
 export function errorDetail(error: unknown) {
-  return error instanceof Error ? error.message : 'Unknown error.';
+  return error instanceof Error
+    ? error.message.replace(IPC_ERROR_PREFIX, '')
+    : 'Unknown error.';
 }
 
 export type Provider = Session['provider'];
