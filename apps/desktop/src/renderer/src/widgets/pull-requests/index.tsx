@@ -19,8 +19,7 @@ import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { PanelSearch } from '@/shared/ui/panel';
-import { ScrollArea } from '@/shared/ui/scroll-area';
+import { PanelBody, PanelSearch } from '@/shared/ui/panel';
 import { SearchField } from '@/shared/ui/search-field';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
@@ -113,7 +112,7 @@ export function PullRequestsView({
   };
   const items = result.list?.items ?? [];
   return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1">
+    <PanelBody className="min-w-0">
       <section
         aria-label="Pull requests"
         className="mx-auto w-full max-w-4xl space-y-2 px-5 py-5 lg:px-8"
@@ -312,6 +311,6 @@ export function PullRequestsView({
           </div>
         )}
       </section>
-    </ScrollArea>
+    </PanelBody>
   );
 }
