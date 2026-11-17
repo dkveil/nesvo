@@ -49,6 +49,8 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 | `text-sm`    | 14 / 20 px         | Message composer, `lg` controls                      |
 | `text-title` | 15 / 22 px         | Page and section titles, empty-state titles          |
 | `text-base`  | 16 / 24 px         | Dialog titles                                        |
+| `text-display` | 24 / 30 px       | Headline numbers (cost total), the new-thread heading |
+| `text-display-lg` | 30 / 36 px    | The new-thread heading on wide windows (`sm:`)       |
 
 `shared/ui` contains no arbitrary `text-[Npx]` classes. The project `cn` in `shared/lib/cn.ts` knows these scales; always import `cn` from there, never from the `cn` package, or `text-ui` is dropped when a text colour follows it.
 
@@ -217,6 +219,7 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | Glass composer shells with their own textarea and send button                 | `<Composer>` + `<ComposerInput>` + `<ComposerToolbar>` + `<ComposerSend>` |
 | Inspector `Field` / `FieldNotes`                                              | `<Field messages={…}>` / `<FieldMessages>`                         |
 | `text-[13px]` / `text-[11px]` / `text-[10px]` / `text-[15px]`                 | `text-ui` / `text-2xs` / `text-micro` / `text-title`               |
+| `text-2xl` / `text-3xl` headings, large totals in `text-base`                 | `text-display` / `text-display-lg`                                 |
 | `focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset` and variants | `focus-ring`                                                |
 | `text-destructive` for error text                                             | `text-error-foreground`                                            |
 | `disabled:opacity-60` / `disabled:opacity-64`                                 | `disabled:opacity-50`                                              |

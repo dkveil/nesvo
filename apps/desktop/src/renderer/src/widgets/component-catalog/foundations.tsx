@@ -40,6 +40,16 @@ const TYPE_SCALE = [
   ['text-sm', '14 / 20', 'text-sm'],
   ['text-title', '15 / 22', 'text-title font-semibold tracking-tight'],
   ['text-base', '16 / 24 · dialog title', 'text-base font-semibold'],
+  [
+    'text-display',
+    '24 / 30 · totals, hero heading',
+    'text-display font-semibold tracking-tight',
+  ],
+  [
+    'text-display-lg',
+    '30 / 36 · hero heading on wide windows',
+    'text-display-lg tracking-tight',
+  ],
 ] as const;
 
 const RADII = [

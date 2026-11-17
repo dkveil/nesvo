@@ -284,7 +284,7 @@ function ComputerCosts({
           {report && (
             <CostAmount
               cost={report.totals.reportedCostUsd}
-              className="text-base font-semibold"
+              className="text-display font-semibold tracking-tight"
             />
           )}
         </div>

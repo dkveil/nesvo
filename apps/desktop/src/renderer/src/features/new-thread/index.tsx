@@ -259,7 +259,7 @@ export function NewThread({
     >
       <div className="w-full max-w-(--composer-max-width) space-y-5">
         <header className="space-y-1 text-center">
-          <h2 className="text-2xl font-normal tracking-tight text-foreground sm:text-3xl">
+          <h2 className="text-display font-normal tracking-tight text-foreground sm:text-display-lg">
             What should we build?
           </h2>
           <Hint label={setup.directory.trim() || 'Isolated folder'}>
