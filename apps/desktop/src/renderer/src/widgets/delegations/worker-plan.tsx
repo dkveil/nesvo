@@ -42,7 +42,7 @@ export function WorkerPlan({
       </h4>
       <MessageBody
         body={plan || 'The worker returned an empty plan.'}
-        className="rounded-lg border bg-background/60 p-3 text-sm"
+        className="rounded-surface border bg-background/60 p-3 text-sm"
       />
       <div className="flex flex-wrap gap-2">
         <Button

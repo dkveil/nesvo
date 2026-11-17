@@ -75,7 +75,7 @@ export function SidebarResizer({ width, onResize }: Props) {
       onDoubleClick={() => onResize(SIDEBAR_DEFAULT_WIDTH_PX)}
       className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize outline-none"
     >
-      <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-ring/60 group-focus-visible:bg-ring group-active:bg-ring" />
+      <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors duration-base ease-out group-hover:bg-ring/60 group-focus-visible:bg-ring group-active:bg-ring" />
     </div>
   );
 }
