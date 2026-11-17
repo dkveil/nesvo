@@ -1,5 +1,6 @@
 import {
   Blocks,
+  Keyboard,
   Monitor,
   Palette,
   Settings2,
@@ -9,7 +10,13 @@ import {
 } from 'lucide-react';
 
 export type SettingsPage =
-  'general' | 'appearance' | 'computers' | 'phone' | 'account' | 'components';
+  | 'general'
+  | 'appearance'
+  | 'shortcuts'
+  | 'computers'
+  | 'phone'
+  | 'account'
+  | 'components';
 
 type SettingsPageEntry = {
   id: SettingsPage;
@@ -34,6 +41,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Palette,
     group: '',
     keywords: 'color scheme theme light dark system',
+  },
+  {
+    id: 'shortcuts',
+    label: 'Keyboard shortcuts',
+    icon: Keyboard,
+    group: '',
+    keywords: 'keys hotkeys bindings palette navigation',
   },
   {
     id: 'computers',

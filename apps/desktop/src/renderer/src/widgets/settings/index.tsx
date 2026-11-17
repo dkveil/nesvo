@@ -22,6 +22,7 @@ import {
 export type { SettingsPage } from './settings-pages';
 export { AppearanceSettings } from './appearance-settings';
 export { GeneralSettings } from './general-settings';
+export { KeyboardShortcutsSettings } from './keyboard-shortcuts-settings';
 
 type Props = {
   page: SettingsPage;
