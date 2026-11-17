@@ -19,9 +19,12 @@ import {
   commandOutputParts,
   elapsedLabel,
   ExitCodeBadge,
+  hiddenActivityLabel,
+  isRoutineActivity,
   runLabel,
   type SessionActivity as Activity,
 } from '@/entities/activity';
+import { useToolVisibility } from '@/features/tool-visibility';
 import { Badge } from '@/shared/ui/badge';
 
 type Props = {
@@ -186,6 +189,7 @@ export function SessionActivity({
   truncated,
   offline = false,
 }: Props) {
+  const [visibility] = useToolVisibility();
   const region = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -231,7 +235,13 @@ export function SessionActivity({
   const failures = items.filter(item => item.status === 'failed').length;
   const refusals = items.filter(item => item.status === 'declined').length;
   const summary = live ? '' : activitySummary(items);
-  const batches = activityBatches(items);
+  const compact = visibility === 'compact';
+  const hidden = compact ? items.filter(isRoutineActivity) : [];
+  const shown = compact
+    ? items.filter(item => !isRoutineActivity(item))
+    : items;
+  const hiddenNote = hiddenActivityLabel(hidden);
+  const batches = activityBatches(shown);
   return (
     <section
       ref={region}
@@ -308,6 +318,15 @@ export function SessionActivity({
           {items.length === 0 && (
             <p className="py-1 text-xs">
               No saved tool activity for this turn.
+            </p>
+          )}
+          {hiddenNote && (
+            <p
+              aria-label="Hidden activity"
+              data-hidden-activity={hidden.length}
+              className="px-1.5 py-1 text-[11px]"
+            >
+              {hiddenNote}
             </p>
           )}
           {truncated && (

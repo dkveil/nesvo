@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import {
@@ -7,9 +8,38 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import { HostStatus } from '@/features/host-status';
+import { useToolVisibility } from '@/features/tool-visibility';
 import { shortcutLabel } from '@/shared/lib/shortcut';
 import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
+import { Switch } from '@/shared/ui/switch';
+
+const ConversationSettings = () => {
+  const [visibility, setVisibility] = useToolVisibility();
+  const descriptionId = useId();
+  return (
+    <SettingsSection title="Conversation">
+      <SettingsRow
+        title="Show every tool call"
+        description={
+          <p id={descriptionId}>
+            Compact hides routine file reads and searches. Approvals, refusals
+            and failures always stay visible.
+          </p>
+        }
+      >
+        <Switch
+          aria-label="Show every tool call"
+          aria-describedby={descriptionId}
+          checked={visibility === 'all'}
+          onCheckedChange={checked =>
+            setVisibility(checked ? 'all' : 'compact')
+          }
+        />
+      </SettingsRow>
+    </SettingsSection>
+  );
+};
 
 type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
@@ -121,6 +151,7 @@ export function GeneralSettings({
           );
         })}
       </SettingsSection>
+      <ConversationSettings />
       <SettingsSection title="Keyboard shortcuts">
         <ul aria-label="Keyboard shortcuts" className="divide-y">
           {shortcuts.map(shortcut => (

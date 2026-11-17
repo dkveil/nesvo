@@ -136,3 +136,20 @@ export const commandOutputParts = (item: SessionActivity) => {
     ? { stdout: item.output.slice(0, separator), stderr }
     : { stdout: item.output, stderr: '' };
 };
+
+const routineNouns: Record<string, [string, string]> = {
+  read: ['read', 'reads'],
+  search: ['search', 'searches'],
+  thinking: ['thought', 'thoughts'],
+};
+
+export const isRoutineActivity = (item: SessionActivity) =>
+  item.kind in routineNouns && item.status === 'completed';
+
+export const hiddenActivityLabel = (items: SessionActivity[]) => {
+  const parts = Object.entries(routineNouns).flatMap(([kind, [one, many]]) => {
+    const count = items.filter(item => item.kind === kind).length;
+    return count ? [`${count} ${count === 1 ? one : many}`] : [];
+  });
+  return parts.length ? `${parts.join(', ')} hidden` : '';
+};
