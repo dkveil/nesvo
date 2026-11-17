@@ -24,7 +24,7 @@ import type {
 } from '@nesvo/contracts';
 import {
   ChevronRight,
-  Folder,
+  ChevronsDownUp,
   FolderOpen,
   RefreshCw,
   WrapText,
@@ -110,7 +110,6 @@ function Directory({
       {state.data?.entries.map(entry => {
         const open = expanded.includes(entry.path);
         const isDirectory = entry.kind === 'directory';
-        const FolderIcon = open ? FolderOpen : Folder;
         return (
           <li key={entry.path}>
             <button
@@ -131,7 +130,8 @@ function Directory({
               }}
               className={cn(
                 panelRow,
-                'flex h-6 w-full min-w-0 items-center gap-1.5 pr-2 text-xs',
+                'flex h-[1.375rem] w-full min-w-0 items-center gap-1.5 pr-2 text-xs text-foreground/85',
+                'aria-pressed:bg-accent aria-pressed:ring-1 aria-pressed:ring-ring/60 aria-pressed:ring-inset',
               )}
               onClick={() =>
                 isDirectory
@@ -147,15 +147,10 @@ function Directory({
                 <ChevronRight
                   aria-hidden="true"
                   className={cn(
-                    'size-3 shrink-0 transition-transform duration-150 ease-out',
+                    'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out',
                     open && 'rotate-90',
                   )}
                 />
-              ) : (
-                <span className="w-3 shrink-0" />
-              )}
-              {isDirectory ? (
-                <FolderIcon aria-hidden="true" className="size-3.5 shrink-0" />
               ) : (
                 <FileGlyph name={entry.name} />
               )}
@@ -415,6 +410,7 @@ export default function WorkspaceFiles({
   const [path, setPath] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [wrap, setWrap] = useState(false);
+  const [collapse, setCollapse] = useState(0);
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
   const select = useCallback((value: string) => {
@@ -450,13 +446,78 @@ export default function WorkspaceFiles({
   const name =
     session.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
   const segments = path ? path.split('/') : [];
+  const editing = tabs.length > 0;
+  const tree = (
+    <nav
+      aria-label="Workspace folders"
+      className={cn(
+        'flex min-h-0 flex-col',
+        editing
+          ? 'w-[34%] max-w-64 min-w-44 shrink-0 border-l'
+          : 'min-w-0 flex-1',
+      )}
+    >
+      <div className="flex h-8 shrink-0 items-center gap-0.5 px-1">
+        <PanelAction
+          aria-label="Refresh files"
+          title="Refresh files and preview"
+          onClick={() => setRefresh(value => value + 1)}
+        >
+          <RefreshCw />
+        </PanelAction>
+        <PanelSearch
+          aria-label="Search files"
+          placeholder="Search files"
+          maxLength={100}
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          className="h-7 min-w-0 flex-1 bg-transparent px-1.5 [&_input]:text-xs [&>svg]:hidden"
+        />
+        <PanelAction
+          aria-label="Collapse folders"
+          title="Collapse folders"
+          onClick={() => setCollapse(value => value + 1)}
+        >
+          <ChevronsDownUp />
+        </PanelAction>
+      </div>
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-1 pb-1"
+        title="Generated and private entries are excluded. Symbolic links are not followed."
+      >
+        {query.trim() ? (
+          <SearchResults
+            key={`${refresh}:${query.trim()}`}
+            sessionId={session.id}
+            query={query.trim()}
+            api={api}
+            onSelect={select}
+            selectedPath={path}
+          />
+        ) : (
+          <Directory
+            key={`${refresh}:${collapse}`}
+            sessionId={session.id}
+            path=""
+            api={api}
+            onSelect={select}
+            selectedPath={path}
+          />
+        )}
+      </div>
+    </nav>
+  );
   return (
     <section
       aria-label="Workspace files"
       data-session-id={session.id}
+      data-editing={editing}
       className={cn(
         panelSurface,
-        'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]',
+        'transition-[width] duration-200 ease-out motion-reduce:transition-none',
+        editing
+          ? 'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]'
+          : 'min-[1200px]:w-72',
       )}
     >
       <header className="flex h-9 shrink-0 items-stretch border-b">
@@ -465,13 +526,20 @@ export default function WorkspaceFiles({
           aria-label="Open files"
           className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]"
         >
-          {tabs.length === 0 && (
-            <h2 className="flex items-center gap-1.5 pl-3 text-[13px] font-semibold">
+          {!editing && (
+            <h2 className="flex min-w-0 items-center gap-1.5 pl-3 text-xs font-semibold">
               <FolderOpen
-                className="size-4 text-muted-foreground"
+                className="size-3.5 shrink-0 text-muted-foreground"
                 aria-hidden="true"
               />
               Files
+              <span className="sr-only">Current workspace</span>
+              <span
+                className="min-w-0 truncate font-normal text-muted-foreground"
+                title={session.directory}
+              >
+                {name}
+              </span>
             </h2>
           )}
           {tabs.map(tab => {
@@ -528,13 +596,15 @@ export default function WorkspaceFiles({
               Result v{savedVersion}
             </Button>
           )}
-          <PanelAction
-            aria-label="Wrap file lines"
-            aria-pressed={wrap}
-            onClick={() => setWrap(value => !value)}
-          >
-            <WrapText />
-          </PanelAction>
+          {editing && (
+            <PanelAction
+              aria-label="Wrap file lines"
+              aria-pressed={wrap}
+              onClick={() => setWrap(value => !value)}
+            >
+              <WrapText />
+            </PanelAction>
+          )}
           <PanelAction
             ref={closeButton}
             aria-label="Close files"
@@ -544,36 +614,39 @@ export default function WorkspaceFiles({
           </PanelAction>
         </div>
       </header>
-      <nav
-        aria-label="File path"
-        className="flex h-7 shrink-0 items-center gap-1.5 overflow-hidden border-b px-3 text-2xs whitespace-nowrap text-muted-foreground"
-      >
-        <span>Current workspace</span>
-        <ChevronRight
-          className="size-3 shrink-0 opacity-60"
-          aria-hidden="true"
-        />
-        <span title={session.directory}>{name}</span>
-        {segments.map((segment, index) => (
-          <Fragment key={`${index}:${segment}`}>
-            <ChevronRight
-              className="size-3 shrink-0 opacity-60"
-              aria-hidden="true"
-            />
-            <span
-              className={cn(
-                'truncate',
-                index === segments.length - 1 && 'font-medium text-foreground',
-              )}
-            >
-              {segment}
-            </span>
-          </Fragment>
-        ))}
-      </nav>
+      {editing && (
+        <nav
+          aria-label="File path"
+          className="flex h-7 shrink-0 items-center gap-1.5 overflow-hidden border-b px-3 text-2xs whitespace-nowrap text-muted-foreground"
+        >
+          <span>Current workspace</span>
+          <ChevronRight
+            className="size-3 shrink-0 opacity-60"
+            aria-hidden="true"
+          />
+          <span title={session.directory}>{name}</span>
+          {segments.map((segment, index) => (
+            <Fragment key={`${index}:${segment}`}>
+              <ChevronRight
+                className="size-3 shrink-0 opacity-60"
+                aria-hidden="true"
+              />
+              <span
+                className={cn(
+                  'truncate',
+                  index === segments.length - 1 &&
+                    'font-medium text-foreground',
+                )}
+              >
+                {segment}
+              </span>
+            </Fragment>
+          ))}
+        </nav>
+      )}
       <div className="flex min-h-0 min-w-0 flex-1">
-        <div className="min-h-0 min-w-0 flex-1">
-          {path ? (
+        {editing && (
+          <div className="min-h-0 min-w-0 flex-1">
             <FilePreview
               key={`${path}:${refresh}`}
               path={path}
@@ -581,61 +654,9 @@ export default function WorkspaceFiles({
               api={api}
               wrap={wrap}
             />
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center text-xs text-muted-foreground">
-              <span>Select a file to preview</span>
-              <span className="text-2xs opacity-70">
-                Generated and private files are hidden
-              </span>
-            </div>
-          )}
-        </div>
-        <nav
-          aria-label="Workspace folders"
-          className="flex min-h-0 w-[34%] max-w-64 min-w-44 shrink-0 flex-col border-l"
-        >
-          <div className="flex shrink-0 items-center gap-0.5 p-1">
-            <PanelSearch
-              aria-label="Search files"
-              placeholder="Search files"
-              maxLength={100}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              className="h-7 min-w-0 flex-1 [&_input]:text-xs"
-            />
-            <PanelAction
-              aria-label="Refresh files"
-              title="Refresh files and preview"
-              onClick={() => setRefresh(value => value + 1)}
-            >
-              <RefreshCw />
-            </PanelAction>
           </div>
-          <div
-            className="min-h-0 flex-1 overflow-y-auto px-1 pb-1"
-            title="Generated and private entries are excluded. Symbolic links are not followed."
-          >
-            {query.trim() ? (
-              <SearchResults
-                key={`${refresh}:${query.trim()}`}
-                sessionId={session.id}
-                query={query.trim()}
-                api={api}
-                onSelect={select}
-                selectedPath={path}
-              />
-            ) : (
-              <Directory
-                key={refresh}
-                sessionId={session.id}
-                path=""
-                api={api}
-                onSelect={select}
-                selectedPath={path}
-              />
-            )}
-          </div>
-        </nav>
+        )}
+        {tree}
       </div>
     </section>
   );
