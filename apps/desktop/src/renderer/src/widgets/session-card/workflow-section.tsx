@@ -22,11 +22,11 @@ import {
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { useNow } from '@/shared/lib/use-now';
 import type { InboxTarget } from '@/widgets/workflow-step-result';
-import {
-  cardRowAction,
-  cardSection,
-  cardSectionHeader,
-} from '@/shared/ui/card-row-styles';
+import { cardSection } from '@/shared/ui/card-row-styles';
+import { ListRow } from '@/shared/ui/list-row';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { cardRowProps } from './card-row';
 import { WorkflowMenu } from './workflow-menu';
 import { WorkflowStepRow } from './workflow-step-row';
 
@@ -99,42 +99,39 @@ export function WorkflowSection({
       data-run-status={run.status}
       className={cardSection}
     >
-      <div className={cardSectionHeader}>
-        <h2
-          id="session-card-workflow"
-          className="min-w-0 truncate font-normal"
-          title={run.workflow.name}
-        >
+      <SectionLabel
+        as="h2"
+        action={
+          <WorkflowMenu
+            run={run}
+            views={views}
+            disabled={!connected || pending}
+            onStop={onStop}
+            onResume={onResume}
+            onConfirmAction={onConfirmAction}
+          />
+        }
+      >
+        <span id="session-card-workflow">
           Workflow ·{' '}
           <span className={toneText[runStatusTones[run.status]]}>{status}</span>
-        </h2>
-        <WorkflowMenu
-          run={run}
-          views={views}
-          disabled={!connected || pending}
-          onStop={onStop}
-          onResume={onResume}
-          onConfirmAction={onConfirmAction}
-        />
-      </div>
+        </span>
+      </SectionLabel>
       {run.attention && (
-        <p className="px-2.5 pb-1.5 text-2xs leading-4 text-warning-foreground [overflow-wrap:anywhere]">
+        <StatusMessage tone="warning" className="px-2 pb-1.5">
           {run.attention}
-        </p>
+        </StatusMessage>
       )}
       {uncertain && (
-        <p className="px-2.5 pb-1.5 text-2xs leading-4 text-muted-foreground">
+        <StatusMessage className="px-2 pb-1.5">
           {uncertain.definition.name} may already have run. Check its effect,
           then choose It already ran or Run it again from the actions menu.
-        </p>
+        </StatusMessage>
       )}
       {error && (
-        <p
-          role="alert"
-          className="px-2.5 pb-1.5 text-2xs leading-4 text-destructive [overflow-wrap:anywhere]"
-        >
+        <StatusMessage tone="error" className="px-2 pb-1.5">
           {error}
-        </p>
+        </StatusMessage>
       )}
       <ul role="list" aria-label="Workflow phases" className="space-y-px">
         {phases.map(group => {
@@ -144,32 +141,33 @@ export function WorkflowSection({
           const progress = phaseProgress(group.steps);
           return (
             <li key={group.phase}>
-              <button
-                type="button"
-                data-card-row
-                data-phase={group.phase}
-                data-phase-state={state}
+              <ListRow
+                leading={<StepStateIcon state={state} />}
+                title={label}
+                trailing={
+                  <>
+                    {progress}
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={cn(
+                        'size-3.5 transition-transform duration-base ease-out',
+                        open && 'rotate-180',
+                      )}
+                    />
+                  </>
+                }
                 aria-expanded={open}
                 aria-controls={
                   open ? `session-card-phase-${group.phase}` : undefined
                 }
-                aria-label={`${label}, ${stepStateLabels[state]}, ${progress} complete`}
+                mainProps={{
+                  ...cardRowProps,
+                  'data-phase': group.phase,
+                  'data-phase-state': state,
+                  'aria-label': `${label}, ${stepStateLabels[state]}, ${progress} complete`,
+                }}
                 onClick={() => toggle(group.phase)}
-                className={cardRowAction}
-              >
-                <StepStateIcon state={state} className="size-4" />
-                <span className="min-w-0 flex-1 truncate">{label}</span>
-                <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">
-                  {progress}
-                </span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={cn(
-                    'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150',
-                    open && 'rotate-180',
-                  )}
-                />
-              </button>
+              />
               {open && (
                 <ul
                   id={`session-card-phase-${group.phase}`}

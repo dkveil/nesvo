@@ -10,15 +10,11 @@ import { FolderOpen, GitBranch, Monitor, Play, Server } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
 import { directoryLabel, type Session } from '@/entities/session';
-import {
-  cardIcon,
-  cardIconButton,
-  cardRow,
-  cardRowAction,
-  cardSection,
-  cardSectionHeader,
-  cardSurface,
-} from '@/shared/ui/card-row-styles';
+import { cardSection, cardSurface } from '@/shared/ui/card-row-styles';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { cardRowProps } from './card-row';
 
 export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
@@ -126,79 +122,72 @@ export function SessionCard({
         'absolute top-2 right-3 z-20 flex max-h-[calc(100%-1rem)] w-58 flex-col divide-y overflow-y-auto shadow-(--popover-shadow) outline-none',
       )}
     >
-      <div className={cardSection}>
-        <div className="flex min-w-0 items-center gap-1">
-          <button
-            type="button"
-            data-card-row
-            className={cn(cardRowAction, 'min-w-0 flex-1 font-normal')}
-            aria-label={`Computer: ${name}, ${connectionLabels[connection]}`}
-            title="Manage computers"
-            onClick={onComputers}
-          >
-            <HostIcon className={cardIcon} aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              {name}
-            </span>
-            {connection !== 'ready' && (
+      <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>
+        <ListRow
+          className="flex-1"
+          leading={<HostIcon />}
+          title={<span className="text-muted-foreground">{name}</span>}
+          trailing={
+            connection !== 'ready' && (
               <span
                 className={cn(
-                  'shrink-0 text-2xs text-muted-foreground',
                   connection === 'unavailable' && 'text-warning-foreground',
                 )}
               >
                 {connectionLabels[connection]}
               </span>
-            )}
-          </button>
-          {session && (
-            <button
-              type="button"
-              className={cn(cardIconButton, 'mr-1')}
-              aria-label={`Browse files in ${directoryLabel(session.directory)}`}
-              title={session.directory}
-              onClick={onFiles}
-            >
-              <FolderOpen className="size-4" aria-hidden="true" />
-            </button>
-          )}
-        </div>
+            )
+          }
+          mainProps={{
+            ...cardRowProps,
+            'aria-label': `Computer: ${name}, ${connectionLabels[connection]}`,
+          }}
+          onClick={onComputers}
+        />
+        {session && (
+          <IconButton
+            size={24}
+            label={`Browse files in ${directoryLabel(session.directory)}`}
+            className="mr-1"
+            onClick={onFiles}
+          >
+            <FolderOpen />
+          </IconButton>
+        )}
       </div>
       {branch && (
         <div className={cardSection}>
-          <p className={cardRow} title={branch}>
-            <GitBranch className={cardIcon} aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">{branch}</span>
-          </p>
+          <ListRow leading={<GitBranch />} title={branch} />
         </div>
       )}
       {session && (
         <div className={cardSection} data-session-workflow-section>
-          <div className={cardSectionHeader}>
-            <h2 className="font-normal">Workflow</h2>
-            <span
-              className="min-w-0 truncate"
-              data-assigned-workflow={session.workflow?.name ?? ''}
-            >
-              {session.workflow
-                ? `${session.workflow.name} · ${session.workflow.root === 'project' ? 'Project' : 'Global'}`
-                : 'None'}
-            </span>
-          </div>
-          <button
-            type="button"
-            data-card-row
-            className={cardRowAction}
+          <SectionLabel
+            as="h2"
+            action={
+              <span
+                className="min-w-0 truncate text-2xs text-muted-foreground"
+                data-assigned-workflow={session.workflow?.name ?? ''}
+              >
+                {session.workflow
+                  ? `${session.workflow.name} · ${session.workflow.root === 'project' ? 'Project' : 'Global'}`
+                  : 'None'}
+              </span>
+            }
+          >
+            Workflow
+          </SectionLabel>
+          <ListRow
+            leading={<Play />}
+            title="Run workflow"
             disabled={
               !session.workflow ||
               session.status === 'running' ||
               session.status === 'stopping'
             }
+            mainProps={cardRowProps}
             onClick={onRunWorkflow}
-          >
-            <Play className={cardIcon} aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">Run workflow</span>
-          </button>
+          />
         </div>
       )}
       {workflow}

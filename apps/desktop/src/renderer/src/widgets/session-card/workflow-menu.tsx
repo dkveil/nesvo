@@ -11,7 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
-import { cardIconButton } from '@/shared/ui/card-row-styles';
+import { IconButton } from '@/shared/ui/icon-button';
 
 type Props = {
   run: WorkflowRun;
@@ -40,14 +40,9 @@ export function WorkflowMenu({
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="Workflow actions"
-          title="Workflow actions"
-          className={cardIconButton}
-        >
-          <Ellipsis className="size-4" aria-hidden="true" />
-        </button>
+        <IconButton size={24} label="Workflow actions">
+          <Ellipsis aria-hidden="true" />
+        </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {uncertain && (

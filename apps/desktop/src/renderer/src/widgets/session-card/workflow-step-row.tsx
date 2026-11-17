@@ -10,8 +10,9 @@ import {
 } from '@/entities/workflow';
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
-import { cardRowAction } from '@/shared/ui/card-row-styles';
+import { ListRow } from '@/shared/ui/list-row';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { cardRowProps } from './card-row';
 
 type Props = {
   run: WorkflowRun;
@@ -24,6 +25,8 @@ type Props = {
   onInbox: (target: InboxTarget) => void;
   onSession: (key: string) => void;
 };
+
+const STEP_LEVEL = 2;
 
 export function WorkflowStepRow({
   run,
@@ -51,45 +54,40 @@ export function WorkflowStepRow({
     <li>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
-          <button
-            type="button"
-            data-card-row
-            data-step-row
-            data-step-state={step.state}
-            aria-label={label}
-            title={label}
+          <ListRow
+            level={STEP_LEVEL}
+            leading={<StepStateIcon state={step.state} />}
+            title={step.definition.name}
+            trailing={
+              <>
+                {attempt && (
+                  <span className="text-warning-foreground">{attempt}</span>
+                )}
+                {duration}
+              </>
+            }
             className={cn(
-              cardRowAction,
-              'pl-8.5 font-normal aria-expanded:bg-highlight',
+              'data-[state=open]:bg-highlight',
               step.state === 'pending' && 'text-muted-foreground',
             )}
-          >
-            <StepStateIcon state={step.state} />
-            <span className="min-w-0 flex-1 truncate">
-              {step.definition.name}
-            </span>
-            {attempt && (
-              <span className="shrink-0 text-2xs text-warning-foreground tabular-nums">
-                {attempt}
-              </span>
-            )}
-            {duration && (
-              <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
-                {duration}
-              </span>
-            )}
-          </button>
+            mainProps={{
+              ...cardRowProps,
+              'data-step-row': '',
+              'data-step-state': step.state,
+              'aria-label': label,
+            }}
+          />
         </PopoverTrigger>
         <PopoverContent
           side="left"
           align="start"
           sideOffset={12}
           collisionPadding={12}
-          aria-label={`${step.definition.name} result`}
-          data-step-result={step.index}
           surface="card"
           size="md"
           padding="none"
+          aria-label={`${step.definition.name} result`}
+          data-step-result={step.index}
           className="flex max-h-[min(36rem,var(--radix-popover-content-available-height))] flex-col overflow-hidden"
         >
           <header className="flex h-9 shrink-0 items-center gap-2.5 border-b px-3">
