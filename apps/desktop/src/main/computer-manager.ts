@@ -35,13 +35,18 @@ type ScheduledJobMethod = Extract<
   HostRequest['method'],
   `${string}scheduled-job${string}`
 >;
+type SessionWorkflowMethod = 'assign-session-workflow';
+export type CatalogWorkflowMethod = Exclude<
+  WorkflowMethod,
+  SessionWorkflowMethod
+>;
 type ExecutableMethod = Exclude<
   HostRequest['method'],
   | 'shutdown'
   | 'list-sessions'
   | 'list-reviews'
   | ScheduledJobMethod
-  | WorkflowMethod
+  | CatalogWorkflowMethod
 >;
 type Connection = {
   request: (
@@ -73,6 +78,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
   workflows:
     'Workflows are not available on this computer yet. Update its Nesvo host, then reconnect.',
+  'permission-modes':
+    'This computer runs an older Nesvo host without the new permission modes. Update the host, then reconnect.',
+  'session-workflow':
+    'This computer runs an older Nesvo host that cannot assign a workflow to a session. Update the host, then reconnect.',
   'git-branch':
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
 };
@@ -82,6 +91,7 @@ function requiredCapability(
   input: unknown,
 ): HostCapability | null {
   if (method === 'read-git-branch') return 'git-branch';
+  if (method === 'assign-session-workflow') return 'session-workflow';
   if (
     method === 'list-workflow-definitions' ||
     method === 'validate-workflow-definitions'
@@ -495,7 +505,7 @@ export class ComputerManager {
   }
 
   async executeWorkflow(
-    method: WorkflowMethod,
+    method: CatalogWorkflowMethod,
     input: unknown,
     hostId: string,
   ) {
@@ -573,6 +583,7 @@ export class ComputerManager {
       'provider-usage': 'provider-usage',
       'create-session': 'session',
       'send-message': 'session',
+      'assign-session-workflow': 'session',
       'queue-message': 'session',
       'cancel-queued': 'session',
       'start-queued': 'session',

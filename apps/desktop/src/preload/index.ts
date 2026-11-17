@@ -9,6 +9,7 @@ import {
   decideDelegationSchema,
   decideReviewSchema,
   hostHealthSchema,
+  assignSessionWorkflowSchema,
   sendMessageSchema,
   queuedMessageRefSchema,
   stopRunSchema,
@@ -415,6 +416,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  assignSessionWorkflow: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:assign-session-workflow',
+        assignSessionWorkflowSchema.parse(input),
         route(hostId),
       ),
     ),

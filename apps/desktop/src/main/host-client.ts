@@ -8,6 +8,7 @@ import {
   type DecideDelegationInput,
   type DecideReviewInput,
   type DesktopEvent,
+  type AssignSessionWorkflowInput,
   type SendMessageInput,
   type QueuedMessageRefInput,
   type RespondApprovalInput,
@@ -196,6 +197,12 @@ export function startHost(directory: string) {
     },
     sendMessage: async (input: SendMessageInput) => {
       const response = await request('send-message', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    assignSessionWorkflow: async (input: AssignSessionWorkflowInput) => {
+      const response = await request('assign-session-workflow', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

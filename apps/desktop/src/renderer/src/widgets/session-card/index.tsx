@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { Computer } from '@nesvo/contracts';
-import { FolderOpen, GitBranch, Monitor, Server } from 'lucide-react';
+import { FolderOpen, GitBranch, Monitor, Play, Server } from 'lucide-react';
 import { cn } from 'cn';
 import type { WorkflowRun } from '@/entities/workflow';
 import { directoryLabel, type Session } from '@/entities/session';
@@ -16,6 +16,7 @@ import {
   cardRow,
   cardRowAction,
   cardSection,
+  cardSectionHeader,
   cardSurface,
 } from '@/shared/ui/card-row-styles';
 
@@ -34,6 +35,7 @@ type Props = {
   usage: ReactNode;
   onComputers: () => void;
   onFiles: () => void;
+  onRunWorkflow: () => void;
   onClose: () => void;
 };
 
@@ -89,6 +91,7 @@ export function SessionCard({
   usage,
   onComputers,
   onFiles,
+  onRunWorkflow,
   onClose,
 }: Props) {
   const card = useRef<HTMLElement>(null);
@@ -167,6 +170,35 @@ export function SessionCard({
             <GitBranch className={cardIcon} aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{branch}</span>
           </p>
+        </div>
+      )}
+      {session && (
+        <div className={cardSection} data-session-workflow-section>
+          <div className={cardSectionHeader}>
+            <h2 className="font-normal">Workflow</h2>
+            <span
+              className="min-w-0 truncate"
+              data-assigned-workflow={session.workflow?.name ?? ''}
+            >
+              {session.workflow
+                ? `${session.workflow.name} · ${session.workflow.root === 'project' ? 'Project' : 'Global'}`
+                : 'None'}
+            </span>
+          </div>
+          <button
+            type="button"
+            data-card-row
+            className={cardRowAction}
+            disabled={
+              !session.workflow ||
+              session.status === 'running' ||
+              session.status === 'stopping'
+            }
+            onClick={onRunWorkflow}
+          >
+            <Play className={cardIcon} aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">Run workflow</span>
+          </button>
         </div>
       )}
       {workflow}

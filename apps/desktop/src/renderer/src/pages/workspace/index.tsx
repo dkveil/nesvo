@@ -14,6 +14,7 @@ import type {
   DesktopReview as Review,
   DesktopSession as Session,
   RespondApprovalInput,
+  SessionMode,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
@@ -30,6 +31,7 @@ import {
 import {
   directoryLabel,
   errorDetail,
+  providerModes,
   providerStatusLabel,
   sessionRoleLabel,
   sessionStatusLabel,
@@ -44,6 +46,7 @@ import {
 } from '@/features/new-workflow/new-workflow-sheet';
 import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
+import { resolveGate } from '@/features/new-thread/workflow-choice';
 import {
   AutomationEditor,
   automationValues,
@@ -102,6 +105,7 @@ import { cn } from 'cn';
 import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';
+import { SessionWorkflowChip } from '@/features/session-workflow';
 import { readSeen, writeSeen } from './seen-store';
 import { useAttention } from './use-attention';
 import { useProviderUsage } from './use-provider-usage';
@@ -306,6 +310,98 @@ export function Workspace() {
         .catch(() => undefined);
     });
   };
+  const assignWorkflow = async (
+    session: Session,
+    workflow: Session['workflow'],
+  ) => {
+    const key = entityKey(session);
+    setErrors(previous => ({ ...previous, [key]: '' }));
+    try {
+      store.merge([
+        await desktopApi(session.hostId).assignSessionWorkflow(
+          { sessionId: session.id, workflow },
+          session.hostId,
+        ),
+      ]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [key]: `Could not assign the workflow. ${errorDetail(failure)}`,
+      }));
+    }
+  };
+  const openWorkflowEditor = (
+    hostId: string,
+    directory: string,
+    name: string,
+  ) => {
+    guardEditor(() => {
+      void window.nesvo.workflows
+        .listDefinitions(hostId, { directory })
+        .then(catalog => {
+          navigationVersion.current += 1;
+          setPanel(null);
+          setDiffTarget(null);
+          setCreating(false);
+          setInbox(false);
+          setAutomation('');
+          setWorkflowsView(true);
+          setNavigationOpen(false);
+          setWorkflowsSource({ hostId, directory });
+          setWorkflowsEditor({
+            hostId,
+            directory,
+            workflowName: catalog.workflows.some(item => item.name === name)
+              ? name
+              : null,
+            catalog,
+          });
+        })
+        .catch(() => undefined);
+    });
+  };
+  const runAssignedWorkflow = async (session: Session) => {
+    const key = entityKey(session);
+    const assigned = session.workflow;
+    if (!assigned || !store.hostReady(session.hostId)) return;
+    setErrors(previous => ({ ...previous, [key]: '' }));
+    try {
+      const catalog = await window.nesvo.workflows.listDefinitions(
+        session.hostId,
+        { directory: session.directory },
+      );
+      const spec = catalog.specs.find(item => item.workflow === assigned.name);
+      if (!spec)
+        throw new Error('No task spec is available for this workflow.');
+      const gate = resolveGate(
+        null,
+        session.provider,
+        store.providerStates(session.hostId),
+      );
+      const run = await window.nesvo.workflows.startTask(session.hostId, {
+        specPath: spec.source.path,
+        workflowName: assigned.name,
+        provider: session.provider,
+        model: session.model,
+        ...(session.effort ? { effort: session.effort } : {}),
+        mode: session.mode ?? 'read-only',
+        directory: session.directory,
+        isolation: 'none',
+        gateProvider: gate.provider,
+        gateModel: gate.model,
+      });
+      store.mergeWorkflowRuns([run]);
+      if (!run.sessionId) return;
+      const history = await store.recover(session.hostId);
+      const authored = history.find(item => item.id === run.sessionId);
+      if (authored) select(entityKey(authored));
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [key]: `Could not run the workflow. ${errorDetail(failure)}`,
+      }));
+    }
+  };
   const assistantDock = (
     hostId: string,
     directory: string,
@@ -479,6 +575,25 @@ export function Workspace() {
     setModelSelections(previous =>
       sent && previous[key] === sent ? { ...previous, [key]: null } : previous,
     );
+  const [modeSelections, setModeSelections] = useState<
+    Record<string, SessionMode | null>
+  >({});
+  const clearModeSelection = (key: string, sent: SessionMode | null) =>
+    setModeSelections(previous =>
+      sent && previous[key] === sent ? { ...previous, [key]: null } : previous,
+    );
+  const supportsSessionWorkflow = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-workflow');
+  const supportsModes = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('permission-modes');
+  const pendingModeOf = (target: Session) =>
+    supportsModes(target.hostId)
+      ? (modeSelections[entityKey(target)] ?? null)
+      : null;
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -499,6 +614,7 @@ export function Workspace() {
         skillId?: string;
         skillHash?: string;
         selection: ModelSelection | null;
+        mode: SessionMode | null;
         messageId: string;
       }
     >
@@ -856,6 +972,7 @@ export function Workspace() {
     onAcknowledge: () => void,
     queued = false,
     selection: ModelSelection | null = null,
+    mode: SessionMode | null = null,
   ) => {
     const sessionId = target.id;
     const sessionKey = entityKey(target);
@@ -868,13 +985,15 @@ export function Workspace() {
       prior.skillId === skillId &&
       prior.skillHash === skillHash &&
       prior.selection?.model === selection?.model &&
-      prior.selection?.effort === selection?.effort
+      prior.selection?.effort === selection?.effort &&
+      prior.mode === mode
         ? prior
         : {
             text,
             skillId,
             skillHash,
             selection,
+            mode,
             messageId: crypto.randomUUID(),
           };
     sendAttempts.current[sessionKey] = attempt;
@@ -896,6 +1015,7 @@ export function Workspace() {
         ...(selection
           ? { model: selection.model, effort: selection.effort }
           : {}),
+        ...(mode ? { mode } : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -940,12 +1060,14 @@ export function Workspace() {
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
+    const mode = pendingModeOf(selected);
     await deliver(
       selected,
       text,
       skill,
       () => {
         clearModelSelection(sessionKey, selection);
+        clearModeSelection(sessionKey, mode);
         if ((draftVersions.current[sessionKey] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
@@ -953,6 +1075,7 @@ export function Workspace() {
       },
       !!activeRun,
       selection,
+      mode,
     );
   };
   const resend = async () => {
@@ -964,14 +1087,19 @@ export function Workspace() {
     if (!last) return;
     const sessionKey = entityKey(selected);
     const selection = modelSelections[sessionKey] ?? null;
+    const mode = pendingModeOf(selected);
     delete sendAttempts.current[sessionKey];
     await deliver(
       selected,
       last.body,
       null,
-      () => clearModelSelection(sessionKey, selection),
+      () => {
+        clearModelSelection(sessionKey, selection);
+        clearModeSelection(sessionKey, mode);
+      },
       false,
       selection,
+      mode,
     );
   };
   const changeQueued = async (
@@ -1012,6 +1140,12 @@ export function Workspace() {
       setModelSelections(previous => ({
         ...previous,
         [key]: { model, effort: entry.effort ?? null },
+      }));
+    const mode = entry?.mode;
+    if (mode)
+      setModeSelections(previous => ({
+        ...previous,
+        [key]: mode === target.mode ? null : mode,
       }));
   };
   const startThread = async (
@@ -1960,6 +2094,9 @@ export function Workspace() {
               run={cardRun}
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
+              onRunWorkflow={() =>
+                cardSession && void runAssignedWorkflow(cardSession)
+              }
               onClose={closeCard}
               workflow={
                 cardRun && (
@@ -2404,6 +2541,43 @@ export function Workspace() {
                     ...previous,
                     [selectedKey]: selection,
                   }))
+                }
+                modes={providerModes(
+                  selected.provider,
+                  selectedProviderState?.status,
+                )}
+                pendingMode={pendingModeOf(selected)}
+                onSelectMode={mode =>
+                  setModeSelections(previous => ({
+                    ...previous,
+                    [selectedKey]: mode,
+                  }))
+                }
+                canChangeMode={supportsModes(selectedHostId)}
+                workflowChip={
+                  <SessionWorkflowChip
+                    hostId={selected.hostId}
+                    directory={selected.directory}
+                    provider={selected.provider}
+                    assigned={selected.workflow}
+                    disabled={
+                      connection !== 'ready' ||
+                      selected.status === 'running' ||
+                      selected.status === 'stopping' ||
+                      selected.role === 'worker'
+                    }
+                    unsupported={!supportsSessionWorkflow(selectedHostId)}
+                    onAssign={workflow =>
+                      void assignWorkflow(selected, workflow)
+                    }
+                    onOpenEditor={name =>
+                      openWorkflowEditor(
+                        selected.hostId,
+                        selected.directory,
+                        name,
+                      )
+                    }
+                  />
                 }
               />
             </div>

@@ -2,7 +2,10 @@ import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron';
 import { startHost } from './host-client';
-import { ComputerManager } from './computer-manager';
+import {
+  ComputerManager,
+  type CatalogWorkflowMethod,
+} from './computer-manager';
 import { mobileAccess } from './mobile-access';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
@@ -16,6 +19,7 @@ import {
   decideDelegationSchema,
   decideReviewSchema,
   respondApprovalSchema,
+  assignSessionWorkflowSchema,
   sendMessageSchema,
   queuedMessageRefSchema,
   stopRunSchema,
@@ -55,7 +59,6 @@ import {
   validateWorkflowDefinitionsSchema,
   type AppliedColorScheme,
   type DesktopSession,
-  type WorkflowMethod,
   type WorkspaceEvent,
 } from '@nesvo/contracts';
 
@@ -102,7 +105,10 @@ const workflowInputs = {
   'workflow-assistant-send': workflowAssistantSendSchema,
   'workflow-assistant-undo': assistantUndoSchema,
   'workflow-assistant-changes': listAssistantChangesSchema,
-} satisfies Record<WorkflowMethod, { parse: (input: unknown) => unknown }>;
+} satisfies Record<
+  CatalogWorkflowMethod,
+  { parse: (input: unknown) => unknown }
+>;
 const MAX_EXTERNAL_URL_LENGTH = 2048;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR)
@@ -465,7 +471,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  for (const method of Object.keys(workflowInputs) as WorkflowMethod[])
+  for (const method of Object.keys(workflowInputs) as CatalogWorkflowMethod[])
     ipcMain.handle(
       `nesvo:${method}`,
       (event, input: unknown, hostId: unknown) => {
@@ -495,6 +501,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:assign-session-workflow',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'assign-session-workflow',
+        assignSessionWorkflowSchema.parse(input),
         route(hostId),
       );
     },
