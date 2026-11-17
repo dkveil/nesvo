@@ -725,7 +725,7 @@ export function Conversation({
                   }
                   data-author={message.author}
                   className={cn(
-                    'group space-y-2 rounded-md',
+                    'group space-y-2 rounded-control',
                     message.author === 'operator' && 'flex flex-col items-end',
                   )}
                 >

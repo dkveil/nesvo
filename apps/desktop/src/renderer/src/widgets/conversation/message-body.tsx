@@ -227,7 +227,7 @@ const components: Components = {
   code: ({ children, className }) => (
     <code
       className={cn(
-        'rounded-md border bg-code-background px-1 py-px font-mono text-[0.85em]',
+        'rounded-control border bg-code-background px-1 py-px font-mono text-[0.85em]',
         className,
       )}
     >
@@ -240,7 +240,11 @@ const components: Components = {
     const source = typeof src === 'string' ? src : '';
     if (source.startsWith('data:image/'))
       return (
-        <img src={source} alt={alt ?? ''} className="max-w-full rounded-md" />
+        <img
+          src={source}
+          alt={alt ?? ''}
+          className="max-w-full rounded-control"
+        />
       );
     return (
       <MarkdownLink href={source}>
@@ -249,7 +253,7 @@ const components: Components = {
     );
   },
   table: ({ children }) => (
-    <div className="max-w-full overflow-x-auto rounded-lg border">
+    <div className="max-w-full overflow-x-auto rounded-surface border">
       <table className="w-full border-collapse text-left [overflow-wrap:normal]">
         {children}
       </table>
