@@ -2,11 +2,13 @@ import type {
   ClaudeStatus,
   CodexStatus,
   DesktopSession as Session,
+  SessionMode,
 } from '@nesvo/contracts';
 
 export type { DesktopSession as Session } from '@nesvo/contracts';
 export { ProviderGlyph } from './provider-glyph';
 export { effortLabel } from './effort-label';
+export { ModeIcon } from './mode-icon';
 
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',
@@ -51,7 +53,42 @@ export const providerSlugs: Record<Provider, string> = {
 export const modeLabels: Record<Session['mode'], string> = {
   'read-only': 'Read-only',
   supervised: 'Workspace edits',
+  'accept-edits': 'Accept edits',
+  auto: 'Auto',
 };
+
+const modeDescriptions: Record<SessionMode, string> = {
+  'read-only': 'Reads files in a read-only sandbox.',
+  supervised:
+    'Edits files in the working directory; asks before commands and risky changes.',
+  'accept-edits':
+    'Edits files without asking. Commands are not available in this mode.',
+  auto: "Lets the agent's own review approve routine actions; refused actions stay visible.",
+};
+
+const legacyModes: Record<Provider, SessionMode[]> = {
+  'Claude Code': ['read-only'],
+  Codex: ['read-only', 'supervised'],
+};
+
+export function modeLabel(provider: Provider, mode: SessionMode) {
+  return provider === 'Claude Code' && mode === 'read-only'
+    ? 'Plan'
+    : modeLabels[mode];
+}
+
+export function modeDescription(provider: Provider, mode: SessionMode) {
+  return provider === 'Claude Code' && mode === 'read-only'
+    ? 'Reads and searches files, proposes changes as text.'
+    : modeDescriptions[mode];
+}
+
+export function providerModes(
+  provider: Provider,
+  status: ClaudeStatus | CodexStatus | null | undefined,
+) {
+  return status?.modes.length ? status.modes : legacyModes[provider];
+}
 
 const versionedClaudeModel = /^claude-(opus|sonnet|haiku)-(\d+)-(\d+)/;
 

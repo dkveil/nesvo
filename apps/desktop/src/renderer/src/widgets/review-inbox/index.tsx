@@ -13,7 +13,7 @@ import {
 } from '@/entities/review';
 import {
   directoryLabel,
-  modeLabels,
+  modeLabel,
   modelLabel,
   type Session,
 } from '@/entities/session';
@@ -521,7 +521,7 @@ export function ReviewInbox({
                       <span>
                         Worker · {delegation.provider} ·{' '}
                         {modelLabel(delegation.model)} ·{' '}
-                        {modeLabels[delegation.mode]}
+                        {modeLabel(delegation.provider, delegation.mode)}
                       </span>
                       <span
                         title={delegation.scope}

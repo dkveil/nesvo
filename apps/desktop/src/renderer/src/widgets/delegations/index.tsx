@@ -3,7 +3,7 @@ import { ArrowUpRight, GitBranch } from 'lucide-react';
 import {
   delegationStatusLabels,
   modelLabel,
-  modeLabels,
+  modeLabel,
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
@@ -100,7 +100,7 @@ export function Delegations({
                 <dt className="sr-only">Provider, model and access</dt>
                 <dd className="text-muted-foreground [overflow-wrap:anywhere]">
                   {delegation.provider} · {modelLabel(delegation.model)} ·{' '}
-                  {modeLabels[delegation.mode]}
+                  {modeLabel(delegation.provider, delegation.mode)}
                 </dd>
               </div>
             </dl>

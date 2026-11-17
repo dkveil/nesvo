@@ -1,6 +1,6 @@
 import {
   modelLabel,
-  modeLabels,
+  modeLabel,
   sessionRoleLabel,
   statusLabels,
   type Session,
@@ -107,7 +107,9 @@ export function SessionDetails({ session }: Props) {
         </section>
       )}
       <section className="space-y-2 border-t pt-5">
-        <h2 className="text-xs font-medium">{modeLabels[session.mode]}</h2>
+        <h2 className="text-xs font-medium">
+          {modeLabel(session.provider, session.mode)}
+        </h2>
         <p className="text-xs leading-5 text-muted-foreground">
           {session.provider === 'Claude Code'
             ? 'File reading and search. Editing and shell commands are disabled.'

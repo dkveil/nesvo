@@ -4,9 +4,7 @@ import {
   ArrowUp,
   FolderOpen,
   ListEnd,
-  Lock,
   Monitor,
-  Pencil,
   Server,
   Square,
 } from 'lucide-react';
@@ -16,10 +14,12 @@ import type {
   ReasoningEffort,
   RespondApprovalInput,
   SessionInterruption,
+  SessionMode,
 } from '@nesvo/contracts';
 import {
   effortLabel,
-  modeLabels,
+  ModeIcon,
+  modeLabel,
   modelLabel,
   directoryLabel,
   statusLabels,
@@ -33,6 +33,8 @@ import { Textarea } from '@/shared/ui/textarea';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
+import { ModeSwitch } from '@/features/session-mode/mode-switch';
+import { cycleMode } from '@/features/session-mode/cycle-mode';
 import {
   modelEfforts,
   resolveEffort,
@@ -45,6 +47,7 @@ import { isLongPrompt } from './long-prompt';
 
 const MESSAGE_MAX_LENGTH = 32000;
 const PASTE_NOTICE_MS = 5000;
+const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
 
 const interruptionLabels: Record<SessionInterruption['reason'], string> = {
@@ -100,6 +103,11 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   pendingSelection: ModelSelection | null;
   onSelectModel: (selection: ModelSelection | null) => void;
+  modes: SessionMode[];
+  pendingMode: SessionMode | null;
+  onSelectMode: (mode: SessionMode | null) => void;
+  canChangeMode: boolean;
+  workflowChip?: ReactNode;
 };
 
 export function Conversation({
@@ -135,6 +143,11 @@ export function Conversation({
   onRefreshProvider,
   pendingSelection,
   onSelectModel,
+  modes,
+  pendingMode,
+  onSelectMode,
+  canChangeMode,
+  workflowChip,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -154,6 +167,9 @@ export function Conversation({
   const [pasteTruncated, setPasteTruncated] = useState(false);
   const pasteTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pasteTimer.current), []);
+  const [modeNotice, setModeNotice] = useState('');
+  const modeNoticeTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
   const queueing = running || otherRun;
@@ -182,20 +198,52 @@ export function Conversation({
   const model = labelFor(session.actualModel ?? session.model);
   const selectionChanges = new Map<string, string>();
   let recorded: Session['messages'][number] | undefined;
+  let recordedMode: SessionMode | null = null;
   for (const message of session.messages) {
-    if (message.author !== 'operator' || !message.model) continue;
-    if (recorded?.model && recorded.model !== message.model)
-      selectionChanges.set(
-        message.id,
-        `Model changed to ${labelFor(message.model)}${message.effort ? ` · ${effortLabel(message.effort)}` : ''}`,
-      );
-    else if (recorded && recorded.effort !== message.effort)
-      selectionChanges.set(
-        message.id,
-        `Effort changed to ${message.effort ? effortLabel(message.effort) : 'Default'}`,
-      );
-    recorded = message;
+    if (message.author !== 'operator') continue;
+    const changes: string[] = [];
+    if (message.model) {
+      if (recorded?.model && recorded.model !== message.model)
+        changes.push(
+          `Model changed to ${labelFor(message.model)}${message.effort ? ` · ${effortLabel(message.effort)}` : ''}`,
+        );
+      else if (recorded && recorded.effort !== message.effort)
+        changes.push(
+          `Effort changed to ${message.effort ? effortLabel(message.effort) : 'Default'}`,
+        );
+      recorded = message;
+    }
+    if (message.mode) {
+      if (recordedMode && recordedMode !== message.mode)
+        changes.push(
+          `Mode changed to ${modeLabel(session.provider, message.mode)}`,
+        );
+      recordedMode = message.mode;
+    }
+    if (changes.length > 0)
+      selectionChanges.set(message.id, changes.join(' · '));
   }
+  const modeLockedReason =
+    session.role === 'worker'
+      ? 'Set by the parent decision'
+      : !canChangeMode
+        ? 'Update the host to change modes'
+        : '';
+  const chooseMode = (next: SessionMode | null) => {
+    onSelectMode(next === session.mode ? null : next);
+  };
+  const cycleSessionMode = () => {
+    const next = cycleMode(modes, pendingMode ?? session.mode);
+    chooseMode(next);
+    setModeNotice(
+      `Permission mode: ${modeLabel(session.provider, next)}${next === session.mode ? '' : ' from the next turn'}`,
+    );
+    window.clearTimeout(modeNoticeTimer.current);
+    modeNoticeTimer.current = window.setTimeout(
+      () => setModeNotice(''),
+      MODE_NOTICE_MS,
+    );
+  };
   const chooseModel = (nextModel: string, nextEffort: string) => {
     if (nextModel === session.model && nextEffort === (session.effort ?? '')) {
       onSelectModel(null);
@@ -228,7 +276,6 @@ export function Conversation({
     session.status === 'completed' && session.queue.length > 0
       ? session.error
       : '';
-  const ModeIcon = session.mode === 'supervised' ? Pencil : Lock;
   const HostIcon = session.hostId === 'local' ? Monitor : Server;
   const runStarts = new Map(
     session.messages
@@ -273,7 +320,6 @@ export function Conversation({
       onFocusMessage={() => messageInput.current?.focus()}
     >
       {({
-        trigger,
         anchor,
         notice,
         onKeyDown,
@@ -320,6 +366,20 @@ export function Conversation({
                   onKeyDown(event);
                   if (event.defaultPrevented) return;
                   const target = event.currentTarget;
+                  if (
+                    event.key === 'Tab' &&
+                    event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    if (!modeLockedReason && connected && modes.length > 1) {
+                      event.preventDefault();
+                      cycleSessionMode();
+                    }
+                    return;
+                  }
                   if (
                     event.key === 'Enter' &&
                     !event.shiftKey &&
@@ -400,8 +460,20 @@ export function Conversation({
               />
               <div className="flex items-center justify-between gap-3 pt-1">
                 <div className="flex min-w-0 items-center gap-2">
-                  {trigger}
-                  <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
+                  <ModeSwitch
+                    provider={session.provider}
+                    modes={modes}
+                    mode={session.mode}
+                    pendingMode={pendingMode}
+                    disabled={!connected}
+                    readOnlyReason={modeLockedReason}
+                    onChange={chooseMode}
+                  />
+                  {workflowChip}
+                  <span
+                    role="status"
+                    className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground"
+                  >
                     {otherRun
                       ? (otherRunLabel ?? 'Another session is working')
                       : running && draft.trim()
@@ -416,7 +488,7 @@ export function Conversation({
                             ? 'Worker approval needed'
                             : session.pendingApprovals.length > 0
                               ? 'Approval needed'
-                              : ''}
+                              : modeNotice}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -514,9 +586,16 @@ export function Conversation({
               </span>
             </span>
             <span className="flex-1" />
-            <span className="flex h-7 shrink-0 items-center gap-1.5 px-1.5">
-              <ModeIcon className="size-3.5" aria-hidden="true" />
-              {modeLabels[session.mode]}
+            <span
+              data-session-mode={session.mode}
+              className="flex h-7 shrink-0 items-center gap-1.5 px-1.5"
+            >
+              <ModeIcon
+                mode={session.mode}
+                className="size-3.5"
+                aria-hidden="true"
+              />
+              {modeLabel(session.provider, session.mode)}
             </span>
           </div>
           {!connected && (

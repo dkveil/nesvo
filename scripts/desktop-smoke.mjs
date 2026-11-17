@@ -862,7 +862,7 @@ try {
     .waitFor();
   await closeSkills();
   await screenshot('-empty-session');
-  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await messageEditor.fill('/');
   await skillPicker
     .getByRole('option', { name: 'Fixture Codex instructions', exact: true })
     .click();
@@ -1021,7 +1021,7 @@ try {
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await message('Fixture streamed reply.').waitFor();
   await sharedInstructionsBadge.waitFor();
-  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await messageEditor.fill('/');
   await skillPicker
     .getByRole('option', { name: 'Fixture Codex instructions', exact: true })
     .click();
@@ -1057,26 +1057,99 @@ try {
   await page.waitForFunction(
     async () => (await window.nesvo.codexStatus()).status === 'ready',
   );
+  const claudeModes = (await page.evaluate(() => window.nesvo.claudeStatus()))
+    .modes;
   await newThread
     .getByRole('button', { name: 'Permissions', exact: true })
     .click();
-  assert.equal(
-    await permissionsPicker
-      .getByRole('radio', { name: 'Workspace edits', exact: true })
-      .getAttribute('aria-disabled'),
-    'true',
-  );
   await permissionsPicker
-    .getByText('Claude runs read-only analysis in Nesvo', { exact: false })
+    .getByRole('radio', { name: 'Plan', exact: true })
     .waitFor();
   assert.equal(
     await permissionsPicker
-      .getByRole('radio', { name: /auto|full access/i })
+      .getByRole('radio', { name: 'Workspace edits', exact: true })
       .count(),
     0,
   );
+  assert.equal(
+    await permissionsPicker
+      .getByRole('radio', { name: /full access|bypass/i })
+      .count(),
+    0,
+  );
+  for (const [mode, label] of [
+    ['accept-edits', 'Accept edits'],
+    ['auto', 'Auto'],
+  ])
+    assert.equal(
+      await permissionsPicker
+        .getByRole('radio', { name: label, exact: true })
+        .count(),
+      claudeModes.includes(mode) ? 1 : 0,
+    );
+  assert.equal(
+    await permissionsPicker
+      .getByText('Claude runs read-only analysis in Nesvo', { exact: false })
+      .count(),
+    claudeModes.length > 1 ? 0 : 1,
+  );
   await page.keyboard.press('Escape');
   await permissionsPicker.waitFor({ state: 'hidden' });
+  if (claudeModes.includes('accept-edits')) {
+    const modeTarget = await sessionByTitle('Workspace analysis');
+    await navigation
+      .getByRole('button', { name: /^Workspace analysis/ })
+      .click();
+    await page
+      .getByRole('heading', {
+        name: 'Workspace analysis',
+        exact: true,
+        level: 1,
+      })
+      .waitFor();
+    await waitState(modeTarget.id, 'completed');
+    const modeSwitch = conversation.getByRole('button', {
+      name: 'Permission mode',
+      exact: true,
+    });
+    const modeDialog = page.getByRole('dialog', {
+      name: 'Permission mode',
+      exact: true,
+    });
+    assert.equal((await modeSwitch.textContent()).trim(), 'Plan');
+    await modeSwitch.click();
+    assert.equal(
+      await modeDialog
+        .getByRole('radio', { name: /full access|bypass|workspace edits/i })
+        .count(),
+      0,
+    );
+    await modeDialog
+      .getByRole('radio', { name: 'Accept edits', exact: true })
+      .click();
+    await modeDialog.waitFor({ state: 'hidden' });
+    await modeSwitch.filter({ hasText: 'next turn' }).waitFor();
+    await send('Mode switch check');
+    await conversation
+      .getByText('Mode changed to Accept edits', { exact: true })
+      .waitFor();
+    const modeSwitched = await waitState(modeTarget.id, 'completed');
+    assert.equal(modeSwitched.mode, 'accept-edits');
+    assert.equal(modeSwitched.messages.at(-2).mode, 'accept-edits');
+    await conversation
+      .locator('[data-session-mode="accept-edits"]', {
+        hasText: 'Accept edits',
+      })
+      .waitFor();
+    assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
+    await messageEditor.press('Shift+Tab');
+    await modeSwitch.filter({ hasText: 'next turn' }).waitFor();
+    for (let step = 1; step < claudeModes.length; step += 1)
+      await messageEditor.press('Shift+Tab');
+    await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
+    assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
+    await openNewThread();
+  }
   assert.equal(
     await newThread.getByRole('combobox', { name: /role/i }).count(),
     0,
@@ -1241,8 +1314,7 @@ try {
     await messageEditor.inputValue(),
     '/fixture-claude-instructions',
   );
-  await messageEditor.fill('');
-  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await messageEditor.fill('/');
   await projectSkillOption.waitFor();
   assert.equal(
     await skillPicker
@@ -1250,9 +1322,7 @@ try {
       .getAttribute('aria-disabled'),
     'true',
   );
-  await page
-    .getByRole('textbox', { name: 'Filter skills', exact: true })
-    .fill('fixture-claude-instructions');
+  await messageEditor.fill('/fixture-claude-instructions');
   await waitForUniqueSkillChoice();
   await messageEditor.press('ArrowDown');
   await messageEditor.press('Enter');
@@ -1406,7 +1476,7 @@ try {
   );
   await requestedSkillBadge.waitFor();
   await message('Codex fixture file accepted.').waitFor();
-  await page.getByRole('button', { name: 'Choose skill', exact: true }).click();
+  await messageEditor.fill('/');
   await projectSkillOption.click();
   await selectedSkillChip.waitFor();
   await send('fixture:continue');

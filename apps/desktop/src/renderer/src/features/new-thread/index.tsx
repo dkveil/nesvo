@@ -10,6 +10,7 @@ import type {
 import {
   directoryLabel,
   errorDetail,
+  providerModes,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
@@ -346,10 +347,12 @@ export function NewThread({
                             provider,
                             model: nextModel,
                             effort: nextEffort,
-                            mode:
-                              provider === 'Claude Code'
-                                ? 'read-only'
-                                : setup.mode,
+                            mode: providerModes(
+                              provider,
+                              statuses[provider].status,
+                            ).includes(setup.mode)
+                              ? setup.mode
+                              : 'read-only',
                           });
                         }}
                         onRefreshProvider={onRefreshProvider}
@@ -418,6 +421,7 @@ export function NewThread({
                 <div className="flex-1" />
                 <PermissionPicker
                   provider={setup.provider}
+                  modes={providerModes(setup.provider, providerState.status)}
                   mode={setup.mode}
                   disabled={pending}
                   onChange={mode => onSetupChange({ ...setup, mode })}

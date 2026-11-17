@@ -1,8 +1,12 @@
 import { useState, type KeyboardEvent } from 'react';
-import { Lock, Pencil } from 'lucide-react';
 import type { CreateSessionInput } from '@nesvo/contracts';
 import { cn } from 'cn';
-import { modeLabels, type Provider } from '@/entities/session';
+import {
+  ModeIcon,
+  modeDescription,
+  modeLabel,
+  type Provider,
+} from '@/entities/session';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { ComposerChip } from './composer-chip';
 
@@ -10,6 +14,7 @@ type Mode = CreateSessionInput['mode'];
 
 type Props = {
   provider: Provider;
+  modes: Mode[];
   mode: Mode;
   disabled?: boolean;
   onChange: (mode: Mode) => void;
@@ -17,48 +22,27 @@ type Props = {
 
 const CLAUDE_READ_ONLY_REASON = 'Claude runs read-only analysis in Nesvo';
 
-const segments: { mode: Mode; icon: typeof Lock; description: string }[] = [
-  {
-    mode: 'read-only',
-    icon: Lock,
-    description: 'Read files and run read commands. No file writes.',
-  },
-  {
-    mode: 'supervised',
-    icon: Pencil,
-    description:
-      'Edit files in the working directory. Codex asks for approval when required.',
-  },
-];
-
 export function PermissionPicker({
   provider,
+  modes,
   mode,
   disabled = false,
   onChange,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState<Mode | null>(null);
-  const unavailable = (candidate: Mode) =>
-    candidate === 'supervised' && provider === 'Claude Code'
-      ? CLAUDE_READ_ONLY_REASON
-      : '';
-  const current =
-    segments.find(segment => segment.mode === mode) ?? segments[0]!;
-  const shown =
-    segments.find(segment => segment.mode === previewMode) ?? current;
-  const Icon = current.icon;
+  const shown = previewMode ?? mode;
+  const planOnly =
+    provider === 'Claude Code' && modes.every(option => option === 'read-only');
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     event.preventDefault();
-    const available = segments.filter(segment => !unavailable(segment.mode));
-    const index = available.findIndex(segment => segment.mode === mode);
+    const index = modes.indexOf(mode);
     const offset = event.key === 'ArrowRight' ? 1 : -1;
-    const next =
-      available[(index + offset + available.length) % available.length];
+    const next = modes[(index + offset + modes.length) % modes.length];
     if (next) {
-      onChange(next.mode);
-      document.getElementById(`thread-mode-${next.mode}`)?.focus();
+      onChange(next);
+      document.getElementById(`thread-mode-${next}`)?.focus();
     }
   };
   return (
@@ -73,10 +57,10 @@ export function PermissionPicker({
         <ComposerChip
           disabled={disabled}
           aria-label="Permissions"
-          title={`Permissions: ${modeLabels[mode]}`}
+          title={`Permissions: ${modeLabel(provider, mode)}`}
         >
-          <Icon />
-          <span>{modeLabels[mode]}</span>
+          <ModeIcon mode={mode} />
+          <span>{modeLabel(provider, mode)}</span>
         </ComposerChip>
       </PopoverTrigger>
       <PopoverContent
@@ -91,51 +75,52 @@ export function PermissionPicker({
         <div
           role="radiogroup"
           aria-label="Permission mode"
-          className="grid grid-cols-2 gap-1 rounded-lg bg-segment-track p-1"
+          className={cn(
+            'grid gap-1 rounded-lg bg-segment-track p-1',
+            modes.length === 1 && 'grid-cols-1',
+            modes.length === 2 && 'grid-cols-2',
+            modes.length >= 3 && 'grid-cols-3',
+          )}
           onPointerLeave={() => setPreviewMode(null)}
         >
-          {segments.map(segment => {
-            const SegmentIcon = segment.icon;
-            const reason = unavailable(segment.mode);
-            const checked = segment.mode === mode;
+          {modes.map(option => {
+            const checked = option === mode;
             return (
               <button
-                key={segment.mode}
-                id={`thread-mode-${segment.mode}`}
+                key={option}
+                id={`thread-mode-${option}`}
                 type="button"
                 role="radio"
                 aria-checked={checked}
-                aria-label={modeLabels[segment.mode]}
-                aria-disabled={reason ? true : undefined}
-                title={reason || modeLabels[segment.mode]}
+                aria-label={modeLabel(provider, option)}
+                title={modeLabel(provider, option)}
                 tabIndex={checked ? 0 : -1}
                 onKeyDown={onKeyDown}
-                onPointerEnter={() => setPreviewMode(segment.mode)}
-                onFocus={() => setPreviewMode(segment.mode)}
+                onPointerEnter={() => setPreviewMode(option)}
+                onFocus={() => setPreviewMode(option)}
                 onBlur={() => setPreviewMode(null)}
-                onClick={() => {
-                  if (!reason) onChange(segment.mode);
-                }}
+                onClick={() => onChange(option)}
                 className={cn(
                   'flex h-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 outline-none',
-                  'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                  reason
-                    ? 'cursor-not-allowed opacity-40'
-                    : 'hover:text-foreground',
+                  'hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   checked && 'bg-segment-active text-foreground shadow-xs',
                 )}
               >
-                <SegmentIcon className="size-3.5" aria-hidden="true" />
+                <ModeIcon
+                  mode={option}
+                  className="size-3.5"
+                  aria-hidden="true"
+                />
               </button>
             );
           })}
         </div>
         <div className="space-y-0.5" aria-live="polite">
-          <p className="text-sm font-semibold">{modeLabels[shown.mode]}</p>
+          <p className="text-sm font-semibold">{modeLabel(provider, shown)}</p>
           <p className="text-xs leading-5 text-muted-foreground">
-            {unavailable(shown.mode) || shown.description}
+            {modeDescription(provider, shown)}
           </p>
-          {provider === 'Claude Code' && shown.mode === mode && (
+          {planOnly && (
             <p role="note" className="text-xs leading-5 text-muted-foreground">
               {CLAUDE_READ_ONLY_REASON}.
             </p>
