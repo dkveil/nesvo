@@ -1,7 +1,6 @@
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Search, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import { Button } from '@/shared/ui/button';
 import {
   Dialog,
   DialogClose,
@@ -9,6 +8,11 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
+import { NavItem, NavList } from '@/shared/ui/nav-list';
+import { SearchField } from '@/shared/ui/search-field';
+import { SectionLabel } from '@/shared/ui/section-label';
 import {
   matchesSettingsPage,
   settingsPages,
@@ -90,72 +94,54 @@ export function Settings({
         <DialogDescription id="settings-description" className="sr-only">
           Nesvo settings for this desktop.
         </DialogDescription>
-        <nav
-          aria-label="Settings sections"
-          className="flex w-44 shrink-0 flex-col gap-0.5 border-r bg-card p-2 md:w-52"
-        >
-          <div className="mb-1.5 flex h-8 items-center gap-2 rounded-md px-2 text-muted-foreground transition-colors duration-100 focus-within:bg-accent focus-within:ring-1 focus-within:ring-ring/70 focus-within:ring-inset hover:bg-accent">
-            <Search className="size-3.5 shrink-0" aria-hidden="true" />
-            <input
-              ref={search}
-              type="search"
-              aria-label="Search settings"
-              placeholder="Search"
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && visible[0] && !busy) {
-                  event.preventDefault();
-                  onPageChange(visible[0].id);
-                }
-              }}
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
-            />
-            <kbd className="rounded-sm border px-1 font-sans text-2xs leading-4 text-muted-foreground">
-              /
-            </kbd>
-          </div>
-          {groups.map(group => (
-            <div key={group || 'main'} className="flex flex-col gap-0.5">
-              {group && (
-                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
-                  {group}
-                </p>
-              )}
-              {visible
-                .filter(entry => entry.group === group)
-                .map(entry => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    aria-current={entry.id === page ? 'page' : undefined}
-                    disabled={busy && entry.id !== page}
-                    onClick={() => onPageChange(entry.id)}
-                    className={cn(
-                      'flex h-7.5 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground transition-colors duration-100 outline-none',
-                      'enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-64',
-                      'aria-[current=page]:bg-highlight aria-[current=page]:font-medium aria-[current=page]:text-foreground',
-                    )}
-                  >
-                    <entry.icon
-                      className="size-4 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{entry.label}</span>
-                  </button>
-                ))}
-            </div>
-          ))}
-          {visible.length === 0 && (
-            <p className="px-2 py-3 text-xs text-muted-foreground">
-              No matching settings
-            </p>
-          )}
-        </nav>
+        <div className="flex w-44 shrink-0 flex-col border-r bg-card p-2 md:w-52">
+          <SearchField
+            ref={search}
+            aria-label="Search settings"
+            placeholder="Search"
+            shortcut="/"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && visible[0] && !busy) {
+                event.preventDefault();
+                onPageChange(visible[0].id);
+              }
+            }}
+            containerClassName="mb-1.5"
+          />
+          <NavList label="Settings sections">
+            {groups.map(group => (
+              <div key={group || 'main'} className="flex flex-col gap-0.5">
+                {group && (
+                  <SectionLabel as="p" className="mt-2">
+                    {group}
+                  </SectionLabel>
+                )}
+                {visible
+                  .filter(entry => entry.group === group)
+                  .map(entry => (
+                    <NavItem
+                      key={entry.id}
+                      icon={<entry.icon aria-hidden="true" />}
+                      selected={entry.id === page}
+                      disabled={busy && entry.id !== page}
+                      onClick={() => onPageChange(entry.id)}
+                    >
+                      {entry.label}
+                    </NavItem>
+                  ))}
+              </div>
+            ))}
+            {visible.length === 0 && (
+              <EmptyState size="sm" title="No matching settings" />
+            )}
+          </NavList>
+        </div>
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-10 shrink-0 items-center gap-2 border-b pr-2 pl-4">
             <nav aria-label="Settings breadcrumb" className="min-w-0 flex-1">
-              <ol className="flex min-w-0 items-center gap-2 text-[13px]">
+              <ol className="flex min-w-0 items-center gap-2 text-ui">
                 <li className="text-muted-foreground">Settings</li>
                 <li aria-hidden="true" className="text-muted-foreground/60">
                   /
@@ -166,16 +152,13 @@ export function Settings({
               </ol>
             </nav>
             <DialogClose asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="size-7 text-muted-foreground enabled:hover:text-foreground"
-                aria-label="Close settings"
+              <IconButton
+                label="Close settings"
+                tooltip={false}
                 disabled={busy}
               >
-                <X className="size-4" />
-              </Button>
+                <X />
+              </IconButton>
             </DialogClose>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto">

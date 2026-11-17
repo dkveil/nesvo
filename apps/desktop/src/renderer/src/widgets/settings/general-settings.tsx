@@ -4,11 +4,13 @@ import {
   providers,
   providerStatusLabel,
   type Provider,
+  type ProviderState,
   type ProviderStates,
 } from '@/entities/session';
 import { HostStatus } from '@/features/host-status';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
+import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
 
 type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
@@ -23,6 +25,12 @@ const syncFormat = new Intl.DateTimeFormat('en', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
+
+function providerTone(state: ProviderState): StatusTone {
+  if (state.loading) return 'loading';
+  if (state.status?.status === 'ready') return 'success';
+  return 'warning';
+}
 
 export function GeneralSettings({
   connection,
@@ -47,9 +55,7 @@ export function GeneralSettings({
                 onRefresh={onRefreshConnection}
               />
               {computer?.error && (
-                <p role="alert" className="text-destructive">
-                  {computer.error}
-                </p>
+                <StatusMessage tone="error">{computer.error}</StatusMessage>
               )}
               {computer?.lastSyncedAt && connection !== 'ready' && (
                 <p>
@@ -71,11 +77,11 @@ export function GeneralSettings({
               title={provider}
               description={
                 <div className="space-y-1">
-                  <p role="status">{providerStatusLabel(provider, state)}</p>
+                  <StatusMessage tone={providerTone(state)}>
+                    {providerStatusLabel(provider, state)}
+                  </StatusMessage>
                   {state.error && (
-                    <p role="alert" className="text-destructive">
-                      {state.error}
-                    </p>
+                    <StatusMessage tone="error">{state.error}</StatusMessage>
                   )}
                   {state.status?.detail && (
                     <p className="whitespace-pre-wrap">{state.status.detail}</p>
@@ -94,17 +100,13 @@ export function GeneralSettings({
                 </div>
               }
             >
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="size-7 text-muted-foreground enabled:hover:text-foreground"
-                aria-label={`Refresh ${provider} status`}
-                title={`Refresh ${provider} status`}
+              <IconButton
+                label={`Refresh ${provider} status`}
                 disabled={state.loading}
                 onClick={() => onRefreshProvider(provider)}
               >
-                <RefreshCw className="size-3.5" />
-              </Button>
+                <RefreshCw />
+              </IconButton>
             </SettingsRow>
           );
         })}

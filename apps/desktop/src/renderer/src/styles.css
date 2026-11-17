@@ -312,18 +312,6 @@
   color: var(--code-string);
 }
 
-[data-scheme-preview='light'] {
-  --preview-canvas: #fcfcfc;
-  --preview-panel: #f4f4f5;
-  --preview-line: #e4e4e7;
-}
-
-[data-scheme-preview='dark'] {
-  --preview-canvas: #0a0a0a;
-  --preview-panel: #1b1b1b;
-  --preview-line: #2d2d2d;
-}
-
 :root[data-platform='mac'] {
   --titlebar-inset-left: 1.5rem;
 }
