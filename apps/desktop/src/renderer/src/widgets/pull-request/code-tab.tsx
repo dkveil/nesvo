@@ -12,8 +12,11 @@ import { Button } from '@/shared/ui/button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelAction } from '@/shared/ui/panel';
 import { panelRow } from '@/shared/ui/panel-styles';
+import { CommentBox } from './comment-box';
 import { PatchDiff } from './file-diff';
+import { lineRangeLabel, type LineDraft, type LineRange } from './line-comment';
 import { inlineThreadLines, parseFilePatch } from './patch';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 import type { Resource } from './use-resource';
 
 const DEFAULT_OPEN_FILES = 25;
@@ -65,9 +68,15 @@ type CodeTabProps = {
   threads: Resource<PullRequestThreads>;
   viewed: ReadonlySet<string>;
   sendReason: string;
+  commentReason: string;
+  staleReason: string;
+  lineCommentState: ActionState | undefined;
   onToggleViewed: (path: string) => void;
   onSendAll: (threads: PullRequestThread[]) => void;
   onRetry: () => void;
+  onRefresh: () => void;
+  onLineComment: (draft: LineDraft) => Promise<boolean>;
+  onLineCommentEdit: () => void;
   renderThread: (thread: PullRequestThread, showLocation: boolean) => ReactNode;
 };
 
@@ -76,12 +85,20 @@ export function CodeTab({
   threads,
   viewed,
   sendReason,
+  commentReason,
+  staleReason,
+  lineCommentState,
   onToggleViewed,
   onSendAll,
   onRetry,
+  onRefresh,
+  onLineComment,
+  onLineCommentEdit,
   renderThread,
 }: CodeTabProps) {
   const [wrap, setWrap] = useState(false);
+  const [draft, setDraft] = useState<LineDraft | null>(null);
+  const draftLocked = isActionLocked(lineCommentState);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [focused, setFocused] = useState('');
   const sections = useRef(new Map<string, HTMLElement>());
@@ -125,6 +142,45 @@ export function CodeTab({
       }),
     );
   };
+  const openDraft = (path: string, range: LineRange) => {
+    if (draftLocked) return;
+    setDraft(previous => ({
+      ...range,
+      path,
+      body: previous?.path === path ? previous.body : '',
+    }));
+    onLineCommentEdit();
+  };
+  const submitDraft = async () => {
+    if (!draft) return;
+    if (await onLineComment({ ...draft, body: draft.body.trim() }))
+      setDraft(null);
+  };
+  const renderDraft = () =>
+    draft && (
+      <CommentBox
+        label={`Comment on ${lineRangeLabel(draft)}`}
+        placeholder={`Comment on ${lineRangeLabel(draft)}`}
+        value={draft.body}
+        onChange={body => {
+          setDraft(previous => previous && { ...previous, body });
+          onLineCommentEdit();
+        }}
+        submitLabel="Comment"
+        canSubmit={!!draft.body.trim()}
+        state={lineCommentState}
+        blockedReason={commentReason}
+        onSubmit={() => void submitDraft()}
+        onCancel={() => setDraft(null)}
+        controls={
+          <span className="text-2xs text-muted-foreground">
+            Shift-click a line number to extend the range.
+          </span>
+        }
+        autoFocus
+        className="my-1.5"
+      />
+    );
   const toggleViewed = (path: string) => {
     if (!viewed.has(path))
       setExpanded(previous => ({ ...previous, [path]: false }));
@@ -196,6 +252,25 @@ export function CodeTab({
           <WrapText />
         </PanelAction>
       </div>
+      {staleReason && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
+          <p
+            role="status"
+            className="min-w-0 flex-1 text-2xs text-warning-foreground"
+          >
+            {staleReason}
+          </p>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="h-6 text-2xs text-muted-foreground enabled:hover:text-foreground"
+            onClick={onRefresh}
+          >
+            Refresh
+          </Button>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <nav
           aria-label="Changed files"
@@ -331,7 +406,11 @@ export function CodeTab({
                         patch={file.patch}
                         threads={placement.inline}
                         wrap={wrap}
+                        draft={draft?.path === file.path ? draft : null}
+                        commentable={!commentReason}
+                        onDraftRange={range => openDraft(file.path, range)}
                         renderThread={thread => renderThread(thread, false)}
+                        renderDraft={renderDraft}
                       />
                     ) : (
                       <p className="px-4 py-3 text-xs text-muted-foreground">

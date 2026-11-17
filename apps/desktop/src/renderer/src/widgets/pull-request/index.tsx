@@ -167,6 +167,7 @@ export default function PullRequestPanel({
     data && files.data && files.data.headSha !== data.headSha
       ? STALE_REVISION_REASON
       : '';
+  const commentReason = blockedReason || staleReason;
   const viewedPaths = new Set(viewed[headSha] ?? []);
   const toggleViewed = (path: string) =>
     setViewed(previous => {
@@ -538,6 +539,29 @@ export default function PullRequestPanel({
                   threads={threads}
                   viewed={viewedPaths}
                   sendReason={sendReason}
+                  commentReason={commentReason}
+                  staleReason={staleReason}
+                  lineCommentState={actions.states['line-comment']}
+                  onRefresh={refreshAll}
+                  onLineCommentEdit={() => actions.clear('line-comment')}
+                  onLineComment={async draft => {
+                    if (!files.data) return false;
+                    const done = await actions.run(
+                      'line-comment',
+                      {
+                        action: 'line-comment',
+                        commitId: files.data.headSha,
+                        path: draft.path,
+                        side: draft.side,
+                        line: draft.line,
+                        startLine: draft.startLine,
+                        body: draft.body,
+                      },
+                      'Comment posted.',
+                    );
+                    if (done) bump('threads');
+                    return done;
+                  }}
                   onToggleViewed={toggleViewed}
                   onSendAll={sendThreads}
                   onRetry={() => {
