@@ -24,8 +24,11 @@ const UNSAFE_NAME_PROBLEM =
 const commandName = (command: string): string | null => {
   const trimmed = command.trim();
   const quoted = /^"([^"]+)"/.exec(trimmed)?.[1];
-  const head = quoted ?? trimmed.split(/\s+/)[0] ?? '';
-  const name = head.split(/[\\/]/).at(-1) ?? '';
+  const windowsProgram = /^[A-Za-z]:[\\/].*?\.(?:exe|cmd|bat|com)\b/i.exec(
+    trimmed,
+  )?.[0];
+  const head = quoted ?? windowsProgram ?? trimmed.split(/\s+/)[0] ?? '';
+  const name = head.split(/[\\/]/).at(-1)?.split(/\s+/)[0] ?? '';
   return name ? name.slice(0, mcpLimits.summary) : null;
 };
 
