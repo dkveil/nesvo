@@ -234,28 +234,89 @@ export const createSessionSchema = z
             : 'Choose a specific Codex model to set a reasoning effort',
       });
   });
-export const messageAttachmentSchema = z.strictObject({
-  id: z.uuid(),
-  kind: z.enum(['image', 'text']),
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .max(255)
-    .regex(/^[^\\/\u0000-\u001f\u007f]+$/),
-  mediaType: z.string().trim().min(1).max(200),
-  bytes: z.number().int().nonnegative(),
+export const attachmentLimits = {
+  perMessage: 10,
+  imageBytes: 5_242_880,
+  textBytes: 204_800,
+  encodedCharacters: 7_000_000,
+  pastedTextCharacters: 4000,
+} as const;
+export const attachmentKindSchema = z.enum(['image', 'text']);
+export type AttachmentKind = z.infer<typeof attachmentKindSchema>;
+export const attachmentMediaTypes = {
+  image: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+  text: ['text/plain', 'text/markdown', 'text/csv', 'application/json'],
+} as const satisfies Record<AttachmentKind, readonly string[]>;
+const TEXT_SUBTYPE_PATTERN = /^text\/x-[a-z0-9.+-]{1,80}$/;
+export const isAttachmentMediaType = (
+  kind: AttachmentKind,
+  mediaType: string,
+): boolean =>
+  (attachmentMediaTypes[kind] as readonly string[]).includes(mediaType) ||
+  (kind === 'text' && TEXT_SUBTYPE_PATTERN.test(mediaType));
+export const attachmentByteLimit = (kind: AttachmentKind): number =>
+  kind === 'image' ? attachmentLimits.imageBytes : attachmentLimits.textBytes;
+export const messageAttachmentSchema = z
+  .strictObject({
+    id: z.uuid(),
+    kind: attachmentKindSchema,
+    name: z
+      .string()
+      .min(1)
+      .max(255)
+      .refine(
+        value =>
+          !/[\\/\u0000-\u001f\u007f]/.test(value) &&
+          value !== '.' &&
+          value !== '..',
+        'Use a file name without folders.',
+      ),
+    mediaType: z.string().min(1).max(100),
+    bytes: z.number().int().min(1).max(attachmentLimits.imageBytes),
+  })
+  .superRefine((value, context) => {
+    if (!isAttachmentMediaType(value.kind, value.mediaType))
+      context.addIssue({
+        code: 'custom',
+        path: ['mediaType'],
+        message: 'This file type cannot be attached.',
+      });
+    if (value.bytes > attachmentByteLimit(value.kind))
+      context.addIssue({
+        code: 'custom',
+        path: ['bytes'],
+        message: 'This file is too large to attach.',
+      });
+  });
+const messageAttachmentsSchema = z
+  .array(messageAttachmentSchema)
+  .max(attachmentLimits.perMessage);
+const attachmentDataSchema = z.base64().max(attachmentLimits.encodedCharacters);
+export const stageAttachmentSchema = z.strictObject({
+  sessionId: z.uuid(),
+  attachment: messageAttachmentSchema,
+  data: attachmentDataSchema,
 });
+export const readAttachmentSchema = z.strictObject({
+  sessionId: z.uuid(),
+  attachmentId: z.uuid(),
+});
+export const stagedAttachmentIdSchema = z.strictObject({ id: z.uuid() });
+export const stagedAttachmentSchema = z.strictObject({
+  attachment: messageAttachmentSchema,
+  data: attachmentDataSchema,
+});
+const messageTextSchema = z.string().trim().max(32000);
 export const sendMessageSchema = z.strictObject({
   sessionId: z.uuid(),
   messageId: z.uuid(),
-  text: z.string().trim().min(1).max(32000),
+  text: messageTextSchema,
+  attachments: messageAttachmentsSchema.optional(),
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
-  attachments: z.array(messageAttachmentSchema).max(10).optional(),
 });
 export const assignSessionWorkflowSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -263,7 +324,8 @@ export const assignSessionWorkflowSchema = z.strictObject({
 });
 export const queuedMessageSchema = z.strictObject({
   id: z.uuid(),
-  text: z.string().trim().min(1).max(32000),
+  text: messageTextSchema,
+  attachments: messageAttachmentsSchema.default([]),
   skillId: z.string().min(1).max(8192).optional(),
   skillHash: skillHashSchema.optional(),
   model: modelSchema.optional(),
@@ -320,6 +382,7 @@ export const sessionMessageSchema = z.strictObject({
   runId: z.uuid(),
   author: z.enum(['operator', 'agent']),
   body: z.string().max(2_000_000),
+  attachments: messageAttachmentsSchema.default([]),
   state: sessionStateSchema,
   createdAt: z.iso.datetime(),
   completedAt: z.iso.datetime().nullable().default(null),
@@ -412,6 +475,9 @@ export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
+export type StageAttachmentInput = z.infer<typeof stageAttachmentSchema>;
+export type ReadAttachmentInput = z.infer<typeof readAttachmentSchema>;
+export type StagedAttachment = z.infer<typeof stagedAttachmentSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;

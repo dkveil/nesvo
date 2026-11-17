@@ -47,6 +47,8 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     listWorkspaceDirectory: input => api.listWorkspaceDirectory(input, hostId),
     searchWorkspaceFiles: input => api.searchWorkspaceFiles(input, hostId),
     readWorkspaceFile: input => api.readWorkspaceFile(input, hostId),
+    stageAttachment: input => api.stageAttachment(input, hostId),
+    readAttachment: input => api.readAttachment(input, hostId),
   };
   boundApis.set(hostId, bound);
   return bound;

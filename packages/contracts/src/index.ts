@@ -27,6 +27,9 @@ import {
   codexStatusSchema,
   createSessionSchema,
   sendMessageSchema,
+  stageAttachmentSchema,
+  readAttachmentSchema,
+  stagedAttachmentSchema,
   assignSessionWorkflowSchema,
   queuedMessageRefSchema,
   sessionSchema,
@@ -40,6 +43,9 @@ import {
   type CodexStatus,
   type CreateSessionInput,
   type SendMessageInput,
+  type StageAttachmentInput,
+  type ReadAttachmentInput,
+  type StagedAttachment,
   type AssignSessionWorkflowInput,
   type QueuedMessageRefInput,
   type StopRunInput,
@@ -256,6 +262,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('queue-message'),
     input: sendMessageSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('stage-attachment'),
+    input: stageAttachmentSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-attachment'),
+    input: readAttachmentSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -487,6 +503,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('git-branch'),
     id: z.uuid(),
     branch: gitBranchSchema,
+  }),
+  z.strictObject({
+    type: z.literal('attachment-staged'),
+    id: z.uuid(),
+    attachmentId: z.uuid(),
+  }),
+  z.strictObject({
+    type: z.literal('attachment'),
+    id: z.uuid(),
+    staged: stagedAttachmentSchema,
   }),
   z.strictObject({
     type: z.literal('reviews'),
@@ -791,6 +817,14 @@ export type DesktopApi = {
     input: SendMessageInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  stageAttachment: (
+    input: StageAttachmentInput,
+    hostId?: HostId,
+  ) => Promise<{ id: string }>;
+  readAttachment: (
+    input: ReadAttachmentInput,
+    hostId?: HostId,
+  ) => Promise<StagedAttachment>;
   cancelQueued: (
     input: QueuedMessageRefInput,
     hostId?: HostId,

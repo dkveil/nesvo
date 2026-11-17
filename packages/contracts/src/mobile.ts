@@ -110,13 +110,16 @@ export const mobileCommandSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     hostId: hostIdSchema,
     method: z.literal('send-message'),
-    input: sendMessageSchema.omit({
-      skillId: true,
-      skillHash: true,
-      model: true,
-      effort: true,
-      mode: true,
-    }),
+    input: sendMessageSchema
+      .omit({
+        attachments: true,
+        skillId: true,
+        skillHash: true,
+        model: true,
+        effort: true,
+        mode: true,
+      })
+      .extend({ text: z.string().trim().min(1).max(32000) }),
   }),
   z.strictObject({
     id: z.uuid(),

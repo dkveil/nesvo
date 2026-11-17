@@ -11,6 +11,8 @@ import {
   type DesktopEvent,
   type AssignSessionWorkflowInput,
   type SendMessageInput,
+  type StageAttachmentInput,
+  type ReadAttachmentInput,
   type QueuedMessageRefInput,
   type RespondApprovalInput,
   type AnswerPromptInput,
@@ -226,6 +228,18 @@ export function startHost(directory: string) {
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;
+    },
+    stageAttachment: async (input: StageAttachmentInput) => {
+      const response = await request('stage-attachment', input);
+      if (response.type !== 'attachment-staged')
+        throw new Error('Unexpected host response');
+      return { id: response.attachmentId };
+    },
+    readAttachment: async (input: ReadAttachmentInput) => {
+      const response = await request('read-attachment', input);
+      if (response.type !== 'attachment')
+        throw new Error('Unexpected host response');
+      return response.staged;
     },
     cancelQueued: async (input: QueuedMessageRefInput) => {
       const response = await request('cancel-queued', input);

@@ -27,6 +27,7 @@ export const hostCapabilitySchema = z.enum([
   'permission-modes',
   'session-workflow',
   'prompts',
+  'attachments',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

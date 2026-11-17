@@ -86,6 +86,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
   prompts:
     'This computer runs an older Nesvo host that cannot answer agent questions or plans. Update the host, then reconnect.',
+  attachments:
+    'This computer runs an older Nesvo host without attachments. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -95,6 +97,17 @@ function requiredCapability(
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'assign-session-workflow') return 'session-workflow';
   if (method === 'answer-prompt') return 'prompts';
+  if (method === 'stage-attachment' || method === 'read-attachment')
+    return 'attachments';
+  if (
+    (method === 'send-message' || method === 'queue-message') &&
+    typeof input === 'object' &&
+    input !== null &&
+    'attachments' in input &&
+    Array.isArray(input.attachments) &&
+    input.attachments.length > 0
+  )
+    return 'attachments';
   if (
     method === 'list-workflow-definitions' ||
     method === 'validate-workflow-definitions'
@@ -601,10 +614,16 @@ export class ComputerManager {
       'search-workspace-files': 'workspace-search',
       'read-workspace-file': 'workspace-file',
       'read-git-branch': 'git-branch',
+      'stage-attachment': 'attachment-staged',
+      'read-attachment': 'attachment',
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
     switch (response.type) {
+      case 'attachment-staged':
+        return { id: response.attachmentId };
+      case 'attachment':
+        return response.staged;
       case 'provider-usage':
         return response.usage;
       case 'health':

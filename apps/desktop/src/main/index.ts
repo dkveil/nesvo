@@ -23,6 +23,8 @@ import {
   answerPromptSchema,
   assignSessionWorkflowSchema,
   sendMessageSchema,
+  stageAttachmentSchema,
+  readAttachmentSchema,
   queuedMessageRefSchema,
   stopRunSchema,
   listWorkspaceDirectorySchema,
@@ -547,6 +549,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'queue-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:stage-attachment',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'stage-attachment',
+        stageAttachmentSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-attachment',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-attachment',
+        readAttachmentSchema.parse(input),
         route(hostId),
       );
     },

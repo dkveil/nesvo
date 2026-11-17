@@ -13,6 +13,10 @@ import {
   hostHealthSchema,
   assignSessionWorkflowSchema,
   sendMessageSchema,
+  stageAttachmentSchema,
+  readAttachmentSchema,
+  stagedAttachmentSchema,
+  stagedAttachmentIdSchema,
   queuedMessageRefSchema,
   stopRunSchema,
   listWorkspaceDirectorySchema,
@@ -434,6 +438,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:queue-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  stageAttachment: async (input, hostId) =>
+    stagedAttachmentIdSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:stage-attachment',
+        stageAttachmentSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readAttachment: async (input, hostId) =>
+    stagedAttachmentSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-attachment',
+        readAttachmentSchema.parse(input),
         route(hostId),
       ),
     ),
