@@ -32,6 +32,8 @@ type ListboxProps<T extends string> = {
   searchPlaceholder?: string;
   emptyText?: string;
   autoFocus?: boolean;
+  query?: string;
+  onQueryChange?: (query: string) => void;
   className?: string;
 };
 
@@ -49,11 +51,19 @@ export function Listbox<T extends string>({
   searchPlaceholder = 'Search',
   emptyText = 'No matches',
   autoFocus = false,
+  query: controlledQuery,
+  onQueryChange,
   className,
 }: ListboxProps<T>) {
   const id = useId();
   const list = useRef<HTMLDivElement>(null);
-  const [query, setQuery] = useState('');
+  const [internalQuery, setInternalQuery] = useState('');
+  const isControlled = typeof controlledQuery === 'string';
+  const query = isControlled ? controlledQuery : internalQuery;
+  const setQuery = (next: string) => {
+    if (!isControlled) setInternalQuery(next);
+    onQueryChange?.(next);
+  };
   const visible = useMemo(
     () => options.filter(option => matches(option, query)),
     [options, query],

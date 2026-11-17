@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Archive,
+  ChevronDown,
   ChevronRight,
   Folder,
   Inbox,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import { DiffStat, FileGlyph } from '@/entities/file-change';
 import { StatusIcon } from '@/entities/status';
+import { ProjectChip } from '@/shared/ui/project-chip';
 import { CountBadge } from '@/shared/ui/badge';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -247,6 +249,60 @@ function RowSpecimens() {
             description="sample/repository #41 · draft"
             trailing={<DiffStat additions={6} deletions={2} />}
             selected
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="sidebar tone · sm · heading · meta · overlay actions">
+        <div className="w-full space-y-0.5 rounded-control bg-sidebar p-1">
+          <ListRow
+            tone="sidebar"
+            size="sm"
+            heading
+            leading={<ChevronDown />}
+            title="Sample group"
+            trailing="3"
+            actionsPlacement="overlay"
+            actions={
+              <IconButton label="Group actions" size={20} tone="sidebar">
+                <MoreHorizontal />
+              </IconButton>
+            }
+            onClick={() => undefined}
+          />
+          {(
+            [
+              ['one', 'Sample session one', 'now'],
+              ['two', 'Sample session two', '2h'],
+            ] as const
+          ).map(([id, title, time]) => (
+            <ListRow
+              key={id}
+              tone="sidebar"
+              density="two-line"
+              size="sm"
+              level={1}
+              leading={<ProjectChip label={id} />}
+              title={title}
+              meta={time}
+              description="sample-folder · main"
+              actionsPlacement="overlay"
+              actions={
+                <IconButton label="Session actions" size={20} tone="sidebar">
+                  <MoreHorizontal />
+                </IconButton>
+              }
+              selected={id === 'two'}
+              onClick={() => undefined}
+            />
+          ))}
+          <ListRow
+            tone="sidebar"
+            density="tree"
+            size="sm"
+            level={2}
+            leading={<ChevronRight />}
+            title="Tree row in the sidebar"
             onClick={() => undefined}
           />
         </div>

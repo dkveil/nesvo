@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Copy,
   Folder,
+  Inbox,
   ListEnd,
   MoreHorizontal,
   PanelLeft,
@@ -179,6 +180,18 @@ export function ActionsSection() {
                 data-preview-hover=""
               >
                 <Plus />
+              </IconButton>
+            </StateCaption>
+          </div>
+          <div className="flex gap-1 rounded-control bg-sidebar py-1 pr-1 pl-2">
+            <StateCaption label="rail · current + marker">
+              <IconButton label="Inbox" size={32} tone="sidebar" current marker>
+                <Inbox />
+              </IconButton>
+            </StateCaption>
+            <StateCaption label="rail · idle">
+              <IconButton label="Folders" size={32} tone="sidebar" marker>
+                <Folder />
               </IconButton>
             </StateCaption>
           </div>

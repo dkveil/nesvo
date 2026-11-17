@@ -11,6 +11,8 @@ type IconButtonProps = Omit<ComponentProps<'button'>, 'aria-label'> & {
   shape?: 'square' | 'round';
   appearance?: 'ghost' | 'send';
   pressed?: boolean;
+  current?: boolean;
+  marker?: boolean;
   shortcut?: string;
   tooltip?: boolean;
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
@@ -31,6 +33,8 @@ export function IconButton({
   shape = 'square',
   appearance = 'ghost',
   pressed,
+  current = false,
+  marker = false,
   shortcut,
   tooltip = true,
   tooltipSide,
@@ -44,11 +48,14 @@ export function IconButton({
       data-slot="icon-button"
       aria-label={label}
       aria-pressed={pressed}
-      data-selected={pressed ? '' : undefined}
+      aria-current={current ? 'page' : undefined}
+      data-selected={pressed || current ? '' : undefined}
       className={cn(
         'focus-ring press inline-flex shrink-0 items-center justify-center transition-[color,background-color,scale] duration-fast ease-out disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
         sizeClasses[size],
         shape === 'round' && 'rounded-full',
+        marker &&
+          'relative before:absolute before:top-1/2 before:-left-1.5 before:h-4 before:w-0.5 before:-translate-y-1/2 before:scale-y-0 before:rounded-full before:bg-foreground before:transition-transform before:duration-base before:ease-out data-selected:before:scale-y-100',
         appearance === 'ghost' && [
           tone === 'default' &&
             'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground data-selected:bg-highlight data-selected:text-foreground',
