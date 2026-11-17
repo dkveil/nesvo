@@ -119,6 +119,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
         <div className="grid gap-3">
           <Field id="group-default-directory" label="Folder">
             <Input
+              size="lg"
               id="group-default-directory"
               placeholder="Absolute path on this computer"
               value={draft.directory}
@@ -138,7 +139,11 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
                   })
                 }
               >
-                <SelectTrigger id="group-default-provider" className="w-full">
+                <SelectTrigger
+                  size="lg"
+                  id="group-default-provider"
+                  className="w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -157,7 +162,11 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
                 disabled={draft.provider === ANY}
                 onValueChange={mode => change({ mode })}
               >
-                <SelectTrigger id="group-default-mode" className="w-full">
+                <SelectTrigger
+                  size="lg"
+                  id="group-default-mode"
+                  className="w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -174,6 +183,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
           </div>
           <Field id="group-default-model" label="Model">
             <Input
+              size="lg"
               id="group-default-model"
               placeholder={
                 draft.provider === ANY ? 'Choose a provider first' : 'default'
@@ -187,6 +197,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
           <div className="grid grid-cols-[1fr_auto] gap-3">
             <Field id="group-default-workflow" label="Workflow">
               <Input
+                size="lg"
                 id="group-default-workflow"
                 placeholder="No default"
                 value={draft.workflowName}
@@ -203,6 +214,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
                 }
               >
                 <SelectTrigger
+                  size="lg"
                   id="group-default-workflow-root"
                   className="w-28"
                 >
@@ -223,6 +235,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
         </div>
         <DialogFooter>
           <Button
+            size="lg"
             type="button"
             variant="ghost"
             disabled={saving}
@@ -231,6 +244,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
             Cancel
           </Button>
           <Button
+            size="lg"
             type="button"
             disabled={saving || !parsed.success}
             onClick={async () => {

@@ -41,7 +41,7 @@ export function WorkerPlan({
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          size="sm"
+          size="md"
           disabled={!canDecide}
           onClick={() => onDecision('accept')}
         >
@@ -49,7 +49,7 @@ export function WorkerPlan({
         </Button>
         <Button
           type="button"
-          size="sm"
+          size="md"
           variant="ghost"
           disabled={!canDecide}
           onClick={() => onDecision('decline')}
@@ -59,6 +59,7 @@ export function WorkerPlan({
       </div>
       <form className="space-y-2" onSubmit={submitCorrection}>
         <Textarea
+          size="lg"
           aria-label="Correction"
           placeholder="Describe what the plan should change"
           maxLength={4000}
@@ -68,7 +69,7 @@ export function WorkerPlan({
         />
         <Button
           type="submit"
-          size="sm"
+          size="md"
           variant="outline"
           disabled={!canDecide || !trimmed}
         >

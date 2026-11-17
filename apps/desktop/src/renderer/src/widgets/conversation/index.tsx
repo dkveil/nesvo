@@ -373,6 +373,8 @@ export function Conversation({
                 />
               )}
               <Textarea
+                variant="ghost"
+                size="lg"
                 ref={messageInput}
                 id="message-input"
                 {...inputAria}
@@ -985,7 +987,7 @@ export function Conversation({
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'accept')}
                   >
@@ -993,7 +995,7 @@ export function Conversation({
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     variant="outline"
                     disabled={!enabled}
                     onClick={() => onApproval(approval.id, 'decline')}

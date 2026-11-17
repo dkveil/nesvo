@@ -85,7 +85,7 @@ export function CheckoutControl({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               disabled={locked}
               onClick={() => setConfirming(false)}
             >
@@ -93,7 +93,7 @@ export function CheckoutControl({
             </Button>
             <Button
               type="button"
-              size="sm"
+              size="md"
               disabled={locked}
               onClick={() => void confirm()}
             >

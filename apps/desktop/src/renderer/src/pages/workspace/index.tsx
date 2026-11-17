@@ -2139,7 +2139,7 @@ ${text}`
           {parentSession && !browsing && !creating && (
             <Button
               variant="ghost"
-              size="icon-sm"
+              size="icon-md"
               aria-label="Back to parent session"
               title={`Back to: ${parentSession.title}`}
               onClick={() => select(entityKey(parentSession))}
@@ -2273,7 +2273,7 @@ ${text}`
             )}
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon-md"
             className="md:hidden"
             aria-label="New session"
             onClick={openCreate}
@@ -2290,7 +2290,7 @@ ${text}`
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon-md"
               className="text-muted-foreground aria-pressed:bg-highlight aria-pressed:text-foreground"
               aria-label="Session details"
               title="Session details"
@@ -2306,7 +2306,7 @@ ${text}`
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon-md"
               aria-label="Open skills"
               title="Shared library"
               aria-pressed={panel === 'skills'}
@@ -2327,7 +2327,7 @@ ${text}`
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon-md"
               aria-label="Open files"
               title="Workspace files"
               aria-pressed={panel === 'files'}
@@ -2342,7 +2342,7 @@ ${text}`
               <SheetTrigger asChild>
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon-md"
                   className="text-muted-foreground"
                   aria-label="Open context"
                   title="Session context"
@@ -2373,7 +2373,7 @@ ${text}`
               {store.error}
             </p>
             <Button
-              size="sm"
+              size="md"
               variant="ghost"
               onClick={() => window.location.reload()}
             >
@@ -2988,7 +2988,7 @@ ${text}`
               This computer is offline. Current files and skills are
               unavailable; saved conversations and result diffs remain readable.
             </p>
-            <Button variant="outline" onClick={closeDiff}>
+            <Button size="lg" variant="outline" onClick={closeDiff}>
               Close panel
             </Button>
           </aside>
@@ -3198,7 +3198,7 @@ ${text}`
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               onClick={() => setLeaveEditor(null)}
             >
               Keep editing
@@ -3206,7 +3206,7 @@ ${text}`
             <Button
               type="button"
               variant="destructive"
-              size="sm"
+              size="md"
               onClick={() => {
                 const proceed = leaveEditor;
                 setLeaveEditor(null);

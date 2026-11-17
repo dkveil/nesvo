@@ -122,6 +122,7 @@ export function ScheduleForm({
       <fieldset disabled={locked} className="space-y-3">
         <Field id={fieldId('name')} label="Name" notes={notesOf('name')}>
           <Input
+            size="lg"
             id={fieldId('name')}
             value={values.name}
             maxLength={scheduledJobLimits.name}
@@ -180,6 +181,7 @@ export function ScheduleForm({
           )}
           {customSpec && (
             <Input
+              size="lg"
               id={fieldId('specPath')}
               value={values.specPath}
               placeholder="Absolute path to a task spec file"
@@ -216,6 +218,7 @@ export function ScheduleForm({
               notes={notesOf('minutes')}
             >
               <Input
+                size="lg"
                 id={fieldId('minutes')}
                 inputMode="numeric"
                 value={values.minutes}
@@ -260,6 +263,7 @@ export function ScheduleForm({
               )}
               <Field id={fieldId('time')} label="Time" notes={notesOf('time')}>
                 <Input
+                  size="lg"
                   id={fieldId('time')}
                   type="time"
                   value={values.time}
@@ -336,6 +340,7 @@ export function ScheduleForm({
           notes={notesOf('timeoutMinutes')}
         >
           <Input
+            size="lg"
             id={fieldId('timeoutMinutes')}
             inputMode="numeric"
             value={values.timeoutMinutes}

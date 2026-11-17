@@ -139,14 +139,10 @@ export function StepInspectorForm({
     >
       <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3">
         <div className="flex items-center gap-1.5">
-          <Badge variant="outline" className="text-2xs">
+          <Badge appearance="outline" className="text-2xs">
             {scopeLabels[step.scope]}
           </Badge>
-          {mode === 'create' && (
-            <Badge variant="secondary" className="text-2xs">
-              New step
-            </Badge>
-          )}
+          {mode === 'create' && <Badge className="text-2xs">New step</Badge>}
           {shared && (
             <span
               className="min-w-0 truncate text-2xs text-muted-foreground"
@@ -168,6 +164,7 @@ export function StepInspectorForm({
           }
         >
           <Input
+            size="lg"
             id={fieldId('name')}
             value={step.name}
             readOnly={mode === 'edit' && !renamable}
@@ -273,6 +270,7 @@ export function StepInspectorForm({
           }
         >
           <Textarea
+            size="lg"
             id={fieldId('body')}
             value={step.body}
             rows={6}
@@ -295,6 +293,7 @@ export function StepInspectorForm({
             </Label>
             <div className="flex gap-1.5">
               <Input
+                size="lg"
                 id={fieldId('timeout')}
                 inputMode="numeric"
                 autoComplete="off"

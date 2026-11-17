@@ -158,7 +158,7 @@ function ReviewVersion({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               aria-label={`View diff for version ${review.version}`}
               onClick={() => onOpenDiff(review.id)}
             >
@@ -182,7 +182,7 @@ function ReviewVersion({
                     key={dependency.reviewId}
                     type="button"
                     variant="outline"
-                    size="sm"
+                    size="md"
                     className="h-auto min-w-0 py-1.5 whitespace-normal [overflow-wrap:anywhere]"
                     onClick={() =>
                       onSession(

@@ -72,6 +72,7 @@ export function MoveToGroupDialog({
           </DialogDescription>
         </DialogHeader>
         <Input
+          size="lg"
           autoFocus
           aria-label="Search groups"
           placeholder="Search groups"

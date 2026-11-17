@@ -158,6 +158,7 @@ export function BudgetDialog({
                 <div className="grid gap-1.5">
                   <Label htmlFor="budget-limit">Limit (USD)</Label>
                   <Input
+                    size="md"
                     id="budget-limit"
                     className="h-8"
                     type="number"
@@ -209,7 +210,7 @@ export function BudgetDialog({
           <DialogFooter>
             <Button
               type="button"
-              size="sm"
+              size="md"
               variant="ghost"
               disabled={saving}
               onClick={onClose}
@@ -218,7 +219,7 @@ export function BudgetDialog({
             </Button>
             <Button
               type="submit"
-              size="sm"
+              size="md"
               variant={removing ? 'destructive' : 'default'}
               disabled={saving}
             >

@@ -222,6 +222,7 @@ export function AutomationEditor({
                   Name
                 </Label>
                 <Input
+                  size="md"
                   id="automation-name"
                   data-field="name"
                   autoFocus
@@ -258,6 +259,7 @@ export function AutomationEditor({
                     Prompt
                   </Label>
                   <Textarea
+                    size="lg"
                     id="automation-prompt"
                     data-field="prompt"
                     value={values.prompt}
@@ -378,6 +380,7 @@ export function AutomationEditor({
                   Time limit (minutes)
                 </Label>
                 <Input
+                  size="md"
                   id="automation-timeout"
                   data-field="timeoutMinutes"
                   inputMode="numeric"
@@ -442,7 +445,7 @@ export function AutomationEditor({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="md"
                 disabled={pending}
                 onClick={onClose}
               >
@@ -450,7 +453,7 @@ export function AutomationEditor({
               </Button>
               <Button
                 type="submit"
-                size="sm"
+                size="md"
                 disabled={
                   pending ||
                   !!blockedReason ||

@@ -7,7 +7,6 @@ import {
   scheduleKinds,
   weekdayNames,
   weekdayOrder,
-  type ScheduleKind,
 } from '@/entities/scheduled-job';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
@@ -18,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/shared/ui/toggle-group';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
 import {
   scheduleOf,
   type AutomationErrors,
@@ -35,9 +34,6 @@ type Props = {
 };
 
 const timeZones = listTimeZones();
-
-const isScheduleKind = (value: string): value is ScheduleKind =>
-  scheduleKinds.some(kind => kind === value);
 
 const previewText = (values: AutomationValues) => {
   const schedule = scheduleOf(values);
@@ -65,29 +61,24 @@ export function ScheduleFields({
   return (
     <fieldset className="space-y-3" disabled={disabled}>
       <legend className="mb-2 text-xs font-medium">Schedule</legend>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        aria-label="Repeat"
-        className="w-full"
+      <SegmentedControl
+        label="Repeat"
+        size="md"
+        fullWidth
         value={values.scheduleKind}
-        onValueChange={value => {
-          if (isScheduleKind(value)) onChange({ scheduleKind: value });
-        }}
-      >
-        {scheduleKinds.map(kind => (
-          <ToggleGroupItem key={kind} value={kind} className="h-7 text-xs">
-            {scheduleKindLabels[kind]}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+        options={scheduleKinds.map(kind => ({
+          value: kind,
+          label: scheduleKindLabels[kind],
+        }))}
+        onChange={scheduleKind => onChange({ scheduleKind })}
+      />
       {values.scheduleKind === 'interval' ? (
         <div className="space-y-1.5">
           <Label htmlFor="automation-minutes" className="text-xs">
             Every N minutes (min {SCHEDULED_JOB_MIN_INTERVAL_MINUTES})
           </Label>
           <Input
+            size="md"
             id="automation-minutes"
             data-field="minutes"
             inputMode="numeric"
@@ -115,7 +106,7 @@ export function ScheduleFields({
               >
                 <SelectTrigger
                   id="automation-weekday"
-                  size="sm"
+                  size="md"
                   className="w-36 text-[13px]"
                 >
                   <SelectValue />
@@ -135,6 +126,7 @@ export function ScheduleFields({
               Time
             </Label>
             <Input
+              size="md"
               id="automation-time"
               data-field="time"
               type="time"
@@ -168,7 +160,7 @@ export function ScheduleFields({
             aria-describedby={
               errors.timeZone ? 'automation-time-zone-error' : undefined
             }
-            size="sm"
+            size="md"
             aria-invalid={!!errors.timeZone}
             className="w-full max-w-64 text-[13px]"
           >

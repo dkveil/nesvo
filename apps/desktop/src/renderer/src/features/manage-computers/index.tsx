@@ -96,6 +96,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
     <div className="space-y-1.5">
       <Label htmlFor={`computer-${name}`}>{label}</Label>
       <Input
+        size="lg"
         id={`computer-${name}`}
         value={fields[name]}
         onChange={event =>
@@ -318,13 +319,13 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="md"
                 disabled={!!pending}
                 onClick={() => setAdding(false)}
               >
                 Cancel
               </Button>
-              <Button type="submit" size="sm" disabled={!!pending}>
+              <Button type="submit" size="md" disabled={!!pending}>
                 {pending === 'add' ? 'Connecting…' : 'Add and connect'}
               </Button>
             </div>

@@ -310,6 +310,8 @@ export function NewThread({
                     />
                   )}
                   <Textarea
+                    variant="ghost"
+                    size="lg"
                     ref={input}
                     id="thread-input"
                     autoFocus

@@ -151,7 +151,7 @@ export function MergeControl({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               disabled={locked}
               onClick={() => setPinned(null)}
             >
@@ -159,7 +159,7 @@ export function MergeControl({
             </Button>
             <Button
               type="button"
-              size="sm"
+              size="md"
               disabled={locked || !pinned}
               onClick={() => void confirm()}
             >

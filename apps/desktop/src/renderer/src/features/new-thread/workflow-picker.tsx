@@ -386,6 +386,7 @@ export function WorkflowPicker({
                   Spec path
                 </Label>
                 <Input
+                  size="sm"
                   id="workflow-spec-path"
                   placeholder="Path to a Markdown spec in this project"
                   value={value.specPath}

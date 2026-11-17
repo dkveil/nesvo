@@ -94,6 +94,7 @@ export function ReviewDecision({
         >
           <Label htmlFor={feedbackId}>Feedback</Label>
           <Textarea
+            size="lg"
             id={feedbackId}
             value={feedback}
             onChange={event => onFeedback(key, event.target.value)}
@@ -112,7 +113,7 @@ export function ReviewDecision({
             </p>
             <Button
               type="submit"
-              size="sm"
+              size="md"
               disabled={disabled || !feedback.trim()}
             >
               Send feedback

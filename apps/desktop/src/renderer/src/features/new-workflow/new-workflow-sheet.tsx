@@ -164,6 +164,7 @@ export function NewWorkflowSheet({
                   Name
                 </Label>
                 <Input
+                  size="md"
                   id={`${id}-name`}
                   data-field="name"
                   autoFocus
@@ -198,6 +199,7 @@ export function NewWorkflowSheet({
                   Description
                 </Label>
                 <Textarea
+                  size="lg"
                   id={`${id}-description-field`}
                   value={description}
                   maxLength={workflowDefinitionLimits.description + 1}
@@ -289,6 +291,7 @@ export function NewWorkflowSheet({
                   Notes
                 </Label>
                 <Textarea
+                  size="lg"
                   id={`${id}-notes`}
                   value={body}
                   maxLength={workflowDefinitionLimits.body}
@@ -313,7 +316,7 @@ export function NewWorkflowSheet({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="md"
                 disabled={pending}
                 onClick={onClose}
               >
@@ -321,7 +324,7 @@ export function NewWorkflowSheet({
               </Button>
               <Button
                 type="submit"
-                size="sm"
+                size="md"
                 disabled={pending || !!blockedReason}
               >
                 {pending ? 'Opening…' : 'Create and open'}

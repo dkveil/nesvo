@@ -259,7 +259,7 @@ export function ReviewInbox({
             >
               {error}
             </p>
-            <Button size="sm" variant="ghost" onClick={onRefresh}>
+            <Button size="md" variant="ghost" onClick={onRefresh}>
               Refresh results
             </Button>
           </div>

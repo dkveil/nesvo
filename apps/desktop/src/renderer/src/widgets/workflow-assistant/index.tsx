@@ -740,6 +740,8 @@ export default function WorkflowAssistantDock({
             Message the assistant
           </label>
           <Textarea
+            variant="ghost"
+            size="lg"
             ref={input}
             id="workflow-assistant-input"
             value={draft}

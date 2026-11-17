@@ -154,6 +154,7 @@ export function MobileAccess({ api }: Props) {
                       expires in two minutes.
                     </p>
                     <Textarea
+                      size="lg"
                       aria-label="Pairing link"
                       value={validPairing.link}
                       readOnly

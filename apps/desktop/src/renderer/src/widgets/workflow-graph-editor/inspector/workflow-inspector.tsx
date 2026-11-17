@@ -66,14 +66,10 @@ export function WorkflowInspectorForm({
       className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3"
     >
       <div className="flex items-center gap-1.5">
-        <Badge variant="outline" className="text-2xs">
+        <Badge appearance="outline" className="text-2xs">
           {scopeLabels[scope]}
         </Badge>
-        {mode === 'create' && (
-          <Badge variant="secondary" className="text-2xs">
-            New workflow
-          </Badge>
-        )}
+        {mode === 'create' && <Badge className="text-2xs">New workflow</Badge>}
       </div>
       <Field
         id={fieldId('name')}
@@ -82,6 +78,7 @@ export function WorkflowInspectorForm({
         hint={mode === 'edit' ? 'The name is the file name and stays.' : null}
       >
         <Input
+          size="lg"
           id={fieldId('name')}
           value={name}
           readOnly={mode === 'edit'}
@@ -109,6 +106,7 @@ export function WorkflowInspectorForm({
         )}
       >
         <Textarea
+          size="lg"
           id={fieldId('description')}
           value={description}
           rows={3}
@@ -133,6 +131,7 @@ export function WorkflowInspectorForm({
         aside={counter(body.length, workflowDefinitionLimits.body)}
       >
         <Textarea
+          size="lg"
           id={fieldId('body')}
           value={body}
           rows={6}

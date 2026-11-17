@@ -203,7 +203,7 @@ export function CostsView({
             />
             {computers.length > 1 && (
               <Select value={hostId} onValueChange={setSelected}>
-                <SelectTrigger size="sm" aria-label="Computer">
+                <SelectTrigger size="md" aria-label="Computer">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -329,7 +329,7 @@ function ComputerCosts({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                size="icon-sm"
+                size="icon-md"
                 variant="ghost"
                 aria-label="Refresh costs"
                 onClick={() => setRefresh(value => value + 1)}
@@ -404,7 +404,7 @@ function ComputerCosts({
               </p>
             </div>
             <Button
-              size="sm"
+              size="md"
               variant="outline"
               onClick={() => setModal({ removing: false })}
             >
@@ -470,7 +470,7 @@ function ComputerCosts({
                     </div>
                     <div className="flex items-center gap-0.5">
                       <Button
-                        size="sm"
+                        size="md"
                         variant="ghost"
                         aria-label={`Edit ${label}`}
                         onClick={() => setModal({ budget, removing: false })}
@@ -478,7 +478,7 @@ function ComputerCosts({
                         Edit
                       </Button>
                       <Button
-                        size="sm"
+                        size="md"
                         variant="ghost"
                         aria-label={`Delete ${label}`}
                         onClick={() => setModal({ budget, removing: true })}

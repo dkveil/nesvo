@@ -375,7 +375,7 @@ export default function WorkflowDefinitions({
             >
               <SelectTrigger
                 id="workflows-computer"
-                size="sm"
+                size="md"
                 className="h-8 w-44 text-xs"
               >
                 <SelectValue />
@@ -395,6 +395,7 @@ export default function WorkflowDefinitions({
               Project folder
             </Label>
             <Input
+              size="md"
               id="workflows-directory"
               placeholder="Absolute path, or blank for global definitions"
               value={directory}
@@ -406,7 +407,7 @@ export default function WorkflowDefinitions({
           <Button
             type="submit"
             variant="outline"
-            size="sm"
+            size="md"
             className="h-8"
             disabled={!connected || state.status === 'loading'}
           >

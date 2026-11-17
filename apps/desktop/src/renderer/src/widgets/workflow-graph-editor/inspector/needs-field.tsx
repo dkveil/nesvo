@@ -116,6 +116,8 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
             {ENV_PREFIX}
           </span>
           <Input
+            variant="ghost"
+            size="lg"
             id={inputId}
             value={name}
             placeholder="NAME"

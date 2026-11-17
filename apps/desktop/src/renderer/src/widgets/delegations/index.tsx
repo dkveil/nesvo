@@ -100,7 +100,7 @@ export function Delegations({
                   {delegation.title}
                 </h3>
                 {delegation.planFirst && (
-                  <Badge variant="outline">Plan first</Badge>
+                  <Badge appearance="outline">Plan first</Badge>
                 )}
               </div>
               <span className="text-xs text-muted-foreground">
@@ -138,7 +138,7 @@ export function Delegations({
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'accept')}
                   >
@@ -146,7 +146,7 @@ export function Delegations({
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     variant="outline"
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'decline')}
@@ -179,7 +179,7 @@ export function Delegations({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="md"
                 onClick={() => onSelect(entityKey(child))}
               >
                 Open worker session
@@ -202,6 +202,7 @@ export function Delegations({
           <p className="text-xs text-muted-foreground">Previous workers</p>
           {previousChildren.map(child => (
             <Button
+              size="lg"
               key={child.id}
               type="button"
               variant="ghost"

@@ -650,6 +650,7 @@ export function GroupedSessions({
           </DialogHeader>
           <DialogFooter>
             <Button
+              size="lg"
               type="button"
               variant="ghost"
               disabled={deletePending}
@@ -658,6 +659,7 @@ export function GroupedSessions({
               Cancel
             </Button>
             <Button
+              size="lg"
               type="button"
               variant="destructive"
               disabled={deletePending}

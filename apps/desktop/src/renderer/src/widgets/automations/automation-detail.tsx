@@ -261,7 +261,7 @@ export function AutomationDetail({
               >
                 {runsError}
               </p>
-              <Button size="sm" variant="ghost" onClick={onRetryRuns}>
+              <Button size="md" variant="ghost" onClick={onRetryRuns}>
                 Retry
               </Button>
             </div>
@@ -387,6 +387,7 @@ export function AutomationDetail({
           </DialogHeader>
           <DialogFooter>
             <Button
+              size="lg"
               type="button"
               variant="ghost"
               disabled={deleting}
@@ -395,6 +396,7 @@ export function AutomationDetail({
               Cancel
             </Button>
             <Button
+              size="lg"
               type="button"
               variant="destructive"
               disabled={deleting}

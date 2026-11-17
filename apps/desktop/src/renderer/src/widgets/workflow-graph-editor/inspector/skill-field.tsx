@@ -64,6 +64,7 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
   return (
     <div className="relative">
       <Input
+        size="lg"
         id={id}
         role="combobox"
         aria-autocomplete="list"

@@ -41,6 +41,7 @@ function LocationForm({
           Working directory
         </Label>
         <Input
+          size="md"
           id="thread-directory"
           aria-label="Working directory"
           placeholder="Absolute path, or leave blank"

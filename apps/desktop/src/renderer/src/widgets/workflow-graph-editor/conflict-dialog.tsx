@@ -40,13 +40,13 @@ export function ConflictDialog({ conflict, onResolve }: Props) {
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               onClick={() => onResolve('reload')}
             >
               Reload
             </Button>
           )}
-          <Button type="button" size="sm" onClick={() => onResolve('keep')}>
+          <Button type="button" size="md" onClick={() => onResolve('keep')}>
             {deleted ? 'Keep mine' : 'Keep mine on top of the new version'}
           </Button>
         </DialogFooter>

@@ -1,12 +1,34 @@
-import * as React from 'react';
+import type { ComponentProps } from 'react';
 import { cn } from 'cn';
 
-function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
+type TextareaProps = ComponentProps<'textarea'> & {
+  size?: 'sm' | 'md' | 'lg';
+  variant?: 'default' | 'ghost';
+};
+
+function Textarea({
+  className,
+  size = 'sm',
+  variant = 'default',
+  ...props
+}: TextareaProps) {
   return (
     <textarea
       data-slot="textarea"
+      data-size={size}
       className={cn(
-        'flex field-sizing-content min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40',
+        'flex field-sizing-content w-full text-foreground transition-[color,background-color,border-color] duration-fast outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+        variant === 'default' && [
+          'focus-ring min-h-16 rounded-control border border-input bg-transparent shadow-xs dark:bg-input/30',
+          'aria-invalid:border-error-foreground',
+          size === 'sm' && 'px-2 py-1.5 text-ui',
+          size === 'md' && 'px-2.5 py-1.5 text-ui',
+          size === 'lg' && 'px-3 py-2 text-sm',
+        ],
+        variant === 'ghost' && [
+          'resize-none rounded-none border-0 bg-transparent p-0 shadow-none',
+          size === 'lg' ? 'text-sm' : 'text-ui',
+        ],
         className,
       )}
       {...props}
@@ -14,4 +36,4 @@ function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
   );
 }
 
-export { Textarea };
+export { Textarea, type TextareaProps };

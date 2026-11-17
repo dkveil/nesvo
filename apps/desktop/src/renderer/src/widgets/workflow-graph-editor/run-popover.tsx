@@ -154,7 +154,7 @@ export function RunPopover({
           >
             <SelectTrigger
               id={`${id}-spec`}
-              size="sm"
+              size="md"
               className="w-full text-xs"
             >
               <SelectValue placeholder="No spec for this workflow" />

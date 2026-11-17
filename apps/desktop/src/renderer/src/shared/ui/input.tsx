@@ -1,15 +1,41 @@
-import * as React from 'react';
+import type { ComponentProps } from 'react';
 import { cn } from 'cn';
 
-function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
+type ControlSize = 'sm' | 'md' | 'lg';
+
+type InputProps = Omit<ComponentProps<'input'>, 'size'> & {
+  size?: ControlSize;
+  variant?: 'default' | 'ghost';
+};
+
+function Input({
+  className,
+  type,
+  size = 'sm',
+  variant = 'default',
+  ...props
+}: InputProps) {
   return (
     <input
       type={type}
       data-slot="input"
+      data-size={size}
       className={cn(
-        'h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30',
-        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
-        'aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40',
+        'w-full min-w-0 text-foreground transition-[color,background-color,border-color] duration-fast outline-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+        'file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-xs file:font-medium file:text-foreground',
+        variant === 'default' && [
+          'focus-ring rounded-control border border-input bg-transparent shadow-xs dark:bg-input/30',
+          'aria-invalid:border-error-foreground',
+          size === 'sm' && 'h-7 px-2 text-ui',
+          size === 'md' && 'h-8 px-2.5 text-ui',
+          size === 'lg' && 'h-9 px-3 py-1 text-sm',
+        ],
+        variant === 'ghost' && [
+          'border-0 bg-transparent p-0 shadow-none',
+          size === 'sm' && 'h-7 text-ui',
+          size === 'md' && 'h-8 text-ui',
+          size === 'lg' && 'h-9 text-sm',
+        ],
         className,
       )}
       {...props}
@@ -17,4 +43,4 @@ function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
   );
 }
 
-export { Input };
+export { Input, type InputProps };

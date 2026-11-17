@@ -401,7 +401,7 @@ export default function WorkflowGraphEditor({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size="md"
               onClick={() => setClosing(false)}
             >
               Keep editing
@@ -409,7 +409,7 @@ export default function WorkflowGraphEditor({
             <Button
               type="button"
               variant="destructive"
-              size="sm"
+              size="md"
               onClick={() => {
                 setClosing(false);
                 onClose();
