@@ -27,6 +27,7 @@ import {
   type NodeIssue,
 } from '@/entities/workflow-graph';
 import { StatusIcon } from '@/entities/status';
+import { AddTile } from '@/shared/ui/add-tile';
 import { Badge } from '@/shared/ui/badge';
 import { IconButton } from '@/shared/ui/icon-button';
 import { StatusDot } from '@/shared/ui/status-dot';
@@ -393,22 +394,13 @@ export function StartNodeView({ data, selected }: NodeProps<StartNode>) {
 
 export function PlaceholderNodeView({ data }: NodeProps<PlaceholderNode>) {
   return (
-    <button
-      type="button"
+    <AddTile
       data-add-first
       onClick={data.onAdd}
       style={stepNodeSize}
-      className="nodrag nopan focus-ring flex items-center gap-3 rounded-overlay border border-dashed border-input bg-card/40 pr-3 pl-2 text-left text-muted-foreground transition-[border-color,color,background-color] duration-fast ease-out enabled:hover:border-foreground/40 enabled:hover:bg-card enabled:hover:text-foreground"
-    >
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-surface border border-dashed border-current/40">
-        <Plus aria-hidden="true" className="size-5" />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-ui font-medium">Add first step</span>
-        <span className="block text-2xs leading-4">
-          A check, an agent, an approval or an action
-        </span>
-      </span>
-    </button>
+      title="Add first step"
+      description="A check, an agent, an approval or an action"
+      className="nodrag nopan"
+    />
   );
 }

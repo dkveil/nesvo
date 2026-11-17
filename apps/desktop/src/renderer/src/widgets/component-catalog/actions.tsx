@@ -6,6 +6,7 @@ import {
   Folder,
   Inbox,
   ListEnd,
+  ListPlus,
   MoreHorizontal,
   PanelLeft,
   Plus,
@@ -13,6 +14,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import { AddTile } from '@/shared/ui/add-tile';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -269,6 +271,28 @@ export function ActionsSection() {
           <Chip size="sm" interactive={false} icon={<Bot />}>
             <span>Static chip</span>
           </Chip>
+        </SpecimenRow>
+      </Specimen>
+      <Specimen title="AddTile" source="shared/ui/add-tile.tsx">
+        <SpecimenRow label="rest · hover · focus · disabled" className="gap-4">
+          <AddTile
+            title="Add first step"
+            description="A check, an agent, an approval or an action"
+            className="w-64"
+          />
+          <AddTile
+            title="Add first step"
+            description="Hover"
+            data-preview-hover=""
+            className="w-64"
+          />
+          <AddTile
+            title="Add a list"
+            icon={ListPlus}
+            data-preview-focus=""
+            className="w-64"
+          />
+          <AddTile title="Add first step" disabled className="w-64" />
         </SpecimenRow>
       </Specimen>
     </CatalogSection>
