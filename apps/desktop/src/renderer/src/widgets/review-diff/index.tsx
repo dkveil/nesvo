@@ -19,11 +19,15 @@ import {
   reviewStatusLabels,
   type Review,
 } from '@/entities/review';
-import { cn } from '@/shared/lib/cn';
+import { DiffStat } from '@/entities/file-change';
 import { usePanelWidth } from '@/shared/lib/use-panel-width';
-import { PanelAction, PanelHeader } from '@/shared/ui/panel';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { ListRow } from '@/shared/ui/list-row';
+import { Panel, PanelAction, PanelHeader } from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';
-import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
+import { panelSurface } from '@/shared/ui/panel-styles';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   review: Review;
@@ -92,25 +96,19 @@ function PatchSource({
   patch: string;
   expanded?: boolean;
 }) {
-  const [open, setOpen] = useState(expanded);
   return (
-    <details
-      open={open}
-      onToggle={event => setOpen(event.currentTarget.open)}
-      className="max-h-[45%] shrink-0 overflow-auto border-t text-xs"
+    <Disclosure
+      title="Raw patch"
+      defaultOpen={expanded}
+      className="max-h-[45%] shrink-0 overflow-y-auto border-t p-1.5"
+      contentClassName="pt-1.5 pr-0.5 pb-0.5 pl-0.5"
     >
-      <summary className="cursor-pointer px-4 py-3 text-muted-foreground focus-visible:outline-ring">
-        Raw patch
-      </summary>
-      {open && (
-        <pre
-          aria-label="Saved patch"
-          className="overflow-auto px-4 pb-4 leading-6"
-        >
-          <code>{patch}</code>
-        </pre>
-      )}
-    </details>
+      <CodeBlock
+        aria-label="Saved patch"
+        code={patch}
+        maxHeightClassName="max-h-none"
+      />
+    </Disclosure>
   );
 }
 
@@ -201,13 +199,13 @@ export default function ReviewDiff({
     return () => document.removeEventListener('keydown', escape);
   }, []);
   const fallback = (
-    <div className="p-4 text-xs leading-6 text-muted-foreground">
+    <p className="p-4 text-xs leading-6 text-muted-foreground">
       This change cannot be displayed as numbered lines. Open the raw patch to
       inspect the saved content.
-    </div>
+    </p>
   );
   return (
-    <section
+    <Panel
       role="region"
       aria-label="Saved result diff"
       data-review-id={review.id}
@@ -223,53 +221,37 @@ export default function ReviewDiff({
         title={`Result v${review.version}`}
         meta={reviewStatusLabels[review.status]}
       >
-        <PanelAction
-          aria-label="Browse workspace files"
-          title="Current workspace files"
-          onClick={onFiles}
-        >
+        <PanelAction label="Browse workspace files" onClick={onFiles}>
           <FolderOpen />
         </PanelAction>
         <PanelAction
-          aria-label="Wrap diff lines"
+          label="Wrap diff lines"
           aria-pressed={wrap}
           onClick={() => setWrap(value => !value)}
         >
           <WrapText />
         </PanelAction>
-        <PanelAction
-          ref={closeButton}
-          aria-label="Close diff"
-          onClick={onClose}
-        >
+        <PanelAction ref={closeButton} label="Close diff" onClick={onClose}>
           <X className="size-4" />
         </PanelAction>
       </PanelHeader>
       <div className="shrink-0 border-b px-3 py-2.5">
-        <p className="truncate text-[13px] font-medium" title={review.title}>
-          {review.title}
-        </p>
+        <p className="truncate text-ui font-medium">{review.title}</p>
         <p className="mt-1 text-2xs text-muted-foreground">
           Saved changes · Start → end of this turn
         </p>
       </div>
       {review.diff.status !== 'complete' && (
-        <p
-          role="status"
-          className="px-4 py-3 text-xs leading-5 text-muted-foreground"
-        >
+        <StatusMessage variant="notice" tone="warning" className="m-1.5">
           {review.diff.detail ??
             'A complete diff is unavailable for this result.'}
-        </p>
+        </StatusMessage>
       )}
       {review.diff.status === 'complete' && !parsed.complete && (
-        <p
-          role="status"
-          className="px-4 py-3 text-xs leading-5 text-muted-foreground"
-        >
+        <StatusMessage variant="notice" tone="warning" className="m-1.5">
           Some changes cannot be displayed as numbered lines. The raw patch
           below retains the saved result.
-        </p>
+        </StatusMessage>
       )}
       <nav
         aria-label="Changed files"
@@ -277,29 +259,26 @@ export default function ReviewDiff({
       >
         {review.diff.files.map(file => {
           const stat = counts(parsed.files.get(file.path));
+          const selected = path === file.path;
           return (
-            <button
+            <ListRow
               key={file.path}
-              type="button"
-              aria-label={`View changes in ${file.path}`}
-              aria-pressed={path === file.path}
               title={file.path}
+              selected={selected}
+              trailing={
+                stat && (stat.added > 0 || stat.removed > 0) ? (
+                  <DiffStat additions={stat.added} deletions={stat.removed} />
+                ) : (
+                  fileKindLabels[file.kind]
+                )
+              }
+              mainProps={{
+                'aria-label': `View changes in ${file.path}`,
+                'aria-pressed': selected,
+                'aria-current': undefined,
+              }}
               onClick={() => onSelectPath(file.path)}
-              className={cn(
-                panelRow,
-                'flex h-7 w-full min-w-0 items-center gap-3 px-2',
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{file.path}</span>
-              {stat && (stat.added > 0 || stat.removed > 0) ? (
-                <span className="flex shrink-0 gap-2 font-mono text-2xs">
-                  <span className="text-success-foreground">+{stat.added}</span>
-                  <span className="text-error-foreground">−{stat.removed}</span>
-                </span>
-              ) : (
-                <span className="text-2xs">{fileKindLabels[file.kind]}</span>
-              )}
-            </button>
+            />
           );
         })}
       </nav>
@@ -340,6 +319,6 @@ export default function ReviewDiff({
           expanded={!parsed.complete}
         />
       )}
-    </section>
+    </Panel>
   );
 }
