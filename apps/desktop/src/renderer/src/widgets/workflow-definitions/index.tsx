@@ -362,7 +362,7 @@ export default function WorkflowDefinitions({
             load(hostId, directory);
           }}
         >
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="workflows-computer" className="text-2xs">
               Computer
             </Label>
@@ -390,7 +390,7 @@ export default function WorkflowDefinitions({
               </SelectContent>
             </Select>
           </div>
-          <div className="min-w-48 flex-1 space-y-1">
+          <div className="flex min-w-48 flex-1 flex-col gap-1">
             <Label htmlFor="workflows-directory" className="text-2xs">
               Project folder
             </Label>
