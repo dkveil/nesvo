@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Plus, RefreshCw, Wallet } from 'lucide-react';
 import type {
   Computer,
   CostBudget,
@@ -12,10 +12,15 @@ import type {
   ReadCostsInput,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
-import { formatCost } from '@/shared/lib/format-cost';
+import { cn } from '@/shared/lib/cn';
 import { hostKey } from '@/shared/lib/host-key';
 import { Button } from '@/shared/ui/button';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
+import { Meter } from '@/shared/ui/progress';
+import { SectionLabel } from '@/shared/ui/section-label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import {
   Select,
@@ -24,9 +29,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { BudgetDialog } from './budget-dialog';
-import { actionLabels, periodLabels, scopeLabels } from './labels';
+import { CostAmount } from './cost-amount';
+import { formatSpend } from './format-spend';
+import { CostChart } from './cost-chart';
+import {
+  actionLabels,
+  countFormat,
+  periodLabels,
+  scopeLabels,
+  unknownCost,
+} from './labels';
 
 type Props = {
   api: DesktopApi;
@@ -41,65 +54,12 @@ const periods = (Object.keys(periodLabels) as CostPeriod[]).map(value => ({
   label: periodLabels[value],
 }));
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const dayLabel = new Intl.DateTimeFormat('en', {
-  day: 'numeric',
-  month: 'short',
-  timeZone: 'UTC',
-});
-const number = new Intl.NumberFormat('en');
 
-function unknownCost(count: number): string {
-  return `${number.format(count)} ${count === 1 ? 'turn' : 'turns'} without reported cost`;
-}
-
-function CostChart({ buckets }: { buckets: CostReport['buckets'] }) {
-  const max = Math.max(
-    0,
-    ...buckets.map(bucket => bucket.reportedCostUsd ?? 0),
-  );
-  return (
-    <figure aria-label="Reported spend by date" className="space-y-2">
-      <div className="flex h-24 items-end gap-1 border-b border-border px-1">
-        {buckets.map(bucket => {
-          const date = dayLabel.format(new Date(bucket.date));
-          const cost = bucket.reportedCostUsd;
-          const description = bucket.turnCount
-            ? `${date} · ${formatCost(cost)} · ${unknownCost(bucket.unknownCostTurns)}`
-            : `${date} · No turns`;
-          return (
-            <Tooltip key={bucket.date}>
-              <TooltipTrigger asChild>
-                <div
-                  tabIndex={0}
-                  aria-label={description}
-                  className="flex h-full min-w-0 flex-1 items-end rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  {cost !== null ? (
-                    <span
-                      className="w-full rounded-t-sm bg-foreground/70"
-                      style={{
-                        height:
-                          max > 0 ? `max(2px, ${(cost / max) * 100}%)` : '2px',
-                      }}
-                    />
-                  ) : bucket.turnCount ? (
-                    <span className="w-full border-t-2 border-dashed border-muted-foreground/70" />
-                  ) : null}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>{description}</TooltipContent>
-            </Tooltip>
-          );
-        })}
-      </div>
-      <figcaption className="flex justify-between text-2xs text-muted-foreground">
-        <span>{dayLabel.format(new Date(buckets[0]!.date))}</span>
-        {buckets.length > 1 && (
-          <span>{dayLabel.format(new Date(buckets.at(-1)!.date))}</span>
-        )}
-      </figcaption>
-    </figure>
-  );
+function budgetTone(percent: number | null, action: CostBudget['action']) {
+  if (percent === null) return 'neutral';
+  if (percent >= 100)
+    return action === 'refuse-new-turns' ? 'error' : 'warning';
+  return percent >= 80 ? 'warning' : 'neutral';
 }
 
 function CostTable({
@@ -109,55 +69,51 @@ function CostTable({
   label: string;
   rows: Array<CostTotals & { key: string; label: string; open?: () => void }>;
 }) {
+  const heading = 'h-7 px-2 text-right text-2xs font-medium whitespace-nowrap';
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
         <thead className="border-b text-muted-foreground">
           <tr>
-            <th className="py-2 pr-2 font-medium" scope="col">
+            <th className={cn(heading, 'pl-0 text-left')} scope="col">
               {label}
             </th>
-            <th
-              className="px-2 text-right font-medium whitespace-nowrap"
-              scope="col"
-            >
+            <th className={heading} scope="col">
               Reported cost
             </th>
-            <th className="px-2 text-right font-medium" scope="col">
+            <th className={heading} scope="col">
               Turns
             </th>
-            <th
-              className="pl-2 text-right font-medium whitespace-nowrap"
-              scope="col"
-            >
+            <th className={cn(heading, 'pr-0')} scope="col">
               Without cost
             </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border tabular-nums">
           {rows.map(row => (
-            <tr key={row.key}>
-              <td className="py-2 pr-2 [overflow-wrap:anywhere]">
+            <tr key={row.key} className="h-9">
+              <td className="max-w-0 pr-2 [overflow-wrap:anywhere]">
                 {row.open ? (
-                  <button
-                    type="button"
-                    className="rounded-sm text-left hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="-ml-2 max-w-full"
                     onClick={row.open}
                   >
-                    {row.label}
-                  </button>
+                    <span className="truncate">{row.label}</span>
+                  </Button>
                 ) : (
                   row.label
                 )}
               </td>
-              <td className="px-2 text-right">
-                {formatCost(row.reportedCostUsd)}
+              <td className="w-28 px-2 text-right">
+                <CostAmount cost={row.reportedCostUsd} />
               </td>
-              <td className="px-2 text-right text-muted-foreground">
-                {number.format(row.turnCount)}
+              <td className="w-20 px-2 text-right text-muted-foreground">
+                {countFormat.format(row.turnCount)}
               </td>
-              <td className="pl-2 text-right text-muted-foreground">
-                {number.format(row.unknownCostTurns)}
+              <td className="w-28 pl-2 text-right text-muted-foreground">
+                {countFormat.format(row.unknownCostTurns)}
               </td>
             </tr>
           ))}
@@ -183,65 +139,64 @@ export function CostsView({
     computers.find(item => item.id === 'local');
   const hostId = computer?.id ?? 'local';
   return (
-    <>
-      <section
-        aria-label="Costs"
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto max-w-3xl space-y-6 px-5 py-5 md:px-7">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <SegmentedControl
-              label="Cost period"
-              value={range}
-              options={periods}
-              onChange={setRange}
-            />
-            {computers.length > 1 && (
-              <Select value={hostId} onValueChange={setSelected}>
-                <SelectTrigger size="md" aria-label="Computer">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {computers.map(item => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                      {item.status === 'disconnected' || item.status === 'error'
-                        ? ' · Offline'
-                        : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          {!computer ||
-          computer.status === 'connecting' ||
-          computer.status === 'syncing' ? (
-            <InlineNotice>
-              Connecting to {computer?.name ?? 'Local'}…
-            </InlineNotice>
-          ) : computer.status !== 'connected' ? (
-            <InlineNotice>
-              {computer.name} is offline. Connect it to view costs and budgets.
-            </InlineNotice>
-          ) : !computer.capabilities.includes('costs') ? (
-            <InlineNotice>
-              Update the Nesvo host on {computer.name}, then reconnect to view
-              costs and budgets.
-            </InlineNotice>
-          ) : (
-            <ComputerCosts
-              key={hostId}
-              api={api}
-              hostId={hostId}
-              range={range}
-              sessions={sessions.filter(item => item.hostId === hostId)}
-              onSession={onSession}
-            />
+    <section
+      aria-label="Costs"
+      className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+    >
+      <div className="mx-auto max-w-3xl space-y-6 px-5 py-5 md:px-7">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SegmentedControl
+            label="Cost period"
+            size="md"
+            value={range}
+            options={periods}
+            onChange={setRange}
+          />
+          {computers.length > 1 && (
+            <Select value={hostId} onValueChange={setSelected}>
+              <SelectTrigger aria-label="Computer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {computers.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                    {item.status === 'disconnected' || item.status === 'error'
+                      ? ' · Offline'
+                      : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
-      </section>
-    </>
+        {!computer ||
+        computer.status === 'connecting' ||
+        computer.status === 'syncing' ? (
+          <InlineNotice tone="loading">
+            Connecting to {computer?.name ?? 'Local'}…
+          </InlineNotice>
+        ) : computer.status !== 'connected' ? (
+          <InlineNotice>
+            {computer.name} is offline. Connect it to view costs and budgets.
+          </InlineNotice>
+        ) : !computer.capabilities.includes('costs') ? (
+          <InlineNotice>
+            Update the Nesvo host on {computer.name}, then reconnect to view
+            costs and budgets.
+          </InlineNotice>
+        ) : (
+          <ComputerCosts
+            key={hostId}
+            api={api}
+            hostId={hostId}
+            range={range}
+            sessions={sessions.filter(item => item.hostId === hostId)}
+            onSession={onSession}
+          />
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -310,30 +265,28 @@ function ComputerCosts({
   return (
     <>
       <section aria-label="Reported cost" className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xs font-medium text-muted-foreground">
-              Reported cost · {timeZone}
-            </h2>
-            {report && (
-              <p className="pt-1 text-2xl font-semibold tracking-tight tabular-nums">
-                {formatCost(report.totals.reportedCostUsd)}
-              </p>
-            )}
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon-md"
-                variant="ghost"
-                aria-label="Refresh costs"
+        <div>
+          <SectionLabel
+            as="h2"
+            className="px-0"
+            action={
+              <IconButton
+                label="Refresh costs"
+                size={24}
                 onClick={() => setRefresh(value => value + 1)}
               >
                 <RefreshCw />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Refresh costs and budgets</TooltipContent>
-          </Tooltip>
+              </IconButton>
+            }
+          >
+            Reported cost · {timeZone}
+          </SectionLabel>
+          {report && (
+            <CostAmount
+              cost={report.totals.reportedCostUsd}
+              className="text-base font-semibold"
+            />
+          )}
         </div>
         {error ? (
           <InlineNotice tone="error">{error}</InlineNotice>
@@ -341,20 +294,22 @@ function ComputerCosts({
           <>
             <p className="text-xs text-muted-foreground">
               {report.totals.turnCount
-                ? `${number.format(report.totals.turnCount)} ${report.totals.turnCount === 1 ? 'turn' : 'turns'} · ${unknownCost(report.totals.unknownCostTurns)}`
+                ? `${countFormat.format(report.totals.turnCount)} ${report.totals.turnCount === 1 ? 'turn' : 'turns'} · ${unknownCost(report.totals.unknownCostTurns)}`
                 : 'No turns in this period'}
             </p>
             {report.buckets.length > 0 && (
-              <CostChart buckets={report.buckets} />
+              <CostChart range={range} buckets={report.buckets} />
             )}
           </>
         ) : (
-          <InlineNotice>Loading costs and budgets…</InlineNotice>
+          <InlineNotice tone="loading">Loading costs and budgets…</InlineNotice>
         )}
       </section>
       {report && report.topSessions.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium">Top sessions</h2>
+        <section aria-label="Top sessions" className="space-y-1">
+          <SectionLabel as="h2" className="px-0">
+            Top sessions
+          </SectionLabel>
           <CostTable
             label="Session"
             rows={report.topSessions.map(row => ({
@@ -364,10 +319,11 @@ function ComputerCosts({
               open: () => onSession(hostKey(row.sessionId, hostId)),
             }))}
           />
-          <details className="space-y-2 pt-2">
-            <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
-              Cost breakdown
-            </summary>
+          <Disclosure
+            title="Cost breakdown"
+            className="-mx-2 pt-2"
+            contentClassName="space-y-2 px-2 pt-2 text-foreground"
+          >
             <SegmentedControl
               label="Group costs by"
               value={groupBy}
@@ -383,33 +339,40 @@ function ComputerCosts({
                 rows={report.groups.map(row => ({ ...row, label: row.key }))}
               />
             ) : (
-              <InlineNotice>Loading breakdown…</InlineNotice>
+              <InlineNotice tone="loading">Loading breakdown…</InlineNotice>
             )}
-          </details>
+          </Disclosure>
         </section>
       )}
       {budgets && (
-        <section className="space-y-3 border-t pt-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1">
-              <h2 className="text-sm font-medium">Budgets</h2>
-              <p className="text-xs text-muted-foreground">
-                Periods use {budgets.timeZone}. Spend excludes turns without
-                reported cost.
-              </p>
-            </div>
-            <Button
-              size="md"
-              variant="outline"
-              onClick={() => setModal({ removing: false })}
-            >
-              New budget
-            </Button>
-          </div>
+        <section aria-label="Budgets" className="space-y-1 border-t pt-4">
+          <SectionLabel
+            as="h2"
+            className="px-0"
+            action={
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => setModal({ removing: false })}
+              >
+                <Plus />
+                New budget
+              </Button>
+            }
+          >
+            Budgets
+          </SectionLabel>
+          <p className="text-xs text-muted-foreground">
+            Periods use {budgets.timeZone}. Spend excludes turns without
+            reported cost.
+          </p>
           {budgets.budgets.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No budgets on this computer.
-            </p>
+            <EmptyState
+              size="sm"
+              icon={Wallet}
+              title="No budgets on this computer"
+              description="A budget warns, or refuses new turns, once reported spend reaches its limit."
+            />
           ) : (
             <ul className="divide-y divide-border">
               {budgets.budgets.map(({ budget, totals }) => {
@@ -425,62 +388,56 @@ function ComputerCosts({
                 const limit = budget.limitUsd;
                 const percent =
                   spend === null ? null : Math.min(100, (spend / limit) * 100);
-                const spending = `${formatCost(spend)} / ${formatCost(limit)}`;
                 return (
-                  <li
-                    key={budget.id}
-                    className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3"
-                  >
-                    <div className="min-w-48 flex-1 space-y-1.5 text-xs">
-                      <div className="flex flex-wrap justify-between gap-1">
-                        <span className="font-medium">{label}</span>
-                        <span className="tabular-nums">{spending}</span>
-                      </div>
-                      {target && (
-                        <p className="break-all text-muted-foreground">
-                          {target}
-                        </p>
-                      )}
-                      <div
-                        className="h-1 overflow-hidden rounded-full bg-muted"
-                        aria-label={label}
-                        role="progressbar"
-                        aria-valuenow={percent ?? undefined}
-                        aria-valuetext={spending}
-                      >
-                        {percent !== null && (
-                          <div
-                            className="h-full rounded-full bg-foreground/70"
-                            style={{ width: `${percent}%` }}
-                          />
+                  <li key={budget.id} className="space-y-2 py-3">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-ui font-medium">{label}</p>
+                        {target && (
+                          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                            {target}
+                          </p>
                         )}
                       </div>
-                      <p className="text-muted-foreground">
-                        {periodLabels[budget.period]} ·{' '}
-                        {actionLabels[budget.action]}
-                        {totals.unknownCostTurns > 0
-                          ? ` · ${unknownCost(totals.unknownCostTurns)}`
-                          : ''}
-                      </p>
+                      <span className="pt-0.5 text-xs whitespace-nowrap">
+                        <CostAmount cost={spend} />
+                        <span className="text-muted-foreground">
+                          {' / '}
+                          <CostAmount cost={limit} />
+                        </span>
+                      </span>
+                      <div className="-mr-2 flex shrink-0 items-center gap-0.5">
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          aria-label={`Edit ${label}`}
+                          onClick={() => setModal({ budget, removing: false })}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          aria-label={`Delete ${label}`}
+                          onClick={() => setModal({ budget, removing: true })}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        size="md"
-                        variant="ghost"
-                        aria-label={`Edit ${label}`}
-                        onClick={() => setModal({ budget, removing: false })}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="md"
-                        variant="ghost"
-                        aria-label={`Delete ${label}`}
-                        onClick={() => setModal({ budget, removing: true })}
-                      >
-                        Delete
-                      </Button>
-                    </div>
+                    <Meter
+                      label={label}
+                      value={percent}
+                      tone={budgetTone(percent, budget.action)}
+                      aria-valuetext={`${formatSpend(spend)} / ${formatSpend(limit)}`}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {periodLabels[budget.period]} ·{' '}
+                      {actionLabels[budget.action]}
+                      {totals.unknownCostTurns > 0
+                        ? ` · ${unknownCost(totals.unknownCostTurns)}`
+                        : ''}
+                    </p>
                   </li>
                 );
               })}

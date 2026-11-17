@@ -15,11 +15,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { Field } from '@/shared/ui/field';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
-import { formatCost } from '@/shared/lib/format-cost';
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
+import { formatSpend } from './format-spend';
 import { periodLabels, scopeLabels, actionLabels } from './labels';
 
 type BudgetDialogProps = {
@@ -32,8 +38,44 @@ type BudgetDialogProps = {
   onClose: () => void;
 };
 
-const selectClass =
-  'h-8 w-full min-w-0 rounded-md border border-input bg-card px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring';
+function BudgetSelect<T extends string>({
+  id,
+  label,
+  value,
+  options,
+  placeholder,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: T;
+  options: Record<T, string>;
+  placeholder?: string;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <Field id={id} label={label} className="min-w-0">
+      <Select
+        required
+        value={value}
+        onValueChange={next => onChange(next as T)}
+      >
+        <SelectTrigger size="md" id={id} className="w-full min-w-0">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.entries(options) as Array<[T, string]>).map(
+            ([option, text]) => (
+              <SelectItem key={option} value={option}>
+                {text}
+              </SelectItem>
+            ),
+          )}
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
 
 export function BudgetDialog({
   budget,
@@ -108,59 +150,40 @@ export function BudgetDialog({
           </DialogTitle>
           <DialogDescription>
             {removing && budget
-              ? `Remove the ${budget.scope} budget ${budget.id.slice(0, 8)} of ${formatCost(budget.limitUsd)} per ${budget.period}.`
+              ? `Remove the ${budget.scope} budget ${budget.id.slice(0, 8)} of ${formatSpend(budget.limitUsd)} per ${budget.period}.`
               : `Periods follow ${timeZone}. The host checks reported spend before each new turn.`}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={event => void submit(event)}>
           {!removing && (
             <fieldset className="grid gap-3" disabled={saving}>
-              <div className="grid gap-1.5">
-                <Label htmlFor="budget-scope">Scope</Label>
-                <select
-                  id="budget-scope"
-                  className={selectClass}
-                  value={scope}
-                  onChange={event => {
-                    setScope(event.target.value as CostBudget['scope']);
-                    setTarget('');
-                  }}
-                >
-                  {Object.entries(scopeLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <BudgetSelect
+                id="budget-scope"
+                label="Scope"
+                value={scope}
+                options={scopeLabels}
+                onChange={value => {
+                  setScope(value);
+                  setTarget('');
+                }}
+              />
               {scope !== 'computer' && (
-                <div className="grid min-w-0 gap-1.5">
-                  <Label htmlFor="budget-target">{scopeLabels[scope]}</Label>
-                  <select
-                    id="budget-target"
-                    className={selectClass}
-                    value={target}
-                    onChange={event => setTarget(event.target.value)}
-                    required
-                  >
-                    <option value="" disabled>
-                      Choose a {scope}
-                    </option>
-                    {targets.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <BudgetSelect
+                  id="budget-target"
+                  label={scopeLabels[scope]}
+                  value={target}
+                  placeholder={`Choose a ${scope}`}
+                  options={Object.fromEntries(
+                    targets.map(option => [option.value, option.label]),
+                  )}
+                  onChange={setTarget}
+                />
               )}
               <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="budget-limit">Limit (USD)</Label>
+                <Field id="budget-limit" label="Limit (USD)">
                   <Input
                     size="md"
                     id="budget-limit"
-                    className="h-8"
                     type="number"
                     step="any"
                     min="0"
@@ -168,42 +191,22 @@ export function BudgetDialog({
                     value={limit}
                     onChange={event => setLimit(event.target.value)}
                   />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="budget-period">Period</Label>
-                  <select
-                    id="budget-period"
-                    className={selectClass}
-                    value={period}
-                    onChange={event =>
-                      setPeriod(event.target.value as CostBudget['period'])
-                    }
-                  >
-                    {Object.entries(periodLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                </Field>
+                <BudgetSelect
+                  id="budget-period"
+                  label="Period"
+                  value={period}
+                  options={periodLabels}
+                  onChange={setPeriod}
+                />
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="budget-action">When the limit is reached</Label>
-                <select
-                  id="budget-action"
-                  className={selectClass}
-                  value={action}
-                  onChange={event =>
-                    setAction(event.target.value as CostBudget['action'])
-                  }
-                >
-                  {Object.entries(actionLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <BudgetSelect
+                id="budget-action"
+                label="When the limit is reached"
+                value={action}
+                options={actionLabels}
+                onChange={setAction}
+              />
             </fieldset>
           )}
           {error && <InlineNotice tone="error">{error}</InlineNotice>}
