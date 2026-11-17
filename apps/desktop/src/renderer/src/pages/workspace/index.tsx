@@ -24,7 +24,6 @@ import {
   FolderOpen,
   Gauge,
   Menu,
-  PanelLeft,
   PanelRight,
   Plus,
   SquareDashed,
@@ -86,7 +85,9 @@ import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
+import { NavigationRail } from '@/widgets/navigation-rail';
 import { SessionSidebar } from '@/widgets/session-sidebar';
+import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import {
   WorkflowSection,
   SessionCard,
@@ -541,7 +542,6 @@ export function Workspace() {
   const visibleSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const navigationToggle = useRef<HTMLButtonElement | null>(null);
-  const sidebarCollapseToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -803,12 +803,7 @@ export function Workspace() {
   }, []);
   const toggleSidebar = useCallback((open: boolean) => {
     setSidebarOpen(open);
-    requestAnimationFrame(() => {
-      const target = open
-        ? sidebarCollapseToggle.current
-        : sidebarToggle.current;
-      target?.focus();
-    });
+    requestAnimationFrame(() => sidebarToggle.current?.focus());
   }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1785,6 +1780,10 @@ export function Workspace() {
     automationsAvailable: automationComputers.length > 0,
     onAutomations: () => openAutomations(),
   };
+  const readBranch = window.nesvo
+    ? (hostId: string, directory: string) =>
+        desktopApi(hostId).readGitBranch({ directory })
+    : undefined;
   const showingNewThread =
     creating || (!browsing && !selected && !store.loading && !store.error);
   const breadcrumbDirectory = showingNewThread
@@ -1811,6 +1810,33 @@ export function Workspace() {
       : null;
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
+      <div className="hidden h-full shrink-0 md:flex">
+        <NavigationRail
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => toggleSidebar(!sidebarOpen)}
+          sidebarToggleRef={sidebarToggle}
+          pendingActions={sidebarProps.pendingActions}
+          inbox={sidebarProps.inbox}
+          workflows={sidebarProps.workflows}
+          automations={sidebarProps.automations}
+          automationsAvailable={sidebarProps.automationsAvailable}
+          hostName={sidebarProps.hostName}
+          onCreate={sidebarProps.onCreate}
+          onInbox={sidebarProps.onInbox}
+          onWorkflows={sidebarProps.onWorkflows}
+          onAutomations={sidebarProps.onAutomations}
+          onSettings={sidebarProps.onSettings}
+          onComputers={sidebarProps.onComputers}
+          usage={
+            <ProviderUsage
+              key={`${selectedHostId}/rail`}
+              layout="column"
+              popoverSide="top"
+              {...usageProps}
+            />
+          }
+        />
+      </div>
       <aside
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
@@ -1825,16 +1851,8 @@ export function Workspace() {
             <div className="h-full overflow-hidden">
               <SessionSidebar
                 {...sidebarProps}
-                onCollapse={() => toggleSidebar(false)}
-                collapseToggleRef={sidebarCollapseToggle}
-                footerStart={
-                  <ProviderUsage
-                    key={`${selectedHostId}/footer`}
-                    layout="row"
-                    popoverSide="top"
-                    {...usageProps}
-                  />
-                }
+                navigation="rail"
+                readBranch={readBranch}
               />
             </div>
             <SidebarResizer
@@ -1881,23 +1899,8 @@ export function Workspace() {
               <SessionSidebar {...sidebarProps} />
             </SheetContent>
           </Sheet>
-          <Button
-            ref={sidebarToggle}
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className={`size-7 text-muted-foreground ${sidebarOpen ? 'hidden' : 'hidden md:inline-flex'}`}
-            aria-label="Toggle sidebar"
-            aria-pressed={sidebarOpen}
-            title="Expand sidebar (Ctrl+B)"
-            onClick={() => toggleSidebar(true)}
-          >
-            <PanelLeft className="size-4" />
-          </Button>
           {!sidebarOpen && (
-            <span className="hidden pr-2 text-[13px] font-semibold tracking-tight select-none md:inline">
-              Nesvo
-            </span>
+            <BrandWordmark className="hidden pr-2 select-none md:block" />
           )}
           {parentSession && !browsing && !creating && (
             <Button

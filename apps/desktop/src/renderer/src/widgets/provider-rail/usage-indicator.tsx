@@ -13,7 +13,7 @@ import {
   type UsageState,
 } from './usage-state';
 
-export type UsageLayout = 'row' | 'bars' | 'account';
+export type UsageLayout = 'row' | 'column' | 'bars' | 'account';
 
 type Props = {
   provider: Provider;
@@ -83,7 +83,9 @@ export function UsageIndicator({
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          side={layout === 'row' ? 'top' : 'left'}
+          side={
+            layout === 'row' ? 'top' : layout === 'column' ? 'right' : 'left'
+          }
           align="center"
           sideOffset={8}
           collisionPadding={12}

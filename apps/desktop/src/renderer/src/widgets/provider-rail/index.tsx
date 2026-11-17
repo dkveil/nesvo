@@ -51,6 +51,7 @@ export function ProviderUsage({
             className={cn(
               'flex',
               layout === 'row' && 'items-center gap-0.5',
+              layout === 'column' && 'flex-col items-center gap-1',
               layout === 'bars' && 'flex-col gap-px',
             )}
           >
