@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Brain,
-  ChevronRight,
   CircleAlert,
   FilePenLine,
   Search,
@@ -19,6 +18,8 @@ import {
   runLabel,
   type SessionActivity as Activity,
 } from '@/entities/activity';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
 
 type Props = {
   runId: string;
@@ -41,81 +42,69 @@ const icons = {
 };
 
 function ActivityItem({ item }: { item: Activity }) {
-  const Icon = item.status === 'failed' ? CircleAlert : icons[item.kind];
+  const failed = item.status === 'failed';
+  const Icon = failed ? CircleAlert : icons[item.kind];
   return (
-    <details
+    <NativeDisclosure
       data-activity-id={item.id}
       data-activity-kind={item.kind}
       data-activity-status={item.status}
-      className="group/activity-item"
+      triggerLabel={`Activity: ${item.title}`}
+      icon={<Icon className={failed ? 'text-error-foreground' : undefined} />}
+      title={item.title}
+      meta={activityStatusLabels[item.status]}
+      contentClassName="ml-3.5 space-y-2 border-l pt-1 pb-3 pl-3"
     >
-      <summary
-        aria-label={`Activity: ${item.title}`}
-        className="flex cursor-pointer list-none items-start gap-2 rounded-md px-1.5 py-1 text-[13px] leading-5 text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset group-open/activity-item:text-foreground [&::-webkit-details-marker]:hidden"
-      >
-        <Icon
-          className={`mt-0.5 size-3.5 shrink-0 ${item.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
-        />
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-          {item.title}
-        </span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {activityStatusLabels[item.status]}
-        </span>
-        <ChevronRight className="activity-caret mt-1 size-3 shrink-0 text-muted-foreground group-open/activity-item:rotate-90" />
-      </summary>
-      <div className="ml-5.5 space-y-2 border-l pl-3 pt-1 pb-3">
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-          <time dateTime={item.startedAt}>
-            Started {new Date(item.startedAt).toLocaleTimeString('en')}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs">
+        <time dateTime={item.startedAt}>
+          Started {new Date(item.startedAt).toLocaleTimeString('en')}
+        </time>
+        {item.completedAt && (
+          <time dateTime={item.completedAt}>
+            Finished {new Date(item.completedAt).toLocaleTimeString('en')} ·{' '}
+            {elapsedLabel(item.startedAt, item.completedAt, 0)}
           </time>
-          {item.completedAt && (
-            <time dateTime={item.completedAt}>
-              Finished {new Date(item.completedAt).toLocaleTimeString('en')} ·{' '}
-              {elapsedLabel(item.startedAt, item.completedAt, 0)}
-            </time>
-          )}
-        </div>
-        {item.paths.length > 0 && (
-          <ul className="space-y-1 text-xs text-muted-foreground">
-            {[...new Set(item.paths)].filter(Boolean).map(path => (
-              <li key={path} className="[overflow-wrap:anywhere]">
-                {path}
-              </li>
-            ))}
-          </ul>
-        )}
-        {item.detail && item.kind === 'thinking' && (
-          <p
-            aria-label="Thinking"
-            className="max-h-48 overflow-auto text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere] italic text-muted-foreground"
-          >
-            {item.detail}
-          </p>
-        )}
-        {item.detail && item.kind !== 'thinking' && (
-          <pre
-            aria-label="Activity details"
-            className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
-          >
-            {item.detail}
-          </pre>
-        )}
-        {item.output && (
-          <pre
-            aria-label="Command output"
-            className="max-h-56 overflow-auto rounded-lg border bg-code-background p-3 font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
-          >
-            {item.output}
-          </pre>
-        )}
-        {item.truncated && (
-          <p className="text-[11px] text-muted-foreground">
-            Only a bounded part of this activity was saved.
-          </p>
         )}
       </div>
-    </details>
+      {item.paths.length > 0 && (
+        <ul className="space-y-1">
+          {[...new Set(item.paths)].filter(Boolean).map(path => (
+            <li key={path} className="[overflow-wrap:anywhere]">
+              {path}
+            </li>
+          ))}
+        </ul>
+      )}
+      {item.detail && item.kind === 'thinking' && (
+        <p
+          aria-label="Thinking"
+          className="max-h-48 overflow-auto leading-5 whitespace-pre-wrap [overflow-wrap:anywhere] italic"
+        >
+          {item.detail}
+        </p>
+      )}
+      {item.detail && item.kind !== 'thinking' && (
+        <CodeBlock
+          aria-label="Activity details"
+          code={item.detail}
+          wrap
+          maxHeightClassName="max-h-48"
+        />
+      )}
+      {item.output && (
+        <CodeBlock
+          aria-label="Command output"
+          code={item.output}
+          wrap
+          maxHeightClassName="max-h-56"
+        />
+      )}
+      {item.truncated && (
+        <p className="text-2xs">
+          Only a bounded part of this activity was saved.
+        </p>
+      )}
+    </NativeDisclosure>
   );
 }
 
@@ -181,81 +170,67 @@ export function SessionActivity({
       data-run-id={runId}
       className="min-w-0 text-muted-foreground"
     >
-      <details className="group/activity">
-        <summary
-          aria-label="Toggle activity"
-          className="flex cursor-pointer list-none items-center gap-2 rounded-md py-1 text-[13px] leading-5 transition-colors duration-100 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden"
-        >
-          <ChevronRight className="activity-caret size-3 shrink-0 group-open/activity:rotate-90" />
-          <span
-            className="activity-shimmer shrink-0 tabular-nums"
-            data-animate={live && visible}
-          >
-            {label}
-          </span>
-          {completedTime && (
-            <time
-              dateTime={completedAt ?? undefined}
-              className="shrink-0 text-[11px] tabular-nums"
-            >
-              {completedTime}
-            </time>
-          )}
-          {running && (
+      <NativeDisclosure
+        triggerLabel="Toggle activity"
+        className="-mx-2"
+        title={
+          <span className="text-muted-foreground">
             <span
-              className="min-w-0 truncate text-xs"
-              title={running.title}
-              data-activity-current
+              className="activity-shimmer tabular-nums"
+              data-animate={live && visible}
             >
-              · {running.title}
+              {label}
             </span>
-          )}
-          {summary && (
-            <span className="min-w-0 truncate text-xs" title={summary}>
-              {summary}
-            </span>
-          )}
-          {failures > 0 && (
-            <span className="shrink-0 text-[11px] text-destructive">
-              {failures} failed
-            </span>
-          )}
-        </summary>
-        <div className="mt-1.5 ml-1.5 max-h-80 space-y-px overflow-y-auto border-l pl-2.5">
-          {batches.map(batch => {
-            if (batch.items.length === 1)
-              return <ActivityItem key={batch.id} item={batch.items[0]!} />;
-            const Icon = icons[batch.kind];
-            return (
-              <details key={batch.id} className="group/activity-batch">
-                <summary
-                  aria-label={`Toggle ${batch.kind} activity`}
-                  className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1.5 py-1 text-[13px] leading-5 transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden"
-                >
-                  <Icon className="size-3.5 shrink-0" />
-                  <span>{batchLabel(batch)}</span>
-                  <ChevronRight className="activity-caret ml-auto size-3 shrink-0 group-open/activity-batch:rotate-90" />
-                </summary>
-                <div className="ml-1.5 space-y-1 border-l pl-3">
-                  {batch.items.map(item => (
-                    <ActivityItem key={item.id} item={item} />
-                  ))}
-                </div>
-              </details>
-            );
-          })}
-          {items.length === 0 && (
-            <p className="py-1 text-xs">
-              No saved tool activity for this turn.
-            </p>
-          )}
-          {truncated && (
-            <p className="py-1 text-[11px]">
-              Some session activity was omitted by the saved-history limit.
-            </p>
-          )}
-        </div>
-      </details>
+            {completedTime && (
+              <time
+                dateTime={completedAt ?? undefined}
+                className="ml-2 text-2xs tabular-nums"
+              >
+                {completedTime}
+              </time>
+            )}
+            {running && (
+              <span className="ml-2 text-xs" data-activity-current>
+                · {running.title}
+              </span>
+            )}
+            {summary && <span className="ml-2 text-xs">{summary}</span>}
+            {failures > 0 && (
+              <span className="ml-2 text-2xs text-error-foreground">
+                {failures} failed
+              </span>
+            )}
+          </span>
+        }
+        contentClassName="ml-3.5 max-h-80 space-y-px overflow-y-auto border-l pt-1 pl-2"
+      >
+        {batches.map(batch => {
+          if (batch.items.length === 1)
+            return <ActivityItem key={batch.id} item={batch.items[0]!} />;
+          const Icon = icons[batch.kind];
+          return (
+            <NativeDisclosure
+              key={batch.id}
+              triggerLabel={`Toggle ${batch.kind} activity`}
+              icon={<Icon />}
+              title={batchLabel(batch)}
+              contentClassName="ml-3.5 space-y-px border-l pt-0 pb-0 pl-2"
+            >
+              {batch.items.map(item => (
+                <ActivityItem key={item.id} item={item} />
+              ))}
+            </NativeDisclosure>
+          );
+        })}
+        {items.length === 0 && (
+          <p className="px-2 py-1">No saved tool activity for this turn.</p>
+        )}
+        {truncated && (
+          <p className="px-2 py-1 text-2xs">
+            Some session activity was omitted by the saved-history limit.
+          </p>
+        )}
+      </NativeDisclosure>
     </section>
   );
 }
