@@ -740,7 +740,7 @@ try {
   });
   assert.equal(
     await sessionCard
-      .locator('[data-usage-row="Claude Code"] [role="progressbar"]')
+      .locator('[data-usage-row="Claude Code"] [role="meter"]')
       .getAttribute('aria-valuetext'),
     '38.8% left',
   );

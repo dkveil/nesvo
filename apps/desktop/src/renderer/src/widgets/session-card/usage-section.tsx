@@ -86,7 +86,6 @@ export function UsageSection({ states, connected }: Props) {
                   <span className="truncate">Weekly</span>
                 </span>
                 <Meter
-                  role="progressbar"
                   label={`Weekly ${providerNames[provider]} limit`}
                   value={left}
                   stale={faded}
