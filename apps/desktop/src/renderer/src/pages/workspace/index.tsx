@@ -55,6 +55,7 @@ import {
   type AutomationValues,
 } from '@/features/edit-automation';
 import { ManageComputers } from '@/features/manage-computers';
+import { HistorySearchDialog } from '@/features/search-history';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
@@ -190,6 +191,13 @@ export function Workspace() {
   >({});
   const runRequests = useRef<Record<string, { id: string; at: string }>>({});
   const [sessionTarget, setSessionTarget] = useState('');
+  const [historySearch, setHistorySearch] = useState<{
+    query: string;
+    returnFocus: HTMLElement | null;
+  } | null>(null);
+  const [messageTarget, setMessageTarget] = useState<{ id: string } | null>(
+    null,
+  );
   const [panel, setPanel] = useState<
     'diff' | 'files' | 'skills' | 'pull-request' | null
   >(location.diff ? 'diff' : null);
@@ -823,6 +831,16 @@ export function Workspace() {
     setSidebarOpen(open);
     requestAnimationFrame(() => sidebarToggle.current?.focus());
   }, []);
+  const openHistorySearch = useCallback((query = '') => {
+    const focused = document.activeElement;
+    setHistorySearch(
+      current =>
+        current ?? {
+          query: query.slice(0, 200),
+          returnFocus: focused instanceof HTMLElement ? focused : null,
+        },
+    );
+  }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -830,9 +848,18 @@ export function Workspace() {
         event.repeat ||
         event.isComposing ||
         !(event.ctrlKey || event.metaKey) ||
-        event.altKey ||
+        event.altKey
+      )
+        return;
+      const key = event.key.toLowerCase();
+      if ((key === 'k' && !event.shiftKey) || (key === 'f' && event.shiftKey)) {
+        event.preventDefault();
+        openHistorySearch();
+        return;
+      }
+      if (
         event.shiftKey ||
-        event.key.toLowerCase() !== 'b' ||
+        key !== 'b' ||
         !window.matchMedia('(min-width: 768px)').matches
       )
         return;
@@ -841,7 +868,7 @@ export function Workspace() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [toggleSidebar]);
+  }, [openHistorySearch, toggleSidebar]);
   const panelTrigger = () =>
     cardOpen
       ? cardTrigger.current
@@ -915,6 +942,7 @@ export function Workspace() {
     setCreating(false);
     setSelectedId(id);
     setSessionTarget(targetId);
+    setMessageTarget(null);
     setInbox(false);
     setWorkflowsView(false);
     setPullRequestsView(false);
@@ -1860,6 +1888,7 @@ ${text}`
     inbox,
     workflows: workflowsView,
     onSelect: select,
+    onSearchHistory: openHistorySearch,
     onInbox: openInbox,
     onWorkflows: openWorkflows,
     onCreate: openCreate,
@@ -1900,6 +1929,21 @@ ${text}`
       : null;
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background">
+      {historySearch && (
+        <HistorySearchDialog
+          computers={store.computers}
+          initialQuery={historySearch.query}
+          returnFocus={historySearch.returnFocus}
+          onClose={() => setHistorySearch(null)}
+          onOpenResult={(hostId, result) => {
+            setHistorySearch(null);
+            guardEditor(() => {
+              selectNow(hostKey(result.sessionId, hostId));
+              if (result.messageId) setMessageTarget({ id: result.messageId });
+            });
+          }}
+        />
+      )}
       <div className="hidden h-full shrink-0 md:flex">
         <NavigationRail
           sidebarOpen={sidebarOpen}
@@ -2621,6 +2665,7 @@ ${text}`
                   />
                 )}
                 focusTarget={sessionTarget}
+                messageTarget={messageTarget}
                 workers={workers}
                 results={
                   <SessionReviews

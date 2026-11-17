@@ -64,6 +64,7 @@ export type ModelSelection = {
 type Props = {
   session: Session;
   focusTarget: string;
+  messageTarget: { id: string } | null;
   workers: Session[];
   delegations: ReactNode;
   results: ReactNode;
@@ -113,6 +114,7 @@ type Props = {
 export function Conversation({
   session,
   focusTarget,
+  messageTarget,
   workers,
   delegations,
   results,
@@ -648,6 +650,21 @@ export function Conversation({
       followOutput.current = false;
     }
   }, [session.id, focusTarget]);
+  useEffect(() => {
+    if (!messageTarget) return;
+    const target = document.getElementById(`message-${messageTarget.id}`);
+    if (!target) return;
+    target.scrollIntoView({ block: 'center' });
+    followOutput.current = false;
+    const highlight = target.animate(
+      [
+        { backgroundColor: 'var(--accent)' },
+        { backgroundColor: 'transparent' },
+      ],
+      { duration: 1800, easing: 'ease-out' },
+    );
+    return () => highlight.cancel();
+  }, [messageTarget, session.id]);
   const scrollToEnd = () => {
     const viewport = bottom.current?.closest<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -700,12 +717,14 @@ export function Conversation({
                   </div>
                 )}
                 <article
+                  id={`message-${message.id}`}
+                  data-message-id={message.id}
                   aria-label={
                     message.author === 'operator' ? 'You' : session.provider
                   }
                   data-author={message.author}
                   className={cn(
-                    'group space-y-2',
+                    'group space-y-2 rounded-md',
                     message.author === 'operator' && 'flex flex-col items-end',
                   )}
                 >

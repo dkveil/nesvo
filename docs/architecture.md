@@ -276,6 +276,14 @@ All successful new turns enter the prototype inbox. This stage does not add per-
 
 The action inbox is a projection of authoritative sessions and reviews. It lists pending operation approvals, current-run worker proposals and saved results with distinct action types. Every row links to the requesting session and exposes its decisions inline. Operation callbacks carry the row's session, run and request IDs; the page validates those IDs against current state independently of the selected conversation. Full versions and diffs are disclosures in the conversation, composed through a widget slot. A session link opens and scrolls to the exact request or result. The shared review decision feature preserves feedback drafts and the existing idempotent decision handling. No new host command or stored action record is introduced. History shows saved review decisions; transient operation approvals are not fabricated as historical records.
 
+## Session history search
+
+Each host indexes the title and the first 8,192 characters of every stored operator and agent message. SQLite triggers update the projection in the session transaction and cascade removals. Archived sessions remain searchable while they remain in stored history. The host probes FTS5 at runtime. With FTS5, results use BM25 relevance followed by creation time and a stable row ID tie-break. Without FTS5, search uses case-folded LIKE over the 4,000 most recent entries and scores contiguous matches first. Schema version 12 backfills existing documents in small batches between event-loop turns and resumes from a durable checkpoint.
+
+`search-history` accepts up to 200 characters, treats punctuation as separators and searches for all resulting words. It sends a page of up to 100 snippets with UTF-16 match offsets and an optional next cursor within the first 10,000 matches. `truncated` covers further matches, incomplete backfill and fallback scan limits. Cursors page the current index and can shift when the history changes.
+
+Desktop sends debounced, read-only queries to each connected computer with `history-search` and discards superseded responses. The palette groups the first page per computer and session, lists computers it could not search, and opens the matching session and message anchor.
+
 ## Session file explorer
 
 D58 adds three narrow, Zod-validated commands: list-workspace-directory, search-workspace-files and read-workspace-file. The host resolves the root from its stored session; callers supply only a session ID and a relative path. The renderer receives directory entries or a bounded text preview, never a filesystem or shell handle. No database migration or provider capability change is required.

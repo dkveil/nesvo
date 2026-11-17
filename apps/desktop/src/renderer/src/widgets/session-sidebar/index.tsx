@@ -54,6 +54,7 @@ type Props = {
   inbox: boolean;
   workflows: boolean;
   onSelect: (id: string) => void;
+  onSearchHistory: (query: string) => void;
   onInbox: () => void;
   onWorkflows: () => void;
   onCreate: () => void;
@@ -150,6 +151,7 @@ export function SessionSidebar({
   inbox,
   workflows,
   onSelect,
+  onSearchHistory,
   onInbox,
   onWorkflows,
   onCreate,
@@ -499,6 +501,16 @@ export function SessionSidebar({
             <SquarePen className="size-4" />
           </Button>
         </div>
+        {search.trim() && (
+          <button
+            type="button"
+            className={navButtonClass}
+            onClick={() => onSearchHistory(search)}
+          >
+            <Search className="size-4 text-sidebar-icon" aria-hidden="true" />
+            Search all history
+          </button>
+        )}
         {inline && (
           <>
             <button
