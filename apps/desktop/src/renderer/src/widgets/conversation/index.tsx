@@ -9,6 +9,7 @@ import {
   Square,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { attachmentLimits } from '@nesvo/contracts';
 import type {
   DesktopApi,
   ReasoningEffort,
@@ -44,9 +45,20 @@ import { MessageBody } from './message-body';
 import { CopyMessageButton } from './copy-message-button';
 import { ClampedPrompt } from './clamped-prompt';
 import { isLongPrompt } from './long-prompt';
+import { AttachmentItem } from '@/features/attachments/attachment-item';
+import {
+  filesFrom,
+  hasFiles,
+  isLongPaste,
+  takeAttachments,
+  textAttachment,
+  type PendingAttachment,
+} from '@/features/attachments/paste-and-drop';
+import type { AttachmentReader } from '@/features/attachments/use-attachment-content';
 
 const MESSAGE_MAX_LENGTH = 32000;
 const PASTE_NOTICE_MS = 5000;
+const ATTACHMENT_NOTICE_MS = 8000;
 const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
 
@@ -109,6 +121,11 @@ type Props = {
   onSelectMode: (mode: SessionMode | null) => void;
   canChangeMode: boolean;
   workflowChip?: ReactNode;
+  attachments: PendingAttachment[];
+  attachmentsEnabled: boolean;
+  onAttach: (items: PendingAttachment[]) => void;
+  onRemoveAttachment: (id: string) => void;
+  readAttachment: AttachmentReader;
 };
 
 export function Conversation({
@@ -150,6 +167,11 @@ export function Conversation({
   onSelectMode,
   canChangeMode,
   workflowChip,
+  attachments,
+  attachmentsEnabled,
+  onAttach,
+  onRemoveAttachment,
+  readAttachment,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -172,6 +194,48 @@ export function Conversation({
   const [modeNotice, setModeNotice] = useState('');
   const modeNoticeTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
+  const [attachmentNote, setAttachmentNote] = useState('');
+  const attachmentNoteTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(attachmentNoteTimer.current), []);
+  const [dragging, setDragging] = useState(false);
+  const pastedTexts = useRef(0);
+  const showAttachmentNote = (note: string) => {
+    setAttachmentNote(note);
+    window.clearTimeout(attachmentNoteTimer.current);
+    if (note)
+      attachmentNoteTimer.current = window.setTimeout(
+        () => setAttachmentNote(''),
+        ATTACHMENT_NOTICE_MS,
+      );
+  };
+  const attachFiles = async (files: File[]) => {
+    if (files.length === 0) return;
+    if (!attachmentsEnabled) {
+      showAttachmentNote(
+        'Attachments need a newer Nesvo host on this computer. Update the host, then reconnect.',
+      );
+      return;
+    }
+    const intake = await takeAttachments(files, attachments.length);
+    onAttach(intake.added);
+    showAttachmentNote(intake.refusals.join(' '));
+  };
+  const attachPastedText = (text: string) => {
+    if (attachments.length >= attachmentLimits.perMessage) {
+      showAttachmentNote(
+        `A message can carry up to ${attachmentLimits.perMessage} attachments.`,
+      );
+      return;
+    }
+    pastedTexts.current += 1;
+    const result = textAttachment(text, pastedTexts.current);
+    if ('refusal' in result) {
+      showAttachmentNote(result.refusal);
+      return;
+    }
+    onAttach([result]);
+    showAttachmentNote('');
+  };
   const visibleSession = useRef('');
   const running = session.status === 'running' || session.status === 'stopping';
   const queueing = running || otherRun;
@@ -265,6 +329,7 @@ export function Conversation({
     .filter(message => message.author === 'operator')
     .map(message => message.body);
   const limitReached = draft.length >= MESSAGE_MAX_LENGTH;
+  const hasContent = !!draft.trim() || attachments.length > 0;
   const lastMessage = session.messages.at(-1);
   const lastOperator = session.messages.findLast(
     message => message.author === 'operator',
@@ -295,7 +360,7 @@ export function Conversation({
       type="submit"
       size="icon-sm"
       className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-      disabled={!draft.trim() || !canQueue}
+      disabled={!hasContent || !canQueue}
       aria-label="Queue message"
       title={
         running
@@ -346,7 +411,7 @@ export function Conversation({
               clearConversation();
               return;
             }
-            if (!draft.trim() || !canSubmit) return;
+            if (!hasContent || !canSubmit) return;
             setRecall(null);
             if (selectedSkill || !hasTypedCommand) {
               onSend();
@@ -365,12 +430,57 @@ export function Conversation({
             Message
           </label>
           {anchor(
-            <div className="glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input">
+            <div
+              data-dragging={dragging || undefined}
+              onDragOver={event => {
+                if (!hasFiles(event.dataTransfer)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                if (!dragging) setDragging(true);
+              }}
+              onDragLeave={event => {
+                if (
+                  !(event.relatedTarget instanceof Node) ||
+                  !event.currentTarget.contains(event.relatedTarget)
+                )
+                  setDragging(false);
+              }}
+              onDrop={event => {
+                if (!hasFiles(event.dataTransfer)) return;
+                event.preventDefault();
+                setDragging(false);
+                void attachFiles(filesFrom(event.dataTransfer));
+              }}
+              className={cn(
+                'glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input',
+                dragging && 'border-ring bg-accent/40',
+              )}
+            >
               {selectedSkill && (
                 <SelectedSkillChip
                   skill={selectedSkill}
                   onRemove={() => onSkillChange(null)}
                 />
+              )}
+              {attachments.length > 0 && (
+                <div
+                  role="group"
+                  aria-label="Attachments"
+                  className="mb-2 flex flex-wrap gap-1"
+                >
+                  {attachments.map(item => (
+                    <AttachmentItem
+                      key={item.attachment.id}
+                      attachment={item.attachment}
+                      hostId={session.hostId}
+                      sessionId={session.id}
+                      read={readAttachment}
+                      data={item.data}
+                      preview={item.preview}
+                      onRemove={() => onRemoveAttachment(item.attachment.id)}
+                    />
+                  ))}
+                </div>
               )}
               <Textarea
                 ref={messageInput}
@@ -448,7 +558,18 @@ export function Conversation({
                 }}
                 onPaste={event => {
                   const target = event.currentTarget;
+                  const files = filesFrom(event.clipboardData);
+                  if (files.length > 0) {
+                    event.preventDefault();
+                    void attachFiles(files);
+                    return;
+                  }
                   const pasted = event.clipboardData.getData('text');
+                  if (attachmentsEnabled && isLongPaste(pasted)) {
+                    event.preventDefault();
+                    attachPastedText(pasted);
+                    return;
+                  }
                   const selected = target.selectionEnd - target.selectionStart;
                   if (
                     draft.length - selected + pasted.length <=
@@ -490,7 +611,7 @@ export function Conversation({
                   >
                     {otherRun
                       ? (otherRunLabel ?? 'Another session is working')
-                      : running && draft.trim()
+                      : running && hasContent
                         ? 'Will send when this turn ends'
                         : sending
                           ? 'Sending…'
@@ -530,7 +651,7 @@ export function Conversation({
                     }
                     onRefreshProvider={onRefreshProvider}
                   />
-                  {running && !!draft.trim() && queueButton}
+                  {running && hasContent && queueButton}
                   {running ? (
                     <Button
                       type="button"
@@ -560,7 +681,7 @@ export function Conversation({
                       type="submit"
                       size="icon-sm"
                       className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-                      disabled={!draft.trim() || !canSend}
+                      disabled={!hasContent || !canSend}
                       aria-label="Send message"
                       title="Send message"
                     >
@@ -572,6 +693,15 @@ export function Conversation({
             </div>,
           )}
           {notice}
+          {attachmentNote && (
+            <p
+              role="status"
+              aria-label="Attachment note"
+              className="px-3 text-[11px] leading-5 text-muted-foreground"
+            >
+              {attachmentNote}
+            </p>
+          )}
           {(limitReached || pasteTruncated) && (
             <p
               role="status"
@@ -774,7 +904,30 @@ export function Conversation({
                       live ? session.status : message.state,
                       live,
                     )}
-                  {(message.body || !live) &&
+                  {message.author === 'operator' &&
+                    message.attachments.length > 0 && (
+                      <div
+                        role="group"
+                        aria-label="Message attachments"
+                        className="flex max-w-[85%] flex-wrap justify-end gap-1"
+                      >
+                        {message.attachments.map(attachment => (
+                          <AttachmentItem
+                            key={attachment.id}
+                            attachment={attachment}
+                            hostId={session.hostId}
+                            sessionId={session.id}
+                            read={readAttachment}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  {(message.body ||
+                    (!live &&
+                      !(
+                        message.author === 'operator' &&
+                        message.attachments.length > 0
+                      ))) &&
                     (message.author === 'operator' ? (
                       isLongPrompt(message.body) ? (
                         <ClampedPrompt>
@@ -888,11 +1041,15 @@ export function Conversation({
                 >
                   <span className="text-[11px] text-muted-foreground">
                     {entry.held ? 'Held' : 'Queued'}
+                    {entry.attachments.length > 0 &&
+                      ` · ${entry.attachments.length} ${entry.attachments.length === 1 ? 'attachment' : 'attachments'}`}
                   </span>
-                  <MessageBody
-                    body={entry.text}
-                    className="max-w-[85%] rounded-2xl border border-dashed px-3.5 py-2 text-sm leading-6"
-                  />
+                  {entry.text && (
+                    <MessageBody
+                      body={entry.text}
+                      className="max-w-[85%] rounded-2xl border border-dashed px-3.5 py-2 text-sm leading-6"
+                    />
+                  )}
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"

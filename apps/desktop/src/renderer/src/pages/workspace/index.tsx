@@ -60,6 +60,8 @@ import { ManageComputers } from '@/features/manage-computers';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
+import type { PendingAttachment } from '@/features/attachments/paste-and-drop';
+import { useAttachmentDrafts } from '@/features/attachments/use-attachment-drafts';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -565,6 +567,7 @@ export function Workspace() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
+  const attachmentDrafts = useAttachmentDrafts();
   const [seen, setSeen] = useState<Record<string, number>>(readSeen);
   useEffect(() => writeSeen(seen), [seen]);
   const [seenSeeded, setSeenSeeded] = useState(false);
@@ -598,6 +601,10 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('session-workflow');
+  const supportsAttachments = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('attachments');
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -627,6 +634,7 @@ export function Workspace() {
         skillHash?: string;
         selection: ModelSelection | null;
         mode: SessionMode | null;
+        attachmentIds: string;
         messageId: string;
       }
     >
@@ -1026,12 +1034,14 @@ export function Workspace() {
     queued = false,
     selection: ModelSelection | null = null,
     mode: SessionMode | null = null,
+    attachments: PendingAttachment[] = [],
   ) => {
     const sessionId = target.id;
     const sessionKey = entityKey(target);
     const hostId = target.hostId;
     const skillId = skill?.id;
     const skillHash = skill?.contentHash;
+    const attachmentIds = attachments.map(item => item.attachment.id).join(',');
     const prior = sendAttempts.current[sessionKey];
     const attempt =
       prior?.text === text &&
@@ -1039,7 +1049,8 @@ export function Workspace() {
       prior.skillHash === skillHash &&
       prior.selection?.model === selection?.model &&
       prior.selection?.effort === selection?.effort &&
-      prior.mode === mode
+      prior.mode === mode &&
+      prior.attachmentIds === attachmentIds
         ? prior
         : {
             text,
@@ -1047,6 +1058,7 @@ export function Workspace() {
             skillHash,
             selection,
             mode,
+            attachmentIds,
             messageId: crypto.randomUUID(),
           };
     sendAttempts.current[sessionKey] = attempt;
@@ -1057,12 +1069,33 @@ export function Workspace() {
       delete sendAttempts.current[sessionKey];
       onAcknowledge();
     };
+    const api = desktopApi(hostId);
+    for (const item of attachments) {
+      if (!item.data) continue;
+      try {
+        await api.stageAttachment({
+          sessionId,
+          attachment: item.attachment,
+          data: item.data,
+        });
+      } catch (failure) {
+        setErrors(previous => ({
+          ...previous,
+          [sessionKey]: `Could not upload ${item.attachment.name}. ${errorDetail(failure)}`,
+        }));
+        sendingRef.current = false;
+        setSending(false);
+        return;
+      }
+    }
     try {
-      const api = desktopApi(hostId);
       const session = await (queued ? api.queueMessage : api.sendMessage)({
         sessionId,
         messageId: attempt.messageId,
         text,
+        ...(attachments.length
+          ? { attachments: attachments.map(item => item.attachment) }
+          : {}),
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
         ...(selection
@@ -1108,8 +1141,9 @@ export function Workspace() {
     )
       return;
     const sessionKey = entityKey(selected);
-    const text = typed?.text ?? drafts[sessionKey]?.trim();
-    if (!text || text.length > 32000) return;
+    const text = typed?.text ?? drafts[sessionKey]?.trim() ?? '';
+    const attachments = attachmentDrafts.list(sessionKey);
+    if ((!text && attachments.length === 0) || text.length > 32000) return;
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
@@ -1121,6 +1155,10 @@ export function Workspace() {
       () => {
         clearModelSelection(sessionKey, selection);
         clearModeSelection(sessionKey, mode);
+        attachmentDrafts.remove(
+          sessionKey,
+          attachments.map(item => item.attachment.id),
+        );
         if ((draftVersions.current[sessionKey] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
@@ -1129,6 +1167,7 @@ export function Workspace() {
       !!activeRun,
       selection,
       mode,
+      attachments,
     );
   };
   const resend = async () => {
@@ -1153,6 +1192,11 @@ export function Workspace() {
       false,
       selection,
       mode,
+      last.attachments.map(attachment => ({
+        attachment,
+        data: null,
+        preview: null,
+      })),
     );
   };
   const changeQueued = async (
@@ -1188,6 +1232,14 @@ export function Workspace() {
     if (!(await changeQueued(target, messageId, 'cancel'))) return;
     const key = entityKey(target);
     changeDraft(key, text);
+    attachmentDrafts.add(
+      key,
+      (entry?.attachments ?? []).map(attachment => ({
+        attachment,
+        data: null,
+        preview: null,
+      })),
+    );
     const model = entry?.model;
     if (model)
       setModelSelections(previous => ({
@@ -2709,6 +2761,13 @@ export function Workspace() {
                   }))
                 }
                 canChangeMode={supportsModes(selectedHostId)}
+                attachments={attachmentDrafts.list(selectedKey)}
+                attachmentsEnabled={supportsAttachments(selectedHostId)}
+                onAttach={items => attachmentDrafts.add(selectedKey, items)}
+                onRemoveAttachment={id =>
+                  attachmentDrafts.remove(selectedKey, [id])
+                }
+                readAttachment={desktopApi(selectedHostId).readAttachment}
                 workflowChip={
                   <SessionWorkflowChip
                     hostId={selected.hostId}
