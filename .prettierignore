@@ -62,7 +62,6 @@
 !.github/workflows/
 !.github/workflows/ci.yml
 !.github/workflows/platforms.yml
-!.github/workflows/site.yml
 **/node_modules/
 **/dist/
 **/out/

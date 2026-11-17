@@ -101,7 +101,7 @@ The public landing page lives in `site/` as plain static files: `index.html`, `s
 
 Download buttons point at the stable asset names of the latest GitHub Release (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so the page needs no change for a new version.
 
-`.github/workflows/site.yml` publishes `site/` to GitHub Pages on every push to master that touches `site/` or the workflow, and on manual dispatch. Before the first deployment, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions** once in the repository settings.
+The site is served by Cloudflare Pages at https://nesvo.dev through the Cloudflare Git integration: the Pages project builds from this repository with no build command and `site` as the output directory, deploys `master` to production and gives every other branch a preview URL. Nothing in the repository holds a Cloudflare token. `site/_headers` sets the security headers (a strict Content Security Policy that allows only same-origin scripts, styles and images) and `site/_redirects` provides short download links: `/download/windows`, `/download/mac`, `/download/mac-intel`, `/releases` and `/github`.
 
 ## Troubleshooting
 
