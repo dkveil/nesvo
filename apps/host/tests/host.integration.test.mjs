@@ -16300,7 +16300,7 @@ function githubCliFixture() {
     }
   } else if (args[0] === 'api' && args[3]?.endsWith('/merge')) {
     if (args.includes(`sha=${'b'.repeat(40)}`)) {
-      console.error('gh: Head branch was modified (HTTP 409)');
+      console.error('gh: HTTP 409');
       process.exitCode = 1;
     } else if (args[3].includes('/43/')) {
       console.error('gh: The base branch requires a merge queue (HTTP 405)');

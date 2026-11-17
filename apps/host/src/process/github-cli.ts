@@ -142,25 +142,26 @@ function ghError(
     .replace(/(https?:\/\/)[^\s/]+@/gi, '$1[redacted]@')
     .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[redacted]')
     .trim();
-  if (apiAction === 'merge' && detail?.endsWith('(HTTP 409)'))
+  const status = /(?:^gh: |\()HTTP (\d{3})\)?$/.exec(detail ?? '')?.[1];
+  if (apiAction === 'merge' && status === '409')
     return new PullRequestError(
       'invalid-request',
       'The pull request head moved since you reviewed it. Refresh and review again.',
     );
-  if (apiAction === 'merge' && detail?.endsWith('(HTTP 405)')) {
+  if (apiAction === 'merge' && status === '405') {
     const message = detail
-      .replace(/^gh: /, '')
-      .replace(/\s*\(HTTP 405\)$/, '')
+      ?.replace(/^gh: /, '')
+      .replace(/(?:^|\s*\()HTTP 405\)?$/, '')
       .slice(0, 300);
     return new PullRequestError(
       'invalid-request',
       `GitHub refused the merge: ${message || 'An immediate merge is unavailable.'}`,
     );
   }
-  if (apiAction === 'line-comment' && detail?.endsWith('(HTTP 422)'))
+  if (apiAction === 'line-comment' && status === '422')
     return new PullRequestError(
       'invalid-request',
-      'GitHub could not comment on the selected line or commit. Refresh the diff and select a changed line or range.',
+      'GitHub could not comment on the selected line or commit. Refresh the diff and select a line or range in the current diff.',
     );
   return new PullRequestError(
     'unavailable',
