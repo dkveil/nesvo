@@ -59,6 +59,10 @@
   --color-send-idle: var(--send-idle);
   --color-send-idle-foreground: var(--send-idle-foreground);
   --color-brand-mark: var(--brand-mark);
+  --color-pr-open: var(--pr-open);
+  --color-pr-draft: var(--pr-draft);
+  --color-pr-merged: var(--pr-merged);
+  --color-pr-closed: var(--pr-closed);
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
 }
@@ -159,6 +163,10 @@
   --brand-black: #000000;
   --brand-white: #ffffff;
   --brand-mark: var(--brand-black);
+  --pr-open: #1f8a4c;
+  --pr-draft: #8a8a93;
+  --pr-merged: #8b5cd6;
+  --pr-closed: #c2343d;
 }
 
 :root.dark {
@@ -239,6 +247,10 @@
   --project-chip-5: #f7768e;
   --project-chip-6: #73daca;
   --brand-mark: var(--brand-white);
+  --pr-open: #5ad38c;
+  --pr-draft: #8f8f8f;
+  --pr-merged: #b49af7;
+  --pr-closed: #f0707a;
 }
 
 .hljs-keyword,

@@ -47,6 +47,13 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     listWorkspaceDirectory: input => api.listWorkspaceDirectory(input, hostId),
     searchWorkspaceFiles: input => api.searchWorkspaceFiles(input, hostId),
     readWorkspaceFile: input => api.readWorkspaceFile(input, hostId),
+    listPullRequests: input => api.listPullRequests(input, hostId),
+    readPullRequest: input => api.readPullRequest(input, hostId),
+    readPullRequestFiles: input => api.readPullRequestFiles(input, hostId),
+    readPullRequestThreads: input => api.readPullRequestThreads(input, hostId),
+    actOnPullRequest: input => api.actOnPullRequest(input, hostId),
+    linkSessionPullRequest: input => api.linkSessionPullRequest(input, hostId),
+    findSessionPullRequest: input => api.findSessionPullRequest(input, hostId),
   };
   boundApis.set(hostId, bound);
   return bound;
