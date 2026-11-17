@@ -547,7 +547,7 @@ try {
           { exact: true },
         )
         .waitFor();
-      const bars = section.getByRole('progressbar');
+      const bars = section.getByRole('meter');
       if (status === 'ready') {
         assert.deepEqual(
           await bars.evaluateAll(nodes =>
@@ -2158,10 +2158,10 @@ try {
   );
   assert.equal(await sessionByTitle('Cancelled session'), undefined);
   await page
-    .getByRole('textbox', { name: 'Search sessions' })
+    .getByRole('searchbox', { name: 'Search sessions' })
     .fill('nonexistent session');
   await page.getByText('No matching sessions.').waitFor();
-  await page.getByRole('textbox', { name: 'Search sessions' }).fill('');
+  await page.getByRole('searchbox', { name: 'Search sessions' }).fill('');
   const sidebarResizer = page.getByRole('separator', {
     name: 'Resize sidebar',
     exact: true,
