@@ -881,6 +881,32 @@ if (args.length === 1 && args[0] === '--version') {
         complete('Codex fixture initial files.');
       } else if (/^fixture:delegate(?:-|$)/.test(command)) {
         delegate(command.slice('fixture:delegate-'.length) || 'default');
+      } else if (
+        command === 'fixture:fail-sign-in' ||
+        command === 'fixture:fail-network'
+      ) {
+        notify('turn/completed', {
+          threadId: thread.id,
+          turn: {
+            id: current.id,
+            status: 'failed',
+            error:
+              command === 'fixture:fail-sign-in'
+                ? {
+                    message: 'Your access token could not be refreshed.',
+                    codexErrorInfo: 'unauthorized',
+                    additionalDetails: null,
+                  }
+                : {
+                    message: 'stream disconnected before completion',
+                    codexErrorInfo: {
+                      responseStreamConnectionFailed: { httpStatusCode: 502 },
+                    },
+                    additionalDetails: null,
+                  },
+            items: [],
+          },
+        });
       } else if (command === 'fixture:disconnect') {
         delta('Codex fixture disconnected.');
         await new Promise(resolve => process.stdout.write('', resolve));

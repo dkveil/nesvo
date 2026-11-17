@@ -395,6 +395,12 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.has('--setting-sources'), false);
     assert.equal(values.has('--no-session-persistence'), false);
   }
+  if (prompt.split('\n')[0].trim() === 'fixture:crash') {
+    process.stderr.write('Fixture crashed: segmentation fault\n', () =>
+      process.exit(7),
+    );
+    await new Promise(() => {});
+  }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);
   assert.equal(existsSync(statePath), resumed, 'Resume must retain CLI state');
   const turn = resumed
@@ -683,6 +689,28 @@ if (args.length === 1 && args[0] === '--version') {
       subtype: 'success',
       is_error: true,
       result: 'Fixture account limit reached.',
+    });
+  } else if (command === 'fixture:fail-sign-in') {
+    emit({
+      type: 'assistant',
+      error: 'authentication_failed',
+      message: {
+        id: messageId,
+        content: [{ type: 'text', text: 'Not logged in · Please run /login' }],
+      },
+    });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Not logged in · Please run /login',
+    });
+  } else if (command === 'fixture:fail-network') {
+    emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: 'API Error: Connection error (ECONNRESET).',
     });
   } else if (command === 'fixture:result-fail') {
     start('Fixture unsuccessful result.');

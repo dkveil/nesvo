@@ -13,11 +13,18 @@ import {
   type PromptAnswer,
   type PromptQuestion,
   type ProviderUsage,
+  type SessionFailure,
   type SessionMode,
   type TurnUsage,
 } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
+import {
+  ProviderFailureError,
+  sessionFailure,
+  textFailureKind,
+  type FailureKind,
+} from './failure';
 import { claudeUsageResult } from './claude-usage';
 import {
   descendantScanMs,
@@ -51,6 +58,7 @@ export type ClaudeResult = {
   structured?: unknown;
   modeUnavailable?: true;
   planAccepted?: { mode: SessionMode; plan: string };
+  failure?: SessionFailure;
 };
 
 type PendingPrompt = {
@@ -869,6 +877,7 @@ export function startClaude(options: {
   };
   const done = (async (): Promise<ClaudeResult> => {
     let failure: string | null = null;
+    let failureKind: FailureKind = 'provider';
     try {
       if (!models.some(model => model.id === options.model))
         throw new Error(
@@ -889,14 +898,25 @@ export function startClaude(options: {
       const inspection = await inspect(() => stopped);
       if (stopped) return { status: 'stopped', error: null };
       if (inspection.status.status !== 'ready' || !inspection.executable)
-        throw new Error(
-          inspection.status.detail ?? 'Claude Code is unavailable.',
+        throw new ProviderFailureError(
+          sessionFailure(
+            inspection.status.status === 'unauthenticated'
+              ? 'sign-in'
+              : 'provider',
+            safeMessage(
+              inspection.status.detail ?? 'Claude Code is unavailable.',
+            ),
+          ),
         );
       if (!inspection.status.modes.includes(options.mode))
         return {
           status: 'failed',
           error:
             'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
+          failure: sessionFailure(
+            'provider',
+            'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
+          ),
           modeUnavailable: true,
         };
       const permission = claudeModes[options.mode];
@@ -974,6 +994,7 @@ export function startClaude(options: {
       let successful = false;
       let initialized = false;
       let providerFailure: string | null = null;
+      let providerFailureKind: FailureKind = 'provider';
       let rateLimitFailure: string | null = null;
       let rateLimitResetsAt: string | null = null;
       const initializeId = randomUUID();
@@ -981,15 +1002,20 @@ export function startClaude(options: {
       let planRound = 0;
       let planAccepted: ClaudeResult['planAccepted'];
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const fail = (message: string) => {
+      const fail = (message: string, kind: FailureKind = 'provider') => {
+        if (!failure) failureKind = kind;
         failure ??= safeMessage(message);
         requestStop();
         void running.stop();
       };
+      const reportProviderFailure = (message: string, evidence: string) => {
+        providerFailure = safeMessage(message);
+        providerFailureKind = textFailureKind(evidence) ?? 'provider';
+      };
       const armTimeout = () => {
         clearTimeout(timer);
         timer = setTimeout(
-          () => fail('Claude turn timed out after ten minutes.'),
+          () => fail('Claude turn timed out after ten minutes.', 'timeout'),
           runTimeoutMs,
         );
       };
@@ -1007,7 +1033,7 @@ export function startClaude(options: {
         try {
           send();
         } catch {
-          fail('Claude Code input closed before Nesvo could answer.');
+          fail('Claude Code input closed before Nesvo could answer.', 'crash');
         }
       };
       const emit = (event: ClaudeEvent) => {
@@ -1015,7 +1041,7 @@ export function startClaude(options: {
         try {
           options.onEvent(event);
         } catch {
-          fail('Claude event delivery failed.');
+          fail('Claude event delivery failed.', 'host');
         }
       };
       const publish = () => {
@@ -1426,10 +1452,17 @@ export function startClaude(options: {
                   .filter(text => typeof text === 'string')
                   .join('')
               : '';
-            providerFailure = safeMessage(
-              content ||
-                `Claude failed: ${typeof value.error === 'string' ? value.error : 'provider error'}.`,
+            const code =
+              typeof value.error === 'string'
+                ? value.error
+                : typeof message?.error === 'string'
+                  ? message.error
+                  : '';
+            reportProviderFailure(
+              content || `Claude failed: ${code || 'provider error'}.`,
+              `${code} ${content}`,
             );
+            if (code === 'rate_limit') providerFailureKind = 'usage-limit';
             if (typeof message?.id === 'string' && messages.delete(message.id))
               publish();
             return;
@@ -1491,14 +1524,21 @@ export function startClaude(options: {
                   .filter(error => typeof error === 'string')
                   .join(' ')
               : '';
-            providerFailure = safeMessage(
+            const reported =
               typeof value.result === 'string' && value.result
                 ? value.result
-                : errors ||
-                    providerFailure ||
-                    rateLimitFailure ||
-                    'Claude did not complete the turn.',
+                : errors;
+            const previousKind = providerFailure
+              ? providerFailureKind
+              : 'provider';
+            providerFailure = safeMessage(
+              reported ||
+                providerFailure ||
+                rateLimitFailure ||
+                'Claude did not complete the turn.',
             );
+            providerFailureKind =
+              (reported ? textFailureKind(reported) : null) ?? previousKind;
           } else if (!lastText && !providerFailure && !rateLimitFailure) {
             const fallback =
               typeof value.result === 'string' && value.result
@@ -1534,10 +1574,11 @@ export function startClaude(options: {
           }
         } else if (value.type === 'error') {
           const error = object(value.error);
-          providerFailure = safeMessage(
+          reportProviderFailure(
             typeof error?.message === 'string'
               ? error.message
               : 'Claude could not continue. Check account limits and authentication.',
+            typeof error?.message === 'string' ? error.message : '',
           );
         }
       };
@@ -1583,7 +1624,12 @@ export function startClaude(options: {
           stopRequested
             .then(() => wait(cleanupTimeoutMs * 3))
             .then(() => {
-              throw new Error('Claude process did not close after cleanup.');
+              throw new ProviderFailureError(
+                sessionFailure(
+                  'crash',
+                  'Claude process did not close after cleanup.',
+                ),
+              );
             }),
         ]);
         if (line) consume(line);
@@ -1597,21 +1643,37 @@ export function startClaude(options: {
         ...(usage ? { usage } : {}),
         ...(structured.output ? { structured: structured.output.value } : {}),
       };
-      if (failure) return { status: 'failed', error: failure };
+      if (failure)
+        return {
+          status: 'failed',
+          error: failure,
+          failure: sessionFailure(failureKind, failure),
+        };
       if (!exit.confirmed)
         return {
           status: 'failed',
           error: 'Claude process closure could not be confirmed after cleanup.',
+          failure: sessionFailure(
+            'crash',
+            'Claude process closure could not be confirmed after cleanup.',
+          ),
         };
-      if (providerFailure || rateLimitFailure)
+      if (providerFailure || rateLimitFailure) {
+        const error = (providerFailure ?? rateLimitFailure)!;
         return {
           status: 'failed',
-          error: providerFailure ?? rateLimitFailure,
+          error,
+          failure: rateLimitFailure
+            ? sessionFailure('usage-limit', error, {
+                resetsAt: rateLimitResetsAt,
+              })
+            : sessionFailure(providerFailureKind, error),
           ...reported,
           ...(rateLimitFailure
             ? { limit: { resetsAt: rateLimitResetsAt } }
             : {}),
         };
+      }
       if (stopped && resultSeen && successful && lastText)
         return { status: 'completed', error: null, ...reported };
       if (stopped) return { status: 'stopped', error: null, ...reported };
@@ -1623,15 +1685,26 @@ export function startClaude(options: {
             'Claude Code disconnected before confirming the turn outcome. Inspect the workspace before continuing.',
         };
       if (exit.error)
-        throw new Error(
-          'Claude Code process failed. Check the executable and working directory.',
+        throw new ProviderFailureError(
+          sessionFailure(
+            'crash',
+            'Claude Code process failed. Check the executable and working directory.',
+          ),
         );
-      if (exit.code !== 0)
-        throw new Error(
-          stderr.trim()
-            ? `Claude Code exited with code ${exit.code}: ${safeMessage(stderr.trim())}`
-            : `Claude Code exited with code ${exit.code}.`,
+      if (exit.code !== 0) {
+        const output = safeMessage(stderr.trim());
+        const message = output
+          ? `Claude Code exited with code ${exit.code}: ${output}`
+          : `Claude Code exited with code ${exit.code}.`;
+        throw new ProviderFailureError(
+          sessionFailure(textFailureKind(output) ?? 'crash', message, {
+            exitCode: exit.code,
+            detail: stderr.trim()
+              ? safeMessage(stderr.trim().slice(-4000))
+              : null,
+          }),
         );
+      }
       if (!resultSeen || !successful)
         throw new Error('Claude Code exited without a successful result.');
       if (!lastText)
@@ -1644,16 +1717,27 @@ export function startClaude(options: {
       };
     } catch (error) {
       await owned?.stop();
-      return failure
-        ? { status: 'failed', error: failure }
-        : stopped
-          ? { status: 'stopped', error: null }
-          : {
-              status: 'failed',
-              error: safeMessage(
-                error instanceof Error ? error.message : 'Claude Code failed.',
-              ),
-            };
+      if (failure)
+        return {
+          status: 'failed',
+          error: failure,
+          failure: sessionFailure(failureKind, failure),
+        };
+      if (stopped) return { status: 'stopped', error: null };
+      if (error instanceof ProviderFailureError)
+        return {
+          status: 'failed',
+          error: error.message,
+          failure: error.failure,
+        };
+      const message = safeMessage(
+        error instanceof Error ? error.message : 'Claude Code failed.',
+      );
+      return {
+        status: 'failed',
+        error: message,
+        failure: sessionFailure('provider', message),
+      };
     }
   })();
   return {

@@ -25,6 +25,7 @@ import {
   type StopRunInput,
   type RespondApprovalInput,
   type AnswerPromptInput,
+  type SessionFailure,
   type SkillReference,
   type SessionInterruption,
   type TurnUsage,
@@ -174,6 +175,16 @@ function resolveTurnSelection(
       'Choose a specific Codex model to set a reasoning effort.',
     );
   return { model, effort, mode };
+}
+
+function hostFailure(message: string): SessionFailure {
+  return {
+    kind: 'host',
+    message: message.slice(0, 2000),
+    resetsAt: null,
+    exitCode: null,
+    detail: null,
+  };
 }
 
 function holdQueue(session: Session): void {
@@ -1396,6 +1407,7 @@ export class SessionService {
     session.runId = runId;
     session.status = 'running';
     session.error = null;
+    session.failure = null;
     session.interruption = null;
     session.pendingApprovals = [];
     session.activity = `Starting ${session.provider}…`;
@@ -1413,6 +1425,7 @@ export class SessionService {
         model: session.model,
         effort: session.effort,
         mode: session.mode,
+        failure: null,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -1429,6 +1442,7 @@ export class SessionService {
         model: null,
         effort: null,
         mode: null,
+        failure: null,
       },
     );
   }
@@ -1728,9 +1742,22 @@ export class SessionService {
           session.mode = planAccepted.mode;
           acceptedPlan = true;
         }
+        session.failure =
+          session.status !== 'failed'
+            ? null
+            : active.persistenceError
+              ? hostFailure(session.error!)
+              : (result.failure ?? {
+                  kind: 'provider',
+                  message: (result.error ?? 'The run failed.').slice(0, 2000),
+                  resetsAt: null,
+                  exitCode: null,
+                  detail: null,
+                });
         session.messages.at(-1)!.state = session.status;
         session.messages.at(-1)!.completedAt = new Date().toISOString();
         session.messages.at(-1)!.usage = result.usage ?? null;
+        session.messages.at(-1)!.failure = session.failure;
         finishActivities(session, session.status);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'
@@ -1761,12 +1788,14 @@ export class SessionService {
         session.status = 'failed';
         session.error =
           'The response could not be saved or finalized. Refresh the session before continuing.';
+        session.failure = hostFailure(session.error);
         session.activity = null;
         session.pendingApprovals = [];
         interruptPrompts(session);
         acceptedPlan = false;
         holdQueue(session);
         session.messages.at(-1)!.state = 'failed';
+        session.messages.at(-1)!.failure = session.failure;
         session.messages.at(-1)!.completedAt ??= new Date().toISOString();
         finishActivities(session, 'failed');
         session.revision += 1;

@@ -172,6 +172,22 @@ export const sessionInterruptionSchema = z.strictObject({
   at: z.iso.datetime(),
 });
 export type SessionInterruption = z.infer<typeof sessionInterruptionSchema>;
+export const sessionFailureSchema = z.strictObject({
+  kind: z.enum([
+    'usage-limit',
+    'sign-in',
+    'network',
+    'crash',
+    'timeout',
+    'provider',
+    'host',
+  ]),
+  message: z.string().max(2000),
+  resetsAt: z.iso.datetime().nullable(),
+  exitCode: z.number().int().nullable(),
+  detail: z.string().max(4000).nullable(),
+});
+export type SessionFailure = z.infer<typeof sessionFailureSchema>;
 export const SESSION_BRANCH_PATTERN =
   /^(?!-)(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]+(?<![./])(?<!\.lock)$/;
 export const sessionIsolationSchema = z.strictObject({
@@ -303,6 +319,7 @@ export const sessionMessageSchema = z.strictObject({
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.nullable().default(null),
+  failure: sessionFailureSchema.nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -330,6 +347,7 @@ export const sessionSchema = z.strictObject({
   directory: z.string(),
   status: sessionStateSchema,
   error: z.string().nullable(),
+  failure: sessionFailureSchema.nullable().default(null),
   interruption: sessionInterruptionSchema.nullable().optional(),
   activity: z.string().nullable(),
   activities: z

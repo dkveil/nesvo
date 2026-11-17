@@ -16428,3 +16428,116 @@ test(
     await finished(parentRun.runId, 'stopped', parent.id);
   },
 );
+
+test(
+  'failed runs carry a typed failure reason that clears on the next run',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-failures-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const host = launch(directory, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await bounded(host.exited, 'Test host did not exit');
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const create = async (provider, model) => {
+      const created = await host.request('create-session', {
+        title: `${provider} failures`,
+        provider,
+        model,
+        directory: project,
+      });
+      assert.equal(created.type, 'session', JSON.stringify(created));
+      return created.session;
+    };
+    const run = async (session, text) => {
+      const sent = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text,
+      });
+      assert.equal(sent.type, 'session', JSON.stringify(sent));
+      assert.equal(sent.session.failure, null);
+      return host.event(
+        value =>
+          value.id === session.id &&
+          value.runId === sent.session.runId &&
+          !['running', 'stopping'].includes(value.status),
+      );
+    };
+    const failed = async (session, text, expected) => {
+      const finished = await run(session, text);
+      assert.equal(finished.status, 'failed', JSON.stringify(finished.failure));
+      assert.ok(finished.error);
+      assert.deepEqual(agent(finished).failure, finished.failure);
+      for (const [key, value] of Object.entries(expected))
+        if (value instanceof RegExp)
+          assert.match(finished.failure[key], value, key);
+        else assert.deepEqual(finished.failure[key], value, key);
+      return finished;
+    };
+    const claude = await create('Claude Code', 'sonnet');
+    await failed(claude, 'fixture:limit', {
+      kind: 'usage-limit',
+      resetsAt: '2099-01-02T03:04:05.000Z',
+      exitCode: null,
+    });
+    await failed(claude, 'fixture:fail-sign-in', {
+      kind: 'sign-in',
+      message: /Not logged in/,
+    });
+    await failed(claude, 'fixture:fail-network', {
+      kind: 'network',
+      message: /ECONNRESET/,
+    });
+    await failed(claude, 'fixture:result-fail', {
+      kind: 'provider',
+      resetsAt: null,
+    });
+    const crashed = await failed(
+      await create('Claude Code', 'sonnet'),
+      'fixture:crash',
+      {
+        kind: 'crash',
+        exitCode: 7,
+        detail: /segmentation fault/,
+        message: /exited with code 7/,
+      },
+    );
+    assert.equal(crashed.error, crashed.failure.message);
+    const recovered = await run(claude, 'fixture:continue');
+    assert.equal(recovered.status, 'completed');
+    assert.equal(recovered.failure, null);
+    assert.equal(agent(recovered).failure, null);
+    assert.equal(
+      recovered.messages.filter(
+        message => message.author === 'agent' && message.failure,
+      ).length,
+      4,
+    );
+
+    const codex = await create('Codex', 'fixture-codex');
+    await failed(codex, 'fixture:fail-sign-in', {
+      kind: 'sign-in',
+      message: 'Your access token could not be refreshed.',
+    });
+    await failed(codex, 'fixture:fail-network', { kind: 'network' });
+  },
+);

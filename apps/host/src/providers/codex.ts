@@ -14,10 +14,12 @@ import {
   type SkillDiscovery,
   type SkillReference,
   type ProviderUsage,
+  type SessionFailure,
   type TurnUsage,
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
+import { sessionFailure, textFailureKind, type FailureKind } from './failure';
 import {
   descendantScanMs,
   recordDescendants,
@@ -52,7 +54,55 @@ export type CodexResult = {
   interruption?: 'provider-disconnected';
   usage?: TurnUsage;
   structured?: unknown;
+  failure?: SessionFailure;
 };
+
+const usageLimitInfo = new Set(['usageLimitExceeded', 'rateLimitExceeded']);
+const networkInfo = new Set([
+  'httpConnectionFailed',
+  'responseStreamConnectionFailed',
+  'responseStreamDisconnected',
+  'responseTooManyFailedAttempts',
+  'serverOverloaded',
+]);
+
+function errorInfoKind(info: unknown): FailureKind | null {
+  const code =
+    typeof info === 'string'
+      ? info
+      : info !== null && typeof info === 'object' && !Array.isArray(info)
+        ? (Object.keys(info)[0] ?? '')
+        : '';
+  if (usageLimitInfo.has(code)) return 'usage-limit';
+  if (code === 'unauthorized') return 'sign-in';
+  if (networkInfo.has(code)) return 'network';
+  return null;
+}
+
+function codexFailure(
+  message: string,
+  info?: unknown,
+  kind?: FailureKind,
+): SessionFailure {
+  const reported = errorInfoKind(info) ?? kind;
+  if (reported) return sessionFailure(reported, message);
+  const exit =
+    /app-server closed before the operation completed \(exit (-?\d+)\)/.exec(
+      message,
+    );
+  if (exit)
+    return sessionFailure('crash', message, { exitCode: Number(exit[1]) });
+  if (
+    /app-server failed to start|process closure could not be confirmed/i.test(
+      message,
+    )
+  )
+    return sessionFailure('crash', message);
+  if (/timed out after ten minutes/.test(message))
+    return sessionFailure('timeout', message);
+  if (/codex login/i.test(message)) return sessionFailure('sign-in', message);
+  return sessionFailure(textFailureKind(message) ?? 'provider', message);
+}
 
 type Executable = { command: string; prefix: string[] };
 type RecordValue = Record<string, unknown>;
@@ -1309,6 +1359,7 @@ export function startCodex(options: {
   let turnId: string | null = null;
   let startingTurn = false;
   let failure: string | null = null;
+  let failureReport: SessionFailure | null = null;
   let stopTask: Promise<void> | null = null;
   const approvals = new Map<
     string,
@@ -1340,11 +1391,13 @@ export function startCodex(options: {
     outcome.confirmed = result;
     resolveTurn(result);
   };
-  const fail = (message: string) => {
+  const fail = (message: string, info?: unknown, kind?: FailureKind) => {
+    if (!failure)
+      failureReport = codexFailure(safeMessage(message), info, kind);
     failure ??= safeMessage(message);
     delegationController.abort();
     pendingDelegates.clear();
-    resolveTurn({ status: 'failed', error: failure });
+    resolveTurn({ status: 'failed', error: failure, failure: failureReport! });
     void peer?.close();
   };
   const emit = (event: CodexEvent) => {
@@ -1352,7 +1405,7 @@ export function startCodex(options: {
     try {
       options.onEvent(event);
     } catch {
-      fail('Codex event delivery failed.');
+      fail('Codex event delivery failed.', null, 'host');
     }
   };
   const resolveApproval = (id: string) => {
@@ -1767,14 +1820,16 @@ export function startCodex(options: {
         );
       else {
         const error = object(turn.error);
+        const reported = safeMessage(
+          typeof error?.message === 'string'
+            ? error.message
+            : 'Codex did not complete the turn.',
+        );
         confirmTurn({
           usage,
           status: 'failed',
-          error: safeMessage(
-            typeof error?.message === 'string'
-              ? error.message
-              : 'Codex did not complete the turn.',
-          ),
+          error: reported,
+          failure: codexFailure(reported, error?.codexErrorInfo),
         });
       }
       return;
@@ -1866,12 +1921,14 @@ export function startCodex(options: {
         typeof error?.message === 'string'
           ? error.message
           : 'Codex could not continue. Check account limits and authentication.',
+        error?.codexErrorInfo,
+        typeof error?.message === 'string' ? undefined : 'provider',
       );
     }
   };
   const done = (async (): Promise<CodexResult> => {
     const timer = setTimeout(
-      () => fail('Codex turn timed out after ten minutes.'),
+      () => fail('Codex turn timed out after ten minutes.', null, 'timeout'),
       runTimeoutMs,
     );
     let result: CodexResult;
@@ -2142,17 +2199,26 @@ export function startCodex(options: {
       pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       const exit = await peer?.close();
-      if (exit && !exit.confirmed)
+      if (exit && !exit.confirmed) {
         failure = 'Codex process closure could not be confirmed after cleanup.';
+        failureReport = sessionFailure('crash', failure);
+      }
     }
-    return failure
-      ? { status: 'failed', error: failure }
+    const final: CodexResult = failure
+      ? {
+          status: 'failed',
+          error: failure,
+          failure: failureReport ?? codexFailure(failure),
+        }
       : outcome.confirmed?.status === 'completed' ||
           outcome.confirmed?.status === 'failed'
         ? outcome.confirmed
         : stopped
           ? { status: 'stopped', error: null }
           : result;
+    return final.status === 'failed' && !final.failure
+      ? { ...final, failure: codexFailure(final.error ?? 'Codex failed.') }
+      : final;
   })();
   return {
     done,
