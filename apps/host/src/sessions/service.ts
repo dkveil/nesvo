@@ -7,7 +7,9 @@ import {
   delegationPlanSchema,
   isProviderSessionMode,
   isWritableSessionMode,
+  sessionModeSchema,
   sessionQueueLimit,
+  workerProposalSchema,
   type AssignSessionWorkflowInput,
   type CreateSessionInput,
   type DecideDelegationInput,
@@ -27,6 +29,7 @@ import {
   type TurnUsage,
 } from '@nesvo/contracts';
 import {
+  reportedClaudeModes,
   startClaude,
   type ClaudeEvent,
   type ClaudeResult,
@@ -75,6 +78,21 @@ export async function confirmCodexEffort(
 type TurnSelection = Pick<Session, 'model' | 'effort' | 'mode'>;
 
 const WORKER_PLAN_LIMIT = 12_000;
+const WORKER_PLAN_ROUND_LIMIT = 5;
+
+const delegationToolSchema = z.toJSONSchema(
+  delegationPlanSchema.safeExtend({
+    workers: z
+      .array(
+        workerProposalSchema.safeExtend({
+          mode: sessionModeSchema.extract(['read-only', 'supervised']),
+        }),
+      )
+      .min(1)
+      .max(2),
+  }),
+  { io: 'input' },
+);
 
 const workerPrompt = (proposal: Delegation): string =>
   `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
@@ -107,6 +125,14 @@ function resolveTurnMode(
     throw new SessionError(
       'invalid-request',
       `${session.provider} does not support the ${mode} permission mode.`,
+    );
+  if (
+    session.provider === 'Claude Code' &&
+    reportedClaudeModes()?.includes(mode) === false
+  )
+    throw new SessionError(
+      'invalid-request',
+      'This Claude Code version does not offer that permission mode. Update the CLI or choose Plan.',
     );
   return mode;
 }
@@ -816,6 +842,16 @@ export class SessionService {
     signal: AbortSignal,
   ): Promise<Session> {
     const session = this.acceptingSession(input.sessionId);
+    if (session.role === 'worker')
+      throw new SessionError(
+        'invalid-request',
+        'Workers follow the task from their parent and cannot carry a workflow.',
+      );
+    if (session.workflowRunId)
+      throw new SessionError(
+        'invalid-request',
+        'This session already belongs to a workflow task.',
+      );
     if (input.workflow) {
       const { name, root } = input.workflow;
       let available = false;
@@ -1063,10 +1099,29 @@ export class SessionService {
         'invalid-request',
         'This worker plan is no longer waiting for a decision.',
       );
+    if (input.decision === 'decline') {
+      proposal.status = 'declined';
+      try {
+        this.publish(parent);
+      } catch (error) {
+        proposal.status = 'plan-ready';
+        throw error;
+      }
+      this.settle(proposal);
+      return structuredClone(parent);
+    }
     if (input.decision === 'correct' && !input.correction)
       throw new SessionError(
         'invalid-request',
         'A correction is required to revise the plan.',
+      );
+    if (
+      input.decision === 'correct' &&
+      proposal.planRound > WORKER_PLAN_ROUND_LIMIT
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This worker already revised its plan five times. Accept or decline it.',
       );
     const correcting = input.decision === 'correct';
     const prompt = correcting
@@ -1471,9 +1526,7 @@ export class SessionService {
                   : {}),
                 ...(canDelegate
                   ? {
-                      delegationSchema: z.toJSONSchema(delegationPlanSchema, {
-                        io: 'input',
-                      }),
+                      delegationSchema: delegationToolSchema,
                       onDelegate: (input: unknown, signal: AbortSignal) =>
                         this.delegate(session, input, signal),
                     }
@@ -1517,7 +1570,12 @@ export class SessionService {
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
-        const { limit } = result as ClaudeResult;
+        const { limit, modeUnavailable } = result as ClaudeResult;
+        if (modeUnavailable && previousSelection) {
+          session.model = previousSelection.model;
+          session.effort = previousSelection.effort;
+          session.mode = previousSelection.mode;
+        }
         if (limit && session.runId && !active.persistenceError)
           this.rememberLimit(session.runId, limit);
         if (

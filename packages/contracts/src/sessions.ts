@@ -200,7 +200,7 @@ export const decideWorkerPlanSchema = z
     sessionId: z.uuid(),
     runId: z.uuid(),
     delegationId: z.uuid(),
-    decision: z.enum(['accept', 'correct']),
+    decision: z.enum(['accept', 'correct', 'decline']),
     correction: z.string().trim().min(1).max(4000).optional(),
   })
   .refine(value => value.decision !== 'correct' || !!value.correction, {

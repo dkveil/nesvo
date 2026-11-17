@@ -47,6 +47,15 @@ export function WorkerPlan({
         >
           Accept plan
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={!canDecide}
+          onClick={() => onDecision('decline')}
+        >
+          Decline worker
+        </Button>
       </div>
       <form className="space-y-2" onSubmit={submitCorrection}>
         <Textarea
@@ -70,7 +79,7 @@ export function WorkerPlan({
         {deciding
           ? 'Sending decision…'
           : canDecide
-            ? 'Accepting lets the worker continue with the access shown above. A correction asks for a revised plan without changes.'
+            ? 'Accepting lets the worker continue with the access shown above. A correction asks for a revised plan without changes. Declining ends the worker without changes.'
             : 'This plan is inactive. Check the connection and session status.'}
       </p>
     </section>

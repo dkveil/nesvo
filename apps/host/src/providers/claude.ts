@@ -35,6 +35,7 @@ export type ClaudeResult = {
   usage?: TurnUsage;
   limit?: { resetsAt: string | null };
   structured?: unknown;
+  modeUnavailable?: true;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -84,12 +85,12 @@ const claudeModes = {
   'accept-edits': {
     cli: 'acceptEdits',
     tools: [...readTools, ...editTools],
-    allowed: [...readTools, ...editTools],
+    allowed: readTools,
   },
   auto: {
     cli: 'auto',
     tools: [...readTools, ...editTools, 'Bash'],
-    allowed: [...readTools, ...editTools],
+    allowed: readTools,
   },
 } as const satisfies Record<
   ClaudeMode,
@@ -147,6 +148,12 @@ function supportedModes(choices: string[]): ClaudeMode[] {
     'read-only',
     ...optionalModes.filter(mode => choices.includes(claudeModes[mode].cli)),
   ];
+}
+
+let lastReadyModes: ClaudeMode[] | null = null;
+
+export function reportedClaudeModes(): SessionMode[] | null {
+  return lastReadyModes ? [...lastReadyModes] : null;
 }
 
 function toolResultText(content: unknown): string {
@@ -500,7 +507,9 @@ async function inspect(cancelled: () => boolean): Promise<{
         ),
       };
     }
-    return { executable, status: status('ready', null), permissionModes };
+    const ready = status('ready', null);
+    lastReadyModes = ready.modes.filter(isClaudeMode);
+    return { executable, status: ready, permissionModes };
   } catch (error) {
     return {
       executable: null,
@@ -756,13 +765,16 @@ export function startClaude(options: {
           inspection.status.detail ?? 'Claude Code is unavailable.',
         );
       if (!inspection.status.modes.includes(options.mode))
-        throw new Error(
-          'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
-        );
+        return {
+          status: 'failed',
+          error:
+            'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
+          modeUnavailable: true,
+        };
       const permission = claudeModes[options.mode];
       const tools = permission.tools.join(',');
       const allowedTools = permission.allowed.join(',');
-      const assistantMode = ['default', 'dontAsk'].find(candidate =>
+      const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
       );
       const permissionMode =

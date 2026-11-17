@@ -371,7 +371,11 @@ export function Workspace() {
         session.hostId,
         { directory: session.directory },
       );
-      const spec = catalog.specs.find(item => item.workflow === assigned.name);
+      const spec = catalog.specs.find(
+        item =>
+          item.workflow === assigned.name &&
+          item.source.scope === assigned.root,
+      );
       if (!spec)
         throw new Error('No task spec is available for this workflow.');
       const gate = resolveGate(
@@ -385,7 +389,7 @@ export function Workspace() {
         provider: session.provider,
         model: session.model,
         ...(session.effort ? { effort: session.effort } : {}),
-        mode: session.mode ?? 'read-only',
+        mode: session.provider === 'Claude Code' ? 'read-only' : session.mode,
         directory: session.directory,
         isolation: 'none',
         gateProvider: gate.provider,

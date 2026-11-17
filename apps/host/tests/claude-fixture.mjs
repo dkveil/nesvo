@@ -41,12 +41,6 @@ const MODE_TOOLS = new Map([
   ['acceptEdits', EDIT_TOOLS],
   ['auto', `${EDIT_TOOLS},Bash`],
 ]);
-const MODE_ALLOWED_TOOLS = new Map([
-  ['plan', READ_TOOLS],
-  ['dontAsk', READ_TOOLS],
-  ['acceptEdits', EDIT_TOOLS],
-  ['auto', EDIT_TOOLS],
-]);
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
 const REPAIR_NOTE = 'The verdict did not match the required shape';
@@ -192,7 +186,7 @@ if (args.length === 1 && args[0] === '--version') {
     ['--output-format', 'stream-json'],
     ['--permission-prompts', 'none'],
     ['--tools', MODE_TOOLS.get(permissionMode)],
-    ['--allowedTools', MODE_ALLOWED_TOOLS.get(permissionMode)],
+    ['--allowedTools', READ_TOOLS],
     ['--mcp-config', '{"mcpServers":{}}'],
     ['--settings', '{"disableAllHooks":true}'],
   ])

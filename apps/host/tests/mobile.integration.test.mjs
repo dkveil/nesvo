@@ -334,6 +334,21 @@ test(
       ).status,
       400,
     );
+    for (const widened of [
+      { mode: 'auto' },
+      { mode: 'accept-edits' },
+      { model: 'gpt-5' },
+      { effort: 'high' },
+    ])
+      assert.equal(
+        (
+          await request('/v1/command', {
+            token: credentials.token,
+            body: { ...command, input: { ...command.input, ...widened } },
+          })
+        ).status,
+        400,
+      );
     assert.equal(mutationCalls, 0);
     const snapshot = await request('/v1/snapshot', {
       token: credentials.token,

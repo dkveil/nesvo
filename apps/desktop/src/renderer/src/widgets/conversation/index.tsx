@@ -226,9 +226,11 @@ export function Conversation({
   const modeLockedReason =
     session.role === 'worker'
       ? 'Set by the parent decision'
-      : !canChangeMode
-        ? 'Update the host to change modes'
-        : '';
+      : session.workflowRunId
+        ? 'Set when the workflow task started'
+        : !canChangeMode
+          ? 'Update the host to change modes'
+          : '';
   const chooseMode = (next: SessionMode | null) => {
     onSelectMode(next === session.mode ? null : next);
   };

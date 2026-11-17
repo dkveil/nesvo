@@ -15591,11 +15591,10 @@ test(
     const args = launches.at(-1).args;
     assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits');
     assert.equal(args[args.indexOf('--permission-prompts') + 1], 'none');
-    assert.ok(args[args.indexOf('--tools') + 1].split(',').includes('Edit'));
-    assert.equal(
-      args[args.indexOf('--allowedTools') + 1].split(',').includes('Bash'),
-      false,
-    );
+    const tools = args[args.indexOf('--tools') + 1].split(',');
+    assert.ok(tools.includes('Edit'));
+    assert.equal(tools.includes('Bash'), false);
+    assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Glob,Grep');
 
     const codex = await host.request('create-session', {
       title: 'Codex modes',
@@ -15674,23 +15673,30 @@ test(
 
 test(
   'plan-first workers plan read-only, accept corrections and continue only after plan acceptance',
-  { timeout: 120_000 },
+  { timeout: 180_000 },
   async t => {
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'nesvo-worker-plan-')),
     );
     const pidFile = join(directory, 'fixture-pids.json');
     const project = join(directory, 'project');
-    const host = launch(directory, pidFile);
+    const hosts = [];
+    let host = launch(directory, pidFile);
+    hosts.push(host);
     t.after(async () => {
-      if (host.child.exitCode === null && host.child.signalCode === null) {
-        try {
-          await host.stop();
-        } catch {
-          host.child.kill();
+      for (const opened of hosts) {
+        if (
+          opened.child.exitCode === null &&
+          opened.child.signalCode === null
+        ) {
+          try {
+            await opened.stop();
+          } catch {
+            opened.child.kill();
+          }
         }
+        await bounded(opened.exited, 'Test host did not exit');
       }
-      await bounded(host.exited, 'Test host did not exit');
       await rm(directory, { recursive: true, force: true });
     });
     await mkdir(project, { recursive: true });
@@ -15871,5 +15877,123 @@ test(
         value.status === 'stopped',
     );
     assert.equal(stopProposalOf(ended).status, 'stopped');
+
+    const openPlan = async () => {
+      const started = await host.request('send-message', {
+        sessionId: root.id,
+        messageId: randomUUID(),
+        text: 'fixture:delegate-plan',
+      });
+      assert.equal(started.type, 'session', JSON.stringify(started));
+      const planRunId = started.session.runId;
+      const of = session =>
+        session.delegations.find(item => item.runId === planRunId);
+      const offered = await host.event(
+        value =>
+          value.id === root.id && value.runId === planRunId && !!of(value),
+      );
+      const delegationId = of(offered).id;
+      await host.request('decide-delegation', {
+        sessionId: root.id,
+        runId: planRunId,
+        delegationId,
+        decision: 'accept',
+      });
+      const ready = round =>
+        host.event(
+          value =>
+            value.id === root.id &&
+            value.runId === planRunId &&
+            of(value)?.status === 'plan-ready' &&
+            of(value).planRound === round,
+        );
+      await ready(1);
+      const decide = (decision, correction) =>
+        host.request('decide-worker-plan', {
+          sessionId: root.id,
+          runId: planRunId,
+          delegationId,
+          decision,
+          ...(correction ? { correction } : {}),
+        });
+      return { runId: planRunId, of, delegationId, ready, decide };
+    };
+
+    const declining = await openPlan();
+    for (let round = 2; round <= 6; round++) {
+      const revising = await declining.decide('correct', `Revision ${round}.`);
+      assert.equal(revising.type, 'session', JSON.stringify(revising));
+      await declining.ready(round);
+    }
+    const exhausted = await declining.decide('correct', 'One more revision.');
+    assert.equal(exhausted.code, 'invalid-request');
+    assert.match(exhausted.message, /revised its plan five times/);
+    const declined = await declining.decide('decline');
+    assert.equal(declined.type, 'session', JSON.stringify(declined));
+    assert.equal(declining.of(declined.session).status, 'declined');
+    assert.equal((await declining.decide('accept')).code, 'invalid-request');
+    const afterDecline = await host.event(
+      value =>
+        value.id === root.id &&
+        value.runId === declining.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(declining.of(afterDecline).status, 'declined');
+    const declinedResults = JSON.parse(
+      agent(afterDecline).body.slice('Codex delegation results: '.length),
+    ).results;
+    assert.equal(declinedResults.length, 1);
+    assert.equal(declinedResults[0].status, 'declined');
+    const declinedChild = (await host.request('list-sessions')).sessions.find(
+      value => value.id === declining.of(afterDecline).childSessionId,
+    );
+    assert.equal(declinedChild.status, 'completed');
+    assert.equal(
+      declinedChild.messages.filter(message => message.author === 'operator')
+        .length,
+      6,
+    );
+    assert.equal(
+      (
+        await host.request('assign-session-workflow', {
+          sessionId: declinedChild.id,
+          workflow: { name: 'ship', root: 'project' },
+        })
+      ).code,
+      'invalid-request',
+    );
+
+    const restarting = await openPlan();
+    const restartChildId = restarting.of(
+      (await host.request('list-sessions')).sessions.find(
+        value => value.id === root.id,
+      ),
+    ).childSessionId;
+    const childTurns = async () => {
+      const child = (await host.request('list-sessions')).sessions.find(
+        value => value.id === restartChildId,
+      );
+      return (await readFile(pidFile + '.turns', 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line))
+        .filter(turn => turn.sessionId === child.providerSessionId).length;
+    };
+    const turnsBeforeRestart = await childTurns();
+    host.child.kill('SIGKILL');
+    await host.exited;
+    host = launch(directory, pidFile);
+    hosts.push(host);
+    const recovered = (await host.request('list-sessions')).sessions;
+    const recoveredRoot = recovered.find(value => value.id === root.id);
+    const recoveredProposal = restarting.of(recoveredRoot);
+    assert.equal(recoveredProposal.status, 'interrupted');
+    assert.match(recoveredProposal.error, /No worker was restarted/);
+    assert.equal(recoveredRoot.status, 'interrupted');
+    const recoveredChild = recovered.find(value => value.id === restartChildId);
+    assert.notEqual(recoveredChild.status, 'running');
+    assert.equal((await restarting.decide('accept')).code, 'invalid-request');
+    await delay(1_000);
+    assert.equal(await childTurns(), turnsBeforeRestart);
   },
 );
