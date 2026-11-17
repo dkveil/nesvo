@@ -1009,6 +1009,20 @@ if (args.length === 1 && args[0] === '--version') {
         finish(text);
       }
     }
+  } else if (command === 'fixture:plan-again') {
+    const accepted = await proposePlan(1, '## Plan\nThe first plan.');
+    assert.match(accepted.message, /^The operator accepted the plan/);
+    const revised = await proposePlan(
+      2,
+      '## Plan\nA second plan after the acceptance.',
+    );
+    assert.match(
+      revised.message,
+      /^The operator asks for changes before accepting the plan: /,
+    );
+    const text = 'Fixture stopped after revising a newer plan.';
+    start(text);
+    finish(text);
   } else if (command === 'fixture:bash') {
     const failing = {
       type: 'tool_use',

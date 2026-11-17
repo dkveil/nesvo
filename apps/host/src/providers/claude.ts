@@ -1302,6 +1302,7 @@ export function startClaude(options: {
           planFromText(latestText()) ??
           missingPlan;
         if (failure || stopped) return;
+        planAccepted = undefined;
         planRound += 1;
         addPrompt(
           {
@@ -1415,6 +1416,7 @@ export function startClaude(options: {
             behavior: 'deny',
             message: `The operator asks for changes before accepting the plan: ${value.feedback}. Revise the plan and call ExitPlanMode again.`,
           });
+          planAccepted = undefined;
         }
         prompts.delete(id);
         if (!prompts.size) armTimeout();

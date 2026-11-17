@@ -16304,6 +16304,49 @@ test(
     assert.equal(fetch.status, 'declined');
     assert.equal(fetch.detail, 'Fetch a page');
 
+    const replanning = await send('fixture:plan-again', { mode: 'read-only' });
+    const acceptedFirst = promptOf(
+      await waitingFor(replanning.runId, 'plan'),
+      replanning.runId,
+    );
+    assert.equal(
+      (
+        await answer(replanning.runId, acceptedFirst.id, {
+          kind: 'plan',
+          decision: 'accept',
+          mode: 'accept-edits',
+        })
+      ).type,
+      'session',
+    );
+    const newerPlan = promptOf(
+      await waitingFor(replanning.runId, 'plan', 2),
+      replanning.runId,
+      2,
+    );
+    assert.equal(newerPlan.plan, 'A second plan after the acceptance.');
+    assert.equal(
+      (
+        await answer(replanning.runId, newerPlan.id, {
+          kind: 'plan',
+          decision: 'revise',
+          feedback: 'Not yet.',
+        })
+      ).type,
+      'session',
+    );
+    const replanned = await finished(replanning.runId);
+    assert.equal(replanned.mode, 'read-only');
+    assert.equal(promptOf(replanned, replanning.runId).status, 'accepted');
+    assert.equal(promptOf(replanned, replanning.runId, 2).status, 'revised');
+    await delay(300);
+    const afterReplan = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    assert.equal(afterReplan.runId, replanning.runId);
+    assert.equal(afterReplan.mode, 'read-only');
+    assert.equal(afterReplan.status, 'completed');
+
     const stopping = await send('fixture:question');
     const stoppingPrompt = promptOf(
       await waitingFor(stopping.runId, 'question'),
