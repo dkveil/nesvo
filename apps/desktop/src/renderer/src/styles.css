@@ -48,6 +48,12 @@
   --color-tooltip: var(--tooltip);
   --color-tooltip-foreground: var(--tooltip-foreground);
   --color-tooltip-key: var(--tooltip-key);
+  --color-file-code: var(--file-code);
+  --color-file-data: var(--file-data);
+  --color-file-doc: var(--file-doc);
+  --color-file-style: var(--file-style);
+  --color-file-config: var(--file-config);
+  --color-file-media: var(--file-media);
   --color-segment-track: var(--segment-track);
   --color-segment-active: var(--segment-active);
   --color-send-idle: var(--send-idle);
@@ -110,6 +116,12 @@
   --code-function: #3f5f86;
   --code-attribute: #8c5252;
   --code-punctuation: #71717b;
+  --file-code: #3d6fd6;
+  --file-data: #b87d1a;
+  --file-doc: #5c6370;
+  --file-style: #1f9489;
+  --file-config: #8b5cd6;
+  --file-media: #d1485f;
   --kbd: #f4f4f5;
   --segment-track: #f4f4f5;
   --segment-active: #ffffff;
@@ -184,6 +196,12 @@
   --code-function: #a3b8d4;
   --code-attribute: #cfa7a7;
   --code-punctuation: #8f8f8f;
+  --file-code: #7aa2f7;
+  --file-data: #e0af68;
+  --file-doc: #a9b1c0;
+  --file-style: #73daca;
+  --file-config: #bb9af7;
+  --file-media: #f7768e;
   --kbd: #303030;
   --segment-track: #1b1b1b;
   --segment-active: #2d2d2d;
