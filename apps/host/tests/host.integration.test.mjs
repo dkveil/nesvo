@@ -673,6 +673,7 @@ test(
         'history-search',
         'session-groups',
         'costs',
+        'mcp-servers',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -5220,6 +5221,7 @@ test(
       'history-search',
       'session-groups',
       'costs',
+      'mcp-servers',
     ]);
     const id = randomUUID();
     const jobInput = {
