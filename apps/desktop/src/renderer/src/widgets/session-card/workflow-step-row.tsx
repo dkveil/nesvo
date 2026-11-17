@@ -1,5 +1,4 @@
 import type { WorkflowsApi } from '@nesvo/contracts';
-import { Popover } from 'radix-ui';
 import { cn } from '@/shared/lib/cn';
 import {
   phaseLabels,
@@ -12,6 +11,7 @@ import {
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
 import { cardRowAction } from '@/shared/ui/card-row-styles';
+import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 
 type Props = {
   run: WorkflowRun;
@@ -49,8 +49,8 @@ export function WorkflowStepRow({
     .join(', ');
   return (
     <li>
-      <Popover.Root open={open} onOpenChange={onOpenChange}>
-        <Popover.Trigger asChild>
+      <Popover open={open} onOpenChange={onOpenChange}>
+        <PopoverTrigger asChild>
           <button
             type="button"
             data-card-row
@@ -79,39 +79,40 @@ export function WorkflowStepRow({
               </span>
             )}
           </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            side="left"
-            align="start"
-            sideOffset={12}
-            collisionPadding={12}
-            aria-label={`${step.definition.name} result`}
-            data-step-result={step.index}
-            className="z-50 flex max-h-[min(36rem,var(--radix-popover-content-available-height))] w-[min(20rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-(--popover-border) bg-card text-card-foreground shadow-(--popover-shadow) outline-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-          >
-            <header className="flex h-9 shrink-0 items-center gap-2.5 border-b px-3">
-              <StepStateIcon state={step.state} className="size-4" />
-              <h3 className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                {step.definition.name}
-              </h3>
-              <span className="shrink-0 text-2xs text-muted-foreground">
-                {phaseLabels[step.definition.phase]}
-              </span>
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-              <StepResult
-                run={run}
-                steps={steps}
-                index={step.index}
-                api={api}
-                onInbox={onInbox}
-                onSession={onSession}
-              />
-            </div>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+        </PopoverTrigger>
+        <PopoverContent
+          side="left"
+          align="start"
+          sideOffset={12}
+          collisionPadding={12}
+          aria-label={`${step.definition.name} result`}
+          data-step-result={step.index}
+          surface="card"
+          size="md"
+          padding="none"
+          className="flex max-h-[min(36rem,var(--radix-popover-content-available-height))] flex-col overflow-hidden"
+        >
+          <header className="flex h-9 shrink-0 items-center gap-2.5 border-b px-3">
+            <StepStateIcon state={step.state} className="size-4" />
+            <h3 className="min-w-0 flex-1 truncate text-ui font-medium">
+              {step.definition.name}
+            </h3>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              {phaseLabels[step.definition.phase]}
+            </span>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <StepResult
+              run={run}
+              steps={steps}
+              index={step.index}
+              api={api}
+              onInbox={onInbox}
+              onSession={onSession}
+            />
+          </div>
+        </PopoverContent>
+      </Popover>
     </li>
   );
 }
