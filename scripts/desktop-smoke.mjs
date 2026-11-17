@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from 'playwright';
@@ -896,60 +897,65 @@ try {
     sessions: await window.nesvo.listSessions(),
     reviews: await window.nesvo.listReviews(),
   }));
+  const refuseSecondInstance = async () => {
+    const duplicateApp = spawn(
+      executablePath,
+      process.platform === 'linux'
+        ? ['--no-sandbox', ...launchArgs]
+        : launchArgs,
+      {
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        windowsHide: true,
+      },
+    );
+    let duplicateStderr = '';
+    duplicateApp.stderr.setEncoding('utf8');
+    duplicateApp.stderr.on('data', value => {
+      duplicateStderr = (duplicateStderr + value).slice(-4000);
+    });
+    const duplicateExit = new Promise((resolve, reject) => {
+      duplicateApp.once('error', reject);
+      duplicateApp.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    let duplicateTimer;
+    try {
+      assert.deepEqual(
+        await Promise.race([
+          duplicateExit,
+          new Promise((_, reject) => {
+            duplicateTimer = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Second application instance did not exit: ${duplicateStderr}`,
+                  ),
+                ),
+              15000,
+            );
+          }),
+        ]),
+        { code: 0, signal: null },
+        duplicateStderr,
+      );
+    } finally {
+      clearTimeout(duplicateTimer);
+      if (
+        duplicateApp.pid &&
+        duplicateApp.exitCode === null &&
+        duplicateApp.signalCode === null
+      )
+        duplicateApp.kill();
+      await duplicateExit;
+    }
+  };
   const firstStatePath = join(
     firstCompleted.directory,
     `.nesvo-fixture-${firstCompleted.providerSessionId}.json`,
   );
   const firstTurnState = await readFile(firstStatePath, 'utf8');
   const originalPidFile = await readFile(pidFile, 'utf8');
-  const duplicateApp = spawn(
-    executablePath,
-    process.platform === 'linux' ? ['--no-sandbox', ...launchArgs] : launchArgs,
-    {
-      env,
-      stdio: ['ignore', 'ignore', 'pipe'],
-      windowsHide: true,
-    },
-  );
-  let duplicateStderr = '';
-  duplicateApp.stderr.setEncoding('utf8');
-  duplicateApp.stderr.on('data', value => {
-    duplicateStderr = (duplicateStderr + value).slice(-4000);
-  });
-  const duplicateExit = new Promise((resolve, reject) => {
-    duplicateApp.once('error', reject);
-    duplicateApp.once('exit', (code, signal) => resolve({ code, signal }));
-  });
-  let duplicateTimer;
-  try {
-    assert.deepEqual(
-      await Promise.race([
-        duplicateExit,
-        new Promise((_, reject) => {
-          duplicateTimer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Second application instance did not exit: ${duplicateStderr}`,
-                ),
-              ),
-            15000,
-          );
-        }),
-      ]),
-      { code: 0, signal: null },
-      duplicateStderr,
-    );
-  } finally {
-    clearTimeout(duplicateTimer);
-    if (
-      duplicateApp.pid &&
-      duplicateApp.exitCode === null &&
-      duplicateApp.signalCode === null
-    )
-      duplicateApp.kill();
-    await duplicateExit;
-  }
+  await refuseSecondInstance();
   assert.equal(await readFile(pidFile, 'utf8'), originalPidFile);
   assert.equal(await readFile(firstStatePath, 'utf8'), firstTurnState);
   assert.deepEqual(
@@ -3291,7 +3297,11 @@ try {
     .getByLabel('Prompt')
     .fill('Summarize the fixture folder.');
   await automationEditor.getByRole('radio', { name: 'Daily' }).click();
-  await automationEditor.getByLabel('Time', { exact: true }).fill('09:00');
+  const automationClock = new Date();
+  const automationTime = `${String((automationClock.getHours() + 21) % 24).padStart(2, '0')}:00`;
+  await automationEditor
+    .getByLabel('Time', { exact: true })
+    .fill(automationTime);
   await automationEditor.getByRole('button', { name: 'Save' }).click();
   await automationEditor.waitFor({ state: 'hidden' });
   await restartedPage
@@ -3317,11 +3327,43 @@ try {
     .locator('[data-run-status="completed"]')
     .getByText('Waiting for acceptance')
     .waitFor();
+  const automationShot = async (target, name) => {
+    if (!process.env.NESVO_SCREENSHOT) return;
+    for (const scheme of ['dark', 'light']) {
+      await target.evaluate(
+        value => window.nesvo.setColorScheme(value),
+        scheme,
+      );
+      await target.evaluate(
+        () =>
+          new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+        const image =
+          await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+            undefined,
+            { stayHidden: true, stayAwake: true },
+          );
+        return image.toPNG().toString('base64');
+      });
+      await writeFile(
+        process.env.NESVO_SCREENSHOT.replace(
+          /\.png$/,
+          `-automations-${name}-${scheme}.png`,
+        ),
+        Buffer.from(encoded, 'base64'),
+      );
+    }
+    await target.evaluate(() => window.nesvo.setColorScheme('dark'));
+  };
+  const automationResult = () =>
+    restartedPage
+      .getByRole('article')
+      .filter({ hasText: 'Automation · Smoke automation' });
   await automationShell.getByRole('button', { name: /^Inbox/ }).click();
-  await restartedPage
-    .locator('article [data-origin="automation"]')
-    .filter({ hasText: 'Automation · Smoke automation' })
-    .waitFor();
+  await automationResult().waitFor();
   const [smokeAutomation] = await restartedPage.evaluate(() =>
     window.nesvo.scheduledJobs.list('local'),
   );
@@ -3333,14 +3375,210 @@ try {
   assert.equal(smokeRuns.runs[0].status, 'completed');
   assert.equal(smokeRuns.runs[0].trigger, 'manual');
   assert.ok(smokeRuns.runs[0].reviewId);
+  const automationSession = (
+    await restartedPage.evaluate(() => window.nesvo.listSessions())
+  ).find(session => session.id === smokeRuns.runs[0].sessionId);
+  assert.match(automationSession.title, /^Smoke automation · /);
+  assert.equal(automationSession.scheduledJobId, smokeAutomation.id);
+  await automationShot(restartedPage, 'inbox-row');
+  await automationResult()
+    .getByRole('button', { name: 'Accept result', exact: true })
+    .click();
+  await automationResult().waitFor({ state: 'hidden' });
+  const openAutomationDetail = async () => {
+    await automationShell
+      .getByRole('button', { name: 'Automations', exact: true })
+      .click();
+    await restartedPage
+      .locator('[data-automation-id]')
+      .filter({ hasText: 'Smoke automation' })
+      .getByRole('button', { name: 'Open automation: Smoke automation' })
+      .click();
+    return restartedPage.getByRole('region', {
+      name: 'Automation: Smoke automation',
+    });
+  };
+  const automationDetail = await openAutomationDetail();
+  await automationDetail
+    .locator('[data-run-status="completed"]')
+    .getByText('Accepted', { exact: true })
+    .waitFor();
+  const reviewsAfterAccept = await restartedPage.evaluate(() =>
+    window.nesvo.listReviews(),
+  );
+  const acceptedReview = reviewsAfterAccept.find(
+    review => review.id === smokeRuns.runs[0].reviewId,
+  );
+  assert.equal(acceptedReview.status, 'accepted');
+  await automationShot(restartedPage, 'detail-accepted');
+  await automationDetail
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
+  await restartedPage.locator('[data-slot="sheet-content"]').waitFor();
+  await automationShot(restartedPage, 'editor');
+  await restartedPage.keyboard.press('Escape');
+  await restartedPage
+    .locator('[data-slot="sheet-content"]')
+    .waitFor({ state: 'hidden' });
+  await automationShell
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  await automationShot(restartedPage, 'list');
+  const smokeDatabase = join(directory, 'host', 'nesvo.sqlite');
+  const readAutomationRow = () => {
+    const database = new DatabaseSync(smokeDatabase, { readOnly: true });
+    try {
+      return {
+        ...database
+          .prepare(
+            'SELECT next_run_at AS nextRunAt FROM scheduled_jobs WHERE id = ?',
+          )
+          .get(smokeAutomation.id),
+      };
+    } finally {
+      database.close();
+    }
+  };
+  const seedNextRunAt = nextRunAt => {
+    const database = new DatabaseSync(smokeDatabase);
+    try {
+      database
+        .prepare('UPDATE scheduled_jobs SET next_run_at = ? WHERE id = ?')
+        .run(nextRunAt, smokeAutomation.id);
+    } finally {
+      database.close();
+    }
+  };
+  const restartApplication = async () => {
+    assert.deepEqual(errors, []);
+    await application.close();
+    application = undefined;
+    await Promise.all([...providerPids, hostPid].map(waitDead));
+    hostPid = undefined;
+  };
+  const relaunchApplication = async () => {
+    application = await launchApplication();
+    const relaunched = await application.firstWindow();
+    relaunched.setDefaultTimeout(20000);
+    relaunched.on('pageerror', error => errors.push(error.message));
+    await relaunched.emulateMedia({ reducedMotion: 'reduce' });
+    hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+    assert.equal(typeof hostPid, 'number');
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1280, 900),
+    );
+    return relaunched;
+  };
+  const listAutomationState = relaunched =>
+    relaunched.evaluate(
+      async id => ({
+        runs: (await window.nesvo.scheduledJobs.listRuns('local', id, null))
+          .runs,
+        sessions: await window.nesvo.listSessions(),
+        reviews: await window.nesvo.listReviews(),
+      }),
+      smokeAutomation.id,
+    );
+  const beforeMissed = await listAutomationState(restartedPage);
+  await restartApplication();
+  const upcomingOccurrence = Date.parse(readAutomationRow().nextRunAt);
+  assert.ok(upcomingOccurrence > Date.now());
+  seedNextRunAt(new Date(upcomingOccurrence - 2 * 86_400_000).toISOString());
+  const missedPage = await relaunchApplication();
+  await missedPage
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  await missedPage
+    .locator('[data-automation-id]')
+    .filter({ hasText: 'Smoke automation' })
+    .getByRole('button', { name: 'Open automation: Smoke automation' })
+    .click();
+  const missedDetail = missedPage.getByRole('region', {
+    name: 'Automation: Smoke automation',
+  });
+  await missedDetail
+    .locator('[data-run-status="skipped"]')
+    .getByText('Skipped · 2 missed', { exact: true })
+    .waitFor();
+  const afterMissed = await listAutomationState(missedPage);
+  assert.equal(afterMissed.runs.length, beforeMissed.runs.length + 1);
+  const missedRun = afterMissed.runs.find(run => run.status === 'skipped');
+  assert.deepEqual(
+    [
+      missedRun.trigger,
+      missedRun.reason,
+      missedRun.missedCount,
+      missedRun.sessionId,
+    ],
+    ['schedule', 'missed', 2, null],
+  );
+  assert.deepEqual(
+    afterMissed.sessions.map(session => session.id).toSorted(),
+    beforeMissed.sessions.map(session => session.id).toSorted(),
+  );
+  assert.deepEqual(
+    afterMissed.reviews.map(review => review.id).toSorted(),
+    beforeMissed.reviews.map(review => review.id).toSorted(),
+  );
+  assert.ok(Date.parse(readAutomationRow().nextRunAt) > Date.now());
+  await automationShot(missedPage, 'detail-skipped');
   console.log(
     JSON.stringify({
       automations: {
         name: smokeAutomation.name,
         schedule: smokeAutomation.schedule,
         run: smokeRuns.runs[0].status,
-        inboxOrigin: true,
+        accepted: acceptedReview.status,
+        missed: [missedRun.status, missedRun.missedCount],
       },
+    }),
+  );
+  await restartApplication();
+  await writeFile(usageControl, JSON.stringify({ 'Claude Code': 'exhausted' }));
+  seedNextRunAt(new Date(Date.now() - 30_000).toISOString());
+  const limitedPage = await relaunchApplication();
+  await limitedPage
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  await limitedPage
+    .locator('[data-automation-id]')
+    .filter({ hasText: 'Smoke automation' })
+    .getByRole('button', { name: 'Open automation: Smoke automation' })
+    .click();
+  await limitedPage
+    .locator('[data-run-status="unavailable"]')
+    .getByText(/^Unavailable · limit until \d\d:\d\d$/)
+    .waitFor();
+  const afterLimit = await listAutomationState(limitedPage);
+  assert.equal(afterLimit.runs.length, afterMissed.runs.length + 1);
+  const limitedRun = afterLimit.runs.find(run => run.status === 'unavailable');
+  assert.deepEqual(
+    [
+      limitedRun.trigger,
+      limitedRun.reason,
+      limitedRun.sessionId,
+      limitedRun.reviewId,
+    ],
+    ['schedule', 'limit', null, null],
+  );
+  assert.ok(Date.parse(limitedRun.resetAt) > Date.now());
+  assert.deepEqual(
+    afterLimit.sessions.map(session => session.id).toSorted(),
+    beforeMissed.sessions.map(session => session.id).toSorted(),
+  );
+  assert.deepEqual(
+    afterLimit.reviews.map(review => review.id).toSorted(),
+    beforeMissed.reviews.map(review => review.id).toSorted(),
+  );
+  await automationShot(limitedPage, 'detail-limit');
+  await refuseSecondInstance();
+  assert.equal(
+    (await listAutomationState(limitedPage)).runs.length,
+    afterLimit.runs.length,
+  );
+  console.log(
+    JSON.stringify({
+      automationLimit: { status: limitedRun.status, reason: limitedRun.reason },
     }),
   );
   assert.deepEqual(errors, []);
