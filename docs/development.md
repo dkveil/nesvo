@@ -95,6 +95,14 @@ NESVO_GIT_EXECUTABLE optionally replaces Git with an absolute path, as the test 
 P0 has no migration from historical application data. Existing private directories and worktrees remain untouched.
 Do not run git clean or delete ignored files as part of setup.
 
+## Landing page
+
+The public landing page lives in `site/` as plain static files: `index.html`, `styles.css`, a small `main.js` that picks the download for the visitor's operating system, and the brand SVGs. There is no build step and no external fonts, scripts or trackers. Open `site/index.html` in a browser to preview it.
+
+Download buttons point at the stable asset names of the latest GitHub Release (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so the page needs no change for a new version.
+
+`.github/workflows/site.yml` publishes `site/` to GitHub Pages on every push to master that touches `site/` or the workflow, and on manual dispatch. Before the first deployment, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions** once in the repository settings.
+
 ## Troubleshooting
 
 If the initial screen reports no connection, retry once and inspect the terminal used to start development.
