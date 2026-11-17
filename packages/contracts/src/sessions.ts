@@ -88,6 +88,75 @@ export const approvalSchema = z.strictObject({
   detail: z.string().max(100_000),
   directory: z.string().max(4096).nullable(),
 });
+export const promptQuestionSchema = z.strictObject({
+  question: z.string().min(1).max(2000),
+  header: z.string().max(200),
+  options: z
+    .array(
+      z.strictObject({
+        label: z.string().min(1).max(500),
+        description: z.string().max(2000),
+      }),
+    )
+    .min(1)
+    .max(20),
+  multiSelect: z.boolean(),
+});
+const promptAnswersSchema = z
+  .record(z.string().min(1).max(2000), z.string().max(2000))
+  .refine(value => Object.keys(value).length <= 10, {
+    message: 'Answer at most ten questions',
+  });
+export const sessionPromptSchema = z.strictObject({
+  id: z.string().min(1).max(200),
+  runId: z.uuid(),
+  kind: z.enum(['question', 'plan']),
+  status: z.enum([
+    'pending',
+    'answered',
+    'accepted',
+    'revised',
+    'declined',
+    'interrupted',
+  ]),
+  createdAt: z.iso.datetime(),
+  resolvedAt: z.iso.datetime().nullable(),
+  questions: z.array(promptQuestionSchema).max(10).default([]),
+  answers: promptAnswersSchema.nullable(),
+  plan: z.string().max(40_000).nullable(),
+  planRound: z.number().int().min(1).default(1),
+  decision: z
+    .strictObject({
+      mode: sessionModeSchema.optional(),
+      feedback: z.string().max(8000).optional(),
+    })
+    .nullable(),
+});
+export const planAcceptModeSchema = sessionModeSchema.extract([
+  'accept-edits',
+  'auto',
+]);
+export const promptAnswerSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('question'), answers: promptAnswersSchema }),
+  z.discriminatedUnion('decision', [
+    z.strictObject({
+      kind: z.literal('plan'),
+      decision: z.literal('accept'),
+      mode: planAcceptModeSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('plan'),
+      decision: z.literal('revise'),
+      feedback: z.string().trim().min(1).max(8000),
+    }),
+  ]),
+]);
+export const answerPromptSchema = z.strictObject({
+  sessionId: z.uuid(),
+  runId: z.uuid(),
+  promptId: z.string().min(1).max(200),
+  answer: promptAnswerSchema,
+});
 export const sessionStateSchema = z.enum([
   'ready',
   'running',
@@ -245,6 +314,7 @@ export const sessionSchema = z.strictObject({
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.default('read-only'),
   pendingApprovals: z.array(approvalSchema).max(20).default([]),
+  prompts: z.array(sessionPromptSchema).max(50).default([]),
   actualModel: z.string().nullable(),
   role: z.enum(['orchestrator', 'standalone', 'worker']),
   parentId: z.uuid().nullable().default(null),
@@ -323,6 +393,11 @@ export type AssignSessionWorkflowInput = z.infer<
 >;
 export type Approval = z.infer<typeof approvalSchema>;
 export type RespondApprovalInput = z.infer<typeof respondApprovalSchema>;
+export type PromptQuestion = z.infer<typeof promptQuestionSchema>;
+export type SessionPrompt = z.infer<typeof sessionPromptSchema>;
+export type PromptAnswer = z.infer<typeof promptAnswerSchema>;
+export type PlanAcceptMode = z.infer<typeof planAcceptModeSchema>;
+export type AnswerPromptInput = z.infer<typeof answerPromptSchema>;
 export type WorkerProposal = z.infer<typeof workerProposalSchema>;
 export type Delegation = z.infer<typeof delegationSchema>;
 export type DelegationPlan = z.infer<typeof delegationPlanSchema>;

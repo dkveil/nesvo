@@ -366,6 +366,7 @@ test(
         'git-branch',
         'permission-modes',
         'session-workflow',
+        'prompts',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -4923,6 +4924,7 @@ test(
       'git-branch',
       'permission-modes',
       'session-workflow',
+      'prompts',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -15618,7 +15620,7 @@ test(
       .map(line => JSON.parse(line));
     const args = launches.at(-1).args;
     assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits');
-    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'none');
+    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
     const tools = args[args.indexOf('--tools') + 1].split(',');
     assert.ok(tools.includes('Edit'));
     assert.equal(tools.includes('Bash'), false);
@@ -16023,5 +16025,406 @@ test(
     assert.equal((await restarting.decide('accept')).code, 'invalid-request');
     await delay(1_000);
     assert.equal(await childTurns(), turnsBeforeRestart);
+  },
+);
+
+test(
+  'Claude questions and plans wait for the operator, continue the turn and never replay answers',
+  { timeout: 180_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-prompts-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const launchLog = join(directory, 'launches.jsonl');
+    const project = join(directory, 'project');
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null) {
+          try {
+            await host.stop();
+          } catch {
+            host.child.kill();
+          }
+        }
+        await bounded(host.exited, 'Test host did not exit');
+      }
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, 'sample.txt'), 'sample\n');
+    const open = () => {
+      const host = launch(directory, pidFile, {
+        NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      });
+      hosts.push(host);
+      return host;
+    };
+    const promptLog = async () =>
+      (await readFile(pidFile + '.prompts', 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    let host = open();
+    const created = await host.request('create-session', {
+      title: 'Prompts',
+      model: 'sonnet',
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const session = created.session;
+    assert.deepEqual(session.prompts, []);
+    const send = async (text, extra = {}) => {
+      const response = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text,
+        ...extra,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const promptOf = (value, runId, round = 1) =>
+      value.prompts.find(
+        prompt => prompt.runId === runId && prompt.planRound === round,
+      );
+    const waitingFor = (runId, kind, round = 1) =>
+      host.event(
+        value =>
+          value.id === session.id &&
+          value.runId === runId &&
+          promptOf(value, runId, round)?.kind === kind &&
+          promptOf(value, runId, round).status === 'pending',
+      );
+    const finished = (runId, status = 'completed', id = session.id) =>
+      host.event(
+        value =>
+          value.id === id && value.runId === runId && value.status === status,
+      );
+    const answer = (runId, promptId, value, sessionId = session.id) =>
+      host.request('answer-prompt', {
+        sessionId,
+        runId,
+        promptId,
+        answer: value,
+      });
+
+    const asking = await send('fixture:question');
+    const waiting = await waitingFor(asking.runId, 'question');
+    const question = promptOf(waiting, asking.runId);
+    assert.equal(waiting.activity, 'Waiting for your answer…');
+    assert.deepEqual(
+      question.questions.map(item => [item.question, item.multiSelect]),
+      [
+        ['Which test runner should I use?', false],
+        ['Which checks should run?', true],
+      ],
+    );
+    assert.deepEqual(question.questions[0].options[1], {
+      label: 'vitest',
+      description: 'Vite-based runner',
+    });
+    assert.equal(question.answers, null);
+    assert.equal(question.resolvedAt, null);
+    const launches = (await readFile(launchLog, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    const args = launches.at(-1).args;
+    assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
+    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
+    assert.equal(args[args.indexOf('--permission-prompt-tool') + 1], 'stdio');
+    assert.equal(
+      args[args.indexOf('--tools') + 1],
+      'Read,Glob,Grep,AskUserQuestion,ExitPlanMode,Write',
+    );
+    assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Glob,Grep');
+    assert.equal(
+      (
+        await answer(asking.runId, question.id, {
+          kind: 'question',
+          answers: { 'Which test runner should I use?': 'vitest' },
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (
+        await answer(asking.runId, question.id, {
+          kind: 'plan',
+          decision: 'revise',
+          feedback: 'Not a plan.',
+        })
+      ).code,
+      'invalid-request',
+    );
+    const answers = {
+      'Which test runner should I use?': 'vitest',
+      'Which checks should run?': 'lint, types',
+    };
+    const answered = await answer(asking.runId, question.id, {
+      kind: 'question',
+      answers,
+    });
+    assert.equal(answered.type, 'session', JSON.stringify(answered));
+    const recorded = promptOf(answered.session, asking.runId);
+    assert.equal(recorded.status, 'answered');
+    assert.deepEqual(recorded.answers, answers);
+    assert.ok(Number.isFinite(Date.parse(recorded.resolvedAt)));
+    const asked = await finished(asking.runId);
+    assert.equal(agent(asked).body, 'Fixture answers: vitest | lint, types.');
+    assert.equal(promptOf(asked, asking.runId).status, 'answered');
+    assert.equal(
+      (await answer(asking.runId, question.id, { kind: 'question', answers }))
+        .code,
+      'invalid-request',
+    );
+
+    const planning = await send('fixture:plan');
+    const first = promptOf(
+      await waitingFor(planning.runId, 'plan'),
+      planning.runId,
+    );
+    assert.equal(
+      first.plan,
+      '1. Add formatPercent to src/format.js.\n2. Cover it with a test.',
+    );
+    assert.deepEqual(first.questions, []);
+    const revised = await answer(planning.runId, first.id, {
+      kind: 'plan',
+      decision: 'revise',
+      feedback: 'Also document it.',
+    });
+    assert.equal(revised.type, 'session', JSON.stringify(revised));
+    assert.equal(promptOf(revised.session, planning.runId).status, 'revised');
+    assert.deepEqual(promptOf(revised.session, planning.runId).decision, {
+      feedback: 'Also document it.',
+    });
+    const second = promptOf(
+      await waitingFor(planning.runId, 'plan', 2),
+      planning.runId,
+      2,
+    );
+    assert.equal(
+      second.plan,
+      'Revised plan round 2: add formatPercent with a test.',
+    );
+    const accepted = await answer(planning.runId, second.id, {
+      kind: 'plan',
+      decision: 'accept',
+      mode: 'accept-edits',
+    });
+    assert.equal(accepted.type, 'session', JSON.stringify(accepted));
+    assert.equal(
+      promptOf(accepted.session, planning.runId, 2).status,
+      'accepted',
+    );
+    assert.deepEqual(promptOf(accepted.session, planning.runId, 2).decision, {
+      mode: 'accept-edits',
+    });
+    const planned = await finished(planning.runId);
+    assert.match(agent(planned).body, /chose Accept edits/);
+    assert.equal(planned.mode, 'accept-edits');
+    const continued = await host.event(
+      value =>
+        value.id === session.id &&
+        value.runId !== planning.runId &&
+        value.messages.some(
+          message =>
+            message.runId === value.runId &&
+            message.author === 'operator' &&
+            message.body === 'Proceed with the accepted plan.',
+        ) &&
+        value.status === 'completed',
+    );
+    const proceed = continued.messages.find(
+      message =>
+        message.runId === continued.runId && message.author === 'operator',
+    );
+    assert.equal(proceed.mode, 'accept-edits');
+    assert.equal(
+      continued.messages.find(
+        message =>
+          message.runId === planning.runId && message.author === 'operator',
+      ).mode,
+      'read-only',
+    );
+    assert.equal(agent(continued).body, 'Fixture resumed reply.');
+    const planResponses = (await promptLog()).filter(
+      entry => entry.tool === 'ExitPlanMode',
+    );
+    assert.deepEqual(
+      planResponses.map(entry => entry.response.behavior),
+      ['deny', 'deny'],
+    );
+    assert.equal(
+      planResponses[0].response.message,
+      'The operator asks for changes before accepting the plan: Also document it.. Revise the plan and call ExitPlanMode again.',
+    );
+    const continuedArgs = (await readFile(launchLog, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+      .at(-1).args;
+    assert.equal(
+      continuedArgs[continuedArgs.indexOf('--permission-mode') + 1],
+      'acceptEdits',
+    );
+
+    const refusing = await send('fixture:refused-edit', { mode: 'read-only' });
+    const refused = await finished(refusing.runId);
+    assert.equal(
+      agent(refused).body,
+      'Fixture refusals: Plan mode is read-only in Nesvo. Describe the change instead. | Nesvo does not allow WebFetch in Plan mode.',
+    );
+    const runActivities = refused.activities.filter(
+      item => item.runId === refusing.runId,
+    );
+    const edit = runActivities.find(item => item.kind === 'file-change');
+    assert.equal(edit.status, 'declined');
+    assert.equal(edit.title, 'Edit file');
+    assert.deepEqual(edit.paths, [join(project, 'sample.txt')]);
+    const fetch = runActivities.find(item => item.title === 'Refused WebFetch');
+    assert.equal(fetch.kind, 'tool');
+    assert.equal(fetch.status, 'declined');
+    assert.equal(fetch.detail, 'Fetch a page');
+
+    const stopping = await send('fixture:question');
+    const stoppingPrompt = promptOf(
+      await waitingFor(stopping.runId, 'question'),
+      stopping.runId,
+    );
+    const responsesBeforeStop = (await promptLog()).length;
+    const stopped = await host.request('stop-run', {
+      sessionId: session.id,
+      runId: stopping.runId,
+    });
+    assert.equal(stopped.type, 'session', JSON.stringify(stopped));
+    assert.equal(
+      promptOf(stopped.session, stopping.runId).status,
+      'interrupted',
+    );
+    const afterStop = await finished(stopping.runId, 'stopped');
+    assert.equal(promptOf(afterStop, stopping.runId).status, 'interrupted');
+    assert.ok(promptOf(afterStop, stopping.runId).resolvedAt);
+    assert.equal(
+      (
+        await answer(stopping.runId, stoppingPrompt.id, {
+          kind: 'question',
+          answers,
+        })
+      ).code,
+      'invalid-request',
+    );
+    await delay(300);
+    assert.equal((await promptLog()).length, responsesBeforeStop);
+
+    const restarting = await send('fixture:question');
+    const snapshot = await waitingFor(restarting.runId, 'question');
+    await host.stop();
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      database
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(JSON.stringify(snapshot), session.id);
+    } finally {
+      database.close();
+    }
+    host = open();
+    const recovered = (await host.request('list-sessions')).sessions.find(
+      value => value.id === session.id,
+    );
+    assertInterruption(recovered, 'host-restart');
+    assert.equal(promptOf(recovered, restarting.runId).status, 'interrupted');
+    assert.ok(promptOf(recovered, restarting.runId).resolvedAt);
+    assert.equal(
+      recovered.prompts.filter(prompt => prompt.status === 'pending').length,
+      0,
+    );
+
+    const parentCreated = await host.request('create-session', {
+      title: 'Parent',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory: project,
+    });
+    assert.equal(parentCreated.type, 'session', JSON.stringify(parentCreated));
+    const parent = parentCreated.session;
+    const parentRun = (
+      await host.request('send-message', {
+        sessionId: parent.id,
+        messageId: randomUUID(),
+        text: 'fixture:delegate-claude-plan',
+      })
+    ).session;
+    const proposed = await host.event(
+      value =>
+        value.id === parent.id &&
+        value.delegations.some(
+          item => item.runId === parentRun.runId && item.status === 'pending',
+        ),
+    );
+    const proposal = proposed.delegations.find(
+      item => item.runId === parentRun.runId,
+    );
+    assert.equal(proposal.provider, 'Claude Code');
+    assert.equal(proposal.mode, 'read-only');
+    const delegated = await host.request('decide-delegation', {
+      sessionId: parent.id,
+      runId: parentRun.runId,
+      delegationId: proposal.id,
+      decision: 'accept',
+    });
+    assert.equal(delegated.type, 'session', JSON.stringify(delegated));
+    const worker = await host.event(
+      value =>
+        value.parentId === parent.id &&
+        value.prompts.some(
+          prompt => prompt.kind === 'plan' && prompt.status === 'pending',
+        ),
+    );
+    const workerPrompt = worker.prompts.find(
+      prompt => prompt.status === 'pending',
+    );
+    const widened = await answer(
+      worker.runId,
+      workerPrompt.id,
+      { kind: 'plan', decision: 'accept', mode: 'accept-edits' },
+      worker.id,
+    );
+    assert.equal(widened.code, 'invalid-request');
+    assert.equal(widened.message, 'A worker cannot widen its access.');
+    const unchanged = (await host.request('list-sessions')).sessions.find(
+      value => value.id === worker.id,
+    );
+    assert.equal(unchanged.mode, 'read-only');
+    assert.equal(
+      unchanged.prompts.find(prompt => prompt.id === workerPrompt.id).status,
+      'pending',
+    );
+    const parentStopped = await host.request('stop-run', {
+      sessionId: parent.id,
+      runId: parentRun.runId,
+    });
+    assert.equal(parentStopped.type, 'session', JSON.stringify(parentStopped));
+    const workerStopped = await host.event(
+      value =>
+        value.id === worker.id &&
+        value.runId === worker.runId &&
+        value.status === 'stopped',
+    );
+    assert.equal(
+      workerStopped.prompts.find(prompt => prompt.id === workerPrompt.id)
+        .status,
+      'interrupted',
+    );
+    await finished(parentRun.runId, 'stopped', parent.id);
   },
 );

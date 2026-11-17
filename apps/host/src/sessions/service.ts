@@ -24,6 +24,7 @@ import {
   type Session,
   type StopRunInput,
   type RespondApprovalInput,
+  type AnswerPromptInput,
   type SkillReference,
   type SessionInterruption,
   type TurnUsage,
@@ -42,6 +43,15 @@ import {
 } from '../providers/codex';
 import { SessionStore, type SessionOrigin } from './store';
 import { finishActivities, updateActivity } from './activities';
+import {
+  ACCEPTED_PLAN_MESSAGE,
+  WAITING_FOR_ANSWER,
+  interruptPrompts,
+  pendingPrompts,
+  recordPrompt,
+  unansweredQuestion,
+  widensAccess,
+} from './prompts';
 import { ReviewStore } from '../review/store';
 import { resolveSessionSkill } from '../skills/service';
 import {
@@ -184,9 +194,12 @@ export class SessionError extends Error {
   }
 }
 
+type RunHandle = ReturnType<typeof startCodex> &
+  Pick<ReturnType<typeof startClaude>, 'answerPrompt'>;
+
 type ActiveRun = {
   session: Session;
-  handle: ReturnType<typeof startClaude> | ReturnType<typeof startCodex>;
+  handle: RunHandle;
   finished: Promise<void>;
   evictedActivities: Set<string>;
   timer?: ReturnType<typeof setTimeout>;
@@ -1175,6 +1188,7 @@ export class SessionService {
     active.session.status = 'stopping';
     active.session.activity = 'Stopping…';
     active.session.pendingApprovals = [];
+    interruptPrompts(active.session);
     try {
       this.cancelDelegations(active.session);
       this.publish(active.session);
@@ -1221,6 +1235,90 @@ export class SessionService {
       );
     }
     return structuredClone(active.session);
+  }
+
+  answerPrompt(input: AnswerPromptInput): Session {
+    const active = this.active.get(input.sessionId);
+    const session = active?.session;
+    const prompt = session?.prompts.find(
+      item => item.id === input.promptId && item.runId === input.runId,
+    );
+    if (
+      !active ||
+      !session ||
+      !prompt ||
+      active.finalizing ||
+      session.runId !== input.runId ||
+      session.status !== 'running' ||
+      prompt.status !== 'pending'
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This question or plan is no longer waiting for an answer.',
+      );
+    const { answer } = input;
+    if (answer.kind !== prompt.kind)
+      throw new SessionError(
+        'invalid-request',
+        'This answer does not match the question or plan.',
+      );
+    if (answer.kind === 'question' && unansweredQuestion(prompt, answer))
+      throw new SessionError(
+        'invalid-request',
+        'Answer every question shown, and only those questions.',
+      );
+    if (answer.kind === 'plan' && answer.decision === 'accept')
+      this.checkPlanAcceptance(session, answer.mode);
+    const previous = structuredClone(prompt);
+    const previousActivity = session.activity;
+    prompt.resolvedAt = new Date().toISOString();
+    if (answer.kind === 'question') {
+      prompt.status = 'answered';
+      prompt.answers = { ...answer.answers };
+    } else if (answer.decision === 'accept') {
+      prompt.status = 'accepted';
+      prompt.decision = { mode: answer.mode };
+    } else {
+      prompt.status = 'revised';
+      prompt.decision = { feedback: answer.feedback };
+    }
+    session.activity = pendingPrompts(session).length
+      ? WAITING_FOR_ANSWER
+      : `${session.provider} is working…`;
+    try {
+      this.publish(session);
+    } catch (error) {
+      Object.assign(prompt, previous);
+      session.activity = previousActivity;
+      throw error;
+    }
+    try {
+      active.handle.answerPrompt(prompt.id, answer);
+    } catch {
+      void active.handle.stop().catch(() => undefined);
+      throw new SessionError(
+        'invalid-request',
+        'Your answer could not be delivered. The session is stopping.',
+      );
+    }
+    return structuredClone(session);
+  }
+
+  private checkPlanAcceptance(session: Session, mode: Session['mode']): void {
+    if (session.role === 'worker' || session.parentId) {
+      if (widensAccess(session.mode, mode))
+        throw new SessionError(
+          'invalid-request',
+          'A worker cannot widen its access.',
+        );
+      return;
+    }
+    if (session.workflowRunId && mode !== session.mode)
+      throw new SessionError(
+        'invalid-request',
+        'Workflow sessions keep the permissions chosen when the task started.',
+      );
+    resolveTurnMode(session, mode);
   }
 
   async close(): Promise<void> {
@@ -1383,7 +1481,10 @@ export class SessionService {
       session.role !== 'worker';
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
-    let provider: ActiveRun['handle'] | undefined;
+    let provider:
+      | ReturnType<typeof startClaude>
+      | ReturnType<typeof startCodex>
+      | undefined;
     const recordSkill = (skill: SkillReference) => {
       const active = this.active.get(session.id);
       if (
@@ -1405,7 +1506,7 @@ export class SessionService {
       message.skill = skill;
       this.publish(session);
     };
-    const handle: ReturnType<typeof startCodex> = {
+    const handle: RunHandle = {
       done: Promise.resolve().then(async (): Promise<CodexResult> => {
         if (session.provider === 'Codex' && session.effort) {
           try {
@@ -1560,6 +1661,11 @@ export class SessionService {
           throw new Error('Provider is not awaiting approval');
         provider.respondApproval(id, decision);
       },
+      answerPrompt: (id, answer) => {
+        if (!provider || !('answerPrompt' in provider))
+          throw new Error('Provider is not awaiting an answer');
+        provider.answerPrompt(id, answer);
+      },
     };
     const active: ActiveRun = {
       session,
@@ -1568,10 +1674,11 @@ export class SessionService {
       evictedActivities: new Set(),
     };
     this.active.set(session.id, active);
+    let acceptedPlan = false;
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
-        const { limit, modeUnavailable } = result as ClaudeResult;
+        const { limit, modeUnavailable, planAccepted } = result as ClaudeResult;
         if (modeUnavailable && previousSelection) {
           session.model = previousSelection.model;
           session.effort = previousSelection.effort;
@@ -1615,7 +1722,12 @@ export class SessionService {
             : result.error;
         session.activity = null;
         session.pendingApprovals = [];
+        interruptPrompts(session);
         if (session.status !== 'completed') holdQueue(session);
+        else if (planAccepted) {
+          session.mode = planAccepted.mode;
+          acceptedPlan = true;
+        }
         session.messages.at(-1)!.state = session.status;
         session.messages.at(-1)!.completedAt = new Date().toISOString();
         session.messages.at(-1)!.usage = result.usage ?? null;
@@ -1651,6 +1763,8 @@ export class SessionService {
           'The response could not be saved or finalized. Refresh the session before continuing.';
         session.activity = null;
         session.pendingApprovals = [];
+        interruptPrompts(session);
+        acceptedPlan = false;
         holdQueue(session);
         session.messages.at(-1)!.state = 'failed';
         session.messages.at(-1)!.completedAt ??= new Date().toISOString();
@@ -1666,8 +1780,32 @@ export class SessionService {
           this.active.delete(session.id);
         this.finishWorker(session);
         this.notifyFinished(session);
-        if (!this.unsaved.has(session.id)) this.startNextQueued(session);
+        if (this.unsaved.has(session.id)) return;
+        if (acceptedPlan) this.continueAcceptedPlan(session);
+        else this.startNextQueued(session);
       });
+  }
+
+  private continueAcceptedPlan(session: Session): void {
+    try {
+      this.send({
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: ACCEPTED_PLAN_MESSAGE,
+        mode: session.mode,
+      });
+    } catch (error) {
+      session.error = `The accepted plan could not continue automatically. ${
+        error instanceof SessionError
+          ? error.message
+          : 'Send a message to continue.'
+      }`;
+      try {
+        this.publish(session);
+      } catch {
+        return;
+      }
+    }
   }
 
   private notifyFinished(session: Session): void {
@@ -2034,6 +2172,18 @@ export class SessionService {
       if (session.status === 'running' && !session.pendingApprovals.length)
         session.activity = `${session.provider} is working…`;
       this.publish(session);
+    } else if (event.type === 'prompt') {
+      if (session.status !== 'running') return;
+      if (session.provider !== 'Claude Code')
+        throw new Error('Unexpected provider prompt');
+      recordPrompt(session, event.prompt);
+      session.activity = WAITING_FOR_ANSWER;
+      this.publish(session);
+    } else if (event.type === 'prompt-resolved') {
+      if (!interruptPrompts(session, undefined, event.id)) return;
+      if (session.status === 'running' && !pendingPrompts(session).length)
+        session.activity = `${session.provider} is working…`;
+      this.publish(session);
     } else if (event.type === 'text') {
       session.messages.at(-1)!.body = event.text;
       session.activity = session.status === 'stopping' ? 'Stopping…' : null;
@@ -2042,6 +2192,8 @@ export class SessionService {
     }
     if (session.pendingApprovals.length)
       session.activity = 'Waiting for your decision…';
+    else if (session.status === 'running' && pendingPrompts(session).length)
+      session.activity = WAITING_FOR_ANSWER;
     if (active && !active.timer) {
       active.timer = setTimeout(() => {
         active.timer = undefined;

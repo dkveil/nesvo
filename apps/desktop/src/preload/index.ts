@@ -5,6 +5,7 @@ import {
   colorSchemeSchema,
   appliedColorSchemeSchema,
   respondApprovalSchema,
+  answerPromptSchema,
   createSessionSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
@@ -465,6 +466,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:respond-approval',
         respondApprovalSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  answerPrompt: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:answer-prompt',
+        answerPromptSchema.parse(input),
         route(hostId),
       ),
     ),

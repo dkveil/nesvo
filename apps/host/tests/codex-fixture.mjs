@@ -207,6 +207,15 @@ if (args.length === 1 && args[0] === '--version') {
     else if (variant === 'mixed')
       workers = [worker('a', 'complete'), worker('b', 'fail')];
     else if (variant === 'recursive') workers = [worker('a', 'recursive')];
+    else if (variant === 'claude-plan')
+      workers = [
+        {
+          ...worker('a', 'complete'),
+          provider: 'Claude Code',
+          model: 'sonnet',
+          task: 'fixture:plan',
+        },
+      ];
     else if (variant === 'plan')
       workers = [
         { ...worker('a', 'plan'), mode: 'supervised', planFirst: true },

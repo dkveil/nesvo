@@ -13,6 +13,7 @@ import {
   type SendMessageInput,
   type QueuedMessageRefInput,
   type RespondApprovalInput,
+  type AnswerPromptInput,
   type StopRunInput,
   type HostRequest,
   type HostResponse,
@@ -150,6 +151,12 @@ export function startHost(directory: string) {
     },
     respondApproval: async (input: RespondApprovalInput) => {
       const response = await request('respond-approval', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    answerPrompt: async (input: AnswerPromptInput) => {
+      const response = await request('answer-prompt', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

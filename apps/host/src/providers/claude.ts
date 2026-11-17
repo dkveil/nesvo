@@ -2,12 +2,16 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, realpath } from 'node:fs/promises';
+import { access, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
+import { z } from 'zod';
 import {
   activityLimits,
+  promptQuestionSchema,
   type ClaudeStatus,
+  type PromptAnswer,
+  type PromptQuestion,
   type ProviderUsage,
   type SessionMode,
   type TurnUsage,
@@ -26,7 +30,17 @@ export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
-  | { type: 'tool-activity'; activity: ProviderActivity };
+  | { type: 'tool-activity'; activity: ProviderActivity }
+  | { type: 'prompt'; prompt: ClaudePrompt }
+  | { type: 'prompt-resolved'; id: string };
+
+export type ClaudePrompt = {
+  id: string;
+  kind: 'question' | 'plan';
+  questions: PromptQuestion[];
+  plan: string | null;
+  planRound: number;
+};
 
 export type ClaudeResult = {
   status: 'completed' | 'stopped' | 'failed' | 'interrupted';
@@ -36,6 +50,12 @@ export type ClaudeResult = {
   limit?: { resetsAt: string | null };
   structured?: unknown;
   modeUnavailable?: true;
+  planAccepted?: { mode: SessionMode; plan: string };
+};
+
+type PendingPrompt = {
+  prompt: ClaudePrompt;
+  questions: unknown;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -97,6 +117,18 @@ const claudeModes = {
   { cli: string; tools: string[]; allowed: string[] }
 >;
 const optionalModes = ['accept-edits', 'auto'] as const;
+const modeLabels = {
+  'read-only': 'Plan',
+  'accept-edits': 'Accept edits',
+  auto: 'Auto',
+} as const satisfies Record<ClaudeMode, string>;
+const questionTool = 'AskUserQuestion';
+const planTools = ['ExitPlanMode', 'Write'];
+const planEditTools = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const maxPendingPrompts = 10;
+const maxPlanLength = 40_000;
+const maxPlanFileBytes = 1024 * 1024;
+const promptQuestionsSchema = z.array(promptQuestionSchema).min(1).max(10);
 const toolPresentation = {
   Read: { kind: 'read', title: 'Read file' },
   Glob: { kind: 'search', title: 'Find files' },
@@ -170,6 +202,82 @@ function toolResultText(content: unknown): string {
 
 function isClaudeMode(mode: SessionMode): mode is ClaudeMode {
   return mode in claudeModes;
+}
+
+function promptQuestions(value: unknown): PromptQuestion[] | null {
+  if (!Array.isArray(value)) return null;
+  const parsed = promptQuestionsSchema.safeParse(
+    value.map(item => {
+      const question = object(item);
+      return {
+        question: question?.question,
+        header: question?.header ?? '',
+        options: Array.isArray(question?.options)
+          ? question.options.map(option => {
+              const choice = object(option);
+              return {
+                label: choice?.label,
+                description: choice?.description ?? '',
+              };
+            })
+          : question?.options,
+        multiSelect: question?.multiSelect === true,
+      };
+    }),
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+function within(root: string, path: string): boolean {
+  const difference = relative(root, path);
+  return (
+    difference !== '' &&
+    !isAbsolute(difference) &&
+    difference !== '..' &&
+    !difference.startsWith(`..${sep}`)
+  );
+}
+
+async function readPlanFile(
+  path: unknown,
+  configDirectory: string | undefined,
+): Promise<string | null> {
+  if (typeof path !== 'string' || !isAbsolute(path)) return null;
+  const roots = [
+    join(homedir(), '.claude', 'plans'),
+    ...(configDirectory && isAbsolute(configDirectory)
+      ? [join(configDirectory, 'plans')]
+      : []),
+  ];
+  try {
+    const resolved = await realpath(path);
+    const allowed = await Promise.all(
+      roots.map(root => realpath(root).catch(() => null)),
+    );
+    if (!allowed.some(root => root !== null && within(root, resolved)))
+      return null;
+    const file = await stat(resolved);
+    if (!file.isFile() || file.size > maxPlanFileBytes) return null;
+    const text = (await readFile(resolved, 'utf8')).trim();
+    return text ? text.slice(0, maxPlanLength) : null;
+  } catch {
+    return null;
+  }
+}
+
+function refusalDetail(input: RecordValue): string | null {
+  return (
+    [
+      input.description,
+      input.command,
+      input.file_path,
+      input.notebook_path,
+      input.path,
+      input.pattern,
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .join('\n') || null
+  );
 }
 
 function wait(ms: number): Promise<void> {
@@ -736,9 +844,29 @@ export function startClaude(options: {
   assistantPrompt?: string;
   mode: SessionMode;
   onEvent: (event: ClaudeEvent) => void;
-}): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
+}): {
+  done: Promise<ClaudeResult>;
+  stop: () => Promise<void>;
+  answerPrompt: (id: string, answer: PromptAnswer) => void;
+} {
   let stopped = false;
   let owned: OwnedProcess | null = null;
+  const prompts = new Map<string, PendingPrompt>();
+  let answer: ((id: string, value: PromptAnswer) => void) | null = null;
+  let requestStop!: () => void;
+  const stopRequested = new Promise<void>(resolve => {
+    requestStop = resolve;
+  });
+  const releasePrompts = () => {
+    for (const id of [...prompts.keys()]) {
+      prompts.delete(id);
+      try {
+        options.onEvent({ type: 'prompt-resolved', id });
+      } catch {
+        continue;
+      }
+    }
+  };
   const done = (async (): Promise<ClaudeResult> => {
     let failure: string | null = null;
     try {
@@ -772,8 +900,6 @@ export function startClaude(options: {
           modeUnavailable: true,
         };
       const permission = claudeModes[options.mode];
-      const tools = permission.tools.join(',');
-      const allowedTools = permission.allowed.join(',');
       const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
       );
@@ -781,10 +907,18 @@ export function startClaude(options: {
         options.assistantPrompt && options.mode === 'read-only' && assistantMode
           ? assistantMode
           : permission.cli;
+      const interactive = !options.outputSchema && !options.assistantPrompt;
+      const planning = interactive && permissionMode === 'plan';
+      const tools = [
+        ...permission.tools,
+        ...(interactive ? [questionTool] : []),
+        ...(planning ? planTools : []),
+      ].join(',');
+      const allowedTools = permission.allowed.join(',');
       const args = [
         '--print',
         '--input-format',
-        'text',
+        'stream-json',
         '--output-format',
         'stream-json',
         '--verbose',
@@ -792,7 +926,9 @@ export function startClaude(options: {
         '--permission-mode',
         permissionMode,
         '--permission-prompts',
-        'none',
+        'host',
+        '--permission-prompt-tool',
+        'stdio',
         '--tools',
         tools,
         '--allowedTools',
@@ -840,9 +976,39 @@ export function startClaude(options: {
       let providerFailure: string | null = null;
       let rateLimitFailure: string | null = null;
       let rateLimitResetsAt: string | null = null;
+      const initializeId = randomUUID();
+      let userSent = false;
+      let planRound = 0;
+      let planAccepted: ClaudeResult['planAccepted'];
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const fail = (message: string) => {
         failure ??= safeMessage(message);
+        requestStop();
         void running.stop();
+      };
+      const armTimeout = () => {
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => fail('Claude turn timed out after ten minutes.'),
+          runTimeoutMs,
+        );
+      };
+      const write = (frame: RecordValue) => {
+        if (running.child.stdin.destroyed || running.child.stdin.writableEnded)
+          throw new Error('Claude Code input is closed.');
+        running.child.stdin.write(JSON.stringify(frame) + '\n');
+      };
+      const respond = (requestId: string, response: RecordValue) =>
+        write({
+          type: 'control_response',
+          response: { subtype: 'success', request_id: requestId, response },
+        });
+      const deliver = (send: () => void) => {
+        try {
+          send();
+        } catch {
+          fail('Claude Code input closed before Nesvo could answer.');
+        }
       };
       const emit = (event: ClaudeEvent) => {
         if (failure || stopped) return;
@@ -979,6 +1145,172 @@ export function startClaude(options: {
           });
         });
       };
+      const addPrompt = (prompt: ClaudePrompt, questions: unknown) => {
+        prompts.set(prompt.id, { prompt, questions });
+        clearTimeout(timer);
+        emit({ type: 'prompt', prompt });
+      };
+      const refuse = (
+        requestId: string,
+        toolName: string,
+        input: RecordValue,
+        toolUseId: unknown,
+      ) => {
+        const message =
+          planning && planEditTools.has(toolName)
+            ? 'Plan mode is read-only in Nesvo. Describe the change instead.'
+            : `Nesvo does not allow ${toolName} in ${modeLabels[options.mode as ClaudeMode]} mode.`;
+        deliver(() => respond(requestId, { behavior: 'deny', message }));
+        const id =
+          typeof toolUseId === 'string' && toolUseId && toolUseId.length <= 200
+            ? toolUseId
+            : `refused-${requestId}`;
+        const previous = toolActivities.get(id);
+        const presentation = Object.hasOwn(toolPresentation, toolName)
+          ? toolPresentation[toolName as keyof typeof toolPresentation]
+          : null;
+        const next = makeActivity({
+          id,
+          kind: presentation?.kind ?? 'tool',
+          title: presentation?.title ?? `Refused ${toolName}`.slice(0, 200),
+          status: 'declined',
+          startedAt: previous?.startedAt,
+          detail: previous?.detail ?? refusalDetail(input),
+          paths: previous?.paths,
+          truncated: previous?.truncated,
+        });
+        toolActivities.set(next.id, next);
+        emit({ type: 'tool-activity', activity: next });
+      };
+      const requestPlan = async (requestId: string, input: RecordValue) => {
+        const plan =
+          (typeof input.plan === 'string' && input.plan.trim()
+            ? input.plan.trim().slice(0, maxPlanLength)
+            : null) ??
+          (await readPlanFile(
+            input.planFilePath,
+            options.environment?.CLAUDE_CONFIG_DIR ??
+              process.env.CLAUDE_CONFIG_DIR,
+          )) ??
+          'The model did not provide a plan.';
+        if (failure || stopped) return;
+        planRound += 1;
+        addPrompt(
+          {
+            id: requestId,
+            kind: 'plan',
+            questions: [],
+            plan,
+            planRound,
+          },
+          null,
+        );
+      };
+      const requestTool = (requestId: string, request: RecordValue) => {
+        const toolName =
+          typeof request.tool_name === 'string' && request.tool_name
+            ? request.tool_name
+            : 'an unnamed tool';
+        const input = object(request.input) ?? {};
+        if (prompts.has(requestId)) return;
+        const prompting =
+          (interactive && toolName === questionTool) ||
+          (planning && toolName === 'ExitPlanMode');
+        if (prompting && prompts.size >= maxPendingPrompts) {
+          deliver(() =>
+            respond(requestId, {
+              behavior: 'deny',
+              message:
+                'Too many questions are waiting for the operator. Continue without asking.',
+            }),
+          );
+          return;
+        }
+        if (interactive && toolName === questionTool) {
+          const questions = promptQuestions(input.questions);
+          if (!questions) {
+            deliver(() =>
+              respond(requestId, {
+                behavior: 'deny',
+                message:
+                  'Nesvo could not show these questions. Continue without asking.',
+              }),
+            );
+            return;
+          }
+          addPrompt(
+            {
+              id: requestId,
+              kind: 'question',
+              questions,
+              plan: null,
+              planRound: 1,
+            },
+            input.questions,
+          );
+        } else if (planning && toolName === 'ExitPlanMode') {
+          requestPlan(requestId, input).catch(() =>
+            fail('Nesvo could not read the proposed plan.'),
+          );
+        } else refuse(requestId, toolName, input, request.tool_use_id);
+      };
+      const control = (value: RecordValue) => {
+        const requestId = value.request_id;
+        const request = object(value.request);
+        if (
+          typeof requestId !== 'string' ||
+          !requestId ||
+          requestId.length > 200 ||
+          !request
+        ) {
+          fail('Claude returned an invalid control request.');
+          return;
+        }
+        if (request.subtype === 'can_use_tool') requestTool(requestId, request);
+        else
+          deliver(() =>
+            write({
+              type: 'control_response',
+              response: {
+                subtype: 'error',
+                request_id: requestId,
+                error: 'Nesvo does not support this request.',
+              },
+            }),
+          );
+      };
+      answer = (id, value) => {
+        const pending = prompts.get(id);
+        if (!pending || failure || stopped)
+          throw new Error('This prompt is no longer waiting for an answer.');
+        if (pending.prompt.kind !== value.kind)
+          throw new Error('This answer does not match the prompt.');
+        if (value.kind === 'question') {
+          respond(id, {
+            behavior: 'allow',
+            updatedInput: {
+              questions: pending.questions,
+              answers: value.answers,
+            },
+          });
+        } else if (value.decision === 'accept') {
+          respond(id, {
+            behavior: 'deny',
+            message: `The operator accepted the plan and chose ${modeLabels[value.mode]}. Stop now without further changes; the work continues in the next turn with that access.`,
+          });
+          planAccepted = {
+            mode: value.mode,
+            plan: pending.prompt.plan ?? '',
+          };
+        } else {
+          respond(id, {
+            behavior: 'deny',
+            message: `The operator asks for changes before accepting the plan: ${value.feedback}. Revise the plan and call ExitPlanMode again.`,
+          });
+        }
+        prompts.delete(id);
+        if (!prompts.size) armTimeout();
+      };
       const consume = (serialized: string) => {
         if (!serialized.trim() || failure || stopped) return;
         let value: RecordValue | null;
@@ -993,7 +1325,34 @@ export function startClaude(options: {
           return;
         }
         if (value.parent_tool_use_id) return;
-        if (value.type === 'system' && value.subtype === 'init') {
+        if (value.type === 'control_request') {
+          control(value);
+        } else if (value.type === 'control_response') {
+          const response = object(value.response);
+          if (userSent || response?.request_id !== initializeId) return;
+          if (response.subtype !== 'success') {
+            fail(
+              'Claude Code did not accept the session handshake. Update the CLI.',
+            );
+            return;
+          }
+          userSent = true;
+          deliver(() =>
+            write({
+              type: 'user',
+              message: {
+                role: 'user',
+                content: [{ type: 'text', text: options.prompt }],
+              },
+            }),
+          );
+        } else if (value.type === 'control_cancel_request') {
+          const id = value.request_id;
+          if (typeof id === 'string' && prompts.delete(id)) {
+            emit({ type: 'prompt-resolved', id });
+            if (!prompts.size) armTimeout();
+          }
+        } else if (value.type === 'system' && value.subtype === 'init') {
           if (
             typeof value.session_id !== 'string' ||
             typeof value.model !== 'string'
@@ -1120,6 +1479,8 @@ export function startClaude(options: {
           }
         } else if (value.type === 'result') {
           resultSeen = true;
+          releasePrompts();
+          if (!running.child.stdin.destroyed) running.child.stdin.end();
           usage = claudeTurnUsage(value);
           successful = value.is_error === false && value.subtype === 'success';
           if (options.outputSchema && 'structured_output' in value)
@@ -1207,22 +1568,29 @@ export function startClaude(options: {
         stderrBytes += Buffer.byteLength(chunk);
         if (stderrBytes <= 16_384) stderr += chunk;
       });
-      const timer = setTimeout(
-        () => fail('Claude turn timed out after ten minutes.'),
-        runTimeoutMs,
+      armTimeout();
+      deliver(() =>
+        write({
+          type: 'control_request',
+          request_id: initializeId,
+          request: { subtype: 'initialize', hooks: {}, sdkMcpServers: [] },
+        }),
       );
-      running.child.stdin.end(options.prompt);
       let exit: ProcessExit;
       try {
         exit = await Promise.race([
           running.closed,
-          wait(runTimeoutMs + cleanupTimeoutMs * 2).then(() => {
-            throw new Error('Claude process did not close after cleanup.');
-          }),
+          stopRequested
+            .then(() => wait(cleanupTimeoutMs * 3))
+            .then(() => {
+              throw new Error('Claude process did not close after cleanup.');
+            }),
         ]);
         if (line) consume(line);
       } finally {
         clearTimeout(timer);
+        answer = null;
+        releasePrompts();
         await running.stop();
       }
       const reported = {
@@ -1268,7 +1636,12 @@ export function startClaude(options: {
         throw new Error('Claude Code exited without a successful result.');
       if (!lastText)
         throw new Error('Claude Code completed without an assistant response.');
-      return { status: 'completed', error: null, ...reported };
+      return {
+        status: 'completed',
+        error: null,
+        ...reported,
+        ...(planAccepted ? { planAccepted } : {}),
+      };
     } catch (error) {
       await owned?.stop();
       return failure
@@ -1287,8 +1660,14 @@ export function startClaude(options: {
     done,
     stop: async () => {
       stopped = true;
+      requestStop();
       await owned?.stop();
       await done;
+    },
+    answerPrompt: (id, value) => {
+      if (!answer)
+        throw new Error('This prompt is no longer waiting for an answer.');
+      answer(id, value);
     },
   };
 }

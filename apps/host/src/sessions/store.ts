@@ -7,6 +7,7 @@ import {
   type Session,
   type Delegation,
 } from '@nesvo/contracts';
+import { interruptPrompts } from './prompts';
 
 export type WorkflowSessionOrigin = {
   kind: 'workflow';
@@ -112,6 +113,7 @@ export class SessionStore {
       providerSessionId: input.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,
       pendingApprovals: [],
+      prompts: [],
       actualModel: null,
       directory,
       status: 'ready',
@@ -197,6 +199,7 @@ export class SessionStore {
         proposal.provider === 'Claude Code' ? randomUUID() : null,
       providerInitialized: false,
       pendingApprovals: [],
+      prompts: [],
       actualModel: null,
       directory,
       status: 'ready',
@@ -248,6 +251,7 @@ export class SessionStore {
         session.pendingApprovals = [];
         changed = true;
       }
+      if (interruptPrompts(session, at)) changed = true;
       if (session.queue.some(item => !item.held)) {
         session.queue = session.queue.map(item => ({ ...item, held: true }));
         changed = true;

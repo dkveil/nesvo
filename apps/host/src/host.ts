@@ -76,6 +76,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'start-queued',
   'stop-run',
   'respond-approval',
+  'answer-prompt',
   'decide-delegation',
   'decide-worker-plan',
   'decide-review',
@@ -1068,6 +1069,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.respondApproval(request.input),
+              };
+            if (request.method === 'answer-prompt')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.answerPrompt(request.input),
               };
             if (request.method === 'decide-delegation')
               return {

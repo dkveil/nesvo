@@ -32,8 +32,10 @@ import {
   sessionSchema,
   stopRunSchema,
   respondApprovalSchema,
+  answerPromptSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
+  type AnswerPromptInput,
   type ClaudeStatus,
   type CodexStatus,
   type CreateSessionInput,
@@ -279,6 +281,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('respond-approval'),
     input: respondApprovalSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('answer-prompt'),
+    input: answerPromptSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -795,6 +802,10 @@ export type DesktopApi = {
   stopRun: (input: StopRunInput, hostId?: HostId) => Promise<DesktopSession>;
   respondApproval: (
     input: RespondApprovalInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  answerPrompt: (
+    input: AnswerPromptInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   decideDelegation: (

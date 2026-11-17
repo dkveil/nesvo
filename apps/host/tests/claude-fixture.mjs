@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
@@ -15,6 +15,7 @@ const flags = [
   '--include-partial-messages',
   '--permission-mode',
   '--permission-prompts',
+  '--permission-prompt-tool',
   '--tools',
   '--allowedTools',
   '--strict-mcp-config',
@@ -41,6 +42,11 @@ const MODE_TOOLS = new Map([
   ['acceptEdits', EDIT_TOOLS],
   ['auto', `${EDIT_TOOLS},Bash`],
 ]);
+const INTERACTIVE_TOOLS = new Map([
+  ['plan', `${READ_TOOLS},AskUserQuestion,ExitPlanMode,Write`],
+  ['acceptEdits', `${EDIT_TOOLS},AskUserQuestion`],
+  ['auto', `${EDIT_TOOLS},Bash,AskUserQuestion`],
+]);
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
 const REPAIR_NOTE = 'The verdict did not match the required shape';
@@ -60,7 +66,10 @@ if (args.length === 1 && args[0] === '--version') {
   );
 } else if (args.join(' ') === 'auth status --json') {
   emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
-} else if (args[args.indexOf('--input-format') + 1] === 'stream-json') {
+} else if (
+  args[args.indexOf('--input-format') + 1] === 'stream-json' &&
+  !args.includes('--permission-prompt-tool')
+) {
   const switches = new Set([
     '--print',
     '--verbose',
@@ -181,11 +190,17 @@ if (args.length === 1 && args[0] === '--version') {
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
   if (values.has('--append-system-prompt'))
     assert.equal(permissionMode, 'dontAsk');
+  const interactive =
+    !values.has('--json-schema') && !values.has('--append-system-prompt');
   for (const [flag, expected] of [
-    ['--input-format', 'text'],
+    ['--input-format', 'stream-json'],
     ['--output-format', 'stream-json'],
-    ['--permission-prompts', 'none'],
-    ['--tools', MODE_TOOLS.get(permissionMode)],
+    ['--permission-prompts', 'host'],
+    ['--permission-prompt-tool', 'stdio'],
+    [
+      '--tools',
+      (interactive ? INTERACTIVE_TOOLS : MODE_TOOLS).get(permissionMode),
+    ],
     ['--allowedTools', READ_TOOLS],
     ['--mcp-config', '{"mcpServers":{}}'],
     ['--settings', '{"disableAllHooks":true}'],
@@ -208,9 +223,87 @@ if (args.length === 1 && args[0] === '--version') {
   assert.match(sessionId, /^[0-9a-f-]{36}$/);
   if (values.has('--model'))
     assert.ok(['opus', 'sonnet', 'haiku'].includes(values.get('--model')));
-  let prompt = '';
-  for await (const chunk of process.stdin) prompt += chunk;
-  assert.ok(prompt.trim(), 'Prompt must arrive through stdin');
+  const pendingFrames = [];
+  const frameWaiters = [];
+  let inputClosed = false;
+  const input = createInterface({ input: process.stdin });
+  input.on('line', line => {
+    if (!line.trim()) return;
+    const frame = JSON.parse(line);
+    const waiter = frameWaiters.shift();
+    if (waiter) waiter(frame);
+    else pendingFrames.push(frame);
+  });
+  input.on('close', () => {
+    inputClosed = true;
+    for (const waiter of frameWaiters.splice(0)) waiter(null);
+  });
+  const nextFrame = () =>
+    pendingFrames.length
+      ? Promise.resolve(pendingFrames.shift())
+      : inputClosed
+        ? Promise.resolve(null)
+        : new Promise(resolve => frameWaiters.push(resolve));
+  const initialize = await nextFrame();
+  assert.equal(initialize?.type, 'control_request');
+  assert.deepEqual(initialize.request, {
+    subtype: 'initialize',
+    hooks: {},
+    sdkMcpServers: [],
+  });
+  emit({
+    type: 'control_response',
+    response: {
+      subtype: 'success',
+      request_id: initialize.request_id,
+      response: { commands: [] },
+    },
+  });
+  const userFrame = await nextFrame();
+  assert.equal(userFrame?.type, 'user');
+  assert.equal(userFrame.message.role, 'user');
+  assert.ok(Array.isArray(userFrame.message.content));
+  const textBlocks = userFrame.message.content.filter(
+    block => block.type === 'text',
+  );
+  let prompt = textBlocks[0]?.text ?? '';
+  assert.ok(prompt.trim(), 'Prompt must arrive as a stream-json user frame');
+  if (process.env.NESVO_FIXTURE_INPUT_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_INPUT_LOG,
+      JSON.stringify({
+        content: userFrame.message.content.map(block =>
+          block.type === 'image'
+            ? {
+                type: 'image',
+                mediaType: block.source.media_type,
+                bytes: Buffer.from(block.source.data, 'base64').length,
+              }
+            : block,
+        ),
+      }) + '\n',
+      { flag: 'a' },
+    );
+  let requestSequence = 0;
+  const askHost = async request => {
+    const requestId = `fixture-request-${++requestSequence}`;
+    emit({ type: 'control_request', request_id: requestId, request });
+    const frame = await nextFrame();
+    assert.equal(frame?.type, 'control_response');
+    assert.equal(frame.response.subtype, 'success');
+    assert.equal(frame.response.request_id, requestId);
+    if (process.env.NESVO_FIXTURE_PID_FILE)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_PID_FILE + '.prompts',
+        JSON.stringify({
+          sessionId: values.get('--resume') ?? values.get('--session-id'),
+          tool: request.tool_name,
+          response: frame.response.response,
+        }) + '\n',
+        { flag: 'a' },
+      );
+    return frame.response.response;
+  };
   if (
     prompt.startsWith(
       'The user explicitly selected the following file as shared instructions',
@@ -387,7 +480,10 @@ if (args.length === 1 && args[0] === '--version') {
           prompt,
         )?.[1] ?? ''
       ).trim()
-    : (operatorRequest?.[2] ?? prompt).split('\n')[0].trim();
+    : (
+        /\n\nTask:\n(fixture:[\w:-]+)$/.exec(prompt)?.[1] ??
+        (operatorRequest?.[2] ?? prompt).split('\n')[0]
+      ).trim();
   if (operatorRequest && process.env.NESVO_FIXTURE_PID_FILE)
     writeFileSync(
       process.env.NESVO_FIXTURE_PID_FILE + '.assistant',
@@ -777,6 +873,123 @@ if (args.length === 1 && args[0] === '--version') {
     );
   } else if (command === 'fixture:assistant-prose') {
     const text = 'I would add a lint step before the approval.';
+    start(text);
+    finish(text);
+  } else if (command === 'fixture:question') {
+    const questions = [
+      {
+        question: 'Which test runner should I use?',
+        header: 'Runner',
+        options: [
+          { label: 'node:test', description: 'Built into Node.js' },
+          { label: 'vitest', description: 'Vite-based runner' },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: 'Which checks should run?',
+        header: 'Checks',
+        options: [
+          { label: 'lint', description: 'ESLint' },
+          { label: 'types', description: 'TypeScript' },
+        ],
+        multiSelect: true,
+      },
+    ];
+    const response = await askHost({
+      subtype: 'can_use_tool',
+      tool_name: 'AskUserQuestion',
+      input: { questions },
+      tool_use_id: `fixture-question-${turn}`,
+      requires_user_interaction: true,
+    });
+    assert.equal(response.behavior, 'allow');
+    assert.deepEqual(response.updatedInput.questions, questions);
+    const { answers } = response.updatedInput;
+    const text = `Fixture answers: ${answers['Which test runner should I use?']} | ${answers['Which checks should run?']}.`;
+    start(text);
+    finish(text);
+  } else if (command === 'fixture:plan') {
+    const plans = join(process.env.CLAUDE_CONFIG_DIR, 'plans');
+    for (let round = 1; round <= 3; round++) {
+      let input = {
+        plan: '1. Add formatPercent to src/format.js.\n2. Cover it with a test.',
+        planFilePath: join(plans, 'ignored.md'),
+      };
+      if (round > 1) {
+        mkdirSync(plans, { recursive: true });
+        const planFilePath = join(plans, `fixture-${sessionId}.md`);
+        writeFileSync(
+          planFilePath,
+          `Revised plan round ${round}: add formatPercent with a test.\n`,
+        );
+        input = { planFilePath };
+      }
+      const response = await askHost({
+        subtype: 'can_use_tool',
+        tool_name: 'ExitPlanMode',
+        input,
+        tool_use_id: `fixture-plan-${turn}-${round}`,
+      });
+      assert.equal(response.behavior, 'deny');
+      if (response.message.startsWith('The operator accepted the plan')) {
+        const text = `Fixture stopped after the accepted plan. ${response.message}`;
+        start(text);
+        finish(text);
+        break;
+      }
+      assert.match(
+        response.message,
+        /^The operator asks for changes before accepting the plan: /,
+      );
+      if (round === 3) {
+        const text = 'Fixture gave up revising.';
+        start(text);
+        finish(text);
+      }
+    }
+  } else if (command === 'fixture:refused-edit') {
+    const block = {
+      type: 'tool_use',
+      id: `fixture-edit-${turn}`,
+      name: 'Edit',
+      input: {
+        file_path: join(process.cwd(), 'sample.txt'),
+        old_string: 'a',
+        new_string: 'b',
+      },
+    };
+    stream({ type: 'message_start', message: { id: `fixture-edit-${turn}` } });
+    stream({ type: 'content_block_start', index: 0, content_block: block });
+    const response = await askHost({
+      subtype: 'can_use_tool',
+      tool_name: 'Edit',
+      input: block.input,
+      tool_use_id: block.id,
+      decision_reason_type: 'mode',
+    });
+    assert.equal(response.behavior, 'deny');
+    emit({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: block.id,
+            is_error: true,
+            content: response.message,
+          },
+        ],
+      },
+    });
+    const unknown = await askHost({
+      subtype: 'can_use_tool',
+      tool_name: 'WebFetch',
+      input: { url: 'https://example.invalid', description: 'Fetch a page' },
+      tool_use_id: `fixture-fetch-${turn}`,
+    });
+    assert.equal(unknown.behavior, 'deny');
+    const text = `Fixture refusals: ${response.message} | ${unknown.message}`;
     start(text);
     finish(text);
   } else {

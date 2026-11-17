@@ -84,6 +84,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot assign a workflow to a session. Update the host, then reconnect.',
   'git-branch':
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
+  prompts:
+    'This computer runs an older Nesvo host that cannot answer agent questions or plans. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -92,6 +94,7 @@ function requiredCapability(
 ): HostCapability | null {
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'assign-session-workflow') return 'session-workflow';
+  if (method === 'answer-prompt') return 'prompts';
   if (
     method === 'list-workflow-definitions' ||
     method === 'validate-workflow-definitions'
@@ -589,6 +592,7 @@ export class ComputerManager {
       'start-queued': 'session',
       'stop-run': 'session',
       'respond-approval': 'session',
+      'answer-prompt': 'session',
       'decide-delegation': 'session',
       'decide-worker-plan': 'session',
       'decide-review': 'review',

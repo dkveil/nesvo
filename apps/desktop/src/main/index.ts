@@ -20,6 +20,7 @@ import {
   decideWorkerPlanSchema,
   decideReviewSchema,
   respondApprovalSchema,
+  answerPromptSchema,
   assignSessionWorkflowSchema,
   sendMessageSchema,
   queuedMessageRefSchema,
@@ -341,6 +342,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'respond-approval',
         respondApprovalSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:answer-prompt',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'answer-prompt',
+        answerPromptSchema.parse(input),
         route(hostId),
       );
     },
