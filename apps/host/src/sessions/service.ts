@@ -1355,6 +1355,16 @@ export class SessionService {
     try {
       active.handle.answerPrompt(prompt.id, answer);
     } catch {
+      const published = session.prompts.find(
+        item => item.id === previous.id && item.runId === previous.runId,
+      );
+      if (published)
+        Object.assign(published, previous, {
+          status: 'interrupted',
+          resolvedAt: new Date().toISOString(),
+        });
+      session.activity = previousActivity;
+      this.publishQuietly(session);
       void active.handle.stop().catch(() => undefined);
       throw new SessionError(
         'invalid-request',
@@ -1362,6 +1372,14 @@ export class SessionService {
       );
     }
     return structuredClone(session);
+  }
+
+  private publishQuietly(session: Session): void {
+    try {
+      this.publish(session);
+    } catch {
+      return;
+    }
   }
 
   private checkPlanAcceptance(session: Session, mode: Session['mode']): void {

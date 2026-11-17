@@ -1023,6 +1023,39 @@ if (args.length === 1 && args[0] === '--version') {
     const text = 'Fixture stopped after revising a newer plan.';
     start(text);
     finish(text);
+  } else if (command === 'fixture:closed-input') {
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: '',
+      session_id: sessionId,
+    });
+    await setTimeout(100);
+    emit({
+      type: 'control_request',
+      request_id: `fixture-closed-question-${turn}`,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              question: 'Which runner?',
+              header: 'Runner',
+              options: [
+                { label: 'node:test', description: 'Built into Node.js' },
+                { label: 'vitest', description: 'Vite-based runner' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: `fixture-closed-question-${turn}`,
+      },
+    });
+    setInterval(() => {}, 1000);
+    await new Promise(() => {});
   } else if (command === 'fixture:bash') {
     const failing = {
       type: 'tool_use',

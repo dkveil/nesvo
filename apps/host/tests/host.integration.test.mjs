@@ -16347,6 +16347,35 @@ test(
     assert.equal(afterReplan.mode, 'read-only');
     assert.equal(afterReplan.status, 'completed');
 
+    const closing = await send('fixture:closed-input', { mode: 'read-only' });
+    const closingPrompt = promptOf(
+      await waitingFor(closing.runId, 'question'),
+      closing.runId,
+    );
+    await delay(300);
+    const undelivered = await answer(closing.runId, closingPrompt.id, {
+      kind: 'question',
+      answers: { 'Which runner?': 'node:test' },
+    });
+    assert.equal(
+      undelivered.code,
+      'invalid-request',
+      JSON.stringify(undelivered),
+    );
+    assert.equal(
+      undelivered.message,
+      'Your answer could not be delivered. The session is stopping.',
+    );
+    const closed = await host.event(
+      value =>
+        value.id === session.id &&
+        value.runId === closing.runId &&
+        !['running', 'stopping'].includes(value.status),
+    );
+    assert.equal(promptOf(closed, closing.runId).status, 'interrupted');
+    assert.equal(promptOf(closed, closing.runId).answers, null);
+    assert.ok(promptOf(closed, closing.runId).resolvedAt);
+
     const stopping = await send('fixture:question');
     const stoppingPrompt = promptOf(
       await waitingFor(stopping.runId, 'question'),
