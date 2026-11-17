@@ -13,6 +13,10 @@ import {
   type TurnUsage,
 } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
+import {
+  writeClaudeMcpConfig,
+  type ClaudeMcpConfig,
+} from '../mcp/claude-config-file';
 import { makeActivity, type ProviderActivity } from './activity';
 import { claudeUsageResult } from './claude-usage';
 import {
@@ -735,10 +739,15 @@ export function startClaude(options: {
   instructionsOnly?: boolean;
   assistantPrompt?: string;
   mode: SessionMode;
+  mcp?: {
+    servers: Readonly<Record<string, Record<string, unknown>>>;
+    hooks: boolean;
+  };
   onEvent: (event: ClaudeEvent) => void;
 }): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
   let stopped = false;
   let owned: OwnedProcess | null = null;
+  let mcpConfig: ClaudeMcpConfig | null = null;
   const done = (async (): Promise<ClaudeResult> => {
     let failure: string | null = null;
     try {
@@ -781,6 +790,8 @@ export function startClaude(options: {
         options.assistantPrompt && options.mode === 'read-only' && assistantMode
           ? assistantMode
           : permission.cli;
+      mcpConfig = await writeClaudeMcpConfig(options.mcp?.servers ?? {});
+      if (stopped) return { status: 'stopped', error: null };
       const args = [
         '--print',
         '--input-format',
@@ -799,9 +810,10 @@ export function startClaude(options: {
         allowedTools,
         '--strict-mcp-config',
         '--mcp-config',
-        '{"mcpServers":{}}',
-        '--settings',
-        '{"disableAllHooks":true}',
+        mcpConfig.argument,
+        ...(options.mcp?.hooks
+          ? []
+          : ['--settings', '{"disableAllHooks":true}']),
         options.resume ? '--resume' : '--session-id',
         options.sessionId,
       ];
@@ -863,7 +875,33 @@ export function startClaude(options: {
           emit({ type: 'text', text });
         }
       };
+      const mcpActivity = (block: RecordValue) => {
+        const name = String(block.name);
+        const [server = '', ...tool] = name.slice('mcp__'.length).split('__');
+        emit({ type: 'activity', text: 'MCP tool' });
+        if (typeof block.id !== 'string') return;
+        const previous = toolActivities.get(block.id);
+        const next = makeActivity({
+          id: block.id,
+          kind: 'tool',
+          title: 'Use MCP tool',
+          status: previous?.status ?? 'running',
+          startedAt: previous?.startedAt,
+          completedAt: previous?.completedAt,
+          detail: [server, tool.join('__')].filter(Boolean).join(' / ') || null,
+          output: previous?.output,
+          truncated: previous?.truncated,
+        });
+        toolActivities.set(next.id, next);
+        emit({ type: 'tool-activity', activity: next });
+      };
       const activity = (block: RecordValue | null) => {
+        if (
+          block?.type === 'tool_use' &&
+          typeof block.name === 'string' &&
+          block.name.startsWith('mcp__')
+        )
+          return mcpActivity(block);
         if (
           block?.type === 'tool_use' &&
           typeof block.name === 'string' &&
@@ -1281,6 +1319,8 @@ export function startClaude(options: {
                 error instanceof Error ? error.message : 'Claude Code failed.',
               ),
             };
+    } finally {
+      await mcpConfig?.dispose().catch(() => undefined);
     }
   })();
   return {

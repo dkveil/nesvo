@@ -5,6 +5,7 @@ import {
   type CreateSessionInput,
   type ScheduledJobSessionOrigin,
   type Session,
+  type SessionMcp,
   type Delegation,
 } from '@nesvo/contracts';
 import { saveCostTurn } from '../cost-store';
@@ -104,10 +105,12 @@ export class SessionStore {
     input: CreateSessionInput,
     directory: string,
     origin: SessionOrigin = { kind: 'operator' },
+    mcp: SessionMcp = { servers: [], hooks: false },
   ): Session {
     const now = new Date().toISOString();
     const session: Session = {
       ...input,
+      mcp,
       effort: input.effort ?? null,
       id: randomUUID(),
       role: 'standalone',
@@ -205,6 +208,7 @@ export class SessionStore {
       workflowRunId: null,
       workflowStepId: null,
       workflow: null,
+      mcp: { servers: [], hooks: false },
       pullRequest: null,
       scheduledJobId: null,
       scheduledJobRunId: null,

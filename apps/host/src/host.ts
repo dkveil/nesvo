@@ -34,6 +34,7 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
+import { listMcpServers } from './mcp/service';
 import { WorkflowRunStore } from './workflows/store';
 import {
   DefinitionError,
@@ -88,6 +89,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'rename-session',
   'set-session-pinned',
   'set-session-archived',
+  'set-session-mcp',
   'cancel-queued',
   'start-queued',
   'stop-run',
@@ -387,6 +389,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       let evidenceRequests = 0;
       let workspaceRequests = 0;
       let skillRequests = 0;
+      let mcpRequests = 0;
       let definitionRequests = 0;
       let definitionWrites = 0;
       const iterator = yield* Effect.acquireRelease(
@@ -495,7 +498,10 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           void inspection.finally(() => probes.pending.delete(inspection));
           continue;
         }
-        if (request.method === 'create-session' && request.input.effort) {
+        if (
+          request.method === 'create-session' &&
+          (request.input.effort || request.input.mcp)
+        ) {
           const creation = sessions
             .createWithEffort(request.input, probes.controller.signal)
             .then(session => send({ type: 'session', id: request.id, session }))
@@ -514,6 +520,100 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(creation);
           void creation.finally(() => probes.pending.delete(creation));
+          continue;
+        }
+        if (request.method === 'set-session-mcp') {
+          const change = sessions
+            .setMcp(request.input, probes.controller.signal)
+            .then(session => send({ type: 'session', id: request.id, session }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'MCP servers could not be updated. Refresh the session and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(change);
+          void change.finally(() => probes.pending.delete(change));
+          continue;
+        }
+        if (request.method === 'list-mcp-servers') {
+          const input = request.input;
+          const session =
+            'sessionId' in input ? store.get(input.sessionId) : undefined;
+          const missing = 'sessionId' in input && !session;
+          if (missing || mcpRequests >= 2) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: missing ? 'not-found' : 'busy',
+                message: missing
+                  ? 'Session not found.'
+                  : 'MCP discovery is busy. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          let target: { provider: Session['provider']; directory: string };
+          try {
+            target = session
+              ? {
+                  provider: session.provider,
+                  directory: session.directory,
+                }
+              : {
+                  provider:
+                    'provider' in input ? input.provider : 'Claude Code',
+                  directory: sessions.draftDirectory(
+                    'directory' in input ? input.directory : '',
+                  ),
+                };
+          } catch (error) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError
+                    ? error.code
+                    : 'invalid-directory',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The folder cannot be accessed.',
+              }),
+            );
+            continue;
+          }
+          mcpRequests++;
+          const discovery = listMcpServers(
+            target.provider,
+            target.directory,
+            probes.controller.signal,
+          )
+            .then(list => send({ type: 'mcp-servers', id: request.id, list }))
+            .catch(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message:
+                  'MCP servers could not be read on this computer. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(discovery);
+          void discovery.finally(() => {
+            mcpRequests--;
+            probes.pending.delete(discovery);
+          });
           continue;
         }
         if (request.method === 'assign-session-workflow') {
