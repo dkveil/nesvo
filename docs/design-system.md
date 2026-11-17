@@ -125,7 +125,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Switch** and **Checkbox** — `shared/ui/switch.tsx`, `shared/ui/checkbox.tsx`. Switch for settings that apply immediately; Checkbox for selections inside forms and lists (viewed files, task lists), including `indeterminate`. Pair both with `Label`.
 
-**SegmentedControl** — `shared/ui/segmented-control.tsx`. Two to five mutually related options shown at once. Sizes `sm` (24) and `md` (28), `fullWidth`, `iconOnly`, per-option `icon`, `count`, `disabled`, `title`. `mode` is `single` (radio group, arrow keys), `toggle` (pressed buttons) or `multiple` (array value). `invalid` draws an error outline. Not for navigation between views with their own panels (use Tabs).
+**SegmentedControl** — `shared/ui/segmented-control.tsx`. Two to five mutually related options shown at once. Sizes `sm` (24) and `md` (28), `fullWidth`, `iconOnly`, per-option `icon`, `count`, `disabled`, `title`. `mode` is `single` (radio group, arrow keys), `toggle` (pressed buttons) or `multiple` (array value). `invalid` draws an error outline. A single value may be `null` while it is unknown; the first enabled option then takes the tab stop. Not for navigation between views with their own panels (use Tabs).
 
 **Tabs** — `shared/ui/tabs.tsx`. `variant="underline"` with a sliding indicator for panel sections; `variant="editor"` for open documents with `closable` tabs (`onClose`, middle click, Delete). Render content in `TabPanel` with the same `idPrefix` so ARIA wiring matches.
 
@@ -175,7 +175,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Disclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `meta`, and collapsible content; controlled or uncontrolled.
 
-**SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages.
+**SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow is a title, a `text-xs` description and trailing controls; put status lines in the description as StatusMessage.
 
 ### Domain glyphs
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/shared/lib/cn';
+import { SectionLabel } from '@/shared/ui/section-label';
 
 type SectionProps = {
   title: string;
@@ -15,11 +16,10 @@ export function SettingsSection({
   className,
 }: SectionProps) {
   return (
-    <section aria-label={title} className="space-y-2.5">
-      <header className="flex min-h-7 items-center justify-between gap-3 px-3">
-        <h2 className="text-title font-semibold tracking-tight">{title}</h2>
-        {action}
-      </header>
+    <section aria-label={title} className="space-y-1.5">
+      <SectionLabel as="h2" action={action} className="px-3">
+        {title}
+      </SectionLabel>
       <div
         className={cn(
           'divide-y rounded-surface border bg-card text-card-foreground',

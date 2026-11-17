@@ -24,7 +24,7 @@ type SegmentedBaseProps<T extends string> = {
 
 type SegmentedSingleProps<T extends string> = SegmentedBaseProps<T> & {
   mode?: 'single' | 'toggle';
-  value: T;
+  value: T | null;
   onChange: (value: T) => void;
 };
 
@@ -74,6 +74,9 @@ export function SegmentedControl<T extends string>(
     props.mode === 'multiple'
       ? props.value.includes(value)
       : props.value === value;
+  const tabStop =
+    options.find(option => isOn(option.value))?.value ??
+    options.find(option => !option.disabled)?.value;
   const choose = (value: T) => {
     if (props.mode === 'multiple')
       props.onChange(
@@ -113,7 +116,7 @@ export function SegmentedControl<T extends string>(
             aria-checked={radio ? on : undefined}
             aria-pressed={radio ? undefined : on}
             aria-label={iconOnly ? option.label : undefined}
-            tabIndex={radio ? (on ? 0 : -1) : 0}
+            tabIndex={radio && option.value !== tabStop ? -1 : 0}
             title={option.title}
             disabled={disabled || option.disabled}
             onClick={() => choose(option.value)}
