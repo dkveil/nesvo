@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { IconButton } from '@/shared/ui/icon-button';
 
 type TabOption<T extends string> = {
   value: T;
@@ -164,15 +165,16 @@ export function Tabs<T extends string>({
             </button>
             {closable && (
               <span className="flex items-center pr-1.5">
-                <button
-                  type="button"
+                <IconButton
+                  size={16}
                   tabIndex={-1}
-                  aria-label={`Close ${option.label}`}
+                  label={`Close ${option.label}`}
+                  tooltip={false}
                   onClick={() => onClose?.(option.value)}
-                  className="focus-ring grid size-4 place-items-center rounded-sm text-muted-foreground opacity-0 transition-[opacity,background-color] duration-fast group-hover/tab:opacity-100 group-data-selected/tab:opacity-100 hover:bg-accent hover:text-foreground"
+                  className="opacity-0 group-hover/tab:opacity-100 group-data-selected/tab:opacity-100"
                 >
-                  <X aria-hidden="true" className="size-3" />
-                </button>
+                  <X aria-hidden="true" />
+                </IconButton>
               </span>
             )}
             {variant === 'editor' && selected && (
