@@ -9,6 +9,7 @@ import {
 
 export { PullRequestStateIcon } from './state-icon';
 export { ChecksIcon } from './checks-icon';
+export { RelativeTime } from './relative-time';
 
 export type PullRequestApi = Pick<
   DesktopApi,
