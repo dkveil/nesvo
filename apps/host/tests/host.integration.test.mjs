@@ -16147,7 +16147,11 @@ test(
     assert.equal(args[args.indexOf('--permission-prompt-tool') + 1], 'stdio');
     assert.equal(
       args[args.indexOf('--tools') + 1],
-      'Read,Glob,Grep,AskUserQuestion,ExitPlanMode,Write',
+      'Read,Glob,Grep,AskUserQuestion,ExitPlanMode',
+    );
+    assert.match(
+      args[args.indexOf('--append-system-prompt') + 1],
+      /^Nesvo plan mode: you cannot write files/,
     );
     assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Glob,Grep');
     assert.equal(

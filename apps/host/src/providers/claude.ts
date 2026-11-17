@@ -109,6 +109,7 @@ const requiredFlags = [
   '--json-schema',
   '--no-session-persistence',
   '--setting-sources',
+  '--append-system-prompt',
   '--model',
 ];
 const readTools = ['Read', 'Glob', 'Grep'];
@@ -136,7 +137,10 @@ const modeLabels = {
   auto: 'Auto',
 } as const satisfies Record<ClaudeMode, string>;
 const questionTool = 'AskUserQuestion';
-const planTools = ['ExitPlanMode', 'Write'];
+const planTools = ['ExitPlanMode'];
+const planModePrompt =
+  "Nesvo plan mode: you cannot write files, including a plan file. When your plan is ready, write the complete plan as your message text under a heading '## Plan' and then call ExitPlanMode in the same message.";
+const missingPlan = 'The model did not provide a plan.';
 const planEditTools = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const maxPendingPrompts = 10;
 const maxPlanLength = 40_000;
@@ -296,6 +300,15 @@ async function readPlanFile(
   } catch {
     return null;
   }
+}
+
+function planFromText(text: string | undefined): string | null {
+  if (!text?.trim()) return null;
+  const heading = /^#{1,6}[ \t]*Plan[ \t]*$/im.exec(text);
+  const section = heading
+    ? text.slice(heading.index + heading[0].length).trim()
+    : '';
+  return (section || text.trim()).slice(0, maxPlanLength);
 }
 
 function refusalDetail(input: RecordValue): string | null {
@@ -992,6 +1005,7 @@ export function startClaude(options: {
       if (options.instructionsOnly) args.push('--setting-sources', '');
       if (options.assistantPrompt)
         args.push('--append-system-prompt', options.assistantPrompt);
+      else if (planning) args.push('--append-system-prompt', planModePrompt);
       if (options.outputSchema)
         args.push('--json-schema', JSON.stringify(options.outputSchema));
       const attachments = await loadAttachments(options.attachments ?? []);
@@ -1030,6 +1044,14 @@ export function startClaude(options: {
         { text: string; blocks: Map<number, string> }
       >();
       const toolActivities = new Map<string, ProviderActivity>();
+      const toolMessages = new Map<string, string>();
+      const recordToolMessage = (
+        messageId: string,
+        block: RecordValue | null,
+      ) => {
+        if (block?.type === 'tool_use' && typeof block.id === 'string')
+          toolMessages.set(block.id, messageId);
+      };
       let currentMessage: string | null = null;
       let sequence = 0;
       let lastText = '';
@@ -1257,7 +1279,16 @@ export function startClaude(options: {
         toolActivities.set(next.id, next);
         emit({ type: 'tool-activity', activity: next });
       };
-      const requestPlan = async (requestId: string, input: RecordValue) => {
+      const latestText = () =>
+        [...messages.values()].reverse().find(message => message.text.trim())
+          ?.text;
+      const requestPlan = async (
+        requestId: string,
+        input: RecordValue,
+        toolUseId: unknown,
+      ) => {
+        const carrier =
+          typeof toolUseId === 'string' ? toolMessages.get(toolUseId) : null;
         const plan =
           (typeof input.plan === 'string' && input.plan.trim()
             ? input.plan.trim().slice(0, maxPlanLength)
@@ -1267,7 +1298,9 @@ export function startClaude(options: {
             options.environment?.CLAUDE_CONFIG_DIR ??
               process.env.CLAUDE_CONFIG_DIR,
           )) ??
-          'The model did not provide a plan.';
+          planFromText(carrier ? messages.get(carrier)?.text : undefined) ??
+          planFromText(latestText()) ??
+          missingPlan;
         if (failure || stopped) return;
         planRound += 1;
         addPrompt(
@@ -1324,7 +1357,7 @@ export function startClaude(options: {
             input.questions,
           );
         } else if (planning && toolName === 'ExitPlanMode') {
-          requestPlan(requestId, input).catch(() =>
+          requestPlan(requestId, input, request.tool_use_id).catch(() =>
             fail('Nesvo could not read the proposed plan.'),
           );
         } else refuse(requestId, toolName, input, request.tool_use_id);
@@ -1453,6 +1486,7 @@ export function startClaude(options: {
             if (event.type === 'content_block_start') {
               const block = object(event.content_block);
               activity(block);
+              recordToolMessage(currentMessage, block);
               if (block?.type === 'text' && typeof block.text === 'string')
                 message.blocks.set(event.index, block.text);
               if (block?.type === 'thinking')
@@ -1523,7 +1557,10 @@ export function startClaude(options: {
               : (currentMessage ?? `assistant-${sequence++}`);
           const existing = messages.get(id);
           const blocks = message.content.map(object);
-          for (const block of blocks) activity(block);
+          for (const block of blocks) {
+            activity(block);
+            recordToolMessage(id, block);
+          }
           completeRecordedThinking(id, blocks);
           const text = blocks
             .filter(block => block?.type === 'text')

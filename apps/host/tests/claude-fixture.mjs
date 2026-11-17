@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
@@ -43,7 +43,7 @@ const MODE_TOOLS = new Map([
   ['auto', `${EDIT_TOOLS},Bash`],
 ]);
 const INTERACTIVE_TOOLS = new Map([
-  ['plan', `${READ_TOOLS},AskUserQuestion,ExitPlanMode,Write`],
+  ['plan', `${READ_TOOLS},AskUserQuestion,ExitPlanMode`],
   ['acceptEdits', `${EDIT_TOOLS},AskUserQuestion`],
   ['auto', `${EDIT_TOOLS},Bash,AskUserQuestion`],
 ]);
@@ -188,10 +188,18 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(values.get(flag), true, flag);
   const permissionMode = values.get('--permission-mode');
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
-  if (values.has('--append-system-prompt'))
+  const systemPrompt = values.get('--append-system-prompt');
+  const planNote =
+    permissionMode === 'plan' &&
+    typeof systemPrompt === 'string' &&
+    systemPrompt.includes('Nesvo plan mode');
+  if (values.has('--append-system-prompt') && !planNote)
     assert.equal(permissionMode, 'dontAsk');
   const interactive =
-    !values.has('--json-schema') && !values.has('--append-system-prompt');
+    !values.has('--json-schema') &&
+    (!values.has('--append-system-prompt') || planNote);
+  if (interactive && permissionMode === 'plan')
+    assert.ok(planNote, 'Plan turns must carry the Nesvo plan mode note');
   for (const [flag, expected] of [
     ['--input-format', 'stream-json'],
     ['--output-format', 'stream-json'],
@@ -478,6 +486,38 @@ if (args.length === 1 && args[0] === '--version') {
       result: text,
       session_id: sessionId,
       ...reported,
+    });
+  };
+  const proposePlan = (round, text, input = {}) => {
+    const id = `fixture-plan-${turn}-${round}`;
+    const message = `fixture-plan-message-${turn}-${round}`;
+    const block = { type: 'tool_use', id, name: 'ExitPlanMode', input: {} };
+    stream({ type: 'message_start', message: { id: message } });
+    stream({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    });
+    stream({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text },
+    });
+    stream({ type: 'content_block_stop', index: 0 });
+    stream({ type: 'content_block_start', index: 1, content_block: block });
+    emit({
+      type: 'assistant',
+      message: {
+        id: message,
+        role: 'assistant',
+        content: [{ type: 'text', text }, block],
+      },
+    });
+    return askHost({
+      subtype: 'can_use_tool',
+      tool_name: 'ExitPlanMode',
+      input,
+      tool_use_id: id,
     });
   };
   const command = verdictMode
@@ -938,27 +978,20 @@ if (args.length === 1 && args[0] === '--version') {
     start(text);
     finish(text);
   } else if (command === 'fixture:plan') {
-    const plans = join(process.env.CLAUDE_CONFIG_DIR, 'plans');
     for (let round = 1; round <= 3; round++) {
-      let input = {
-        plan: '1. Add formatPercent to src/format.js.\n2. Cover it with a test.',
-        planFilePath: join(plans, 'ignored.md'),
-      };
-      if (round > 1) {
-        mkdirSync(plans, { recursive: true });
-        const planFilePath = join(plans, `fixture-${sessionId}.md`);
-        writeFileSync(
-          planFilePath,
-          `Revised plan round ${round}: add formatPercent with a test.\n`,
-        );
-        input = { planFilePath };
-      }
-      const response = await askHost({
-        subtype: 'can_use_tool',
-        tool_name: 'ExitPlanMode',
-        input,
-        tool_use_id: `fixture-plan-${turn}-${round}`,
-      });
+      const response =
+        round === 2
+          ? await proposePlan(
+              round,
+              '## Plan\nA drafted plan that the tool input replaces.',
+              {
+                plan: 'Revised plan round 2: add formatPercent with a test.',
+              },
+            )
+          : await proposePlan(
+              round,
+              'Here is what I found.\n\n## Plan\n1. Add formatPercent to src/format.js.\n2. Cover it with a test.',
+            );
       assert.equal(response.behavior, 'deny');
       if (response.message.startsWith('The operator accepted the plan')) {
         const text = `Fixture stopped after the accepted plan. ${response.message}`;
