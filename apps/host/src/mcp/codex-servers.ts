@@ -13,16 +13,10 @@ import {
 } from './server-summary';
 
 const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
-const IDENTITY_FIELDS = [
-  'command',
-  'args',
-  'env',
-  'env_vars',
-  'url',
-  'bearer_token_env_var',
-  'http_headers',
-  'env_http_headers',
-] as const;
+const REPORTED_DEFAULTS: Readonly<Record<string, unknown>> = {
+  environment_id: 'local',
+  args: [],
+};
 
 const configSchema = z.looseObject({
   mcp_servers: z.record(z.string(), z.unknown()).optional(),
@@ -51,11 +45,15 @@ export const sameCodexServer = (
 ): boolean => {
   if (effective === null || typeof effective !== 'object') return false;
   const actual = effective as Record<string, unknown>;
-  return (
-    actual.enabled !== false &&
-    IDENTITY_FIELDS.every(
-      field => canonicalJson(expected[field]) === canonicalJson(actual[field]),
-    )
+  if (actual.enabled === false) return false;
+  const fields = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  fields.delete('enabled');
+  return [...fields].every(field =>
+    Object.hasOwn(expected, field)
+      ? canonicalJson(expected[field]) === canonicalJson(actual[field])
+      : actual[field] == null ||
+        canonicalJson(actual[field]) ===
+          canonicalJson(REPORTED_DEFAULTS[field]),
   );
 };
 
