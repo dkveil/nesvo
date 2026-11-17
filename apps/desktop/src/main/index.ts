@@ -29,6 +29,7 @@ import {
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
   readGitBranchSchema,
+  historySearchInputSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
   actOnPullRequestSchema,
@@ -445,6 +446,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'find-session-pull-request',
         findSessionPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:search-history',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'search-history',
+        historySearchInputSchema.parse(input),
         route(hostId),
       );
     },

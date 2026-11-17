@@ -3,6 +3,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
+import { installHistoryIndex } from './sessions/history-index';
+
+const DATABASE_VERSION = 12;
 
 export const ownDataDirectory = (directory: string) =>
   Effect.acquireRelease(
@@ -128,7 +131,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
   const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
   try {
     const version = database.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version > 11) {
+    if (typeof version !== 'number' || version > DATABASE_VERSION) {
       throw new Error('Unsupported database version');
     }
     database.exec(
@@ -235,7 +238,8 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         database.exec(
           'ALTER TABLE assistant_changes ADD COLUMN definitions_root TEXT',
         );
-      database.exec('PRAGMA user_version = 11; COMMIT');
+      installHistoryIndex(database, version < DATABASE_VERSION);
+      database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
     } catch (error) {
       database.exec('ROLLBACK');
       throw error;

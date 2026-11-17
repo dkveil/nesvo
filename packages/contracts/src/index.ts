@@ -2,6 +2,12 @@ import { z } from 'zod';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import type { AppliedColorScheme, ColorScheme } from './appearance';
 import {
+  historySearchInputSchema,
+  historySearchPageSchema,
+  type HistorySearchInput,
+  type HistorySearchPage,
+} from './history-search';
+import {
   providerUsageInputSchema,
   providerUsageSchema,
   type ProviderUsageInput,
@@ -175,6 +181,7 @@ export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
 export * from './workspace';
+export * from './history-search';
 export * from './skills';
 export * from './computers';
 export * from './provider-usage';
@@ -234,6 +241,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: providerUsageInputSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('search-history'),
+    input: historySearchInputSchema,
+  }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
   z.strictObject({
     id: z.uuid(),
@@ -535,6 +547,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('workspace-file'),
     id: z.uuid(),
     file: workspaceFileSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history-search'),
+    id: z.uuid(),
+    search: historySearchPageSchema,
   }),
   z.strictObject({
     type: z.literal('git-branch'),
@@ -842,6 +859,10 @@ export type DesktopApi = {
     input: ReadGitBranchInput,
     hostId?: HostId,
   ) => Promise<GitBranch>;
+  searchHistory: (
+    input: HistorySearchInput,
+    hostId?: HostId,
+  ) => Promise<HistorySearchPage>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
     hostId?: HostId,

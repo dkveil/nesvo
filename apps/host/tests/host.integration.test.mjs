@@ -367,6 +367,7 @@ test(
         'permission-modes',
         'session-workflow',
         'pull-requests',
+        'history-search',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -1350,7 +1351,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      11,
+      12,
     );
     migrated.close();
     const reopened = open();
@@ -4911,6 +4912,7 @@ test(
       'permission-modes',
       'session-workflow',
       'pull-requests',
+      'history-search',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -5838,7 +5840,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            11,
+            12,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -5921,11 +5923,11 @@ test(
       }
     });
 
-    await t.test('a version 12 database is refused', async () => {
+    await t.test('a version 13 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 12');
+      newer.exec('PRAGMA user_version = 13');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -5937,7 +5939,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          12,
+          13,
         );
       } finally {
         check.close();
@@ -8618,7 +8620,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        11,
+        12,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -8669,7 +8671,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        11,
+        12,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -16759,3 +16761,211 @@ test(
     );
   },
 );
+
+test('History search backfills and tracks the host session documents', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-history-search-'));
+  const path = join(directory, 'nesvo.sqlite');
+  const sessionId = randomUUID();
+  const runId = randomUUID();
+  const earlier = new Date('2026-11-15T12:00:00Z').toISOString();
+  const later = new Date('2026-11-16T12:00:00Z').toISOString();
+  const legacyMessages = [earlier, later].map((createdAt, index) => ({
+    id: randomUUID(),
+    runId,
+    author: index === 0 ? 'operator' : 'agent',
+    body: 'Próba searchablelegacy AND OR near <fixture>',
+    state: 'completed',
+    createdAt,
+  }));
+  const lastLegacy = {
+    ...legacyMessages[1],
+    id: randomUUID(),
+    body: 'Laterbackfillbatch ' + 'x'.repeat(8192) + ' Omittedtail',
+  };
+  let host;
+  let database;
+  try {
+    database = new DatabaseSync(path);
+    database.exec(
+      'CREATE TABLE sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL, updated_at TEXT NOT NULL); PRAGMA user_version = 11',
+    );
+    database.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run(
+      sessionId,
+      JSON.stringify({
+        id: sessionId,
+        title: 'Legacy indexing landmark',
+        directory,
+        provider: 'Claude Code',
+        providerSessionId: null,
+        providerInitialized: false,
+        model: 'default',
+        actualModel: null,
+        mode: 'read-only',
+        role: 'standalone',
+        error: null,
+        status: 'completed',
+        activity: null,
+        pendingApprovals: [],
+        runId,
+        revision: 1,
+        createdAt: earlier,
+        updatedAt: later,
+        messages: [
+          ...legacyMessages,
+          ...Array.from({ length: 64 }, () => ({
+            ...legacyMessages[0],
+            id: randomUUID(),
+            body: 'Backfill filler',
+          })),
+          lastLegacy,
+        ],
+        queue: [],
+      }),
+      later,
+    );
+    database.close();
+    database = undefined;
+    host = launch(directory, join(directory, 'pids.json'));
+    const health = await host.request('health');
+    assert.ok(health.health.capabilities.includes('history-search'));
+    const search = async (query, input = {}) => {
+      const response = await host.request('search-history', {
+        query,
+        ...input,
+      });
+      assert.equal(
+        response.type,
+        'history-search',
+        response.message ?? host.error(),
+      );
+      return response.search;
+    };
+    let title;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      title = await search('landmark');
+      if (title.results.length) break;
+      await delay(25);
+    }
+    assert.equal(title.results[0]?.sessionId, sessionId, host.error());
+    assert.equal(title.results[0].messageId, null);
+    assert.equal(title.results[0].role, 'title');
+    let lastPage;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      lastPage = await search('laterbackfillbatch');
+      if (lastPage.results.length) break;
+      await delay(25);
+    }
+    assert.equal(lastPage.results[0]?.messageId, lastLegacy.id, host.error());
+    assert.deepEqual((await search('omittedtail')).results, []);
+    const firstPage = await search('searchablelegacy "AND" OR (near*)', {
+      limit: 1,
+    });
+    assert.equal(firstPage.truncated, true);
+    assert.equal(firstPage.results.length, 1);
+    assert.equal(firstPage.results[0].messageId, legacyMessages[1].id);
+    const { text, ranges } = firstPage.results[0].snippet;
+    assert.ok(
+      ranges.some(
+        ({ start, end }) => text.slice(start, end) === 'searchablelegacy',
+      ),
+    );
+    assert.ok(firstPage.nextCursor);
+    const secondPage = await search('searchablelegacy "AND" OR (near*)', {
+      limit: 1,
+      cursor: firstPage.nextCursor,
+    });
+    assert.equal(secondPage.results[0].messageId, legacyMessages[0].id);
+    assert.equal(secondPage.nextCursor, null);
+    assert.deepEqual((await search('":** ^ ()')).results, []);
+    assert.equal(
+      (
+        await host.send(
+          JSON.stringify({
+            id: randomUUID(),
+            method: 'search-history',
+            input: { query: 'x', limit: 101 },
+          }),
+        )
+      ).code,
+      'invalid-request',
+    );
+
+    const created = (
+      await host.request('create-session', {
+        provider: 'Claude Code',
+        title: 'Fresh thread',
+        model: 'default',
+        directory: '',
+      })
+    ).session;
+    assert.ok(created);
+    const messageId = randomUUID();
+    const sent = await host.request('send-message', {
+      sessionId: created.id,
+      messageId,
+      text: 'Freshlysavedsearch',
+    });
+    assert.equal(sent.type, 'session', sent.message);
+    const added = await search('freshlysavedsearch');
+    assert.ok(
+      added.results.some(
+        result =>
+          result.sessionId === created.id && result.messageId === messageId,
+      ),
+    );
+    const replied = await host.event(
+      session =>
+        session.id === created.id &&
+        agent(session)?.body.includes('Fixture initial reply.'),
+    );
+    assert.ok(
+      (await search('initial reply')).results.some(
+        result =>
+          result.messageId === agent(replied).id && result.role === 'agent',
+      ),
+    );
+
+    database = new DatabaseSync(path);
+    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
+    assert.equal(
+      database.prepare('PRAGMA user_version').get().user_version,
+      12,
+    );
+    database
+      .prepare(
+        "UPDATE sessions SET document = json_set(document, '$.title', ?, '$.messages[0].body', ?) WHERE id = ?",
+      )
+      .run('Renamed from storage', 'Editedsearchtoken', sessionId);
+    assert.equal((await search('renamed')).results[0].sessionId, sessionId);
+    assert.deepEqual((await search('landmark')).results, []);
+    assert.equal(
+      (await search('editedsearchtoken')).results[0].messageId,
+      legacyMessages[0].id,
+    );
+    assert.deepEqual(
+      (await search('searchablelegacy')).results.map(
+        result => result.messageId,
+      ),
+      [legacyMessages[1].id],
+    );
+    database.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    assert.deepEqual((await search('renamed')).results, []);
+    assert.deepEqual((await search('searchablelegacy')).results, []);
+    assert.deepEqual((await search('editedsearchtoken')).results, []);
+    assert.equal(
+      (await host.request('list-sessions')).sessions.some(
+        session => session.id === sessionId,
+      ),
+      false,
+    );
+    await host.stop();
+    host = undefined;
+  } finally {
+    if (host) {
+      host.child.kill();
+      await host.exited;
+    }
+    database?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

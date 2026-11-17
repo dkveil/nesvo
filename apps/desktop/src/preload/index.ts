@@ -18,6 +18,8 @@ import {
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
   readGitBranchSchema,
+  historySearchInputSchema,
+  historySearchPageSchema,
   gitBranchSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
@@ -574,6 +576,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-git-branch',
         readGitBranchSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  searchHistory: async (input, hostId) =>
+    historySearchPageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:search-history',
+        historySearchInputSchema.parse(input),
         route(hostId),
       ),
     ),

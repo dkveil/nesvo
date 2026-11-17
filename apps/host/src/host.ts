@@ -19,6 +19,7 @@ import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
+import { HistorySearch } from './sessions/history-search';
 import { ReviewStore } from './review/store';
 import { PullRequests } from './pull-requests';
 import { PullRequestError } from './process/github-cli';
@@ -138,6 +139,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
     Effect.gen(function* () {
       yield* ownDataDirectory(directory);
       const database = yield* openDatabase(directory);
+      const history = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const index = new HistorySearch(database);
+          index.start();
+          return index;
+        }),
+        index => Effect.sync(() => index.close()),
+      );
       const store = new SessionStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
       const workflowRunStore = new WorkflowRunStore(database);
@@ -1102,6 +1111,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'sessions',
                 id: request.id,
                 sessions: sessions.list(),
+              };
+            if (request.method === 'search-history')
+              return {
+                type: 'history-search',
+                id: request.id,
+                search: history.search(request.input),
               };
             if (request.method === 'create-session')
               return {

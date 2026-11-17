@@ -652,6 +652,7 @@ try {
     'permission-modes',
     'session-workflow',
     'pull-requests',
+    'history-search',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
