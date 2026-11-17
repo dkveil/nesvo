@@ -1,5 +1,5 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
-import { Check, RefreshCw, Workflow } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { RefreshCw, Workflow } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { DefinitionCatalog, WorkflowsApi } from '@nesvo/contracts';
 import {
@@ -10,10 +10,13 @@ import {
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
+import { Listbox } from '@/shared/ui/listbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
 import {
   Select,
   SelectContent,
@@ -21,7 +24,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
+import { Hint } from '@/shared/ui/tooltip';
 import { ComposerChip } from './composer-chip';
 import {
   gateModels,
@@ -48,28 +53,13 @@ type CatalogState =
   | { status: 'error'; message: string }
   | { status: 'loaded'; catalog: DefinitionCatalog };
 
-const moveRadio = (event: KeyboardEvent<HTMLDivElement>) => {
-  const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-  if (!forward && event.key !== 'ArrowUp' && event.key !== 'ArrowLeft') return;
-  const radios = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-      ':scope > [role="radio"]',
-    ),
-  ];
-  const index = radios.findIndex(radio => radio === document.activeElement);
-  const next =
-    radios[(index + (forward ? 1 : -1) + radios.length) % radios.length];
-  if (!next) return;
-  event.preventDefault();
-  next.focus();
-  next.click();
-};
+const NO_WORKFLOW = '';
 
 const specName = (path: string) =>
   path.split(/[\\/]/).at(-1)?.replace(/\.md$/i, '') ?? path;
 
-const optionRow =
-  'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-100 hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset aria-checked:bg-highlight';
+const issueCount = (count: number) =>
+  `${count} ${count === 1 ? 'issue' : 'issues'}`;
 
 export function WorkflowPicker({
   hostId,
@@ -118,6 +108,31 @@ export function WorkflowPicker({
     };
     onChange({ ...base, ...changes });
   };
+  const chooseWorkflow = (name: string) => {
+    if (!catalog || name === NO_WORKFLOW) {
+      onChange(null);
+      return;
+    }
+    const spec = catalog.specs.find(
+      item => item.source.path === value?.specPath,
+    );
+    const firstSpec = catalog.specs.find(item => item.workflow === name);
+    const keep = !!value?.specPath && (!spec || spec.workflow === name);
+    choose({
+      workflowName: name,
+      specPath: keep ? value.specPath : (firstSpec?.source.path ?? ''),
+      specTitle: keep ? value.specTitle : (firstSpec?.title ?? null),
+    });
+  };
+  const chooseSpec = (path: string) => {
+    const spec = catalog?.specs.find(item => item.source.path === path);
+    if (spec)
+      choose({
+        specPath: spec.source.path,
+        specTitle: spec.title,
+        workflowName: spec.workflow,
+      });
+  };
   const selectedWorkflow = catalog?.workflows.find(
     workflow => workflow.name === value?.workflowName,
   );
@@ -134,173 +149,115 @@ export function WorkflowPicker({
         if (next) load();
       }}
     >
-      <PopoverTrigger asChild>
-        <ComposerChip
-          disabled={disabled}
-          aria-label={
-            value?.workflowName ? `Workflow: ${value.workflowName}` : 'Workflow'
-          }
-          data-workflow={value?.workflowName || undefined}
-          title={
-            value?.workflowName
-              ? `Workflow: ${value.workflowName}${value.specPath ? ` · ${specName(value.specPath)}` : ''}`
-              : 'Run this task through a workflow'
-          }
-          className={cn(value?.workflowName && 'text-foreground')}
-        >
-          <Workflow />
-          <span className="truncate">{value?.workflowName || 'Workflow'}</span>
-        </ComposerChip>
-      </PopoverTrigger>
+      <Hint
+        label={
+          value?.workflowName
+            ? `Workflow: ${value.workflowName}${value.specPath ? ` · ${specName(value.specPath)}` : ''}`
+            : 'Run this task through a workflow'
+        }
+      >
+        <PopoverTrigger asChild>
+          <ComposerChip
+            disabled={disabled}
+            aria-label={
+              value?.workflowName
+                ? `Workflow: ${value.workflowName}`
+                : 'Workflow'
+            }
+            data-workflow={value?.workflowName || undefined}
+            icon={<Workflow aria-hidden="true" />}
+            className={cn(value?.workflowName && 'text-foreground')}
+          >
+            <span>{value?.workflowName || 'Workflow'}</span>
+          </ComposerChip>
+        </PopoverTrigger>
+      </Hint>
       <PopoverContent
         side="top"
         align="start"
-        sideOffset={8}
         collisionPadding={12}
         aria-label="Workflow"
-        className="flex max-h-[min(34rem,var(--radix-popover-content-available-height))] w-[min(26rem,calc(100vw-1.5rem))] flex-col gap-3 overflow-y-auto p-2.5"
+        size="lg"
+        padding="none"
+        scroll
+        className="flex flex-col gap-3 p-2.5"
       >
         <div className="flex items-center justify-between gap-2 px-1">
           <p className="text-xs font-medium text-muted-foreground">Workflow</p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-6 text-muted-foreground"
-            aria-label="Refresh workflows"
-            title="Refresh workflows"
+          <IconButton
+            label="Refresh workflows"
+            size={24}
             disabled={!connected || state.status === 'loading'}
             onClick={load}
           >
             <RefreshCw
               className={cn(
-                'size-3.5',
                 state.status === 'loading' &&
                   'animate-spin motion-reduce:animate-none',
               )}
             />
-          </Button>
+          </IconButton>
         </div>
         {!connected && (
-          <p className="px-1 text-xs text-muted-foreground">
+          <StatusMessage className="px-1">
             Connect this computer to list its workflows.
-          </p>
+          </StatusMessage>
         )}
         {state.status === 'error' && (
-          <p
-            role="alert"
-            className="px-1 text-xs text-destructive [overflow-wrap:anywhere]"
-          >
+          <StatusMessage tone="error" className="px-1">
             {state.message}
-          </p>
+          </StatusMessage>
         )}
         {state.status === 'loading' && !catalog && (
-          <p role="status" className="px-1 text-xs text-muted-foreground">
+          <StatusMessage tone="loading" className="px-1">
             Reading workflows…
-          </p>
+          </StatusMessage>
         )}
         {catalog && (
-          <div className="space-y-0.5">
-            <div
-              role="radiogroup"
-              aria-label="Workflows"
-              className="space-y-0.5"
-              onKeyDown={moveRadio}
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={!value?.workflowName}
-                tabIndex={value?.workflowName ? -1 : 0}
-                className={optionRow}
-                onClick={() => onChange(null)}
-              >
-                <Check
-                  className={cn(
-                    'mt-0.5 size-3.5 shrink-0',
-                    value?.workflowName && 'invisible',
-                  )}
-                  aria-hidden="true"
-                />
-                <span className="flex-1 text-[13px]">No workflow</span>
-              </button>
-              {catalog.workflows.map(workflow => {
-                const issues = workflowIssues(catalog, workflow.name, '');
-                const checked = value?.workflowName === workflow.name;
-                return (
-                  <button
-                    key={workflow.name}
-                    type="button"
-                    role="radio"
-                    aria-checked={checked}
-                    tabIndex={checked ? 0 : -1}
-                    data-workflow-option={workflow.name}
-                    className={optionRow}
-                    onClick={() => {
-                      const spec = catalog.specs.find(
-                        item => item.source.path === value?.specPath,
-                      );
-                      const firstSpec = catalog.specs.find(
-                        item => item.workflow === workflow.name,
-                      );
-                      const keep =
-                        !!value?.specPath &&
-                        (!spec || spec.workflow === workflow.name);
-                      choose({
-                        workflowName: workflow.name,
-                        specPath: keep
-                          ? value!.specPath
-                          : (firstSpec?.source.path ?? ''),
-                        specTitle: keep
-                          ? value!.specTitle
-                          : (firstSpec?.title ?? null),
-                      });
-                    }}
-                  >
-                    <Check
-                      className={cn(
-                        'mt-0.5 size-3.5 shrink-0',
-                        !checked && 'invisible',
-                      )}
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-[13px] font-medium">
-                          {workflow.name}
-                        </span>
-                        <span className="shrink-0 text-2xs text-muted-foreground">
-                          {workflow.steps.length} steps
-                        </span>
+          <div className="space-y-1">
+            <Listbox
+              label="Workflows"
+              options={[
+                { value: NO_WORKFLOW, label: 'No workflow' },
+                ...catalog.workflows.map(workflow => {
+                  const issues = workflowIssues(catalog, workflow.name, '');
+                  return {
+                    value: workflow.name,
+                    label: workflow.name,
+                    description: workflow.description || undefined,
+                    trailing: (
+                      <>
+                        {workflow.steps.length} steps
                         {issues.length > 0 && (
-                          <span className="shrink-0 text-2xs text-warning-foreground">
-                            {issues.length}{' '}
-                            {issues.length === 1 ? 'issue' : 'issues'}
+                          <span className="text-warning-foreground">
+                            {' · '}
+                            {issueCount(issues.length)}
                           </span>
                         )}
-                      </span>
-                      {workflow.description && (
-                        <span className="mt-0.5 line-clamp-2 block text-2xs leading-4 text-muted-foreground">
-                          {workflow.description}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                      </>
+                    ),
+                  };
+                }),
+              ]}
+              value={value?.workflowName || NO_WORKFLOW}
+              onSelect={chooseWorkflow}
+              className="-mx-1"
+            />
             {catalog.workflows.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              <StatusMessage className="px-1">
                 No workflows in .agents/workflows for this folder.
-              </p>
+              </StatusMessage>
             )}
             {catalog.issues.length > 0 && (
-              <details className="px-2 pt-1 text-2xs text-muted-foreground">
-                <summary className="cursor-pointer text-warning-foreground">
-                  {catalog.issues.length} definition{' '}
-                  {catalog.issues.length === 1 ? 'issue' : 'issues'}
-                </summary>
-                <ul className="mt-1.5 space-y-1.5 leading-4">
+              <Disclosure
+                title={
+                  <span className="text-warning-foreground">
+                    {catalog.issues.length} definition{' '}
+                    {catalog.issues.length === 1 ? 'issue' : 'issues'}
+                  </span>
+                }
+              >
+                <ul className="space-y-1.5 text-2xs">
                   {catalog.issues.slice(0, 20).map((issue, index) => (
                     <li key={index} className="[overflow-wrap:anywhere]">
                       <span
@@ -320,7 +277,7 @@ export function WorkflowPicker({
                     </li>
                   ))}
                 </ul>
-              </details>
+              </Disclosure>
             )}
           </div>
         )}
@@ -331,62 +288,23 @@ export function WorkflowPicker({
                 Task spec
               </p>
               {catalog && catalog.specs.length > 0 && (
-                <div
-                  role="radiogroup"
-                  aria-label="Task specs"
-                  className="space-y-0.5"
-                  onKeyDown={moveRadio}
-                >
-                  {catalog.specs.map((spec, index) => {
-                    const checked = value.specPath === spec.source.path;
-                    const focusable =
-                      checked ||
-                      (index === 0 &&
-                        !catalog.specs.some(
-                          item => item.source.path === value.specPath,
-                        ));
-                    return (
-                      <button
-                        key={spec.source.path}
-                        type="button"
-                        role="radio"
-                        aria-checked={checked}
-                        tabIndex={focusable ? 0 : -1}
-                        className={optionRow}
-                        onClick={() =>
-                          choose({
-                            specPath: spec.source.path,
-                            specTitle: spec.title,
-                            workflowName: spec.workflow,
-                          })
-                        }
-                      >
-                        <Check
-                          className={cn(
-                            'mt-0.5 size-3.5 shrink-0',
-                            !checked && 'invisible',
-                          )}
-                          aria-hidden="true"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px]">
-                            {spec.title ?? specName(spec.source.path)}
-                          </span>
-                          <span className="block truncate text-2xs text-muted-foreground">
-                            {specName(spec.source.path)}.md · {spec.workflow}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <Listbox
+                  label="Task specs"
+                  options={catalog.specs.map(spec => ({
+                    value: spec.source.path,
+                    label: spec.title ?? specName(spec.source.path),
+                    description: `${specName(spec.source.path)}.md · ${spec.workflow}`,
+                  }))}
+                  value={value.specPath}
+                  onSelect={chooseSpec}
+                  className="-mx-1"
+                />
               )}
               <div className="space-y-1 px-1 pt-1">
                 <Label htmlFor="workflow-spec-path" className="text-2xs">
                   Spec path
                 </Label>
                 <Input
-                  size="sm"
                   id="workflow-spec-path"
                   placeholder="Path to a Markdown spec in this project"
                   value={value.specPath}
@@ -394,13 +312,12 @@ export function WorkflowPicker({
                   onChange={event =>
                     choose({ specPath: event.target.value, specTitle: null })
                   }
-                  className="h-7 px-2 text-xs md:text-xs"
                 />
               </div>
             </div>
             <div className="space-y-1 border-t px-1 pt-2.5">
               <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="workflow-isolation" className="text-xs">
+                <Label htmlFor="workflow-isolation">
                   Isolate in a worktree
                 </Label>
                 <Switch
@@ -410,7 +327,7 @@ export function WorkflowPicker({
                   onCheckedChange={checked => choose({ isolation: checked })}
                 />
               </div>
-              <p className="text-2xs leading-4 text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 {isolationReason ||
                   'A new branch and worktree from the repository top folder. Nothing is pushed or merged.'}
               </p>
@@ -418,34 +335,22 @@ export function WorkflowPicker({
             <div className="space-y-1.5 border-t px-1 pt-2.5">
               <p className="text-xs font-medium text-muted-foreground">Gates</p>
               <div className="flex items-center gap-2">
-                <div
-                  role="radiogroup"
-                  aria-label="Gate provider"
-                  onKeyDown={moveRadio}
-                  className="grid shrink-0 grid-cols-2 gap-0.5 rounded-lg bg-segment-track p-0.5"
-                >
-                  {providers.map(provider => (
-                    <button
-                      key={provider}
-                      type="button"
-                      role="radio"
-                      aria-checked={gateProvider === provider}
-                      tabIndex={gateProvider === provider ? 0 : -1}
-                      title={provider}
-                      onClick={() =>
-                        choose({
-                          gateProvider: provider,
-                          gateModel: gateModels(statuses, provider)[0]!.id,
-                          gateEdited: true,
-                        })
-                      }
-                      className="inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-checked:bg-segment-active aria-checked:text-foreground"
-                    >
-                      <ProviderGlyph provider={provider} />
-                      {provider}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  label="Gate provider"
+                  value={gateProvider}
+                  onChange={provider =>
+                    choose({
+                      gateProvider: provider,
+                      gateModel: gateModels(statuses, provider)[0]!.id,
+                      gateEdited: true,
+                    })
+                  }
+                  options={providers.map(provider => ({
+                    value: provider,
+                    label: provider,
+                    icon: <ProviderGlyph provider={provider} />,
+                  }))}
+                />
                 <Select
                   value={gate.model}
                   onValueChange={gateModel =>
@@ -457,9 +362,8 @@ export function WorkflowPicker({
                   }
                 >
                   <SelectTrigger
-                    size="sm"
                     aria-label="Gate model"
-                    className="h-7 min-w-0 flex-1 text-xs"
+                    className="min-w-0 flex-1"
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -472,7 +376,7 @@ export function WorkflowPicker({
                   </SelectContent>
                 </Select>
               </div>
-              <p className="text-2xs leading-4 text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 Agent gates run read-only in a fresh session
                 {gateProvider !== authorProvider
                   ? ', on a different provider than the author.'
@@ -480,7 +384,7 @@ export function WorkflowPicker({
               </p>
             </div>
             {selectedWorkflow && (
-              <p className="border-t px-1 pt-2.5 text-2xs leading-4 text-muted-foreground">
+              <p className="border-t px-1 pt-2.5 text-2xs text-muted-foreground">
                 {selectedWorkflow.steps.map(step => step.name).join(' → ')}
               </p>
             )}
