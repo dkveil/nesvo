@@ -1038,7 +1038,7 @@ export function Workspace() {
         hostId: selected.hostId,
         directory: selected.directory,
         provider: selected.provider,
-        mode: selected.mode,
+        mode: 'read-only',
         model: 'default',
         effort: '',
       });
@@ -1326,7 +1326,7 @@ export function Workspace() {
         title: 'New thread',
         provider: source.provider,
         model: source.model,
-        mode: source.mode,
+        mode: 'read-only',
         directory: source.directory,
         ...(source.effort ? { effort: source.effort } : {}),
       });
