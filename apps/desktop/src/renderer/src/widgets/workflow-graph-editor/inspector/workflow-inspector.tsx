@@ -12,11 +12,9 @@ import {
   schemaNotes,
   describedBy,
   hasError,
-  inspectorInput,
-  inspectorTextarea,
   type FieldNote,
 } from './field-notes';
-import { Field, FieldNotes } from './fields';
+import { Field, FieldMessages } from '@/shared/ui/field';
 import type { WorkflowInspectorProps } from './index';
 
 const workflowFields = ['name', 'description', 'body'] as const;
@@ -66,19 +64,17 @@ export function WorkflowInspectorForm({
       className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3"
     >
       <div className="flex items-center gap-1.5">
-        <Badge appearance="outline" className="text-2xs">
-          {scopeLabels[scope]}
-        </Badge>
-        {mode === 'create' && <Badge className="text-2xs">New workflow</Badge>}
+        <Badge appearance="outline">{scopeLabels[scope]}</Badge>
+        {mode === 'create' && <Badge>New workflow</Badge>}
       </div>
       <Field
         id={fieldId('name')}
         label="Name"
-        notes={notesOf('name')}
+        messages={notesOf('name')}
         hint={mode === 'edit' ? 'The name is the file name and stays.' : null}
       >
         <Input
-          size="lg"
+          size="sm"
           id={fieldId('name')}
           value={name}
           readOnly={mode === 'edit'}
@@ -90,7 +86,6 @@ export function WorkflowInspectorForm({
           aria-describedby={describedBy(fieldId('name'), notesOf('name'))}
           onChange={event => onChange({ ...fields, name: event.target.value })}
           className={cn(
-            inspectorInput,
             'font-mono',
             mode === 'edit' && 'text-muted-foreground',
           )}
@@ -99,14 +94,14 @@ export function WorkflowInspectorForm({
       <Field
         id={fieldId('description')}
         label="Description"
-        notes={notesOf('description')}
+        messages={notesOf('description')}
         aside={counter(
           description.length,
           workflowDefinitionLimits.description,
         )}
       >
         <Textarea
-          size="lg"
+          size="sm"
           id={fieldId('description')}
           value={description}
           rows={3}
@@ -120,18 +115,18 @@ export function WorkflowInspectorForm({
           onChange={event =>
             onChange({ ...fields, description: event.target.value })
           }
-          className="min-h-16 px-2 py-1.5 text-xs leading-5 md:text-xs"
+          className="min-h-16"
         />
       </Field>
       <Field
         id={fieldId('body')}
         label="Notes"
-        notes={notesOf('body')}
+        messages={notesOf('body')}
         hint="Free text kept below the frontmatter of the workflow file."
         aside={counter(body.length, workflowDefinitionLimits.body)}
       >
         <Textarea
-          size="lg"
+          size="sm"
           id={fieldId('body')}
           value={body}
           rows={6}
@@ -139,12 +134,12 @@ export function WorkflowInspectorForm({
           aria-invalid={hasError(notesOf('body')) || undefined}
           aria-describedby={describedBy(fieldId('body'), notesOf('body'))}
           onChange={event => onChange({ ...fields, body: event.target.value })}
-          className={inspectorTextarea}
+          className="max-h-72 min-h-24 font-mono text-xs leading-5"
         />
       </Field>
       {formNotes.length > 0 && (
         <div role="alert">
-          <FieldNotes id={fieldId('form-notes')} notes={formNotes} />
+          <FieldMessages id={fieldId('form-notes')} messages={formNotes} />
         </div>
       )}
     </div>

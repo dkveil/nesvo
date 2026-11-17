@@ -28,7 +28,8 @@ import {
 } from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { PanelAction, PanelHeader } from '@/shared/ui/panel';
+import { IconButton } from '@/shared/ui/icon-button';
+import { PanelHeader } from '@/shared/ui/panel';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
 import {
   EdgeInspector,
@@ -121,15 +122,15 @@ export function InspectorPanel({
     <aside
       aria-label="Inspector"
       data-editor-inspector={selection.kind}
-      className="flex w-80 shrink-0 flex-col border-l bg-background animate-in duration-200 fade-in-0 slide-in-from-right-4 motion-reduce:animate-none"
+      className="flex w-80 shrink-0 flex-col border-l bg-background animate-in duration-slow ease-out fade-in-0 slide-in-from-right-4 motion-reduce:animate-none"
     >
       <PanelHeader icon={header.icon} title={header.title} meta={header.meta}>
-        <PanelAction
-          aria-label="Close inspector"
+        <IconButton
+          label="Close inspector"
           onClick={() => state.select({ kind: 'none' })}
         >
           <X />
-        </PanelAction>
+        </IconButton>
       </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {selection.kind === 'draft' && state.pendingDraft && (
@@ -146,7 +147,7 @@ export function InspectorPanel({
         )}
         {node && showResult && overlay && runStep && (
           <div className="space-y-3 px-3 py-3">
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-ui">
               <StepStateIcon state={runStep.state} className="size-4" />
               <span className="min-w-0 flex-1 truncate font-medium">
                 {node.id}

@@ -1,4 +1,6 @@
-export type FieldNote = { severity: 'error' | 'warning'; message: string };
+import type { FieldMessage } from '@/shared/ui/field';
+
+export type FieldNote = FieldMessage;
 
 export type IssueLike = {
   severity: 'error' | 'warning';
@@ -56,14 +58,10 @@ export const mergeNotes = (
   return merged;
 };
 
-export const notesId = (id: string) => `${id}-notes`;
+export const notesId = (id: string) => `${id}-messages`;
 
 export const describedBy = (id: string, notes: FieldNote[]) =>
   notes.length ? notesId(id) : undefined;
 
 export const hasError = (notes: FieldNote[]) =>
   notes.some(note => note.severity === 'error');
-
-export const inspectorInput = 'h-7 px-2 text-xs md:text-xs';
-export const inspectorTextarea =
-  'max-h-72 min-h-24 px-2 py-1.5 font-mono text-xs leading-5 md:text-xs';

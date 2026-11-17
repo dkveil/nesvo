@@ -5,11 +5,12 @@ import {
   scheduledJobLimits,
   type TaskSpecSummary,
 } from '@nesvo/contracts';
-import { cn } from '@/shared/lib/cn';
 import { errorDetail, type ProviderStates } from '@/entities/session';
+import { RepeatField } from '@/features/edit-automation';
 import { ModelPicker } from '@/features/new-thread/model-picker';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
+import { StatusMessage } from '@/shared/ui/status-message';
 import {
   Select,
   SelectContent,
@@ -22,19 +23,12 @@ import {
   automationNotes,
   initialScheduleValues,
   listTimeZones,
-  scheduleKindLabels,
-  scheduleKinds,
   weekdayLabels,
   weekdayOrder,
   type ScheduleValues,
 } from './automation-form';
-import { Field, FieldNotes, Segmented } from './fields';
-import {
-  describedBy,
-  hasError,
-  inspectorInput,
-  type FieldNote,
-} from './field-notes';
+import { Field, FieldMessages } from '@/shared/ui/field';
+import { describedBy, hasError, type FieldNote } from './field-notes';
 import type { AutomationInput } from './index';
 
 type Props = {
@@ -113,16 +107,16 @@ export function ScheduleForm({
   return (
     <form
       aria-label="Add schedule"
-      className="space-y-3 rounded-lg border bg-card p-2.5"
+      className="space-y-3 rounded-surface border bg-card p-2.5"
       onSubmit={event => {
         event.preventDefault();
         void submit();
       }}
     >
       <fieldset disabled={locked} className="space-y-3">
-        <Field id={fieldId('name')} label="Name" notes={notesOf('name')}>
+        <Field id={fieldId('name')} label="Name" messages={notesOf('name')}>
           <Input
-            size="lg"
+            size="sm"
             id={fieldId('name')}
             value={values.name}
             maxLength={scheduledJobLimits.name}
@@ -130,13 +124,12 @@ export function ScheduleForm({
             aria-invalid={hasError(notesOf('name')) || undefined}
             aria-describedby={describedBy(fieldId('name'), notesOf('name'))}
             onChange={event => change({ name: event.target.value })}
-            className={inspectorInput}
           />
         </Field>
         <Field
           id={fieldId('specPath')}
           label="Task spec"
-          notes={notesOf('specPath')}
+          messages={notesOf('specPath')}
         >
           {ownSpecs.length > 0 && (
             <Select
@@ -159,29 +152,23 @@ export function ScheduleForm({
                     ? undefined
                     : describedBy(fieldId('specPath'), notesOf('specPath'))
                 }
-                className="h-7 w-full text-xs"
+                className="w-full"
               >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent position="popper">
                 {ownSpecs.map(spec => (
-                  <SelectItem
-                    key={spec.source.path}
-                    value={spec.source.path}
-                    className="text-xs"
-                  >
+                  <SelectItem key={spec.source.path} value={spec.source.path}>
                     {spec.title ?? spec.source.path.split(/[\\/]/).at(-1)}
                   </SelectItem>
                 ))}
-                <SelectItem value={OTHER_SPEC} className="text-xs">
-                  Another path
-                </SelectItem>
+                <SelectItem value={OTHER_SPEC}>Another path</SelectItem>
               </SelectContent>
             </Select>
           )}
           {customSpec && (
             <Input
-              size="lg"
+              size="sm"
               id={fieldId('specPath')}
               value={values.specPath}
               placeholder="Absolute path to a task spec file"
@@ -194,31 +181,25 @@ export function ScheduleForm({
                 notesOf('specPath'),
               )}
               onChange={event => change({ specPath: event.target.value })}
-              className={cn(inspectorInput, 'font-mono')}
+              className="font-mono"
             />
           )}
         </Field>
-        <Field id={fieldId('repeat')} label="Repeat" as="span">
-          <Segmented
-            label="Repeat"
-            value={values.kind}
-            disabled={locked}
-            options={scheduleKinds.map(kind => ({
-              value: kind,
-              label: scheduleKindLabels[kind],
-            }))}
-            onChange={kind => change({ kind })}
-          />
-        </Field>
+        <RepeatField
+          id={fieldId('repeat')}
+          value={values.kind}
+          disabled={locked}
+          onChange={kind => change({ kind })}
+        />
         <div className="flex flex-wrap items-start gap-2">
           {values.kind === 'interval' ? (
             <Field
               id={fieldId('minutes')}
               label="Every N minutes"
-              notes={notesOf('minutes')}
+              messages={notesOf('minutes')}
             >
               <Input
-                size="lg"
+                size="sm"
                 id={fieldId('minutes')}
                 inputMode="numeric"
                 value={values.minutes}
@@ -229,7 +210,7 @@ export function ScheduleForm({
                   notesOf('minutes'),
                 )}
                 onChange={event => change({ minutes: event.target.value })}
-                className={cn(inspectorInput, 'w-24 tabular-nums')}
+                className="w-24 tabular-nums"
               />
             </Field>
           ) : (
@@ -243,17 +224,13 @@ export function ScheduleForm({
                     <SelectTrigger
                       id={fieldId('weekday')}
                       size="sm"
-                      className="h-7 w-32 text-xs"
+                      className="w-32"
                     >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent position="popper">
                       {weekdayOrder.map(day => (
-                        <SelectItem
-                          key={day}
-                          value={String(day)}
-                          className="text-xs"
-                        >
+                        <SelectItem key={day} value={String(day)}>
                           {weekdayLabels[day]}
                         </SelectItem>
                       ))}
@@ -261,9 +238,13 @@ export function ScheduleForm({
                   </Select>
                 </Field>
               )}
-              <Field id={fieldId('time')} label="Time" notes={notesOf('time')}>
+              <Field
+                id={fieldId('time')}
+                label="Time"
+                messages={notesOf('time')}
+              >
                 <Input
-                  size="lg"
+                  size="sm"
                   id={fieldId('time')}
                   type="time"
                   value={values.time}
@@ -273,7 +254,7 @@ export function ScheduleForm({
                     notesOf('time'),
                   )}
                   onChange={event => change({ time: event.target.value })}
-                  className={cn(inspectorInput, 'w-28 tabular-nums')}
+                  className="w-28 tabular-nums"
                 />
               </Field>
             </>
@@ -282,7 +263,7 @@ export function ScheduleForm({
         <Field
           id={fieldId('timeZone')}
           label="Time zone"
-          notes={notesOf('timeZone')}
+          messages={notesOf('timeZone')}
         >
           <Select
             value={values.timeZone}
@@ -296,13 +277,13 @@ export function ScheduleForm({
                 fieldId('timeZone'),
                 notesOf('timeZone'),
               )}
-              className="h-7 w-full text-xs"
+              className="w-full"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent position="popper" className="max-h-72">
               {zones.map(zone => (
-                <SelectItem key={zone} value={zone} className="text-xs">
+                <SelectItem key={zone} value={zone}>
                   {zone}
                 </SelectItem>
               ))}
@@ -313,13 +294,13 @@ export function ScheduleForm({
           id={fieldId('model')}
           label="Provider and model"
           as="span"
-          notes={notesOf('model')}
+          messages={notesOf('model')}
         >
           <div
             role="group"
             aria-labelledby={`${fieldId('model')}-label`}
             aria-describedby={describedBy(fieldId('model'), notesOf('model'))}
-            className="flex h-8 items-center rounded-md border border-input px-0.5 dark:bg-input/30"
+            className="flex h-7 items-center rounded-control border border-input px-0.5 shadow-xs dark:bg-input/30"
           >
             <ModelPicker
               provider={values.provider}
@@ -337,10 +318,10 @@ export function ScheduleForm({
         <Field
           id={fieldId('timeoutMinutes')}
           label="Timeout in minutes"
-          notes={notesOf('timeoutMinutes')}
+          messages={notesOf('timeoutMinutes')}
         >
           <Input
-            size="lg"
+            size="sm"
             id={fieldId('timeoutMinutes')}
             inputMode="numeric"
             value={values.timeoutMinutes}
@@ -351,7 +332,7 @@ export function ScheduleForm({
               notesOf('timeoutMinutes'),
             )}
             onChange={event => change({ timeoutMinutes: event.target.value })}
-            className={cn(inspectorInput, 'w-24 tabular-nums')}
+            className="w-24 tabular-nums"
           />
         </Field>
       </fieldset>
@@ -361,17 +342,10 @@ export function ScheduleForm({
       </p>
       {formNotes.length > 0 && (
         <div role="alert">
-          <FieldNotes id={fieldId('form-notes')} notes={formNotes} />
+          <FieldMessages id={fieldId('form-notes')} messages={formNotes} />
         </div>
       )}
-      {failure && (
-        <p
-          role="alert"
-          className="text-2xs leading-4 text-error-foreground [overflow-wrap:anywhere]"
-        >
-          {failure}
-        </p>
-      )}
+      {failure && <StatusMessage tone="error">{failure}</StatusMessage>}
       <div className="flex justify-end gap-1.5">
         <Button
           type="button"

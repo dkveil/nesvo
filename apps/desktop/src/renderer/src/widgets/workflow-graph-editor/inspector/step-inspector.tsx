@@ -24,12 +24,13 @@ import {
   mergeNotes,
   describedBy,
   hasError,
-  inspectorInput,
-  inspectorTextarea,
   notesId,
   type FieldNote,
 } from './field-notes';
-import { Field, FieldNotes, Segmented } from './fields';
+import { Field, FieldMessages } from '@/shared/ui/field';
+import { Toolbar, ToolbarSpacer } from '@/shared/ui/panel';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { Hint } from '@/shared/ui/tooltip';
 import type { StepInspectorProps } from './index';
 import { NeedsField } from './needs-field';
 import { SkillField } from './skill-field';
@@ -70,7 +71,7 @@ function PhaseWarning({
   return (
     <div
       role="alert"
-      className="space-y-2 rounded-md border border-warning-foreground/40 px-2.5 py-2 text-2xs leading-4"
+      className="space-y-2 rounded-control border border-warning-foreground/40 px-2.5 py-2 text-2xs leading-4"
     >
       <p className="text-warning-foreground">{usageText(usedBy.length)}.</p>
       <p className="text-muted-foreground [overflow-wrap:anywhere]">
@@ -139,24 +140,21 @@ export function StepInspectorForm({
     >
       <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3">
         <div className="flex items-center gap-1.5">
-          <Badge appearance="outline" className="text-2xs">
-            {scopeLabels[step.scope]}
-          </Badge>
-          {mode === 'create' && <Badge className="text-2xs">New step</Badge>}
+          <Badge appearance="outline">{scopeLabels[step.scope]}</Badge>
+          {mode === 'create' && <Badge>New step</Badge>}
           {shared && (
-            <span
-              className="min-w-0 truncate text-2xs text-muted-foreground"
-              title={usedBy.join(', ')}
-            >
-              Also in {usedBy.length}{' '}
-              {usedBy.length === 1 ? 'workflow' : 'workflows'}
-            </span>
+            <Hint label={usedBy.join(', ')}>
+              <span className="min-w-0 truncate text-2xs text-muted-foreground">
+                Also in {usedBy.length}{' '}
+                {usedBy.length === 1 ? 'workflow' : 'workflows'}
+              </span>
+            </Hint>
           )}
         </div>
         <Field
           id={fieldId('name')}
           label="Name"
-          notes={notesOf('name')}
+          messages={notesOf('name')}
           hint={
             mode === 'edit' && !renamable
               ? 'The name is the file name and stays.'
@@ -164,7 +162,7 @@ export function StepInspectorForm({
           }
         >
           <Input
-            size="lg"
+            size="sm"
             id={fieldId('name')}
             value={step.name}
             readOnly={mode === 'edit' && !renamable}
@@ -176,7 +174,6 @@ export function StepInspectorForm({
             aria-describedby={describedBy(fieldId('name'), notesOf('name'))}
             onChange={event => update({ name: event.target.value })}
             className={cn(
-              inspectorInput,
               'font-mono',
               mode === 'edit' && !renamable && 'text-muted-foreground',
             )}
@@ -186,9 +183,10 @@ export function StepInspectorForm({
           id={fieldId('type')}
           label="Type"
           as="span"
-          notes={notesOf('type')}
+          messages={notesOf('type')}
         >
-          <Segmented
+          <SegmentedControl
+            fullWidth
             label="Type"
             value={step.type}
             options={stepTypeSchema.options.map(type => ({
@@ -200,7 +198,7 @@ export function StepInspectorForm({
             onChange={type => onChange(withType(step, type))}
           />
         </Field>
-        <Field id={fieldId('phase')} label="Phase" notes={notesOf('phase')}>
+        <Field id={fieldId('phase')} label="Phase" messages={notesOf('phase')}>
           <Select
             value={pendingPhase ?? step.phase}
             onValueChange={value => choosePhase(value as StepPhase)}
@@ -213,13 +211,13 @@ export function StepInspectorForm({
                 describedBy(fieldId('phase'), notesOf('phase')) ??
                 (phaseMoved ? `${fieldId('phase')}-moved` : undefined)
               }
-              className="h-7 w-full text-xs"
+              className="w-full"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent position="popper">
               {phaseOrder.map(phase => (
-                <SelectItem key={phase} value={phase} className="text-xs">
+                <SelectItem key={phase} value={phase}>
                   {phaseLabels[phase]}
                 </SelectItem>
               ))}
@@ -248,7 +246,11 @@ export function StepInspectorForm({
           )}
         </Field>
         {step.type === 'agent' && (
-          <Field id={fieldId('skill')} label="Skill" notes={notesOf('skill')}>
+          <Field
+            id={fieldId('skill')}
+            label="Skill"
+            messages={notesOf('skill')}
+          >
             <SkillField
               id={fieldId('skill')}
               value={step.skill}
@@ -261,7 +263,7 @@ export function StepInspectorForm({
         <Field
           id={fieldId('body')}
           label={bodyLabels[step.type]}
-          notes={notesOf('body')}
+          messages={notesOf('body')}
           aside={
             <span className="text-2xs text-muted-foreground tabular-nums">
               {step.body.length.toLocaleString()}/
@@ -270,7 +272,7 @@ export function StepInspectorForm({
           }
         >
           <Textarea
-            size="lg"
+            size="sm"
             id={fieldId('body')}
             value={step.body}
             rows={6}
@@ -280,20 +282,20 @@ export function StepInspectorForm({
             aria-invalid={hasError(notesOf('body')) || undefined}
             aria-describedby={describedBy(fieldId('body'), notesOf('body'))}
             onChange={event => update({ body: event.target.value })}
-            className={inspectorTextarea}
+            className="max-h-72 min-h-24 font-mono text-xs leading-5"
           />
         </Field>
         <div className="grid grid-cols-2 gap-2">
-          <div className="col-span-2 space-y-1" data-field={fieldId('timeout')}>
-            <Label
-              htmlFor={fieldId('timeout')}
-              className="text-2xs text-muted-foreground"
-            >
-              Timeout
-            </Label>
+          <Field
+            id={fieldId('timeout')}
+            label="Timeout"
+            hint="Between 1 second and 4 hours."
+            messages={notesOf('timeout')}
+            className="col-span-2"
+          >
             <div className="flex gap-1.5">
               <Input
-                size="lg"
+                size="sm"
                 id={fieldId('timeout')}
                 inputMode="numeric"
                 autoComplete="off"
@@ -310,7 +312,7 @@ export function StepInspectorForm({
                     timeout: joinDuration(event.target.value, duration.unit),
                   })
                 }
-                className={cn(inspectorInput, 'w-24 tabular-nums')}
+                className="w-24 tabular-nums"
               />
               <Select
                 value={duration.unit}
@@ -326,34 +328,24 @@ export function StepInspectorForm({
                 <SelectTrigger
                   aria-label="Timeout unit"
                   size="sm"
-                  className="h-7 flex-1 text-xs"
+                  className="flex-1"
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper">
                   {units.map(unit => (
-                    <SelectItem key={unit} value={unit} className="text-xs">
+                    <SelectItem key={unit} value={unit}>
                       {durationUnitLabels[unit]}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <p
-              id={`${fieldId('timeout')}-hint`}
-              className="text-2xs leading-4 text-muted-foreground"
-            >
-              Between 1 second and 4 hours.
-            </p>
-            <FieldNotes
-              id={notesId(fieldId('timeout'))}
-              notes={notesOf('timeout')}
-            />
-          </div>
+          </Field>
           <Field
             id={fieldId('retries')}
             label="Retries"
-            notes={notesOf('retries')}
+            messages={notesOf('retries')}
           >
             <Select
               value={String(step.retries)}
@@ -369,7 +361,7 @@ export function StepInspectorForm({
                   fieldId('retries'),
                   notesOf('retries'),
                 )}
-                className="h-7 w-full text-xs tabular-nums"
+                className="w-full tabular-nums"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -378,7 +370,7 @@ export function StepInspectorForm({
                   <SelectItem
                     key={count}
                     value={String(count)}
-                    className="text-xs tabular-nums"
+                    className="tabular-nums"
                   >
                     {String(count)}
                   </SelectItem>
@@ -390,9 +382,10 @@ export function StepInspectorForm({
             id={fieldId('on_fail')}
             label="On failure"
             as="span"
-            notes={notesOf('on_fail')}
+            messages={notesOf('on_fail')}
           >
-            <Segmented
+            <SegmentedControl
+              fullWidth
               label="On failure"
               value={step.on_fail}
               disabled={human}
@@ -427,7 +420,7 @@ export function StepInspectorForm({
         />
         <div className="space-y-1" data-field={fieldId('effect')}>
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor={fieldId('effect')} className="text-xs font-normal">
+            <Label htmlFor={fieldId('effect')} className="text-ui font-normal">
               External effect
             </Label>
             <Switch
@@ -449,18 +442,22 @@ export function StepInspectorForm({
               ? 'Reaches beyond this computer, such as a deploy or a message. Put a human step before it.'
               : 'Only command and action steps declare an external effect.'}
           </p>
-          <FieldNotes
+          <FieldMessages
             id={notesId(fieldId('effect'))}
-            notes={notesOf('effect')}
+            messages={notesOf('effect')}
           />
         </div>
         {formNotes.length > 0 && (
           <div role="alert">
-            <FieldNotes id={fieldId('form-notes')} notes={formNotes} />
+            <FieldMessages id={fieldId('form-notes')} messages={formNotes} />
           </div>
         )}
       </div>
-      <div className="flex h-11 shrink-0 items-center gap-1.5 border-t px-3">
+      <Toolbar
+        label="Step actions"
+        bordered={false}
+        className="h-10 border-t px-3"
+      >
         {onDelete && (
           <Button
             type="button"
@@ -472,7 +469,7 @@ export function StepInspectorForm({
             {mode === 'create' ? 'Discard step' : 'Remove from workflow'}
           </Button>
         )}
-        <span className="min-w-0 flex-1" />
+        <ToolbarSpacer />
         <Button
           type="submit"
           size="xs"
@@ -487,7 +484,7 @@ export function StepInspectorForm({
         >
           {mode === 'create' ? 'Create step' : 'Save step'}
         </Button>
-      </div>
+      </Toolbar>
     </form>
   );
 }

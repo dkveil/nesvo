@@ -1,18 +1,14 @@
 import { useState } from 'react';
 import { workflowDefinitionLimits, stepNeedSchema } from '@nesvo/contracts';
 import { X } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
+import { Chip } from '@/shared/ui/chip';
+import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Switch } from '@/shared/ui/switch';
-import {
-  describedBy,
-  inspectorInput,
-  notesId,
-  type FieldNote,
-} from './field-notes';
-import { FieldNotes } from './fields';
+import { describedBy, notesId, type FieldNote } from './field-notes';
+import { FieldMessages } from '@/shared/ui/field';
 
 type Props = {
   id: string;
@@ -64,7 +60,7 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
         Needs
       </legend>
       <div className="flex items-center justify-between gap-2 pt-1">
-        <Label htmlFor={`${id}-browser`} className="text-xs font-normal">
+        <Label htmlFor={`${id}-browser`} className="text-ui font-normal">
           Browser
         </Label>
         <Switch
@@ -83,23 +79,23 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
       {variables.length > 0 && (
         <ul aria-label="Environment variables" className="flex flex-wrap gap-1">
           {variables.map(item => (
-            <li
-              key={item}
-              className="inline-flex h-6 items-center gap-1 rounded-md border bg-card pr-0.5 pl-2 font-mono text-2xs"
-            >
-              {item}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Remove ${item}`}
-                onClick={() =>
-                  onChange(needs.filter(existing => existing !== item))
-                }
-                className="size-5"
+            <li key={item}>
+              <Chip
+                size="sm"
+                interactive={false}
+                className="border bg-card pr-0.5 font-mono text-foreground"
               >
-                <X />
-              </Button>
+                <span>{item}</span>
+                <IconButton
+                  size={20}
+                  label={`Remove ${item}`}
+                  onClick={() =>
+                    onChange(needs.filter(existing => existing !== item))
+                  }
+                >
+                  <X />
+                </IconButton>
+              </Chip>
             </li>
           ))}
         </ul>
@@ -108,16 +104,15 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
         <Label htmlFor={inputId} className="sr-only">
           Environment variable
         </Label>
-        <div className="flex min-w-0 flex-1 items-center rounded-md border border-input focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 has-aria-invalid:border-destructive dark:bg-input/30">
+        <div className="focus-ring-within flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-control border border-input shadow-xs has-aria-invalid:border-error-foreground dark:bg-input/30">
           <span
             aria-hidden="true"
-            className="pl-2 font-mono text-xs text-muted-foreground"
+            className="pl-2 font-mono text-ui text-muted-foreground"
           >
             {ENV_PREFIX}
           </span>
           <Input
             variant="ghost"
-            size="lg"
             id={inputId}
             value={name}
             placeholder="NAME"
@@ -135,25 +130,20 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
               event.preventDefault();
               add();
             }}
-            className={cn(
-              inspectorInput,
-              'border-0 bg-transparent pl-0.5 font-mono shadow-none focus-visible:ring-0 dark:bg-transparent',
-            )}
+            className="pr-2 font-mono"
           />
         </div>
         <Button
           type="button"
           variant="outline"
-          size="xs"
           disabled={!canAdd}
           onClick={add}
-          className="h-7"
         >
           Add
         </Button>
       </div>
-      <FieldNotes id={notesId(inputId)} notes={pending} />
-      <FieldNotes id={notesId(id)} notes={notes} />
+      <FieldMessages id={notesId(inputId)} messages={pending} />
+      <FieldMessages id={notesId(id)} messages={notes} />
     </fieldset>
   );
 }

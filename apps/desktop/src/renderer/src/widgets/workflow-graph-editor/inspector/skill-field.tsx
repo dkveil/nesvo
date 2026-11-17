@@ -2,12 +2,8 @@ import { useId, useState, type KeyboardEvent } from 'react';
 import { workflowDefinitionLimits } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import { Input } from '@/shared/ui/input';
-import {
-  describedBy,
-  hasError,
-  inspectorInput,
-  type FieldNote,
-} from './field-notes';
+import { menuItem, menuSurface } from '@/shared/ui/menu-styles';
+import { describedBy, hasError, type FieldNote } from './field-notes';
 import type { SkillSummary } from './index';
 
 type Props = {
@@ -64,7 +60,7 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
   return (
     <div className="relative">
       <Input
-        size="lg"
+        size="sm"
         id={id}
         role="combobox"
         aria-autocomplete="list"
@@ -94,14 +90,17 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
         }}
         onBlur={() => setOpen(false)}
         onKeyDown={onKeyDown}
-        className={cn(inspectorInput, 'font-mono')}
+        className="font-mono"
       />
       {options.length > 0 && (
         <ul
           id={listId}
           role="listbox"
           aria-label="Skills"
-          className="glass-popover absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border p-1 text-popover-foreground"
+          className={cn(
+            menuSurface,
+            'absolute inset-x-0 top-full mt-1 max-h-56',
+          )}
         >
           {options.map((skill, index) => (
             <li
@@ -109,17 +108,18 @@ export function SkillField({ id, value, skills, notes, onChange }: Props) {
               id={optionId(index)}
               role="option"
               aria-selected={skill.name === value}
-              data-active={skill === current || undefined}
+              data-highlighted={skill === current ? '' : undefined}
               onMouseDown={event => event.preventDefault()}
               onMouseEnter={() => setActive(index)}
               onClick={() => choose(skill.name)}
-              className="cursor-pointer space-y-0.5 rounded-sm px-2 py-1 data-active:bg-highlight"
+              className={cn(
+                menuItem,
+                'h-auto min-h-7 cursor-pointer flex-col items-start gap-0 py-1',
+              )}
             >
-              <span className="block truncate font-mono text-xs">
-                {skill.name}
-              </span>
+              <span className="w-full truncate font-mono">{skill.name}</span>
               {skill.description && (
-                <span className="block truncate text-2xs text-muted-foreground">
+                <span className="w-full truncate text-2xs text-muted-foreground">
                   {skill.description}
                 </span>
               )}
