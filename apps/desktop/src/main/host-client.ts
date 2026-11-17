@@ -15,6 +15,8 @@ import {
   type DecideReviewInput,
   type DesktopEvent,
   type AssignSessionWorkflowInput,
+  type CreateSessionGroupInput,
+  type MoveSessionInput,
   type SendMessageInput,
   type QueuedMessageRefInput,
   type RespondApprovalInput,
@@ -263,6 +265,24 @@ export function startHost(directory: string) {
     },
     assignSessionWorkflow: async (input: AssignSessionWorkflowInput) => {
       const response = await request('assign-session-workflow', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    listSessionGroups: async () => {
+      const response = await request('list-session-groups');
+      if (response.type !== 'session-groups')
+        throw new Error('Unexpected host response');
+      return response.list;
+    },
+    createSessionGroup: async (input: CreateSessionGroupInput) => {
+      const response = await request('create-session-group', input);
+      if (response.type !== 'session-groups')
+        throw new Error('Unexpected host response');
+      return response.list;
+    },
+    moveSession: async (input: MoveSessionInput) => {
+      const response = await request('move-session', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

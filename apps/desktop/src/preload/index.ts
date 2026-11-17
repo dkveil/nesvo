@@ -11,6 +11,15 @@ import {
   decideReviewSchema,
   hostHealthSchema,
   assignSessionWorkflowSchema,
+  createSessionGroupSchema,
+  deleteSessionGroupSchema,
+  moveSessionGroupSchema,
+  moveSessionSchema,
+  renameSessionSchema,
+  sessionGroupListSchema,
+  setSessionArchivedSchema,
+  setSessionPinnedSchema,
+  updateSessionGroupSchema,
   sendMessageSchema,
   queuedMessageRefSchema,
   stopRunSchema,
@@ -438,6 +447,74 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:assign-session-workflow',
         assignSessionWorkflowSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listSessionGroups: async hostId =>
+    sessionGroupListSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-session-groups', route(hostId)),
+    ),
+  createSessionGroup: async (input, hostId) =>
+    sessionGroupListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:create-session-group',
+        createSessionGroupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  updateSessionGroup: async (input, hostId) =>
+    sessionGroupListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:update-session-group',
+        updateSessionGroupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  moveSessionGroup: async (input, hostId) =>
+    sessionGroupListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:move-session-group',
+        moveSessionGroupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteSessionGroup: async (input, hostId) =>
+    sessionGroupListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-session-group',
+        deleteSessionGroupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  moveSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:move-session',
+        moveSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  renameSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:rename-session',
+        renameSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setSessionPinned: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-session-pinned',
+        setSessionPinnedSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setSessionArchived: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-session-archived',
+        setSessionArchivedSchema.parse(input),
         route(hostId),
       ),
     ),

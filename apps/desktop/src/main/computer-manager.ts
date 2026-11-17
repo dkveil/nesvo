@@ -81,6 +81,18 @@ const pullRequestResponses = {
   'find-session-pull-request': 'pull-request-reference',
 } as const;
 
+const sessionGroupResponses = {
+  'list-session-groups': 'session-groups',
+  'create-session-group': 'session-groups',
+  'update-session-group': 'session-groups',
+  'move-session-group': 'session-groups',
+  'delete-session-group': 'session-groups',
+  'move-session': 'session',
+  'rename-session': 'session',
+  'set-session-pinned': 'session',
+  'set-session-archived': 'session',
+} as const;
+
 const capabilityUpdates: Record<HostCapability, string> = {
   'scheduled-jobs':
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
@@ -98,6 +110,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
   'history-search':
     'Update this computer’s Nesvo host and reconnect to search its history.',
+  'session-groups':
+    'This computer runs an older Nesvo host without session groups. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -107,6 +121,15 @@ function requiredCapability(
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'search-history') return 'history-search';
+  if (Object.hasOwn(sessionGroupResponses, method)) return 'session-groups';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'groupId' in input &&
+    input.groupId
+  )
+    return 'session-groups';
   if (method === 'assign-session-workflow') return 'session-workflow';
   if (
     method === 'list-workflow-definitions' ||
@@ -614,6 +637,7 @@ export class ComputerManager {
       'read-workspace-file': 'workspace-file',
       'read-git-branch': 'git-branch',
       'search-history': 'history-search',
+      ...sessionGroupResponses,
       ...pullRequestResponses,
     }[method];
     if (response.type !== expected)
@@ -650,6 +674,8 @@ export class ComputerManager {
         return response.branch;
       case 'history-search':
         return response.search;
+      case 'session-groups':
+        return response.list;
       case 'session':
         this.apply(entry, {
           type: 'session-changed',
@@ -849,6 +875,10 @@ export class ComputerManager {
           type: 'workflow-step-changed',
           step: { ...event.step, hostId },
         });
+      return;
+    }
+    if (event.type === 'session-groups-changed') {
+      if (publish) this.publish({ ...event, hostId });
       return;
     }
     if (

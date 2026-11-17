@@ -22,6 +22,14 @@ import {
   decideReviewSchema,
   respondApprovalSchema,
   assignSessionWorkflowSchema,
+  createSessionGroupSchema,
+  deleteSessionGroupSchema,
+  moveSessionGroupSchema,
+  moveSessionSchema,
+  renameSessionSchema,
+  setSessionArchivedSchema,
+  setSessionPinnedSchema,
+  updateSessionGroupSchema,
   sendMessageSchema,
   queuedMessageRefSchema,
   stopRunSchema,
@@ -624,6 +632,37 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  ipcMain.handle(
+    'nesvo:list-session-groups',
+    async (event, hostId: unknown) => {
+      authorize(event);
+      return computers.execute('list-session-groups', undefined, route(hostId));
+    },
+  );
+  const sessionGroupInputs = {
+    'create-session-group': createSessionGroupSchema,
+    'update-session-group': updateSessionGroupSchema,
+    'move-session-group': moveSessionGroupSchema,
+    'delete-session-group': deleteSessionGroupSchema,
+    'move-session': moveSessionSchema,
+    'rename-session': renameSessionSchema,
+    'set-session-pinned': setSessionPinnedSchema,
+    'set-session-archived': setSessionArchivedSchema,
+  } as const;
+  for (const method of Object.keys(
+    sessionGroupInputs,
+  ) as (keyof typeof sessionGroupInputs)[])
+    ipcMain.handle(
+      `nesvo:${method}`,
+      async (event, input: unknown, hostId: unknown) => {
+        authorize(event);
+        return computers.execute(
+          method,
+          sessionGroupInputs[method].parse(input),
+          route(hostId),
+        );
+      },
+    );
   ipcMain.handle(
     'nesvo:queue-message',
     async (event, input: unknown, hostId: unknown) => {
