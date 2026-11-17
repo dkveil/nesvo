@@ -300,7 +300,7 @@ export function SessionSidebar({
             child
               ? 'h-6 justify-center pr-2 pl-7'
               : 'gap-px py-1 pl-(--sidebar-row-inset)',
-            !child && (childCount > 0 ? 'pr-9' : 'pr-2'),
+            !child && 'pr-2',
             selected &&
               'bg-sidebar-row-selected shadow-(--sidebar-row-selected-shadow) hover:bg-sidebar-row-selected',
           )}
@@ -381,10 +381,9 @@ export function SessionSidebar({
             aria-expanded={expanded}
             aria-label={`${expanded ? 'Hide' : 'Show'} ${childCount} subsessions of ${session.title}`}
             title={`${childCount} ${childCount === 1 ? 'subsession' : 'subsessions'}`}
-            className="absolute top-1 right-1 flex h-4 items-center gap-0.5 rounded-sm px-1 text-2xs leading-none text-sidebar-muted-foreground tabular-nums transition-colors duration-100 outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="absolute top-[1.125rem] left-1 flex size-5 items-center justify-center rounded-sm text-sidebar-icon transition-colors duration-100 outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
             onClick={onToggle}
           >
-            {childCount}
             <ChevronDown
               aria-hidden="true"
               className={cn(
