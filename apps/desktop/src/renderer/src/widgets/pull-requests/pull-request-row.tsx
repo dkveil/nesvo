@@ -50,16 +50,21 @@ export function PullRequestRow({
           </>
         }
         trailing={
-          <>
-            <ChecksIcon checks={pullRequest.checks} className="size-3.5" />
-            <span className="flex flex-col items-end gap-0.5">
-              <DiffStat
-                additions={pullRequest.additions}
-                deletions={pullRequest.deletions}
-              />
-              <RelativeTime at={pullRequest.updatedAt} now={now} />
+          <span className="flex items-center gap-3">
+            <span className="flex size-3.5 items-center justify-center">
+              <ChecksIcon checks={pullRequest.checks} className="size-3.5" />
             </span>
-          </>
+            <DiffStat
+              additions={pullRequest.additions}
+              deletions={pullRequest.deletions}
+              className="min-w-20 justify-end"
+            />
+            <RelativeTime
+              at={pullRequest.updatedAt}
+              now={now}
+              className="w-8 text-right tabular-nums"
+            />
+          </span>
         }
       />
     </li>
