@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   mkdir,
@@ -76,9 +77,38 @@ const alive = pid => {
     return false;
   }
 };
+const commandLineOf = pid => {
+  if (process.platform === 'win32') {
+    const probe = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+      ],
+      { encoding: 'utf8', timeout: 15000 },
+    );
+    return probe.status === 0 ? (probe.stdout ?? '') : null;
+  }
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+  } catch {
+    return null;
+  }
+};
+const fixtureRoot = resolve('apps/host/tests');
+const stillOwned = pid => {
+  const commandLine = commandLineOf(pid);
+  if (commandLine === null) return true;
+  return commandLine.includes(directory) || commandLine.includes(fixtureRoot);
+};
 const waitDead = async pid => {
   for (let attempt = 0; attempt < 60 && alive(pid); attempt++) await delay(100);
-  assert.equal(alive(pid), false, `Owned process ${pid} must exit`);
+  assert.equal(
+    alive(pid) && stillOwned(pid),
+    false,
+    `Owned process ${pid} must exit`,
+  );
   providerPids.delete(pid);
 };
 try {
