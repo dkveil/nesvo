@@ -37,17 +37,25 @@ function readGitHeadInChild(): void {
       if (descriptor !== null) fs.closeSync(descriptor);
     }
   };
-  const findGitDirectory = (start: string): string | null => {
+  const findGitDirectory = (
+    start: string,
+  ): { directory: string; worktree: string | null } | null => {
     let current = path.resolve(start);
     for (let level = 0; level < 256; level++) {
       const marker = path.join(current, '.git');
       const info = fs.statSync(marker, { throwIfNoEntry: false });
-      if (info?.isDirectory()) return marker;
+      if (info?.isDirectory()) return { directory: marker, worktree: null };
       if (info?.isFile()) {
         const pointer = /^gitdir:[ \t]*(\S.*?)[ \t]*$/m.exec(
           readSmallFile(marker) ?? '',
         )?.[1];
-        return pointer ? path.resolve(current, pointer) : null;
+        if (!pointer) return null;
+        const directory = path.resolve(current, pointer);
+        const linked =
+          path.basename(path.dirname(directory)) === 'worktrees'
+            ? path.basename(directory)
+            : '';
+        return { directory, worktree: linked || null };
       }
       const parent = path.dirname(current);
       if (parent === current) return null;
@@ -57,21 +65,24 @@ function readGitHeadInChild(): void {
   };
   const folder = process.argv[1] ?? '';
   let head: string | null = null;
+  let worktree: string | null = null;
   try {
-    const gitDirectory = findGitDirectory(folder);
-    head = gitDirectory ? readSmallFile(path.join(gitDirectory, 'HEAD')) : null;
+    const found = findGitDirectory(folder);
+    head = found ? readSmallFile(path.join(found.directory, 'HEAD')) : null;
+    worktree = found?.worktree ?? null;
   } catch {
     head = null;
+    worktree = null;
   }
-  process.stdout.write(JSON.stringify({ head }));
+  process.stdout.write(JSON.stringify({ head, worktree }));
 }
 
-function parseGitHead(content: string): GitBranch {
+function parseGitHead(content: string, worktree: string | null): GitBranch {
   const head = content.trim();
   const name = /^ref:[ \t]*refs\/heads\/([^\s\p{Cc}\p{Cf}]+)$/u.exec(head)?.[1];
-  if (name && name.length <= 255) return { kind: 'branch', name };
+  if (name && name.length <= 255) return { kind: 'branch', name, worktree };
   if (/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(head))
-    return { kind: 'detached', sha: head.slice(0, 7) };
+    return { kind: 'detached', sha: head.slice(0, 7), worktree };
   return noBranch;
 }
 
@@ -143,22 +154,36 @@ export function readGitBranch(
       finish(new GitBranchError('The Git branch could not be read.')),
     );
     child.once('close', code => {
-      const report = code === 0 ? parsedHead(output) : undefined;
+      const report = code === 0 ? parsedReport(output) : undefined;
       if (report === undefined)
         finish(new GitBranchError('The Git branch could not be read.'));
-      else finish(report === null ? noBranch : parseGitHead(report));
+      else
+        finish(
+          report.head === null
+            ? noBranch
+            : parseGitHead(report.head, report.worktree),
+        );
     });
   });
 }
 
-function parsedHead(output: string): string | null | undefined {
+function parsedReport(
+  output: string,
+): { head: string | null; worktree: string | null } | undefined {
   try {
     const value: unknown = JSON.parse(output);
     if (value === null || typeof value !== 'object' || !('head' in value))
       return undefined;
-    return typeof value.head === 'string' || value.head === null
-      ? value.head
-      : undefined;
+    if (typeof value.head !== 'string' && value.head !== null) return undefined;
+    const worktree =
+      'worktree' in value &&
+      typeof value.worktree === 'string' &&
+      value.worktree.length > 0 &&
+      value.worktree.length <= 255 &&
+      !/[\p{Cc}\p{Cf}]/u.test(value.worktree)
+        ? value.worktree
+        : null;
+    return { head: value.head, worktree };
   } catch {
     return undefined;
   }

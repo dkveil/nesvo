@@ -69,14 +69,17 @@ export const readGitBranchSchema = z.strictObject({
     .max(4096)
     .regex(/^[^\u0000-\u001f\u007f]*$/),
 });
+const gitWorktreeSchema = z.string().min(1).max(255).nullable().default(null);
 export const gitBranchSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('branch'),
     name: z.string().min(1).max(255),
+    worktree: gitWorktreeSchema,
   }),
   z.strictObject({
     kind: z.literal('detached'),
     sha: z.string().regex(/^[0-9a-f]{7}$/),
+    worktree: gitWorktreeSchema,
   }),
   z.strictObject({ kind: z.literal('none') }),
 ]);

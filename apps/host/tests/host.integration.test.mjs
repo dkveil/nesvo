@@ -405,15 +405,28 @@ test(
       join(branchRoot, 'linked', '.git'),
       'gitdir: ../linked-git/worktree\n',
     );
+    await seedHead(
+      join(branchRoot, 'main-git', 'worktrees', 'checkout'),
+      'ref: refs/heads/topic\n',
+    );
+    await mkdir(join(branchRoot, 'checkout'), { recursive: true });
+    await writeFile(
+      join(branchRoot, 'checkout', '.git'),
+      'gitdir: ../main-git/worktrees/checkout\n',
+    );
     await seedHead(join(branchRoot, 'malformed', '.git'), 'ref: refs/heads/\n');
     await mkdir(join(branchRoot, 'plain'), { recursive: true });
     const branchOf = async target =>
       host.request('read-git-branch', { directory: target });
     for (const [target, expected] of [
-      ['named', { kind: 'branch', name: 'feature/ui1c' }],
-      [join('named', 'src', 'deep'), { kind: 'branch', name: 'feature/ui1c' }],
-      ['detached', { kind: 'detached', sha: 'ab12cd3' }],
-      ['linked', { kind: 'branch', name: 'linked' }],
+      ['named', { kind: 'branch', name: 'feature/ui1c', worktree: null }],
+      [
+        join('named', 'src', 'deep'),
+        { kind: 'branch', name: 'feature/ui1c', worktree: null },
+      ],
+      ['detached', { kind: 'detached', sha: 'ab12cd3', worktree: null }],
+      ['linked', { kind: 'branch', name: 'linked', worktree: null }],
+      ['checkout', { kind: 'branch', name: 'topic', worktree: 'checkout' }],
       ['malformed', { kind: 'none' }],
       ['plain', { kind: 'none' }],
     ])
@@ -428,6 +441,7 @@ test(
     assert.deepEqual((await branchOf(join(branchRoot, 'named-link'))).branch, {
       kind: 'branch',
       name: 'feature/ui1c',
+      worktree: null,
     });
     for (const target of [
       join(branchRoot, 'missing'),
@@ -5214,6 +5228,15 @@ test(
       join(directory, 'linked', '.git'),
       'gitdir: ../linked-git/worktree\n',
     );
+    await seedHead(
+      join(directory, 'main-git', 'worktrees', 'checkout'),
+      'ref: refs/heads/topic\n',
+    );
+    await mkdir(join(directory, 'checkout'), { recursive: true });
+    await writeFile(
+      join(directory, 'checkout', '.git'),
+      'gitdir: ../main-git/worktrees/checkout\n',
+    );
     await seedHead(join(directory, 'malformed', '.git'), 'ref: refs/heads/\n');
     await seedHead(
       join(directory, 'bidirectional', '.git'),
@@ -5222,10 +5245,14 @@ test(
     await mkdir(join(directory, 'plain'), { recursive: true });
     const idle = new AbortController().signal;
     for (const [target, expected] of [
-      ['named', { kind: 'branch', name: 'feature/ui1c' }],
-      [join('named', 'src', 'deep'), { kind: 'branch', name: 'feature/ui1c' }],
-      ['detached', { kind: 'detached', sha: 'ab12cd3' }],
-      ['linked', { kind: 'branch', name: 'linked' }],
+      ['named', { kind: 'branch', name: 'feature/ui1c', worktree: null }],
+      [
+        join('named', 'src', 'deep'),
+        { kind: 'branch', name: 'feature/ui1c', worktree: null },
+      ],
+      ['detached', { kind: 'detached', sha: 'ab12cd3', worktree: null }],
+      ['linked', { kind: 'branch', name: 'linked', worktree: null }],
+      ['checkout', { kind: 'branch', name: 'topic', worktree: 'checkout' }],
       ['malformed', { kind: 'none' }],
       ['bidirectional', { kind: 'none' }],
       ['plain', { kind: 'none' }],

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GitBranch as GitBranchIcon } from 'lucide-react';
+import { FolderGit2, GitBranch as GitBranchIcon } from 'lucide-react';
 import type { DesktopApi, GitBranch } from '@nesvo/contracts';
 import { cn } from 'cn';
 
@@ -54,18 +54,31 @@ export function BranchChip({ hostId, directory, enabled, api }: Props) {
     ? `Detached HEAD at ${shown.sha}`
     : `Git branch ${shown.name}`;
   return (
-    <span
-      title={label}
-      data-branch-kind={shown.kind}
-      className="inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground [&_svg]:size-3 [&_svg]:shrink-0"
-    >
-      <GitBranchIcon aria-hidden="true" />
-      <span className="sr-only">
-        {detached ? 'Detached HEAD at ' : 'Git branch '}
+    <>
+      <span
+        title={label}
+        data-branch-kind={shown.kind}
+        className="inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground [&_svg]:size-3 [&_svg]:shrink-0"
+      >
+        <GitBranchIcon aria-hidden="true" />
+        <span className="sr-only">
+          {detached ? 'Detached HEAD at ' : 'Git branch '}
+        </span>
+        <span className={cn('truncate', detached && 'font-mono')}>
+          {detached ? shown.sha : shown.name}
+        </span>
       </span>
-      <span className={cn('truncate', detached && 'font-mono')}>
-        {detached ? shown.sha : shown.name}
-      </span>
-    </span>
+      {shown.worktree && (
+        <span
+          title={`Git worktree ${shown.worktree} at ${directory}`}
+          data-worktree={shown.worktree}
+          className="inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground [&_svg]:size-3 [&_svg]:shrink-0"
+        >
+          <FolderGit2 aria-hidden="true" />
+          <span className="sr-only">Git worktree </span>
+          <span className="truncate">{shown.worktree}</span>
+        </span>
+      )}
+    </>
   );
 }
