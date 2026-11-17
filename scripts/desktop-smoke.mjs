@@ -3418,7 +3418,10 @@ try {
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1280, 900),
   );
-  const automationShell = restartedPage.locator('aside[aria-label="Sidebar"]');
+  const automationShell = restartedPage.getByRole('navigation', {
+    name: 'Primary',
+    exact: true,
+  });
   await automationShell
     .getByRole('button', { name: 'Automations', exact: true })
     .click();
