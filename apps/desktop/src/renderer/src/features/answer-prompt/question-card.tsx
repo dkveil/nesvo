@@ -49,6 +49,9 @@ const HeaderChip = ({ header }: { header: string }) =>
 const optionClass =
   'flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors duration-100 hover:bg-accent has-checked:border-ring has-checked:bg-accent/60 has-disabled:cursor-not-allowed has-disabled:opacity-60';
 
+const compactOptionClass =
+  'inline-flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1 transition-colors duration-100 hover:bg-accent has-checked:border-ring has-checked:bg-accent/60 has-disabled:cursor-not-allowed has-disabled:opacity-60';
+
 export const QuestionCard = ({
   prompt,
   enabled,
@@ -94,7 +97,7 @@ export const QuestionCard = ({
         id={compact ? undefined : `prompt-${prompt.id}`}
         data-prompt-id={prompt.id}
         data-prompt-status={prompt.status}
-        className={cn(frame, 'space-y-2')}
+        className={cn('space-y-1.5', className)}
       >
         <p className="text-xs text-muted-foreground">
           {statusTitles[prompt.status] ?? 'Question'}
@@ -140,7 +143,7 @@ export const QuestionCard = ({
             : `The agent is waiting for ${prompt.questions.length} answers`}
         </p>
       )}
-      <form className="space-y-4" onSubmit={submit}>
+      <form className={compact ? 'space-y-3' : 'space-y-4'} onSubmit={submit}>
         {prompt.questions.map((question, index) => {
           const choice = choiceAt(index);
           const name = `${prompt.id}-${index}`;
@@ -164,13 +167,18 @@ export const QuestionCard = ({
             }));
           return (
             <div key={question.question} className="min-w-0 space-y-2">
-              <p className="flex items-start gap-2 text-sm leading-6 font-medium">
+              <p
+                className={cn(
+                  'flex items-start gap-2 font-medium',
+                  compact ? 'text-[13px] leading-5' : 'text-sm leading-6',
+                )}
+              >
                 <HeaderChip header={question.header} />
                 <span className="[overflow-wrap:anywhere]">
                   {question.question}
                 </span>
               </p>
-              {question.multiSelect && (
+              {question.multiSelect && !compact && (
                 <p className="text-xs text-muted-foreground">
                   Choose one or more.
                 </p>
@@ -178,14 +186,15 @@ export const QuestionCard = ({
               <div
                 role={question.multiSelect ? 'group' : 'radiogroup'}
                 aria-label={question.question}
-                className={cn('grid gap-1.5', compact && 'gap-1')}
+                className={compact ? 'flex flex-wrap gap-1.5' : 'grid gap-1.5'}
               >
                 {question.options.map((option, optionIndex) => {
                   const descriptionId = `${name}-option-${optionIndex}`;
                   return (
                     <label
                       key={option.label}
-                      className={cn(optionClass, compact && 'py-1.5')}
+                      title={compact ? option.description : undefined}
+                      className={compact ? compactOptionClass : optionClass}
                     >
                       <input
                         type={type}
@@ -197,7 +206,10 @@ export const QuestionCard = ({
                         checked={choice.labels.includes(option.label)}
                         disabled={disabled}
                         onChange={() => toggle(option.label)}
-                        className="mt-1 size-3.5 shrink-0 accent-primary"
+                        className={cn(
+                          'size-3.5 shrink-0 accent-primary',
+                          !compact && 'mt-1',
+                        )}
                       />
                       <span className="min-w-0 space-y-0.5">
                         <span className="block text-[13px] leading-5 [overflow-wrap:anywhere]">
@@ -206,7 +218,10 @@ export const QuestionCard = ({
                         {option.description && (
                           <span
                             id={descriptionId}
-                            className="block text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                            className={cn(
+                              'block text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]',
+                              compact && 'sr-only',
+                            )}
                           >
                             {option.description}
                           </span>
@@ -215,7 +230,7 @@ export const QuestionCard = ({
                     </label>
                   );
                 })}
-                <label className={cn(optionClass, compact && 'py-1.5')}>
+                <label className={compact ? compactOptionClass : optionClass}>
                   <input
                     type={type}
                     name={name}
@@ -225,32 +240,34 @@ export const QuestionCard = ({
                     onChange={() =>
                       chooseOther(question.multiSelect ? !choice.other : true)
                     }
-                    className="mt-2.5 size-3.5 shrink-0 accent-primary"
+                    className={cn(
+                      'size-3.5 shrink-0 accent-primary',
+                      !compact && 'mt-1',
+                    )}
                   />
-                  <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block text-[13px] leading-5">Other</span>
-                    <Input
-                      aria-label="Other answer"
-                      placeholder="Type your own answer"
-                      maxLength={2000}
-                      value={choice.otherText}
-                      disabled={disabled}
-                      onChange={event => {
-                        const otherText = event.target.value;
-                        update(index, current => ({
-                          ...current,
-                          otherText,
-                          other: otherText.trim() ? true : current.other,
-                          labels:
-                            question.multiSelect || !otherText.trim()
-                              ? current.labels
-                              : [],
-                        }));
-                      }}
-                      className="h-8 text-[13px]"
-                    />
-                  </span>
+                  <span className="text-[13px] leading-5">Other</span>
                 </label>
+                {choice.other && (
+                  <Input
+                    autoFocus
+                    aria-label="Other answer"
+                    placeholder="Type your own answer"
+                    maxLength={2000}
+                    value={choice.otherText}
+                    disabled={disabled}
+                    onChange={event => {
+                      const otherText = event.target.value;
+                      update(index, current => ({
+                        ...current,
+                        otherText,
+                      }));
+                    }}
+                    className={cn(
+                      'h-8 text-[13px]',
+                      compact && 'h-7 w-56 max-w-full',
+                    )}
+                  />
+                )}
               </div>
             </div>
           );

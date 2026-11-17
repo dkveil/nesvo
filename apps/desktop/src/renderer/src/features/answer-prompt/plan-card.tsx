@@ -181,6 +181,7 @@ export const PlanCard = ({
   onAccept,
   onRevise,
 }: Props) => {
+  const [planShown, setPlanShown] = useState(false);
   const pending = prompt.status === 'pending';
   const disabled = !enabled || sending;
   const offered = acceptBlockedReason ? [] : acceptModes;
@@ -193,24 +194,40 @@ export const PlanCard = ({
       data-prompt-status={prompt.status}
       data-plan-round={prompt.planRound}
       className={cn(
-        'space-y-3 rounded-xl border bg-card/70 p-4',
-        !pending && 'space-y-2 bg-transparent',
+        pending ? 'space-y-3 rounded-xl border bg-card/70 p-4' : 'space-y-1.5',
         className,
       )}
     >
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h3 className="text-sm font-medium">{planHeading(prompt)}</h3>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h3
+          className={cn(
+            'font-medium',
+            pending ? 'text-sm' : 'text-[13px] text-muted-foreground',
+          )}
+        >
+          {planHeading(prompt)}
+        </h3>
         {!pending && (
-          <p className="text-xs text-muted-foreground">
-            {planOutcome(prompt, provider)}
-          </p>
+          <>
+            <p className="text-xs text-muted-foreground">
+              {planOutcome(prompt, provider)}
+            </p>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-expanded={planShown}
+              onClick={() => setPlanShown(value => !value)}
+            >
+              {planShown ? 'Hide plan' : 'Show plan'}
+            </Button>
+          </>
         )}
       </div>
-      <PlanBody
-        key={`${prompt.id}/${prompt.status}`}
-        plan={prompt.plan ?? ''}
-        renderPlan={renderPlan}
-      />
+      {(pending || planShown) && (
+        <PlanBody plan={prompt.plan ?? ''} renderPlan={renderPlan} />
+      )}
       {prompt.status === 'revised' && prompt.decision?.feedback && (
         <p className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
           Feedback: {prompt.decision.feedback}
