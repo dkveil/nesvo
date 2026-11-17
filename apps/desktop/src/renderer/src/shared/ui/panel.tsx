@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/button';
 
 type PanelHeaderProps = {
   icon: LucideIcon;
+  titleBar?: boolean;
   title: string;
   meta?: ReactNode;
   children?: ReactNode;
@@ -12,12 +13,19 @@ type PanelHeaderProps = {
 
 export function PanelHeader({
   icon: Icon,
+  titleBar = false,
   title,
   meta,
   children,
 }: PanelHeaderProps) {
   return (
-    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3">
+    <header
+      className={cn(
+        'flex h-10 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3',
+        titleBar &&
+          'drag-region h-(--shell-topbar-height) pr-[calc(0.375rem+var(--panel-edge-inset,0px))]',
+      )}
+    >
       <Icon
         className="size-4 shrink-0 text-muted-foreground"
         aria-hidden="true"

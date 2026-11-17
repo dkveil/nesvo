@@ -209,6 +209,7 @@ function Catalog({
   return (
     <>
       <PanelHeader
+        titleBar
         icon={BookOpen}
         title="Shared library"
         meta={session.provider}

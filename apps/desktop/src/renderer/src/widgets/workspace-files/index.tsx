@@ -517,17 +517,17 @@ export default function WorkspaceFiles({
         'transition-[width] duration-200 ease-out motion-reduce:transition-none',
         editing
           ? 'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]'
-          : 'min-[1200px]:w-72',
+          : 'min-[1200px]:w-[calc(15rem+var(--panel-edge-inset))]',
       )}
     >
-      <header className="flex h-9 shrink-0 items-stretch border-b">
+      <header className="drag-region flex h-(--shell-topbar-height) shrink-0 items-stretch border-b pr-(--panel-edge-inset)">
         <div
           role="tablist"
           aria-label="Open files"
           className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]"
         >
           {!editing && (
-            <h2 className="flex min-w-0 items-center gap-1.5 pl-3 text-xs font-semibold">
+            <h2 className="flex min-w-0 shrink-0 items-center gap-1.5 pl-3 text-xs font-semibold">
               <FolderOpen
                 className="size-3.5 shrink-0 text-muted-foreground"
                 aria-hidden="true"

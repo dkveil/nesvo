@@ -205,6 +205,7 @@ export default function ReviewDiff({
       )}
     >
       <PanelHeader
+        titleBar
         icon={FileCode2}
         title={`Result v${review.version}`}
         meta={reviewStatusLabels[review.status]}

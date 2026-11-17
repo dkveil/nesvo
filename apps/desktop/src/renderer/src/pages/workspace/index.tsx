@@ -1809,7 +1809,7 @@ export function Workspace() {
       ? selectedProviderState
       : null;
   return (
-    <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
+    <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background">
       <div className="hidden h-full shrink-0 md:flex">
         <NavigationRail
           sidebarOpen={sidebarOpen}
@@ -1869,6 +1869,7 @@ export function Workspace() {
           className={cn(
             'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))]',
             sidebarOpen && 'md:pl-2',
+            visiblePanel && 'min-[1200px]:pr-(--shell-gutter)',
           )}
         >
           <div className="md:hidden">
@@ -2671,95 +2672,94 @@ export function Workspace() {
               </p>
             </section>
           )}
-          {(panel === 'files' || panel === 'skills') &&
-            !browsing &&
-            !creating &&
-            selected &&
-            !store.hostReady(selectedHostId) && (
-              <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-background p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
-                <p>
-                  This computer is offline. Current files and skills are
-                  unavailable; saved conversations and result diffs remain
-                  readable.
-                </p>
-                <Button variant="outline" onClick={closeDiff}>
-                  Close panel
-                </Button>
-              </aside>
-            )}
-          {panel === 'diff' && !creating && diffReview && diffTarget && (
-            <Suspense
-              fallback={
-                <aside
-                  role="status"
-                  className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
-                >
-                  Loading saved diff…
-                </aside>
-              }
-            >
-              <ReviewDiff
-                key={entityKey(diffReview)}
-                review={diffReview}
-                selectedPath={diffTarget.path}
-                onSelectPath={path =>
-                  setDiffTarget({ reviewId: diffReview.id, path })
-                }
-                onClose={closeDiff}
-                onFiles={() => setPanel('files')}
-              />
-            </Suspense>
-          )}
-          {panel === 'files' &&
-            !browsing &&
-            !creating &&
-            selected &&
-            store.hostReady(selectedHostId) && (
-              <Suspense
-                fallback={
-                  <aside
-                    role="status"
-                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
-                  >
-                    Loading files…
-                  </aside>
-                }
-              >
-                <WorkspaceFiles
-                  key={selectedKey}
-                  session={selected}
-                  api={desktopApi(selectedHostId)}
-                  savedVersion={diffReview?.version}
-                  onSavedDiff={() => setPanel('diff')}
-                  onClose={closeDiff}
-                />
-              </Suspense>
-            )}
-          {panel === 'skills' &&
-            !browsing &&
-            !creating &&
-            selected &&
-            store.hostReady(selectedHostId) && (
-              <Suspense
-                fallback={
-                  <aside
-                    role="status"
-                    className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
-                  >
-                    Loading skills…
-                  </aside>
-                }
-              >
-                <SessionSkills
-                  key={selectedKey}
-                  session={selected}
-                  api={desktopApi(selectedHostId)}
-                  onClose={closeDiff}
-                />
-              </Suspense>
-            )}
         </main>
       </div>
+      {(panel === 'files' || panel === 'skills') &&
+        !browsing &&
+        !creating &&
+        selected &&
+        !store.hostReady(selectedHostId) && (
+          <aside className="absolute inset-0 z-10 flex flex-col gap-3 border-l bg-background p-5 text-sm min-[1200px]:relative min-[1200px]:w-96">
+            <p>
+              This computer is offline. Current files and skills are
+              unavailable; saved conversations and result diffs remain readable.
+            </p>
+            <Button variant="outline" onClick={closeDiff}>
+              Close panel
+            </Button>
+          </aside>
+        )}
+      {panel === 'diff' && !creating && diffReview && diffTarget && (
+        <Suspense
+          fallback={
+            <aside
+              role="status"
+              className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[46%]"
+            >
+              Loading saved diff…
+            </aside>
+          }
+        >
+          <ReviewDiff
+            key={entityKey(diffReview)}
+            review={diffReview}
+            selectedPath={diffTarget.path}
+            onSelectPath={path =>
+              setDiffTarget({ reviewId: diffReview.id, path })
+            }
+            onClose={closeDiff}
+            onFiles={() => setPanel('files')}
+          />
+        </Suspense>
+      )}
+      {panel === 'files' &&
+        !browsing &&
+        !creating &&
+        selected &&
+        store.hostReady(selectedHostId) && (
+          <Suspense
+            fallback={
+              <aside
+                role="status"
+                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+              >
+                Loading files…
+              </aside>
+            }
+          >
+            <WorkspaceFiles
+              key={selectedKey}
+              session={selected}
+              api={desktopApi(selectedHostId)}
+              savedVersion={diffReview?.version}
+              onSavedDiff={() => setPanel('diff')}
+              onClose={closeDiff}
+            />
+          </Suspense>
+        )}
+      {panel === 'skills' &&
+        !browsing &&
+        !creating &&
+        selected &&
+        store.hostReady(selectedHostId) && (
+          <Suspense
+            fallback={
+              <aside
+                role="status"
+                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[380px]"
+              >
+                Loading skills…
+              </aside>
+            }
+          >
+            <SessionSkills
+              key={selectedKey}
+              session={selected}
+              api={desktopApi(selectedHostId)}
+              onClose={closeDiff}
+            />
+          </Suspense>
+        )}
       {newWorkflow && (
         <NewWorkflowSheet
           hostId={newWorkflow.hostId}
