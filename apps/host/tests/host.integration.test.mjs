@@ -366,6 +366,7 @@ test(
         'git-branch',
         'permission-modes',
         'session-workflow',
+        'pull-requests',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -4909,6 +4910,7 @@ test(
       'git-branch',
       'permission-modes',
       'session-workflow',
+      'pull-requests',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -15996,5 +15998,591 @@ test(
     assert.equal((await restarting.decide('accept')).code, 'invalid-request');
     await delay(1_000);
     assert.equal(await childTurns(), turnsBeforeRestart);
+  },
+);
+
+function githubCliFixture() {
+  const { appendFileSync, readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const args = process.argv.slice(2);
+  const stdin =
+    args.includes('--body-file') || args.includes('--input')
+      ? readFileSync(0, 'utf8')
+      : null;
+  appendFileSync(
+    join(process.env.GH_CONFIG_DIR, 'gh-calls.jsonl'),
+    JSON.stringify({
+      args,
+      stdin,
+      cwd: process.cwd(),
+      env: {
+        prompt: process.env.GH_PROMPT_DISABLED,
+        updates: process.env.GH_NO_UPDATE_NOTIFIER,
+        color: process.env.NO_COLOR,
+        pager: process.env.GH_PAGER,
+        host: process.env.GH_HOST,
+        hasToken: Boolean(process.env.GH_TOKEN || process.env.GITHUB_TOKEN),
+      },
+    }) + '\n',
+  );
+  const reference = {
+    number: 42,
+    url: 'https://github.com/octo/project/pull/42',
+  };
+  const date = day => `2026-11-0${day}T00:00:00Z`;
+  const sha = 'a'.repeat(40);
+  const threadId = 'PRRT_fixture';
+  const summary = {
+    ...reference,
+    title: 'A pull request',
+    state: 'OPEN',
+    isDraft: false,
+    author: { login: 'octocat' },
+    headRefName: 'topic',
+    baseRefName: 'master',
+    additions: 3,
+    deletions: 1,
+    statusCheckRollup: [
+      {
+        __typename: 'StatusContext',
+        context: 'legacy',
+        state: 'PENDING',
+        targetUrl: '',
+      },
+      {
+        __typename: 'CheckRun',
+        name: 'build',
+        status: 'COMPLETED',
+        conclusion: 'FAILURE',
+        detailsUrl: 'https://github.com/octo/project/actions',
+      },
+    ],
+    reviewDecision: 'CHANGES_REQUESTED',
+    updatedAt: date(4),
+  };
+  const comment = {
+    id: 'comment-1',
+    author: { login: 'fixture[bot]', __typename: 'Bot' },
+    body: 'Details',
+    createdAt: date(3),
+    url: reference.url + '#issuecomment-1',
+  };
+  const json = data => console.log(JSON.stringify(data));
+  if (args[2] === '401') {
+    console.error('Run gh auth login to authenticate.');
+    process.exitCode = 4;
+  } else if (args[2] === '404') {
+    console.error(
+      'GraphQL: Could not resolve to a PullRequest with the number of 404.',
+    );
+    process.exitCode = 1;
+  } else if (args[0] === 'repo') {
+    json(
+      args.includes('viewerPermission')
+        ? { viewerPermission: 'WRITE' }
+        : { nameWithOwner: 'octo/project' },
+    );
+  } else if (args[0] === 'api' && args[1] === 'user') {
+    json({ login: 'OCTOCAT', unrelated: 'ignored' });
+  } else if (args[0] === 'api' && args[1] === 'repos/octo/project') {
+    json({
+      allow_squash_merge: true,
+      allow_merge_commit: false,
+      allow_rebase_merge: true,
+    });
+  } else if (args[0] === 'api' && args.includes('--slurp')) {
+    const entry = {
+      filename: 'src/new.ts',
+      previous_filename: 'old.ts',
+      status: 'renamed',
+      additions: 2,
+      deletions: 1,
+      patch: '界'.repeat(70_000),
+    };
+    json([
+      [
+        entry,
+        ...Array.from({ length: 99 }, (_, index) => ({
+          ...entry,
+          filename: `part-${index}.ts`,
+          patch: undefined,
+        })),
+      ],
+      ...Array.from({ length: 2 }, (_, page) =>
+        Array.from({ length: 100 }, (_, index) => ({
+          ...entry,
+          filename: `page-${page}-${index}.ts`,
+          patch: undefined,
+        })),
+      ),
+      [{ ...entry, filename: 'extra.ts', patch: undefined }],
+    ]);
+  } else if (args[0] === 'api' && args[1] === 'graphql') {
+    const query = args.find(arg => arg.startsWith('query=')) ?? '';
+    if (stdin !== null) {
+      const request = JSON.parse(stdin);
+      if (
+        request.variables.thread !== threadId ||
+        !request.query.includes('addPullRequestReviewThreadReply')
+      )
+        throw Error('Unexpected reply.');
+      json({
+        data: {
+          addPullRequestReviewThreadReply: { comment: { id: 'new-reply' } },
+        },
+      });
+    } else if (query.includes('node(id:')) {
+      json({
+        data: {
+          node: {
+            pullRequest: {
+              number: 42,
+              repository: { nameWithOwner: 'octo/project' },
+            },
+          },
+        },
+      });
+    } else if (query.includes('resolveReviewThread')) {
+      json({
+        data: {
+          resolveReviewThread: { thread: { id: threadId, isResolved: true } },
+        },
+      });
+    } else {
+      const secondPage = args.includes('cursor=thread-next');
+      json({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: {
+                  hasNextPage: !secondPage,
+                  endCursor: secondPage ? null : 'thread-next',
+                },
+                nodes: [
+                  {
+                    id: secondPage ? 'PRRT_next' : threadId,
+                    path: 'src/new.ts',
+                    line: 8,
+                    diffSide: 'RIGHT',
+                    isResolved: false,
+                    isOutdated: false,
+                    viewerCanResolve: true,
+                    viewerCanReply: true,
+                    comments: {
+                      nodes: [comment],
+                      pageInfo: { hasNextPage: secondPage },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+  } else if (args[1] === 'list') {
+    json([summary]);
+  } else if (args[1] === 'view') {
+    if (args.includes('number,url')) {
+      if (process.cwd().endsWith('no-pr')) {
+        console.error('no pull requests found for branch "work"');
+        process.exitCode = 1;
+      } else json(reference);
+    } else if (args.includes('headRefOid,baseRefOid')) {
+      json({ headRefOid: sha, baseRefOid: 'c'.repeat(40) });
+    } else {
+      json({
+        ...summary,
+        body: 'Summary',
+        headRefOid: sha,
+        changedFiles: 301,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'CLEAN',
+        reviewRequests: [{ __typename: 'Team', slug: 'octo/maintainers' }],
+        labels: [{ name: 'feature' }],
+        comments: [comment],
+        reviews: [
+          {
+            id: 'review-1',
+            state: 'APPROVED',
+            body: 'Looks good',
+            submittedAt: date(2),
+            author: { login: 'reviewer' },
+          },
+        ],
+        commits: [
+          {
+            oid: sha,
+            messageHeadline: 'Change it',
+            committedDate: date(1),
+            authors: [{ login: 'octocat', name: 'The Octocat' }],
+          },
+        ],
+      });
+    }
+  } else if (args[1] === 'merge') {
+    if (args.includes('b'.repeat(40))) {
+      console.error(
+        'GraphQL: Head sha changed since the pull request was reviewed.',
+      );
+      process.exitCode = 1;
+    }
+  } else if (args[1] === 'checkout' && args[2] === '43') {
+    console.error(
+      'local changes would be overwritten by checkout (ghp_exampleSecretValue)',
+    );
+    process.exitCode = 1;
+  } else if (
+    args[1] !== 'checkout' &&
+    args[1] !== 'review' &&
+    args[1] !== 'comment'
+  ) {
+    throw Error('Unexpected gh fixture invocation.');
+  }
+}
+
+test(
+  'GitHub CLI boundary maps pull requests and executes each explicit action once',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-pull-requests-'));
+    const workspace = join(directory, 'project');
+    const noPullRequest = join(directory, 'no-pr');
+    const fixture = join(directory, 'gh-fixture.cjs');
+    await mkdir(workspace);
+    await mkdir(noPullRequest);
+    await writeFile(fixture, `(${githubCliFixture.toString()})();\n`);
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const open = (gh = fixture) => {
+      const host = launch(directory, join(directory, 'pids.json'), {
+        NESVO_GH_EXECUTABLE: gh,
+        GH_CONFIG_DIR: directory,
+        GH_TOKEN: 'sentinel-fixture-token',
+        GITHUB_TOKEN: 'sentinel-fixture-token',
+      });
+      hosts.push(host);
+      return host;
+    };
+    const calls = async () =>
+      (await readFile(join(directory, 'gh-calls.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line));
+    const reference = { number: 42, repository: 'octo/project' };
+    let host = open();
+    const request = (method, input) => host.request(method, input);
+    const action = (spec, number = 42, actionId = randomUUID()) =>
+      request('act-on-pull-request', {
+        actionId,
+        reference: { ...reference, number },
+        action: spec,
+      });
+
+    assert.ok(
+      (await request('health')).health.capabilities.includes('pull-requests'),
+    );
+    const authored = await request('list-pull-requests', {
+      directory: workspace,
+      scope: 'authored',
+    });
+    assert.equal(authored.type, 'pull-request-list');
+    assert.equal(authored.list.repository, reference.repository);
+    assert.equal(authored.list.items[0].checks, 'failing');
+    assert.equal(authored.list.items[0].reviewDecision, 'changes-requested');
+    assert.equal(authored.list.truncated, false);
+    assert.equal(
+      (
+        await request('list-pull-requests', {
+          repository: reference.repository,
+          scope: 'review-requested',
+          query: 'draft in:title',
+        })
+      ).type,
+      'pull-request-list',
+    );
+    const listCalls = (await calls()).filter(call => call.args[1] === 'list');
+    assert.deepEqual(listCalls[0].args.slice(-2), ['--author', '@me']);
+    assert.deepEqual(listCalls[1].args.slice(-2), [
+      '--search',
+      'review-requested:@me draft in:title',
+    ]);
+
+    const detail = await request('read-pull-request', reference);
+    assert.equal(detail.type, 'pull-request');
+    assert.equal(detail.pullRequest.viewerCanMerge, true);
+    assert.equal(detail.pullRequest.viewerCanReview, false);
+    assert.equal(detail.pullRequest.mergeable, 'mergeable');
+    assert.deepEqual(detail.pullRequest.allowedMergeMethods, [
+      'squash',
+      'rebase',
+    ]);
+    assert.deepEqual(
+      detail.pullRequest.timeline.map(item => item.kind),
+      ['commit', 'review', 'comment'],
+    );
+    assert.deepEqual(detail.pullRequest.reviewers, [
+      { login: 'octo/maintainers', isBot: false },
+    ]);
+    assert.equal(detail.pullRequest.checkRuns[1].conclusion, 'failure');
+    for (const [number, expected] of [
+      [401, 'unavailable'],
+      [404, 'not-found'],
+    ]) {
+      const error = await request('read-pull-request', {
+        ...reference,
+        number,
+      });
+      assert.equal(error.code, expected);
+      if (number === 401)
+        assert.equal(
+          error.message,
+          'Sign in with gh auth login on this computer.',
+        );
+    }
+
+    const files = await request('read-pull-request-files', reference);
+    assert.equal(files.type, 'pull-request-files');
+    assert.equal(files.files.headSha, 'a'.repeat(40));
+    assert.equal(files.files.files.length, 300);
+    assert.equal(files.files.truncated, true);
+    const [renamed, noPatch] = files.files.files;
+    assert.equal(renamed.previousPath, 'old.ts');
+    assert.equal(renamed.patchTruncated, true);
+    assert.equal(Buffer.byteLength(renamed.patch), 204_798);
+    assert.equal(noPatch.patch, null);
+
+    const threads = await request('read-pull-request-threads', reference);
+    assert.equal(threads.type, 'pull-request-threads');
+    assert.equal(threads.threads.truncated, true);
+    assert.deepEqual(
+      threads.threads.threads.map(thread => thread.id),
+      ['PRRT_fixture', 'PRRT_next'],
+    );
+    assert.equal(threads.threads.threads[0].side, 'right');
+    assert.equal(threads.threads.threads[0].comments[0].author.isBot, true);
+
+    const actionId = randomUUID();
+    const merge = {
+      action: 'merge',
+      method: 'squash',
+      expectedHeadSha: 'a'.repeat(40),
+      deleteBranch: true,
+    };
+    const merged = await Promise.all([
+      action(merge, 42, actionId),
+      action(merge, 42, actionId),
+    ]);
+    assert.equal(merged[0].type, 'pull-request-action');
+    assert.deepEqual(merged[0].result, merged[1].result);
+    assert.deepEqual(
+      (await action(merge, 42, actionId)).result,
+      merged[0].result,
+    );
+    const mergeCalls = (await calls()).filter(call => call.args[1] === 'merge');
+    assert.equal(mergeCalls.length, 1);
+    assert.deepEqual(mergeCalls[0].args.slice(-4), [
+      '--squash',
+      '--match-head-commit',
+      merge.expectedHeadSha,
+      '--delete-branch',
+    ]);
+    const stale = await action({ ...merge, expectedHeadSha: 'b'.repeat(40) });
+    assert.equal(stale.code, 'invalid-request');
+    assert.match(stale.message, /head changed/i);
+
+    const body = '--flag-like message\nNext line';
+    assert.equal(
+      (await action({ action: 'comment', body })).type,
+      'pull-request-action',
+    );
+    assert.equal(
+      (await action({ action: 'review', event: 'request-changes', body })).type,
+      'pull-request-action',
+    );
+    assert.equal(
+      (await action({ action: 'review', event: 'comment', body: '' })).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await action({ action: 'reply-thread', threadId: 'PRRT_fixture', body }))
+        .type,
+      'pull-request-action',
+    );
+    assert.equal(
+      (
+        await action(
+          {
+            action: 'resolve-thread',
+            threadId: 'PRRT_fixture',
+            resolved: true,
+          },
+          43,
+        )
+      ).code,
+      'not-found',
+    );
+    assert.equal(
+      (
+        await action({
+          action: 'resolve-thread',
+          threadId: 'PRRT_fixture',
+          resolved: true,
+        })
+      ).type,
+      'pull-request-action',
+    );
+    const recorded = await calls();
+    const bodyCalls = recorded.filter(call =>
+      call.args.includes('--body-file'),
+    );
+    assert.equal(bodyCalls.length, 2);
+    for (const call of bodyCalls) {
+      assert.equal(call.stdin, body);
+      assert.equal(call.args.includes(body), false);
+    }
+    assert.equal(
+      JSON.parse(recorded.find(call => call.args.includes('--input')).stdin)
+        .variables.body,
+      body,
+    );
+    assert.equal(
+      recorded.filter(call =>
+        call.args.some(arg => arg.includes('resolveReviewThread')),
+      ).length,
+      1,
+    );
+    assert.deepEqual(recorded[0].env, {
+      prompt: '1',
+      updates: '1',
+      color: '1',
+      pager: '',
+      host: 'github.com',
+      hasToken: false,
+    });
+
+    const create = directory =>
+      request('create-session', {
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'read-only',
+        title: 'PR workspace',
+        directory,
+      });
+    const target = await create(workspace);
+    const legacy = await create(noPullRequest);
+    assert.equal(target.type, 'session');
+    assert.equal(legacy.type, 'session');
+    assert.equal(target.session.pullRequest, null);
+    const { id: sessionId } = target.session;
+    assert.deepEqual(
+      (await request('find-session-pull-request', { sessionId })).reference,
+      reference,
+    );
+    assert.equal(
+      (
+        await request('find-session-pull-request', {
+          sessionId: legacy.session.id,
+        })
+      ).reference,
+      null,
+    );
+    assert.equal(
+      (
+        await request('link-session-pull-request', {
+          sessionId: randomUUID(),
+          pullRequest: reference,
+        })
+      ).code,
+      'not-found',
+    );
+    const linked = await request('link-session-pull-request', {
+      sessionId,
+      pullRequest: reference,
+    });
+    assert.deepEqual(linked.session.pullRequest, reference);
+    assert.deepEqual(
+      (
+        await host.event(
+          session => session.id === sessionId && session.pullRequest,
+        )
+      ).pullRequest,
+      reference,
+    );
+    const running = await request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text: 'fixture:hold',
+    });
+    assert.equal(running.session.status, 'running');
+    const checkout = { action: 'checkout', sessionId };
+    assert.equal((await action(checkout)).code, 'busy');
+    assert.equal(
+      (await calls()).some(call => call.args[1] === 'checkout'),
+      false,
+    );
+    await request('stop-run', { sessionId, runId: running.session.runId });
+    await host.event(
+      session => session.id === sessionId && session.status === 'stopped',
+    );
+    const failedCheckout = await action(checkout, 43);
+    assert.equal(failedCheckout.code, 'unavailable');
+    assert.match(failedCheckout.message, /local changes.*\[redacted\]/);
+    assert.equal(failedCheckout.message.includes('exampleSecretValue'), false);
+    assert.equal((await action(checkout)).type, 'pull-request-action');
+    assert.equal(
+      await realpath(
+        (await calls()).findLast(call => call.args[1] === 'checkout').cwd,
+      ),
+      await realpath(workspace),
+    );
+
+    await host.stop();
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    const row = database
+      .prepare('SELECT document FROM sessions WHERE id = ?')
+      .get(legacy.session.id);
+    const oldDocument = JSON.parse(row.document);
+    delete oldDocument.pullRequest;
+    database
+      .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+      .run(JSON.stringify(oldDocument), legacy.session.id);
+    database.close();
+
+    host = open(join(directory, 'missing-gh.cjs'));
+    const { sessions } = await request('list-sessions');
+    assert.deepEqual(
+      sessions.find(session => session.id === sessionId).pullRequest,
+      reference,
+    );
+    assert.equal(
+      sessions.find(session => session.id === legacy.session.id).pullRequest,
+      null,
+    );
+    assert.equal(
+      (
+        await request('link-session-pull-request', {
+          sessionId,
+          pullRequest: null,
+        })
+      ).session.pullRequest,
+      null,
+    );
+    const missing = await request('list-pull-requests', {
+      repository: reference.repository,
+    });
+    assert.equal(missing.code, 'unavailable');
+    assert.equal(
+      missing.message,
+      'Install the GitHub CLI (gh) on this computer and run gh auth login.',
+    );
   },
 );
