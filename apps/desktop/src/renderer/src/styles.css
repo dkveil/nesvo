@@ -2,6 +2,7 @@
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant hover (&:is(:hover, [data-preview-hover]));
 
 @theme inline {
   --font-sans:
@@ -63,13 +64,29 @@
   --color-pr-draft: var(--pr-draft);
   --color-pr-merged: var(--pr-merged);
   --color-pr-closed: var(--pr-closed);
+  --color-track: var(--usage-ring-track);
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 0.875rem;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+  --text-title: 0.9375rem;
+  --text-title--line-height: 1.375rem;
+  --radius-control: calc(var(--radius) - 2px);
+  --radius-surface: var(--radius);
+  --radius-overlay: calc(var(--radius) + 4px);
+  --radius-composer: calc(var(--radius) + 8px);
+  --transition-duration-fast: var(--duration-fast);
+  --transition-duration-base: var(--duration-base);
+  --transition-duration-slow: var(--duration-slow);
 }
 
 :root {
   --radius: 0.5rem;
-  --control-radius: 0.5rem;
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+  --duration-slow: 200ms;
   --shell-topbar-height: 2.5rem;
   --rail-width: 2.75rem;
   --shell-gutter: 0.75rem;
@@ -329,6 +346,49 @@
   border-color: var(--composer-border);
   box-shadow: var(--composer-shadow);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+@utility focus-ring {
+  outline: none;
+  &:focus-visible,
+  &[data-preview-focus] {
+    outline: 1.5px solid var(--ring);
+    outline-offset: -1.5px;
+  }
+}
+
+@utility focus-ring-within {
+  outline: none;
+  &:has(:focus-visible),
+  &[data-preview-focus] {
+    outline: 1.5px solid var(--ring);
+    outline-offset: -1.5px;
+  }
+}
+
+@utility focus-ring-offset {
+  outline: none;
+  &:focus-visible,
+  &[data-preview-focus] {
+    outline: 1.5px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@utility press {
+  &:not(:disabled):active,
+  &[data-preview-active] {
+    scale: 0.97;
+  }
+}
+
+@keyframes progress-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 250% 0;
+  }
 }
 
 .drag-region {
