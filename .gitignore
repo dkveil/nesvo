@@ -70,6 +70,7 @@
 !/docs/mobile.md
 !/docs/workflows.md
 !/docs/brand.md
+!/docs/design-system.md
 !/.github/
 /.github/*
 !/.github/dependabot.yml

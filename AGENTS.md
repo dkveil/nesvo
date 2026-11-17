@@ -43,6 +43,7 @@ Discuss changes in Polish. Write code, repository documentation and commit messa
 ## Product and design
 
 Use base shadcn components with neutral dark defaults. Black is the primary appearance, including native window chrome.
+Use the component library in shared/ui and docs/design-system.md; do not hand-roll controls.
 Keep the workspace minimal: flat session rows, few badges, conversation-first space and session details on demand. Minimal Geist alignment may be accepted by Damian.
 Use a flat black canvas, a narrow sidebar with a subtle divider, compact navigation and restrained neutral panels. Keep the first message and composer together in an empty session; established conversations retain a bottom composer. Visual references do not authorize new product features.
 Do not restore the previous logo, palette or theme. Present UI changes for acceptance before expanding them.
