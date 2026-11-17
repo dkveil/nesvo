@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { Hint } from '@/shared/ui/tooltip';
 import { ComposerChip } from './composer-chip';
 
 type Props = {
@@ -55,9 +56,8 @@ function LocationForm({
               onDone();
             }
           }}
-          className="h-8 text-[13px]"
         />
-        <p className="text-[11px] leading-5 text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Any folder on {computerName}. A Git repository is not required. Leave
           it blank to start in an isolated folder.
         </p>
@@ -94,23 +94,24 @@ export function LocationPicker({
   const project = directory.trim() ? directoryLabel(directory.trim()) : '';
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <ComposerChip
-          disabled={disabled}
-          aria-label="Location"
-          title={directory.trim() || 'Isolated folder on this computer'}
-        >
-          <FolderOpen />
-          <span className="truncate">{project || 'Isolated folder'}</span>
-        </ComposerChip>
-      </PopoverTrigger>
+      <Hint label={directory.trim() || 'Isolated folder on this computer'}>
+        <PopoverTrigger asChild>
+          <ComposerChip
+            disabled={disabled}
+            aria-label="Location"
+            icon={<FolderOpen aria-hidden="true" />}
+          >
+            <span>{project || 'Isolated folder'}</span>
+          </ComposerChip>
+        </PopoverTrigger>
+      </Hint>
       <PopoverContent
         side="bottom"
         align="start"
-        sideOffset={8}
         collisionPadding={12}
         aria-label="Location"
-        className="w-[min(26rem,calc(100vw-1.5rem))] space-y-3 p-3"
+        size="lg"
+        className="space-y-3 p-3"
       >
         <LocationForm
           directory={directory}
