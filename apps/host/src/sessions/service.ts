@@ -180,6 +180,7 @@ type LaunchTurn = {
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
+  assistantPrompt?: string;
   previousSelection?: TurnSelection;
 };
 
@@ -1127,6 +1128,7 @@ export class SessionService {
       outputSchema,
       ephemeral,
       instructionsOnly,
+      assistantPrompt,
       previousSelection,
     }: LaunchTurn,
   ): void {
