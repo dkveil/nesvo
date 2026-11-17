@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -8,6 +9,7 @@ import {
 } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { listboxOptionId } from '@/shared/ui/listbox-option-id';
 import { menuItem, menuLabel } from '@/shared/ui/menu-styles';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SearchField } from '@/shared/ui/search-field';
@@ -21,6 +23,7 @@ type ListboxOption<T extends string> = {
   group?: string;
   keywords?: string;
   disabled?: boolean;
+  ariaLabel?: string;
 };
 
 type ListboxProps<T extends string> = {
@@ -34,6 +37,9 @@ type ListboxProps<T extends string> = {
   autoFocus?: boolean;
   query?: string;
   onQueryChange?: (query: string) => void;
+  id?: string;
+  active?: T | null;
+  onActiveChange?: (value: T | null) => void;
   className?: string;
 };
 
@@ -53,10 +59,15 @@ export function Listbox<T extends string>({
   autoFocus = false,
   query: controlledQuery,
   onQueryChange,
+  id: listIdProp,
+  active,
+  onActiveChange,
   className,
 }: ListboxProps<T>) {
-  const id = useId();
+  const generatedId = useId();
+  const listId = listIdProp ?? `${generatedId}-list`;
   const list = useRef<HTMLDivElement>(null);
+  const notifyActive = useRef(onActiveChange);
   const [internalQuery, setInternalQuery] = useState('');
   const isControlled = typeof controlledQuery === 'string';
   const query = isControlled ? controlledQuery : internalQuery;
@@ -73,16 +84,27 @@ export function Listbox<T extends string>({
     enabled.find(option => option.value === value)?.value ??
     enabled[0]?.value ??
     null;
-  const [active, setActive] = useState<T | null>(initial);
+  const [highlighted, setHighlighted] = useState<T | null>(initial);
+  const preferred = active ?? highlighted;
   const current =
-    active !== null && enabled.some(option => option.value === active)
-      ? active
+    preferred !== null && enabled.some(option => option.value === preferred)
+      ? preferred
       : initial;
-  const optionId = (option: T) => `${id}-option-${option}`;
-  const reveal = (next: T) =>
+  const optionId = (option: T) => listboxOptionId(listId, option);
+  const highlight = (next: T) => {
+    setHighlighted(next);
+    if (active != null) onActiveChange?.(next);
+  };
+  useEffect(() => {
+    notifyActive.current = onActiveChange;
+  }, [onActiveChange]);
+  useEffect(() => {
+    notifyActive.current?.(current);
+    if (current === null) return;
     list.current
-      ?.querySelector(`[id="${CSS.escape(optionId(next))}"]`)
+      ?.querySelector(`[id="${CSS.escape(listboxOptionId(listId, current))}"]`)
       ?.scrollIntoView({ block: 'nearest' });
+  }, [current, listId]);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     const index = enabled.findIndex(option => option.value === current);
     const target =
@@ -99,8 +121,7 @@ export function Listbox<T extends string>({
       const next = enabled[target];
       if (!next) return;
       event.preventDefault();
-      setActive(next.value);
-      reveal(next.value);
+      highlight(next.value);
       return;
     }
     if (event.key === 'Enter' && current !== null) {
@@ -116,7 +137,7 @@ export function Listbox<T extends string>({
         <SearchField
           variant="underline"
           aria-label={`Search ${label.toLocaleLowerCase()}`}
-          aria-controls={`${id}-list`}
+          aria-controls={listId}
           aria-activedescendant={activeDescendant}
           aria-autocomplete="list"
           role="combobox"
@@ -131,7 +152,7 @@ export function Listbox<T extends string>({
       )}
       <div
         ref={list}
-        id={`${id}-list`}
+        id={listId}
         role="listbox"
         aria-label={label}
         aria-activedescendant={searchable ? undefined : activeDescendant}
@@ -156,14 +177,17 @@ export function Listbox<T extends string>({
                     key={option.value}
                     id={optionId(option.value)}
                     role="option"
+                    aria-label={option.ariaLabel}
                     aria-selected={selected}
                     aria-disabled={option.disabled || undefined}
                     data-selected={selected ? '' : undefined}
                     data-highlighted={option.value === current ? '' : undefined}
                     data-disabled={option.disabled ? '' : undefined}
                     onPointerMove={() => {
-                      if (!option.disabled) setActive(option.value);
+                      if (!option.disabled && option.value !== current)
+                        highlight(option.value);
                     }}
+                    onMouseDown={event => event.preventDefault()}
                     onClick={() => {
                       if (!option.disabled) onSelect(option.value);
                     }}

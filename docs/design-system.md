@@ -125,7 +125,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Switch** and **Checkbox** — `shared/ui/switch.tsx`, `shared/ui/checkbox.tsx`. Switch for settings that apply immediately; Checkbox for selections inside forms and lists (viewed files, task lists), including `indeterminate`. Pair both with `Label`.
 
-**SegmentedControl** — `shared/ui/segmented-control.tsx`. Two to five mutually related options shown at once. Sizes `sm` (24) and `md` (28), `fullWidth`, `iconOnly`, per-option `icon`, `count`, `disabled`, `title`. `mode` is `single` (radio group, arrow keys), `toggle` (pressed buttons) or `multiple` (array value). `invalid` draws an error outline. A single value may be `null` while it is unknown; the first enabled option then takes the tab stop. Not for navigation between views with their own panels (use Tabs).
+**SegmentedControl** — `shared/ui/segmented-control.tsx`. Two to five mutually related options shown at once. Sizes `sm` (24) and `md` (28), `fullWidth`, `iconOnly`, per-option `icon`, `count`, `disabled`, `title`. `mode` is `single` (radio group, arrow keys), `toggle` (pressed buttons) or `multiple` (array value). `orientation="vertical"` stacks the options in a column, for example a provider rail beside a list. `invalid` draws an error outline. A single value may be `null` while it is unknown; the first enabled option then takes the tab stop. Not for navigation between views with their own panels (use Tabs).
 
 **Tabs** — `shared/ui/tabs.tsx`. `variant="underline"` with a sliding indicator for panel sections; `variant="editor"` for open documents with `closable` tabs (`onClose`, middle click, Delete). Render content in `TabPanel` with the same `idPrefix` so ARIA wiring matches.
 
@@ -137,7 +137,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **DropdownMenu** — `shared/ui/dropdown-menu.tsx`. Action menus. Item, CheckboxItem, RadioGroup/RadioItem, Label, Separator, Shortcut, Sub/SubTrigger/SubContent, Group. `variant="destructive"` on an item that deletes. Every item is 28 px, `text-ui`, `rounded-control`, `bg-accent` when highlighted; the classes live in `shared/ui/menu-styles.ts` and Select and Listbox reuse them.
 
-**Listbox / Combobox** — `shared/ui/listbox.tsx`. Pickers with search, groups, descriptions, disabled options and full keyboard handling (arrows, Home, End, Enter; the search field keeps focus and drives `aria-activedescendant`). Combobox puts a Listbox in a solid popover behind any trigger, usually a Chip. Replaces hand-written option lists in model, folder, branch and workflow pickers. `query` and `onQueryChange` control the search text when the caller needs it, for example to offer a "create" option for an unmatched name.
+**Listbox / Combobox** — `shared/ui/listbox.tsx`. Pickers with search, groups, descriptions, disabled options and full keyboard handling (arrows, Home, End, Enter; the search field keeps focus and drives `aria-activedescendant`). Options take an `ariaLabel` when the visible label is not the accessible name. `onActiveChange` reports the highlighted option (for a preview beside the list). An input outside the list can drive it: pass `id` and `active`, and point `aria-activedescendant` at `listboxOptionId(id, value)` from `shared/ui/listbox-option-id.ts` (the skill picker keeps focus in the message field this way). Combobox puts a Listbox in a solid popover behind any trigger, usually a Chip. Replaces hand-written option lists in model, folder, branch and workflow pickers. `query` and `onQueryChange` control the search text when the caller needs it, for example to offer a "create" option for an unmatched name.
 
 **Dialog / Sheet** — `shared/ui/dialog.tsx`, `shared/ui/sheet.tsx`. Dialog titles are `text-base` semibold and descriptions `text-xs` muted by default; don't override them. Sheet content is `bg-card` with no padding; SheetHeader has the bordered `px-5 py-4` layout and SheetFooter a bordered action row. Both close with a 28 px IconButton.
 
@@ -151,7 +151,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Spinner** — `shared/ui/spinner.tsx`. Inline loading glyph; `label` when it stands alone.
 
-**Separator** — `shared/ui/separator.tsx`. Horizontal or vertical 1 px rule.
+**Separator** — `shared/ui/separator.tsx`. Horizontal or vertical 1 px rule. `label` centres `text-2xs` muted text between two rules (history dividers such as "Mode changed to …").
 
 ### Composites
 

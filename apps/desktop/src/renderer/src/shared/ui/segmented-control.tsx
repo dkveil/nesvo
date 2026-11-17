@@ -16,6 +16,7 @@ type SegmentedBaseProps<T extends string> = {
   size?: 'sm' | 'md';
   fullWidth?: boolean;
   iconOnly?: boolean;
+  orientation?: 'horizontal' | 'vertical';
   disabled?: boolean;
   invalid?: boolean;
   describedBy?: string;
@@ -63,6 +64,7 @@ export function SegmentedControl<T extends string>(
     size = 'sm',
     fullWidth = false,
     iconOnly = false,
+    orientation = 'horizontal',
     disabled = false,
     invalid = false,
     describedBy,
@@ -90,6 +92,7 @@ export function SegmentedControl<T extends string>(
     <div
       role={radio ? 'radiogroup' : 'group'}
       aria-label={label}
+      aria-orientation={radio ? orientation : undefined}
       aria-describedby={describedBy}
       aria-invalid={invalid || undefined}
       aria-disabled={disabled || undefined}
@@ -100,6 +103,7 @@ export function SegmentedControl<T extends string>(
       className={cn(
         'inline-flex shrink-0 gap-0.5 rounded-surface bg-segment-track p-0.5',
         fullWidth && 'flex w-full',
+        orientation === 'vertical' && 'flex-col',
         invalid && 'outline-1 outline-error-foreground',
         className,
       )}

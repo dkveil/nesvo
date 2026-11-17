@@ -165,6 +165,7 @@ function LiveMenu() {
 
 function PickerSpecimens() {
   const [model, setModel] = useState('large');
+  const [preview, setPreview] = useState<string | null>(null);
   const label =
     MODEL_OPTIONS.find(option => option.value === model)?.label ?? 'Model';
   return (
@@ -178,6 +179,22 @@ function PickerSpecimens() {
             value={model}
             onSelect={setModel}
           />
+        </div>
+      </StateCaption>
+      <StateCaption label="Listbox · highlighted option reported beside it">
+        <div className="flex h-40 w-80 overflow-hidden rounded-surface border bg-popover">
+          <Listbox
+            label="Models (preview)"
+            options={MODEL_OPTIONS}
+            value={model}
+            onSelect={setModel}
+            onActiveChange={setPreview}
+            className="flex-1"
+          />
+          <p className="w-28 shrink-0 border-l p-3 text-2xs text-muted-foreground">
+            {MODEL_OPTIONS.find(option => option.value === preview)?.label ??
+              'None'}
+          </p>
         </div>
       </StateCaption>
       <StateCaption label="Combobox · Chip trigger">

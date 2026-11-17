@@ -32,6 +32,7 @@ import {
   ToolbarSpacer,
 } from '@/shared/ui/panel';
 import { ListRow } from '@/shared/ui/list-row';
+import { Separator } from '@/shared/ui/separator';
 import { FileGlyph } from '@/entities/file-change';
 import { CatalogSection, Specimen, StateCaption } from './specimen';
 
@@ -210,6 +211,10 @@ export function SurfacesSection() {
         <Specimen title="CodeBlock" source="shared/ui/code-block.tsx">
           <CodeBlock code={SAMPLE_CODE} label="greet.ts" />
           <CodeBlock code="bun run check" />
+        </Specimen>
+        <Specimen title="Separator" source="shared/ui/separator.tsx">
+          <Separator />
+          <Separator label="Mode changed to Accept edits" />
         </Specimen>
       </div>
     </CatalogSection>

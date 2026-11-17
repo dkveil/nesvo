@@ -132,6 +132,20 @@ function Selections() {
             ]}
           />
         </SpecimenRow>
+        <SpecimenRow label="vertical · icons">
+          <SegmentedControl
+            label="View (vertical)"
+            iconOnly
+            size="md"
+            orientation="vertical"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'list', label: 'List', icon: <List /> },
+              { value: 'tree', label: 'Tree', icon: <Rows3 /> },
+            ]}
+          />
+        </SpecimenRow>
         <SpecimenRow label="md · counts">
           <SegmentedControl
             label="Repeat"
