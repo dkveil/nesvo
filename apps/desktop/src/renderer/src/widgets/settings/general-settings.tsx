@@ -7,6 +7,7 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import { HostStatus } from '@/features/host-status';
+import { shortcutLabel } from '@/shared/lib/shortcut';
 import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 
@@ -18,6 +19,17 @@ type Props = {
   onRefreshConnection: () => void;
   onRefreshProvider: (provider: Provider) => void;
 };
+
+const shortcuts: { label: string; keys: string }[] = [
+  { label: 'New session', keys: shortcutLabel('N') },
+  { label: 'Command palette', keys: shortcutLabel('K') },
+  { label: 'Toggle sidebar', keys: shortcutLabel('B') },
+  { label: 'Cycle permission mode', keys: 'Shift+Tab' },
+  { label: 'Send message', keys: 'Enter' },
+  { label: 'Recall previous message', keys: 'ArrowUp' },
+  { label: 'Choose a skill', keys: '/' },
+  { label: 'Start a fresh conversation in this folder', keys: '/clear' },
+];
 
 const syncFormat = new Intl.DateTimeFormat('en', {
   dateStyle: 'medium',
@@ -108,6 +120,21 @@ export function GeneralSettings({
             </SettingsRow>
           );
         })}
+      </SettingsSection>
+      <SettingsSection title="Keyboard shortcuts">
+        <ul aria-label="Keyboard shortcuts" className="divide-y">
+          {shortcuts.map(shortcut => (
+            <li
+              key={shortcut.label}
+              className="flex items-center justify-between gap-4 px-4 py-2 text-[13px]"
+            >
+              <span>{shortcut.label}</span>
+              <kbd className="rounded-sm border px-1.5 font-sans text-2xs leading-5 text-muted-foreground">
+                {shortcut.keys}
+              </kbd>
+            </li>
+          ))}
+        </ul>
       </SettingsSection>
     </div>
   );
