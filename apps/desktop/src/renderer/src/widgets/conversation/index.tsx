@@ -22,6 +22,7 @@ import {
   ModeIcon,
   modeLabel,
   modelLabel,
+  providerStatusLabel,
   directoryLabel,
   statusLabels,
   type Provider,
@@ -41,6 +42,7 @@ import {
   resolveEffort,
 } from '@/features/new-thread/reasoning-effort';
 import { entityKey } from '@/shared/lib/host-key';
+import { FailureNotice } from '@/features/failure-notice';
 import { MessageBody } from './message-body';
 import { CopyMessageButton } from './copy-message-button';
 import { ClampedPrompt } from './clamped-prompt';
@@ -962,29 +964,25 @@ export function Conversation({
               </Fragment>
             );
           })}
-          {session.error &&
+          {(session.error || session.failure) &&
             session.status !== 'interrupted' &&
             session.status !== 'completed' && (
-              <section
-                role="alert"
-                aria-label="Failed run"
-                className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3"
-              >
-                <p className="text-sm leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">
-                  {session.error}
-                </p>
-                {canResend && (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={!canSend || sending}
-                    onClick={onResend}
-                  >
-                    Resend last message
-                  </Button>
+              <FailureNotice
+                key={session.runId}
+                failure={session.failure}
+                error={session.error ?? ''}
+                provider={session.provider}
+                computerName={computerName}
+                canResend={canResend}
+                resendDisabled={!canSend || sending}
+                checking={statuses[session.provider].loading}
+                providerStatus={providerStatusLabel(
+                  session.provider,
+                  statuses[session.provider],
                 )}
-              </section>
+                onResend={onResend}
+                onCheckProvider={() => onRefreshProvider(session.provider)}
+              />
             )}
           {session.status === 'interrupted' && (
             <section

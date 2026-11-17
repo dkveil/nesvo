@@ -1,4 +1,5 @@
 import type { SessionActivity, Session } from '@nesvo/contracts';
+export { ExitCodeBadge } from './exit-code-badge';
 
 export type { SessionActivity } from '@nesvo/contracts';
 
