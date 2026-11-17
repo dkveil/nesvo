@@ -236,7 +236,7 @@ export const createSessionSchema = z
   });
 export const attachmentLimits = {
   perMessage: 10,
-  imageBytes: 5_242_880,
+  imageBytes: 3_932_160,
   textBytes: 204_800,
   encodedCharacters: 7_000_000,
   pastedTextCharacters: 4000,

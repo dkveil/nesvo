@@ -13,7 +13,7 @@ export type LoadedAttachment = ProviderAttachment & { content: Buffer };
 
 export const attachmentLimits = {
   count: 10,
-  imageBytes: 5 * 1024 * 1024,
+  imageBytes: 3_932_160,
   textBytes: 200 * 1024,
 } as const;
 
@@ -52,7 +52,7 @@ async function checkedSize(attachment: ProviderAttachment): Promise<number> {
   if (size > limit)
     refuse(
       attachment.kind === 'image'
-        ? `The image ${attachment.name} is larger than 5 MB. No provider turn was started.`
+        ? `The image ${attachment.name} is larger than 3.75 MiB. No provider turn was started.`
         : `The text file ${attachment.name} is larger than 200 kB. No provider turn was started.`,
     );
   return size;
