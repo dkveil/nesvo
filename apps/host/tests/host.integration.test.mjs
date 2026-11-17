@@ -88,6 +88,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   const observedReviews = [];
   const scheduledEvents = [];
   const workflowEvents = [];
+  const groupEvents = [];
   const timeline = [];
   let transportError;
   child.stderr.setEncoding('utf8');
@@ -124,6 +125,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         scheduledEvents.push(message);
       } else if (message.type.startsWith('workflow-') && !message.id) {
         workflowEvents.push(message);
+      } else if (message.type === 'session-groups-changed') {
+        groupEvents.push(message.list);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -166,6 +169,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
     observedReviews,
     scheduledEvents,
     workflowEvents,
+    groupEvents,
     timeline,
     request,
     send,
@@ -8620,7 +8624,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        12,
+        13,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -8671,7 +8675,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        12,
+        13,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -16929,7 +16933,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      12,
+      13,
     );
     database
       .prepare(
@@ -16969,3 +16973,332 @@ test('History search backfills and tracks the host session documents', async () 
     await rm(directory, { recursive: true, force: true });
   }
 });
+test(
+  'session groups nest, reorder and persist housekeeping across restarts',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-groups-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const hosts = [];
+    t.after(async () => {
+      for (const opened of hosts) {
+        if (
+          opened.child.exitCode === null &&
+          opened.child.signalCode === null
+        ) {
+          try {
+            await opened.stop();
+          } catch {
+            opened.child.kill();
+          }
+        }
+        await bounded(opened.exited, 'Test host did not exit');
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const open = () => {
+      const opened = launch(directory, pidFile);
+      hosts.push(opened);
+      return opened;
+    };
+    let host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'session-groups',
+      ),
+    );
+    const createGroup = (groupId, name, parentId = null, defaults) =>
+      host.request('create-session-group', {
+        groupId,
+        name,
+        parentId,
+        ...(defaults ? { defaults } : {}),
+      });
+    const moveGroup = (groupId, parentId, position = 0) =>
+      host.request('move-session-group', { groupId, parentId, position });
+    const createSession = async (title, groupId) => {
+      const response = await host.request('create-session', {
+        title,
+        model: 'sonnet',
+        directory: project,
+        ...(groupId ? { groupId } : {}),
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const sessionsIn = async groupId =>
+      (await host.request('list-sessions')).sessions
+        .filter(
+          session =>
+            session.groupId === groupId &&
+            !session.pinned &&
+            !session.archivedAt,
+        )
+        .sort(
+          (left, right) =>
+            left.order - right.order ||
+            right.updatedAt.localeCompare(left.updatedAt) ||
+            left.id.localeCompare(right.id),
+        )
+        .map(session => session.title);
+
+    const [work, client, deep, side, sideChild] = Array.from(
+      { length: 5 },
+      () => randomUUID(),
+    );
+    const defaults = {
+      directory: project,
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'read-only',
+    };
+    const created = await createGroup(work, ' Work ', null, defaults);
+    assert.equal(created.type, 'session-groups', JSON.stringify(created));
+    assert.equal(created.list.groups[0].name, 'Work');
+    assert.deepEqual(created.list.groups[0].defaults, defaults);
+    assert.equal(
+      (await createGroup(client, 'Client', work)).type,
+      'session-groups',
+    );
+    assert.equal(
+      (await createGroup(deep, 'Deep', client)).type,
+      'session-groups',
+    );
+    assert.equal(
+      (await createGroup(randomUUID(), 'Too deep', deep)).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await createGroup(randomUUID(), 'Orphan', randomUUID())).code,
+      'invalid-request',
+    );
+    const repeated = await createGroup(work, 'Work');
+    assert.equal(repeated.list.groups.length, 3);
+    assert.equal((await createGroup(work, 'Other')).code, 'invalid-request');
+    assert.equal((await moveGroup(work, deep)).code, 'invalid-request');
+    assert.equal((await moveGroup(work, work)).code, 'invalid-request');
+    assert.equal((await moveGroup(randomUUID(), null)).code, 'not-found');
+    await createGroup(side, 'Side');
+    await createGroup(sideChild, 'Side child', side);
+    assert.equal((await moveGroup(side, client)).code, 'invalid-request');
+    const reparented = await moveGroup(side, work, 0);
+    assert.equal(reparented.type, 'session-groups', JSON.stringify(reparented));
+    assert.deepEqual(
+      reparented.list.groups
+        .filter(group => group.parentId === work)
+        .sort((left, right) => left.order - right.order)
+        .map(group => group.name),
+      ['Side', 'Client'],
+    );
+    const latestRevision = (await host.request('list-session-groups')).list
+      .revision;
+    await bounded(
+      (async () => {
+        while (host.groupEvents.at(-1)?.revision !== latestRevision)
+          await delay(20);
+      })(),
+      'Group change event was not published',
+      2000,
+    );
+
+    const alpha = await createSession('Alpha');
+    const beta = await createSession('Beta');
+    const gamma = await createSession('Gamma', work);
+    assert.equal(gamma.groupId, work);
+    assert.equal(alpha.groupId, null);
+    assert.equal(alpha.pinned, false);
+    assert.equal(alpha.archivedAt, null);
+    assert.equal(
+      (
+        await host.request('create-session', {
+          title: 'Lost',
+          model: 'sonnet',
+          directory: project,
+          groupId: randomUUID(),
+        })
+      ).code,
+      'invalid-request',
+    );
+    const move = (session, groupId, position) =>
+      host.request('move-session', {
+        sessionId: session.id,
+        groupId,
+        position,
+      });
+    const movedAlpha = await move(alpha, work, 0);
+    assert.equal(movedAlpha.type, 'session', JSON.stringify(movedAlpha));
+    assert.equal(movedAlpha.session.groupId, work);
+    assert.equal(movedAlpha.session.updatedAt, alpha.updatedAt);
+    assert.deepEqual(await sessionsIn(work), ['Alpha', 'Gamma']);
+    await move(beta, work, 1);
+    assert.deepEqual(await sessionsIn(work), ['Alpha', 'Beta', 'Gamma']);
+    await move(beta, work, 0);
+    assert.deepEqual(await sessionsIn(work), ['Beta', 'Alpha', 'Gamma']);
+    await move(gamma, work, 99);
+    assert.deepEqual(await sessionsIn(work), ['Beta', 'Alpha', 'Gamma']);
+    assert.equal((await move(alpha, randomUUID(), 0)).code, 'invalid-request');
+    assert.equal(
+      (
+        await host.request('move-session', {
+          sessionId: randomUUID(),
+          groupId: null,
+          position: 0,
+        })
+      ).code,
+      'not-found',
+    );
+    await move(gamma, client, 0);
+    assert.deepEqual(await sessionsIn(client), ['Gamma']);
+
+    const renamed = await host.request('rename-session', {
+      sessionId: gamma.id,
+      title: '  Gamma renamed ',
+    });
+    assert.equal(renamed.session.title, 'Gamma renamed');
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'rename-session',
+          input: { sessionId: gamma.id, title: ' ' },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
+    const pinned = await host.request('set-session-pinned', {
+      sessionId: alpha.id,
+      pinned: true,
+    });
+    assert.equal(pinned.session.pinned, true);
+
+    const started = (
+      await host.request('send-message', {
+        sessionId: beta.id,
+        messageId: randomUUID(),
+        text: 'fixture:hold',
+      })
+    ).session;
+    await host.event(
+      value =>
+        value.runId === started.runId &&
+        agent(value).body === 'Fixture is waiting.',
+    );
+    const archive = (session, archived) =>
+      host.request('set-session-archived', {
+        sessionId: session.id,
+        archived,
+      });
+    assert.equal((await archive(beta, true)).code, 'busy');
+    const runningRename = await host.request('rename-session', {
+      sessionId: beta.id,
+      title: 'Beta running',
+    });
+    assert.equal(runningRename.session.status, 'running');
+    assert.equal(runningRename.session.runId, started.runId);
+    assert.equal((await move(beta, null, 0)).session.groupId, null);
+    await host.request('stop-run', {
+      sessionId: beta.id,
+      runId: started.runId,
+    });
+    const stopped = await host.event(
+      value => value.runId === started.runId && value.status === 'stopped',
+    );
+    assert.equal(stopped.title, 'Beta running');
+    assert.equal(stopped.groupId, null);
+    const archived = await archive(beta, true);
+    assert.equal(archived.type, 'session', JSON.stringify(archived));
+    assert.ok(archived.session.archivedAt);
+    assert.equal(archived.session.messages.length, stopped.messages.length);
+
+    const removed = await host.request('delete-session-group', {
+      groupId: client,
+    });
+    assert.equal(removed.type, 'session-groups', JSON.stringify(removed));
+    assert.equal(
+      removed.list.groups.some(group => group.id === client),
+      false,
+    );
+    assert.equal(
+      removed.list.groups.find(group => group.id === deep).parentId,
+      work,
+    );
+    assert.deepEqual(await sessionsIn(work), ['Gamma renamed']);
+    assert.equal(
+      (await host.request('delete-session-group', { groupId: client })).code,
+      'not-found',
+    );
+    const updated = await host.request('update-session-group', {
+      groupId: work,
+      name: 'Work renamed',
+      defaults: { provider: 'Codex', mode: 'supervised' },
+    });
+    assert.equal(updated.type, 'session-groups', JSON.stringify(updated));
+    await host.stop();
+
+    host = open();
+    const groups = (await host.request('list-session-groups')).list.groups;
+    assert.deepEqual(
+      groups
+        .map(group => [group.name, group.parentId])
+        .sort((left, right) => left[0].localeCompare(right[0])),
+      [
+        ['Deep', work],
+        ['Side', work],
+        ['Side child', side],
+        ['Work renamed', null],
+      ],
+    );
+    assert.deepEqual(groups.find(group => group.id === work).defaults, {
+      provider: 'Codex',
+      mode: 'supervised',
+    });
+    const restored = (await host.request('list-sessions')).sessions;
+    const byId = id => restored.find(session => session.id === id);
+    assert.equal(byId(alpha.id).pinned, true);
+    assert.equal(byId(alpha.id).groupId, work);
+    assert.equal(byId(gamma.id).title, 'Gamma renamed');
+    assert.equal(byId(gamma.id).groupId, work);
+    assert.ok(byId(beta.id).archivedAt);
+    assert.equal(byId(beta.id).title, 'Beta running');
+    const unarchived = await archive(beta, false);
+    assert.equal(unarchived.session.archivedAt, null);
+    await host.stop();
+
+    const path = join(directory, 'nesvo.sqlite');
+    const legacy = new DatabaseSync(path);
+    try {
+      legacy
+        .prepare(
+          "UPDATE sessions SET document = json_remove(document, '$.groupId', '$.order', '$.pinned', '$.archivedAt') WHERE id = ?",
+        )
+        .run(alpha.id);
+      legacy.exec('PRAGMA user_version = 11');
+    } finally {
+      legacy.close();
+    }
+    host = open();
+    const upgraded = (await host.request('list-sessions')).sessions.find(
+      session => session.id === alpha.id,
+    );
+    assert.equal(upgraded.groupId, null);
+    assert.equal(upgraded.order, 0);
+    assert.equal(upgraded.pinned, false);
+    assert.equal(upgraded.archivedAt, null);
+    assert.equal(
+      (await host.request('list-session-groups')).list.groups.length,
+      4,
+    );
+    await host.stop();
+    const check = new DatabaseSync(path);
+    try {
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 13);
+    } finally {
+      check.close();
+    }
+  },
+);
