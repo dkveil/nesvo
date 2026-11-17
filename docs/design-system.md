@@ -74,7 +74,7 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 | `rounded-control`  | 6 px  | Controls, menu items, rows, chips            |
 | `rounded-surface`  | 8 px  | Popovers, menus, cards, specimens            |
 | `rounded-overlay`  | 12 px | Dialogs, the compact composer                |
-| `rounded-composer` | 16 px | The message composer                         |
+| `rounded-composer` | 16 px | The message composer, message bubbles        |
 | `rounded-full`     |       | Round icon buttons, send, pills, badges      |
 
 ### Motion

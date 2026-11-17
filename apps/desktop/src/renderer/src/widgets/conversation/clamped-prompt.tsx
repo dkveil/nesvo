@@ -18,7 +18,7 @@ export function ClampedPrompt({ children }: Props) {
         {!expanded && (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 rounded-b-2xl bg-linear-to-t from-message-surface to-transparent"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 rounded-b-composer bg-linear-to-t from-message-surface to-transparent"
           />
         )}
       </div>

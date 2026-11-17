@@ -3170,7 +3170,7 @@ ${text}`
             ) : (
               <ProviderAccounts
                 {...usageProps}
-                className="rounded-lg border bg-card px-4 pt-3 pb-4"
+                className="rounded-surface border bg-card px-4 pt-3 pb-4"
               />
             )
           }

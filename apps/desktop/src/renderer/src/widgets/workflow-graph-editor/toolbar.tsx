@@ -21,6 +21,7 @@ import {
   ToolbarSpacer,
 } from '@/shared/ui/panel';
 import { StatusDot } from '@/shared/ui/status-dot';
+import { Hint } from '@/shared/ui/tooltip';
 import { RunPopover } from './run-popover';
 import type { EditorState } from './use-editor-state';
 
@@ -82,7 +83,7 @@ export function Toolbar({
         onChange={event =>
           state.setWorkflowFields({ name: event.target.value })
         }
-        className="focus-ring w-56 rounded-control px-1.5 font-semibold placeholder:font-normal hover:bg-accent focus-visible:bg-accent"
+        className="focus-ring w-56 rounded-control px-1.5 font-semibold placeholder:font-normal enabled:hover:bg-accent focus-visible:bg-accent"
       />
       <Badge appearance="outline" size="xs">
         {scopeLabels[state.document.scope]}
@@ -184,15 +185,18 @@ export function Toolbar({
             onRun={onRun}
           />
         )}
-        <Button
-          type="button"
-          title="Save (Ctrl+S)"
-          disabled={!state.dirty || state.saving || state.validation.hasErrors}
-          onClick={() => void state.save()}
-        >
-          <Save />
-          {state.saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Hint label="Save" shortcut="Ctrl S">
+          <Button
+            type="button"
+            disabled={
+              !state.dirty || state.saving || state.validation.hasErrors
+            }
+            onClick={() => void state.save()}
+          >
+            <Save />
+            {state.saving ? 'Saving…' : 'Save'}
+          </Button>
+        </Hint>
         <ToolbarSeparator />
         <IconButton label="Close graph editor" onClick={onClose}>
           <X />

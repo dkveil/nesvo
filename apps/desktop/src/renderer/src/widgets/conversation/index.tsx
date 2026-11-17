@@ -798,13 +798,13 @@ export function Conversation({
                         <ClampedPrompt>
                           <MessageBody
                             body={message.body}
-                            className="rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6"
+                            className="rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
                           />
                         </ClampedPrompt>
                       ) : (
                         <MessageBody
                           body={message.body || 'No response text.'}
-                          className="max-w-[85%] rounded-2xl bg-message-surface px-3.5 py-2 text-sm leading-6"
+                          className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
                         />
                       )
                     ) : (
@@ -814,7 +814,7 @@ export function Conversation({
                       />
                     ))}
                   {message.author === 'agent' && !live && message.body && (
-                    <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
                       <CopyMessageButton body={message.body} />
                     </div>
                   )}
@@ -911,7 +911,7 @@ export function Conversation({
                   </Hint>
                   <MessageBody
                     body={entry.text}
-                    className="max-w-[85%] rounded-2xl border border-dashed px-3.5 py-2 text-sm leading-6"
+                    className="max-w-[85%] rounded-composer border border-dashed px-3.5 py-2 text-sm leading-6"
                   />
                   <div className="flex items-center gap-1">
                     <Button
