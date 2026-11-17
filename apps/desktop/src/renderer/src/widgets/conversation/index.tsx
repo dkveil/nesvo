@@ -93,6 +93,7 @@ type Props = {
   error: string;
   onDraft: (value: string) => void;
   onSend: (typed?: { text: string; skill: SelectedSkill }) => void;
+  onClear: () => void;
   onStop: () => void;
   onResend: () => void;
   canQueue: boolean;
@@ -133,6 +134,7 @@ export function Conversation({
   error,
   onDraft,
   onSend,
+  onClear,
   onStop,
   onResend,
   canQueue,
@@ -304,6 +306,11 @@ export function Conversation({
       <ListEnd />
     </Button>
   );
+  const clearConversation = () => {
+    setRecall(null);
+    onDraft('');
+    onClear();
+  };
   const composer = (
     <SelectSkill
       key={entityKey(session)}
@@ -315,6 +322,7 @@ export function Conversation({
       api={skillApi}
       enabled={connected}
       draft={draft}
+      onClear={clearConversation}
       onSelect={skill => {
         onSkillChange(skill);
         if (draft.startsWith('/')) onDraft(draft.replace(/^\/[^\s]*\s?/, ''));
@@ -334,6 +342,10 @@ export function Conversation({
           className="mx-auto w-full max-w-(--composer-max-width) space-y-2"
           onSubmit={event => {
             event.preventDefault();
+            if (draft.trim() === '/clear') {
+              clearConversation();
+              return;
+            }
             if (!draft.trim() || !canSubmit) return;
             setRecall(null);
             if (selectedSkill || !hasTypedCommand) {

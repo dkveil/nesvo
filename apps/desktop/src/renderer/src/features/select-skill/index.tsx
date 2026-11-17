@@ -65,9 +65,12 @@ type Props = {
   draft: string;
   enabled?: boolean;
   onSelect: (skill: SelectedSkill) => void;
+  onClear?: () => void;
   onFocusMessage: () => void;
   children: (controls: Controls) => ReactNode;
 };
+
+const clearCommandId = 'command:clear';
 
 const toSelected = (skill: SkillEntry): SelectedSkill => ({
   id: skill.id,
@@ -104,6 +107,7 @@ export function SelectSkill({
   draft,
   enabled = true,
   onSelect,
+  onClear,
   onFocusMessage,
   children,
 }: Props) {
@@ -130,11 +134,22 @@ export function SelectSkill({
   const loading = !catalog && !error;
   const skills = catalog ? rankSkills(catalog.skills, query) : [];
   const selectable = skills.filter(skill => !unavailableReason(skill, catalog));
-  const active =
-    selectable.find(skill => skill.id === activeId) ?? selectable[0];
-  const activeIndex = active
-    ? skills.findIndex(skill => skill.id === active.id)
-    : -1;
+  const clearVisible = !!onClear && 'clear'.startsWith(query);
+  const optionIds = [
+    ...(clearVisible ? [clearCommandId] : []),
+    ...selectable.map(skill => skill.id),
+  ];
+  const activeKey = optionIds.includes(activeId) ? activeId : optionIds[0];
+  const clearActive = clearVisible && activeKey === clearCommandId;
+  const active = clearActive
+    ? undefined
+    : selectable.find(skill => skill.id === activeKey);
+  const optionOffset = clearVisible ? 1 : 0;
+  const activeIndex = clearActive
+    ? 0
+    : active
+      ? skills.findIndex(skill => skill.id === active.id) + optionOffset
+      : -1;
   const activeOptionId =
     activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined;
   const fetchCatalog = () => requestCatalog(api, scope);
@@ -163,6 +178,11 @@ export function SelectSkill({
     setManualOpen(false);
     setDismissedDraft(draft);
     setManualQuery(null);
+  };
+  const runClear = () => {
+    close();
+    setTypedError('');
+    onClear?.();
   };
   const choose = (skill: SkillEntry) => {
     if (unavailableReason(skill, catalog) || !skill.path) return;
@@ -217,22 +237,23 @@ export function SelectSkill({
       return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      if (!selectable.length) return;
-      const index = selectable.findIndex(skill => skill.id === active?.id);
+      if (!optionIds.length) return;
+      const index = optionIds.indexOf(activeKey ?? '');
       const offset = event.key === 'ArrowDown' ? 1 : -1;
       const next =
-        selectable[(index + offset + selectable.length) % selectable.length];
-      if (next) setActiveId(next.id);
+        optionIds[(index + offset + optionIds.length) % optionIds.length];
+      if (next) setActiveId(next);
     } else if (
       (event.key === 'Enter' || event.key === 'Tab') &&
       !event.shiftKey &&
       !event.ctrlKey &&
       !event.altKey &&
       !event.metaKey &&
-      active
+      (active || clearActive)
     ) {
       event.preventDefault();
-      choose(active);
+      if (active) choose(active);
+      else runClear();
     }
   };
   const reload = () => {
@@ -382,6 +403,33 @@ export function SelectSkill({
             aria-label="Skills"
             className="min-h-0 overflow-y-auto p-1"
           >
+            {clearVisible && (
+              <div
+                id={`${listId}-0`}
+                role="option"
+                aria-label="/clear"
+                aria-selected={clearActive}
+                tabIndex={-1}
+                data-skill-command="clear"
+                onMouseDown={event => event.preventDefault()}
+                onMouseMove={() => {
+                  if (!clearActive) setActiveId(clearCommandId);
+                }}
+                onClick={runClear}
+                className={cn(
+                  'flex h-8 min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[13px] transition-colors duration-100',
+                  clearActive && 'bg-accent',
+                )}
+              >
+                <span className="shrink-0 font-semibold">/clear</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  Start a fresh conversation in this folder
+                </span>
+                <span className="hidden shrink-0 text-[11px] text-muted-foreground/70 sm:inline">
+                  Command
+                </span>
+              </div>
+            )}
             {skills.map((skill, index) => {
               const reason = unavailableReason(skill, catalog);
               const selected = active?.id === skill.id;
@@ -394,7 +442,7 @@ export function SelectSkill({
               return (
                 <div
                   key={skill.id}
-                  id={`${listId}-${index}`}
+                  id={`${listId}-${index + optionOffset}`}
                   role="option"
                   aria-label={skill.name}
                   aria-selected={selected}
@@ -438,7 +486,7 @@ export function SelectSkill({
                 </div>
               );
             })}
-            {catalog && !skills.length && (
+            {catalog && !skills.length && !clearVisible && (
               <p className="px-2.5 py-2 text-xs text-muted-foreground">
                 {query
                   ? `No skill matches /${query}.`

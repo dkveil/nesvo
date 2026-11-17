@@ -1233,6 +1233,34 @@ export function Workspace() {
       threadRequest.current = false;
     }
   };
+  const clearConversation = async (source: Session) => {
+    const sourceKey = entityKey(source);
+    const fail = (message: string) =>
+      setErrors(previous => ({ ...previous, [sourceKey]: message }));
+    if (threadRequest.current || sendingRef.current)
+      return fail('Wait for the current send to finish before clearing.');
+    if (!store.hostReady(source.hostId))
+      return fail('Connect this computer before starting a new conversation.');
+    threadRequest.current = true;
+    const origin = navigationVersion.current;
+    try {
+      const session = await desktopApi(source.hostId).createSession({
+        title: 'New thread',
+        provider: source.provider,
+        model: source.model,
+        mode: source.mode,
+        directory: source.directory,
+        ...(source.effort ? { effort: source.effort } : {}),
+      });
+      store.merge([session]);
+      setErrors(previous => ({ ...previous, [sourceKey]: '' }));
+      if (navigationVersion.current === origin) select(entityKey(session));
+    } catch (failure) {
+      fail(`Could not start a new conversation. ${errorDetail(failure)}`);
+    } finally {
+      threadRequest.current = false;
+    }
+  };
   const startWorkflowTask = async (
     input: StartWorkflowTaskInput,
   ): Promise<'opened' | 'started'> => {
@@ -2643,6 +2671,7 @@ export function Workspace() {
                 error={errors[selectedKey] ?? ''}
                 onDraft={value => changeDraft(selectedKey, value)}
                 onSend={typed => void send(typed)}
+                onClear={() => void clearConversation(selected)}
                 onStop={() => void stop()}
                 canQueue={
                   !sending && connection === 'ready' && !selected.workflowStepId
