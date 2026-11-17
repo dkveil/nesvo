@@ -185,7 +185,7 @@ export class SessionError extends Error {
   }
 }
 
-class BudgetRefusal extends SessionError {
+export class BudgetRefusal extends SessionError {
   constructor(message: string) {
     super('invalid-request', message);
   }
@@ -1415,7 +1415,13 @@ export class SessionService {
   ): void {
     const now = new Date();
     const budget = this.options.checkCostBudgets?.(session, now);
-    if (budget?.refusal) throw new BudgetRefusal(budget.refusal);
+    if (budget?.refusal) {
+      if (session.scheduledJobRunId && !session.runId) {
+        session.error = budget.refusal;
+        this.publish(session);
+      }
+      throw new BudgetRefusal(budget.refusal);
+    }
     const runId = randomUUID();
     if (!session.providerInitialized && session.runId)
       session.providerSessionId =

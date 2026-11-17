@@ -504,6 +504,51 @@ test(
       session => session.id === claude.id,
     );
     assert.equal(agent(restored).costWarning, agent(done).costWarning);
+
+    assert.equal(
+      (await request('update-cost-budget', refusal.budget)).type,
+      'cost-budget',
+    );
+    const id = randomUUID();
+    const job = await request('save-scheduled-job', {
+      id,
+      expectedRevision: null,
+      name: 'Budgeted automation',
+      prompt: 'fixture:stream',
+      directory,
+      provider: 'claude',
+      model: 'default',
+      effort: null,
+      mode: 'read-only',
+      schedule: { kind: 'daily', time: '09:00' },
+      timeZone: 'UTC',
+      active: false,
+    });
+    assert.equal(job.type, 'scheduled-job');
+    const automation = await request('run-scheduled-job-now', {
+      id,
+      requestId: randomUUID(),
+    });
+    assert.equal(automation.type, 'scheduled-job-run');
+    const failedAutomation = () =>
+      host.scheduledEvents.find(
+        event =>
+          event.type === 'scheduled-job-run-changed' &&
+          event.run.id === automation.run.id &&
+          event.run.status === 'failed',
+      )?.run;
+    await waitUntil(
+      failedAutomation,
+      'Budgeted automation did not record a refusal',
+    );
+    const failed = failedAutomation();
+    assert.equal(failed.runId, null);
+    const blockedSession = (await request('list-sessions')).sessions.find(
+      session => session.id === failed.sessionId,
+    );
+    assert.ok(blockedSession.error.includes(refusal.budget.id.slice(0, 8)));
+    assert.deepEqual(blockedSession.messages, []);
+
     assert.equal(
       (await request('delete-cost-budget', { id: warning.id })).type,
       'cost-budget-deleted',

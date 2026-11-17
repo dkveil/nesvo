@@ -9,6 +9,7 @@ import {
   type StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
+  BudgetRefusal,
   SessionError,
   confirmCodexEffort,
   type RunOutcome,
@@ -222,9 +223,16 @@ export class SessionLauncher implements ScheduledJobLauncher {
     signal.throwIfAborted();
     this.ensureAvailable(run);
     const { sessionId, runId } = this.start(input, scheduledJob, run);
-    this.watch(scheduledJob, sessionId, runId, progress);
+    if (runId) this.watch(scheduledJob, sessionId, runId, progress);
     try {
       progress.started({ sessionId, runId });
+      if (!runId)
+        progress.finished({
+          status: 'failed',
+          reason: null,
+          reviewId: null,
+          resetAt: null,
+        });
     } catch {
       return;
     }
@@ -332,7 +340,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
     input: CreateSessionInput,
     scheduledJob: ScheduledJob,
     run: ScheduledJobRun,
-  ): { sessionId: string; runId: string } {
+  ): { sessionId: string; runId: string | null } {
+    let sessionId: string | undefined;
     try {
       const session = this.sessions.create(input, {
         origin: {
@@ -341,13 +350,16 @@ export class SessionLauncher implements ScheduledJobLauncher {
           runId: run.id,
         },
       });
+      sessionId = session.id;
       const started = this.sessions.send({
-        sessionId: session.id,
+        sessionId,
         messageId: firstMessageId(run.id),
         text: scheduledJob.prompt,
       });
-      return { sessionId: session.id, runId: started.runId! };
+      return { sessionId, runId: started.runId! };
     } catch (error) {
+      if (error instanceof BudgetRefusal && sessionId)
+        return { sessionId, runId: null };
       if (error instanceof SessionError && error.code === 'invalid-directory')
         throw new ScheduledJobLaunchError('folder', error.message);
       throw error;

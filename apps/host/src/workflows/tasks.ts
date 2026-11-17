@@ -20,6 +20,7 @@ import {
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { adoptLegacyFolder } from './legacy-folders';
 import {
+  BudgetRefusal,
   SessionError,
   confirmCodexEffort,
   type WorkflowTurnState,
@@ -181,6 +182,7 @@ export const createSessionAuthor = ({
       try {
         return send(run, turn);
       } catch (error) {
+        if (error instanceof BudgetRefusal) return { refusal: error.message };
         if (error instanceof SessionError && error.code === 'busy') return 'busy';
         return 'unavailable';
       }

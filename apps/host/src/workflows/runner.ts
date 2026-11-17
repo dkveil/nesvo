@@ -56,7 +56,9 @@ export type AuthorTurn =
 
 export type AuthorPort = {
   turnState: (run: WorkflowRun, messageId: string) => TurnState;
-  sendTurn: (turn: AuthorTurn) => 'sent' | 'busy' | 'unavailable';
+  sendTurn: (
+    turn: AuthorTurn,
+  ) => 'sent' | 'busy' | 'unavailable' | { refusal: string };
   stop: (runId: string) => void;
 };
 
@@ -934,11 +936,14 @@ export class WorkflowRunner {
       this.clearBusy(run.id);
       return true;
     }
-    if (result === 'unavailable') {
+    if (result === 'unavailable' || typeof result === 'object') {
       this.clearBusy(run.id);
       this.writeRun(run, {
         status: 'needs-attention',
-        attention: AUTHOR_UNAVAILABLE_ATTENTION,
+        attention:
+          typeof result === 'object'
+            ? result.refusal
+            : AUTHOR_UNAVAILABLE_ATTENTION,
       });
       return true;
     }

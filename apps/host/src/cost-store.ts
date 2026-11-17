@@ -140,7 +140,12 @@ export class CostStore {
       FROM cost_turns
       WHERE started_at >= ? AND started_at <= ? AND cost_local_date(started_at) BETWEEN ? AND ?
     `;
-    const params = [period.lowerBound, period.now, period.firstDate, period.today];
+    const params = [
+      period.lowerBound,
+      period.now,
+      period.firstDate,
+      period.today,
+    ];
     const read = (sql: string) => this.database.prepare(sql).all(...params);
     const rows = read(`
       SELECT cost_local_date(started_at) AS date, ${sumColumns}

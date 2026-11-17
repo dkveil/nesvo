@@ -17,6 +17,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import {
+  BudgetRefusal,
   confirmCodexEffort,
   type RunFinished,
   type SessionService,
@@ -501,7 +502,11 @@ export class WorkflowAssistant {
     let sent: 'sent' | 'busy';
     try {
       sent = this.sendTurn(sessionId, repairId, REPAIR_TEXT);
-    } catch {
+    } catch (error) {
+      if (error instanceof BudgetRefusal) {
+        this.refuseTurn(turn, error.message);
+        return false;
+      }
       sent = 'busy';
     }
     if (sent === 'busy') {
