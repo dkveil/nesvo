@@ -36,6 +36,7 @@ import {
 import type { ScheduledJob } from '@/entities/scheduled-job';
 import { Button } from '@/shared/ui/button';
 import { ProjectChip } from '@/shared/ui/project-chip';
+import { shortcutLabel } from '@/shared/lib/shortcut';
 
 type Props = {
   sessions: Session[];
@@ -53,6 +54,7 @@ type Props = {
   onInbox: () => void;
   onWorkflows: () => void;
   onCreate: () => void;
+  onOpenPalette?: () => void;
   onCollapse?: () => void;
   collapseToggleRef?: RefObject<HTMLButtonElement | null>;
   footerStart?: ReactNode;
@@ -134,6 +136,7 @@ export function SessionSidebar({
   onInbox,
   onWorkflows,
   onCreate,
+  onOpenPalette,
   onCollapse,
   collapseToggleRef,
   footerStart,
@@ -341,6 +344,17 @@ export function SessionSidebar({
                 }
               }}
             />
+            {!search && onOpenPalette && (
+              <button
+                type="button"
+                aria-label="Open command palette"
+                title="Open command palette"
+                className="shrink-0 rounded-sm border border-sidebar-border px-1 font-sans text-2xs leading-4 outline-none hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={onOpenPalette}
+              >
+                {shortcutLabel('K')}
+              </button>
+            )}
             {search && (
               <button
                 type="button"
@@ -358,7 +372,7 @@ export function SessionSidebar({
             size="icon-sm"
             className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             aria-label="New session"
-            title="New session"
+            title={`New session (${shortcutLabel('N')})`}
             onClick={onCreate}
           >
             <SquarePen className="size-4" />

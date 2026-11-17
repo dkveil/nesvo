@@ -87,6 +87,7 @@ import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
+import { CommandPalette } from '@/features/command-palette';
 import { SessionSidebar } from '@/widgets/session-sidebar';
 import {
   WorkflowSection,
@@ -561,6 +562,7 @@ export function Workspace() {
     saveThreadSetup(setup);
   };
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
   const [seen, setSeen] = useState<Record<string, number>>(readSeen);
@@ -836,6 +838,33 @@ export function Workspace() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [toggleSidebar]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        (key !== 'n' && key !== 'k')
+      )
+        return;
+      const dialogs = [
+        ...document.querySelectorAll('[role="dialog"][data-state="open"]'),
+      ];
+      const paletteDialog = dialogs.some(dialog =>
+        dialog.hasAttribute('data-command-palette'),
+      );
+      if (dialogs.length > (paletteDialog ? 1 : 0)) return;
+      event.preventDefault();
+      if (key === 'k') setPaletteOpen(open => !open);
+      else if (!paletteDialog) openCreate();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
   const panelTrigger = () =>
     cardOpen
       ? cardTrigger.current
@@ -1801,6 +1830,7 @@ export function Workspace() {
     onInbox: openInbox,
     onWorkflows: openWorkflows,
     onCreate: openCreate,
+    onOpenPalette: () => setPaletteOpen(true),
     scheduledJobs: automations.jobs,
     automations: !!automation,
     automationsAvailable: automationComputers.length > 0,
@@ -2827,6 +2857,29 @@ export function Workspace() {
           onClose={() => setEditor(null)}
         />
       )}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        sessions={store.sessions}
+        actions={{
+          automationsAvailable: automationComputers.length > 0,
+          onNewSession: openCreate,
+          onInbox: openInbox,
+          onWorkflows: openWorkflows,
+          onAutomations: () => openAutomations(),
+          onSettings: () => {
+            setNavigationOpen(false);
+            setSettingsPage('general');
+          },
+          onToggleSidebar: () => toggleSidebar(!readSidebarOpen()),
+          onColorScheme: scheme => {
+            desktopApi()
+              .setColorScheme(scheme)
+              .catch(() => undefined);
+          },
+          onSelectSession: select,
+        }}
+      />
       {settingsPage && (
         <Settings
           page={settingsPage}
