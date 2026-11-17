@@ -169,7 +169,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **SectionLabel** — `shared/ui/section-label.tsx`. 24 px group heading with optional `count` and `action`.
 
-**Field / FieldMessages** — `shared/ui/field.tsx`. Label, control, hint and error or warning messages (`${id}-messages` for `aria-describedby`); `layout` `stacked` or `inline`.
+**Field / FieldMessages** — `shared/ui/field.tsx`. Label, control, hint and error or warning messages (`${id}-messages` for `aria-describedby`); `layout` `stacked` or `inline`. A Select inside a form renders Radix's hidden native `<select>` after its trigger; Field drops the trigger's trailing spacing in that case, so put the Select directly in the Field without a wrapper `<div>`.
 
 **KeyValueList** — `shared/ui/key-value-list.tsx`. Two-column `dl` for details and metadata.
 
@@ -218,6 +218,7 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | `SheetHeader className="border-b px-5 py-4"`, `SheetTitle className="text-sm"` | Drop the override                                                 |
 | Glass composer shells with their own textarea and send button                 | `<Composer>` + `<ComposerInput>` + `<ComposerToolbar>` + `<ComposerSend>` |
 | Inspector `Field` / `FieldNotes`                                              | `<Field messages={…}>` / `<FieldMessages>`                         |
+| `<Field><div><Select …/></div></Field>`                                       | `<Field><Select …/></Field>`                                       |
 | `text-[13px]` / `text-[11px]` / `text-[10px]` / `text-[15px]`                 | `text-ui` / `text-2xs` / `text-micro` / `text-title`               |
 | `text-2xl` / `text-3xl` headings, large totals in `text-base`                 | `text-display` / `text-display-lg`                                 |
 | `focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset` and variants | `focus-ring`                                                |

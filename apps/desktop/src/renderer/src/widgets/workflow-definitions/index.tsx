@@ -354,31 +354,25 @@ export default function WorkflowDefinitions({
           }}
         >
           <Field id="workflows-computer" label="Computer">
-            <div>
-              <Select
-                value={hostId}
-                onValueChange={value => {
-                  setHostId(value);
-                  load(value, directory);
-                }}
-              >
-                <SelectTrigger
-                  id="workflows-computer"
-                  size="md"
-                  className="w-44"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {computers.map(item => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                      {item.status === 'connected' ? '' : ' · Offline'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <Select
+              value={hostId}
+              onValueChange={value => {
+                setHostId(value);
+                load(value, directory);
+              }}
+            >
+              <SelectTrigger id="workflows-computer" size="md" className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {computers.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                    {item.status === 'connected' ? '' : ' · Offline'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           <Field
             id="workflows-directory"

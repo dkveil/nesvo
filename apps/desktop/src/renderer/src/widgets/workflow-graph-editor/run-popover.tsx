@@ -137,24 +137,22 @@ export function RunPopover({
           </p>
         </div>
         <Field id={`${id}-spec`} label="Task spec">
-          <div>
-            <Select
-              value={chosenSpec?.source.path ?? ''}
-              onValueChange={setSpecPath}
-              disabled={mine.length === 0}
-            >
-              <SelectTrigger id={`${id}-spec`} className="w-full">
-                <SelectValue placeholder="No spec for this workflow" />
-              </SelectTrigger>
-              <SelectContent>
-                {mine.map(spec => (
-                  <SelectItem key={spec.source.path} value={spec.source.path}>
-                    {specLabel(spec)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Select
+            value={chosenSpec?.source.path ?? ''}
+            onValueChange={setSpecPath}
+            disabled={mine.length === 0}
+          >
+            <SelectTrigger id={`${id}-spec`} className="w-full">
+              <SelectValue placeholder="No spec for this workflow" />
+            </SelectTrigger>
+            <SelectContent>
+              {mine.map(spec => (
+                <SelectItem key={spec.source.path} value={spec.source.path}>
+                  {specLabel(spec)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field id={`${id}-author`} label="Author" as="span">
           <div className="flex items-center gap-2">

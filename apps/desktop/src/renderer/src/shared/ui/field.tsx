@@ -91,7 +91,7 @@ export function Field({
         {caption}
         {aside}
       </div>
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-1 [&>:has(+select[aria-hidden]:last-child)]:mb-0">
         {children}
         {hint && (
           <p

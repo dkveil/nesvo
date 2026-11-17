@@ -384,6 +384,38 @@ export function InputsSection() {
             <Input id="catalog-field-inline" defaultValue="sample value" />
           </Field>
         </div>
+        <SpecimenRow label="select in a form · bottom aligned">
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={event => event.preventDefault()}
+          >
+            <Field id="catalog-field-computer" label="Computer">
+              <Select defaultValue="local">
+                <SelectTrigger
+                  id="catalog-field-computer"
+                  size="md"
+                  className="w-44"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">Local</SelectItem>
+                  <SelectItem value="vps">Sample VPS · Offline</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field id="catalog-field-folder" label="Project folder">
+              <Input
+                id="catalog-field-folder"
+                size="md"
+                defaultValue="~/projects/sample"
+              />
+            </Field>
+            <Button type="submit" variant="outline" size="md">
+              Load
+            </Button>
+          </form>
+        </SpecimenRow>
       </Specimen>
     </CatalogSection>
   );
