@@ -32,6 +32,17 @@ type Props = {
   onSelect: (id: string) => void;
 };
 
+const childStatusLabel = (session: Session, child: Session) => {
+  const proposal = session.delegations.find(
+    delegation => delegation.childSessionId === child.id,
+  );
+  return proposal &&
+    proposal.status !== 'running' &&
+    proposal.status !== 'completed'
+    ? delegationStatusLabels[proposal.status]
+    : sessionStatusLabel(child);
+};
+
 export function Delegations({
   session,
   children,
@@ -199,7 +210,7 @@ export function Delegations({
             >
               <span className="min-w-0 truncate text-xs">{child.title}</span>
               <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                {sessionStatusLabel(child)}
+                {childStatusLabel(session, child)}
               </span>
               <ArrowUpRight className="size-3 shrink-0" />
             </Button>
