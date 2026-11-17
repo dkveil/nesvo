@@ -97,7 +97,7 @@ Do not run git clean or delete ignored files as part of setup.
 
 ## Landing page
 
-The public landing page lives in `site/` as plain static files: `index.html`, `styles.css`, a small `main.js` that picks the download for the visitor's operating system, and the brand SVGs. There is no build step and no external fonts, scripts or trackers. Open `site/index.html` in a browser to preview it.
+The public landing page lives in `site/` as plain static files: a single-viewport `index.html` with the wordmark inlined as SVG, `styles.css`, `favicon.svg` and a small `main.js` that picks the download for the visitor's operating system and runs the download button feedback, including the first-launch note for unsigned builds. Links use only the short paths from `site/_redirects`, so every download also works without JavaScript. There is no build step and no external fonts, scripts or trackers. Serve `site/` with its `_headers` applied when previewing, so the Content Security Policy is checked too.
 
 Download buttons point at the stable asset names of the latest GitHub Release (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so the page needs no change for a new version.
 
