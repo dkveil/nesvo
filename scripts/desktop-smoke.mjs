@@ -155,7 +155,18 @@ try {
     });
   const runActivities = (session, runId) =>
     session.activities.filter(activity => activity.runId === runId);
-  const checkActivityRows = async (runId, activities) => {
+  const routineActivity = activity =>
+    ['read', 'search', 'thinking'].includes(activity.kind) &&
+    activity.status === 'completed';
+  const checkActivityRows = async (
+    runId,
+    allActivities,
+    visibility = 'compact',
+  ) => {
+    const activities =
+      visibility === 'compact'
+        ? allActivities.filter(activity => !routineActivity(activity))
+        : allActivities;
     const region = activityFor(runId);
     const toggle = region.getByLabel('Toggle activity', { exact: true });
     if (!(await toggle.evaluate(node => node.closest('details')?.open)))
@@ -1057,6 +1068,70 @@ try {
     .waitFor();
   await waitState(first.id, 'failed');
   await screenshot('-failure');
+  await send('fixture:bash');
+  const commandsRun = await waitState(first.id, 'completed');
+  const commandRows = runActivities(commandsRun, commandsRun.runId).filter(
+    activity => activity.kind === 'command',
+  );
+  assert.deepEqual(
+    commandRows.map(activity => [activity.status, activity.exitCode]),
+    [
+      ['failed', 3],
+      ['completed', 0],
+    ],
+  );
+  const commandsActivity = activityFor(commandsRun.runId);
+  await commandsActivity.getByLabel('Toggle activity', { exact: true }).click();
+  const commandRow = activity =>
+    commandsActivity.locator(`[data-activity-id="${activity.id}"]`);
+  assert.equal(
+    await commandRow(commandRows[0])
+      .getByLabel('Exit code 3', { exact: true })
+      .innerText(),
+    'exit 3',
+  );
+  assert.equal(
+    await commandRow(commandRows[1])
+      .getByLabel('Exit code 0', { exact: true })
+      .innerText(),
+    'exit 0',
+  );
+  await commandRow(commandRows[1])
+    .getByLabel(`Activity: ${commandRows[1].title}`, { exact: true })
+    .click();
+  const commandOutput = commandRow(commandRows[1]).getByLabel(
+    'Command output',
+    { exact: true },
+  );
+  assert.equal(
+    await commandOutput.locator('[data-output-stream="stdout"]').innerText(),
+    'done',
+  );
+  assert.equal(
+    await commandOutput.locator('[data-output-stream="stderr"]').innerText(),
+    'warning: fixture',
+  );
+  await screenshot('-commands');
+  await send('fixture:fail-sign-in');
+  const signInNotice = page
+    .getByRole('alert', { name: 'Failed run', exact: true })
+    .filter({ hasText: 'Sign in with Claude Code' });
+  await signInNotice.waitFor();
+  assert.equal(
+    await signInNotice
+      .getByLabel('Sign-in command', { exact: true })
+      .innerText(),
+    'claude auth login',
+  );
+  await signInNotice
+    .getByRole('button', { name: 'Check again', exact: true })
+    .click();
+  await signInNotice
+    .getByRole('status')
+    .filter({ hasText: 'Claude Code is ready' })
+    .waitFor();
+  await waitState(first.id, 'failed');
+  await screenshot('-sign-in');
   const pasteIntoComposer = (items, text = '') =>
     messageEditor.evaluate(
       (node, { items, text }) => {
@@ -1491,6 +1566,38 @@ try {
     /Worked for/,
   );
   await checkActivityRows(codexCompleted.runId, completedActivities);
+  const hiddenReads = completedActivities.filter(routineActivity).length;
+  const hiddenActivity = activityFor(codexCompleted.runId).getByLabel(
+    'Hidden activity',
+    { exact: true },
+  );
+  assert.equal(
+    await hiddenActivity.innerText(),
+    `${hiddenReads} ${hiddenReads === 1 ? 'read' : 'reads'} hidden`,
+  );
+  const showEveryToolCall = async checked => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('dialog', {
+      name: 'Settings',
+      exact: true,
+    });
+    const toolSwitch = settings
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByRole('switch', { name: 'Show every tool call', exact: true });
+    if ((await toolSwitch.isChecked()) !== checked) await toolSwitch.click();
+    assert.equal(await toolSwitch.isChecked(), checked);
+    await page.keyboard.press('Escape');
+    await settings.waitFor({ state: 'hidden' });
+  };
+  await showEveryToolCall(true);
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('nesvo.tool-visibility.v1')),
+    'all',
+  );
+  await hiddenActivity.waitFor({ state: 'detached' });
+  await checkActivityRows(codexCompleted.runId, completedActivities, 'all');
+  await showEveryToolCall(false);
+  await hiddenActivity.waitFor();
   const approval = page.getByRole('region', {
     name: 'Operation approval',
     exact: true,
