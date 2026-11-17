@@ -12,6 +12,9 @@ import {
 } from '@/entities/session';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { KeyValueList } from '@/shared/ui/key-value-list';
+import { ListRow } from '@/shared/ui/list-row';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { entityKey } from '@/shared/lib/host-key';
 import { WorkerPlan } from './worker-plan';
 
@@ -92,7 +95,7 @@ export function Delegations({
             key={delegation.id}
             id={`delegation-${delegation.id}`}
             aria-label="Worker proposal"
-            className="space-y-3 rounded-xl border bg-card/60 p-4"
+            className="space-y-3 rounded-surface border bg-card p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -112,33 +115,38 @@ export function Delegations({
             <p className="text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
               {delegation.task}
             </p>
-            <dl className="space-y-2 text-xs">
-              <div>
-                <dt className="text-muted-foreground">Scope</dt>
-                <dd className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {delegation.scope}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Relative directory</dt>
-                <dd className="mt-1 [overflow-wrap:anywhere]">
-                  {delegation.directory}
-                </dd>
-              </div>
-              <div>
-                <dt className="sr-only">Provider, model and access</dt>
-                <dd className="text-muted-foreground [overflow-wrap:anywhere]">
-                  {delegation.provider} · {modelLabel(delegation.model)} ·{' '}
-                  {modeLabel(delegation.provider, delegation.mode)}
-                </dd>
-              </div>
-            </dl>
+            <KeyValueList
+              entries={[
+                {
+                  key: 'scope',
+                  label: 'Scope',
+                  value: (
+                    <span className="whitespace-pre-wrap">
+                      {delegation.scope}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'directory',
+                  label: 'Relative directory',
+                  value: delegation.directory,
+                },
+                {
+                  key: 'runtime',
+                  label: 'Runs with',
+                  value: [
+                    delegation.provider,
+                    modelLabel(delegation.model),
+                    modeLabel(delegation.provider, delegation.mode),
+                  ].join(' · '),
+                },
+              ]}
+            />
             {delegation.status === 'pending' && (
               <>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="md"
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'accept')}
                   >
@@ -146,7 +154,6 @@ export function Delegations({
                   </Button>
                   <Button
                     type="button"
-                    size="md"
                     variant="outline"
                     disabled={!canDecide}
                     onClick={() => onDecision(delegation.id, 'decline')}
@@ -154,13 +161,13 @@ export function Delegations({
                     Decline
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <StatusMessage tone={deciding ? 'loading' : 'info'}>
                   {deciding
                     ? 'Sending decision…'
                     : canDecide
                       ? 'Starts this worker with the scope and access shown above.'
                       : 'This proposal is inactive. Check the connection and session status.'}
-                </p>
+                </StatusMessage>
               </>
             )}
             {delegation.status === 'plan-ready' && (
@@ -179,7 +186,6 @@ export function Delegations({
               <Button
                 type="button"
                 variant="ghost"
-                size="md"
                 onClick={() => onSelect(entityKey(child))}
               >
                 Open worker session
@@ -187,12 +193,9 @@ export function Delegations({
               </Button>
             )}
             {delegation.error && (
-              <p
-                role="alert"
-                className="text-xs leading-relaxed whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]"
-              >
+              <StatusMessage tone="error" className="whitespace-pre-wrap">
                 {delegation.error}
-              </p>
+              </StatusMessage>
             )}
           </section>
         );
@@ -201,20 +204,17 @@ export function Delegations({
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">Previous workers</p>
           {previousChildren.map(child => (
-            <Button
-              size="lg"
+            <ListRow
               key={child.id}
-              type="button"
-              variant="ghost"
-              className="h-auto w-full justify-between gap-3 px-2 py-2 text-left"
+              title={child.title}
+              trailing={
+                <>
+                  {childStatusLabel(session, child)}
+                  <ArrowUpRight className="size-3" />
+                </>
+              }
               onClick={() => onSelect(entityKey(child))}
-            >
-              <span className="min-w-0 truncate text-xs">{child.title}</span>
-              <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                {childStatusLabel(session, child)}
-              </span>
-              <ArrowUpRight className="size-3 shrink-0" />
-            </Button>
+            />
           ))}
         </div>
       )}

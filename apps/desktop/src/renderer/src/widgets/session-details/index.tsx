@@ -6,6 +6,7 @@ import {
   type Session,
 } from '@/entities/session';
 import { formatCost } from '@/shared/lib/format-cost';
+import { KeyValueList } from '@/shared/ui/key-value-list';
 
 type Props = { session: Session };
 
@@ -54,56 +55,46 @@ export function SessionDetails({ session }: Props) {
     <div className="space-y-6 p-5">
       <section aria-label="Session details" className="space-y-4">
         <h2 className="text-xs font-medium">Session</h2>
-        <dl className="space-y-3 text-xs">
-          {role && (
-            <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Role</dt>
-              <dd>{role}</dd>
-            </div>
-          )}
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Provider</dt>
-            <dd>{session.provider}</dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Model</dt>
-            <dd className="min-w-0 break-all text-right">
-              {session.actualModel ?? modelLabel(session.model)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">Status</dt>
-            <dd>{statusLabels[session.status]}</dd>
-          </div>
-          <div className="space-y-1">
-            <dt className="text-muted-foreground">Working directory</dt>
-            <dd className="break-all leading-5">{session.directory}</dd>
-          </div>
-        </dl>
+        <KeyValueList
+          density="comfortable"
+          entries={[
+            ...(role ? [{ key: 'role', label: 'Role', value: role }] : []),
+            { key: 'provider', label: 'Provider', value: session.provider },
+            {
+              key: 'model',
+              label: 'Model',
+              value: session.actualModel ?? modelLabel(session.model),
+            },
+            {
+              key: 'status',
+              label: 'Status',
+              value: statusLabels[session.status],
+            },
+            {
+              key: 'directory',
+              label: 'Working directory',
+              value: session.directory,
+            },
+          ]}
+        />
       </section>
       {usage && (
         <section aria-label="Usage" className="space-y-4">
           <h2 className="text-xs font-medium">Usage</h2>
-          <dl className="space-y-3 text-xs">
-            {usage.last && (
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Last turn</dt>
-                <dd>{usage.last}</dd>
-              </div>
-            )}
-            {usage.total && (
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Session</dt>
-                <dd>{usage.total}</dd>
-              </div>
-            )}
-            <div className="flex justify-between gap-3">
-              <dt className="text-muted-foreground">Reported cost</dt>
-              <dd className="text-right">{usage.cost}</dd>
-            </div>
-          </dl>
+          <KeyValueList
+            density="comfortable"
+            entries={[
+              ...(usage.last
+                ? [{ key: 'last', label: 'Last turn', value: usage.last }]
+                : []),
+              ...(usage.total
+                ? [{ key: 'session', label: 'Session', value: usage.total }]
+                : []),
+              { key: 'cost', label: 'Reported cost', value: usage.cost },
+            ]}
+          />
           {usage.unknown > 0 && (
-            <p className="text-right text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {usage.unknown} {usage.unknown === 1 ? 'turn' : 'turns'} without
               reported cost
             </p>

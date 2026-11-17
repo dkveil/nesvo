@@ -1,7 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import type { DecideWorkerPlanInput } from '@nesvo/contracts';
 import { Button } from '@/shared/ui/button';
-import { Textarea } from '@/shared/ui/textarea';
+import {
+  Composer,
+  ComposerInput,
+  ComposerSend,
+  ComposerToolbar,
+} from '@/shared/ui/composer';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { MessageBody } from '@/widgets/conversation/message-body';
 
 type Props = {
@@ -41,7 +47,6 @@ export function WorkerPlan({
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          size="md"
           disabled={!canDecide}
           onClick={() => onDecision('accept')}
         >
@@ -49,7 +54,6 @@ export function WorkerPlan({
         </Button>
         <Button
           type="button"
-          size="md"
           variant="ghost"
           disabled={!canDecide}
           onClick={() => onDecision('decline')}
@@ -57,32 +61,33 @@ export function WorkerPlan({
           Decline worker
         </Button>
       </div>
-      <form className="space-y-2" onSubmit={submitCorrection}>
-        <Textarea
-          size="lg"
-          aria-label="Correction"
-          placeholder="Describe what the plan should change"
-          maxLength={4000}
-          value={correction}
-          disabled={!canDecide}
-          onChange={event => setCorrection(event.target.value)}
-        />
-        <Button
-          type="submit"
-          size="md"
-          variant="outline"
-          disabled={!canDecide || !trimmed}
-        >
-          Send correction
-        </Button>
+      <form onSubmit={submitCorrection}>
+        <Composer variant="compact">
+          <ComposerInput
+            aria-label="Correction"
+            placeholder="Describe what the plan should change"
+            maxLength={4000}
+            value={correction}
+            disabled={!canDecide}
+            onChange={event => setCorrection(event.target.value)}
+          />
+          <ComposerToolbar
+            end={
+              <ComposerSend
+                label="Send correction"
+                disabled={!canDecide || !trimmed}
+              />
+            }
+          />
+        </Composer>
       </form>
-      <p className="text-xs text-muted-foreground">
+      <StatusMessage tone={deciding ? 'loading' : 'info'}>
         {deciding
           ? 'Sending decision…'
           : canDecide
             ? 'Accepting lets the worker continue with the access shown above. A correction asks for a revised plan without changes. Declining ends the worker without changes.'
             : 'This plan is inactive. Check the connection and session status.'}
-      </p>
+      </StatusMessage>
     </section>
   );
 }
