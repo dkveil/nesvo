@@ -20,6 +20,7 @@ import {
 import { errorDetail, type Session } from '@/entities/session';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
+import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { Button } from '@/shared/ui/button';
 import {
   DropdownMenu,
@@ -30,6 +31,7 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelAction } from '@/shared/ui/panel';
+import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelSurface } from '@/shared/ui/panel-styles';
 import {
   Tooltip,
@@ -56,6 +58,11 @@ import { usePullRequestActions } from './use-pull-request-actions';
 import { useResource } from './use-resource';
 
 const RELATIVE_TIME_REFRESH_MS = 60_000;
+const DEFAULT_WIDTH_RATIO = 0.56;
+const DEFAULT_MAX_WIDTH_PX = 1000;
+
+const defaultPanelWidth = (viewportWidth: number) =>
+  Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
 
 const STALE_REVISION_REASON =
   'The pull request changed. Refresh to review the latest commit.';
@@ -105,6 +112,11 @@ export default function PullRequestPanel({
   const [unlinking, setUnlinking] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
+  const {
+    attach: attachPanel,
+    style: panelStyle,
+    resizer,
+  } = usePanelWidth('pull-request', defaultPanelWidth);
   const readable = !blockedReason;
   const pullRequest = useResource(
     () => api.readPullRequest(reference),
@@ -269,11 +281,11 @@ export default function PullRequestPanel({
         role="region"
         aria-label={`Pull request ${reference.repository} #${reference.number}`}
         data-pull-request={`${reference.repository}#${reference.number}`}
-        className={cn(
-          panelSurface,
-          'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]',
-        )}
+        ref={attachPanel}
+        style={panelStyle}
+        className={panelSurface}
       >
+        <PanelResizer label="Resize pull request panel" {...resizer} />
         <header className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 border-b pr-[calc(0.375rem+var(--panel-edge-inset))] pl-3">
           {state ? (
             <PullRequestStateIcon state={state} />

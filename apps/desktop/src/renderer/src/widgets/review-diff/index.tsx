@@ -20,7 +20,9 @@ import {
   type Review,
 } from '@/entities/review';
 import { cn } from 'cn';
+import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { PanelAction, PanelHeader } from '@/shared/ui/panel';
+import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
 
 type Props = {
@@ -145,6 +147,12 @@ function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
   );
 }
 
+const DEFAULT_WIDTH_RATIO = 0.46;
+const DEFAULT_MAX_WIDTH_PX = 850;
+
+const defaultPanelWidth = (viewportWidth: number) =>
+  Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
+
 export default function ReviewDiff({
   review,
   selectedPath,
@@ -154,6 +162,11 @@ export default function ReviewDiff({
 }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
+  const {
+    attach: attachPanel,
+    style: panelStyle,
+    resizer,
+  } = usePanelWidth('diff', defaultPanelWidth);
   const path = review.diff.files.some(file => file.path === selectedPath)
     ? selectedPath!
     : (review.diff.files[0]?.path ?? '');
@@ -199,11 +212,11 @@ export default function ReviewDiff({
       aria-label="Saved result diff"
       data-review-id={review.id}
       data-review-version={review.version}
-      className={cn(
-        panelSurface,
-        'min-[1200px]:w-[46%] min-[1200px]:max-w-[850px]',
-      )}
+      ref={attachPanel}
+      style={panelStyle}
+      className={panelSurface}
     >
+      <PanelResizer label="Resize saved diff panel" {...resizer} />
       <PanelHeader
         titleBar
         icon={FileCode2}

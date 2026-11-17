@@ -8,7 +8,9 @@ import type {
 import { BookOpen, ChevronRight, RefreshCw, X } from 'lucide-react';
 import { cn } from 'cn';
 import { errorDetail } from '@/entities/session';
+import { usePanelWidth } from '@/shared/lib/use-panel-width';
 import { PanelAction, PanelHeader, PanelSearch } from '@/shared/ui/panel';
+import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelSurface } from '@/shared/ui/panel-styles';
 
 type Props = {
@@ -322,17 +324,29 @@ function Catalog({
   );
 }
 
+const WIDE_VIEWPORT_PX = 1600;
+const DEFAULT_WIDTH_PX = 380;
+const WIDE_DEFAULT_WIDTH_PX = 440;
+
+const defaultPanelWidth = (viewportWidth: number) =>
+  viewportWidth >= WIDE_VIEWPORT_PX ? WIDE_DEFAULT_WIDTH_PX : DEFAULT_WIDTH_PX;
+
 export default function SessionSkills(props: Props) {
   const [refresh, setRefresh] = useState(0);
+  const {
+    attach: attachPanel,
+    style: panelStyle,
+    resizer,
+  } = usePanelWidth('skills', defaultPanelWidth);
   return (
     <section
       aria-label="Session skills"
       data-session-id={props.session.id}
-      className={cn(
-        panelSurface,
-        'min-[1200px]:w-[380px] min-[1600px]:w-[440px]',
-      )}
+      ref={attachPanel}
+      style={panelStyle}
+      className={panelSurface}
     >
+      <PanelResizer label="Resize skills panel" {...resizer} />
       <Catalog
         key={`${props.session.id}:${refresh}`}
         {...props}

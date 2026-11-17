@@ -33,7 +33,12 @@ import {
 import { cn } from 'cn';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import {
+  PANEL_MIN_WIDTH_PX,
+  usePanelWidth,
+} from '@/shared/lib/use-panel-width';
 import { PanelAction, PanelSearch } from '@/shared/ui/panel';
+import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelRow, panelSurface } from '@/shared/ui/panel-styles';
 import { FileGlyph } from './file-glyph';
 
@@ -398,6 +403,14 @@ function FilePreview({
   );
 }
 
+const EDITOR_WIDTH_RATIO = 0.56;
+const EDITOR_MAX_WIDTH_PX = 1000;
+
+const defaultEditorWidth = (viewportWidth: number) =>
+  Math.min(EDITOR_MAX_WIDTH_PX, viewportWidth * EDITOR_WIDTH_RATIO);
+
+const defaultTreeWidth = () => PANEL_MIN_WIDTH_PX;
+
 export default function WorkspaceFiles({
   session,
   api,
@@ -447,6 +460,15 @@ export default function WorkspaceFiles({
     session.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace';
   const segments = path ? path.split('/') : [];
   const editing = tabs.length > 0;
+  const {
+    attach: attachPanel,
+    style: panelStyle,
+    resizing,
+    resizer,
+  } = usePanelWidth(
+    editing ? 'files-editor' : 'files-tree',
+    editing ? defaultEditorWidth : defaultTreeWidth,
+  );
   const tree = (
     <nav
       aria-label="Workspace folders"
@@ -512,14 +534,15 @@ export default function WorkspaceFiles({
       aria-label="Workspace files"
       data-session-id={session.id}
       data-editing={editing}
+      ref={attachPanel}
+      style={panelStyle}
       className={cn(
         panelSurface,
-        'transition-[width] duration-200 ease-out motion-reduce:transition-none',
-        editing
-          ? 'min-[1200px]:w-[56%] min-[1200px]:max-w-[1000px]'
-          : 'min-[1200px]:w-[calc(15rem+var(--panel-edge-inset))]',
+        'transition-[width] duration-150 ease-out motion-reduce:transition-none',
+        resizing && 'transition-none',
       )}
     >
+      <PanelResizer label="Resize files panel" {...resizer} />
       <header className="drag-region flex h-(--shell-topbar-height) shrink-0 items-stretch border-b pr-(--panel-edge-inset)">
         <div
           role="tablist"
