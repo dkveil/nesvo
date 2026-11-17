@@ -244,7 +244,21 @@ export function SessionSidebar({
   const grouped = computers.length > 1;
   const isSelected = (session: Session) =>
     !inbox && !workflows && selectedId === entityKey(session);
-  const row = (session: Session, child = false) => {
+  type RowOptions = {
+    child?: boolean;
+    childCount?: number;
+    expanded?: boolean;
+    onToggle?: () => void;
+  };
+  const row = (
+    session: Session,
+    {
+      child = false,
+      childCount = 0,
+      expanded = false,
+      onToggle,
+    }: RowOptions = {},
+  ) => {
     const computer = computerOf(session);
     const selected = isSelected(session);
     const offline = computer?.status !== 'connected';
@@ -260,8 +274,18 @@ export function SessionSidebar({
           ? branch.sha
           : null;
     const machine = computer?.name ?? session.hostId;
+    const status = (
+      <span className="shrink-0 text-2xs leading-none tabular-nums">
+        <SessionStatus
+          session={session}
+          run={runOf(session)}
+          offline={offline}
+          now={now}
+        />
+      </span>
+    );
     return (
-      <li key={entityKey(session)}>
+      <li key={entityKey(session)} className="relative">
         <button
           type="button"
           data-host-id={session.hostId}
@@ -271,9 +295,12 @@ export function SessionSidebar({
           title={`${machine} · ${session.provider} · ${role || 'Session'} · ${statusText(session)}`}
           onClick={() => onSelect(entityKey(session))}
           className={cn(
-            'flex w-full flex-col gap-0.5 rounded-md py-1.5 pr-2 text-left transition-colors duration-100 outline-none',
+            'flex w-full flex-col rounded-md text-left transition-colors duration-100 outline-none',
             'hover:bg-sidebar-row-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
-            child ? 'pl-6' : 'pl-(--sidebar-row-inset)',
+            child
+              ? 'h-6 justify-center pr-2 pl-7'
+              : 'gap-px py-1 pl-(--sidebar-row-inset)',
+            !child && (childCount > 0 ? 'pr-9' : 'pr-2'),
             selected &&
               'bg-sidebar-row-selected shadow-(--sidebar-row-selected-shadow) hover:bg-sidebar-row-selected',
           )}
@@ -281,7 +308,7 @@ export function SessionSidebar({
           <span className="relative flex h-4 min-w-0 items-center gap-1.5">
             {child ? (
               <CornerDownRight
-                className="size-3.5 shrink-0 text-sidebar-icon"
+                className="size-3 shrink-0 text-sidebar-icon"
                 aria-hidden="true"
               />
             ) : (
@@ -295,61 +322,78 @@ export function SessionSidebar({
             )}
             <span
               className={cn(
-                'min-w-0 flex-1 truncate text-[13px] leading-4 text-sidebar-foreground',
+                'min-w-0 flex-1 truncate text-xs leading-4 text-sidebar-foreground',
                 unread ? 'font-semibold' : 'font-medium',
               )}
             >
               {session.title}
             </span>
-            <span className="shrink-0 text-2xs leading-none tabular-nums">
-              <SessionStatus
-                session={session}
-                run={runOf(session)}
-                offline={offline}
-                now={now}
+            {status}
+          </span>
+          {!child && (
+            <span className="flex h-3.5 min-w-0 items-center gap-1 pl-3.5 text-2xs leading-none text-sidebar-muted-foreground">
+              <span className="min-w-6 shrink-[3] truncate">{directory}</span>
+              {branchLabel && (
+                <>
+                  <MetaSeparator />
+                  <GitBranch
+                    className="size-2.5 shrink-0 text-sidebar-icon"
+                    aria-hidden="true"
+                  />
+                  <span
+                    className={cn(
+                      'min-w-8 truncate',
+                      branch?.kind === 'detached' && 'font-mono',
+                    )}
+                  >
+                    {branchLabel}
+                  </span>
+                </>
+              )}
+              {!grouped && (
+                <>
+                  <MetaSeparator />
+                  {remote ? (
+                    <Cloud
+                      className="size-2.5 shrink-0 text-sidebar-icon"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Monitor
+                      className="size-2.5 shrink-0 text-sidebar-icon"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="max-w-20 shrink-0 truncate">{machine}</span>
+                </>
+              )}
+              <span className="min-w-0 flex-1" />
+              <ProviderGlyph
+                provider={session.provider}
+                className="size-3 text-sidebar-icon"
               />
             </span>
-          </span>
-          <span className="flex h-3.5 min-w-0 items-center gap-1 pl-[1.375rem] text-2xs leading-none text-sidebar-muted-foreground">
-            <span className="min-w-6 shrink-[3] truncate">{directory}</span>
-            {branchLabel && (
-              <>
-                <MetaSeparator />
-                <GitBranch
-                  className="size-2.5 shrink-0 text-sidebar-icon"
-                  aria-hidden="true"
-                />
-                <span
-                  className={cn(
-                    'min-w-8 truncate',
-                    branch?.kind === 'detached' && 'font-mono',
-                  )}
-                >
-                  {branchLabel}
-                </span>
-              </>
-            )}
-            {!grouped && (
-              <>
-                <MetaSeparator />
-                {remote ? (
-                  <Cloud
-                    className="size-2.5 shrink-0 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Monitor
-                    className="size-2.5 shrink-0 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                )}
-                <span className="max-w-20 shrink-0 truncate">{machine}</span>
-              </>
-            )}
-            <span className="min-w-0 flex-1" />
-            <ProviderGlyph provider={session.provider} />
-          </span>
+          )}
         </button>
+        {childCount > 0 && onToggle && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={`${expanded ? 'Hide' : 'Show'} ${childCount} subsessions of ${session.title}`}
+            title={`${childCount} ${childCount === 1 ? 'subsession' : 'subsessions'}`}
+            className="absolute top-1 right-1 flex h-4 items-center gap-0.5 rounded-sm px-1 text-2xs leading-none text-sidebar-muted-foreground tabular-nums transition-colors duration-100 outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={onToggle}
+          >
+            {childCount}
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                'size-3 shrink-0 transition-transform duration-150',
+                !expanded && '-rotate-90',
+              )}
+            />
+          </button>
+        )}
       </li>
     );
   };
@@ -363,35 +407,13 @@ export function SessionSidebar({
       childToggles[key] ??
       (!!search.trim() || children.some(child => isSelected(child)));
     return [
-      row(root),
-      <li key={`${key}/children`}>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-label={`${expanded ? 'Hide' : 'Show'} ${children.length} subsessions of ${root.title}`}
-          className="flex h-5 w-full items-center gap-1 rounded-md pl-[calc(var(--sidebar-row-inset)+1.375rem)] text-left text-2xs leading-none text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-          onClick={() =>
-            setChildToggles(previous => ({ ...previous, [key]: !expanded }))
-          }
-        >
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
-              !expanded && '-rotate-90',
-            )}
-          />
-          <span className="tabular-nums">
-            {children.length}{' '}
-            {children.length === 1 ? 'subsession' : 'subsessions'}
-          </span>
-        </button>
-        {expanded && (
-          <ul className="flex flex-col gap-0.5">
-            {children.map(child => row(child, true))}
-          </ul>
-        )}
-      </li>,
+      row(root, {
+        childCount: children.length,
+        expanded,
+        onToggle: () =>
+          setChildToggles(previous => ({ ...previous, [key]: !expanded })),
+      }),
+      ...(expanded ? children.map(child => row(child, { child: true })) : []),
     ];
   };
   return (
@@ -629,7 +651,9 @@ export function SessionSidebar({
                           </button>
                           {expanded && (
                             <ul className="flex flex-col gap-0.5">
-                              {group.runs.map(session => row(session, true))}
+                              {group.runs.map(session =>
+                                row(session, { child: true }),
+                              )}
                             </ul>
                           )}
                         </li>

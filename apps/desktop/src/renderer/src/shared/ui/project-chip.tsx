@@ -7,15 +7,6 @@ export type ProjectChipProps = ComponentProps<'span'> & {
   label: string;
 };
 
-function projectInitials(label: string) {
-  const words = label.split(/[\s\-_.]+/).filter(Boolean);
-  const letters =
-    words.length > 1
-      ? `${words[0]?.[0] ?? ''}${words[1]?.[0] ?? ''}`
-      : label.slice(0, 2);
-  return letters.toLocaleUpperCase();
-}
-
 const chipColor = (label: string) => {
   let hash = 0;
   for (const character of label)
@@ -35,12 +26,10 @@ export function ProjectChip({
       data-slot="project-chip"
       style={{ '--chip': chipColor(label), ...style } as CSSProperties}
       className={cn(
-        'inline-flex h-3.5 min-w-4 shrink-0 items-center justify-center rounded-[3px] bg-(--chip)/16 px-0.5 text-[8px] leading-none font-bold tracking-tight text-(--chip)',
+        'inline-block size-2 shrink-0 rounded-[3px] bg-(--chip) shadow-[inset_0_0_0_1px_rgb(255_255_255/22%)]',
         className,
       )}
       {...props}
-    >
-      {projectInitials(label)}
-    </span>
+    />
   );
 }
