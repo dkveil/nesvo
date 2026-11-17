@@ -119,7 +119,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Input / Textarea** — `shared/ui/input.tsx`, `shared/ui/textarea.tsx`. Sizes `sm` `md` `lg`, `variant="ghost"` for inline titles and composer fields (no border, no ring; the container shows focus). Invalid uses `aria-invalid`, which draws an error border.
 
-**SearchField** — `shared/ui/search-field.tsx`. Variants `panel` (panel headers and toolbars), `sidebar`, `underline` (top of a picker or popover), `palette` (command palette, history search). `onClear` adds a clear button while there is a value; `shortcut` shows a key hint while empty. `PanelSearch` is the panel variant.
+**SearchField** — `shared/ui/search-field.tsx`. Variants `panel` (panel headers and toolbars), `sidebar`, `underline` (top of a picker or popover), `palette` (command palette, history search). `onClear` adds a clear button while there is a value; `shortcut` shows a key hint while empty. `icon` replaces the search glyph for lookup fields (a repository, a link) and `trailing` holds an inline action such as an xs ghost Open button. `PanelSearch` is the panel variant.
 
 **Select** — `shared/ui/select.tsx`. Native-like single choice from a short fixed list. Trigger sizes `sm` `md` `lg` (`default` = `lg`), `variant="ghost"` for toolbar pickers. Items use the shared menu item spec. For searchable or rich options use Combobox.
 

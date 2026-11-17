@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { GitBranch, List, Rows3 } from 'lucide-react';
+import { GitBranch, Link2, List, Rows3 } from 'lucide-react';
+import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
@@ -55,6 +56,21 @@ function SearchFields() {
             aria-label="Search sessions"
             placeholder="Search sessions"
             shortcut="Ctrl K"
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="panel · icon · trailing action">
+        <div className="w-64">
+          <SearchField
+            icon={<Link2 />}
+            aria-label="Open by link"
+            placeholder="Paste a sample link"
+            defaultValue="sample/repository#42"
+            trailing={
+              <Button variant="ghost" size="xs">
+                Open
+              </Button>
+            }
           />
         </div>
       </StateCaption>

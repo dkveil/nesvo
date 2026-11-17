@@ -1,4 +1,4 @@
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Search, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -8,6 +8,8 @@ type SearchFieldProps = Omit<ComponentProps<'input'>, 'size' | 'type'> & {
   variant?: 'panel' | 'sidebar' | 'underline' | 'palette';
   onClear?: () => void;
   shortcut?: string;
+  icon?: ReactNode;
+  trailing?: ReactNode;
   containerClassName?: string;
 };
 
@@ -15,6 +17,8 @@ export function SearchField({
   variant = 'panel',
   onClear,
   shortcut,
+  icon,
+  trailing,
   className,
   containerClassName,
   value,
@@ -35,13 +39,17 @@ export function SearchField({
         containerClassName,
       )}
     >
-      <Search
+      <span
         aria-hidden="true"
         className={cn(
-          'shrink-0',
-          variant === 'palette' ? 'size-4' : 'size-3.5',
+          'flex shrink-0',
+          variant === 'palette'
+            ? '[&_svg:not([class*=size-])]:size-4'
+            : '[&_svg:not([class*=size-])]:size-3.5',
         )}
-      />
+      >
+        {icon ?? <Search />}
+      </span>
       <input
         type="search"
         value={value}
@@ -64,6 +72,7 @@ export function SearchField({
         </IconButton>
       )}
       {shortcut && !filled && <KeyCombo keys={shortcut} />}
+      {trailing}
     </div>
   );
 }
