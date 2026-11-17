@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { Plug, RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -10,10 +10,12 @@ import {
 } from '@nesvo/contracts';
 import { errorDetail, modeLabel, type Provider } from '@/entities/session';
 import { ComposerChip } from '@/features/new-thread/composer-chip';
-import { Button } from '@/shared/ui/button';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Label } from '@/shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
+import { Hint } from '@/shared/ui/tooltip';
 import { scopeLabels, transportLabels } from './mcp-labels';
 
 type Props = {
@@ -34,6 +36,18 @@ type ListState =
   | { status: 'error'; message: string }
   | { status: 'loaded'; list: McpServerList };
 
+type ToggleRowProps = {
+  id: string;
+  label: string;
+  detail?: ReactNode;
+  problem?: string;
+  checked: boolean;
+  disabled: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  className?: string;
+  serverKey?: string;
+};
+
 const hookSources: Record<Provider, string> = {
   'Claude Code': 'Runs the hooks from your Claude Code settings.',
   Codex: 'Runs the hooks from your Codex configuration.',
@@ -47,6 +61,44 @@ function serverDetail(server: McpServer) {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+function ToggleRow({
+  id,
+  label,
+  detail,
+  problem,
+  checked,
+  disabled,
+  onCheckedChange,
+  className,
+  serverKey,
+}: ToggleRowProps) {
+  return (
+    <div
+      data-mcp-server={serverKey}
+      className={cn('flex items-start gap-2.5 px-2 py-1.5', className)}
+    >
+      <span className="min-w-0 flex-1 space-y-0.5">
+        <Label htmlFor={id} className="block truncate">
+          {label}
+        </Label>
+        {detail && (
+          <span className="block truncate text-2xs text-muted-foreground">
+            {detail}
+          </span>
+        )}
+        {problem && <StatusMessage tone="warning">{problem}</StatusMessage>}
+      </span>
+      <Switch
+        id={id}
+        className="mt-0.5"
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+      />
+    </div>
+  );
 }
 
 export function McpChip({
@@ -111,195 +163,129 @@ export function McpChip({
         ? `Not available in ${readOnlyMode} mode`
         : 'MCP servers and hooks');
   return (
-    <>
-      <Popover
-        open={open && !unsupported}
-        onOpenChange={next => {
-          setOpen(next);
-          if (next) load();
-        }}
+    <Popover
+      open={open && !unsupported}
+      onOpenChange={next => {
+        setOpen(next);
+        if (next) load();
+      }}
+    >
+      <Hint label={hint}>
+        <PopoverTrigger asChild>
+          <ComposerChip
+            disabled={disabled || unsupported}
+            aria-label={`${label}. ${hint}`}
+            data-session-mcp={selection.servers.join(' ')}
+            icon={<Plug aria-hidden="true" />}
+            className={cn(
+              active && !readOnly && 'text-foreground',
+              active && readOnly && 'line-through',
+            )}
+          >
+            <span>{label}</span>
+          </ComposerChip>
+        </PopoverTrigger>
+      </Hint>
+      <PopoverContent
+        side="top"
+        align="start"
+        collisionPadding={12}
+        aria-label="MCP servers and hooks"
+        size="md"
+        padding="none"
+        scroll
+        className="flex flex-col gap-2 p-2.5"
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <ComposerChip
-                disabled={disabled || unsupported}
-                aria-label={`${label}. ${hint}`}
-                data-session-mcp={selection.servers.join(' ')}
-                className={cn(
-                  active && !readOnly && 'text-foreground',
-                  active && readOnly && 'line-through',
-                )}
-              >
-                <Plug aria-hidden="true" />
-                <span className="truncate">{label}</span>
-              </ComposerChip>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="top">{hint}</TooltipContent>
-        </Tooltip>
-        <PopoverContent
-          side="top"
-          align="start"
-          sideOffset={8}
-          collisionPadding={12}
-          aria-label="MCP servers and hooks"
-          className="flex max-h-[min(30rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2 overflow-y-auto p-2.5"
-        >
-          <div className="flex items-center justify-between gap-2 px-1">
-            <p className="text-xs font-medium text-muted-foreground">
-              Applies from the next turn
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-6 text-muted-foreground"
-              aria-label="Refresh"
-              title="Refresh"
-              disabled={state.status === 'loading'}
-              onClick={load}
-            >
-              <RefreshCw
-                className={cn(
-                  'size-3.5',
-                  state.status === 'loading' &&
-                    'animate-spin motion-reduce:animate-none',
-                )}
-              />
-            </Button>
-          </div>
-          {readOnly && (
-            <p
-              role="note"
-              className="px-1 text-xs leading-5 text-warning-foreground"
-            >
-              {`Not available in ${readOnlyMode} mode. The selection applies when the session can edit.`}
-            </p>
-          )}
-          {lockedReason && (
-            <p role="note" className="px-1 text-xs text-muted-foreground">
-              {lockedReason}.
-            </p>
-          )}
-          {state.status === 'error' && (
-            <p
-              role="alert"
-              className="px-1 text-xs text-destructive [overflow-wrap:anywhere]"
-            >
-              {state.message}
-            </p>
-          )}
-          {state.status === 'loading' && !list && (
-            <p role="status" className="px-1 text-xs text-muted-foreground">
-              Reading MCP servers…
-            </p>
-          )}
-          {list && (
-            <div role="group" aria-label="MCP servers" className="space-y-0.5">
-              {list.servers.length === 0 && missing.length === 0 && (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  {`No MCP servers are configured for ${provider} on this computer.`}
-                </p>
+        <div className="flex items-center justify-between gap-2 px-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            Applies from the next turn
+          </p>
+          <IconButton
+            label="Refresh"
+            size={24}
+            disabled={state.status === 'loading'}
+            onClick={load}
+          >
+            <RefreshCw
+              className={cn(
+                state.status === 'loading' &&
+                  'animate-spin motion-reduce:animate-none',
               )}
-              {list.servers.map((server, index) => {
-                const checked = selection.servers.includes(server.key);
-                const switchId = `${idPrefix}-server-${index}`;
-                return (
-                  <div
-                    key={server.key}
-                    data-mcp-server={server.key}
-                    className="flex items-start gap-2.5 rounded-md px-2 py-1.5"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <label
-                        htmlFor={switchId}
-                        className="block truncate text-[13px] font-medium"
-                      >
-                        {server.name}
-                      </label>
-                      <span className="block truncate text-2xs text-muted-foreground">
-                        {serverDetail(server)}
-                      </span>
-                      {server.problem && (
-                        <span className="mt-0.5 block text-2xs leading-4 text-warning-foreground [overflow-wrap:anywhere]">
-                          {server.problem}
-                        </span>
-                      )}
-                    </span>
-                    <Switch
-                      id={switchId}
-                      className="mt-0.5"
-                      checked={checked}
-                      disabled={locked || (!checked && !!server.problem)}
-                      onCheckedChange={value => toggleServer(server.key, value)}
-                    />
-                  </div>
-                );
-              })}
-              {missing.map((key, index) => {
-                const switchId = `${idPrefix}-missing-${index}`;
-                return (
-                  <div
-                    key={key}
-                    data-mcp-server={key}
-                    className="flex items-start gap-2.5 rounded-md px-2 py-1.5"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <label
-                        htmlFor={switchId}
-                        className="block truncate text-[13px] font-medium"
-                      >
-                        {mcpServerNameOf(key)}
-                      </label>
-                      <span className="mt-0.5 block text-2xs leading-4 text-warning-foreground">
-                        No longer configured. Turn it off to start the next
-                        turn.
-                      </span>
-                    </span>
-                    <Switch
-                      id={switchId}
-                      className="mt-0.5"
-                      checked
-                      disabled={locked}
-                      onCheckedChange={() => toggleServer(key, false)}
-                    />
-                  </div>
-                );
-              })}
-              {list.issues.map(issue => (
-                <p
-                  key={issue}
-                  role="alert"
-                  className="px-2 text-2xs leading-4 text-warning-foreground"
-                >
-                  {issue}
-                </p>
-              ))}
-            </div>
-          )}
-          <div className="flex items-start gap-2.5 border-t px-2 pt-2.5">
-            <span className="min-w-0 flex-1">
-              <label
-                htmlFor={`${idPrefix}-hooks`}
-                className="block text-[13px] font-medium"
-              >
-                Use my hooks
-              </label>
-              <span className="block text-2xs leading-4 text-muted-foreground">
-                {hookSources[provider]}
-              </span>
-            </span>
-            <Switch
-              id={`${idPrefix}-hooks`}
-              className="mt-0.5"
-              checked={selection.hooks}
-              disabled={locked}
-              onCheckedChange={hooks => onChange({ ...selection, hooks })}
             />
+          </IconButton>
+        </div>
+        {readOnly && (
+          <StatusMessage tone="warning" variant="notice" role="note">
+            {`Not available in ${readOnlyMode} mode. The selection applies when the session can edit.`}
+          </StatusMessage>
+        )}
+        {lockedReason && (
+          <StatusMessage role="note" className="px-1">
+            {lockedReason}.
+          </StatusMessage>
+        )}
+        {state.status === 'error' && (
+          <StatusMessage tone="error" className="px-1">
+            {state.message}
+          </StatusMessage>
+        )}
+        {state.status === 'loading' && !list && (
+          <StatusMessage tone="loading" className="px-1">
+            Reading MCP servers…
+          </StatusMessage>
+        )}
+        {list && (
+          <div role="group" aria-label="MCP servers" className="space-y-0.5">
+            {list.servers.length === 0 && missing.length === 0 && (
+              <StatusMessage className="px-2 py-1">
+                {`No MCP servers are configured for ${provider} on this computer.`}
+              </StatusMessage>
+            )}
+            {list.servers.map((server, index) => {
+              const checked = selection.servers.includes(server.key);
+              return (
+                <ToggleRow
+                  key={server.key}
+                  serverKey={server.key}
+                  id={`${idPrefix}-server-${index}`}
+                  label={server.name}
+                  detail={serverDetail(server)}
+                  problem={server.problem ?? undefined}
+                  checked={checked}
+                  disabled={locked || (!checked && !!server.problem)}
+                  onCheckedChange={value => toggleServer(server.key, value)}
+                />
+              );
+            })}
+            {missing.map((key, index) => (
+              <ToggleRow
+                key={key}
+                serverKey={key}
+                id={`${idPrefix}-missing-${index}`}
+                label={mcpServerNameOf(key)}
+                problem="No longer configured. Turn it off to start the next turn."
+                checked
+                disabled={locked}
+                onCheckedChange={() => toggleServer(key, false)}
+              />
+            ))}
+            {list.issues.map(issue => (
+              <StatusMessage key={issue} tone="warning" className="px-2">
+                {issue}
+              </StatusMessage>
+            ))}
           </div>
-        </PopoverContent>
-      </Popover>
-    </>
+        )}
+        <ToggleRow
+          id={`${idPrefix}-hooks`}
+          label="Use my hooks"
+          detail={hookSources[provider]}
+          checked={selection.hooks}
+          disabled={locked}
+          onCheckedChange={hooks => onChange({ ...selection, hooks })}
+          className="border-t pt-2.5"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
