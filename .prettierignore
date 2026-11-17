@@ -38,6 +38,8 @@
 !packages/
 !packages/contracts/
 !packages/contracts/**
+!site/
+!site/**
 !scripts/
 !scripts/desktop-smoke.mjs
 !scripts/remote-smoke.mjs
