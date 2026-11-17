@@ -372,6 +372,7 @@ test(
         'session-workflow',
         'pull-requests',
         'history-search',
+        'session-groups',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -4917,6 +4918,7 @@ test(
       'session-workflow',
       'pull-requests',
       'history-search',
+      'session-groups',
     ]);
     const id = randomUUID();
     const jobInput = {
