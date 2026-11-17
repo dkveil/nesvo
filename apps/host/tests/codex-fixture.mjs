@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { parse as parseToml } from 'smol-toml';
 
 const args = process.argv.slice(2);
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -28,6 +29,40 @@ const isolatedConfig = {
     multi_agent: false,
     multi_agent_v2: false,
   },
+};
+
+const effectiveConfig = () => {
+  const file = join(process.env.CODEX_HOME ?? '\0', 'config.toml');
+  const configured = existsSync(file)
+    ? (parseToml(readFileSync(file, 'utf8')).mcp_servers ?? {})
+    : {};
+  const overrides = args.flatMap((value, index) =>
+    args[index - 1] === '-c' ? [value] : [],
+  );
+  const disabledFeatures = new Set(
+    args.flatMap((value, index) =>
+      args[index - 1] === '--disable' ? [value] : [],
+    ),
+  );
+  const servers = Object.fromEntries(
+    Object.entries(configured).map(([name, server]) => [
+      name,
+      {
+        ...server,
+        enabled: overrides.includes(`mcp_servers.${name}.enabled=false`)
+          ? false
+          : (server.enabled ?? true),
+      },
+    ]),
+  );
+  return {
+    ...isolatedConfig,
+    mcp_servers: servers,
+    features: {
+      ...isolatedConfig.features,
+      hooks: !disabledFeatures.has('hooks') && disabledFeatures.size > 0,
+    },
+  };
 };
 
 if (args.length === 1 && args[0] === '--version') {
@@ -456,7 +491,7 @@ if (args.length === 1 && args[0] === '--version') {
         skillsDirectory = params.cwd;
         skillsTrace(skillsDirectory, method);
       }
-      response(id, { config: isolatedConfig, origins: {}, layers: null });
+      response(id, { config: effectiveConfig(), origins: {}, layers: null });
     } else if (method === 'skills/extraRoots/set') {
       assert.ok(Array.isArray(params.extraRoots));
       assert.ok(params.extraRoots.length > 0);
@@ -603,6 +638,18 @@ if (args.length === 1 && args[0] === '--version') {
         effort === null || ['low', 'medium', 'high'].includes(effort),
         'Reasoning effort must come from the reported catalog',
       );
+      if (process.env.NESVO_CODEX_FIXTURE_MCP_LOG)
+        writeFileSync(
+          process.env.NESVO_CODEX_FIXTURE_MCP_LOG,
+          JSON.stringify({
+            sandbox: params.sandbox,
+            approvalPolicy: params.approvalPolicy,
+            args,
+            mcpServers: params.config?.mcp_servers ?? null,
+            hooksFeature: params.config?.['features.hooks'] ?? null,
+          }) + '\n',
+          { flag: 'a' },
+        );
       if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
         writeFileSync(
           process.env.NESVO_FIXTURE_LAUNCH_LOG,

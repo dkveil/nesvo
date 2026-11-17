@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
 
@@ -187,10 +187,27 @@ if (args.length === 1 && args[0] === '--version') {
     ['--permission-prompts', 'none'],
     ['--tools', MODE_TOOLS.get(permissionMode)],
     ['--allowedTools', READ_TOOLS],
-    ['--mcp-config', '{"mcpServers":{}}'],
-    ['--settings', '{"disableAllHooks":true}'],
   ])
     assert.equal(values.get(flag), expected, flag);
+  if (values.has('--settings'))
+    assert.equal(values.get('--settings'), '{"disableAllHooks":true}');
+  const mcpConfig = values.get('--mcp-config');
+  const mcpFile = mcpConfig === '{"mcpServers":{}}' ? null : mcpConfig;
+  if (mcpFile) assert.ok(isAbsolute(mcpFile), 'MCP config must be a file');
+  if (process.env.NESVO_FIXTURE_MCP_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_MCP_LOG,
+      JSON.stringify({
+        permissionMode,
+        tools: values.get('--tools'),
+        allowedTools: values.get('--allowedTools'),
+        hooksDisabled: values.has('--settings'),
+        file: mcpFile,
+        mode: mcpFile ? statSync(mcpFile).mode & 0o777 : null,
+        config: JSON.parse(mcpFile ? readFileSync(mcpFile, 'utf8') : mcpConfig),
+      }) + '\n',
+      { flag: 'a' },
+    );
   assert.notEqual(values.has('--session-id'), values.has('--resume'));
   if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
     writeFileSync(

@@ -17605,3 +17605,312 @@ test(
     }
   },
 );
+
+test(
+  'MCP servers and hooks are discovered without secrets and applied per session only in writable modes',
+  { timeout: 180_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-mcp-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const claudeLog = join(directory, 'claude-mcp.jsonl');
+    const codexLog = join(directory, 'codex-mcp.jsonl');
+    const project = join(directory, 'project');
+    const claudeConfig = join(directory, 'claude-config');
+    const codexConfig = join(directory, 'codex-config');
+    const secret = 'FIXTURE-MCP-SECRET-7f3a9c';
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null) {
+          try {
+            await host.stop();
+          } catch {
+            host.child.kill();
+          }
+        }
+        await bounded(host.exited, 'Test host did not exit');
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    await mkdir(join(project, '.git'), { recursive: true });
+    await mkdir(claudeConfig, { recursive: true });
+    await mkdir(codexConfig, { recursive: true });
+    const docs = {
+      type: 'stdio',
+      command:
+        process.platform === 'win32'
+          ? 'C:\\tools\\docs-server.exe'
+          : '/opt/tools/docs-server',
+      args: ['--token', secret],
+      env: { DOCS_TOKEN: secret },
+    };
+    const claudeSettings = servers =>
+      writeFile(
+        join(claudeConfig, '.claude.json'),
+        JSON.stringify({
+          mcpServers: servers,
+          projects: {
+            [project.replaceAll('\\', '/')]: {
+              mcpServers: {
+                local_db: { command: 'db-mcp', env: { PASSWORD: secret } },
+              },
+            },
+          },
+        }),
+      );
+    await claudeSettings({
+      docs,
+      tracker: {
+        type: 'http',
+        url: `https://tracker.example.com/mcp?key=${secret}`,
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+      legacy: { type: 'ws', url: 'wss://legacy.example.com' },
+      'bad.name': { command: 'node' },
+    });
+    await writeFile(
+      join(project, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          repo: { command: 'npx', args: ['-y', 'repo-mcp', secret] },
+        },
+      }),
+    );
+    await writeFile(
+      join(codexConfig, 'config.toml'),
+      [
+        '[mcp_servers.search]',
+        'command = "search-mcp"',
+        `args = ["${secret}"]`,
+        '',
+        '[mcp_servers.search.env]',
+        `SEARCH_KEY = "${secret}"`,
+        '',
+        '[mcp_servers.notes]',
+        `url = "https://notes.example.com/mcp?token=${secret}"`,
+        '',
+        '[mcp_servers.off]',
+        'command = "off-mcp"',
+        'enabled = false',
+        '',
+      ].join('\n'),
+    );
+    const open = () => {
+      const host = launch(directory, pidFile, {
+        NESVO_FIXTURE_MCP_LOG: claudeLog,
+        NESVO_CODEX_FIXTURE_MCP_LOG: codexLog,
+      });
+      hosts.push(host);
+      return host;
+    };
+    const logged = async file =>
+      (await readFile(file, 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    const host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'mcp-servers',
+      ),
+    );
+
+    const claudeList = await host.request('list-mcp-servers', {
+      provider: 'Claude Code',
+      directory: project,
+    });
+    assert.equal(claudeList.type, 'mcp-servers', JSON.stringify(claudeList));
+    const serialized = JSON.stringify(claudeList);
+    for (const leaked of [secret, 'Bearer', 'key=', '/mcp', 'tools'])
+      assert.equal(serialized.includes(leaked), false, leaked);
+    const byKey = Object.fromEntries(
+      claudeList.list.servers.map(server => [server.key, server]),
+    );
+    const fixtureKeys = Object.keys(byKey).filter(
+      key => !key.startsWith('project:') || key === 'project:repo',
+    );
+    assert.deepEqual(fixtureKeys.sort(), [
+      'local:local_db',
+      'project:repo',
+      'user:bad.name',
+      'user:docs',
+      'user:legacy',
+      'user:tracker',
+    ]);
+    assert.equal(byKey['user:docs'].transport, 'stdio');
+    assert.match(byKey['user:docs'].summary, /^docs-server(?:\.exe)?$/);
+    assert.equal(byKey['user:tracker'].transport, 'http');
+    assert.equal(byKey['user:tracker'].summary, 'tracker.example.com');
+    assert.equal(byKey['project:repo'].summary, 'npx');
+    assert.ok(byKey['user:legacy'].problem);
+    assert.ok(byKey['user:bad.name'].problem);
+    assert.equal(byKey['user:docs'].problem, null);
+
+    assert.equal(
+      (
+        await host.request('create-session', {
+          title: 'Legacy',
+          model: 'sonnet',
+          mode: 'accept-edits',
+          directory: project,
+          mcp: { servers: ['user:legacy'], hooks: false },
+        })
+      ).code,
+      'invalid-request',
+    );
+    const created = await host.request('create-session', {
+      title: 'MCP',
+      model: 'sonnet',
+      mode: 'accept-edits',
+      directory: project,
+      mcp: { servers: ['user:docs', 'project:repo'], hooks: false },
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const claude = created.session;
+    assert.deepEqual(
+      claude.mcp.servers.map(server => server.key),
+      ['user:docs', 'project:repo'],
+    );
+    const turn = async (session, mode) => {
+      const sent = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'fixture:continue',
+        mode,
+      });
+      assert.equal(sent.type, 'session', JSON.stringify(sent));
+      return host.event(
+        value =>
+          value.id === session.id &&
+          value.runId === sent.session.runId &&
+          ['completed', 'failed'].includes(value.status),
+      );
+    };
+    const first = await turn(claude, 'accept-edits');
+    assert.equal(first.status, 'completed', first.error);
+    assert.deepEqual(
+      first.messages.find(
+        item => item.runId === first.runId && item.author === 'operator',
+      ).mcp,
+      { servers: ['user:docs', 'project:repo'], hooks: false },
+    );
+    let launches = await logged(claudeLog);
+    const applied = launches.at(-1);
+    assert.equal(applied.permissionMode, 'acceptEdits');
+    assert.equal(applied.allowedTools, 'Read,Glob,Grep');
+    assert.equal(applied.hooksDisabled, true);
+    assert.deepEqual(Object.keys(applied.config.mcpServers).sort(), [
+      'docs',
+      'repo',
+    ]);
+    assert.deepEqual(applied.config.mcpServers.docs, docs);
+    if (process.platform !== 'win32') assert.equal(applied.mode, 0o600);
+    await assert.rejects(stat(applied.file), { code: 'ENOENT' });
+
+    const changed = await host.request('set-session-mcp', {
+      sessionId: claude.id,
+      servers: ['user:docs'],
+      hooks: true,
+    });
+    assert.equal(changed.type, 'session', JSON.stringify(changed));
+    assert.equal(changed.session.mcp.hooks, true);
+    const plan = await turn(claude, 'read-only');
+    assert.equal(plan.status, 'completed', plan.error);
+    launches = await logged(claudeLog);
+    const planned = launches.at(-1);
+    assert.equal(planned.permissionMode, 'plan');
+    assert.equal(planned.tools, 'Read,Glob,Grep');
+    assert.equal(planned.allowedTools, 'Read,Glob,Grep');
+    assert.equal(planned.hooksDisabled, true);
+    assert.equal(planned.file, null);
+    assert.deepEqual(planned.config, { mcpServers: {} });
+    const hooked = await turn(claude, 'accept-edits');
+    assert.equal(hooked.status, 'completed', hooked.error);
+    launches = await logged(claudeLog);
+    assert.equal(launches.at(-1).hooksDisabled, false);
+    assert.deepEqual(Object.keys(launches.at(-1).config.mcpServers), ['docs']);
+
+    await claudeSettings({ docs: { ...docs, args: ['--other'] } });
+    const drifted = await turn(claude, 'accept-edits');
+    assert.equal(drifted.status, 'failed');
+    assert.match(drifted.error, /"docs" changed since it was enabled/);
+    await claudeSettings({});
+    const vanished = await turn(claude, 'accept-edits');
+    assert.equal(vanished.status, 'failed');
+    assert.match(vanished.error, /"docs" is no longer configured/);
+    assert.equal((await logged(claudeLog)).length, launches.length);
+
+    const codexList = await host.request('list-mcp-servers', {
+      provider: 'Codex',
+      directory: project,
+    });
+    assert.equal(codexList.type, 'mcp-servers', JSON.stringify(codexList));
+    assert.equal(JSON.stringify(codexList).includes(secret), false);
+    assert.deepEqual(
+      codexList.list.servers.map(server => [
+        server.key,
+        server.transport,
+        server.summary,
+        Boolean(server.problem),
+      ]),
+      [
+        ['user:search', 'stdio', 'search-mcp', false],
+        ['user:notes', 'http', 'notes.example.com', false],
+        ['user:off', 'stdio', 'off-mcp', true],
+      ],
+    );
+    const codexCreated = await host.request('create-session', {
+      title: 'Codex MCP',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+      directory: project,
+      mcp: { servers: ['user:search'], hooks: true },
+    });
+    assert.equal(codexCreated.type, 'session', JSON.stringify(codexCreated));
+    const codex = codexCreated.session;
+    const supervised = await turn(codex, 'supervised');
+    assert.equal(supervised.status, 'completed', supervised.error);
+    const codexApplied = (await logged(codexLog)).at(-1);
+    assert.equal(codexApplied.sandbox, 'workspace-write');
+    assert.deepEqual(codexApplied.mcpServers, {
+      notes: { enabled: false },
+      off: { enabled: false },
+    });
+    assert.ok(codexApplied.args.includes('mcp_servers.notes.enabled=false'));
+    assert.equal(
+      codexApplied.args.includes('mcp_servers.search.enabled=false'),
+      false,
+    );
+    assert.equal(codexApplied.args.includes('hooks'), false);
+    assert.equal(codexApplied.hooksFeature, null);
+    const readOnly = await turn(codex, 'read-only');
+    assert.equal(readOnly.status, 'completed', readOnly.error);
+    const codexReadOnly = (await logged(codexLog)).at(-1);
+    assert.equal(codexReadOnly.sandbox, 'read-only');
+    assert.deepEqual(Object.keys(codexReadOnly.mcpServers).sort(), [
+      'notes',
+      'off',
+      'search',
+    ]);
+    assert.ok(codexReadOnly.args.includes('hooks'));
+    assert.equal(codexReadOnly.hooksFeature, false);
+    await host.stop();
+
+    const reopened = open();
+    const restored = (await reopened.request('list-sessions')).sessions;
+    const restoredClaude = restored.find(value => value.id === claude.id);
+    assert.deepEqual(
+      restoredClaude.mcp.servers.map(server => server.key),
+      ['user:docs'],
+    );
+    assert.equal(restoredClaude.mcp.hooks, true);
+    assert.deepEqual(restored.find(value => value.id === codex.id).mcp, {
+      servers: codex.mcp.servers,
+      hooks: true,
+    });
+  },
+);
