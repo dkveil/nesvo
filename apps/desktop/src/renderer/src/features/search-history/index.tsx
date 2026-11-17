@@ -5,11 +5,14 @@ import type {
   HistorySearchResult,
   HostId,
 } from '@nesvo/contracts';
-import { Search } from 'lucide-react';
 import { directoryLabel, ProviderGlyph } from '@/entities/session';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import { Dialog, DialogContent, DialogTitle } from '@/shared/ui/dialog';
+import { Listbox } from '@/shared/ui/listbox';
+import { listboxOptionId } from '@/shared/ui/listbox-option-id';
+import { SearchField } from '@/shared/ui/search-field';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   computers: Computer[];
@@ -41,7 +44,7 @@ function HighlightedSnippet({ text, ranges }: HistorySearchResult['snippet']) {
       {ranges.map(({ start, end }, index) => (
         <Fragment key={start}>
           {text.slice(ranges[index - 1]?.end ?? 0, start)}
-          <mark className="rounded-sm bg-warning-foreground/15 text-warning-foreground">
+          <mark className="rounded-sm bg-accent text-warning-foreground">
             {text.slice(start, end)}
           </mark>
         </Fragment>
@@ -50,6 +53,8 @@ function HighlightedSnippet({ text, ranges }: HistorySearchResult['snippet']) {
     </>
   );
 }
+
+const RESULTS_ID = 'history-results';
 
 const resultKey = (computer: Computer, result: HistorySearchResult) =>
   `history-result-${computer.id}-${result.sessionId}-${result.messageId ?? 'title'}`;
@@ -110,15 +115,16 @@ export function HistorySearchDialog({
     groups.flat().map(result => ({
       key: resultKey(computer, result),
       hostId: computer.id,
+      computerName: computer.name,
       result,
     })),
   );
   const active = rows.findIndex(row => row.key === activeKey);
   const current = rows[Math.max(active, 0)];
   const pending = !!term && eligible.some(computer => !hosts[computer.id]);
-  const setActive = (key: string) => {
-    setActiveKey(key);
-    document.getElementById(key)?.scrollIntoView({ block: 'nearest' });
+  const open = (key: string) => {
+    const row = rows.find(item => item.key === key);
+    if (row) onOpenResult(row.hostId, row.result);
   };
 
   return (
@@ -133,119 +139,79 @@ export function HistorySearchDialog({
         className="gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
         <DialogTitle className="sr-only">Search all history</DialogTitle>
-        <div className="flex items-center gap-3 border-b px-4">
-          <Search aria-hidden="true" className="size-4 text-muted-foreground" />
-          <input
-            role="combobox"
-            aria-label="Search all history"
-            aria-autocomplete="list"
-            aria-expanded
-            aria-controls="history-results"
-            aria-activedescendant={current?.key}
-            placeholder="Search messages and session titles"
-            maxLength={200}
-            className="h-12 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            value={query}
-            onChange={event => {
-              setQuery(event.target.value);
-              setActiveKey('');
-            }}
-            onKeyDown={event => {
-              if (event.nativeEvent.isComposing || !current) return;
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                onOpenResult(current.hostId, current.result);
-              }
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                const direction = event.key === 'ArrowDown' ? 1 : -1;
-                const index =
-                  (Math.max(active, 0) + direction + rows.length) % rows.length;
-                const next = rows[index];
-                if (next) setActive(next.key);
-              }
-            }}
-          />
-        </div>
-        <div
-          id="history-results"
-          role="listbox"
-          aria-label="History matches"
-          aria-busy={pending}
-          className="max-h-[min(55vh,28rem)] overflow-y-auto p-2"
-        >
-          {groups.map(
-            ({ computer, groups }) =>
-              groups.length > 0 && (
-                <div
-                  key={computer.id}
-                  role="group"
-                  aria-label={computer.name}
-                  className="pb-2"
-                >
-                  <div
-                    aria-hidden="true"
-                    className="px-2 py-1 text-xs font-medium text-muted-foreground"
-                  >
-                    {computer.name}
-                  </div>
-                  {groups.map(group => (
-                    <div
-                      key={group[0]?.sessionId}
-                      role="group"
-                      aria-label={group[0]?.title}
-                      className="mb-1"
-                    >
-                      {group.map(result => {
-                        const key = resultKey(computer, result);
-                        return (
-                          <div
-                            key={key}
-                            id={key}
-                            role="option"
-                            aria-selected={current?.key === key}
-                            className="cursor-pointer rounded-md px-2 py-1.5 text-sm hover:bg-accent aria-selected:bg-accent"
-                            onMouseDown={event => event.preventDefault()}
-                            onClick={() => onOpenResult(computer.id, result)}
-                          >
-                            <div className="flex items-center gap-2">
-                              <ProviderGlyph provider={result.provider} />
-                              <span className="sr-only">{result.provider}</span>
-                              <span className="min-w-0 truncate font-medium">
-                                {result.title}
-                              </span>
-                              <span className="min-w-0 truncate text-xs text-muted-foreground">
-                                {directoryLabel(result.directory)}
-                              </span>
-                              <time
-                                dateTime={result.createdAt}
-                                className="ml-auto shrink-0 text-xs text-muted-foreground"
-                              >
-                                {formatRelativeTime(result.createdAt, now)}
-                              </time>
-                            </div>
-                            <p className="mt-0.5 line-clamp-2 break-words pl-5 text-xs leading-relaxed text-muted-foreground">
-                              <HighlightedSnippet {...result.snippet} />
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
+        <SearchField
+          variant="palette"
+          role="combobox"
+          aria-label="Search all history"
+          aria-autocomplete="list"
+          aria-expanded
+          aria-controls={RESULTS_ID}
+          aria-activedescendant={
+            current ? listboxOptionId(RESULTS_ID, current.key) : undefined
+          }
+          placeholder="Search messages and session titles"
+          maxLength={200}
+          value={query}
+          onChange={event => {
+            setQuery(event.target.value);
+            setActiveKey('');
+          }}
+          onClear={() => {
+            setQuery('');
+            setActiveKey('');
+          }}
+          onKeyDown={event => {
+            if (event.nativeEvent.isComposing || !current) return;
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              onOpenResult(current.hostId, current.result);
+            }
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              const direction = event.key === 'ArrowDown' ? 1 : -1;
+              const index =
+                (Math.max(active, 0) + direction + rows.length) % rows.length;
+              const next = rows[index];
+              if (next) setActiveKey(next.key);
+            }
+          }}
+        />
+        {rows.length > 0 && (
+          <Listbox
+            id={RESULTS_ID}
+            label="History matches"
+            options={rows.map(row => ({
+              value: row.key,
+              label: row.result.title,
+              group: row.computerName,
+              icon: <ProviderGlyph provider={row.result.provider} />,
+              description: <HighlightedSnippet {...row.result.snippet} />,
+              trailing: (
+                <>
+                  {directoryLabel(row.result.directory)} ·{' '}
+                  <time dateTime={row.result.createdAt}>
+                    {formatRelativeTime(row.result.createdAt, now)}
+                  </time>
+                </>
               ),
-          )}
-        </div>
+            }))}
+            active={current?.key ?? null}
+            onActiveChange={next => {
+              if (next) setActiveKey(next);
+            }}
+            onSelect={open}
+            className="max-h-[min(55vh,28rem)]"
+          />
+        )}
         {term && (
-          <div
-            role="status"
-            className="space-y-1 px-4 pb-3 text-xs text-muted-foreground empty:hidden"
-          >
-            {pending && <p>Searching history…</p>}
+          <div className="space-y-1 px-3.5 py-2.5 empty:hidden">
+            {pending && (
+              <StatusMessage tone="loading">Searching history…</StatusMessage>
+            )}
             {!pending &&
               !rows.length &&
               eligible.some(computer => hosts[computer.id]?.page) && (
-                <p>No matches.</p>
+                <StatusMessage>No matches.</StatusMessage>
               )}
             {computers.map(computer => {
               const status =
@@ -259,9 +225,9 @@ export function HistorySearchDialog({
                         ? 'partial results'
                         : '';
               return status ? (
-                <p key={computer.id}>
+                <StatusMessage key={computer.id} tone="warning">
                   {computer.name} · {status}
-                </p>
+                </StatusMessage>
               ) : null;
             })}
           </div>
