@@ -16001,6 +16001,83 @@ test(
   },
 );
 
+test(
+  'GitHub CLI releases queue capacity when a waiting request aborts',
+  {
+    timeout: 15_000,
+  },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-gh-queue-'));
+    const fixture = join(directory, 'gh-fixture.cjs');
+    const bundle = join(directory, 'github-cli.mjs');
+    const previous = process.env.NESVO_GH_EXECUTABLE;
+    const shutdown = new AbortController();
+    const requests = [];
+    t.after(async () => {
+      shutdown.abort();
+      await writeFile(join(directory, 'release'), '');
+      await Promise.all(requests);
+      if (previous === undefined) delete process.env.NESVO_GH_EXECUTABLE;
+      else process.env.NESVO_GH_EXECUTABLE = previous;
+      await rm(directory, { recursive: true, force: true });
+    });
+    await promisify(execFile)('bun', [
+      'build',
+      fileURLToPath(new URL('../src/process/github-cli.ts', import.meta.url)),
+      '--target=node',
+      '--outfile',
+      bundle,
+    ]);
+    await writeFile(
+      fixture,
+      `
+    const { existsSync } = require('node:fs');
+    if (process.argv[2] === 'hold') {
+      const timer = setInterval(() => {
+        if (existsSync('release')) clearInterval(timer);
+      }, 15);
+    } else {
+      process.stdout.write(process.argv[2]);
+    }
+  `,
+    );
+    process.env.NESVO_GH_EXECUTABLE = fixture;
+    const { GitHubCli } = await import(pathToFileURL(bundle).href);
+    const gh = new GitHubCli(shutdown.signal);
+    const call = (name, signal) => {
+      const result = gh
+        .run([name], { cwd: directory, signal })
+        .catch(error => error);
+      requests.push(result);
+      return result;
+    };
+    const active = Array.from({ length: 6 }, () => call('hold'));
+    const controller = new AbortController();
+    const cancelled = call('cancelled', controller.signal);
+    const backlog = new AbortController();
+    const queued = Array.from({ length: 31 }, () =>
+      call('queued', backlog.signal),
+    );
+    assert.equal((await call('overflow')).code, 'busy');
+
+    controller.abort();
+    const replacement = call('replacement');
+    const error = await bounded(
+      cancelled,
+      'queued GitHub CLI cancellation',
+      1_000,
+    );
+    assert.equal(error.message, 'The GitHub CLI request was cancelled.');
+    backlog.abort();
+    assert.ok(
+      (await Promise.all(queued)).every(value => value.code === 'unavailable'),
+    );
+    await writeFile(join(directory, 'release'), '');
+    assert.deepEqual(await Promise.all(active), Array(6).fill(''));
+    assert.equal(await replacement, 'replacement');
+  },
+);
+
 function githubCliFixture() {
   const { appendFileSync, readFileSync } = require('node:fs');
   const { join } = require('node:path');

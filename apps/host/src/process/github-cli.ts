@@ -179,13 +179,24 @@ type GhOptions = {
   signal?: AbortSignal;
 };
 
+function abortedRequest(signal: AbortSignal) {
+  return new PullRequestError(
+    'unavailable',
+    signal.reason instanceof DOMException &&
+      signal.reason.name === 'TimeoutError'
+      ? 'The GitHub CLI request timed out.'
+      : 'The GitHub CLI request was cancelled.',
+  );
+}
+
 export class GitHubCli {
   private active = 0;
   private readonly waiting: (() => void)[] = [];
 
   constructor(private readonly signal: AbortSignal) {}
 
-  private async acquire() {
+  private async acquire(signal: AbortSignal) {
+    if (signal.aborted) throw abortedRequest(signal);
     if (this.active < maxConcurrentProcesses) {
       this.active++;
       return;
@@ -195,7 +206,19 @@ export class GitHubCli {
         'busy',
         'Too many GitHub CLI requests. Try again shortly.',
       );
-    await new Promise<void>(resolve => this.waiting.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      const handOver = () => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      };
+      const abort = () => {
+        const index = this.waiting.indexOf(handOver);
+        if (index !== -1) this.waiting.splice(index, 1);
+        reject(abortedRequest(signal));
+      };
+      this.waiting.push(handOver);
+      signal.addEventListener('abort', abort, { once: true });
+    });
   }
 
   private release() {
@@ -205,15 +228,23 @@ export class GitHubCli {
   }
 
   async run(args: string[], options: GhOptions = {}) {
-    await this.acquire();
+    const signal = options.signal
+      ? AbortSignal.any([this.signal, options.signal])
+      : this.signal;
+    await this.acquire(signal);
     try {
-      return await this.execute(args, options);
+      if (signal.aborted) throw abortedRequest(signal);
+      return await this.execute(args, options, signal);
     } finally {
       this.release();
     }
   }
 
-  private async execute(args: string[], options: GhOptions) {
+  private async execute(
+    args: string[],
+    options: GhOptions,
+    signal: AbortSignal,
+  ) {
     const { command, prefix } = ghExecutable();
     try {
       const result = await runOwnedProcess({
@@ -223,12 +254,11 @@ export class GitHubCli {
         env: ghEnvironment(prefix.length > 0, options.inferHost ?? false),
         timeoutMs: options.mutation ? 60_000 : 20_000,
         maxOutputBytes: options.maxOutputBytes ?? 8 * 1024 * 1024,
-        signal: options.signal
-          ? AbortSignal.any([this.signal, options.signal])
-          : this.signal,
+        signal,
         stdin: options.stdin,
       });
-      if (result.timedOut || options.signal?.aborted)
+      if (signal.aborted) throw abortedRequest(signal);
+      if (result.timedOut)
         throw new PullRequestError(
           'unavailable',
           'The GitHub CLI request timed out.',
@@ -250,13 +280,12 @@ export class GitHubCli {
       return result.stdout;
     } catch (error) {
       if (!(error instanceof OwnedProcessError)) throw error;
+      if (signal.aborted) throw abortedRequest(signal);
       if (error.systemCode === 'ENOENT' && !executableFile(command))
         throw new PullRequestError('unavailable', installation);
       throw new PullRequestError(
         'unavailable',
-        options.signal?.aborted
-          ? 'The GitHub CLI request timed out.'
-          : 'The GitHub CLI process did not finish cleanly.',
+        'The GitHub CLI process did not finish cleanly.',
       );
     }
   }
