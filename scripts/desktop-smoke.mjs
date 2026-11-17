@@ -1057,6 +1057,81 @@ try {
     .waitFor();
   await waitState(first.id, 'failed');
   await screenshot('-failure');
+  const pasteIntoComposer = (items, text = '') =>
+    messageEditor.evaluate(
+      (node, { items, text }) => {
+        const transfer = new DataTransfer();
+        for (const item of items)
+          transfer.items.add(
+            new File(
+              [Uint8Array.from(atob(item.data), value => value.charCodeAt(0))],
+              item.name,
+              { type: item.type },
+            ),
+          );
+        if (text) transfer.setData('text/plain', text);
+        node.dispatchEvent(
+          new ClipboardEvent('paste', {
+            clipboardData: transfer,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      },
+      { items, text },
+    );
+  const composerAttachments = page.getByRole('group', {
+    name: 'Attachments',
+    exact: true,
+  });
+  await pasteIntoComposer([
+    {
+      name: 'pixel.png',
+      type: 'image/png',
+      data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    },
+    { name: 'notes.pdf', type: 'application/pdf', data: 'JVBERi0=' },
+  ]);
+  await composerAttachments
+    .getByRole('button', { name: 'Open pixel.png', exact: true })
+    .waitFor();
+  await page
+    .getByRole('status', { name: 'Attachment note', exact: true })
+    .filter({ hasText: 'notes.pdf' })
+    .waitFor();
+  await pasteIntoComposer([], 'long pasted line\n'.repeat(400));
+  assert.equal(await messageEditor.inputValue(), '');
+  await composerAttachments
+    .getByRole('button', { name: 'Remove pasted-text-1.txt', exact: true })
+    .click();
+  await send('Describe the attached image');
+  const attached = await waitState(first.id, 'completed');
+  assert.deepEqual(
+    attached.messages
+      .at(-2)
+      .attachments.map(({ kind, name, mediaType, bytes }) => ({
+        kind,
+        name,
+        mediaType,
+        bytes,
+      })),
+    [{ kind: 'image', name: 'pixel.png', mediaType: 'image/png', bytes: 70 }],
+  );
+  await composerAttachments.waitFor({ state: 'detached' });
+  await conversation
+    .getByRole('group', { name: 'Message attachments', exact: true })
+    .getByRole('button', { name: 'Open pixel.png', exact: true })
+    .click();
+  const attachmentPreview = page.getByRole('dialog', {
+    name: 'pixel.png',
+    exact: true,
+  });
+  await attachmentPreview
+    .getByRole('img', { name: 'pixel.png', exact: true })
+    .waitFor();
+  await screenshot('-attachment');
+  await page.keyboard.press('Escape');
+  await attachmentPreview.waitFor({ state: 'hidden' });
   await openNewThread();
   await page.waitForFunction(
     async () => (await window.nesvo.codexStatus()).status === 'ready',
