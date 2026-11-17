@@ -117,9 +117,20 @@ export function PermissionPicker({
         </div>
         <div className="space-y-0.5" aria-live="polite">
           <p className="text-sm font-semibold">{modeLabel(provider, shown)}</p>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {modeDescription(provider, shown)}
-          </p>
+          <div className="grid">
+            {modes.map(option => (
+              <p
+                key={option}
+                aria-hidden={option !== shown}
+                className={cn(
+                  'col-start-1 row-start-1 text-xs leading-5 text-muted-foreground',
+                  option !== shown && 'invisible',
+                )}
+              >
+                {modeDescription(provider, option)}
+              </p>
+            ))}
+          </div>
           {planOnly && (
             <p role="note" className="text-xs leading-5 text-muted-foreground">
               {CLAUDE_READ_ONLY_REASON}.
