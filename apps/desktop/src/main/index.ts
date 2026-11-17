@@ -17,6 +17,7 @@ import {
   colorSchemeSchema,
   createSessionSchema,
   decideDelegationSchema,
+  decideWorkerPlanSchema,
   decideReviewSchema,
   respondApprovalSchema,
   assignSessionWorkflowSchema,
@@ -318,6 +319,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'decide-delegation',
         decideDelegationSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:decide-worker-plan',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'decide-worker-plan',
+        decideWorkerPlanSchema.parse(input),
         route(hostId),
       );
     },

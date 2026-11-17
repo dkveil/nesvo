@@ -1,4 +1,7 @@
-import type { DecideDelegationInput } from '@nesvo/contracts';
+import type {
+  DecideDelegationInput,
+  DecideWorkerPlanInput,
+} from '@nesvo/contracts';
 import { ArrowUpRight, GitBranch } from 'lucide-react';
 import {
   delegationStatusLabels,
@@ -7,8 +10,10 @@ import {
   sessionStatusLabel,
   type Session,
 } from '@/entities/session';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { entityKey } from '@/shared/lib/host-key';
+import { WorkerPlan } from './worker-plan';
 
 type Props = {
   session: Session;
@@ -19,6 +24,11 @@ type Props = {
     delegationId: string,
     decision: DecideDelegationInput['decision'],
   ) => void;
+  onPlanDecision: (
+    delegationId: string,
+    decision: DecideWorkerPlanInput['decision'],
+    correction?: string,
+  ) => void;
   onSelect: (id: string) => void;
 };
 
@@ -28,6 +38,7 @@ export function Delegations({
   enabled,
   pending,
   onDecision,
+  onPlanDecision,
   onSelect,
 }: Props) {
   const current = session.delegations.filter(
@@ -57,12 +68,15 @@ export function Delegations({
           !!pending[
             `${entityKey(session)}/${delegation.runId}/${delegation.id}`
           ];
-        const canDecide =
+        const isCurrentRun =
           enabled &&
           session.status === 'running' &&
           session.runId === delegation.runId &&
-          delegation.status === 'pending' &&
           !deciding;
+        const canDecide = isCurrentRun && delegation.status === 'pending';
+        const isPlanning =
+          delegation.status === 'planning' ||
+          delegation.status === 'plan-ready';
         return (
           <section
             key={delegation.id}
@@ -71,11 +85,16 @@ export function Delegations({
             className="space-y-3 rounded-xl border bg-card/60 p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
-                {delegation.title}
-              </h3>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
+                  {delegation.title}
+                </h3>
+                {delegation.planFirst && (
+                  <Badge variant="outline">Plan first</Badge>
+                )}
+              </div>
               <span className="text-xs text-muted-foreground">
-                {child
+                {child && !isPlanning
                   ? sessionStatusLabel(child)
                   : delegationStatusLabels[delegation.status]}
               </span>
@@ -133,6 +152,18 @@ export function Delegations({
                       : 'This proposal is inactive. Check the connection and session status.'}
                 </p>
               </>
+            )}
+            {delegation.status === 'plan-ready' && (
+              <WorkerPlan
+                key={delegation.planRound}
+                plan={delegation.plan ?? ''}
+                round={delegation.planRound}
+                canDecide={isCurrentRun}
+                deciding={deciding}
+                onDecision={(decision, correction) =>
+                  onPlanDecision(delegation.id, decision, correction)
+                }
+              />
             )}
             {child && (
               <Button

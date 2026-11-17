@@ -44,6 +44,7 @@ export const workerProposalSchema = z
     provider: providerSchema,
     model: modelSchema,
     mode: sessionModeSchema,
+    planFirst: z.boolean().default(false),
   })
   .superRefine((value, context) => {
     if (
@@ -66,6 +67,8 @@ export const delegationSchema = workerProposalSchema.safeExtend({
   status: z.enum([
     'pending',
     'declined',
+    'planning',
+    'plan-ready',
     'running',
     'completed',
     'stopped',
@@ -75,6 +78,8 @@ export const delegationSchema = workerProposalSchema.safeExtend({
   childSessionId: z.uuid().nullable(),
   childRunId: z.uuid().nullable().optional(),
   error: z.string().nullable(),
+  plan: z.string().max(12000).nullable().default(null),
+  planRound: z.number().int().nonnegative().default(0),
 });
 export const approvalSchema = z.strictObject({
   id: z.string().min(1).max(200),
@@ -190,6 +195,18 @@ export const decideDelegationSchema = z.strictObject({
   delegationId: z.uuid(),
   decision: z.enum(['accept', 'decline']),
 });
+export const decideWorkerPlanSchema = z
+  .strictObject({
+    sessionId: z.uuid(),
+    runId: z.uuid(),
+    delegationId: z.uuid(),
+    decision: z.enum(['accept', 'correct']),
+    correction: z.string().trim().min(1).max(4000).optional(),
+  })
+  .refine(value => value.decision !== 'correct' || !!value.correction, {
+    message: 'A correction is required',
+    path: ['correction'],
+  });
 const tokenCountSchema = z.number().int().nonnegative().nullable();
 export const turnUsageSchema = z.strictObject({
   inputTokens: tokenCountSchema,
@@ -310,3 +327,4 @@ export type WorkerProposal = z.infer<typeof workerProposalSchema>;
 export type Delegation = z.infer<typeof delegationSchema>;
 export type DelegationPlan = z.infer<typeof delegationPlanSchema>;
 export type DecideDelegationInput = z.infer<typeof decideDelegationSchema>;
+export type DecideWorkerPlanInput = z.infer<typeof decideWorkerPlanSchema>;

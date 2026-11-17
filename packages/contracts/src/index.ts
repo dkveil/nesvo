@@ -33,6 +33,7 @@ import {
   stopRunSchema,
   respondApprovalSchema,
   decideDelegationSchema,
+  decideWorkerPlanSchema,
   type ClaudeStatus,
   type CodexStatus,
   type CreateSessionInput,
@@ -42,6 +43,7 @@ import {
   type StopRunInput,
   type RespondApprovalInput,
   type DecideDelegationInput,
+  type DecideWorkerPlanInput,
 } from './sessions';
 import {
   reviewSchema,
@@ -282,6 +284,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('decide-delegation'),
     input: decideDelegationSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-worker-plan'),
+    input: decideWorkerPlanSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -792,6 +799,10 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   decideDelegation: (
     input: DecideDelegationInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  decideWorkerPlan: (
+    input: DecideWorkerPlanInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   subscribe: (listener: (event: WorkspaceEvent) => void) => () => void;

@@ -207,6 +207,10 @@ if (args.length === 1 && args[0] === '--version') {
     else if (variant === 'mixed')
       workers = [worker('a', 'complete'), worker('b', 'fail')];
     else if (variant === 'recursive') workers = [worker('a', 'recursive')];
+    else if (variant === 'plan')
+      workers = [
+        { ...worker('a', 'plan'), mode: 'supervised', planFirst: true },
+      ];
     else if (variant === 'writable')
       workers = [
         {
@@ -788,7 +792,7 @@ if (args.length === 1 && args[0] === '--version') {
         outputs: { checked: 'sample.txt' },
       };
       const worker =
-        /fixture:worker-(hold|complete|fail|recursive):([a-z])/.exec(
+        /fixture:worker-(hold|complete|fail|recursive|plan):([a-z])/.exec(
           requestPrompt,
         );
       if (worker) {
@@ -797,7 +801,20 @@ if (args.length === 1 && args[0] === '--version') {
           false,
           'Workers must not receive dynamic delegation tools',
         );
-        if (worker[1] === 'hold') await hold(worker[2]);
+        if (worker[1] === 'plan') {
+          const planning = requestPrompt.includes('First produce a plan only');
+          assert.equal(
+            params.sandboxPolicy.type,
+            planning ? 'readOnly' : 'workspaceWrite',
+          );
+          complete(
+            requestPrompt.includes('Correction from the operator')
+              ? `Codex worker ${worker[2]} revised plan: edit sample.txt only.`
+              : requestPrompt.includes('Approved plan:')
+                ? `Codex worker ${worker[2]} completed the approved plan.`
+                : `Codex worker ${worker[2]} plan: inspect and edit sample.txt.`,
+          );
+        } else if (worker[1] === 'hold') await hold(worker[2]);
         else if (worker[1] === 'recursive') delegate('recursive');
         else if (worker[1] === 'fail') {
           notify('turn/completed', {

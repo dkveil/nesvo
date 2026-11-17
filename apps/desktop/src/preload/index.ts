@@ -7,6 +7,7 @@ import {
   respondApprovalSchema,
   createSessionSchema,
   decideDelegationSchema,
+  decideWorkerPlanSchema,
   decideReviewSchema,
   hostHealthSchema,
   assignSessionWorkflowSchema,
@@ -472,6 +473,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:decide-delegation',
         decideDelegationSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideWorkerPlan: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-worker-plan',
+        decideWorkerPlanSchema.parse(input),
         route(hostId),
       ),
     ),

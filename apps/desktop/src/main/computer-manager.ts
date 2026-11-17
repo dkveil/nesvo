@@ -590,6 +590,7 @@ export class ComputerManager {
       'stop-run': 'session',
       'respond-approval': 'session',
       'decide-delegation': 'session',
+      'decide-worker-plan': 'session',
       'decide-review': 'review',
       'discover-skills': 'skills',
       'list-workspace-directory': 'workspace-directory',

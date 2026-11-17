@@ -12,6 +12,7 @@ import {
   type CreateSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
+  type DecideWorkerPlanInput,
   type Review,
   type ReviewDiff,
   type Delegation,
@@ -72,6 +73,20 @@ export async function confirmCodexEffort(
 }
 
 type TurnSelection = Pick<Session, 'model' | 'effort' | 'mode'>;
+
+const WORKER_PLAN_LIMIT = 12_000;
+
+const workerPrompt = (proposal: Delegation): string =>
+  `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
+
+const workerPlanPrompt = (proposal: Delegation, correction?: string): string =>
+  `${workerPrompt(proposal)}\n\nFirst produce a plan only: list the files you would change and the steps, do not change anything yet.${correction ? `\n\nCorrection from the operator:\n${correction}` : ''}`;
+
+const approvedPlanPrompt = (proposal: Delegation): string =>
+  `${workerPrompt(proposal)}\n\nApproved plan:\n${proposal.plan ?? ''}`;
+
+const isActiveDelegation = (proposal: Delegation): boolean =>
+  proposal.status === 'running' || proposal.status === 'planning';
 
 function resolveTurnMode(
   session: Session,
@@ -238,6 +253,7 @@ export class SessionService {
   private readonly unsaved = new Map<string, Session>();
   private readonly limits = new Map<string, { resetsAt: string | null }>();
   private readonly structuredOutputs = new Map<string, unknown>();
+  private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
   private reviewDecision?: AbortController;
@@ -997,11 +1013,13 @@ export class SessionService {
       parent.delegations.filter(item => item.runId === input.runId),
     );
     const child = this.store.worker(parent, proposal, directory);
-    const prompt = `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
+    const prompt = proposal.planFirst
+      ? workerPlanPrompt(proposal)
+      : workerPrompt(proposal);
     this.prepareRun(child, randomUUID(), proposal.task);
     proposal.childSessionId = child.id;
     proposal.childRunId = child.runId;
-    proposal.status = 'running';
+    proposal.status = proposal.planFirst ? 'planning' : 'running';
     try {
       this.store.saveMany([parent, child]);
     } catch (error) {
@@ -1012,7 +1030,75 @@ export class SessionService {
     }
     this.emitSession(parent);
     this.emitSession(child);
-    this.launch(child, prompt, {});
+    if (proposal.planFirst) this.planRuns.add(child.runId!);
+    this.launch(child, prompt, proposal.planFirst ? { readOnly: true } : {});
+    return structuredClone(parent);
+  }
+
+  decideWorkerPlan(input: DecideWorkerPlanInput): Session {
+    const active = this.active.get(input.sessionId);
+    const parent = active?.session;
+    const proposal = parent?.delegations.find(
+      item => item.id === input.delegationId,
+    );
+    const child = proposal?.childSessionId
+      ? this.store.get(proposal.childSessionId)
+      : undefined;
+    if (
+      !active ||
+      !parent ||
+      active.finalizing ||
+      parent.runId !== input.runId ||
+      parent.status !== 'running' ||
+      proposal?.runId !== input.runId ||
+      proposal.status !== 'plan-ready' ||
+      !this.waiters.has(proposal.id) ||
+      !child ||
+      child.parentId !== parent.id ||
+      child.parentRunId !== parent.runId ||
+      this.active.has(child.id) ||
+      this.unsaved.has(child.id)
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This worker plan is no longer waiting for a decision.',
+      );
+    if (input.decision === 'correct' && !input.correction)
+      throw new SessionError(
+        'invalid-request',
+        'A correction is required to revise the plan.',
+      );
+    const correcting = input.decision === 'correct';
+    const prompt = correcting
+      ? workerPlanPrompt(proposal, input.correction)
+      : approvedPlanPrompt(proposal);
+    const previous = {
+      childRunId: proposal.childRunId,
+      status: proposal.status,
+      activity: parent.activity,
+    };
+    this.prepareRun(
+      child,
+      randomUUID(),
+      correcting ? input.correction! : proposal.task,
+    );
+    proposal.childRunId = child.runId;
+    proposal.status = correcting ? 'planning' : 'running';
+    parent.activity = correcting
+      ? 'Waiting for the revised worker plan…'
+      : 'Waiting for worker results…';
+    try {
+      this.store.saveMany([parent, child]);
+    } catch (error) {
+      proposal.childRunId = previous.childRunId;
+      proposal.status = previous.status;
+      parent.activity = previous.activity;
+      throw error;
+    }
+    this.emitSession(parent);
+    this.emitSession(child);
+    if (correcting) this.planRuns.add(child.runId!);
+    this.launch(child, prompt, correcting ? { readOnly: true } : {});
     return structuredClone(parent);
   }
 
@@ -1385,7 +1471,9 @@ export class SessionService {
                   : {}),
                 ...(canDelegate
                   ? {
-                      delegationSchema: z.toJSONSchema(delegationPlanSchema),
+                      delegationSchema: z.toJSONSchema(delegationPlanSchema, {
+                        io: 'input',
+                      }),
                       onDelegate: (input: unknown, signal: AbortSignal) =>
                         this.delegate(session, input, signal),
                     }
@@ -1550,7 +1638,9 @@ export class SessionService {
     diff: ReviewDiff,
   ): Promise<void> {
     const reviews =
-      session.status === 'completed' && !session.workflowStepId
+      session.status === 'completed' &&
+      !session.workflowStepId &&
+      !(session.runId && this.planRuns.has(session.runId))
         ? [
             ...this.reviews.supersededBy(session.id),
             this.reviews.result(session, diff),
@@ -1604,6 +1694,8 @@ export class SessionService {
       status: 'pending',
       childSessionId: null,
       error: null,
+      plan: null,
+      planRound: 0,
     }));
     try {
       this.validateWorkerDirectories(parent, [...previous, ...proposals]);
@@ -1655,7 +1747,14 @@ export class SessionService {
             'The parent run ended before this worker was started.';
         cancelled.push(proposal);
         changed = true;
-      } else if (proposal.status === 'running' && proposal.childSessionId) {
+      } else if (proposal.status === 'plan-ready') {
+        proposal.status = parent.interruption ? 'interrupted' : 'stopped';
+        if (parent.interruption)
+          proposal.error =
+            'The parent run ended before this worker plan was accepted.';
+        cancelled.push(proposal);
+        changed = true;
+      } else if (isActiveDelegation(proposal) && proposal.childSessionId) {
         const child = this.active.get(proposal.childSessionId);
         if (child && !child.finalizing) {
           try {
@@ -1685,6 +1784,7 @@ export class SessionService {
   }
 
   private finishWorker(child: Session): void {
+    if (child.runId) this.planRuns.delete(child.runId);
     if (!child.parentId || !child.parentRunId) return;
     const parent = this.active.get(child.parentId)?.session;
     const proposal = parent?.delegations.find(
@@ -1693,7 +1793,11 @@ export class SessionService {
         item.runId === child.parentRunId &&
         (!item.childRunId || item.childRunId === child.runId),
     );
-    if (!parent || !proposal || proposal.status !== 'running') return;
+    if (!parent || !proposal || !isActiveDelegation(proposal)) return;
+    if (proposal.status === 'planning' && child.status === 'completed') {
+      this.readyPlan(parent, proposal, child);
+      return;
+    }
     proposal.status =
       child.status === 'completed' ||
       child.status === 'stopped' ||
@@ -1714,15 +1818,41 @@ export class SessionService {
     this.settle(proposal, child);
   }
 
+  private readyPlan(
+    parent: Session,
+    proposal: Delegation,
+    child: Session,
+  ): void {
+    const plan = this.workerText(child);
+    proposal.status = 'plan-ready';
+    proposal.plan =
+      plan.length > WORKER_PLAN_LIMIT ? plan.slice(0, WORKER_PLAN_LIMIT) : plan;
+    proposal.planRound += 1;
+    proposal.error = null;
+    parent.activity = 'Waiting for your decision on the worker plan…';
+    try {
+      this.publish(parent);
+    } catch {
+      this.unsaved.set(parent.id, parent);
+      const active = this.active.get(parent.id);
+      if (active) {
+        active.persistenceError = true;
+        void active.handle.stop().catch(() => undefined);
+      }
+    }
+  }
+
+  private workerText(child: Session): string {
+    return child.messages
+      .filter(
+        message => message.runId === child.runId && message.author === 'agent',
+      )
+      .map(message => message.body)
+      .join('\n');
+  }
+
   private settle(proposal: Delegation, child?: Session): void {
-    const text =
-      child?.messages
-        .filter(
-          message =>
-            message.runId === child.runId && message.author === 'agent',
-        )
-        .map(message => message.body)
-        .join('\n') ?? '';
+    const text = child ? this.workerText(child) : '';
     this.waiters.get(proposal.id)?.({
       delegationId: proposal.id,
       childSessionId: proposal.childSessionId,

@@ -262,6 +262,16 @@ export class SessionStore {
     }
     for (const session of sessions) {
       for (const proposal of session.delegations) {
+        if (
+          proposal.status === 'planning' ||
+          proposal.status === 'plan-ready'
+        ) {
+          proposal.status = 'interrupted';
+          proposal.error =
+            'The previous host stopped before this worker plan was accepted. No worker was restarted.';
+          updates.set(session.id, session);
+          continue;
+        }
         if (proposal.status !== 'pending' && proposal.status !== 'running')
           continue;
         const child = proposal.childSessionId

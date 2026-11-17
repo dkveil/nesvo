@@ -196,6 +196,10 @@ The Claude status reports `modes` from the choices that `claude --help` lists fo
 
 A session can also carry a saved workflow assignment, `workflow: { name, root }` with root `project` or `global`, null by default. `assign-session-workflow` sets or clears it while the session is idle or running, after checking that the definitions catalog for the session folder contains that workflow in that root; it persists across restarts and starts nothing by itself.
 
+## Plan-first workers
+
+D67 lets a parent propose a worker with `planFirst`. The operator still approves the worker; its first turn then runs with a read-only turn sandbox and must return a plan, and the proposal moves from `planning` to `plan-ready` with the bounded plan text and a `planRound` counter. The plan appears in the parent conversation with two decisions sent through `decide-worker-plan`: `accept` resumes the worker thread in the proposal's mode with the approved plan in its prompt, and `correct` runs another read-only plan turn with the operator's correction. The parent's delegation tool call keeps waiting until the worker finishes for real, so a plan never counts as a worker result, and plan turns save no review. The proposal mode was already checked against the parent's access when it was proposed, so the post-plan turn can never be broader than the parent allows. Parent Stop or host shutdown stops or interrupts a planning or plan-ready worker like a running one, and a host restart marks both states interrupted without continuing the worker. The action inbox does not list plan decisions yet; they are made on the worker card in the parent conversation.
+
 ## Growth by domain
 
 Introduce sessions, delegation, review and skills modules as their stages are accepted.

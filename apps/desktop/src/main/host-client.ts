@@ -6,6 +6,7 @@ import {
   hostRequestSchema,
   type CreateSessionInput,
   type DecideDelegationInput,
+  type DecideWorkerPlanInput,
   type DecideReviewInput,
   type DesktopEvent,
   type AssignSessionWorkflowInput,
@@ -137,6 +138,12 @@ export function startHost(directory: string) {
     },
     decideDelegation: async (input: DecideDelegationInput) => {
       const response = await request('decide-delegation', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    decideWorkerPlan: async (input: DecideWorkerPlanInput) => {
+      const response = await request('decide-worker-plan', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

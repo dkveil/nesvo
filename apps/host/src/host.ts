@@ -77,6 +77,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'stop-run',
   'respond-approval',
   'decide-delegation',
+  'decide-worker-plan',
   'decide-review',
   'start-workflow-task',
   'run-workflow-steps',
@@ -1073,6 +1074,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.decideDelegation(request.input),
+              };
+            if (request.method === 'decide-worker-plan')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.decideWorkerPlan(request.input),
               };
             if (request.method === 'list-scheduled-jobs')
               return {

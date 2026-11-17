@@ -15671,3 +15671,205 @@ test(
     assert.equal(cleared.session.workflow, null);
   },
 );
+
+test(
+  'plan-first workers plan read-only, accept corrections and continue only after plan acceptance',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-worker-plan-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const project = join(directory, 'project');
+    const host = launch(directory, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await bounded(host.exited, 'Test host did not exit');
+      await rm(directory, { recursive: true, force: true });
+    });
+    await mkdir(project, { recursive: true });
+    const created = await host.request('create-session', {
+      title: 'Plan-first parent',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'read-only',
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const root = created.session;
+    assert.equal(root.delegationEnabled, true);
+    const sent = await host.request('send-message', {
+      sessionId: root.id,
+      messageId: randomUUID(),
+      text: 'fixture:delegate-plan',
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const runId = sent.session.runId;
+    const proposalOf = session =>
+      session.delegations.find(item => item.runId === runId);
+    const proposed = await host.event(
+      value =>
+        value.id === root.id && value.runId === runId && !!proposalOf(value),
+    );
+    const proposal = proposalOf(proposed);
+    assert.equal(proposal.status, 'pending');
+    assert.equal(proposal.planFirst, true);
+    assert.equal(proposal.mode, 'supervised');
+    assert.equal(proposal.plan, null);
+    assert.equal(proposal.planRound, 0);
+    const decidePlan = (decision, correction) =>
+      host.request('decide-worker-plan', {
+        sessionId: root.id,
+        runId,
+        delegationId: proposal.id,
+        decision,
+        ...(correction ? { correction } : {}),
+      });
+    assert.equal((await decidePlan('accept')).code, 'invalid-request');
+    const approved = await host.request('decide-delegation', {
+      sessionId: root.id,
+      runId,
+      delegationId: proposal.id,
+      decision: 'accept',
+    });
+    assert.equal(approved.type, 'session', JSON.stringify(approved));
+    assert.equal(proposalOf(approved.session).status, 'planning');
+    const planReady = async round => {
+      const ready = await host.event(
+        value =>
+          value.id === root.id &&
+          value.runId === runId &&
+          proposalOf(value)?.status === 'plan-ready' &&
+          proposalOf(value).planRound === round,
+      );
+      assert.equal(ready.status, 'running');
+      assert.equal(
+        agent(ready).body.startsWith('Codex delegation results: '),
+        false,
+      );
+      return proposalOf(ready);
+    };
+    const firstPlan = await planReady(1);
+    assert.equal(
+      firstPlan.plan,
+      'Codex worker a plan: inspect and edit sample.txt.',
+    );
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'decide-worker-plan',
+          input: {
+            sessionId: root.id,
+            runId,
+            delegationId: proposal.id,
+            decision: 'correct',
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
+    const corrected = await decidePlan('correct', 'Only touch sample.txt.');
+    assert.equal(corrected.type, 'session', JSON.stringify(corrected));
+    assert.equal(proposalOf(corrected.session).status, 'planning');
+    assert.equal((await decidePlan('accept')).code, 'invalid-request');
+    const revised = await planReady(2);
+    assert.equal(
+      revised.plan,
+      'Codex worker a revised plan: edit sample.txt only.',
+    );
+    const accepted = await decidePlan('accept');
+    assert.equal(accepted.type, 'session', JSON.stringify(accepted));
+    assert.equal(proposalOf(accepted.session).status, 'running');
+    const completed = await host.event(
+      value =>
+        value.id === root.id &&
+        value.runId === runId &&
+        value.status === 'completed',
+    );
+    assert.equal(proposalOf(completed).status, 'completed');
+    const results = JSON.parse(
+      agent(completed).body.slice('Codex delegation results: '.length),
+    ).results;
+    assert.equal(results.length, 1);
+    assert.equal(results[0].status, 'completed');
+    assert.equal(
+      results[0].text,
+      'Codex worker a completed the approved plan.',
+    );
+    const child = (await host.request('list-sessions')).sessions.find(
+      value =>
+        value.id === proposal.childSessionId || value.parentId === root.id,
+    );
+    assert.equal(child.mode, 'supervised');
+    assert.deepEqual(
+      child.messages
+        .filter(message => message.author === 'operator')
+        .map(message => message.body),
+      [proposal.task, 'Only touch sample.txt.', proposal.task],
+    );
+    const turns = (await readFile(pidFile + '.turns', 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+      .filter(turn => turn.sessionId === child.providerSessionId);
+    assert.deepEqual(
+      turns.map(turn => turn.sandbox),
+      ['readOnly', 'readOnly', 'workspaceWrite'],
+    );
+    assert.match(
+      turns[2].prompt,
+      /Approved plan:\nCodex worker a revised plan/,
+    );
+    const childReviews = (await host.request('list-reviews')).reviews.filter(
+      review => review.sessionId === child.id,
+    );
+    assert.equal(childReviews.length, 1);
+    const stopping = await host.request('send-message', {
+      sessionId: root.id,
+      messageId: randomUUID(),
+      text: 'fixture:delegate-plan',
+    });
+    assert.equal(stopping.type, 'session', JSON.stringify(stopping));
+    const stopRunId = stopping.session.runId;
+    const stopProposalOf = session =>
+      session.delegations.find(item => item.runId === stopRunId);
+    const stopProposed = await host.event(
+      value =>
+        value.id === root.id &&
+        value.runId === stopRunId &&
+        !!stopProposalOf(value),
+    );
+    await host.request('decide-delegation', {
+      sessionId: root.id,
+      runId: stopRunId,
+      delegationId: stopProposalOf(stopProposed).id,
+      decision: 'accept',
+    });
+    await host.event(
+      value =>
+        value.id === root.id &&
+        value.runId === stopRunId &&
+        stopProposalOf(value)?.status === 'plan-ready',
+    );
+    const stopped = await host.request('stop-run', {
+      sessionId: root.id,
+      runId: stopRunId,
+    });
+    assert.equal(stopped.type, 'session', JSON.stringify(stopped));
+    assert.equal(stopProposalOf(stopped.session).status, 'stopped');
+    const ended = await host.event(
+      value =>
+        value.id === root.id &&
+        value.runId === stopRunId &&
+        value.status === 'stopped',
+    );
+    assert.equal(stopProposalOf(ended).status, 'stopped');
+  },
+);

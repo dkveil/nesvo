@@ -118,6 +118,8 @@ export const delegationStatusLabels: Record<
 > = {
   pending: 'Awaiting decision',
   declined: 'Declined',
+  planning: 'Planning',
+  'plan-ready': 'Plan ready',
   running: 'Working',
   completed: 'Done',
   stopped: 'Stopped',

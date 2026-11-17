@@ -10,6 +10,7 @@ import {
 import type {
   CreateSessionInput,
   DecideDelegationInput,
+  DecideWorkerPlanInput,
   DecideReviewInput,
   DesktopReview as Review,
   DesktopSession as Session,
@@ -1396,6 +1397,60 @@ export function Workspace() {
       });
     }
   };
+  const decideWorkerPlan = async (
+    input: DecideWorkerPlanInput,
+    hostId = 'local',
+  ) => {
+    const session = store.sessions.find(
+      item => item.id === input.sessionId && item.hostId === hostId,
+    );
+    if (
+      !session ||
+      session.runId !== input.runId ||
+      session.status !== 'running' ||
+      !store.hostReady(hostId) ||
+      store.loading ||
+      store.error ||
+      !session.delegations.some(
+        delegation =>
+          delegation.id === input.delegationId &&
+          delegation.runId === input.runId &&
+          delegation.status === 'plan-ready',
+      )
+    )
+      return;
+    const { sessionId, runId, delegationId } = input;
+    const key = `${hostKey(sessionId, hostId)}/${runId}/${delegationId}`;
+    if (delegationRequests.current.has(key)) return;
+    delegationRequests.current.add(key);
+    setDelegationPending(previous => ({ ...previous, [key]: true }));
+    setErrors(previous => ({ ...previous, [hostKey(sessionId, hostId)]: '' }));
+    try {
+      store.merge([await desktopApi(hostId).decideWorkerPlan(input)]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [hostKey(sessionId, hostId)]:
+          `Could not send the plan decision. ${errorDetail(failure)}`,
+      }));
+      try {
+        await store.recover(hostId);
+      } catch (recoveryFailure) {
+        setErrors(previous => ({
+          ...previous,
+          [hostKey(sessionId, hostId)]:
+            `${previous[hostKey(sessionId, hostId)] ?? ''} Could not refresh the conversation. ${errorDetail(recoveryFailure)}`,
+        }));
+      }
+    } finally {
+      delegationRequests.current.delete(key);
+      setDelegationPending(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
+  };
   const reviewBlockedReason = (review: Review) =>
     !store.hostReady(review.hostId)
       ? 'Connect this computer and sync its history before making a decision.'
@@ -2467,6 +2522,19 @@ export function Workspace() {
                           runId: selected.runId,
                           delegationId,
                           decision,
+                        },
+                        selectedHostId,
+                      )
+                    }
+                    onPlanDecision={(delegationId, decision, correction) =>
+                      selected.runId &&
+                      void decideWorkerPlan(
+                        {
+                          sessionId: selected.id,
+                          runId: selected.runId,
+                          delegationId,
+                          decision,
+                          ...(correction ? { correction } : {}),
                         },
                         selectedHostId,
                       )
