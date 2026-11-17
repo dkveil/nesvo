@@ -156,6 +156,10 @@ const WorkflowGraphEditor = lazy(
   () => import('@/widgets/workflow-graph-editor'),
 );
 
+const ComponentCatalog = import.meta.env.DEV
+  ? lazy(() => import('@/widgets/component-catalog'))
+  : null;
+
 const samePlace = (left: string, right: string) =>
   left.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
   right.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -3169,6 +3173,12 @@ ${text}`
               />
             ) : page === 'phone' ? (
               <MobileAccess api={desktopApi()} />
+            ) : page === 'components' ? (
+              ComponentCatalog && (
+                <Suspense fallback={null}>
+                  <ComponentCatalog />
+                </Suspense>
+              )
             ) : (
               <ProviderAccounts
                 {...usageProps}

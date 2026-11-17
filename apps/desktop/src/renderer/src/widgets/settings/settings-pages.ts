@@ -1,4 +1,5 @@
 import {
+  Blocks,
   Monitor,
   Palette,
   Settings2,
@@ -8,7 +9,7 @@ import {
 } from 'lucide-react';
 
 export type SettingsPage =
-  'general' | 'appearance' | 'computers' | 'phone' | 'account';
+  'general' | 'appearance' | 'computers' | 'phone' | 'account' | 'components';
 
 type SettingsPageEntry = {
   id: SettingsPage;
@@ -16,6 +17,7 @@ type SettingsPageEntry = {
   icon: LucideIcon;
   group: string;
   keywords: string;
+  wide?: boolean;
 };
 
 export const settingsPages: SettingsPageEntry[] = [
@@ -54,6 +56,18 @@ export const settingsPages: SettingsPageEntry[] = [
     group: 'Account',
     keywords: 'usage quota limits reset weekly',
   },
+  ...(import.meta.env.DEV
+    ? [
+        {
+          id: 'components' as const,
+          label: 'Components',
+          icon: Blocks,
+          group: 'Development',
+          keywords: 'design system catalog library ui primitives',
+          wide: true,
+        },
+      ]
+    : []),
 ];
 
 export const matchesSettingsPage = (entry: SettingsPageEntry, query: string) =>

@@ -181,7 +181,10 @@ export function Settings({
           <div className="min-h-0 flex-1 overflow-y-auto">
             <section
               aria-label={current.label}
-              className="mx-auto w-full max-w-[44rem] px-6 py-7"
+              className={cn(
+                'mx-auto w-full px-6 py-7',
+                current.wide ? 'max-w-6xl' : 'max-w-[44rem]',
+              )}
             >
               {children(page, setBusy)}
             </section>

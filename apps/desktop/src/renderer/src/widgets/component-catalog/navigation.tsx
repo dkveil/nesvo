@@ -1,0 +1,338 @@
+import { useState } from 'react';
+import {
+  Archive,
+  ChevronRight,
+  Folder,
+  Inbox,
+  MessageSquare,
+  MoreHorizontal,
+  Pin,
+  Settings2,
+  Workflow,
+} from 'lucide-react';
+import { DiffStat, FileGlyph } from '@/entities/file-change';
+import { StatusIcon } from '@/entities/status';
+import { CountBadge } from '@/shared/ui/badge';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { NavItem, NavList } from '@/shared/ui/nav-list';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { TabPanel, Tabs } from '@/shared/ui/tabs';
+import { CatalogSection, Specimen, StateCaption } from './specimen';
+
+function TabSpecimens() {
+  const [tab, setTab] = useState<'summary' | 'timeline' | 'code'>('summary');
+  const [files, setFiles] = useState(['app.tsx', 'styles.css', 'readme.md']);
+  const [file, setFile] = useState('app.tsx');
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <StateCaption label="underline · sliding indicator">
+        <div className="w-full rounded-control border bg-card">
+          <Tabs
+            label="Sample sections"
+            idPrefix="catalog-tabs"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'summary', label: 'Summary' },
+              { value: 'timeline', label: 'Timeline', count: 12 },
+              { value: 'code', label: 'Code', count: 4 },
+            ]}
+          />
+          <TabPanel
+            idPrefix="catalog-tabs"
+            value={tab}
+            className="px-3 py-3 text-xs text-muted-foreground"
+          >
+            Sample {tab} panel.
+          </TabPanel>
+        </div>
+      </StateCaption>
+      <StateCaption label="editor · closable">
+        <div className="w-full overflow-hidden rounded-control border">
+          <Tabs
+            label="Open files"
+            idPrefix="catalog-editor-tabs"
+            variant="editor"
+            value={file}
+            onChange={setFile}
+            onClose={value => {
+              const next = files.filter(entry => entry !== value);
+              setFiles(next.length ? next : ['app.tsx']);
+              if (value === file) setFile(next[0] ?? 'app.tsx');
+            }}
+            options={files.map(name => ({
+              value: name,
+              label: name,
+              icon: <FileGlyph name={name} />,
+              closable: true,
+            }))}
+          />
+          <TabPanel
+            idPrefix="catalog-editor-tabs"
+            value={file}
+            className="bg-background px-3 py-3 font-mono text-xs text-muted-foreground"
+          >
+            {file}
+          </TabPanel>
+        </div>
+      </StateCaption>
+    </div>
+  );
+}
+
+function NavSpecimens() {
+  const [page, setPage] = useState('general');
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <StateCaption label="default tone · sm">
+        <NavList
+          label="Sample settings"
+          className="w-52 rounded-control bg-card p-2"
+        >
+          <NavItem
+            icon={<Settings2 />}
+            selected={page === 'general'}
+            onClick={() => setPage('general')}
+          >
+            General
+          </NavItem>
+          <NavItem
+            icon={<Folder />}
+            selected={page === 'folders'}
+            onClick={() => setPage('folders')}
+          >
+            Folders
+          </NavItem>
+          <NavItem icon={<Archive />} data-preview-hover="">
+            Hover
+          </NavItem>
+          <NavItem icon={<Archive />} data-preview-focus="">
+            Focus
+          </NavItem>
+          <NavItem icon={<Archive />} disabled>
+            Disabled
+          </NavItem>
+        </NavList>
+      </StateCaption>
+      <StateCaption label="sidebar tone · md">
+        <NavList
+          label="Sample sidebar"
+          className="w-52 rounded-control bg-sidebar p-2"
+        >
+          <NavItem tone="sidebar" size="md" icon={<MessageSquare />}>
+            Sessions
+          </NavItem>
+          <NavItem
+            tone="sidebar"
+            size="md"
+            icon={<Inbox />}
+            selected
+            trailing={<CountBadge count={3} />}
+          >
+            Inbox
+          </NavItem>
+          <NavItem
+            tone="sidebar"
+            size="md"
+            icon={<Workflow />}
+            data-preview-hover=""
+          >
+            Workflows
+          </NavItem>
+        </NavList>
+      </StateCaption>
+    </div>
+  );
+}
+
+function RowSpecimens() {
+  const [selected, setSelected] = useState('two');
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <StateCaption label="compact 28px · hover · selected · disabled · actions">
+        <div className="w-full space-y-0.5 rounded-control border bg-card p-1">
+          {(
+            [
+              ['one', 'Sample session one'],
+              ['two', 'Sample session two'],
+              ['three', 'Sample session three'],
+            ] as const
+          ).map(([id, title]) => (
+            <ListRow
+              key={id}
+              leading={<MessageSquare />}
+              title={title}
+              trailing="2m"
+              selected={selected === id}
+              onClick={() => setSelected(id)}
+              actions={
+                <IconButton label="Row actions" size={20}>
+                  <MoreHorizontal />
+                </IconButton>
+              }
+            />
+          ))}
+          <ListRow
+            leading={<Pin />}
+            title="Hover preview"
+            trailing="1h"
+            onClick={() => undefined}
+            data-preview-hover=""
+          />
+          <ListRow
+            leading={<Archive />}
+            title="Disabled row"
+            disabled
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="tree 22px · drop indicators">
+        <div className="w-full rounded-control border bg-card p-1">
+          <ListRow
+            density="tree"
+            leading={<ChevronRight />}
+            title="src"
+            onClick={() => undefined}
+          />
+          <ListRow
+            density="tree"
+            level={1}
+            leading={<FileGlyph name="app.tsx" />}
+            title="app.tsx"
+            onClick={() => undefined}
+            dropIndicator="before"
+          />
+          <ListRow
+            density="tree"
+            level={1}
+            leading={<FileGlyph name="styles.css" />}
+            title="styles.css"
+            selected
+            onClick={() => undefined}
+          />
+          <ListRow
+            density="tree"
+            level={1}
+            leading={<Folder />}
+            title="shared (drop inside)"
+            onClick={() => undefined}
+            dropIndicator="inside"
+          />
+          <ListRow
+            density="tree"
+            level={2}
+            leading={<FileGlyph name="package.json" />}
+            title="package.json"
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="two-line">
+        <div className="w-full rounded-control border bg-card p-1">
+          <ListRow
+            density="two-line"
+            leading={<StatusIcon status="success" className="size-3.5" />}
+            title="Sample pull request title"
+            description="sample/repository #42 · updated 2h ago"
+            trailing={<DiffStat additions={128} deletions={14} />}
+            onClick={() => undefined}
+          />
+          <ListRow
+            density="two-line"
+            leading={<StatusIcon status="pending" className="size-3.5" />}
+            title="Another sample change"
+            description="sample/repository #41 · draft"
+            trailing={<DiffStat additions={6} deletions={2} />}
+            selected
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="grid (static)">
+        <div className="w-full rounded-control border bg-card p-1">
+          {(
+            [
+              ['Today', '4', '0:12'],
+              ['This week', '19', '1:47'],
+            ] as const
+          ).map(([period, runs, time]) => (
+            <ListRow
+              key={period}
+              density="grid"
+              columns="minmax(0,1fr) 4rem 4rem"
+            >
+              <span className="truncate">{period}</span>
+              <span className="text-right text-muted-foreground tabular-nums">
+                {runs}
+              </span>
+              <span className="text-right text-muted-foreground tabular-nums">
+                {time}
+              </span>
+            </ListRow>
+          ))}
+        </div>
+      </StateCaption>
+    </div>
+  );
+}
+
+export function NavigationSection() {
+  return (
+    <CatalogSection
+      id="navigation"
+      title="Navigation and lists"
+      description="Selected state is always data-selected on the styled element, with the ARIA attribute that fits the role: aria-current for navigation, aria-selected for tabs and options, aria-pressed for toggles."
+    >
+      <Specimen title="Tabs" source="shared/ui/tabs.tsx">
+        <TabSpecimens />
+      </Specimen>
+      <Specimen title="NavList and NavItem" source="shared/ui/nav-list.tsx">
+        <NavSpecimens />
+      </Specimen>
+      <Specimen title="ListRow" source="shared/ui/list-row.tsx">
+        <RowSpecimens />
+      </Specimen>
+      <Specimen
+        title="SectionLabel and Disclosure"
+        source="section-label.tsx · disclosure.tsx"
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-control border bg-card p-1">
+            <SectionLabel
+              count={2}
+              action={
+                <IconButton label="Section actions" size={20}>
+                  <MoreHorizontal />
+                </IconButton>
+              }
+            >
+              Pinned
+            </SectionLabel>
+            <ListRow
+              leading={<Pin />}
+              title="Sample pinned session"
+              onClick={() => undefined}
+            />
+            <ListRow
+              leading={<Pin />}
+              title="Another pinned session"
+              onClick={() => undefined}
+            />
+          </div>
+          <div className="space-y-1 rounded-control border bg-card p-1">
+            <Disclosure title="Sample details" meta="3" defaultOpen>
+              The disclosure body uses muted 12px text and indents under the
+              chevron.
+            </Disclosure>
+            <Disclosure title="Collapsed disclosure" meta="12">
+              Hidden sample content.
+            </Disclosure>
+          </div>
+        </div>
+      </Specimen>
+    </CatalogSection>
+  );
+}
