@@ -2876,6 +2876,7 @@ test(
       'fixture:delegate-escape',
       'fixture:delegate-symlink',
       'fixture:delegate-overlap',
+      'fixture:delegate-unlisted-mode',
     ]) {
       const invalid = await sendCodex(checked, root, prompt);
       const result = await parentResult(checked, { run: invalid });

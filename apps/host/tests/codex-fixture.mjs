@@ -235,6 +235,8 @@ if (args.length === 1 && args[0] === '--version') {
     else if (variant === 'symlink')
       workers = [{ ...worker('a', 'complete'), directory: 'outside-link' }];
     else if (variant === 'overlap') workers[1].mode = 'supervised';
+    else if (variant === 'unlisted-mode')
+      workers = [{ ...worker('a', 'complete'), mode: 'auto' }];
     const id = `fixture-delegation-${randomUUID()}`;
     delegations.set(id, true);
     emit({

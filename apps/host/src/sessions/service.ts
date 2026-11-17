@@ -80,19 +80,20 @@ type TurnSelection = Pick<Session, 'model' | 'effort' | 'mode'>;
 const WORKER_PLAN_LIMIT = 12_000;
 const WORKER_PLAN_ROUND_LIMIT = 5;
 
-const delegationToolSchema = z.toJSONSchema(
-  delegationPlanSchema.safeExtend({
-    workers: z
-      .array(
-        workerProposalSchema.safeExtend({
-          mode: sessionModeSchema.extract(['read-only', 'supervised']),
-        }),
-      )
-      .min(1)
-      .max(2),
-  }),
-  { io: 'input' },
-);
+const delegationToolInputSchema = delegationPlanSchema.safeExtend({
+  workers: z
+    .array(
+      workerProposalSchema.safeExtend({
+        mode: sessionModeSchema.extract(['read-only', 'supervised']),
+      }),
+    )
+    .min(1)
+    .max(2),
+});
+
+const delegationToolSchema = z.toJSONSchema(delegationToolInputSchema, {
+  io: 'input',
+});
 
 const workerPrompt = (proposal: Delegation): string =>
   `You are a visible Nesvo worker. Complete only the assigned task within the stated scope. Scope is an assignment boundary, not a filesystem security sandbox. Do not delegate or start additional workers. Report concrete results and any limitations.\n\nScope:\n${proposal.scope}\n\nTask:\n${proposal.task}`;
@@ -1726,7 +1727,7 @@ export class SessionService {
     const active = this.active.get(parent.id);
     if (!active || active.finalizing || parent.status !== 'running')
       throw new Error('The orchestrator run is no longer active.');
-    const parsed = delegationPlanSchema.safeParse(input);
+    const parsed = delegationToolInputSchema.safeParse(input);
     if (!parsed.success)
       return JSON.stringify({
         error:
