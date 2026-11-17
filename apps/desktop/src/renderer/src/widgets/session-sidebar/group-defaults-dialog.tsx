@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import {
   providerSessionModes,
   sessionGroupDefaultsSchema,
@@ -16,8 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import {
   Select,
   SelectContent,
@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   group: SessionGroup | null;
@@ -70,25 +71,6 @@ const toDefaults = (draft: Draft) => {
   });
 };
 
-function Field({
-  id,
-  label,
-  children,
-}: {
-  id: string;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid gap-1.5">
-      <Label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </Label>
-      {children}
-    </div>
-  );
-}
-
 export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     toDraft(group?.defaults ?? {}),
@@ -108,10 +90,8 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
     >
       <DialogContent className="gap-4 sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-base">
-            New-session defaults for {group?.name}
-          </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogTitle>New-session defaults for {group?.name}</DialogTitle>
+          <DialogDescription>
             These values only pre-fill the form when you start a session from
             this group. Existing sessions keep their settings.
           </DialogDescription>
@@ -228,9 +208,9 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
             </Field>
           </div>
           {!parsed.success && (
-            <p role="alert" className="text-xs text-error-foreground">
+            <StatusMessage tone="error">
               {parsed.error.issues[0]?.message}
-            </p>
+            </StatusMessage>
           )}
         </div>
         <DialogFooter>

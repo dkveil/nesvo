@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { cn } from '@/shared/lib/cn';
+import { Input } from '@/shared/ui/input';
 
 type Props = {
   value: string;
@@ -7,7 +7,6 @@ type Props = {
   maxLength: number;
   onSubmit: (value: string) => void;
   onCancel: () => void;
-  className?: string;
 };
 
 export function InlineNameInput({
@@ -16,7 +15,6 @@ export function InlineNameInput({
   maxLength,
   onSubmit,
   onCancel,
-  className,
 }: Props) {
   const [draft, setDraft] = useState(value);
   const input = useRef<HTMLInputElement>(null);
@@ -33,14 +31,14 @@ export function InlineNameInput({
     else onCancel();
   };
   return (
-    <input
+    <Input
       ref={input}
-      type="text"
+      variant="ghost"
       aria-label={label}
       value={draft}
       maxLength={maxLength}
+      className="h-auto text-xs font-medium text-sidebar-foreground"
       onChange={event => setDraft(event.target.value)}
-      onClick={event => event.stopPropagation()}
       onKeyDown={event => {
         event.stopPropagation();
         if (event.key === 'Enter') {
@@ -53,10 +51,6 @@ export function InlineNameInput({
         }
       }}
       onBlur={() => finish(true)}
-      className={cn(
-        'h-5 min-w-0 flex-1 rounded-sm bg-sidebar-row-selected px-1 text-xs font-medium text-sidebar-foreground ring-1 ring-ring outline-none',
-        className,
-      )}
     />
   );
 }

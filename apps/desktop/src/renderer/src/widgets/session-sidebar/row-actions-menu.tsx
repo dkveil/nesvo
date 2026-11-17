@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { MoreHorizontal } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
+import { IconButton } from '@/shared/ui/icon-button';
 
 export type RowAction =
   | {
@@ -24,31 +24,15 @@ type Props = {
   actions: RowAction[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  className?: string;
 };
 
-export function RowActionsMenu({
-  label,
-  actions,
-  open,
-  onOpenChange,
-  className,
-}: Props) {
+export function RowActionsMenu({ label, actions, open, onOpenChange }: Props) {
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          title={label}
-          onClick={event => event.stopPropagation()}
-          className={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-sm text-sidebar-icon transition-colors duration-100 outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring',
-            className,
-          )}
-        >
-          <MoreHorizontal className="size-3.5" aria-hidden="true" />
-        </button>
+        <IconButton label={label} size={20} tone="sidebar" tooltipSide="bottom">
+          <MoreHorizontal />
+        </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -61,12 +45,9 @@ export function RowActionsMenu({
           ) : (
             <DropdownMenuItem
               key={action.label}
+              variant={action.destructive ? 'destructive' : 'default'}
               disabled={action.disabled}
               onSelect={action.onSelect}
-              className={cn(
-                action.destructive &&
-                  'text-error-foreground focus:text-error-foreground [&_svg:not([class*=text-])]:text-error-foreground',
-              )}
             >
               {action.icon}
               {action.label}

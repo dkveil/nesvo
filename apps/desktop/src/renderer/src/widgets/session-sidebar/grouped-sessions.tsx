@@ -27,8 +27,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
-import { dropIndicatorClass } from './drop-indicator';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { toDropIndicator } from './drop-indicator';
 import { GroupDefaultsDialog } from './group-defaults-dialog';
 import type {
   DragItem,
@@ -43,7 +44,6 @@ import {
   buildHostTree,
   canNestUnder,
   canReparent,
-  GROUP_INDENT_REM,
   pruneEmpty,
   type GroupNode,
 } from './session-tree';
@@ -363,20 +363,72 @@ export function GroupedSessions({
     const zoneKey = `zone:${key}`;
     const stored = collapseKey(hostId, group.id);
     const expanded = searching || !isCollapsed(stored);
-    const placement = drag.indicator(zoneKey);
+    const editing = renaming === key;
     return (
       <li key={key} className="flex flex-col gap-0.5">
-        <div
+        <ListRow
+          tone="sidebar"
+          size="sm"
+          heading
+          level={depth - 1}
           data-group-id={group.id}
-          className={cn(
-            'group/row relative flex h-7 items-center gap-1 rounded-md pr-1 text-sidebar-muted-foreground transition-colors duration-100 hover:bg-sidebar-row-hover hover:text-sidebar-foreground',
-            dropIndicatorClass(placement),
-          )}
-          style={{
-            paddingLeft: `calc(var(--sidebar-row-inset) + ${(depth - 1) * GROUP_INDENT_REM}rem - 0.25rem)`,
+          leading={
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                'size-3 transition-transform duration-base ease-out',
+                !expanded && '-rotate-90',
+              )}
+            />
+          }
+          title={
+            editing ? (
+              <InlineNameInput
+                value={group.name}
+                label="Group name"
+                maxLength={80}
+                onSubmit={name => {
+                  onRenamingChange(null);
+                  void housekeeping.renameGroup(hostId, group.id, name);
+                }}
+                onCancel={() => onRenamingChange(null)}
+              />
+            ) : (
+              group.name
+            )
+          }
+          trailing={!expanded && node.count > 0 ? node.count : undefined}
+          actionsPlacement="overlay"
+          actions={
+            <>
+              <IconButton
+                label={`New session in ${group.name}`}
+                size={20}
+                tone="sidebar"
+                tooltipSide="bottom"
+                onClick={() => housekeeping.createInGroup(hostId, group)}
+              >
+                <Plus />
+              </IconButton>
+              <RowActionsMenu
+                label={`Actions for ${group.name}`}
+                actions={groupActions(node)}
+                open={menu === key}
+                onOpenChange={openMenu(key)}
+              />
+            </>
+          }
+          dropIndicator={toDropIndicator(drag.indicator(zoneKey))}
+          className={cn(editing && 'focus-ring-within')}
+          mainProps={{
+            'aria-expanded': expanded,
+            'aria-label': `${expanded ? 'Collapse' : 'Expand'} ${group.name}`,
           }}
+          onClick={
+            editing ? undefined : () => onToggleCollapsed(stored, expanded)
+          }
           {...contextMenu(key)}
-          {...(renaming === key
+          {...(editing
             ? {}
             : drag.source({ kind: 'group', hostId, id: group.id }))}
           {...drag.zone({
@@ -406,72 +458,7 @@ export function GroupedSessions({
               if (dragged) placeGroup(dragged, group, where);
             },
           })}
-        >
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.name}`}
-            className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch rounded-md pl-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-            onClick={() => onToggleCollapsed(stored, expanded)}
-          >
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
-                !expanded && '-rotate-90',
-              )}
-            />
-            {renaming === key ? (
-              <InlineNameInput
-                value={group.name}
-                label="Group name"
-                maxLength={80}
-                onSubmit={name => {
-                  onRenamingChange(null);
-                  void housekeeping.renameGroup(hostId, group.id, name);
-                }}
-                onCancel={() => onRenamingChange(null)}
-              />
-            ) : (
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                {group.name}
-              </span>
-            )}
-          </button>
-          {!expanded && node.count > 0 && (
-            <span className="pr-1 text-2xs tabular-nums group-focus-within/row:hidden group-hover/row:hidden">
-              {node.count}
-            </span>
-          )}
-          <span
-            className={cn(
-              'hidden items-center gap-0.5 group-focus-within/row:flex group-hover/row:flex',
-              menu === key && 'flex',
-            )}
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`New session in ${group.name}`}
-                  className="flex size-5 items-center justify-center rounded-sm text-sidebar-icon outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={() => housekeeping.createInGroup(hostId, group)}
-                >
-                  <Plus className="size-3.5" aria-hidden="true" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                New session in group
-              </TooltipContent>
-            </Tooltip>
-            <RowActionsMenu
-              label={`Actions for ${group.name}`}
-              actions={groupActions(node)}
-              open={menu === key}
-              onOpenChange={openMenu(key)}
-            />
-          </span>
-        </div>
+        />
         {expanded && (
           <ul aria-label={group.name} className="flex flex-col gap-0.5">
             {node.children.map(groupRow)}
@@ -494,30 +481,32 @@ export function GroupedSessions({
       )}
       {visibleGroups.map(groupRow)}
       {showUngroupedLabel && (
-        <li
-          className={cn(
-            'relative flex h-6 items-center px-(--sidebar-row-inset) text-2xs font-medium text-sidebar-muted-foreground',
-            dropIndicatorClass(drag.indicator(ungroupedKey)),
-          )}
-          {...drag.zone({
-            key: ungroupedKey,
-            accepts: item =>
-              draggedSession(item) || draggedGroup(item) ? ['into'] : [],
-            onDrop: item => {
-              const session = draggedSession(item);
-              if (session) void housekeeping.moveSession(session, null, 0);
-              const group = draggedGroup(item);
-              if (group)
-                void housekeeping.moveGroup(
-                  hostId,
-                  group.id,
-                  null,
-                  groupSiblings(null).length,
-                );
-            },
-          })}
-        >
-          Ungrouped
+        <li>
+          <ListRow
+            tone="sidebar"
+            size="sm"
+            density="tree"
+            heading
+            title="Ungrouped"
+            dropIndicator={toDropIndicator(drag.indicator(ungroupedKey))}
+            {...drag.zone({
+              key: ungroupedKey,
+              accepts: item =>
+                draggedSession(item) || draggedGroup(item) ? ['into'] : [],
+              onDrop: item => {
+                const session = draggedSession(item);
+                if (session) void housekeeping.moveSession(session, null, 0);
+                const group = draggedGroup(item);
+                if (group)
+                  void housekeeping.moveGroup(
+                    hostId,
+                    group.id,
+                    null,
+                    groupSiblings(null).length,
+                  );
+              },
+            })}
+          />
         </li>
       )}
       {shown.ungrouped.flatMap(session =>
@@ -526,27 +515,24 @@ export function GroupedSessions({
       {automations}
       {full.archived.length > 0 && (
         <li>
-          <button
-            type="button"
-            aria-expanded={archivedOpen}
-            className="flex h-7 w-full items-center gap-2 rounded-md px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+          <ListRow
+            tone="sidebar"
+            size="sm"
+            heading
+            leading={<Archive />}
+            title={`Archived (${full.archived.length})`}
+            trailing={
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  'size-3 text-sidebar-icon transition-transform duration-base ease-out',
+                  !archivedOpen && '-rotate-90',
+                )}
+              />
+            }
+            mainProps={{ 'aria-expanded': archivedOpen }}
             onClick={() => onArchivedOpenChange(!archivedOpen)}
-          >
-            <Archive
-              className="size-3.5 shrink-0 text-sidebar-icon"
-              aria-hidden="true"
-            />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium">
-              Archived ({full.archived.length})
-            </span>
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
-                !archivedOpen && '-rotate-90',
-              )}
-            />
-          </button>
+          />
           {archivedOpen && (
             <ul
               aria-label="Archived sessions"
@@ -556,8 +542,14 @@ export function GroupedSessions({
                 renderRoot(session, decorate(session, 0, false)),
               )}
               {shown.archived.length === 0 && (
-                <li className="px-(--sidebar-row-inset) py-1 text-2xs text-sidebar-muted-foreground">
-                  No matching archived sessions.
+                <li>
+                  <ListRow
+                    tone="sidebar"
+                    size="sm"
+                    density="tree"
+                    heading
+                    title="No matching archived sessions."
+                  />
                 </li>
               )}
             </ul>
@@ -640,10 +632,8 @@ export function GroupedSessions({
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              Delete {deleting?.name}?
-            </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogTitle>Delete {deleting?.name}?</DialogTitle>
+            <DialogDescription>
               No sessions are deleted. Its sessions and subgroups move to{' '}
               {groupById(deleting?.parentId ?? null)?.name ?? 'Ungrouped'}.
             </DialogDescription>

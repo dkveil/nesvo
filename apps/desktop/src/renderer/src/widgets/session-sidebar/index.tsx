@@ -2,7 +2,6 @@ import { useState, type ReactNode, type RefObject } from 'react';
 import {
   CalendarClock,
   ChevronDown,
-  CircleCheck,
   Cloud,
   CornerDownRight,
   FolderPlus,
@@ -26,27 +25,33 @@ import { useNow } from '@/shared/lib/use-now';
 import {
   directoryLabel,
   ProviderGlyph,
-  sessionRoleLabel,
   sessionStatusLabel,
   statusTones,
   type Session,
 } from '@/entities/session';
+import { StatusIcon, toneText } from '@/entities/status';
 import {
   runStatusLabel,
   runStatusTones,
   showsRunStatus,
-  toneText,
   type WorkflowRun,
 } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
+import { CountBadge } from '@/shared/ui/badge';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import { Button } from '@/shared/ui/button';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { NavItem } from '@/shared/ui/nav-list';
 import { ProjectChip } from '@/shared/ui/project-chip';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
-import { dropIndicatorClass } from './drop-indicator';
+import { SearchField } from '@/shared/ui/search-field';
+import { StatusDot } from '@/shared/ui/status-dot';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
+import { toDropIndicator } from './drop-indicator';
 import { GroupedSessions } from './grouped-sessions';
 import type { RowDecoration, SidebarHousekeeping } from './housekeeping';
-import { GROUP_INDENT_REM } from './session-tree';
 import { useCollapsedGroups } from './use-collapsed-groups';
 import { useSessionBranches, type ReadBranch } from './use-session-branches';
 
@@ -84,8 +89,7 @@ type Props = {
   currentHostId?: string;
 };
 
-const navButtonClass =
-  'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset';
+const TREE_INDENT_PX = 12;
 
 function SessionStatus({
   session,
@@ -98,8 +102,7 @@ function SessionStatus({
   offline: boolean;
   now: number;
 }) {
-  if (offline)
-    return <span className="text-sidebar-muted-foreground">Offline</span>;
+  if (offline) return <span>Offline</span>;
   if (showsRunStatus(session, run))
     return (
       <span
@@ -114,26 +117,21 @@ function SessionStatus({
     );
   if (session.status === 'ready')
     return (
-      <time
-        dateTime={session.updatedAt}
-        className="text-sidebar-muted-foreground"
-      >
+      <time dateTime={session.updatedAt}>
         {formatRelativeTime(session.updatedAt, now)}
       </time>
     );
   const label = sessionStatusLabel(session);
-  const sessionTone = statusTones[session.status];
   const tone =
-    label === 'Needs approval'
-      ? toneText.warning
-      : sessionTone
-        ? toneText[sessionTone]
-        : 'text-sidebar-muted-foreground';
+    label === 'Needs approval' ? 'warning' : statusTones[session.status];
   return (
-    <span className={cn('inline-flex items-center gap-1 font-medium', tone)}>
-      {session.status === 'completed' && (
-        <CircleCheck className="size-3" aria-hidden="true" />
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 font-medium',
+        tone && toneText[tone],
       )}
+    >
+      {session.status === 'completed' && <StatusIcon status="success" />}
       {label}
     </span>
   );
@@ -299,12 +297,11 @@ export function SessionSidebar({
       decoration,
     }: RowOptions = {},
   ) => {
-    const indent = (decoration?.depth ?? 0) * GROUP_INDENT_REM;
+    const depth = decoration?.depth ?? 0;
     const computer = computerOf(session);
     const selected = isSelected(session);
     const offline = computer?.status !== 'connected';
     const directory = directoryLabel(session.directory);
-    const role = sessionRoleLabel(session);
     const remote = session.hostId !== 'local';
     const unread = !selected && !!unreadKeys?.has(entityKey(session));
     const branch = branchOf(session);
@@ -315,174 +312,146 @@ export function SessionSidebar({
           ? branch.sha
           : null;
     const machine = computer?.name ?? session.hostId;
+    const renamingField = decoration?.title;
     const status = (
-      <span
-        className={cn(
-          'shrink-0 text-2xs leading-none tabular-nums',
-          decoration?.menu &&
-            'group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-state=open]]/row:invisible',
+      <SessionStatus
+        session={session}
+        run={runOf(session)}
+        offline={offline}
+        now={now}
+      />
+    );
+    const title = renamingField ?? (
+      <span className="flex min-w-0 items-center gap-1.5">
+        {session.pinned && !child && organized(session.hostId) && (
+          <Pin
+            className="size-2.5 shrink-0 text-sidebar-icon"
+            aria-label="Pinned"
+          />
         )}
-      >
-        <SessionStatus
-          session={session}
-          run={runOf(session)}
-          offline={offline}
-          now={now}
+        <span className={cn('min-w-0 truncate', unread && 'font-semibold')}>
+          {session.title}
+        </span>
+      </span>
+    );
+    const details = (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="min-w-6 shrink-[3] truncate">{directory}</span>
+        {branchLabel && (
+          <>
+            <MetaSeparator />
+            <GitBranch
+              className="size-2.5 shrink-0 text-sidebar-icon"
+              aria-hidden="true"
+            />
+            <span
+              className={cn(
+                'min-w-8 truncate',
+                branch?.kind === 'detached' && 'font-mono',
+              )}
+            >
+              {branchLabel}
+            </span>
+          </>
+        )}
+        {session.pullRequest && (
+          <span className="flex shrink-0 items-center gap-0.5 tabular-nums">
+            <GitPullRequest
+              className="size-2.5 shrink-0 text-sidebar-icon"
+              aria-hidden="true"
+            />
+            <span className="sr-only">Pull request</span>#
+            {session.pullRequest.number}
+          </span>
+        )}
+        {!grouped && (
+          <>
+            <MetaSeparator />
+            {remote ? (
+              <Cloud
+                className="size-2.5 shrink-0 text-sidebar-icon"
+                aria-hidden="true"
+              />
+            ) : (
+              <Monitor
+                className="size-2.5 shrink-0 text-sidebar-icon"
+                aria-hidden="true"
+              />
+            )}
+            <span className="max-w-20 shrink-0 truncate">{machine}</span>
+          </>
+        )}
+        <span className="min-w-0 flex-1" />
+        <ProviderGlyph
+          provider={session.provider}
+          className="size-3 text-sidebar-icon"
         />
+      </span>
+    );
+    const leading = child ? (
+      <CornerDownRight className="size-3" aria-hidden="true" />
+    ) : (
+      <span className="relative flex">
+        {unread && (
+          <StatusDot
+            tone="strong"
+            className="absolute top-1/2 -left-2 -translate-y-1/2"
+          />
+        )}
+        <ProjectChip label={directory} />
       </span>
     );
     return (
       <li
         key={entityKey(session)}
-        {...decoration?.item}
-        className={cn(
-          'group/row relative',
-          decoration?.dimmed && 'opacity-60',
-          dropIndicatorClass(decoration?.indicator),
-        )}
+        className={cn('relative', decoration?.dimmed && 'opacity-60')}
       >
-        <button
-          type="button"
-          data-host-id={session.hostId}
-          data-session-id={session.id}
-          aria-current={selected ? 'page' : undefined}
-          aria-label={`${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}`}
-          title={`${machine} · ${session.provider} · ${role || 'Session'} · ${statusText(session)}`}
-          onClick={() => onSelect(entityKey(session))}
-          style={
-            indent
-              ? {
-                  paddingLeft: child
-                    ? `${1.75 + indent}rem`
-                    : `calc(var(--sidebar-row-inset) + ${indent}rem)`,
-                }
-              : undefined
+        <ListRow
+          tone="sidebar"
+          size="sm"
+          density={child ? 'tree' : 'two-line'}
+          level={child ? depth + 1 : depth}
+          leading={leading}
+          title={title}
+          meta={child ? undefined : status}
+          trailing={child ? status : undefined}
+          description={child ? undefined : details}
+          selected={selected}
+          actions={decoration?.menu}
+          actionsPlacement="overlay"
+          dropIndicator={toDropIndicator(decoration?.indicator)}
+          className={cn(renamingField && 'focus-ring-within')}
+          onClick={
+            renamingField ? undefined : () => onSelect(entityKey(session))
           }
-          className={cn(
-            'flex w-full flex-col rounded-md text-left transition-colors duration-100 outline-none',
-            'hover:bg-sidebar-row-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
-            child
-              ? 'h-6 justify-center pr-2 pl-7'
-              : 'gap-px py-1 pl-(--sidebar-row-inset)',
-            !child && 'pr-2',
-            selected &&
-              'bg-sidebar-row-selected shadow-(--sidebar-row-selected-shadow) hover:bg-sidebar-row-selected',
-          )}
-        >
-          <span className="relative flex h-4 min-w-0 items-center gap-1.5">
-            {child ? (
-              <CornerDownRight
-                className="size-3 shrink-0 text-sidebar-icon"
-                aria-hidden="true"
-              />
-            ) : (
-              <ProjectChip label={directory} />
-            )}
-            {unread && (
-              <span
-                aria-hidden="true"
-                className="absolute top-1/2 -left-2 size-1.5 -translate-y-1/2 rounded-full bg-foreground"
-              />
-            )}
-            {session.pinned && !child && organized(session.hostId) && (
-              <Pin
-                className="size-2.5 shrink-0 text-sidebar-icon"
-                aria-label="Pinned"
-              />
-            )}
-            {decoration?.title ?? (
-              <span
-                className={cn(
-                  'min-w-0 flex-1 truncate text-xs leading-4 text-sidebar-foreground',
-                  unread ? 'font-semibold' : 'font-medium',
-                )}
-              >
-                {session.title}
-              </span>
-            )}
-            {status}
-          </span>
-          {!child && (
-            <span className="flex h-3.5 min-w-0 items-center gap-1 pl-3.5 text-2xs leading-none text-sidebar-muted-foreground">
-              <span className="min-w-6 shrink-[3] truncate">{directory}</span>
-              {branchLabel && (
-                <>
-                  <MetaSeparator />
-                  <GitBranch
-                    className="size-2.5 shrink-0 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                  <span
-                    className={cn(
-                      'min-w-8 truncate',
-                      branch?.kind === 'detached' && 'font-mono',
-                    )}
-                  >
-                    {branchLabel}
-                  </span>
-                </>
-              )}
-              {session.pullRequest && (
-                <span
-                  className="flex shrink-0 items-center gap-0.5 tabular-nums"
-                  title={`${session.pullRequest.repository} #${session.pullRequest.number}`}
-                >
-                  <GitPullRequest
-                    className="size-2.5 shrink-0 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                  <span className="sr-only">Pull request</span>#
-                  {session.pullRequest.number}
-                </span>
-              )}
-              {!grouped && (
-                <>
-                  <MetaSeparator />
-                  {remote ? (
-                    <Cloud
-                      className="size-2.5 shrink-0 text-sidebar-icon"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Monitor
-                      className="size-2.5 shrink-0 text-sidebar-icon"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <span className="max-w-20 shrink-0 truncate">{machine}</span>
-                </>
-              )}
-              <span className="min-w-0 flex-1" />
-              <ProviderGlyph
-                provider={session.provider}
-                className="size-3 text-sidebar-icon"
-              />
-            </span>
-          )}
-        </button>
-        {decoration?.menu && (
-          <span className="absolute top-0.5 right-1 hidden rounded-sm bg-sidebar-row-hover group-focus-within/row:flex group-hover/row:flex has-[[data-state=open]]:flex">
-            {decoration.menu}
-          </span>
-        )}
+          mainProps={{
+            ...{
+              'data-host-id': session.hostId,
+              'data-session-id': session.id,
+            },
+            'aria-current': selected ? 'page' : undefined,
+            'aria-label': `${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}`,
+          }}
+          {...decoration?.item}
+        />
         {childCount > 0 && onToggle && (
-          <button
-            type="button"
+          <IconButton
+            label={`${expanded ? 'Hide' : 'Show'} ${childCount} subsessions of ${session.title}`}
+            size={20}
+            tone="sidebar"
             aria-expanded={expanded}
-            aria-label={`${expanded ? 'Hide' : 'Show'} ${childCount} subsessions of ${session.title}`}
-            title={`${childCount} ${childCount === 1 ? 'subsession' : 'subsessions'}`}
-            style={indent ? { left: `${0.25 + indent}rem` } : undefined}
-            className="absolute top-[1.125rem] left-1 flex size-5 items-center justify-center rounded-sm text-sidebar-icon transition-colors duration-100 outline-none hover:bg-sidebar-row-selected hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="absolute top-4.5"
+            style={{ left: 2 + depth * TREE_INDENT_PX }}
             onClick={onToggle}
           >
             <ChevronDown
               aria-hidden="true"
               className={cn(
-                'size-3 shrink-0 transition-transform duration-150',
+                'transition-transform duration-base ease-out',
                 !expanded && '-rotate-90',
               )}
             />
-          </button>
+          </IconButton>
         )}
       </li>
     );
@@ -512,392 +481,319 @@ export function SessionSidebar({
         : []),
     ];
   };
+  const hostIcon = (hostId: string) =>
+    hostId === 'local' ? <Monitor /> : <Cloud />;
+  const disclosureChevron = (open: boolean) => (
+    <ChevronDown
+      aria-hidden="true"
+      className={cn(
+        'size-3 shrink-0 text-sidebar-icon transition-transform duration-base ease-out',
+        !open && '-rotate-90',
+      )}
+    />
+  );
   return (
-    <>
-      <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-        <div className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-2 pl-[calc(0.5rem+var(--titlebar-inset-left))]">
-          {inline && onCollapse && (
-            <Button
-              ref={collapseToggleRef}
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-7 text-sidebar-icon hover:text-sidebar-foreground"
-              aria-label="Toggle sidebar"
-              aria-pressed="true"
-              title="Collapse sidebar (Ctrl+B)"
-              onClick={onCollapse}
-            >
-              <PanelLeft className="size-4" />
-            </Button>
-          )}
-          <BrandWordmark
-            className={cn('select-none', !(inline && onCollapse) && 'ml-1')}
-          />
-        </div>
-        <div className="space-y-0.5 px-(--sidebar-inset) pb-2">
-          <div className="flex items-center gap-0.5">
-            <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-muted-foreground transition-colors duration-100 focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-ring/70 focus-within:ring-inset hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
-              <Search
-                className="size-4 shrink-0 text-sidebar-icon"
-                aria-hidden="true"
-              />
-              <input
-                type="text"
-                aria-label="Search sessions"
-                placeholder="Search"
-                className="min-w-0 flex-1 bg-transparent text-sm font-medium text-sidebar-foreground outline-none placeholder:text-sidebar-muted-foreground"
-                value={search}
-                onChange={event => setSearch(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Escape' && search) {
-                    event.preventDefault();
-                    setSearch('');
-                  }
-                }}
-              />
-              {search && (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm outline-none hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={() => setSearch('')}
-                >
-                  <X className="size-3" />
-                </button>
-              )}
-            </div>
-            {housekeeping && organized(currentHostId) && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                    aria-label="New group"
-                    onClick={() => {
-                      setSearch('');
-                      void housekeeping
-                        .createGroup(currentHostId, null, 'New group')
-                        .then(id => {
-                          if (id) setRenaming(`g:${id}`);
-                        });
-                    }}
-                  >
-                    <FolderPlus className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">New group</TooltipContent>
-              </Tooltip>
-            )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              aria-label="New session"
-              title="New session"
-              onClick={onCreate}
-            >
-              <SquarePen className="size-4" />
-            </Button>
-          </div>
-          {search.trim() && (
-            <button
-              type="button"
-              className={navButtonClass}
-              onClick={() => onSearchHistory(search)}
-            >
-              <Search className="size-4 text-sidebar-icon" aria-hidden="true" />
-              Search all history
-            </button>
-          )}
-          {inline && (
-            <>
-              <button
-                type="button"
-                className={cn(
-                  navButtonClass,
-                  inbox && 'bg-sidebar-row-selected text-sidebar-foreground',
-                )}
-                onClick={onInbox}
-                aria-current={inbox ? 'page' : undefined}
-              >
-                <Inbox
-                  className="size-4 text-sidebar-icon"
-                  aria-hidden="true"
-                />
-                Inbox
-                {pendingActions > 0 && (
-                  <span
-                    aria-label={`${pendingActions} pending items`}
-                    className="ml-auto text-xs text-sidebar-muted-foreground tabular-nums"
-                  >
-                    {pendingActions}
-                  </span>
-                )}
-              </button>
-              {automationsAvailable && onAutomations && (
-                <button
-                  type="button"
-                  className={cn(
-                    navButtonClass,
-                    automations &&
-                      'bg-sidebar-row-selected text-sidebar-foreground',
-                  )}
-                  onClick={onAutomations}
-                  aria-current={automations ? 'page' : undefined}
-                >
-                  <CalendarClock
-                    className="size-4 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                  Automations
-                </button>
-              )}
-              <button
-                type="button"
-                className={cn(
-                  navButtonClass,
-                  workflows &&
-                    'bg-sidebar-row-selected text-sidebar-foreground',
-                )}
-                onClick={onWorkflows}
-                aria-current={workflows ? 'page' : undefined}
-              >
-                <Workflow
-                  className="size-4 text-sidebar-icon"
-                  aria-hidden="true"
-                />
-                Workflows
-              </button>
-              {onPullRequests && (
-                <button
-                  type="button"
-                  className={cn(
-                    navButtonClass,
-                    pullRequests &&
-                      'bg-sidebar-row-selected text-sidebar-foreground',
-                  )}
-                  onClick={onPullRequests}
-                  aria-current={pullRequests ? 'page' : undefined}
-                >
-                  <GitPullRequest
-                    className="size-4 text-sidebar-icon"
-                    aria-hidden="true"
-                  />
-                  Pull requests
-                </button>
-              )}
-            </>
-          )}
-        </div>
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
-          {housekeeping?.error && (
-            <p
-              role="alert"
-              className="mx-(--sidebar-inset) mb-1 flex items-start gap-1 rounded-md bg-sidebar-row-hover px-2 py-1.5 text-2xs text-error-foreground"
-            >
-              <span className="min-w-0 flex-1">{housekeeping.error}</span>
-              <button
-                type="button"
-                aria-label="Dismiss"
-                className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-sidebar-icon outline-none hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                onClick={housekeeping.clearError}
-              >
-                <X className="size-3" />
-              </button>
-            </p>
-          )}
-          <nav
-            aria-label="Sessions"
-            className="space-y-1 px-(--sidebar-inset) pb-3"
+    <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
+      <div className="drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-2 pl-[calc(0.5rem+var(--titlebar-inset-left))]">
+        {inline && onCollapse && (
+          <IconButton
+            ref={collapseToggleRef}
+            label="Toggle sidebar"
+            shortcut="Ctrl B"
+            tone="sidebar"
+            aria-pressed="true"
+            onClick={onCollapse}
           >
-            {groups.map(({ computer, roots, automations: jobGroups }) => {
-              const closed = grouped && closedHosts.includes(computer.id);
-              return (
-                <section key={computer.id} aria-label={computer.name}>
-                  {grouped && (
-                    <button
-                      type="button"
-                      aria-expanded={!closed}
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-                      onClick={() =>
-                        setClosedHosts(previous =>
-                          closed
-                            ? previous.filter(id => id !== computer.id)
-                            : [...previous, computer.id],
-                        )
-                      }
-                    >
-                      {computer.id === 'local' ? (
-                        <Monitor
-                          className="size-3.5 shrink-0 text-sidebar-icon"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Cloud
-                          className="size-3.5 shrink-0 text-sidebar-icon"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                        {computer.name}
-                      </span>
-                      {computer.status !== 'connected' && (
-                        <span className="text-2xs">Offline</span>
-                      )}
-                      {closed && (
-                        <span className="text-xs tabular-nums">
-                          {roots.length + jobGroups.length}
-                        </span>
-                      )}
-                      <ChevronDown
-                        aria-hidden="true"
-                        className={cn(
-                          'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
-                          closed && '-rotate-90',
-                        )}
-                      />
-                    </button>
-                  )}
-                  {!closed && (
-                    <ul className="flex flex-col gap-0.5">
-                      {!organized(computer.id) &&
-                        roots.flatMap(root => rootWithChildren(root))}
-                      {(() => {
-                        const automationRows = jobGroups.map(group => {
-                          const expanded =
-                            jobToggles[group.key] ??
-                            (!!search.trim() ||
-                              group.runs.some(
-                                session =>
-                                  !inbox && selectedId === entityKey(session),
-                              ));
-                          return (
-                            <li key={`automation/${group.key}`}>
-                              <button
-                                type="button"
-                                aria-expanded={expanded}
-                                data-automation-group={group.key}
-                                className="flex h-7 w-full items-center gap-2 rounded-md px-(--sidebar-row-inset) text-left text-sidebar-muted-foreground transition-colors duration-100 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-                                onClick={() =>
-                                  setJobToggles(previous => ({
-                                    ...previous,
-                                    [group.key]: !expanded,
-                                  }))
-                                }
-                              >
-                                <CalendarClock
-                                  className="size-3.5 shrink-0 text-sidebar-icon"
-                                  aria-hidden="true"
-                                />
-                                <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                                  {group.name
-                                    ? `Automation · ${group.name}`
-                                    : 'Automation'}
-                                </span>
-                                {group.runs.some(
-                                  session =>
-                                    session.status === 'running' ||
-                                    session.status === 'stopping',
-                                ) && (
-                                  <span className="text-xs font-medium text-info-foreground">
-                                    Working
-                                  </span>
-                                )}
-                                <span className="text-xs tabular-nums">
-                                  {group.runs.length}
-                                </span>
-                                <ChevronDown
-                                  aria-hidden="true"
-                                  className={cn(
-                                    'size-3 shrink-0 text-sidebar-icon transition-transform duration-150',
-                                    !expanded && '-rotate-90',
-                                  )}
-                                />
-                              </button>
-                              {expanded && (
-                                <ul className="flex flex-col gap-0.5">
-                                  {group.runs.map(session =>
-                                    row(session, { child: true }),
-                                  )}
-                                </ul>
-                              )}
-                            </li>
-                          );
-                        });
-                        return organized(computer.id) && housekeeping ? (
-                          <GroupedSessions
-                            hostId={computer.id}
-                            roots={roots}
-                            allRoots={allRoots.filter(
-                              root => root.hostId === computer.id,
-                            )}
-                            housekeeping={housekeeping}
-                            searching={!!search.trim()}
-                            renaming={renaming}
-                            onRenamingChange={setRenaming}
-                            archivedOpen={archivedHosts.includes(computer.id)}
-                            onArchivedOpenChange={open =>
-                              setArchivedHosts(previous =>
-                                open
-                                  ? [...previous, computer.id]
-                                  : previous.filter(id => id !== computer.id),
-                              )
-                            }
-                            isCollapsed={collapsed.isCollapsed}
-                            onToggleCollapsed={collapsed.toggle}
-                            renderRoot={rootWithChildren}
-                            automations={automationRows}
-                          />
-                        ) : (
-                          automationRows
-                        );
-                      })()}
-                    </ul>
-                  )}
-                </section>
-              );
-            })}
-            {groups.length === 0 && (
-              <p className="px-2 py-6 text-sm text-sidebar-muted-foreground">
-                {search ? 'No matching sessions.' : 'No sessions yet.'}
-              </p>
-            )}
-          </nav>
+            <PanelLeft />
+          </IconButton>
+        )}
+        <BrandWordmark
+          className={cn('select-none', !(inline && onCollapse) && 'ml-1')}
+        />
+      </div>
+      <div className="space-y-0.5 px-(--sidebar-inset) pb-2">
+        <div className="flex items-center gap-0.5">
+          <SearchField
+            variant="sidebar"
+            aria-label="Search sessions"
+            placeholder="Search"
+            containerClassName="min-w-0 flex-1"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            onClear={() => setSearch('')}
+            onKeyDown={event => {
+              if (event.key === 'Escape' && search) {
+                event.preventDefault();
+                setSearch('');
+              }
+            }}
+          />
+          {housekeeping && organized(currentHostId) && (
+            <IconButton
+              label="New group"
+              tone="sidebar"
+              tooltipSide="bottom"
+              onClick={() => {
+                setSearch('');
+                void housekeeping
+                  .createGroup(currentHostId, null, 'New group')
+                  .then(id => {
+                    if (id) setRenaming(`g:${id}`);
+                  });
+              }}
+            >
+              <FolderPlus />
+            </IconButton>
+          )}
+          <IconButton
+            label="New session"
+            tone="sidebar"
+            tooltipSide="bottom"
+            onClick={onCreate}
+          >
+            <SquarePen />
+          </IconButton>
         </div>
+        {search.trim() && (
+          <NavItem
+            tone="sidebar"
+            size="md"
+            icon={<Search />}
+            onClick={() => onSearchHistory(search)}
+          >
+            Search all history
+          </NavItem>
+        )}
         {inline && (
-          <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="size-7 text-sidebar-icon hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              aria-label="Settings"
-              title="Settings"
-              onClick={onSettings}
+          <>
+            <NavItem
+              tone="sidebar"
+              size="md"
+              icon={<Inbox />}
+              selected={inbox}
+              onClick={onInbox}
+              trailing={
+                pendingActions > 0 && (
+                  <CountBadge
+                    count={pendingActions}
+                    tone="muted"
+                    aria-label={`${pendingActions} pending items`}
+                  />
+                )
+              }
             >
-              <Settings className="size-4" />
-            </Button>
-            {footerStart}
-            <div className="min-w-0 flex-1" />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 max-w-28 min-w-0 shrink gap-1.5 px-2 text-xs font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              aria-label="Computers"
-              title={`Computers · ${hostName}`}
-              onClick={onComputers}
+              Inbox
+            </NavItem>
+            {automationsAvailable && onAutomations && (
+              <NavItem
+                tone="sidebar"
+                size="md"
+                icon={<CalendarClock />}
+                selected={automations}
+                onClick={onAutomations}
+              >
+                Automations
+              </NavItem>
+            )}
+            <NavItem
+              tone="sidebar"
+              size="md"
+              icon={<Workflow />}
+              selected={workflows}
+              onClick={onWorkflows}
             >
-              <Monitor className="size-3.5 text-sidebar-icon" />
-              <span className="truncate">{hostName}</span>
-            </Button>
-          </div>
+              Workflows
+            </NavItem>
+            {onPullRequests && (
+              <NavItem
+                tone="sidebar"
+                size="md"
+                icon={<GitPullRequest />}
+                selected={pullRequests}
+                onClick={onPullRequests}
+              >
+                Pull requests
+              </NavItem>
+            )}
+          </>
         )}
       </div>
-    </>
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {housekeeping?.error && (
+          <div className="relative mx-(--sidebar-inset) mb-1">
+            <StatusMessage tone="error" variant="notice" className="pr-8">
+              {housekeeping.error}
+            </StatusMessage>
+            <IconButton
+              label="Dismiss"
+              size={20}
+              tone="sidebar"
+              className="absolute top-1.5 right-1.5"
+              onClick={housekeeping.clearError}
+            >
+              <X />
+            </IconButton>
+          </div>
+        )}
+        <nav
+          aria-label="Sessions"
+          className="space-y-1 px-(--sidebar-inset) pb-3"
+        >
+          {groups.map(({ computer, roots, automations: jobGroups }) => {
+            const closed = grouped && closedHosts.includes(computer.id);
+            return (
+              <section key={computer.id} aria-label={computer.name}>
+                {grouped && (
+                  <ListRow
+                    tone="sidebar"
+                    size="sm"
+                    heading
+                    leading={hostIcon(computer.id)}
+                    title={computer.name}
+                    trailing={
+                      <>
+                        {computer.status !== 'connected' && 'Offline'}
+                        {closed && (
+                          <span>{roots.length + jobGroups.length}</span>
+                        )}
+                        {disclosureChevron(!closed)}
+                      </>
+                    }
+                    mainProps={{ 'aria-expanded': !closed }}
+                    onClick={() =>
+                      setClosedHosts(previous =>
+                        closed
+                          ? previous.filter(id => id !== computer.id)
+                          : [...previous, computer.id],
+                      )
+                    }
+                  />
+                )}
+                {!closed && (
+                  <ul className="flex flex-col gap-0.5">
+                    {!organized(computer.id) &&
+                      roots.flatMap(root => rootWithChildren(root))}
+                    {(() => {
+                      const automationRows = jobGroups.map(group => {
+                        const expanded =
+                          jobToggles[group.key] ??
+                          (!!search.trim() ||
+                            group.runs.some(
+                              session =>
+                                !inbox && selectedId === entityKey(session),
+                            ));
+                        const working = group.runs.some(
+                          session =>
+                            session.status === 'running' ||
+                            session.status === 'stopping',
+                        );
+                        return (
+                          <li key={`automation/${group.key}`}>
+                            <ListRow
+                              tone="sidebar"
+                              size="sm"
+                              heading
+                              leading={<CalendarClock />}
+                              title={
+                                group.name
+                                  ? `Automation · ${group.name}`
+                                  : 'Automation'
+                              }
+                              trailing={
+                                <>
+                                  {working && (
+                                    <span className="font-medium text-info-foreground">
+                                      Working
+                                    </span>
+                                  )}
+                                  <span>{group.runs.length}</span>
+                                  {disclosureChevron(expanded)}
+                                </>
+                              }
+                              mainProps={{
+                                ...{ 'data-automation-group': group.key },
+                                'aria-expanded': expanded,
+                              }}
+                              onClick={() =>
+                                setJobToggles(previous => ({
+                                  ...previous,
+                                  [group.key]: !expanded,
+                                }))
+                              }
+                            />
+                            {expanded && (
+                              <ul className="flex flex-col gap-0.5">
+                                {group.runs.map(session =>
+                                  row(session, { child: true }),
+                                )}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      });
+                      return organized(computer.id) && housekeeping ? (
+                        <GroupedSessions
+                          hostId={computer.id}
+                          roots={roots}
+                          allRoots={allRoots.filter(
+                            root => root.hostId === computer.id,
+                          )}
+                          housekeeping={housekeeping}
+                          searching={!!search.trim()}
+                          renaming={renaming}
+                          onRenamingChange={setRenaming}
+                          archivedOpen={archivedHosts.includes(computer.id)}
+                          onArchivedOpenChange={open =>
+                            setArchivedHosts(previous =>
+                              open
+                                ? [...previous, computer.id]
+                                : previous.filter(id => id !== computer.id),
+                            )
+                          }
+                          isCollapsed={collapsed.isCollapsed}
+                          onToggleCollapsed={collapsed.toggle}
+                          renderRoot={rootWithChildren}
+                          automations={automationRows}
+                        />
+                      ) : (
+                        automationRows
+                      );
+                    })()}
+                  </ul>
+                )}
+              </section>
+            );
+          })}
+          {groups.length === 0 && (
+            <EmptyState
+              size="sm"
+              title={search ? 'No matching sessions.' : 'No sessions yet.'}
+              className="text-sidebar-muted-foreground"
+            />
+          )}
+        </nav>
+      </div>
+      {inline && (
+        <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
+          <IconButton label="Settings" tone="sidebar" onClick={onSettings}>
+            <Settings />
+          </IconButton>
+          {footerStart}
+          <div className="min-w-0 flex-1" />
+          <Hint label={`Computers · ${hostName}`}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="max-w-28 min-w-0 shrink text-sidebar-muted-foreground"
+              aria-label="Computers"
+              onClick={onComputers}
+            >
+              <Monitor />
+              <span className="truncate">{hostName}</span>
+            </Button>
+          </Hint>
+        </div>
+      )}
+    </div>
   );
 }

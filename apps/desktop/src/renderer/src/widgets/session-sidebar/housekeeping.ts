@@ -49,6 +49,6 @@ export type RowDecoration = {
   menu?: ReactNode;
   title?: ReactNode;
   dimmed?: boolean;
-  item?: HTMLAttributes<HTMLLIElement>;
+  item?: HTMLAttributes<HTMLElement>;
   indicator?: DropPlacement | null;
 };

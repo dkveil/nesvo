@@ -6,8 +6,6 @@ import {
 } from '@nesvo/contracts';
 import type { Session } from '@/entities/session';
 
-export const GROUP_INDENT_REM = 0.75;
-
 export type GroupNode = {
   group: SessionGroup;
   depth: number;
