@@ -438,6 +438,7 @@ export default function WorkflowDefinitions({
                   return (
                     <li key={workflow.name}>
                       <ListRow
+                        data-definition={workflow.name}
                         selected={active}
                         leading={<Workflow aria-hidden="true" />}
                         title={
@@ -497,7 +498,6 @@ export default function WorkflowDefinitions({
                             [workflow.description, phaseCounts(workflow)]
                               .filter(Boolean)
                               .join(' · ') || undefined,
-                          ...{ 'data-definition': workflow.name },
                         }}
                       />
                     </li>
