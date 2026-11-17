@@ -47,10 +47,8 @@ export function CheckoutControl({
         <Button
           type="button"
           variant="ghost"
-          size="xs"
           disabled={!!reason || locked}
           onClick={() => setConfirming(true)}
-          className="h-7 text-xs text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed"
         >
           <GitBranch />
           {pending ? 'Checking out…' : 'Check out'}
@@ -64,10 +62,8 @@ export function CheckoutControl({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              Check out #{pullRequest.number}?
-            </DialogTitle>
-            <DialogDescription className="text-xs leading-5">
+            <DialogTitle>Check out #{pullRequest.number}?</DialogTitle>
+            <DialogDescription>
               Switches the session folder{' '}
               <span className="font-mono [overflow-wrap:anywhere]">
                 {session.directory}

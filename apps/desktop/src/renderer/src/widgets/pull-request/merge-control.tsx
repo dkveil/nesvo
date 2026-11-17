@@ -19,7 +19,8 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { ActionFeedback } from './action-feedback';
@@ -87,10 +88,9 @@ export function MergeControl({
         <span className="inline-flex items-stretch">
           <Button
             type="button"
-            size="xs"
             disabled={disabled}
             onClick={open}
-            className="h-7 rounded-r-none px-2.5 text-xs disabled:cursor-not-allowed"
+            className="rounded-r-none"
           >
             {pending ? 'Merging…' : mergeMethodLabels[method ?? 'squash']}
           </Button>
@@ -98,25 +98,26 @@ export function MergeControl({
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
-                size="xs"
                 disabled={disabled || methods.length < 2}
                 aria-label="Choose merge method"
-                className="h-7 rounded-l-none border-l border-primary-foreground/20 px-1.5 disabled:cursor-not-allowed"
+                className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
               >
-                <ChevronDown className="size-3.5" />
+                <ChevronDown />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48">
-              {methods.map(item => (
-                <DropdownMenuItem
-                  key={item}
-                  aria-checked={item === method}
-                  className="text-xs aria-checked:font-medium"
-                  onSelect={() => setChosen(item)}
-                >
-                  {mergeMethodLabels[item]}
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuRadioGroup
+                value={method}
+                onValueChange={value =>
+                  setChosen(methods.find(item => item === value) ?? null)
+                }
+              >
+                {methods.map(item => (
+                  <DropdownMenuRadioItem key={item} value={item}>
+                    {mergeMethodLabels[item]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </span>
@@ -129,10 +130,8 @@ export function MergeControl({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              Merge #{pullRequest.number}?
-            </DialogTitle>
-            <DialogDescription className="text-xs leading-5">
+            <DialogTitle>Merge #{pullRequest.number}?</DialogTitle>
+            <DialogDescription>
               Merges commit{' '}
               <code className="rounded-sm bg-accent px-1 font-mono">
                 {shortSha(pinned?.sha ?? pullRequest.headSha)}
