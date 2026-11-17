@@ -8,6 +8,7 @@ type SegmentedOption<T extends string> = {
   count?: number;
   disabled?: boolean;
   title?: string;
+  ariaLabel?: string;
 };
 
 type SegmentedBaseProps<T extends string> = {
@@ -119,7 +120,9 @@ export function SegmentedControl<T extends string>(
             data-selected={on ? '' : undefined}
             aria-checked={radio ? on : undefined}
             aria-pressed={radio ? undefined : on}
-            aria-label={iconOnly ? option.label : undefined}
+            aria-label={
+              option.ariaLabel ?? (iconOnly ? option.label : undefined)
+            }
             tabIndex={radio && option.value !== tabStop ? -1 : 0}
             title={option.title}
             disabled={disabled || option.disabled}

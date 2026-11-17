@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WorkflowsApi } from '@nesvo/contracts';
 import {
   ExternalLink,
@@ -27,6 +27,11 @@ import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { KeyValueList } from '@/shared/ui/key-value-list';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 export type InboxTarget = {
   hostId: string;
@@ -55,23 +60,6 @@ const evidenceIcons: Record<Evidence['kind'], LucideIcon> = {
 
 const SECOND_MS = 1000;
 
-const moveRadio = (event: KeyboardEvent<HTMLDivElement>) => {
-  const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-  if (!forward && event.key !== 'ArrowUp' && event.key !== 'ArrowLeft') return;
-  const radios = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-      ':scope > [role="radio"]',
-    ),
-  ];
-  const index = radios.findIndex(radio => radio === document.activeElement);
-  const next =
-    radios[(index + (forward ? 1 : -1) + radios.length) % radios.length];
-  if (!next) return;
-  event.preventDefault();
-  next.focus();
-  next.click();
-};
-
 const stateNotes: Partial<Record<WorkflowStepRecord['state'], string>> = {
   pending: 'This step has not started.',
   'awaiting-human': 'Waiting for your decision in the Inbox.',
@@ -89,23 +77,20 @@ type PreviewState =
 function EvidencePreview({ state }: { state: PreviewState }) {
   if (state.status === 'loading')
     return (
-      <p role="status" className="px-2 py-2 text-2xs text-muted-foreground">
+      <StatusMessage tone="loading" className="px-1 py-1">
         Loading preview…
-      </p>
+      </StatusMessage>
     );
   if (state.status === 'error')
     return (
-      <p
-        role="alert"
-        className="px-2 py-2 text-2xs text-destructive [overflow-wrap:anywhere]"
-      >
+      <StatusMessage tone="error" className="px-1 py-1">
         {state.message}
-      </p>
+      </StatusMessage>
     );
   const { evidence } = state;
   if (evidence.status !== 'text' || evidence.text === null)
     return (
-      <p className="px-2 py-2 text-2xs text-muted-foreground">
+      <p className="px-1 py-1 text-2xs text-muted-foreground">
         {evidence.status === 'too-large'
           ? 'This file is too large to preview.'
           : evidence.status === 'binary'
@@ -113,14 +98,7 @@ function EvidencePreview({ state }: { state: PreviewState }) {
             : 'The file is no longer available.'}
       </p>
     );
-  return (
-    <pre
-      aria-label="Evidence preview"
-      className="max-h-80 overflow-auto rounded-md border bg-code-background p-2.5 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
-    >
-      {evidence.text}
-    </pre>
-  );
+  return <CodeBlock aria-label="Evidence preview" code={evidence.text} wrap />;
 }
 
 export function StepResult({
@@ -234,28 +212,17 @@ export function StepResult({
         </p>
       </div>
       {attempts.length > 1 && (
-        <div
-          role="radiogroup"
-          aria-label="Attempt"
-          onKeyDown={moveRadio}
-          className="flex w-fit gap-0.5 rounded-lg bg-segment-track p-0.5"
-        >
-          {attempts.map(item => (
-            <button
-              key={item.id}
-              type="button"
-              role="radio"
-              aria-checked={item.id === record?.id}
-              tabIndex={item.id === record?.id ? 0 : -1}
-              aria-label={`Attempt ${item.attempt} · ${stepStateLabels[item.state]}`}
-              onClick={() => setAttempt(item.attempt)}
-              className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-checked:bg-segment-active aria-checked:text-foreground"
-            >
-              <StepStateIcon state={item.state} className="size-3" />
-              {item.attempt}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="Attempt"
+          value={String(record?.attempt ?? '')}
+          onChange={value => setAttempt(Number(value))}
+          options={attempts.map(item => ({
+            value: String(item.attempt),
+            label: String(item.attempt),
+            ariaLabel: `Attempt ${item.attempt} · ${stepStateLabels[item.state]}`,
+            icon: <StepStateIcon state={item.state} />,
+          }))}
+        />
       )}
       {record?.skip ? (
         <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">
@@ -302,31 +269,21 @@ export function StepResult({
         </Button>
       )}
       {outputs.length > 0 && (
-        <section aria-label="Outputs" className="space-y-1.5">
-          <h3 className="text-2xs font-medium text-muted-foreground">
-            Outputs
-          </h3>
-          <table className="w-full table-fixed border-separate border-spacing-0 overflow-hidden rounded-md border">
-            <tbody>
-              {outputs.map(([key, value]) => (
-                <tr key={key} className="[&:not(:last-child)>td]:border-b">
-                  <td className="w-28 px-2 py-1.5 align-top font-mono text-2xs text-muted-foreground [overflow-wrap:anywhere]">
-                    {key}
-                  </td>
-                  <td className="px-2 py-1.5 font-mono text-2xs select-text [overflow-wrap:anywhere]">
-                    {value}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <section aria-label="Outputs" className="space-y-1">
+          <SectionLabel className="px-0">Outputs</SectionLabel>
+          <KeyValueList
+            className="font-mono text-2xs"
+            entries={outputs.map(([key, value]) => ({
+              key,
+              label: key,
+              value: <span className="select-text">{value}</span>,
+            }))}
+          />
         </section>
       )}
       {evidence.length > 0 && (
-        <section aria-label="Evidence" className="space-y-1.5">
-          <h3 className="text-2xs font-medium text-muted-foreground">
-            Evidence
-          </h3>
+        <section aria-label="Evidence" className="space-y-1">
+          <SectionLabel className="px-0">Evidence</SectionLabel>
           <ul className="space-y-1">
             {evidence.map((item, position) => {
               const Icon = evidenceIcons[item.kind];
@@ -335,7 +292,7 @@ export function StepResult({
                 (item.kind === 'log' || item.kind === 'text') && !!item.path;
               return (
                 <li key={key} className="space-y-1">
-                  <div className="flex min-w-0 items-center gap-2 rounded-md px-1 py-1">
+                  <div className="flex h-7 min-w-0 items-center gap-2">
                     <Icon
                       className="size-3.5 shrink-0 text-muted-foreground"
                       aria-hidden="true"
@@ -351,7 +308,6 @@ export function StepResult({
                         type="button"
                         variant="ghost"
                         size="xs"
-                        className="h-6 px-2 text-2xs"
                         aria-expanded={!!previews[key]}
                         onClick={() => void preview(item, key)}
                       >
