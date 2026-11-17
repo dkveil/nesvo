@@ -24,6 +24,7 @@ type ListboxOption<T extends string> = {
   keywords?: string;
   disabled?: boolean;
   ariaLabel?: string;
+  attributes?: Record<`data-${string}`, string>;
 };
 
 type ListboxProps<T extends string> = {
@@ -32,6 +33,7 @@ type ListboxProps<T extends string> = {
   value?: T | null;
   onSelect: (value: T) => void;
   searchable?: boolean;
+  searchLabel?: string;
   searchPlaceholder?: string;
   emptyText?: string;
   autoFocus?: boolean;
@@ -54,6 +56,7 @@ export function Listbox<T extends string>({
   value = null,
   onSelect,
   searchable = false,
+  searchLabel,
   searchPlaceholder = 'Search',
   emptyText = 'No matches',
   autoFocus = false,
@@ -136,7 +139,7 @@ export function Listbox<T extends string>({
       {searchable && (
         <SearchField
           variant="underline"
-          aria-label={`Search ${label.toLocaleLowerCase()}`}
+          aria-label={searchLabel ?? `Search ${label.toLocaleLowerCase()}`}
           aria-controls={listId}
           aria-activedescendant={activeDescendant}
           aria-autocomplete="list"
@@ -197,6 +200,7 @@ export function Listbox<T extends string>({
                       option.description &&
                         'h-auto min-h-11 items-start py-1.5',
                     )}
+                    {...option.attributes}
                   >
                     {option.icon}
                     <span className="flex min-w-0 flex-1 flex-col">
