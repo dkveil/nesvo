@@ -139,8 +139,25 @@ export function sessionStatusLabel(session: Session) {
       ))
   )
     return 'Needs approval';
+  if (pendingPrompt(session)) return 'Needs an answer';
   return statusLabels[session.status];
 }
+
+export type SessionPrompt = Session['prompts'][number];
+
+export const isAnswerable = (session: Session, prompt: SessionPrompt) =>
+  prompt.status === 'pending' &&
+  session.status === 'running' &&
+  !!session.runId &&
+  prompt.runId === session.runId;
+
+export const pendingPrompts = (session: Session) =>
+  session.prompts.filter(prompt => isAnswerable(session, prompt));
+
+export const pendingPrompt = (session: Session) =>
+  session.prompts.find(prompt => isAnswerable(session, prompt));
+
+export const attentionLabels = ['Needs approval', 'Needs an answer'];
 
 export function sessionRoleLabel(session: Session) {
   if (session.parentId) return 'Worker';

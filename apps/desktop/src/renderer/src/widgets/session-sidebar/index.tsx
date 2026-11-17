@@ -20,6 +20,7 @@ import { entityKey } from '@/shared/lib/host-key';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import {
+  attentionLabels,
   directoryLabel,
   ProviderGlyph,
   sessionRoleLabel,
@@ -106,10 +107,9 @@ function SessionStatus({
       </time>
     );
   const label = sessionStatusLabel(session);
-  const tone =
-    label === 'Needs approval'
-      ? 'text-warning-foreground'
-      : (statusTone[session.status] ?? 'text-sidebar-muted-foreground');
+  const tone = attentionLabels.includes(label)
+    ? 'text-warning-foreground'
+    : (statusTone[session.status] ?? 'text-sidebar-muted-foreground');
   return (
     <span className={cn('inline-flex items-center gap-1 font-medium', tone)}>
       {session.status === 'completed' && (

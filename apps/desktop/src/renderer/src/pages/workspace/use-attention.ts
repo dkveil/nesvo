@@ -1,8 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { entityKey } from '@/shared/lib/host-key';
-import type { Session } from '@/entities/session';
+import { pendingPrompts, type Session } from '@/entities/session';
 
-type Snapshot = { status: Session['status']; pending: number };
+type Snapshot = {
+  status: Session['status'];
+  pending: number;
+  prompts: number;
+};
 
 const working: Session['status'][] = ['running', 'stopping'];
 
@@ -38,6 +42,8 @@ function notify(
 
 function attentionTitle(previous: Snapshot, session: Session) {
   if (pendingCount(session) > previous.pending) return 'Approval needed';
+  if (pendingPrompts(session).length > previous.prompts)
+    return 'Needs an answer';
   if (session.status === previous.status) return null;
   if (!working.includes(previous.status)) return null;
   if (session.status === 'completed') return 'Finished';
@@ -63,6 +69,7 @@ export function useAttention(
       const snapshot = {
         status: session.status,
         pending: pendingCount(session),
+        prompts: pendingPrompts(session).length,
       };
       next.set(key, snapshot);
       const before = previous.get(key);

@@ -6,7 +6,11 @@ import type {
   ResolvedStep,
   StepPhase,
 } from '@nesvo/contracts';
-import { sessionStatusLabel, type Session } from '@/entities/session';
+import {
+  attentionLabels,
+  sessionStatusLabel,
+  type Session,
+} from '@/entities/session';
 
 export type {
   DefinitionCatalog,
@@ -123,7 +127,7 @@ export const showsRunStatus = (
   !!run &&
   !session.workflowStepId &&
   session.status !== 'failed' &&
-  sessionStatusLabel(session) !== 'Needs approval';
+  !attentionLabels.includes(sessionStatusLabel(session));
 
 export const isRunActive = (run: DesktopWorkflowRun) =>
   activeRunStatuses.includes(run.status);
