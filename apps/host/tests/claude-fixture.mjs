@@ -28,6 +28,25 @@ const flags = [
   '--setting-sources',
   '--append-system-prompt',
 ];
+const PERMISSION_HELP = [
+  '--permission-mode <mode>  Permission mode to use for the session',
+  '                          (choices: "acceptEdits", "auto",',
+  '                          "bypassPermissions", "manual", "dontAsk", "plan")',
+].join('\n');
+const READ_TOOLS = 'Read,Glob,Grep';
+const EDIT_TOOLS = `${READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit`;
+const MODE_TOOLS = new Map([
+  ['plan', READ_TOOLS],
+  ['dontAsk', READ_TOOLS],
+  ['acceptEdits', EDIT_TOOLS],
+  ['auto', `${EDIT_TOOLS},Bash`],
+]);
+const MODE_ALLOWED_TOOLS = new Map([
+  ['plan', READ_TOOLS],
+  ['dontAsk', READ_TOOLS],
+  ['acceptEdits', EDIT_TOOLS],
+  ['auto', EDIT_TOOLS],
+]);
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
 const REPAIR_NOTE = 'The verdict did not match the required shape';
@@ -40,7 +59,11 @@ const runEnvironment = () => ({
 if (args.length === 1 && args[0] === '--version') {
   console.log('2.1.0 (Claude Code fixture)');
 } else if (args.length === 1 && args[0] === '--help') {
-  console.log(flags.join('\n'));
+  console.log(
+    flags
+      .map(flag => (flag === '--permission-mode' ? PERMISSION_HELP : flag))
+      .join('\n'),
+  );
 } else if (args.join(' ') === 'auth status --json') {
   emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
 } else if (args[args.indexOf('--input-format') + 1] === 'stream-json') {
@@ -160,16 +183,16 @@ if (args.length === 1 && args[0] === '--version') {
   for (const flag of switches)
     if (flag !== '--no-session-persistence')
       assert.equal(values.get(flag), true, flag);
-  assert.equal(
-    values.get('--permission-mode'),
-    values.has('--append-system-prompt') ? 'default' : 'plan',
-  );
+  const permissionMode = values.get('--permission-mode');
+  assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
+  if (values.has('--append-system-prompt'))
+    assert.equal(permissionMode, 'dontAsk');
   for (const [flag, expected] of [
     ['--input-format', 'text'],
     ['--output-format', 'stream-json'],
     ['--permission-prompts', 'none'],
-    ['--tools', 'Read,Glob,Grep'],
-    ['--allowedTools', 'Read,Glob,Grep'],
+    ['--tools', MODE_TOOLS.get(permissionMode)],
+    ['--allowedTools', MODE_ALLOWED_TOOLS.get(permissionMode)],
     ['--mcp-config', '{"mcpServers":{}}'],
     ['--settings', '{"disableAllHooks":true}'],
   ])

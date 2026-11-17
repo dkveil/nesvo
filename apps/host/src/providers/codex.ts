@@ -585,6 +585,7 @@ async function initialize(
 }
 
 const codexEffortSupport = { status: 'per-model' } as const;
+const codexModes = ['read-only', 'supervised'] as const;
 
 function modelEfforts(model: RecordValue): ModelEfforts | null {
   const supported = model.supportedReasoningEfforts;
@@ -693,6 +694,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
           'Install the native Codex CLI, then sign in with codex login. Restart Nesvo if PATH changed.',
         models: [],
         effort: codexEffortSupport,
+        modes: [],
       };
     if (signal?.aborted) throw new Error('Stopped.');
     peer = rpcPeer(executable, undefined, message =>
@@ -702,7 +704,11 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
     if (signal?.aborted) throw new Error('Stopped.');
     version = await initialize(peer);
     const status = await readAccountAndModels(peer);
-    return { ...status, version };
+    return {
+      ...status,
+      version,
+      modes: status.status === 'ready' ? [...codexModes] : [],
+    };
   } catch (error) {
     return {
       status: 'error',
@@ -712,6 +718,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
       ),
       models: [],
       effort: codexEffortSupport,
+      modes: [],
     };
   } finally {
     signal?.removeEventListener('abort', cancel);

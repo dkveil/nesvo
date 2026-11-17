@@ -71,6 +71,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
   'send-message',
   'queue-message',
+  'assign-session-workflow',
   'cancel-queued',
   'start-queued',
   'stop-run',
@@ -108,6 +109,7 @@ const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
   'workflow-assistant-send',
   'workflow-assistant-undo',
   'workflow-assistant-changes',
+  'assign-session-workflow',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
@@ -474,6 +476,27 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(creation);
           void creation.finally(() => probes.pending.delete(creation));
+          continue;
+        }
+        if (request.method === 'assign-session-workflow') {
+          const assignment = sessions
+            .assignWorkflow(request.input, probes.controller.signal)
+            .then(session => send({ type: 'session', id: request.id, session }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The workflow could not be assigned. Refresh the session and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(assignment);
+          void assignment.finally(() => probes.pending.delete(assignment));
           continue;
         }
         if (request.method === 'decide-review') {

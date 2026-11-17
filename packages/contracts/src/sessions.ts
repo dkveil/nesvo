@@ -9,7 +9,31 @@ import { skillHashSchema, skillReferenceSchema } from './skills';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
-export const sessionModeSchema = z.enum(['read-only', 'supervised']);
+export const sessionModeSchema = z.enum([
+  'read-only',
+  'supervised',
+  'accept-edits',
+  'auto',
+]);
+export const providerSessionModes = {
+  'Claude Code': ['read-only', 'accept-edits', 'auto'],
+  Codex: ['read-only', 'supervised'],
+} as const satisfies Record<
+  z.infer<typeof providerSchema>,
+  readonly z.infer<typeof sessionModeSchema>[]
+>;
+export const isProviderSessionMode = (
+  provider: z.infer<typeof providerSchema>,
+  mode: z.infer<typeof sessionModeSchema>,
+): boolean =>
+  (providerSessionModes[provider] as readonly string[]).includes(mode);
+export const isWritableSessionMode = (
+  mode: z.infer<typeof sessionModeSchema>,
+): boolean => mode !== 'read-only';
+export const sessionWorkflowSchema = z.strictObject({
+  name: z.string().trim().min(1).max(200),
+  root: z.enum(['project', 'global']),
+});
 const modelSchema = z.string().trim().min(1).max(200);
 export const workerProposalSchema = z
   .strictObject({
@@ -23,13 +47,14 @@ export const workerProposalSchema = z
   })
   .superRefine((value, context) => {
     if (
-      value.provider === 'Claude Code' &&
-      (value.mode !== 'read-only' ||
-        !claudeModelSchema.safeParse(value.model).success)
+      !isProviderSessionMode(value.provider, value.mode) ||
+      (value.provider === 'Claude Code' &&
+        (value.mode !== 'read-only' ||
+          !claudeModelSchema.safeParse(value.model).success))
     )
       context.addIssue({
         code: 'custom',
-        message: 'Unsupported Claude worker configuration',
+        message: `Unsupported ${value.provider} worker configuration`,
       });
   });
 export const delegationPlanSchema = z.strictObject({
@@ -98,13 +123,13 @@ export const createSessionSchema = z
   })
   .superRefine((value, context) => {
     if (
-      value.provider === 'Claude Code' &&
-      (value.mode !== 'read-only' ||
+      !isProviderSessionMode(value.provider, value.mode) ||
+      (value.provider === 'Claude Code' &&
         !claudeModelSchema.safeParse(value.model).success)
     )
       context.addIssue({
         code: 'custom',
-        message: 'Unsupported Claude Code model or mode',
+        message: `Unsupported ${value.provider} model or mode`,
       });
     if (
       value.effort &&
@@ -127,6 +152,11 @@ export const sendMessageSchema = z.strictObject({
   skillHash: skillHashSchema.optional(),
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
+  mode: sessionModeSchema.optional(),
+});
+export const assignSessionWorkflowSchema = z.strictObject({
+  sessionId: z.uuid(),
+  workflow: sessionWorkflowSchema.nullable(),
 });
 export const queuedMessageSchema = z.strictObject({
   id: z.uuid(),
@@ -135,6 +165,7 @@ export const queuedMessageSchema = z.strictObject({
   skillHash: skillHashSchema.optional(),
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
+  mode: sessionModeSchema.optional(),
   createdAt: z.iso.datetime(),
   held: z.boolean().default(false),
 });
@@ -185,6 +216,7 @@ export const sessionMessageSchema = z.strictObject({
   origin: z.literal('workflow').nullable().default(null),
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),
+  mode: sessionModeSchema.nullable().default(null),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -205,6 +237,7 @@ export const sessionSchema = z.strictObject({
   delegations: z.array(delegationSchema).max(100).default([]),
   workflowRunId: z.uuid().nullable().default(null),
   workflowStepId: z.uuid().nullable().default(null),
+  workflow: sessionWorkflowSchema.nullable().default(null),
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),
@@ -244,6 +277,7 @@ export const claudeStatusSchema = z.strictObject({
     reason:
       'This computer runs an older Nesvo host that does not report reasoning effort support. Update the host to choose an effort.',
   }),
+  modes: z.array(sessionModeSchema).default([]),
 });
 export const codexStatusSchema = claudeStatusSchema.extend({
   models: z.array(
@@ -266,6 +300,10 @@ export type ClaudeStatus = z.infer<typeof claudeStatusSchema>;
 export type CodexStatus = z.infer<typeof codexStatusSchema>;
 export type Provider = z.infer<typeof providerSchema>;
 export type SessionMode = z.infer<typeof sessionModeSchema>;
+export type SessionWorkflow = z.infer<typeof sessionWorkflowSchema>;
+export type AssignSessionWorkflowInput = z.infer<
+  typeof assignSessionWorkflowSchema
+>;
 export type Approval = z.infer<typeof approvalSchema>;
 export type RespondApprovalInput = z.infer<typeof respondApprovalSchema>;
 export type WorkerProposal = z.infer<typeof workerProposalSchema>;

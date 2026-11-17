@@ -364,6 +364,8 @@ test(
         'reasoning-effort',
         'workflows',
         'git-branch',
+        'permission-modes',
+        'session-workflow',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -375,6 +377,11 @@ test(
     );
     assert.equal(status.status.effort.status, 'unsupported');
     assert.match(status.status.effort.reason, /reasoning effort/);
+    assert.deepEqual(status.status.modes, [
+      'read-only',
+      'accept-edits',
+      'auto',
+    ]);
     const branchRoot = join(directory, 'branches');
     const seedHead = async (path, head) => {
       await mkdir(path, { recursive: true });
@@ -2754,6 +2761,17 @@ test(
     assert.equal(firstResults.result.results[0].childSessionId, firstChild.id);
     assert.match(firstResults.result.results[0].text, /worker a completed/);
     assert.equal(firstResults.result.results[1].childSessionId, null);
+    assert.equal(
+      (
+        await checked.request('send-message', {
+          sessionId: firstChild.id,
+          messageId: randomUUID(),
+          text: 'fixture:continue',
+          mode: 'supervised',
+        })
+      ).code,
+      'invalid-request',
+    );
     const parentReview = await checked.review(
       value =>
         value.runId === firstPlan.run.runId && value.status === 'pending',
@@ -4888,6 +4906,8 @@ test(
       'reasoning-effort',
       'workflows',
       'git-branch',
+      'permission-modes',
+      'session-workflow',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -13998,7 +14018,7 @@ test(
           recorded.prompt,
           /\[begin view ([0-9a-f]+)\]\nNot stated\. By default, create or change workflows and the steps they use\.\n\[end view \1\]/,
         );
-        assert.equal(recorded.permissionMode, 'default');
+        assert.equal(recorded.permissionMode, 'dontAsk');
         assert.match(recorded.systemPrompt, /This is not a planning session/);
         assert.match(
           recorded.prompt,
@@ -15472,5 +15492,182 @@ test(
     assert.ok(Date.now() - stopping < 5000, String(Date.now() - stopping));
     await pending.catch(() => undefined);
     await processesGone([hung], new Set([hung]));
+  },
+);
+
+test(
+  'permission modes apply from the next turn and session workflows persist',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-modes-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const launchLog = join(directory, 'launches.jsonl');
+    const home = join(directory, 'home', '.agents', 'workflows');
+    const project = join(directory, 'project');
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null) {
+          try {
+            await host.stop();
+          } catch {
+            host.child.kill();
+          }
+        }
+        await bounded(host.exited, 'Test host did not exit');
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    await mkdir(join(project, '.git'), { recursive: true });
+    const check =
+      '---\nname: check\ntype: command\nphase: pre-done\n---\nbun test\n';
+    await write(
+      join(project, '.agents', 'workflows', 'steps', 'check.md'),
+      check,
+    );
+    await write(
+      join(project, '.agents', 'workflows', 'workflows', 'ship.md'),
+      '---\nname: ship\nsteps: [check]\n---\n',
+    );
+    await write(join(home, 'steps', 'check.md'), check);
+    await write(
+      join(home, 'workflows', 'release.md'),
+      '---\nname: release\nsteps: [check]\n---\n',
+    );
+    const open = () => {
+      const host = launch(directory, pidFile, {
+        NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+        NESVO_TEST_MODE: '1',
+        NESVO_WORKFLOWS_HOME: home,
+      });
+      hosts.push(host);
+      return host;
+    };
+    const host = open();
+    const created = await host.request('create-session', {
+      title: 'Modes',
+      model: 'sonnet',
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const claude = created.session;
+    assert.equal(claude.mode, 'read-only');
+    assert.equal(claude.workflow, null);
+    const message = mode => ({
+      sessionId: claude.id,
+      messageId: randomUUID(),
+      text: 'fixture:continue',
+      mode,
+    });
+    assert.equal(
+      (await host.request('send-message', message('supervised'))).code,
+      'invalid-request',
+    );
+    const sent = await host.request('send-message', message('accept-edits'));
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    assert.equal(sent.session.mode, 'accept-edits');
+    const completed = await host.event(
+      value =>
+        value.id === claude.id &&
+        value.runId === sent.session.runId &&
+        value.status === 'completed',
+    );
+    const operator = completed.messages.find(
+      item => item.runId === sent.session.runId && item.author === 'operator',
+    );
+    assert.equal(operator.mode, 'accept-edits');
+    assert.equal(agent(completed).mode, null);
+    const launches = (await readFile(launchLog, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    const args = launches.at(-1).args;
+    assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits');
+    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'none');
+    assert.ok(args[args.indexOf('--tools') + 1].split(',').includes('Edit'));
+    assert.equal(
+      args[args.indexOf('--allowedTools') + 1].split(',').includes('Bash'),
+      false,
+    );
+
+    const codex = await host.request('create-session', {
+      title: 'Codex modes',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory: project,
+    });
+    assert.equal(codex.type, 'session', JSON.stringify(codex));
+    assert.equal(
+      (
+        await host.request('send-message', {
+          sessionId: codex.session.id,
+          messageId: randomUUID(),
+          text: 'fixture:continue',
+          mode: 'auto',
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'create-session',
+          input: {
+            title: 'Codex auto',
+            provider: 'Codex',
+            model: 'fixture-codex',
+            mode: 'auto',
+            directory: project,
+          },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+    );
+
+    const assign = workflow =>
+      host.request('assign-session-workflow', {
+        sessionId: claude.id,
+        workflow,
+      });
+    assert.equal(
+      (await assign({ name: 'missing', root: 'project' })).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await assign({ name: 'ship', root: 'global' })).code,
+      'invalid-request',
+    );
+    const assigned = await assign({ name: 'release', root: 'global' });
+    assert.equal(assigned.type, 'session', JSON.stringify(assigned));
+    assert.deepEqual(assigned.session.workflow, {
+      name: 'release',
+      root: 'global',
+    });
+    const projectAssigned = await assign({ name: 'ship', root: 'project' });
+    assert.deepEqual(projectAssigned.session.workflow, {
+      name: 'ship',
+      root: 'project',
+    });
+    await host.stop();
+
+    const reopened = open();
+    const restored = (await reopened.request('list-sessions')).sessions.find(
+      value => value.id === claude.id,
+    );
+    assert.deepEqual(restored.workflow, { name: 'ship', root: 'project' });
+    assert.equal(restored.mode, 'accept-edits');
+    const cleared = await reopened.request('assign-session-workflow', {
+      sessionId: claude.id,
+      workflow: null,
+    });
+    assert.equal(cleared.session.workflow, null);
   },
 );

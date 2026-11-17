@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { reasoningEffortSchema } from '../reasoning-effort';
 import {
   claudeModelSchema,
+  isProviderSessionMode,
   providerSchema,
   sessionModeSchema,
 } from '../sessions';
@@ -58,14 +59,15 @@ export const startWorkflowTaskSchema = z
   })
   .superRefine((value, context) => {
     if (
-      value.provider === 'Claude Code' &&
-      (value.mode !== 'read-only' ||
-        !claudeModelSchema.safeParse(value.model).success)
+      !isProviderSessionMode(value.provider, value.mode) ||
+      (value.provider === 'Claude Code' &&
+        (value.mode !== 'read-only' ||
+          !claudeModelSchema.safeParse(value.model).success))
     )
       context.addIssue({
         code: 'custom',
         path: ['model'],
-        message: 'Unsupported Claude Code model or mode',
+        message: `Unsupported ${value.provider} model or mode`,
       });
     if (
       value.effort &&

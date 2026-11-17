@@ -181,6 +181,21 @@ A message submitted while a run is active, or while the host is busy with anothe
 
 An existing session can change its model, and for Codex its reasoning effort, from the composer. The choice travels with the next message, including a queued one, and applies from that turn on: the host validates it with the same provider rules as session creation, updates the session and launches the next provider process with the new values while resuming the recorded provider thread. If Codex rejects the requested reasoning effort while the turn is being prepared, the run fails before a provider turn starts and the session returns to its previous model and effort. A running process is never restarted or replaced. Each operator message records the model and effort requested for its turn, and the conversation shows a divider where the recorded value changes; history saved before this field existed shows none. The provider cannot be switched inside a session.
 
+## Permission modes
+
+D67 lets an existing session change its permission mode from the composer. The mode travels with the next message like a model change, including a queued one, and applies from that turn on; a running turn is never touched. Each operator message records the mode requested for its turn (`mode`, null on agent messages and in older history), so the conversation can show a divider where it changes. The host validates the mode with the creation rules and refuses a change for a worker, whose permissions come from the parent's decision, and for a workflow session, which keeps the mode its task started with.
+
+| Session mode   | Claude Code                                                               | Codex                                |
+| -------------- | ------------------------------------------------------------------------- | ------------------------------------ |
+| `read-only`    | Plan: CLI `plan`, tools Read, Glob, Grep                                  | read-only sandbox, `never` approvals |
+| `supervised`   | not accepted                                                              | workspace-write sandbox, `untrusted` |
+| `accept-edits` | CLI `acceptEdits`, Read, Glob, Grep, Edit, Write, MultiEdit, NotebookEdit | not accepted                         |
+| `auto`         | CLI `auto`, the accept-edits tools plus Bash                              | not accepted                         |
+
+The Claude status reports `modes` from the choices that `claude --help` lists for `--permission-mode`: Plan always, Accept edits and Auto only when `acceptEdits` and `auto` are listed. Codex reports Read-only and Supervised. Older hosts parse with an empty list and advertise no `permission-modes` capability. Claude keeps `--permission-prompts none`: Nesvo has no approval channel for Claude, so a tool the selected mode does not allow, or a permission the CLI cannot ask about, fails visibly as a failed activity with the provider's message instead of waiting for an answer. No mode enables permission bypass. Claude Edit, Write, MultiEdit and NotebookEdit tool uses appear as file-change activities with their paths, and Bash as a command activity. Every mode other than `read-only` captures the workspace baseline, so a Claude turn that edits files produces a saved-result diff. For delegation, `accept-edits` and `auto` count as writable like `supervised`. A workflow assistant turn uses Plan unless the CLI lists `default`.
+
+A session can also carry a saved workflow assignment, `workflow: { name, root }` with root `project` or `global`, null by default. `assign-session-workflow` sets or clears it while the session is idle or running, after checking that the definitions catalog for the session folder contains that workflow in that root; it persists across restarts and starts nothing by itself.
+
 ## Growth by domain
 
 Introduce sessions, delegation, review and skills modules as their stages are accepted.
@@ -204,7 +219,7 @@ P2 removes demonstration sessions from the product. The page owns selection, dra
 ## Claude adapter and P2 limits
 
 The adapter uses the documented print/stream-json interface, existing login and explicit session-id/resume arguments. It validates required CLI capabilities, streams main-session text, ignores subagent output, reconciles final text and treats is_error as authoritative even when result subtype says success. Model aliases are not a promise of account entitlement.
-Claude enables only Read, Glob and Grep in plan mode, denies unanswered permission requests, disables hooks and supplies an empty strict MCP configuration. It never enables permission bypass. Interactive approval in P3 is provider-specific; Claude retains its P2 capabilities. Provider-aware skill support belongs to P6.
+Claude enables only Read, Glob and Grep in plan mode unless the operator chose Accept edits or Auto (see Permission modes), denies unanswered permission requests, disables hooks and supplies an empty strict MCP configuration. It never enables permission bypass. Interactive approval in P3 is provider-specific; Claude retains its P2 capabilities. Provider-aware skill support belongs to P6.
 Only one group runs at a time, with at most two children beside its parent. Stop targets the owned Windows process tree or POSIX process group and waits for close; the host's shutdown watchdog allows cleanup to finish. Windows cleanup skips a parent whose exit is already known, avoiding another tree-kill request against its retired PID. Descendants already orphaned before the parent exits are not guaranteed to be contained by PID-tree cleanup. Abrupt OS termination is not equivalent to graceful shutdown; stronger containment needs a separate native job mechanism.
 The host is local and lives with the desktop. There is no network listener, remote authentication or background daemon.
 A closed host is not silently restarted. UI reports failure and lets the operator retry or reopen the app.

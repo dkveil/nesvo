@@ -5,7 +5,10 @@ import { z } from 'zod';
 import {
   claudeModelSchema,
   delegationPlanSchema,
+  isProviderSessionMode,
+  isWritableSessionMode,
   sessionQueueLimit,
+  type AssignSessionWorkflowInput,
   type CreateSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
@@ -47,6 +50,7 @@ import {
   compareWorkspace,
   type WorkspaceSnapshot,
 } from '../review/workspace';
+import { loadCatalog } from '../workflows/definitions';
 
 export async function confirmCodexEffort(
   model: string,
@@ -67,14 +71,38 @@ export async function confirmCodexEffort(
     );
 }
 
-type TurnSelection = Pick<Session, 'model' | 'effort'>;
+type TurnSelection = Pick<Session, 'model' | 'effort' | 'mode'>;
+
+function resolveTurnMode(
+  session: Session,
+  mode: SendMessageInput['mode'],
+): Session['mode'] {
+  if (!mode || mode === session.mode) return session.mode;
+  if (session.role === 'worker' || session.parentId)
+    throw new SessionError(
+      'invalid-request',
+      'Worker permissions are set by the parent decision.',
+    );
+  if (session.workflowRunId)
+    throw new SessionError(
+      'invalid-request',
+      'Workflow sessions keep the permissions chosen when the task started.',
+    );
+  if (!isProviderSessionMode(session.provider, mode))
+    throw new SessionError(
+      'invalid-request',
+      `${session.provider} does not support the ${mode} permission mode.`,
+    );
+  return mode;
+}
 
 function resolveTurnSelection(
   session: Session,
-  input: Pick<SendMessageInput, 'model' | 'effort'>,
+  input: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
 ): TurnSelection {
   const model = input.model ?? session.model;
   const effort = input.effort === undefined ? session.effort : input.effort;
+  const mode = resolveTurnMode(session, input.mode);
   if (
     session.provider === 'Claude Code' &&
     !claudeModelSchema.safeParse(model).success
@@ -93,7 +121,7 @@ function resolveTurnSelection(
       'invalid-request',
       'Choose a specific Codex model to set a reasoning effort.',
     );
-  return { model, effort };
+  return { model, effort, mode };
 }
 
 function holdQueue(session: Session): void {
@@ -739,9 +767,14 @@ export class SessionService {
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, input.text);
-    const previousSelection = { model: session.model, effort: session.effort };
+    const previousSelection = {
+      model: session.model,
+      effort: session.effort,
+      mode: session.mode,
+    };
     session.model = selection.model;
     session.effort = selection.effort;
+    session.mode = selection.mode;
     this.prepareRun(
       session,
       input.messageId,
@@ -760,6 +793,43 @@ export class SessionService {
       previousSelection,
     });
     return structuredClone(session);
+  }
+
+  async assignWorkflow(
+    input: AssignSessionWorkflowInput,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const session = this.acceptingSession(input.sessionId);
+    if (input.workflow) {
+      const { name, root } = input.workflow;
+      let available = false;
+      try {
+        const catalog = await loadCatalog(
+          this.resolveDirectory(session.directory),
+          signal,
+        );
+        available = catalog.workflows.some(
+          workflow => workflow.name === name && workflow.source.scope === root,
+        );
+      } catch (error) {
+        if (error instanceof SessionError) throw error;
+      }
+      if (!available)
+        throw new SessionError(
+          'invalid-request',
+          'This workflow is not available for the session folder.',
+        );
+    }
+    const current = this.acceptingSession(input.sessionId);
+    const previous = current.workflow;
+    current.workflow = input.workflow ? { ...input.workflow } : null;
+    try {
+      this.publish(current);
+    } catch (error) {
+      current.workflow = previous;
+      throw error;
+    }
+    return structuredClone(current);
   }
 
   queue(input: SendMessageInput): Session {
@@ -788,6 +858,7 @@ export class SessionService {
       ...(input.skillHash ? { skillHash: input.skillHash } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort === undefined ? {} : { effort: input.effort }),
+      ...(input.mode ? { mode: input.mode } : {}),
       createdAt: new Date().toISOString(),
       held: false,
     });
@@ -839,6 +910,7 @@ export class SessionService {
       skillHash: entry.skillHash,
       model: entry.model,
       effort: entry.effort,
+      mode: entry.mode,
     });
   }
 
@@ -873,6 +945,7 @@ export class SessionService {
         skillHash: next.skillHash,
         model: next.model,
         effort: next.effort,
+        mode: next.mode,
       });
     } catch (error) {
       session.error =
@@ -1099,6 +1172,7 @@ export class SessionService {
         origin,
         model: session.model,
         effort: session.effort,
+        mode: session.mode,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
       },
@@ -1114,6 +1188,7 @@ export class SessionService {
         origin: null,
         model: null,
         effort: null,
+        mode: null,
       },
     );
   }
@@ -1210,6 +1285,7 @@ export class SessionService {
             ) {
               session.model = previousSelection.model;
               session.effort = previousSelection.effort;
+              session.mode = previousSelection.mode;
             }
             return controller.signal.aborted
               ? { status: 'stopped', error: null }
@@ -1251,7 +1327,7 @@ export class SessionService {
                 };
           }
         }
-        if (session.mode === 'supervised')
+        if (isWritableSessionMode(session.mode))
           baseline = await captureWorkspace(
             session.directory,
             controller.signal,
@@ -1263,7 +1339,8 @@ export class SessionService {
             ? startCodex({
                 ...options,
                 sessionId: session.providerSessionId,
-                mode: session.mode,
+                mode:
+                  session.mode === 'supervised' ? 'supervised' : 'read-only',
                 effort: session.effort,
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
@@ -1327,6 +1404,7 @@ export class SessionService {
                 ...(ephemeral ? { ephemeral } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
+                mode: readOnly ? 'read-only' : session.mode,
                 sessionId: session.providerSessionId!,
               });
         return provider.done;
@@ -1663,8 +1741,8 @@ export class SessionService {
     proposals: Delegation[],
   ): void {
     if (
-      parent.mode === 'supervised' &&
-      proposals.some(proposal => proposal.mode === 'supervised')
+      isWritableSessionMode(parent.mode) &&
+      proposals.some(proposal => isWritableSessionMode(proposal.mode))
     )
       throw new SessionError(
         'invalid-request',
@@ -1681,8 +1759,8 @@ export class SessionService {
     for (let left = 0; left < proposals.length; left++) {
       for (let right = left + 1; right < proposals.length; right++) {
         if (
-          proposals[left]!.mode !== 'supervised' &&
-          proposals[right]!.mode !== 'supervised'
+          !isWritableSessionMode(proposals[left]!.mode) &&
+          !isWritableSessionMode(proposals[right]!.mode)
         )
           continue;
         if (

@@ -130,6 +130,7 @@ export class SessionStore {
       parentRunId: null,
       scope: null,
       delegations: [],
+      workflow: null,
       ...originLinks(origin, input),
     };
     this.save(session);
@@ -189,6 +190,7 @@ export class SessionStore {
       delegations: [],
       workflowRunId: null,
       workflowStepId: null,
+      workflow: null,
       scheduledJobId: null,
       scheduledJobRunId: null,
       providerSessionId:

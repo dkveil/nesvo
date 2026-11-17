@@ -27,6 +27,7 @@ import {
   codexStatusSchema,
   createSessionSchema,
   sendMessageSchema,
+  assignSessionWorkflowSchema,
   queuedMessageRefSchema,
   sessionSchema,
   stopRunSchema,
@@ -36,6 +37,7 @@ import {
   type CodexStatus,
   type CreateSessionInput,
   type SendMessageInput,
+  type AssignSessionWorkflowInput,
   type QueuedMessageRefInput,
   type StopRunInput,
   type RespondApprovalInput,
@@ -250,6 +252,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('queue-message'),
     input: sendMessageSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('assign-session-workflow'),
+    input: assignSessionWorkflowSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -760,6 +767,10 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   sendMessage: (
     input: SendMessageInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  assignSessionWorkflow: (
+    input: AssignSessionWorkflowInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   queueMessage: (

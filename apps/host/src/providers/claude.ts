@@ -9,6 +9,7 @@ import {
   activityLimits,
   type ClaudeStatus,
   type ProviderUsage,
+  type SessionMode,
   type TurnUsage,
 } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
@@ -37,6 +38,7 @@ export type ClaudeResult = {
 };
 
 type Executable = { command: string; prefix: string[] };
+type ClaudeMode = Exclude<SessionMode, 'supervised'>;
 type RecordValue = Record<string, unknown>;
 type ProcessExit = {
   code: number | null;
@@ -75,6 +77,38 @@ const requiredFlags = [
   '--setting-sources',
   '--model',
 ];
+const readTools = ['Read', 'Glob', 'Grep'];
+const editTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+const claudeModes = {
+  'read-only': { cli: 'plan', tools: readTools, allowed: readTools },
+  'accept-edits': {
+    cli: 'acceptEdits',
+    tools: [...readTools, ...editTools],
+    allowed: [...readTools, ...editTools],
+  },
+  auto: {
+    cli: 'auto',
+    tools: [...readTools, ...editTools, 'Bash'],
+    allowed: [...readTools, ...editTools],
+  },
+} as const satisfies Record<
+  ClaudeMode,
+  { cli: string; tools: string[]; allowed: string[] }
+>;
+const optionalModes = ['accept-edits', 'auto'] as const;
+const toolPresentation = {
+  Read: { kind: 'read', title: 'Read file' },
+  Glob: { kind: 'search', title: 'Find files' },
+  Grep: { kind: 'search', title: 'Search files' },
+  Edit: { kind: 'file-change', title: 'Edit file' },
+  MultiEdit: { kind: 'file-change', title: 'Edit file' },
+  Write: { kind: 'file-change', title: 'Write file' },
+  NotebookEdit: { kind: 'file-change', title: 'Edit notebook' },
+  Bash: { kind: 'command', title: 'Run command' },
+} as const satisfies Record<
+  string,
+  { kind: ProviderActivity['kind']; title: string }
+>;
 const maxLineBytes = 1024 * 1024;
 const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
@@ -95,6 +129,40 @@ function safeMessage(value: string): string {
     .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[redacted email]')
     .slice(0, 800);
+}
+
+function permissionChoices(help: string): string[] {
+  const flag = '--permission-mode';
+  const start = help.indexOf(flag);
+  if (start < 0) return [];
+  const rest = help.slice(start + flag.length);
+  const end = rest.search(/\n\s*-/);
+  const segment = end < 0 ? rest : rest.slice(0, end);
+  const choices = /\(choices:([^)]*)\)/.exec(segment)?.[1] ?? '';
+  return [...choices.matchAll(/"([^"]+)"/g)].map(match => match[1]!);
+}
+
+function supportedModes(choices: string[]): ClaudeMode[] {
+  return [
+    'read-only',
+    ...optionalModes.filter(mode => choices.includes(claudeModes[mode].cli)),
+  ];
+}
+
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map(object)
+    .map(item =>
+      item?.type === 'text' && typeof item.text === 'string' ? item.text : '',
+    )
+    .filter(Boolean)
+    .join('\n');
+}
+
+function isClaudeMode(mode: SessionMode): mode is ClaudeMode {
+  return mode in claudeModes;
 }
 
 function wait(ms: number): Promise<void> {
@@ -329,8 +397,10 @@ async function probe(
 async function inspect(cancelled: () => boolean): Promise<{
   status: ClaudeStatus;
   executable: Executable | null;
+  permissionModes: string[];
 }> {
   let version: string | null = null;
+  let permissionModes: string[] = [];
   const status = (
     state: ClaudeStatus['status'],
     detail: string | null,
@@ -344,12 +414,14 @@ async function inspect(cancelled: () => boolean): Promise<{
       reason:
         'Nesvo runs Claude Code without a reasoning effort setting, so the CLI default applies.',
     },
+    modes: state === 'ready' ? supportedModes(permissionModes) : [],
   });
   try {
     const executable = await executablePath();
     if (!executable) {
       return {
         executable: null,
+        permissionModes,
         status: status(
           'missing',
           'Install the native Claude Code CLI, then sign in with claude auth login. Restart Nesvo if PATH changed.',
@@ -373,16 +445,19 @@ async function inspect(cancelled: () => boolean): Promise<{
     if (versionResult.code !== 0) {
       return {
         executable,
+        permissionModes,
         status: status('error', 'Claude Code version inspection failed.'),
       };
     }
     version =
       /\b\d+\.\d+\.\d+(?:[-+][\w.-]+)?\b/.exec(versionResult.stdout)?.[0] ??
       null;
+    permissionModes = permissionChoices(help.stdout);
     const missing = requiredFlags.filter(flag => !help.stdout.includes(flag));
     if (help.code !== 0 || missing.length > 0 || !version) {
       return {
         executable,
+        permissionModes,
         status: status(
           'unsupported',
           `Update Claude Code: required streaming and analysis capabilities are unavailable${missing.length ? ` (${missing.join(', ')})` : ''}.`,
@@ -395,6 +470,7 @@ async function inspect(cancelled: () => boolean): Promise<{
     } catch {
       return {
         executable,
+        permissionModes,
         status: status(
           'unsupported',
           'Claude Code did not return a supported authentication status. Update the CLI.',
@@ -407,6 +483,7 @@ async function inspect(cancelled: () => boolean): Promise<{
     ) {
       return {
         executable,
+        permissionModes,
         status: status(
           'unauthenticated',
           'Sign in with claude auth login, then refresh Claude Code status.',
@@ -416,16 +493,18 @@ async function inspect(cancelled: () => boolean): Promise<{
     if (auth.code !== 0 || authentication?.loggedIn !== true) {
       return {
         executable,
+        permissionModes,
         status: status(
           'error',
           'Claude Code authentication could not be verified.',
         ),
       };
     }
-    return { executable, status: status('ready', null) };
+    return { executable, status: status('ready', null), permissionModes };
   } catch (error) {
     return {
       executable: null,
+      permissionModes,
       status: status(
         'error',
         safeMessage(
@@ -646,6 +725,7 @@ export function startClaude(options: {
   ephemeral?: boolean;
   instructionsOnly?: boolean;
   assistantPrompt?: string;
+  mode: SessionMode;
   onEvent: (event: ClaudeEvent) => void;
 }): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
   let stopped = false;
@@ -665,12 +745,30 @@ export function startClaude(options: {
         throw new Error('Claude session ID must be a UUID.');
       if (!isAbsolute(options.directory))
         throw new Error('Claude working directory must be an absolute path.');
+      if (!isClaudeMode(options.mode))
+        throw new Error(
+          'Claude Code does not support this permission mode. Choose Plan, Accept edits or Auto.',
+        );
       const inspection = await inspect(() => stopped);
       if (stopped) return { status: 'stopped', error: null };
       if (inspection.status.status !== 'ready' || !inspection.executable)
         throw new Error(
           inspection.status.detail ?? 'Claude Code is unavailable.',
         );
+      if (!inspection.status.modes.includes(options.mode))
+        throw new Error(
+          'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
+        );
+      const permission = claudeModes[options.mode];
+      const tools = permission.tools.join(',');
+      const allowedTools = permission.allowed.join(',');
+      const assistantMode = ['default', 'dontAsk'].find(candidate =>
+        inspection.permissionModes.includes(candidate),
+      );
+      const permissionMode =
+        options.assistantPrompt && options.mode === 'read-only' && assistantMode
+          ? assistantMode
+          : permission.cli;
       const args = [
         '--print',
         '--input-format',
@@ -680,13 +778,13 @@ export function startClaude(options: {
         '--verbose',
         '--include-partial-messages',
         '--permission-mode',
-        options.assistantPrompt ? 'default' : 'plan',
+        permissionMode,
         '--permission-prompts',
         'none',
         '--tools',
-        'Read,Glob,Grep',
+        tools,
         '--allowedTools',
-        'Read,Glob,Grep',
+        allowedTools,
         '--strict-mcp-config',
         '--mcp-config',
         '{"mcpServers":{}}',
@@ -757,28 +855,33 @@ export function startClaude(options: {
         if (
           block?.type === 'tool_use' &&
           typeof block.name === 'string' &&
-          ['Read', 'Glob', 'Grep'].includes(block.name)
+          Object.hasOwn(toolPresentation, block.name)
         ) {
-          emit({ type: 'activity', text: block.name });
+          const name = block.name as keyof typeof toolPresentation;
+          emit({ type: 'activity', text: name });
           if (typeof block.id !== 'string') return;
           const previous = toolActivities.get(block.id);
           const input = object(block.input);
-          const paths = [input?.file_path, input?.path].filter(
-            (value): value is string => typeof value === 'string',
-          );
+          const paths = [
+            input?.file_path,
+            input?.notebook_path,
+            input?.path,
+          ].filter((value): value is string => typeof value === 'string');
+          const command =
+            typeof input?.command === 'string' ? input.command : null;
           const detail =
-            [typeof input?.pattern === 'string' ? input.pattern : '', ...paths]
-              .filter(Boolean)
-              .join('\n') || null;
+            name === 'Bash'
+              ? command
+              : [
+                  typeof input?.pattern === 'string' ? input.pattern : '',
+                  ...paths,
+                ]
+                  .filter(Boolean)
+                  .join('\n') || null;
           const next = makeActivity({
             id: block.id,
-            kind: block.name === 'Read' ? 'read' : 'search',
-            title:
-              block.name === 'Read'
-                ? 'Read file'
-                : block.name === 'Glob'
-                  ? 'Find files'
-                  : 'Search files',
+            kind: toolPresentation[name].kind,
+            title: toolPresentation[name].title,
             status: previous?.status ?? 'running',
             startedAt: previous?.startedAt,
             completedAt: previous?.completedAt,
@@ -998,10 +1101,7 @@ export function startClaude(options: {
             const next = makeActivity({
               ...previous,
               status: failed ? 'failed' : 'completed',
-              output:
-                failed && typeof block.content === 'string'
-                  ? block.content
-                  : '',
+              output: failed ? toolResultText(block.content) : '',
             });
             toolActivities.set(next.id, next);
             emit({ type: 'tool-activity', activity: next });
