@@ -276,11 +276,23 @@ export const pullRequestActionSchema = z.discriminatedUnion('action', [
     threadId: z.string().min(1).max(200),
     resolved: z.boolean(),
   }),
+  z
+    .strictObject({
+      action: z.literal('line-comment'),
+      commitId: shaSchema,
+      path: pathSchema.min(1),
+      side: z.enum(['left', 'right']),
+      line: z.number().int().positive(),
+      startLine: z.number().int().positive().nullable().default(null),
+      body: commentBodySchema,
+    })
+    .refine(value => value.startLine === null || value.startLine < value.line, {
+      message: 'A comment range must start before its last line.',
+    }),
   z.strictObject({
     action: z.literal('merge'),
     method: z.enum(['squash', 'merge', 'rebase']),
     expectedHeadSha: shaSchema,
-    deleteBranch: z.boolean().default(false),
   }),
   z.strictObject({
     action: z.literal('checkout'),
@@ -303,6 +315,7 @@ export const pullRequestActionResultSchema = z.strictObject({
     'review',
     'reply-thread',
     'resolve-thread',
+    'line-comment',
     'merge',
     'checkout',
   ]),
