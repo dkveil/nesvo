@@ -284,6 +284,14 @@ The host rejects traversal, absolute paths, device names, alternate streams and 
 
 The lazy-loaded workspace-files widget opens folders on demand, debounces filename search and drops obsolete responses. The existing virtualized code renderer provides syntax colors, line numbers and wrapping. Refresh reloads the current preview and tree. Compact windows show the file panel in place of the conversation; Escape returns focus to the opener. Current workspace content is labeled separately from the saved result panel. Switching between them retains the exact saved review ID and version, including historical results. The explorer does not edit files, compute a live diff, execute skills or alter review acceptance.
 
+## GitHub pull requests
+
+The desktop sends pull request commands to the selected computer and requires its `pull-requests` capability. The host runs the installed GitHub CLI without a shell. Structured CLI and API responses are validated and bounded before they reach Electron. The CLI uses its own login and credential store on that computer. Nesvo forwards the configuration and platform environment needed to locate those resources and keeps GitHub credentials out of its own storage and subprocess environment. Comment and review bodies travel over stdin.
+
+Explicit GitHub actions carry an action ID. The host retains each in-flight or settled result, including failures, for the lifetime of the process. The bounded history refuses new actions when full so that retained IDs stay effective. Reconnecting refreshes state without replaying operations. Merge gives GitHub the exact reviewed head SHA to match. Checkout validates the target session folder and holds the session runner idle until the GitHub CLI exits.
+
+A session's pull request reference lives in its SQLite session document. Changing the link publishes a session update. Branch discovery reads the current association on demand and stores it only when the operator links it.
+
 ## Shared skill library
 
 D61 extends the P6 discovery and selection boundary into a common local catalog. The discover-skills command accepts a stored session ID; callers cannot supply paths or provider names. Two concurrent inspections are allowed independently of message streaming and Stop. Shutdown owns discovery cancellation and provider-process cleanup. Catalogs are transient and require no database migration.
