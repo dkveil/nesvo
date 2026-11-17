@@ -1,18 +1,33 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   PullRequestFile,
   PullRequestFiles,
   PullRequestThread,
   PullRequestThreads,
 } from '@nesvo/contracts';
-import { ChevronRight, MessageSquareShare, WrapText } from 'lucide-react';
+import {
+  ChevronRight,
+  FileDiff,
+  MessageSquareShare,
+  WrapText,
+} from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { DiffStat, FileGlyph, StatusLetter } from '@/entities/file-change';
+import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { Checkbox } from '@/shared/ui/checkbox';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { PanelAction } from '@/shared/ui/panel';
-import { panelRow } from '@/shared/ui/panel-styles';
+import { Label } from '@/shared/ui/label';
+import { ListRow } from '@/shared/ui/list-row';
+import { Toolbar, ToolbarSpacer } from '@/shared/ui/panel';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import { CommentBox } from './comment-box';
+import { DisabledHint } from './disabled-hint';
 import { PatchDiff } from './file-diff';
 import { lineRangeLabel, type LineDraft, type LineRange } from './line-comment';
 import { inlineThreadLines, parseFilePatch } from './patch';
@@ -58,6 +73,7 @@ export function CodeTab({
   onLineCommentEdit,
   renderThread,
 }: CodeTabProps) {
+  const idPrefix = useId();
   const [wrap, setWrap] = useState(false);
   const [draft, setDraft] = useState<LineDraft | null>(null);
   const draftLocked = isActionLocked(lineCommentState);
@@ -134,11 +150,7 @@ export function CodeTab({
         blockedReason={commentReason}
         onSubmit={() => void submitDraft()}
         onCancel={() => setDraft(null)}
-        controls={
-          <span className="text-2xs text-muted-foreground">
-            Shift-click a line to extend
-          </span>
-        }
+        controls={<span>Shift-click a line to extend</span>}
         autoFocus
         className="my-1.5"
       />
@@ -154,81 +166,69 @@ export function CodeTab({
         <InlineNotice tone="error" className="min-w-0 flex-1">
           {files.error}
         </InlineNotice>
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="text-muted-foreground"
-          onClick={onRetry}
-        >
+        <Button type="button" size="xs" variant="ghost" onClick={onRetry}>
           Try again
         </Button>
       </div>
     );
   if (!files.data)
     return (
-      <p role="status" className="p-4 text-xs text-muted-foreground">
+      <StatusMessage tone="loading" className="p-4">
         Loading changed files…
-      </p>
+      </StatusMessage>
     );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b pr-1.5 pl-3 text-2xs text-muted-foreground">
-        <span className="tabular-nums" aria-live="polite">
+      <Toolbar
+        label="Changed files"
+        className="pl-3 text-2xs text-muted-foreground"
+      >
+        <span className="shrink-0 tabular-nums" aria-live="polite">
           {viewedCount} / {list.length} viewed
         </span>
-        {files.data.truncated && <span>· Some files are not listed</span>}
-        {threads.status === 'error' && (
-          <span
-            role="alert"
-            className="truncate text-error-foreground"
-            title={threads.error}
-          >
-            · Threads unavailable: {threads.error}
-          </span>
+        {files.data.truncated && (
+          <span className="shrink-0">· Some files are not listed</span>
         )}
-        <span className="flex-1" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={openThreads.length === 0 || !!sendReason}
-          title={
-            sendReason ||
-            (openThreads.length === 0
+        {threads.status === 'error' && (
+          <StatusMessage tone="error" className="min-w-0 [&>span]:truncate">
+            Threads unavailable: {threads.error}
+          </StatusMessage>
+        )}
+        <ToolbarSpacer />
+        <DisabledHint
+          reason={sendReason}
+          hint={
+            openThreads.length === 0
               ? 'No open review threads'
-              : 'Put every open thread into the session composer')
+              : 'Put every open thread into the session composer'
           }
-          onClick={() => onSendAll(openThreads)}
-          className="h-6 text-2xs text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed"
         >
-          <MessageSquareShare />
-          Send all open threads
-          <span className="tabular-nums">{openThreads.length}</span>
-        </Button>
-        <PanelAction
-          aria-label="Wrap diff lines"
-          aria-pressed={wrap}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={openThreads.length === 0 || !!sendReason}
+            onClick={() => onSendAll(openThreads)}
+          >
+            <MessageSquareShare />
+            Send all open threads
+            <CountBadge count={openThreads.length} tone="muted" />
+          </Button>
+        </DisabledHint>
+        <IconButton
+          label="Wrap diff lines"
+          pressed={wrap}
           onClick={() => setWrap(value => !value)}
         >
           <WrapText />
-        </PanelAction>
-      </div>
+        </IconButton>
+      </Toolbar>
       {staleReason && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
-          <p
-            role="status"
-            className="min-w-0 flex-1 text-2xs text-warning-foreground"
-          >
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b py-1 pr-1.5 pl-3">
+          <StatusMessage tone="warning" className="min-w-0 flex-1">
             {staleReason}
-          </p>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            className="h-6 text-2xs text-muted-foreground enabled:hover:text-foreground"
-            onClick={onRefresh}
-          >
+          </StatusMessage>
+          <Button type="button" size="xs" variant="ghost" onClick={onRefresh}>
             Refresh
           </Button>
         </div>
@@ -241,44 +241,47 @@ export function CodeTab({
           <ul className="space-y-px">
             {list.map(file => {
               const count = threadsByPath.get(file.path)?.length ?? 0;
+              const isViewed = viewed.has(file.path);
               return (
                 <li key={file.path} className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     aria-label={`Mark ${file.path} as viewed`}
-                    checked={viewed.has(file.path)}
-                    onChange={() => toggleViewed(file.path)}
-                    className="ml-1 size-3 shrink-0 accent-foreground"
+                    checked={isViewed}
+                    onCheckedChange={() => toggleViewed(file.path)}
+                    className="ml-1"
                   />
-                  <button
-                    type="button"
-                    title={
+                  <Hint
+                    label={
                       file.previousPath
                         ? `${file.previousPath} → ${file.path}`
                         : file.path
                     }
-                    aria-pressed={focused === file.path}
-                    onClick={() => reveal(file.path)}
-                    className={cn(
-                      panelRow,
-                      'flex h-[1.375rem] min-w-0 flex-1 items-center gap-1.5 px-1.5 text-xs',
-                      viewed.has(file.path) && 'opacity-60',
-                    )}
+                    side="right"
                   >
-                    <StatusLetter status={file.status} />
-                    <FileGlyph name={fileName(file.path)} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {fileName(file.path)}
-                    </span>
-                    {count > 0 && (
-                      <span
-                        aria-label={`${count} review threads`}
-                        className="shrink-0 text-2xs text-muted-foreground tabular-nums"
-                      >
-                        {count}
-                      </span>
-                    )}
-                  </button>
+                    <ListRow
+                      density="tree"
+                      selected={focused === file.path}
+                      onClick={() => reveal(file.path)}
+                      leading={
+                        <>
+                          <StatusLetter status={file.status} />
+                          <FileGlyph name={fileName(file.path)} />
+                        </>
+                      }
+                      title={fileName(file.path)}
+                      trailing={
+                        count > 0 && (
+                          <span aria-label={`${count} review threads`}>
+                            {count}
+                          </span>
+                        )
+                      }
+                      className={cn(
+                        'min-w-0 flex-1',
+                        isViewed && 'text-muted-foreground',
+                      )}
+                    />
+                  </Hint>
                 </li>
               );
             })}
@@ -293,6 +296,7 @@ export function CodeTab({
               ? inlineThreadLines(diff, fileThreads)
               : { inline: [], detached: fileThreads };
             const folder = folderOf(file.path);
+            const viewedId = `${idPrefix}-viewed-${index}`;
             return (
               <section
                 key={file.path}
@@ -303,62 +307,73 @@ export function CodeTab({
                 aria-label={`Changes in ${file.path}`}
                 className="scroll-mt-0 border-b"
               >
-                <header className="sticky top-0 z-[1] flex h-8 items-center gap-1.5 border-b bg-background pr-2 pl-1.5 text-xs">
-                  <button
-                    type="button"
-                    aria-expanded={open}
+                <header className="sticky top-0 z-[1] flex h-9 items-center gap-2 border-b bg-background pr-2 pl-1">
+                  <ListRow
                     onClick={() =>
                       setExpanded(previous => ({
                         ...previous,
                         [file.path]: !open,
                       }))
                     }
-                    className="flex h-6 min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={cn(
-                        'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out',
-                        open && 'rotate-90',
-                      )}
-                    />
-                    <StatusLetter status={file.status} />
-                    <span className="min-w-0 truncate" title={file.path}>
-                      {folder && (
-                        <span className="text-muted-foreground">{folder}/</span>
-                      )}
-                      <span className="font-medium">{fileName(file.path)}</span>
-                    </span>
-                    {file.previousPath && (
-                      <span
-                        className="min-w-0 truncate text-2xs text-muted-foreground"
-                        title={file.previousPath}
-                      >
-                        from {file.previousPath}
-                      </span>
-                    )}
-                  </button>
-                  {fileThreads.length > 0 && (
-                    <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
-                      {fileThreads.length} threads
-                    </span>
-                  )}
-                  <DiffStat
-                    additions={file.additions}
-                    deletions={file.deletions}
+                    mainProps={{ 'aria-expanded': open }}
+                    leading={
+                      <>
+                        <ChevronRight
+                          className={cn(
+                            'transition-transform duration-base ease-out',
+                            open && 'rotate-90',
+                          )}
+                        />
+                        <StatusLetter status={file.status} />
+                      </>
+                    }
+                    title={
+                      <>
+                        {folder && (
+                          <span className="text-muted-foreground">
+                            {folder}/
+                          </span>
+                        )}
+                        <span className="font-medium">
+                          {fileName(file.path)}
+                        </span>
+                        {file.previousPath && (
+                          <span className="text-2xs text-muted-foreground">
+                            {' '}
+                            from {file.previousPath}
+                          </span>
+                        )}
+                      </>
+                    }
+                    trailing={
+                      <>
+                        {fileThreads.length > 0 && (
+                          <span>{fileThreads.length} threads</span>
+                        )}
+                        <DiffStat
+                          additions={file.additions}
+                          deletions={file.deletions}
+                        />
+                      </>
+                    }
+                    className="min-w-0 flex-1"
                   />
-                  <label className="flex shrink-0 cursor-pointer items-center gap-1 text-2xs text-muted-foreground">
-                    <input
-                      type="checkbox"
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <Checkbox
+                      id={viewedId}
                       checked={viewed.has(file.path)}
-                      onChange={() => toggleViewed(file.path)}
-                      className="size-3 accent-foreground"
+                      onCheckedChange={() => toggleViewed(file.path)}
                     />
-                    Viewed
-                  </label>
+                    <Label
+                      htmlFor={viewedId}
+                      className="cursor-pointer text-2xs font-normal text-muted-foreground"
+                    >
+                      Viewed
+                    </Label>
+                  </span>
                 </header>
                 {open && (
-                  <div className="animate-in duration-150 fade-in-0">
+                  <div className="animate-in duration-base ease-out fade-in-0">
                     {file.patchTruncated && (
                       <InlineNotice className="m-2">
                         This diff is too large to show in full. Open the pull
@@ -385,9 +400,13 @@ export function CodeTab({
                       </p>
                     )}
                     {file.patch && !diff && (
-                      <pre className="overflow-auto bg-code-background px-3 pb-3 font-mono text-xs leading-5">
-                        <code>{file.patch}</code>
-                      </pre>
+                      <div className="px-2 pb-2">
+                        <CodeBlock
+                          code={file.patch}
+                          wrap={wrap}
+                          maxHeightClassName="max-h-none"
+                        />
+                      </div>
                     )}
                     {placement.detached.length > 0 && (
                       <div className="px-2 pb-1">
@@ -402,15 +421,13 @@ export function CodeTab({
             );
           })}
           {list.length === 0 && (
-            <p className="p-4 text-xs text-muted-foreground">
-              No file changes.
-            </p>
+            <EmptyState size="sm" icon={FileDiff} title="No file changes." />
           )}
           {orphaned.length > 0 && (
             <section aria-label="Other review threads" className="px-2 py-2">
-              <h3 className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
+              <SectionLabel className="px-1">
                 Threads on files not listed
-              </h3>
+              </SectionLabel>
               {orphaned.map(thread => renderThread(thread, true))}
             </section>
           )}

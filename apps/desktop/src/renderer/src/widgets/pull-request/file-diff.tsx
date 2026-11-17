@@ -16,6 +16,8 @@ import type {
 import { FileDiff, type DiffBasePropsReact } from '@pierre/diffs/react';
 import type { PullRequestThread } from '@nesvo/contracts';
 import { Plus } from 'lucide-react';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { IconButton } from '@/shared/ui/icon-button';
 import {
   lineRangeOf,
   selectedLinesOf,
@@ -68,9 +70,9 @@ class DiffBoundary extends Component<
   }
   override render() {
     return this.state.failed ? (
-      <pre className="overflow-auto bg-code-background p-3 font-mono text-xs leading-5">
-        <code>{this.props.patch}</code>
-      </pre>
+      <div className="px-2 pb-2">
+        <CodeBlock code={this.props.patch} maxHeightClassName="max-h-none" />
+      </div>
     ) : (
       this.props.children
     );
@@ -97,18 +99,18 @@ function GutterCommentButton({ onPress }: { onPress: () => void }) {
     [],
   );
   return (
-    <button
+    <IconButton
       ref={pressOnPointerDown}
-      type="button"
-      aria-label="Comment on this line"
-      title="Comment on this line. Shift-click another line number to select a range."
+      label="Comment on this line"
+      size={16}
+      appearance="send"
       onClick={event => {
         if (event.detail === 0) onPress();
       }}
-      className="relative z-10 my-0.5 mr-0.5 flex size-4 animate-in cursor-pointer items-center justify-center rounded-sm bg-primary text-primary-foreground shadow-xs duration-150 ease-out fade-in-0 zoom-in-90 outline-none hover:bg-primary/85 focus-visible:ring-1 focus-visible:ring-ring motion-reduce:animate-none"
+      className="relative z-10 my-0.5 mr-0.5 animate-in rounded-sm shadow-xs duration-base ease-out fade-in-0 zoom-in-90"
     >
-      <Plus aria-hidden="true" className="size-3" strokeWidth={2.5} />
-    </button>
+      <Plus className="size-3" strokeWidth={2.5} />
+    </IconButton>
   );
 }
 
