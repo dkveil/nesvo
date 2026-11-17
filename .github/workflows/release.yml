@@ -1,0 +1,99 @@
+name: Desktop release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example v0.1.0)
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || format('refs/tags/{0}', inputs.tag) }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - name: Check desktop release version
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            printf 'Release tag %s must match apps/desktop/package.json version (expected v%s).\n' "$RELEASE_TAG" "$version" >&2
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Build Windows x64 installer
+        if: runner.os == 'Windows'
+        run: bun run --cwd apps/desktop electron-builder --win nsis --x64 --publish never
+      - name: Build Apple silicon and Intel disk images
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          bun run --cwd apps/desktop electron-builder --mac dmg --arm64 --publish never
+          lipo -verify_arch arm64 apps/desktop/release/mac-arm64/Nesvo.app/Contents/MacOS/Nesvo
+          bun run --cwd apps/desktop electron-builder --mac dmg --x64 --publish never
+          lipo -verify_arch x86_64 apps/desktop/release/mac/Nesvo.app/Contents/MacOS/Nesvo
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nesvo-release-${{ runner.os }}
+          path: |
+            apps/desktop/release/Nesvo-Windows-Setup.exe
+            apps/desktop/release/Nesvo-macOS-arm64.dmg
+            apps/desktop/release/Nesvo-macOS-x64.dmg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: nesvo-release-*
+          path: release
+          merge-multiple: true
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          assets=(release/Nesvo-Windows-Setup.exe release/Nesvo-macOS-arm64.dmg release/Nesvo-macOS-x64.dmg)
+          for asset in "${assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              printf 'Missing release asset: %s\n' "$asset" >&2
+              exit 1
+            fi
+          done
+          if gh release view "$RELEASE_TAG" >/dev/null; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --generate-notes
+          fi
