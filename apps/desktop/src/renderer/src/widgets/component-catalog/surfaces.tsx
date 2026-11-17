@@ -122,7 +122,7 @@ export function SurfacesSection() {
       >
         <Panel className="h-80 w-full max-w-md overflow-hidden rounded-control border">
           <PanelHeader icon={Files} title="Files" meta="sample-project">
-            <PanelAction aria-label="Refresh">
+            <PanelAction label="Refresh">
               <RefreshCw />
             </PanelAction>
             <PanelAction aria-label="Expand">

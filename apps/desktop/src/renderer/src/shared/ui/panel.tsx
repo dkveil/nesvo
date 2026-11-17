@@ -3,6 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import { SearchField } from '@/shared/ui/search-field';
+import { Hint } from '@/shared/ui/tooltip';
 
 export function Panel({ className, ...props }: ComponentProps<'section'>) {
   return (
@@ -83,21 +84,31 @@ export function PanelBody({ className, ...props }: ComponentProps<'div'>) {
   );
 }
 
+type PanelActionProps = ComponentProps<typeof Button> & {
+  label?: string;
+  shortcut?: string;
+};
+
 export function PanelAction({
+  label,
+  shortcut,
   className,
   ...props
-}: ComponentProps<typeof Button>) {
+}: PanelActionProps) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      className={cn(
-        'text-muted-foreground enabled:hover:text-foreground aria-pressed:bg-highlight aria-pressed:text-foreground [&_svg:not([class*=size-])]:size-3.5',
-        className,
-      )}
-      {...props}
-    />
+    <Hint label={label ?? ''} shortcut={shortcut}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        className={cn(
+          'text-muted-foreground enabled:hover:text-foreground aria-pressed:bg-highlight aria-pressed:text-foreground [&_svg:not([class*=size-])]:size-3.5',
+          className,
+        )}
+        {...props}
+      />
+    </Hint>
   );
 }
 
