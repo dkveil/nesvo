@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   ArrowUpRight,
-  CalendarClock,
   Copy,
   Lock,
   MoreHorizontal,
@@ -17,7 +16,6 @@ import {
   formatRunTime,
   isActiveRun,
   previewSchedule,
-  scheduleSummary,
   type ScheduledJob,
   type ScheduledJobRun,
 } from '@/entities/scheduled-job';
@@ -33,11 +31,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { Badge } from '@/shared/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
+import { IconButton } from '@/shared/ui/icon-button';
 import { Label } from '@/shared/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
-import { ComputerChip, FolderChip, ModelChip } from './job-chips';
+import { Hint } from '@/shared/ui/tooltip';
+import { ComputerChip, FolderChip, ModelChip, ScheduleChip } from './job-chips';
 import { RunStatus } from './run-status';
 
 type Props = {
@@ -105,7 +114,6 @@ export function AutomationDetail({
   onRetryRuns,
 }: Props) {
   const now = useNow(30_000);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const activeRun = runs.find(isActiveRun);
@@ -123,34 +131,29 @@ export function AutomationDetail({
         data-automation-id={job.id}
         className="mx-auto w-full max-w-4xl space-y-6 px-5 py-6 lg:px-8"
       >
-        <header className="space-y-3 px-3">
+        <header className="space-y-3 px-2">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
-              <h2 className="truncate text-lg font-semibold tracking-tight">
+              <h2 className="truncate text-title font-semibold tracking-tight">
                 {job.name}
               </h2>
-              <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <CalendarClock
-                    className="size-3 shrink-0"
-                    aria-hidden="true"
-                  />
-                  {scheduleSummary(job)}
-                </span>
+              <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <ScheduleChip job={job} />
                 <ComputerChip computer={computer} />
                 <FolderChip directory={job.directory} />
                 <ModelChip job={job} />
-                <span
-                  className="inline-flex items-center gap-1 rounded-sm border px-1.5 text-2xs leading-4 font-medium text-foreground"
-                  title={
+                <Hint
+                  label={
                     job.provider === 'claude'
                       ? 'Claude Code can use Read, Glob and Grep only.'
                       : 'Codex runs in its read-only sandbox.'
                   }
                 >
-                  <Lock className="size-2.5" aria-hidden="true" />
-                  Read-only
-                </span>
+                  <Badge appearance="outline">
+                    <Lock aria-hidden="true" />
+                    Read-only
+                  </Badge>
+                </Hint>
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -170,98 +173,64 @@ export function AutomationDetail({
               </div>
               <Button
                 type="button"
-                size="sm"
                 variant="secondary"
-                className="h-7 gap-1.5 px-2.5 text-xs"
                 disabled={pending || !!runBlockedReason || !!activeRun}
-                title={runBlockedReason || 'Run now'}
+                title={runBlockedReason || undefined}
                 onClick={onRunNow}
               >
-                <Zap className="size-3.5" />
+                <Zap />
                 Run now
               </Button>
               <Button
                 type="button"
-                size="sm"
                 variant="ghost"
-                className="h-7 gap-1.5 px-2 text-xs"
                 disabled={!!editBlockedReason}
-                title={editBlockedReason || 'Edit'}
+                title={editBlockedReason || undefined}
                 onClick={onEdit}
               >
-                <Pencil className="size-3.5" />
+                <Pencil />
                 Edit
               </Button>
-              <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    className="size-7 text-muted-foreground"
-                    aria-label="More actions"
-                    title="More actions"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-44 p-1">
-                  <button
-                    type="button"
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton label="More actions">
+                    <MoreHorizontal />
+                  </IconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
                     disabled={!!editBlockedReason}
-                    className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-sm outline-none hover:bg-highlight focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDuplicate();
-                    }}
+                    onSelect={onDuplicate}
                   >
-                    <Copy className="size-3.5 text-muted-foreground" />
+                    <Copy />
                     Duplicate
-                  </button>
-                  <button
-                    type="button"
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
                     disabled={!connected || !!activeRun}
-                    className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-destructive outline-none hover:bg-highlight focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setConfirming(true);
-                    }}
+                    onSelect={() => setConfirming(true)}
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash2 />
                     Delete
-                  </button>
-                </PopoverContent>
-              </Popover>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           <p className="text-xs text-muted-foreground">{nextRuns(job, now)}</p>
-          <p className="line-clamp-3 rounded-lg border bg-card px-3 py-2 text-[13px] leading-5 whitespace-pre-wrap text-card-foreground [overflow-wrap:anywhere]">
+          <p className="line-clamp-3 rounded-surface border bg-card px-3 py-2 text-ui whitespace-pre-wrap text-card-foreground [overflow-wrap:anywhere]">
             {job.workflow
               ? `Workflow ${job.workflow.name} · ${job.workflow.specPath}`
               : job.prompt}
           </p>
-          {error && (
-            <p
-              role="alert"
-              className="text-xs text-destructive [overflow-wrap:anywhere]"
-            >
-              {error}
-            </p>
-          )}
+          {error && <StatusMessage tone="error">{error}</StatusMessage>}
         </header>
         <section aria-label="Runs" className="space-y-1">
-          <h3 className="px-3 text-xs font-medium text-muted-foreground">
-            Runs
-          </h3>
+          <SectionLabel>Runs</SectionLabel>
           {runsError && (
-            <div className="flex flex-wrap items-center gap-3 px-3">
-              <p
-                role="alert"
-                className="text-xs text-destructive [overflow-wrap:anywhere]"
-              >
-                {runsError}
-              </p>
-              <Button size="md" variant="ghost" onClick={onRetryRuns}>
+            <div className="flex flex-wrap items-center gap-3 px-2">
+              <StatusMessage tone="error">{runsError}</StatusMessage>
+              <Button variant="ghost" onClick={onRetryRuns}>
                 Retry
               </Button>
             </div>
@@ -277,67 +246,70 @@ export function AutomationDetail({
                     key={run.id}
                     data-run-id={run.id}
                     data-run-status={run.status}
-                    className="grid grid-cols-1 items-center gap-x-4 gap-y-1 rounded-lg px-3 py-2 text-xs transition-colors duration-100 hover:bg-accent md:grid-cols-[minmax(0,1fr)_auto]"
                   >
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                      <RunStatus run={run} />
-                      <span className="text-muted-foreground">
-                        {run.trigger === 'manual' ? 'Run now' : 'Scheduled'}
-                      </span>
-                      {at && (
-                        <time
-                          dateTime={at}
-                          className="text-muted-foreground tabular-nums"
-                        >
-                          {formatRunTime(at)}
-                        </time>
-                      )}
-                      {duration && (
-                        <span className="text-muted-foreground tabular-nums">
-                          {duration}
-                        </span>
-                      )}
-                      {review && (
-                        <span
-                          className={cn(
-                            'text-muted-foreground',
-                            review.status === 'pending' &&
-                              'text-warning-foreground',
+                    <ListRow
+                      title={
+                        <span className="flex min-w-0 items-center gap-2.5 text-xs">
+                          <RunStatus run={run} />
+                          <span className="text-muted-foreground">
+                            {run.trigger === 'manual' ? 'Run now' : 'Scheduled'}
+                          </span>
+                          {at && (
+                            <time
+                              dateTime={at}
+                              className="text-muted-foreground tabular-nums"
+                            >
+                              {formatRunTime(at)}
+                            </time>
                           )}
-                        >
-                          {reviewStates[review.status]}
+                          {duration && (
+                            <span className="text-muted-foreground tabular-nums">
+                              {duration}
+                            </span>
+                          )}
+                          {review && (
+                            <span
+                              className={cn(
+                                'text-muted-foreground',
+                                review.status === 'pending' &&
+                                  'text-warning-foreground',
+                              )}
+                            >
+                              {reviewStates[review.status]}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {isActiveRun(run) && run.sessionId && (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          className="h-6 rounded-full px-2 text-xs"
-                          disabled={!connected}
-                          onClick={() => onStop(run)}
-                        >
-                          Stop
-                        </Button>
-                      )}
-                      {run.sessionId && (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          className="h-6 gap-1 px-2 text-xs text-muted-foreground"
-                          onClick={() =>
-                            run.sessionId &&
-                            onSession(hostKey(run.sessionId, run.hostId))
-                          }
-                        >
-                          Open session
-                          <ArrowUpRight className="size-3" />
-                        </Button>
-                      )}
-                    </div>
+                      }
+                      trailing={
+                        <span className="flex items-center gap-1">
+                          {isActiveRun(run) && run.sessionId && (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={!connected}
+                              onClick={() => onStop(run)}
+                            >
+                              Stop
+                            </Button>
+                          )}
+                          {run.sessionId && (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="ghost"
+                              onClick={() =>
+                                run.sessionId &&
+                                onSession(hostKey(run.sessionId, run.hostId))
+                              }
+                            >
+                              Open session
+                              <ArrowUpRight />
+                            </Button>
+                          )}
+                        </span>
+                      }
+                    />
                   </li>
                 );
               })}
@@ -345,27 +317,18 @@ export function AutomationDetail({
           ) : (
             !runsLoading &&
             !runsError && (
-              <p className="px-3 py-3 text-xs text-muted-foreground">
+              <p className="px-2 py-2 text-xs text-muted-foreground">
                 No runs yet. Use Run now or wait for the schedule.
               </p>
             )
           )}
           {runsLoading && (
-            <p
-              role="status"
-              className="px-3 py-2 text-xs text-muted-foreground"
-            >
+            <StatusMessage tone="loading" className="px-2 py-2">
               Loading runs…
-            </p>
+            </StatusMessage>
           )}
           {hasMoreRuns && !runsLoading && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="mx-1 h-7 text-xs text-muted-foreground"
-              onClick={onLoadMore}
-            >
+            <Button type="button" variant="ghost" onClick={onLoadMore}>
               Show older runs
             </Button>
           )}

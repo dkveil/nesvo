@@ -1,14 +1,5 @@
-import {
-  CircleAlert,
-  CircleCheck,
-  CircleDashed,
-  CircleSlash,
-  CircleStop,
-  CircleX,
-  LoaderCircle,
-  type LucideIcon,
-} from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { StatusIcon, type StatusKind } from '@/entities/status';
 import {
   runSummary,
   runTones,
@@ -16,15 +7,15 @@ import {
   type ScheduledJobRun,
 } from '@/entities/scheduled-job';
 
-const runIcons: Record<ScheduledJobRun['status'], LucideIcon> = {
-  starting: LoaderCircle,
-  running: LoaderCircle,
-  completed: CircleCheck,
-  failed: CircleX,
-  stopped: CircleStop,
-  interrupted: CircleDashed,
-  skipped: CircleSlash,
-  unavailable: CircleAlert,
+const runStatusKinds: Record<ScheduledJobRun['status'], StatusKind> = {
+  starting: 'running',
+  running: 'running',
+  completed: 'success',
+  failed: 'error',
+  stopped: 'idle',
+  interrupted: 'idle',
+  skipped: 'idle',
+  unavailable: 'warning',
 };
 
 type Props = {
@@ -33,23 +24,16 @@ type Props = {
 };
 
 export function RunStatus({ run, className }: Props) {
-  const Icon = runIcons[run.status];
-  const active = run.status === 'starting' || run.status === 'running';
+  const tone = runTones[run.status];
   return (
     <span
       className={cn(
         'inline-flex min-w-0 items-center gap-1.5 font-medium',
-        toneText[runTones[run.status]],
+        toneText[tone],
         className,
       )}
     >
-      <Icon
-        aria-hidden="true"
-        className={cn(
-          'size-3.5 shrink-0',
-          active && 'animate-spin motion-reduce:animate-none',
-        )}
-      />
+      <StatusIcon status={runStatusKinds[run.status]} tone={tone} />
       <span className="truncate">{runSummary(run)}</span>
     </span>
   );

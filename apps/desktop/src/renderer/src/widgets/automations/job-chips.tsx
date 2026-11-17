@@ -1,40 +1,53 @@
-import { Cloud, Monitor, SquareDashed } from 'lucide-react';
+import { CalendarClock, Cloud, Monitor, SquareDashed } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
-import { sessionProviders, type ScheduledJob } from '@/entities/scheduled-job';
+import {
+  scheduleSummary,
+  sessionProviders,
+  type ScheduledJob,
+} from '@/entities/scheduled-job';
 import {
   directoryLabel,
   effortLabel,
   modelLabel,
   ProviderGlyph,
 } from '@/entities/session';
+import { Chip } from '@/shared/ui/chip';
 import { ProjectChip } from '@/shared/ui/project-chip';
+import { Hint } from '@/shared/ui/tooltip';
 
 export function ComputerChip({ computer }: { computer: Computer | undefined }) {
   const Icon = computer?.kind === 'ssh' ? Cloud : Monitor;
   return (
-    <span className="inline-flex min-w-0 items-center gap-1">
-      <Icon className="size-3 shrink-0" aria-hidden="true" />
-      <span className="truncate">{computer?.name ?? 'Local'}</span>
-    </span>
+    <Chip
+      size="sm"
+      interactive={false}
+      icon={<Icon aria-hidden="true" />}
+      className="px-0"
+    >
+      <span>{computer?.name ?? 'Local'}</span>
+    </Chip>
   );
 }
 
 export function FolderChip({ directory }: { directory: string }) {
   const path = directory.trim();
   return (
-    <span
-      className="inline-flex min-w-0 items-center gap-1"
-      title={path || 'Isolated folder'}
-    >
-      {path ? (
-        <ProjectChip label={directoryLabel(path)} />
-      ) : (
-        <SquareDashed className="size-3 shrink-0" aria-hidden="true" />
-      )}
-      <span className="truncate">
-        {path ? directoryLabel(path) : 'Isolated folder'}
-      </span>
-    </span>
+    <Hint label={path || 'Isolated folder'}>
+      <Chip
+        size="sm"
+        interactive={false}
+        icon={
+          path ? (
+            <ProjectChip label={directoryLabel(path)} />
+          ) : (
+            <SquareDashed aria-hidden="true" />
+          )
+        }
+        className="px-0"
+      >
+        <span>{path ? directoryLabel(path) : 'Isolated folder'}</span>
+      </Chip>
+    </Hint>
   );
 }
 
@@ -45,15 +58,31 @@ export function ModelChip({
 }) {
   const provider = sessionProviders[job.provider];
   return (
-    <span
-      className="inline-flex min-w-0 items-center gap-1"
-      title={`${provider} · ${modelLabel(job.model)}${job.effort ? ` · ${effortLabel(job.effort)}` : ''}`}
+    <Hint
+      label={`${provider} · ${modelLabel(job.model)}${job.effort ? ` · ${effortLabel(job.effort)}` : ''}`}
     >
-      <ProviderGlyph provider={provider} />
-      <span className="truncate">{modelLabel(job.model)}</span>
-      {job.effort && (
-        <span className="shrink-0">{effortLabel(job.effort)}</span>
-      )}
-    </span>
+      <Chip
+        size="sm"
+        interactive={false}
+        icon={<ProviderGlyph provider={provider} />}
+        className="px-0"
+      >
+        <span>{modelLabel(job.model)}</span>
+        {job.effort && <span>{effortLabel(job.effort)}</span>}
+      </Chip>
+    </Hint>
+  );
+}
+
+export function ScheduleChip({ job }: { job: ScheduledJob }) {
+  return (
+    <Chip
+      size="sm"
+      interactive={false}
+      icon={<CalendarClock aria-hidden="true" />}
+      className="max-w-none px-0"
+    >
+      <span>{scheduleSummary(job)}</span>
+    </Chip>
   );
 }
