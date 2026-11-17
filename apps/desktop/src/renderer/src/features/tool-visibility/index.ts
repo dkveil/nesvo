@@ -1,6 +1,2 @@
-export { useToolVisibility, setToolVisibility } from './use-tool-visibility';
-export {
-  readToolVisibility,
-  toolVisibilityKey,
-  type ToolVisibility,
-} from './tool-visibility-preference';
+export { useToolVisibility } from './use-tool-visibility';
+export type { ToolVisibility } from './tool-visibility-preference';

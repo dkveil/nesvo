@@ -100,7 +100,7 @@ export const FailureNotice = ({
   let line: ReactNode = message;
   if (kind === 'usage-limit' && failure) line = usageLine(failure, now);
   if (kind === 'sign-in')
-    line = `Run this on ${computerName}, then check again.`;
+    line = `Run this in a terminal on ${computerName}, then check again.`;
   const checkProvider = () => {
     setChecked(true);
     onCheckProvider();

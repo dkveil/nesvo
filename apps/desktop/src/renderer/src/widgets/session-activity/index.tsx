@@ -138,14 +138,17 @@ function ActivityItem({ item }: { item: Activity }) {
             {item.detail}
           </p>
         )}
-        {item.detail && item.kind !== 'thinking' && (command || !declined) && (
-          <pre
-            aria-label="Activity details"
-            className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
-          >
-            {item.detail}
-          </pre>
-        )}
+        {item.detail &&
+          item.kind !== 'thinking' &&
+          item.detail !== command &&
+          (command || !declined) && (
+            <pre
+              aria-label="Activity details"
+              className="max-h-48 overflow-auto font-mono text-xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]"
+            >
+              {item.detail}
+            </pre>
+          )}
         {item.output && (
           <pre
             aria-label="Command output"
