@@ -33,6 +33,7 @@ import {
   directoryLabel,
   errorDetail,
   pendingPrompt,
+  pendingPrompts,
   providerModes,
   providerStatusLabel,
   sessionRoleLabel,
@@ -1919,6 +1920,7 @@ export function Workspace() {
           count +
           (session.status === 'running' && session.runId
             ? session.pendingApprovals.length +
+              pendingPrompts(session).length +
               session.delegations.filter(
                 item =>
                   item.runId === session.runId &&
@@ -2519,6 +2521,18 @@ export function Workspace() {
               }
               onWorkerPlan={(input, hostId) =>
                 void decideWorkerPlan(input, hostId)
+              }
+              promptAnswers={promptAnswers}
+              promptModes={session =>
+                providerModes(
+                  session.provider,
+                  store.providerStates(session.hostId)[session.provider]
+                    ?.status,
+                )
+              }
+              isPromptEnabled={session => promptsEnabled(session.hostId)}
+              promptInactiveReason={session =>
+                promptsInactiveReason(session.hostId)
               }
               onSession={select}
               onRefresh={store.reload}

@@ -3,6 +3,7 @@ import type {
   DecideDelegationInput,
   DecideWorkerPlanInput,
   RespondApprovalInput,
+  SessionMode,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
 import {
@@ -16,8 +17,11 @@ import {
   directoryLabel,
   modeLabel,
   modelLabel,
+  pendingPrompts,
   type Session,
+  type SessionPrompt,
 } from '@/entities/session';
+import type { AnswerPromptController } from '@/features/answer-prompt';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import {
@@ -26,6 +30,7 @@ import {
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
 import { WorkerPlanRow } from './worker-plan-row';
+import { PromptRow } from './prompt-row';
 import { Label } from '@/shared/ui/label';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -50,6 +55,10 @@ type Props = ReviewDecisionProps & {
   onApproval: (input: RespondApprovalInput, hostId: string) => void;
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onWorkerPlan: (input: DecideWorkerPlanInput, hostId: string) => void;
+  promptAnswers: AnswerPromptController;
+  promptModes: (session: Session) => SessionMode[];
+  isPromptEnabled: (session: Session) => boolean;
+  promptInactiveReason: (session: Session) => string;
   onSession: (sessionId: string, targetId?: string) => void;
   onRefresh: () => void;
   originLabel?: (review: Review) => string;
@@ -64,6 +73,13 @@ type ActionRow =
       type: 'approval';
       session: Session;
       approval: Session['pendingApprovals'][number];
+      at: string;
+      id: string;
+    }
+  | {
+      type: 'prompt';
+      session: Session;
+      prompt: SessionPrompt;
       at: string;
       id: string;
     }
@@ -137,6 +153,10 @@ export function ReviewInbox({
   onApproval,
   onDelegation,
   onWorkerPlan,
+  promptAnswers,
+  promptModes,
+  isPromptEnabled,
+  promptInactiveReason,
   onSession,
   onRefresh,
   originLabel,
@@ -168,6 +188,14 @@ export function ReviewInbox({
           approval,
           at: session.updatedAt,
           id: `${entityKey(session)}/${session.runId}/${approval.id}`,
+        });
+      for (const prompt of pendingPrompts(session))
+        rows.push({
+          type: 'prompt',
+          session,
+          prompt,
+          at: session.updatedAt,
+          id: `${entityKey(session)}/${session.runId}/${prompt.id}`,
         });
       for (const delegation of session.delegations)
         if (
@@ -379,6 +407,41 @@ export function ReviewInbox({
               const computerName =
                 computers.find(item => item.id === session.hostId)?.name ??
                 session.hostId;
+              if (row.type === 'prompt') {
+                const { prompt } = row;
+                return (
+                  <PromptRow
+                    key={`prompt/${row.id}`}
+                    session={session}
+                    prompt={prompt}
+                    className={rowClass}
+                    sessionLink={sessionLink(
+                      entityKey(session),
+                      session.title,
+                      `prompt-${prompt.id}`,
+                    )}
+                    hostLabel={
+                      session.hostId !== 'local' ||
+                      computers.length > 1 ||
+                      !isOperationEnabled(session)
+                        ? `${computerName}${
+                            !isOperationEnabled(session)
+                              ? ' · Offline snapshot'
+                              : ''
+                          }`
+                        : ''
+                    }
+                    modes={promptModes(session)}
+                    enabled={operationEnabled && isPromptEnabled(session)}
+                    inactiveReason={promptInactiveReason(session)}
+                    sending={promptAnswers.isSending(session, prompt)}
+                    error={promptAnswers.errorOf(session, prompt)}
+                    onAnswer={answer =>
+                      void promptAnswers.answer(session, prompt, answer)
+                    }
+                  />
+                );
+              }
               if (row.type === 'approval') {
                 const { approval } = row;
                 const deciding = !!approvalPending[row.id];
