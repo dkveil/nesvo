@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type {
   CreateSessionInput,
+  SessionGroup,
   DecideDelegationInput,
   DecideWorkerPlanInput,
   DecideReviewInput,
@@ -88,6 +89,7 @@ import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { NavigationRail } from '@/widgets/navigation-rail';
 import { SessionSidebar } from '@/widgets/session-sidebar';
+import { useHousekeeping } from './use-housekeeping';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import {
   WorkflowSection,
@@ -570,6 +572,10 @@ export function Workspace() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [creationGroup, setCreationGroup] = useState<{
+    hostId: string;
+    groupId: string;
+  } | null>(null);
   const threadRequest = useRef(false);
   const navigationVersion = useRef(0);
   const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
@@ -1015,7 +1021,29 @@ export function Workspace() {
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
-  const openCreate = () => guardEditor(openCreateNow);
+  const openCreate = () =>
+    guardEditor(() => {
+      setCreationGroup(null);
+      openCreateNow();
+    });
+  const openCreateInGroup = (hostId: string, group: SessionGroup) =>
+    guardEditor(() => {
+      const { directory, provider, model, mode } = group.defaults;
+      setThreadSetup(previous => {
+        const switched = !!provider && provider !== previous.provider;
+        return {
+          ...previous,
+          hostId,
+          directory: directory ?? previous.directory,
+          provider: provider ?? previous.provider,
+          model: model ?? (switched ? '' : previous.model),
+          effort: switched || model ? '' : previous.effort,
+          mode: mode ?? (switched ? 'read-only' : previous.mode),
+        };
+      });
+      setCreationGroup({ hostId, groupId: group.id });
+      openCreateNow();
+    });
   const openCreateNow = () => {
     navigationVersion.current += 1;
     setNavigationOpen(false);
@@ -1231,9 +1259,19 @@ export function Workspace() {
       throw new Error('Connect this computer before starting a thread.');
     threadRequest.current = true;
     const origin = navigationVersion.current;
+    const group =
+      creationGroup?.hostId === hostId && store.supportsGroups(hostId)
+        ? store.groups(hostId).find(item => item.id === creationGroup.groupId)
+        : undefined;
     try {
-      const session = await desktopApi(hostId).createSession(input);
+      const session = await desktopApi(hostId).createSession(
+        group ? { ...input, groupId: group.id } : input,
+      );
       store.merge([session]);
+      setCreationGroup(null);
+      const workflow = group?.defaults.workflow;
+      if (workflow && supportsSessionWorkflow(hostId))
+        await assignWorkflow(session, workflow);
       const key = entityKey(session);
       draftVersions.current[key] = (draftVersions.current[key] ?? 0) + 1;
       const version = draftVersions.current[key];
@@ -1853,7 +1891,15 @@ ${text}`
       ),
     );
   };
+  const housekeeping = useHousekeeping(store, openCreateInGroup);
+  const creationGroupName = creationGroup
+    ? store
+        .groups(creationGroup.hostId)
+        .find(group => group.id === creationGroup.groupId)?.name
+    : undefined;
   const sidebarProps = {
+    housekeeping,
+    currentHostId: creating ? threadSetup.hostId : selectedHostId,
     sessions: store.sessions,
     workflowRuns: store.workflowRuns,
     computers: store.computers,
@@ -2110,7 +2156,9 @@ ${text}`
               >
                 <h1 className="truncate text-[13px] font-semibold">
                   {creating
-                    ? 'New thread'
+                    ? creationGroupName
+                      ? `New thread · ${creationGroupName}`
+                      : 'New thread'
                     : workflowsView
                       ? workflowsEditor
                         ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`

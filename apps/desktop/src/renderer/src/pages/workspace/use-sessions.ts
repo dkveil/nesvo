@@ -8,6 +8,7 @@ import type {
   DesktopWorkflowStepRecord,
   DesktopReview,
   DesktopSession,
+  SessionGroupList,
   WorkspaceEvent,
 } from '@nesvo/contracts';
 import {
@@ -54,6 +55,15 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     actOnPullRequest: input => api.actOnPullRequest(input, hostId),
     linkSessionPullRequest: input => api.linkSessionPullRequest(input, hostId),
     findSessionPullRequest: input => api.findSessionPullRequest(input, hostId),
+    listSessionGroups: () => api.listSessionGroups(hostId),
+    createSessionGroup: input => api.createSessionGroup(input, hostId),
+    updateSessionGroup: input => api.updateSessionGroup(input, hostId),
+    moveSessionGroup: input => api.moveSessionGroup(input, hostId),
+    deleteSessionGroup: input => api.deleteSessionGroup(input, hostId),
+    moveSession: input => api.moveSession(input, hostId),
+    renameSession: input => api.renameSession(input, hostId),
+    setSessionPinned: input => api.setSessionPinned(input, hostId),
+    setSessionArchived: input => api.setSessionArchived(input, hostId),
   };
   boundApis.set(hostId, bound);
   return bound;
@@ -113,6 +123,17 @@ export function useSessions() {
       }),
     [],
   );
+  const [groupLists, setGroupLists] = useState<
+    Record<string, SessionGroupList>
+  >({});
+  const mergeGroups = useCallback((hostId: string, list: SessionGroupList) => {
+    if (!computersRef.current.some(computer => computer.id === hostId)) return;
+    setGroupLists(previous =>
+      (previous[hostId]?.revision ?? -1) > list.revision
+        ? previous
+        : { ...previous, [hostId]: list },
+    );
+  }, []);
   const runRequests = useRef(new Set<string>());
   const [computers, setComputers] = useState<Computer[]>([]);
   const computersRef = useRef<Computer[]>([]);
@@ -251,7 +272,23 @@ export function useSessions() {
       setReviews(current => current.filter(item => ids.has(item.hostId)));
       setWorkflowRuns(current => current.filter(item => ids.has(item.hostId)));
       setWorkflowSteps(current => current.filter(item => ids.has(item.hostId)));
+      setGroupLists(current =>
+        Object.fromEntries(
+          Object.entries(current).filter(([hostId]) => ids.has(hostId)),
+        ),
+      );
       for (const computer of updates) {
+        if (
+          computer.status === 'connected' &&
+          computer.capabilities.includes('session-groups') &&
+          !previous.some(
+            item => item.id === computer.id && item.status === 'connected',
+          )
+        )
+          void window.nesvo.listSessionGroups(computer.id).then(
+            list => mergeGroups(computer.id, list),
+            () => undefined,
+          );
         if (
           computer.status === 'connected' &&
           computer.capabilities.includes('workflows') &&
@@ -287,6 +324,8 @@ export function useSessions() {
         mergeWorkflowRuns([event.run]);
       else if (event.type === 'workflow-step-changed')
         mergeWorkflowSteps([event.step]);
+      else if (event.type === 'session-groups-changed')
+        mergeGroups(event.hostId, event.list);
       else if (event.type === 'workflow-assistant-proposal')
         setAssistantProposals(previous => ({
           ...previous,
@@ -379,6 +418,7 @@ export function useSessions() {
     };
   }, [
     attempt,
+    mergeGroups,
     recordAssistantChange,
     inspectProvider,
     merge,
@@ -426,8 +466,17 @@ export function useSessions() {
     computers.some(item => item.id === hostId && item.status === 'connected');
   const providerStates = (hostId = 'local') =>
     providersByHost[hostId] ?? emptyProviders;
+  const groups = (hostId: string) => groupLists[hostId]?.groups ?? [];
+  const supportsGroups = (hostId: string) =>
+    !!computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-groups');
   return {
     sessions,
+    groups,
+    groupLists,
+    mergeGroups,
+    supportsGroups,
     reviews,
     workflowRuns,
     workflowSteps,
