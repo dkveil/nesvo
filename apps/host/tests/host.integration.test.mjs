@@ -16395,10 +16395,26 @@ test(
     };
     const merged = await Promise.all([
       action(merge, 42, actionId),
-      action(merge, 42, actionId),
+      request('act-on-pull-request', {
+        actionId,
+        reference: { number: 42, repository: 'OCTO/Project' },
+        action: {
+          method: merge.method,
+          expectedHeadSha: merge.expectedHeadSha,
+          action: merge.action,
+        },
+      }),
+      action({ ...merge, method: 'rebase' }, 42, actionId),
     ]);
     assert.equal(merged[0].type, 'pull-request-action');
     assert.deepEqual(merged[0].result, merged[1].result);
+    for (const conflict of [merged[2], await action(merge, 43, actionId)]) {
+      assert.equal(conflict.code, 'invalid-request');
+      assert.equal(
+        conflict.message,
+        'This action ID was already used for a different request.',
+      );
+    }
     assert.deepEqual(
       (await action(merge, 42, actionId)).result,
       merged[0].result,

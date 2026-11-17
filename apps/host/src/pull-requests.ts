@@ -1,4 +1,5 @@
-﻿import { isAbsolute } from 'node:path';
+﻿import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import {
   githubRepositorySchema,
   parsePullRequestUrl,
@@ -118,12 +119,17 @@ type Checkout = (
   run: (session: Session) => Promise<void>,
 ) => Promise<void>;
 
+const maxActions = 4096;
+type ActionRequest = z.output<typeof actOnPullRequestSchema>;
+type ActionRecord = {
+  fingerprint: string;
+  result: Promise<PullRequestActionResult>;
+  settled: boolean;
+};
+
 export class PullRequests {
   private readonly gh: GitHubCli;
-  private readonly actions = new Map<
-    string,
-    Promise<PullRequestActionResult>
-  >();
+  private readonly actions = new Map<string, ActionRecord>();
 
   constructor(
     private readonly signal: AbortSignal,
@@ -355,28 +361,52 @@ export class PullRequests {
     return resolveFolder(session.directory, this.signal);
   }
 
-  act(
-    input: z.output<typeof actOnPullRequestSchema>,
-  ): Promise<PullRequestActionResult> {
-    const existing = this.actions.get(input.actionId);
-    if (existing) return existing;
-    if (this.actions.size >= 4096)
+  act(input: ActionRequest): Promise<PullRequestActionResult> {
+    const { action, reference } = input;
+    const id = input.actionId.toLowerCase();
+    const fingerprint = createHash('sha256')
+      .update(
+        JSON.stringify([reference.repository.toLowerCase(), reference.number]),
+      )
+      .update(JSON.stringify(action, Object.keys(action).sort()))
+      .digest('hex');
+    const existing = this.actions.get(id);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint)
+        throw new PullRequestError(
+          'invalid-request',
+          'This action ID was already used for a different request.',
+        );
+      return existing.result;
+    }
+    if (this.actions.size >= maxActions) {
+      for (const [key, record] of this.actions) {
+        if (!record.settled) continue;
+        this.actions.delete(key);
+        break;
+      }
+    }
+    if (this.actions.size >= maxActions)
       throw new PullRequestError(
         'busy',
-        'The GitHub action history is full. Restart the host before starting new actions.',
+        'Too many GitHub actions are in progress. Try again shortly.',
       );
-    const pending = this.runAction(input);
-    this.actions.set(input.actionId, pending);
-    return pending;
+    const record: ActionRecord = {
+      fingerprint,
+      settled: false,
+      result: this.runAction(input).finally(() => {
+        record.settled = true;
+      }),
+    };
+    this.actions.set(id, record);
+    return record.result;
   }
 
   private async runAction({
     action,
     actionId,
     reference,
-  }: z.output<
-    typeof actOnPullRequestSchema
-  >): Promise<PullRequestActionResult> {
+  }: ActionRequest): Promise<PullRequestActionResult> {
     const prArgs = referenceArgs(reference);
     const endpoint = `repos/${reference.repository}/pulls/${reference.number}`;
     const signal = AbortSignal.timeout(60_000);
