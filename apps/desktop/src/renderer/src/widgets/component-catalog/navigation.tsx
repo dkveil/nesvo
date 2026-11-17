@@ -15,7 +15,7 @@ import { DiffStat, FileGlyph } from '@/entities/file-change';
 import { StatusIcon } from '@/entities/status';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { CountBadge } from '@/shared/ui/badge';
-import { Disclosure } from '@/shared/ui/disclosure';
+import { Disclosure, NativeDisclosure } from '@/shared/ui/disclosure';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { NavItem, NavList } from '@/shared/ui/nav-list';
@@ -386,6 +386,14 @@ export function NavigationSection() {
             <Disclosure title="Collapsed disclosure" meta="12">
               Hidden sample content.
             </Disclosure>
+            <NativeDisclosure
+              title="Native disclosure with description"
+              description="A second muted line previews the collapsed content."
+              meta="Pending"
+            >
+              Rendered with details and summary, so the content stays in the
+              document and the open attribute is preserved.
+            </NativeDisclosure>
           </div>
         </div>
       </Specimen>

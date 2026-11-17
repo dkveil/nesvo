@@ -68,6 +68,9 @@ export function ListRow({
   className,
   style,
   children,
+  'aria-expanded': ariaExpanded,
+  'aria-haspopup': ariaHasPopup,
+  'aria-controls': ariaControls,
   ...props
 }: ListRowProps) {
   const interactive = !!onClick;
@@ -77,6 +80,11 @@ export function ListRow({
   const mutedText = sidebar
     ? 'text-sidebar-muted-foreground'
     : 'text-muted-foreground';
+  const disclosureProps = {
+    'aria-expanded': ariaExpanded,
+    'aria-haspopup': ariaHasPopup,
+    'aria-controls': ariaControls,
+  };
   const inset = BASE_INSET_PX + level * TREE_INDENT_PX;
   const content =
     density === 'grid' ? (
@@ -162,11 +170,12 @@ export function ListRow({
         tone === 'default' && [
           'text-foreground',
           interactive && 'not-data-disabled:hover:bg-accent',
-          'data-selected:bg-highlight',
+          'data-[state=open]:bg-accent data-selected:bg-highlight',
         ],
         sidebar && [
           'text-sidebar-foreground',
           interactive && 'not-data-disabled:hover:bg-sidebar-row-hover',
+          'data-[state=open]:bg-sidebar-row-hover',
           'data-selected:bg-sidebar-row-selected data-selected:shadow-(--sidebar-row-selected-shadow)',
         ],
         'data-disabled:opacity-50',
@@ -174,6 +183,7 @@ export function ListRow({
         className,
       )}
       style={{ ...style, paddingLeft: interactive ? undefined : inset }}
+      {...(interactive ? {} : disclosureProps)}
       {...props}
     >
       {interactive ? (
@@ -181,6 +191,7 @@ export function ListRow({
           type="button"
           disabled={disabled}
           aria-current={selected ? 'true' : undefined}
+          {...disclosureProps}
           {...mainProps}
           onClick={onClick}
           style={{ paddingLeft: inset, ...gridStyle, ...mainProps?.style }}
