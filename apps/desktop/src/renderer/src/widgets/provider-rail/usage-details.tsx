@@ -11,6 +11,20 @@ const sourceLabels = {
   'claude-control': 'Claude Code',
 };
 
+const planLabels: Record<string, string> = {
+  free: 'Free',
+  pro: 'Pro',
+  prolite: 'Pro Lite',
+  plus: 'Plus',
+  max: 'Max',
+  team: 'Team',
+  edu: 'Edu',
+  enterprise: 'Enterprise',
+};
+
+const formatPlan = (plan: string) =>
+  planLabels[plan.trim().toLowerCase()] ?? plan;
+
 export function UsageDetails({
   provider,
   state,
@@ -28,20 +42,20 @@ export function UsageDetails({
   const status = !connected
     ? 'Offline · last observation'
     : error
-      ? 'Could not refresh limits'
+      ? 'Could not refresh'
       : !data
         ? loading
-          ? 'Checking limits…'
-          : 'Limits unavailable'
+          ? 'Checking…'
+          : 'Unavailable'
         : data.status === 'unauthenticated'
           ? 'Sign-in required'
           : data.status === 'error'
-            ? 'Limits unavailable'
+            ? 'Unavailable'
             : data.status === 'unavailable'
-              ? 'Not reported by this connection'
+              ? 'Not reported'
               : outdated
                 ? 'Stale · refresh to verify'
-                : 'Current observation';
+                : null;
   return (
     <section
       aria-label={`${provider} usage`}
@@ -49,38 +63,44 @@ export function UsageDetails({
       data-usage-status={error ? 'error' : (data?.status ?? 'unavailable')}
       data-usage-stale={outdated}
       data-usage-source={data?.source ?? undefined}
-      className="space-y-3 py-4 first:pt-1 last:pb-0"
+      className="space-y-2 py-3 first:pt-0 last:pb-0"
     >
-      <header className="flex items-start justify-between gap-3">
-        <h3 className="text-sm font-medium">{provider}</h3>
-        <span className="text-[11px] text-muted-foreground">{status}</span>
-      </header>
-      {data?.account && (
-        <div className="space-y-0.5 text-xs">
-          <p className="break-all">
-            {data.account.label || 'Account name not reported'}
-          </p>
-          {data.account.plan && (
-            <p className="text-muted-foreground">{data.account.plan}</p>
+      <header className="flex items-baseline justify-between gap-3">
+        <h3 className="text-xs font-semibold">
+          {provider}
+          {data?.account?.plan && (
+            <span className="ml-1.5 font-normal text-muted-foreground">
+              {formatPlan(data.account.plan)}
+            </span>
           )}
-        </div>
+        </h3>
+        {status && (
+          <span className="text-2xs text-muted-foreground">{status}</span>
+        )}
+      </header>
+      {data?.account?.label && (
+        <p
+          className="truncate text-2xs text-muted-foreground"
+          title={data.account.label}
+        >
+          {data.account.label}
+        </p>
       )}
       {usable && data.windows.length > 0 ? (
-        <div className="space-y-3">
+        <ul className="space-y-1.5">
           {data.windows.map(window => {
             const expired =
               window.resetsAt !== null && Date.parse(window.resetsAt) <= now;
             return (
-              <div
+              <li
                 key={window.id}
                 data-usage-window={window.id}
-                className="space-y-1.5"
+                className="space-y-1"
               >
-                <div className="flex justify-between gap-3 text-xs">
-                  <span>{window.label}</span>
+                <div className="flex items-baseline justify-between gap-3 text-xs">
+                  <span className="min-w-0 truncate">{window.label}</span>
                   <span className="shrink-0 tabular-nums">
-                    {formatPercent(Math.max(0, 100 - window.usedPercent))}{' '}
-                    remaining
+                    {formatPercent(Math.max(0, 100 - window.usedPercent))} left
                   </span>
                 </div>
                 <div
@@ -97,25 +117,22 @@ export function UsageDetails({
                     style={{ width: `${Math.min(100, window.usedPercent)}%` }}
                   />
                 </div>
-                <p className="text-[11px] leading-5 text-muted-foreground">
-                  {formatPercent(window.usedPercent)} used
-                </p>
-                <p className="text-[11px] leading-5 text-muted-foreground">
+                <p className="text-2xs text-muted-foreground tabular-nums">
                   {window.resetsAt ? (
                     <>
-                      {expired ? 'Reported reset passed: ' : 'Resets: '}
+                      {expired ? 'Reported reset passed ' : 'Resets '}
                       <time dateTime={window.resetsAt}>
                         {formatResetTime(window.resetsAt)}
                       </time>
                     </>
                   ) : (
-                    'Reset time not reported.'
+                    'Reset time not reported'
                   )}
                 </p>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       ) : (
         <p className="text-xs text-muted-foreground">
           {loading && !data
@@ -124,29 +141,26 @@ export function UsageDetails({
         </p>
       )}
       {data?.ordinaryUsageAllowed === false && (
-        <p className="text-xs leading-5 text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           The provider reports that ordinary usage is unavailable. Session
           controls remain available.
         </p>
       )}
       {data?.detail && (
-        <p className="text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="text-2xs text-muted-foreground [overflow-wrap:anywhere]">
           {data.detail}
         </p>
       )}
       {data && (
-        <p className="text-[11px] leading-5 text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Checked{' '}
           <time dateTime={data.checkedAt}>
             {formatResetTime(data.checkedAt)}
           </time>
-          {data.source ? ` · Reported by ${sourceLabels[data.source]}` : ''}
-        </p>
-      )}
-      {outdated && (
-        <p className="text-[11px] leading-5 text-muted-foreground">
-          Values reflect the last check. A passed reset does not confirm a
-          refreshed allowance.
+          {data.source ? ` · ${sourceLabels[data.source]}` : ''}
+          {outdated
+            ? ' · a passed reset does not confirm a refreshed allowance'
+            : ''}
         </p>
       )}
     </section>

@@ -32,22 +32,22 @@ export function ProviderAccounts({
   const loading = providers.some(provider => states[provider].loading);
   return (
     <div data-host-id={hostId} className={className}>
-      <header className="mb-3 flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-medium">Account and limits</h2>
-          <p
-            className="mt-0.5 truncate text-xs text-muted-foreground"
+      <header className="mb-2 flex items-center gap-2">
+        <h2 className="min-w-0 flex-1 truncate text-xs font-semibold">
+          Limits
+          <span
+            className="ml-1.5 font-normal text-muted-foreground"
             title={computerName}
           >
             {computerName}
             {connected ? '' : ' · Offline'}
-          </p>
-        </div>
+          </span>
+        </h2>
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
-          className="size-7 text-muted-foreground hover:text-foreground"
+          size="icon-xs"
+          className="text-muted-foreground hover:text-foreground"
           aria-label="Refresh limits"
           title="Refresh limits"
           disabled={!connected || loading}
@@ -55,7 +55,7 @@ export function ProviderAccounts({
         >
           <RefreshCw
             className={cn(
-              'size-3.5',
+              'size-3',
               loading && 'animate-spin motion-reduce:animate-none',
             )}
           />

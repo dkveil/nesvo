@@ -102,7 +102,7 @@ export function ProviderUsage({
               }
             }}
             data-host-id={hostId}
-            className="glass-popover z-50 max-h-[min(40rem,var(--radix-popover-content-available-height))] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border p-4 text-popover-foreground"
+            className="glass-popover z-50 max-h-[min(40rem,var(--radix-popover-content-available-height))] w-[min(19rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border p-3 text-popover-foreground"
           >
             <ProviderAccounts
               hostId={hostId}
@@ -117,7 +117,7 @@ export function ProviderUsage({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  className="mb-3 px-0 text-muted-foreground"
+                  className="mb-2 h-5 px-0 text-2xs text-muted-foreground"
                   onClick={() => setSelected('all')}
                 >
                   All accounts
