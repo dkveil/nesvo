@@ -108,6 +108,14 @@ import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';
 import { SessionWorkflowChip } from '@/features/session-workflow';
+import { SessionPullRequest } from '@/features/session-pull-request';
+import {
+  pullRequestsUnavailableReason,
+  referenceKey,
+  sameReference,
+  type PullRequestTarget,
+} from '@/entities/pull-request';
+import { PullRequestsView } from '@/widgets/pull-requests';
 import { readSeen, writeSeen } from './seen-store';
 import { useAttention } from './use-attention';
 import { useProviderUsage } from './use-provider-usage';
@@ -125,6 +133,10 @@ const ReviewDiff = lazy(() => import('@/widgets/review-diff'));
 const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
+
+const PullRequestPanel = lazy(() => import('@/widgets/pull-request'));
+
+const DRAFT_LIMIT_CHARACTERS = 32_000;
 
 const WorkflowDefinitions = lazy(
   () => import('@/widgets/workflow-definitions'),
@@ -178,9 +190,12 @@ export function Workspace() {
   >({});
   const runRequests = useRef<Record<string, { id: string; at: string }>>({});
   const [sessionTarget, setSessionTarget] = useState('');
-  const [panel, setPanel] = useState<'diff' | 'files' | 'skills' | null>(
-    location.diff ? 'diff' : null,
-  );
+  const [panel, setPanel] = useState<
+    'diff' | 'files' | 'skills' | 'pull-request' | null
+  >(location.diff ? 'diff' : null);
+  const [pullRequestsView, setPullRequestsView] = useState(false);
+  const [pullRequestTarget, setPullRequestTarget] =
+    useState<PullRequestTarget | null>(null);
   const [workflowsView, setWorkflowsView] = useState(false);
   const [workflowsSource, setWorkflowsSource] = useState({
     hostId: 'local',
@@ -298,6 +313,7 @@ export function Workspace() {
           setInbox(false);
           setAutomation('');
           setWorkflowsView(true);
+          setPullRequestsView(false);
           setNavigationOpen(false);
           setWorkflowsSource({ hostId, directory: change.directory });
           setWorkflowsEditor({
@@ -348,6 +364,7 @@ export function Workspace() {
           setInbox(false);
           setAutomation('');
           setWorkflowsView(true);
+          setPullRequestsView(false);
           setNavigationOpen(false);
           setWorkflowsSource({ hostId, directory });
           setWorkflowsEditor({
@@ -470,7 +487,7 @@ export function Workspace() {
   };
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
-  const browsing = inbox || workflowsView || !!automation;
+  const browsing = inbox || workflowsView || pullRequestsView || !!automation;
   const editorHostId = workflowsEditor?.hostId ?? '';
   const discoverEditorSkills = useCallback(
     async (directory: string): Promise<SkillSummary[]> => {
@@ -660,7 +677,8 @@ export function Workspace() {
     store.sessions[0];
   const selectedKey = selected ? entityKey(selected) : '';
   const selectedRevision = selected?.revision ?? 0;
-  const selectedVisible = !inbox && !creating && !workflowsView && !automation;
+  const selectedVisible =
+    !inbox && !creating && !workflowsView && !pullRequestsView && !automation;
   const markSeen = useCallback(() => {
     if (!selectedKey || !selectedVisible || !document.hasFocus()) return;
     setSeen(previous => {
@@ -899,6 +917,7 @@ export function Workspace() {
     setSessionTarget(targetId);
     setInbox(false);
     setWorkflowsView(false);
+    setPullRequestsView(false);
     setAutomation('');
     setNavigationOpen(false);
     setDetailsOpen(false);
@@ -911,6 +930,7 @@ export function Workspace() {
     setCreating(false);
     setInbox(true);
     setWorkflowsView(false);
+    setPullRequestsView(false);
     setAutomation('');
     setNavigationOpen(false);
   };
@@ -929,7 +949,28 @@ export function Workspace() {
     setWorkflowsEditor(null);
     setAutomation('');
     setWorkflowsView(true);
+    setPullRequestsView(false);
     setNavigationOpen(false);
+  };
+  const openPullRequests = () => guardEditor(openPullRequestsNow);
+  const openPullRequestsNow = () => {
+    navigationVersion.current += 1;
+    if (panel !== 'pull-request') setPanel(null);
+    setDiffTarget(null);
+    setCreating(false);
+    setInbox(false);
+    setWorkflowsEditor(null);
+    setWorkflowsView(false);
+    setAutomation('');
+    setPullRequestsView(true);
+    setNavigationOpen(false);
+    setDetailsOpen(false);
+  };
+  const openPullRequest = (target: PullRequestTarget) => {
+    diffTrigger.current = panelTrigger();
+    setCardOpen(false);
+    setPullRequestTarget(target);
+    setPanel('pull-request');
   };
   const openAutomations = (target = 'list') =>
     guardEditor(() => openAutomationsNow(target));
@@ -941,6 +982,7 @@ export function Workspace() {
     setInbox(false);
     setWorkflowsEditor(null);
     setWorkflowsView(false);
+    setPullRequestsView(false);
     setAutomation(target);
     setNavigationOpen(false);
     setDetailsOpen(false);
@@ -954,6 +996,7 @@ export function Workspace() {
     setDiffTarget(null);
     setInbox(false);
     setWorkflowsView(false);
+    setPullRequestsView(false);
     setAutomation('');
     setCreating(true);
   };
@@ -1740,6 +1783,48 @@ export function Workspace() {
     automations.runs(job).runs[0];
   const operationEnabled =
     connection === 'ready' && !store.loading && !store.error;
+  const pullRequestsAvailable = store.computers.some(computer =>
+    computer.capabilities.includes('pull-requests'),
+  );
+  const pullRequestBlockedReason = (hostId: string) =>
+    pullRequestsUnavailableReason(
+      store.computers.find(computer => computer.id === hostId),
+    ) || (store.hostReady(hostId) ? '' : 'Session history is still loading.');
+  const pullRequestApi = (hostId: string) =>
+    window.nesvo ? desktopApi(hostId) : null;
+  const linkedSessions = pullRequestTarget
+    ? store.sessions.filter(
+        session =>
+          session.hostId === pullRequestTarget.hostId &&
+          sameReference(session.pullRequest, pullRequestTarget.reference),
+      )
+    : [];
+  const checkoutSession =
+    selected && linkedSessions.includes(selected) ? selected : null;
+  const threadTarget = checkoutSession ?? linkedSessions[0] ?? selected ?? null;
+  const sendToSession = (text: string) => {
+    if (!threadTarget) return;
+    const key = entityKey(threadTarget);
+    const existing = drafts[key]?.trim();
+    changeDraft(
+      key,
+      (existing
+        ? `${existing}
+
+${text}`
+        : text
+      ).slice(0, DRAFT_LIMIT_CHARACTERS),
+    );
+    if (key !== selectedKey || browsing || creating) {
+      selectNow(key);
+      setPanel('pull-request');
+    }
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() =>
+        document.getElementById('message-input')?.focus(),
+      ),
+    );
+  };
   const sidebarProps = {
     sessions: store.sessions,
     workflowRuns: store.workflowRuns,
@@ -1767,7 +1852,10 @@ export function Workspace() {
             : 0),
         0,
       ),
-    selectedId: creating || workflowsView || automation ? '' : selectedKey,
+    selectedId:
+      creating || workflowsView || pullRequestsView || automation
+        ? ''
+        : selectedKey,
     unreadKeys,
     inbox,
     workflows: workflowsView,
@@ -1779,6 +1867,8 @@ export function Workspace() {
     automations: !!automation,
     automationsAvailable: automationComputers.length > 0,
     onAutomations: () => openAutomations(),
+    pullRequests: pullRequestsView,
+    onPullRequests: pullRequestsAvailable ? openPullRequests : undefined,
   };
   const readBranch = window.nesvo
     ? (hostId: string, directory: string) =>
@@ -1825,6 +1915,8 @@ export function Workspace() {
           onInbox={sidebarProps.onInbox}
           onWorkflows={sidebarProps.onWorkflows}
           onAutomations={sidebarProps.onAutomations}
+          pullRequests={sidebarProps.pullRequests}
+          onPullRequests={sidebarProps.onPullRequests}
           onSettings={sidebarProps.onSettings}
           onComputers={sidebarProps.onComputers}
           usage={
@@ -1979,13 +2071,15 @@ export function Workspace() {
                       ? workflowsEditor
                         ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`
                         : 'Workflows'
-                      : inbox
-                        ? 'Inbox'
-                        : automationView === 'detail'
-                          ? automationJob?.name
-                          : automationView === 'list'
-                            ? 'Automations'
-                            : (selected?.title ?? 'New thread')}
+                      : pullRequestsView
+                        ? 'Pull requests'
+                        : inbox
+                          ? 'Inbox'
+                          : automationView === 'detail'
+                            ? automationJob?.name
+                            : automationView === 'list'
+                              ? 'Automations'
+                              : (selected?.title ?? 'New thread')}
                 </h1>
                 {!browsing &&
                   !creating &&
@@ -1995,6 +2089,20 @@ export function Workspace() {
                       {sessionRoleLabel(selected)}
                     </span>
                   )}
+                {!browsing && !creating && selected && window.nesvo && (
+                  <SessionPullRequest
+                    key={selectedKey}
+                    session={selected}
+                    unavailableReason={pullRequestBlockedReason(
+                      selected.hostId,
+                    )}
+                    api={desktopApi(selected.hostId)}
+                    onOpen={reference =>
+                      openPullRequest({ hostId: selected.hostId, reference })
+                    }
+                    onLinked={session => store.merge([session])}
+                  />
+                )}
               </li>
             </ol>
           </nav>
@@ -2346,6 +2454,24 @@ export function Workspace() {
                 )}
               </div>
             </Suspense>
+          ) : pullRequestsView ? (
+            <div
+              className={cn(
+                'flex min-h-0 min-w-0 flex-1',
+                panel === 'pull-request' &&
+                  pullRequestTarget &&
+                  'max-[1200px]:hidden',
+              )}
+            >
+              <PullRequestsView
+                computers={store.computers}
+                hostId={selected?.hostId ?? 'local'}
+                directory={selected?.directory ?? ''}
+                apiFor={pullRequestApi}
+                openTarget={panel === 'pull-request' ? pullRequestTarget : null}
+                onOpen={openPullRequest}
+              />
+            </div>
           ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
@@ -2733,6 +2859,34 @@ export function Workspace() {
               api={desktopApi(selectedHostId)}
               savedVersion={diffReview?.version}
               onSavedDiff={() => setPanel('diff')}
+              onClose={closeDiff}
+            />
+          </Suspense>
+        )}
+      {panel === 'pull-request' &&
+        pullRequestTarget &&
+        !creating &&
+        (pullRequestsView || (!browsing && selected)) &&
+        pullRequestApi(pullRequestTarget.hostId) && (
+          <Suspense
+            fallback={
+              <aside
+                role="status"
+                className="absolute inset-0 z-10 border-l bg-background p-4 text-xs text-muted-foreground min-[1200px]:relative min-[1200px]:w-[56%]"
+              >
+                Loading pull request…
+              </aside>
+            }
+          >
+            <PullRequestPanel
+              key={referenceKey(pullRequestTarget)}
+              target={pullRequestTarget}
+              api={desktopApi(pullRequestTarget.hostId)}
+              blockedReason={pullRequestBlockedReason(pullRequestTarget.hostId)}
+              linkedSession={checkoutSession}
+              sendTargetTitle={threadTarget?.title ?? ''}
+              onSendToSession={sendToSession}
+              onLinked={session => store.merge([session])}
               onClose={closeDiff}
             />
           </Suspense>

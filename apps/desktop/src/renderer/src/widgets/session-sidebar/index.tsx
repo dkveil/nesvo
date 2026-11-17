@@ -6,6 +6,7 @@ import {
   Cloud,
   CornerDownRight,
   GitBranch,
+  GitPullRequest,
   Inbox,
   Monitor,
   PanelLeft,
@@ -63,6 +64,8 @@ type Props = {
   automations?: boolean;
   automationsAvailable?: boolean;
   onAutomations?: () => void;
+  pullRequests?: boolean;
+  onPullRequests?: () => void;
   navigation?: 'inline' | 'rail';
   readBranch?: ReadBranch;
 };
@@ -157,6 +160,8 @@ export function SessionSidebar({
   automations = false,
   automationsAvailable = false,
   onAutomations,
+  pullRequests = false,
+  onPullRequests,
   navigation = 'inline',
   readBranch,
 }: Props) {
@@ -243,7 +248,7 @@ export function SessionSidebar({
     .filter(group => group.roots.length > 0 || group.automations.length > 0);
   const grouped = computers.length > 1;
   const isSelected = (session: Session) =>
-    !inbox && !workflows && selectedId === entityKey(session);
+    !inbox && !workflows && !pullRequests && selectedId === entityKey(session);
   type RowOptions = {
     child?: boolean;
     childCount?: number;
@@ -349,6 +354,19 @@ export function SessionSidebar({
                     {branchLabel}
                   </span>
                 </>
+              )}
+              {session.pullRequest && (
+                <span
+                  className="flex shrink-0 items-center gap-0.5 tabular-nums"
+                  title={`${session.pullRequest.repository} #${session.pullRequest.number}`}
+                >
+                  <GitPullRequest
+                    className="size-2.5 shrink-0 text-sidebar-icon"
+                    aria-hidden="true"
+                  />
+                  <span className="sr-only">Pull request</span>#
+                  {session.pullRequest.number}
+                </span>
               )}
               {!grouped && (
                 <>
@@ -536,6 +554,24 @@ export function SessionSidebar({
               />
               Workflows
             </button>
+            {onPullRequests && (
+              <button
+                type="button"
+                className={cn(
+                  navButtonClass,
+                  pullRequests &&
+                    'bg-sidebar-row-selected text-sidebar-foreground',
+                )}
+                onClick={onPullRequests}
+                aria-current={pullRequests ? 'page' : undefined}
+              >
+                <GitPullRequest
+                  className="size-4 text-sidebar-icon"
+                  aria-hidden="true"
+                />
+                Pull requests
+              </button>
+            )}
           </>
         )}
       </div>

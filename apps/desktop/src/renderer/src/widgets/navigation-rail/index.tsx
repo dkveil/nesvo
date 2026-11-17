@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode, RefObject } from 'react';
 import {
   CalendarClock,
+  GitPullRequest,
   Inbox,
   Monitor,
   PanelLeft,
@@ -31,6 +32,8 @@ type Props = {
   onInbox: () => void;
   onWorkflows: () => void;
   onAutomations?: () => void;
+  pullRequests?: boolean;
+  onPullRequests?: () => void;
   onSettings: () => void;
   onComputers: () => void;
   usage?: ReactNode;
@@ -95,6 +98,8 @@ export function NavigationRail({
   onInbox,
   onWorkflows,
   onAutomations,
+  pullRequests = false,
+  onPullRequests,
   onSettings,
   onComputers,
   usage,
@@ -149,6 +154,15 @@ export function NavigationRail({
           >
             <Workflow className="size-4" />
           </RailButton>
+          {onPullRequests && (
+            <RailButton
+              label="Pull requests"
+              active={pullRequests}
+              onClick={onPullRequests}
+            >
+              <GitPullRequest className="size-4" />
+            </RailButton>
+          )}
         </div>
         <div className="min-h-0 flex-1" />
         <div className="flex flex-col items-center gap-1">
