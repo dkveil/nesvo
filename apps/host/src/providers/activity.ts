@@ -27,6 +27,7 @@ export function makeActivity(input: {
   completedAt?: string | null;
   detail?: string | null;
   output?: string;
+  exitCode?: number | null;
   paths?: string[];
   truncated?: boolean;
 }): ProviderActivity {
@@ -45,6 +46,10 @@ export function makeActivity(input: {
     completedAt: input.status === 'running' ? null : (input.completedAt ?? now),
     detail: detail?.slice(0, activityLimits.detail) ?? null,
     output: output.slice(-activityLimits.output),
+    exitCode:
+      typeof input.exitCode === 'number' && Number.isSafeInteger(input.exitCode)
+        ? input.exitCode
+        : null,
     paths: paths
       .slice(0, activityLimits.paths)
       .map(path => path.slice(0, activityLimits.pathLength)),

@@ -1504,9 +1504,6 @@ export function startCodex(options: {
             : 'running';
     const error = object(item.error);
     const errorDetail = [
-      typeof item.exitCode === 'number' && item.exitCode !== 0
-        ? `Exit code: ${item.exitCode}`
-        : '',
       typeof error?.code === 'string' || typeof error?.code === 'number'
         ? `Error code: ${error.code}`
         : '',
@@ -1529,6 +1526,10 @@ export function startCodex(options: {
         detail,
         paths,
         output,
+        exitCode:
+          typeof item.exitCode === 'number'
+            ? item.exitCode
+            : previous?.exitCode,
         startedAt: previous?.startedAt,
       }),
     );

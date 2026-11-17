@@ -208,6 +208,26 @@ function toolResultText(content: unknown): string {
     .join('\n');
 }
 
+function commandResult(
+  text: string,
+  failed: boolean,
+  reported: unknown,
+): { output: string; exitCode: number | null } {
+  const result = object(reported);
+  if (!failed && typeof result?.stdout === 'string') {
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    return {
+      output: stderr.trim() ? `${result.stdout}\n\n${stderr}` : result.stdout,
+      exitCode: 0,
+    };
+  }
+  if (!failed) return { output: text, exitCode: 0 };
+  const exit = /^Exit code (-?\d+)\r?\n?/.exec(text);
+  return exit
+    ? { output: text.slice(exit[0].length), exitCode: Number(exit[1]) }
+    : { output: text, exitCode: null };
+}
+
 function isClaudeMode(mode: SessionMode): mode is ClaudeMode {
   return mode in claudeModes;
 }
@@ -1492,20 +1512,29 @@ export function startClaude(options: {
         } else if (value.type === 'user') {
           const message = object(value.message);
           if (!Array.isArray(message?.content)) return;
-          for (const content of message.content) {
-            const block = object(content);
-            if (
-              block?.type !== 'tool_result' ||
-              typeof block.tool_use_id !== 'string'
-            )
-              continue;
+          const results = message.content
+            .map(object)
+            .filter(block => block?.type === 'tool_result');
+          for (const block of results) {
+            if (!block || typeof block.tool_use_id !== 'string') continue;
             const previous = toolActivities.get(block.tool_use_id);
             if (!previous || previous.status !== 'running') continue;
             const failed = block.is_error === true;
+            const command =
+              previous.kind === 'command'
+                ? commandResult(
+                    toolResultText(block.content),
+                    failed,
+                    results.length === 1 ? value.tool_use_result : undefined,
+                  )
+                : null;
             const next = makeActivity({
               ...previous,
               status: failed ? 'failed' : 'completed',
-              output: failed ? toolResultText(block.content) : '',
+              output:
+                command?.output ??
+                (failed ? toolResultText(block.content) : ''),
+              exitCode: command?.exitCode ?? null,
             });
             toolActivities.set(next.id, next);
             emit({ type: 'tool-activity', activity: next });

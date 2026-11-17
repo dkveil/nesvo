@@ -34,6 +34,7 @@ export function updateActivity(
       completedAt: previous.completedAt ?? next.completedAt,
       detail: next.detail ?? previous.detail,
       output: next.output || previous.output,
+      exitCode: next.exitCode ?? previous.exitCode,
       paths: next.paths.length ? next.paths : previous.paths,
       truncated: previous.truncated || next.truncated,
     });

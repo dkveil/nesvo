@@ -33,6 +33,7 @@ export const sessionActivitySchema = z.strictObject({
   completedAt: z.iso.datetime().nullable(),
   detail: z.string().max(activityLimits.detail).nullable(),
   output: z.string().max(activityLimits.output),
+  exitCode: z.number().int().nullable().default(null),
   paths: z
     .array(z.string().max(activityLimits.pathLength))
     .max(activityLimits.paths),

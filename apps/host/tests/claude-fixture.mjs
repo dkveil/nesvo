@@ -976,6 +976,67 @@ if (args.length === 1 && args[0] === '--version') {
         finish(text);
       }
     }
+  } else if (command === 'fixture:bash') {
+    const failing = {
+      type: 'tool_use',
+      id: `fixture-bash-fail-${turn}`,
+      name: 'Bash',
+      input: {
+        command: 'node -e "console.log(\'hello\'); process.exit(3)"',
+        description: 'Print hello and exit with code 3',
+      },
+    };
+    stream({ type: 'message_start', message: { id: `fixture-bash-${turn}` } });
+    stream({ type: 'content_block_start', index: 0, content_block: failing });
+    emit({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            content: 'Exit code 3\nhello',
+            is_error: true,
+            tool_use_id: failing.id,
+          },
+        ],
+      },
+      tool_use_result: 'Error: Exit code 3\nhello',
+    });
+    const passing = {
+      type: 'tool_use',
+      id: `fixture-bash-ok-${turn}`,
+      name: 'Bash',
+      input: { command: 'echo done', description: 'Print done' },
+    };
+    emit({
+      type: 'assistant',
+      message: { id: `fixture-bash-ok-${turn}`, content: [passing] },
+    });
+    emit({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            tool_use_id: passing.id,
+            type: 'tool_result',
+            content: 'done',
+            is_error: false,
+          },
+        ],
+      },
+      tool_use_result: {
+        stdout: 'done',
+        stderr: 'warning: fixture',
+        interrupted: false,
+        isImage: false,
+        noOutputExpected: false,
+      },
+    });
+    const text = 'Fixture ran two commands.';
+    start(text);
+    finish(text);
   } else if (command === 'fixture:refused-edit') {
     const block = {
       type: 'tool_use',

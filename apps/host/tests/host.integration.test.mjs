@@ -2478,7 +2478,9 @@ test(
         activityResult.activityTruncatedRunIds.includes(activityRun.runId),
       );
       assert.equal(currentActivities[1].status, 'failed');
-      assert.match(currentActivities[1].detail, /Exit code: 7/);
+      assert.equal(currentActivities[1].exitCode, 7);
+      assert.doesNotMatch(currentActivities[1].detail, /Exit code/);
+      assert.equal(currentActivities[0].exitCode, 0);
       assert.equal(currentActivities[2].truncated, true);
       assert.ok(
         currentActivities.every(
@@ -16539,5 +16541,66 @@ test(
       message: 'Your access token could not be refreshed.',
     });
     await failed(codex, 'fixture:fail-network', { kind: 'network' });
+  },
+);
+
+test(
+  'Claude command activities keep their output and exit code',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-commands-')),
+    );
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const host = launch(directory, join(directory, 'fixture-pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await bounded(host.exited, 'Test host did not exit');
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    await host.request('claude-status');
+    const created = await host.request('create-session', {
+      title: 'Commands',
+      model: 'sonnet',
+      mode: 'auto',
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const sent = await host.request('send-message', {
+      sessionId: created.session.id,
+      messageId: randomUUID(),
+      text: 'fixture:bash',
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const finished = await host.event(
+      value =>
+        value.id === created.session.id &&
+        value.runId === sent.session.runId &&
+        value.status === 'completed',
+    );
+    const commands = finished.activities.filter(
+      item => item.runId === sent.session.runId && item.kind === 'command',
+    );
+    assert.deepEqual(
+      commands.map(item => [item.status, item.output, item.exitCode]),
+      [
+        ['failed', 'hello', 3],
+        ['completed', 'done\n\nwarning: fixture', 0],
+      ],
+    );
+    assert.equal(commands[1].detail, 'echo done');
   },
 );
