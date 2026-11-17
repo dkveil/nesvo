@@ -32,7 +32,7 @@ type DiffOptions = NonNullable<
 
 const annotationsOf = (
   threads: PullRequestThread[],
-  draft: LineDraft | null,
+  draft: Pick<LineRange, 'side' | 'line'> | null,
 ): NoteAnnotation[] => {
   const grouped = new Map<string, NoteAnnotation>();
   const noteAt = (side: NoteAnnotation['side'], lineNumber: number) => {
@@ -125,14 +125,32 @@ export function PatchDiff({
   useLayoutEffect(() => {
     latest.current = { draft, onDraftRange };
   });
+  const drafting = !!draft;
+  const draftSide = draft?.side ?? 'right';
+  const draftLine = draft?.line ?? 0;
+  const draftStart = draft?.startLine ?? null;
   const annotations = useMemo(
-    () => annotationsOf(threads, draft),
-    [threads, draft],
+    () =>
+      annotationsOf(
+        threads,
+        drafting ? { side: draftSide, line: draftLine } : null,
+      ),
+    [threads, drafting, draftSide, draftLine],
   );
   const selectedLines = useMemo(
-    () => (draft ? selectedLinesOf(draft) : commentable ? selection : null),
-    [draft, selection, commentable],
+    () =>
+      drafting
+        ? selectedLinesOf({
+            side: draftSide,
+            line: draftLine,
+            startLine: draftStart,
+          })
+        : commentable
+          ? selection
+          : null,
+    [drafting, draftSide, draftLine, draftStart, selection, commentable],
   );
+  const showGutter = commentable && !drafting;
   const options = useMemo<DiffOptions>(
     () => ({
       theme: { dark: 'github-dark', light: 'github-light' },
@@ -145,7 +163,7 @@ export function PatchDiff({
       lineDiffType: 'word',
       tokenizeMaxLength: 100000,
       tokenizeMaxLineLength: 1000,
-      enableGutterUtility: commentable,
+      enableGutterUtility: showGutter,
       enableLineSelection: commentable,
       onLineSelected: range => {
         if (!latest.current.draft) setSelection(range);
@@ -154,7 +172,7 @@ export function PatchDiff({
       unsafeCSS:
         ':host{--diffs-font-size:12px;--diffs-line-height:20px;--diffs-bg:var(--code-background);--diffs-fg:var(--foreground)} [data-diffs]{background:var(--code-background)} [data-code]{font-family:Consolas,monospace}',
     }),
-    [wrap, commentable],
+    [wrap, commentable, showGutter],
   );
   return (
     <DiffBoundary patch={patch}>
@@ -170,7 +188,7 @@ export function PatchDiff({
           </div>
         )}
         renderGutterUtility={
-          commentable
+          showGutter
             ? getHoveredLine => (
                 <GutterCommentButton
                   onPress={() => {
