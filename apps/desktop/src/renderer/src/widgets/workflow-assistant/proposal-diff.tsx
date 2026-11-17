@@ -1,6 +1,7 @@
 import { Component, useMemo, type ReactNode } from 'react';
 import { parseDiffFromFile, type FileDiffMetadata } from '@pierre/diffs';
 import { FileDiff, type FileDiffOptions } from '@pierre/diffs/react';
+import { CodeBlock } from '@/shared/ui/code-block';
 
 type Props = {
   name: string;
@@ -58,22 +59,23 @@ export function ProposalDiff({ name, before, after }: Props) {
     [name, before, after],
   );
   const fallback = (
-    <pre className="px-2.5 py-2 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
-      {after}
-    </pre>
+    <CodeBlock
+      code={after}
+      wrap
+      copyable={false}
+      maxHeightClassName="max-h-60"
+    />
   );
+  if (!fileDiff || fileDiff.unifiedLineCount === 0)
+    return <div data-assistant-diff={name}>{fallback}</div>;
   return (
     <div
       data-assistant-diff={name}
-      className="max-h-60 min-w-0 overflow-auto rounded-md border bg-code-background"
+      className="max-h-60 min-w-0 overflow-auto rounded-surface border bg-code-background"
     >
-      {fileDiff && fileDiff.unifiedLineCount > 0 ? (
-        <DiffBoundary fallback={fallback}>
-          <FileDiff fileDiff={fileDiff} options={options} disableWorkerPool />
-        </DiffBoundary>
-      ) : (
-        fallback
-      )}
+      <DiffBoundary fallback={fallback}>
+        <FileDiff fileDiff={fileDiff} options={options} disableWorkerPool />
+      </DiffBoundary>
     </div>
   );
 }

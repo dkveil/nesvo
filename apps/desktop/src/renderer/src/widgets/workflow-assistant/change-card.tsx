@@ -6,16 +6,16 @@ import type {
 } from '@nesvo/contracts';
 import {
   CalendarClock,
-  CircleX,
   Terminal,
-  TriangleAlert,
   Undo2,
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
+import { StatusIcon } from '@/entities/status';
 import { Button } from '@/shared/ui/button';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 const kindIcons: Record<AssistantChange['kind'], LucideIcon> = {
   step: Terminal,
@@ -77,11 +77,11 @@ export function ChangeCard({ change, onUndo, onOpen }: ChangeProps) {
       data-assistant-change={change.changeId}
       data-assistant-change-status={change.status}
       className={cn(
-        'flex min-w-0 items-start gap-2.5 rounded-xl border px-2.5 py-2',
-        undone && 'opacity-60',
+        'flex min-w-0 items-start gap-2.5 rounded-surface border px-2.5 py-2',
+        undone && 'opacity-50',
       )}
     >
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent text-muted-foreground">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-control bg-accent text-muted-foreground">
         <Icon className="size-3.5" aria-hidden="true" />
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">
@@ -90,13 +90,15 @@ export function ChangeCard({ change, onUndo, onOpen }: ChangeProps) {
             {undone ? 'Undone' : opLabels[change.op]} {kindLabels[change.kind]}
           </span>
           {onOpen && !undone ? (
-            <button
+            <Button
               type="button"
-              className="min-w-0 truncate font-mono font-medium underline-offset-2 outline-none hover:underline focus-visible:underline"
+              variant="link"
+              size="xs"
+              className="min-w-0 px-0 font-mono text-foreground"
               onClick={() => onOpen(change)}
             >
-              {changeName(change)}
-            </button>
+              <span className="truncate">{changeName(change)}</span>
+            </Button>
           ) : (
             <span className="min-w-0 truncate font-mono font-medium">
               {changeName(change)}
@@ -106,11 +108,7 @@ export function ChangeCard({ change, onUndo, onOpen }: ChangeProps) {
         <p className="text-2xs leading-4 text-muted-foreground [overflow-wrap:anywhere]">
           {change.summary}
         </p>
-        {note && (
-          <p role="alert" className="text-2xs leading-4 text-destructive">
-            {note}
-          </p>
-        )}
+        {note && <StatusMessage tone="error">{note}</StatusMessage>}
       </div>
       {!undone && (
         <Button
@@ -120,7 +118,6 @@ export function ChangeCard({ change, onUndo, onOpen }: ChangeProps) {
           className="shrink-0 text-muted-foreground"
           disabled={busy}
           aria-label={`Undo: ${change.summary}`}
-          title="Undo this change"
           onClick={() => void undo()}
         >
           <Undo2 />
@@ -132,21 +129,15 @@ export function ChangeCard({ change, onUndo, onOpen }: ChangeProps) {
 }
 
 export function RefusalCard({ refusal }: { refusal: AssistantChangeRefusal }) {
-  const Icon = refusal.reason === 'unsafe' ? CircleX : TriangleAlert;
   return (
     <div
       role="status"
       data-assistant-refusal
-      className="flex min-w-0 items-start gap-2.5 rounded-xl border border-warning-foreground/40 px-2.5 py-2"
+      className="flex min-w-0 items-start gap-2.5 rounded-surface border border-warning-foreground/40 px-2.5 py-2"
     >
-      <Icon
-        className={cn(
-          'mt-0.5 size-4 shrink-0',
-          refusal.reason === 'unsafe'
-            ? 'text-error-foreground'
-            : 'text-warning-foreground',
-        )}
-        aria-hidden="true"
+      <StatusIcon
+        status={refusal.reason === 'unsafe' ? 'error' : 'warning'}
+        className="mt-0.5 size-4"
       />
       <div className="min-w-0 flex-1 space-y-0.5 text-2xs leading-4">
         <p className="text-xs font-medium">{reasonLabels[refusal.reason]}</p>

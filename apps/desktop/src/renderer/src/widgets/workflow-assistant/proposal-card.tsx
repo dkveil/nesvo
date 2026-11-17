@@ -6,8 +6,7 @@ import type {
   WorkflowAssistantDocument,
   WorkflowDefinitionConflict,
 } from '@nesvo/contracts';
-import { Check, CircleX, RefreshCw, TriangleAlert } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
+import { RefreshCw } from 'lucide-react';
 import {
   fromCatalog,
   stepDefinitionOf,
@@ -15,7 +14,10 @@ import {
   toFileText,
 } from '@/entities/workflow-graph';
 import { errorDetail } from '@/entities/session';
+import { StatusIcon } from '@/entities/status';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { ProposalDiff } from './proposal-diff';
 
 export type ProposalDecision = 'applied' | 'discarded';
@@ -172,19 +174,15 @@ function IssueList({ issues }: { issues: DefinitionIssue[] }) {
     <ul className="space-y-1">
       {issues.map((issue, index) => {
         const error = issue.severity === 'error';
-        const Icon = error ? CircleX : TriangleAlert;
         return (
           <li
             key={index}
             className="flex min-w-0 items-start gap-1.5 text-2xs leading-4"
           >
-            <Icon
-              role="img"
-              aria-label={error ? 'Error' : 'Warning'}
-              className={cn(
-                'mt-px size-3 shrink-0',
-                error ? 'text-error-foreground' : 'text-warning-foreground',
-              )}
+            <StatusIcon
+              status={error ? 'error' : 'warning'}
+              label={error ? 'Error' : 'Warning'}
+              className="mt-0.5"
             />
             <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
               {issue.message}
@@ -327,24 +325,21 @@ export function ProposalCard({
       aria-label={`${kindLabels[change.kind]} ${change.name}`}
       data-proposal-change={change.name}
       data-proposal-state={decision ?? 'open'}
-      className="min-w-0 space-y-2 rounded-lg border bg-card/60 p-2.5"
+      className="min-w-0 space-y-2 rounded-surface border bg-card/60 p-2.5"
     >
       <header className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 rounded border px-1.5 text-2xs leading-4 text-muted-foreground">
+        <Badge appearance="outline" size="xs">
           {kindLabels[change.kind]}
-        </span>
-        <span className="shrink-0 rounded border px-1.5 text-2xs leading-4 text-muted-foreground">
+        </Badge>
+        <Badge appearance="outline" size="xs">
           {scopeLabels[change.scope]}
-        </span>
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-xs font-medium"
-          title={change.name}
-        >
+        </Badge>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
           {change.name}
         </span>
         {decision === 'applied' && (
           <span className="flex shrink-0 items-center gap-1 text-2xs text-success-foreground">
-            <Check className="size-3" aria-hidden="true" />
+            <StatusIcon status="success" />
             Applied
           </span>
         )}
@@ -362,18 +357,15 @@ export function ProposalCard({
       {!decision && (
         <>
           {base.status === 'loading' && (
-            <p role="status" className="text-2xs text-muted-foreground">
+            <StatusMessage tone="loading">
               Reading the current file…
-            </p>
+            </StatusMessage>
           )}
           {base.status === 'error' && (
             <div className="flex items-center gap-2">
-              <p
-                role="alert"
-                className="min-w-0 flex-1 text-2xs text-destructive [overflow-wrap:anywhere]"
-              >
+              <StatusMessage tone="error" className="flex-1">
                 {base.message}
-              </p>
+              </StatusMessage>
               <Button
                 type="button"
                 variant="ghost"
@@ -413,7 +405,7 @@ export function ProposalCard({
           {outcome.status === 'conflict' && (
             <div
               role="alert"
-              className="flex items-center gap-2 rounded-md border border-warning-foreground/40 px-2 py-1.5"
+              className="flex items-center gap-2 rounded-control border border-warning-foreground/40 px-2 py-1.5"
             >
               <p className="min-w-0 flex-1 text-2xs leading-4">
                 The file changed since the assistant read it. Reload to compare
@@ -432,19 +424,14 @@ export function ProposalCard({
           )}
           {outcome.status === 'refused' && (
             <div role="alert" className="space-y-1">
-              <p className="text-2xs text-destructive">
+              <p className="text-2xs text-error-foreground">
                 The change was refused.
               </p>
               <IssueList issues={outcome.issues} />
             </div>
           )}
           {outcome.status === 'error' && (
-            <p
-              role="alert"
-              className="text-2xs text-destructive [overflow-wrap:anywhere]"
-            >
-              {outcome.message}
-            </p>
+            <StatusMessage tone="error">{outcome.message}</StatusMessage>
           )}
           <div className="flex justify-end gap-1.5">
             <Button

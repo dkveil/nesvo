@@ -14,16 +14,13 @@ import type {
   DesktopSession,
 } from '@nesvo/contracts';
 import {
-  ArrowUp,
   ChevronDown,
   History,
-  LoaderCircle,
   MessageSquareText,
   Sparkles,
   Square,
   SquarePen,
 } from 'lucide-react';
-import { cn } from '@/shared/lib/cn';
 import {
   errorDetail,
   ProviderGlyph,
@@ -39,9 +36,21 @@ import {
 import { MessageBody } from '@/widgets/conversation/message-body';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
+import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { PanelAction } from '@/shared/ui/panel';
-import { Textarea } from '@/shared/ui/textarea';
+import {
+  Composer,
+  ComposerInput,
+  ComposerSend,
+  ComposerToolbar,
+} from '@/shared/ui/composer';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { IconButton } from '@/shared/ui/icon-button';
+import { ListRow } from '@/shared/ui/list-row';
+import { PanelHeader } from '@/shared/ui/panel';
+import { SectionLabel } from '@/shared/ui/section-label';
+import { StatusDot } from '@/shared/ui/status-dot';
+import { StatusMessage } from '@/shared/ui/status-message';
 import {
   assistantIntro,
   assistantSubject,
@@ -126,18 +135,7 @@ function resolvePick(
 }
 
 function Working({ children }: { children: string }) {
-  return (
-    <p
-      role="status"
-      className="flex items-center gap-1.5 text-2xs text-muted-foreground"
-    >
-      <LoaderCircle
-        className="size-3 animate-spin motion-reduce:animate-none"
-        aria-hidden="true"
-      />
-      {children}
-    </p>
-  );
+  return <StatusMessage tone="loading">{children}</StatusMessage>;
 }
 
 function ShowReply({ reply }: { reply: string }) {
@@ -145,14 +143,16 @@ function ShowReply({ reply }: { reply: string }) {
   if (!reply) return null;
   return (
     <div className="space-y-1.5">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="xs"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
-        className="text-2xs text-muted-foreground underline-offset-2 outline-none enabled:hover:text-foreground enabled:hover:underline focus-visible:underline"
+        className="-ml-2 text-muted-foreground"
       >
         {open ? 'Hide reply' : 'Show reply'}
-      </button>
+      </Button>
       {open && (
         <MessageBody
           body={reply}
@@ -392,7 +392,7 @@ export default function WorkflowAssistantDock({
         <div className="flex justify-end">
           <MessageBody
             body={entry.text}
-            className="max-w-[85%] rounded-2xl rounded-br-md bg-message-surface px-3 py-1.5 text-xs leading-5"
+            className="max-w-[85%] rounded-composer rounded-br-control bg-message-surface px-3 py-1.5 text-xs leading-5"
           />
         </div>
         <div className="flex gap-2.5">
@@ -521,37 +521,36 @@ export default function WorkflowAssistantDock({
   };
   if (collapsed)
     return (
-      <button
-        type="button"
+      <IconButton
+        size={32}
+        shape="round"
         data-assistant-toggle
-        aria-label={
+        label={
           unseen > 0
             ? `Open assistant, ${unseen} new ${unseen === 1 ? 'update' : 'updates'}`
             : 'Open assistant'
         }
-        title="Assistant"
+        tooltipSide="left"
         onClick={() => toggle(false)}
-        className={cn(
-          'glass-popover relative flex size-10 items-center justify-center rounded-full border text-foreground outline-none',
-          'transition-[background-color,scale] duration-150 ease-out enabled:hover:bg-accent enabled:active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring',
-        )}
+        className="glass-popover relative border text-foreground"
       >
-        <Sparkles className="size-4" aria-hidden="true" />
+        <Sparkles aria-hidden="true" />
         {assistant.running && (
-          <span
-            aria-hidden="true"
-            className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full bg-info-foreground motion-safe:animate-pulse"
+          <StatusDot
+            tone="info"
+            size="md"
+            pulse
+            className="absolute -top-0.5 -left-0.5"
           />
         )}
         {unseen > 0 && (
-          <span
+          <CountBadge
             aria-hidden="true"
-            className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground tabular-nums"
-          >
-            {unseen}
-          </span>
+            count={unseen}
+            className="absolute -top-1 -right-1 bg-primary text-primary-foreground"
+          />
         )}
-      </button>
+      </IconButton>
     );
   const subject = assistantSubject(context);
   return (
@@ -562,61 +561,45 @@ export default function WorkflowAssistantDock({
       data-assistant-dock
       onKeyDown={onPanelKeyDown}
       style={{ width: size.width, height: size.height }}
-      className="glass-popover relative flex max-h-[calc(100vh-7rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border"
+      className="glass-popover relative flex max-h-[calc(100vh-7rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-overlay border"
     >
-      <header className="flex h-11 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3.5">
-        <Sparkles
-          className="size-4 shrink-0 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <h2 className="shrink-0 text-[13px] font-semibold">Assistant</h2>
-        <span
-          className="min-w-0 truncate rounded-full border px-1.5 text-2xs leading-4 text-muted-foreground"
-          title={subject}
+      <PanelHeader icon={Sparkles} title="Assistant" meta={subject}>
+        <IconButton
+          label="New chat"
+          disabled={!assistant.sessionId || assistant.pending !== null}
+          onClick={() => {
+            assistant.startNew();
+            setHistoryOpen(false);
+            requestAnimationFrame(() => input.current?.focus());
+          }}
         >
-          {subject}
-        </span>
-        <div className="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
-          <PanelAction
-            aria-label="New chat"
-            title="Start a new conversation"
-            disabled={!assistant.sessionId || assistant.pending !== null}
-            onClick={() => {
-              assistant.startNew();
-              setHistoryOpen(false);
-              requestAnimationFrame(() => input.current?.focus());
-            }}
-          >
-            <SquarePen />
-          </PanelAction>
-          <PanelAction
-            aria-label="Conversation history"
-            aria-pressed={historyOpen}
-            title="Earlier conversations"
-            disabled={assistant.conversations.length === 0}
-            onClick={() => setHistoryOpen(value => !value)}
-          >
-            <History />
-          </PanelAction>
-          <PanelAction
-            aria-label="Open session"
-            title="Open the full conversation"
-            disabled={!assistant.session}
-            onClick={() =>
-              assistant.session && onOpenSession(assistant.session.id)
-            }
-          >
-            <MessageSquareText />
-          </PanelAction>
-          <PanelAction
-            aria-label="Collapse assistant"
-            title="Collapse (Esc)"
-            onClick={() => toggle(true)}
-          >
-            <ChevronDown />
-          </PanelAction>
-        </div>
-      </header>
+          <SquarePen />
+        </IconButton>
+        <IconButton
+          label="Conversation history"
+          pressed={historyOpen}
+          disabled={assistant.conversations.length === 0}
+          onClick={() => setHistoryOpen(value => !value)}
+        >
+          <History />
+        </IconButton>
+        <IconButton
+          label="Open session"
+          disabled={!assistant.session}
+          onClick={() =>
+            assistant.session && onOpenSession(assistant.session.id)
+          }
+        >
+          <MessageSquareText />
+        </IconButton>
+        <IconButton
+          label="Collapse assistant"
+          shortcut="Esc"
+          onClick={() => toggle(true)}
+        >
+          <ChevronDown />
+        </IconButton>
+      </PanelHeader>
       <button
         type="button"
         aria-label="Resize assistant"
@@ -626,78 +609,59 @@ export default function WorkflowAssistantDock({
         onPointerUp={onResizePointerUp}
         onPointerCancel={onResizePointerUp}
         onKeyDown={onResizeKeyDown}
-        className="absolute top-0 left-0 z-10 size-4 cursor-nwse-resize rounded-tl-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="focus-ring absolute top-0 left-0 z-10 size-4 cursor-nwse-resize rounded-tl-overlay"
       />
       {historyOpen ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          <h3 className="px-2 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
-            Conversations
-          </h3>
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+          <SectionLabel>Conversations</SectionLabel>
           <ol aria-label="Earlier conversations" className="space-y-px">
-            {assistant.conversations.map(conversation => {
-              const active = conversation.sessionId === assistant.sessionId;
-              return (
-                <li key={conversation.sessionId}>
-                  <button
-                    type="button"
-                    aria-current={active ? 'true' : undefined}
-                    data-assistant-conversation={conversation.sessionId}
-                    onClick={() => {
-                      assistant.switchTo(conversation.sessionId);
-                      setHistoryOpen(false);
-                      requestAnimationFrame(() => input.current?.focus());
-                    }}
-                    className={cn(
-                      'flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-100 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset',
-                      active && 'bg-highlight',
-                    )}
-                  >
-                    <MessageSquareText
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs">
-                      {conversation.title}
-                    </span>
-                    <span className="shrink-0 text-2xs text-muted-foreground tabular-nums">
-                      {formatRelativeTime(conversation.at, now)}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+            {assistant.conversations.map(conversation => (
+              <li key={conversation.sessionId}>
+                <ListRow
+                  selected={conversation.sessionId === assistant.sessionId}
+                  leading={<MessageSquareText aria-hidden="true" />}
+                  title={conversation.title}
+                  trailing={formatRelativeTime(conversation.at, now)}
+                  onClick={() => {
+                    assistant.switchTo(conversation.sessionId);
+                    setHistoryOpen(false);
+                    requestAnimationFrame(() => input.current?.focus());
+                  }}
+                  data-assistant-conversation={conversation.sessionId}
+                />
+              </li>
+            ))}
           </ol>
         </div>
       ) : (
         <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           {assistant.entries.length === 0 && assistant.pending === null ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-2 text-center">
-              <span className="flex size-10 items-center justify-center rounded-xl border bg-card text-muted-foreground">
-                <Sparkles className="size-4.5" aria-hidden="true" />
-              </span>
-              <div className="space-y-1">
-                <h3 className="text-[13px] font-semibold">Ask the assistant</h3>
-                <p className="max-w-xs text-2xs leading-4 text-muted-foreground">
-                  {assistantIntro(context)}
-                </p>
-              </div>
+            <div className="flex h-full flex-col items-center justify-center gap-2">
+              <EmptyState
+                size="sm"
+                icon={Sparkles}
+                title="Ask the assistant"
+                description={assistantIntro(context)}
+                className="py-0"
+              />
               <ul
                 aria-label="Suggested prompts"
-                className="flex w-full max-w-xs flex-col gap-1"
+                className="flex w-full max-w-sm flex-col gap-1"
               >
                 {assistantSuggestions(context).map(suggestion => (
                   <li key={suggestion}>
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       data-assistant-suggestion
                       onClick={() => {
                         setDraft(suggestion);
                         input.current?.focus();
                       }}
-                      className="w-full rounded-lg border px-2.5 py-1.5 text-left text-xs leading-4 text-muted-foreground transition-colors duration-100 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                      className="w-full justify-start font-normal text-muted-foreground"
                     >
-                      {suggestion}
-                    </button>
+                      <span className="truncate">{suggestion}</span>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -710,7 +674,7 @@ export default function WorkflowAssistantDock({
                   <div className="flex justify-end">
                     <MessageBody
                       body={assistant.pending}
-                      className="max-w-[85%] rounded-2xl rounded-br-md bg-message-surface px-3 py-1.5 text-xs leading-5 opacity-70"
+                      className="max-w-[85%] rounded-composer rounded-br-control bg-message-surface px-3 py-1.5 text-xs leading-5 opacity-70"
                     />
                   </div>
                   <Working>Sending…</Working>
@@ -728,20 +692,15 @@ export default function WorkflowAssistantDock({
         }}
       >
         {(assistant.notice || stopError) && (
-          <p
-            role="alert"
-            className="px-1 text-2xs leading-4 text-destructive [overflow-wrap:anywhere]"
-          >
+          <StatusMessage tone="error" className="px-1">
             {assistant.notice || stopError}
-          </p>
+          </StatusMessage>
         )}
-        <div className="glass-composer rounded-2xl border px-3 pt-2.5 pb-2 transition-colors duration-150 focus-within:border-input">
+        <Composer variant="compact">
           <label htmlFor="workflow-assistant-input" className="sr-only">
             Message the assistant
           </label>
-          <Textarea
-            variant="ghost"
-            size="lg"
+          <ComposerInput
             ref={input}
             id="workflow-assistant-input"
             value={draft}
@@ -754,65 +713,64 @@ export default function WorkflowAssistantDock({
             disabled={!!blockedReason && !draft}
             onChange={event => setDraft(event.target.value)}
             onKeyDown={onComposerKeyDown}
-            className="max-h-40 min-h-10 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-[13px] leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 md:text-[13px] dark:bg-transparent"
+            className="max-h-40"
           />
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <ModelPicker
-                provider={pick.provider}
-                model={pick.model}
-                effort={pick.effort}
-                statuses={statuses}
-                disabled={!connected || assistant.pending !== null}
-                onChange={(provider, model, effort) => {
-                  const next = { provider, model, effort };
-                  savePick(hostId, next);
-                  setSavedPicks(previous => ({ ...previous, [hostId]: next }));
-                }}
-                onRefreshProvider={onRefreshProvider}
-              />
-              <span
-                role="status"
-                className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground"
-              >
-                {blockedReason ||
-                  (assistant.newConversation
-                    ? 'Starts a new conversation with this model.'
-                    : assistant.running
-                      ? 'Working…'
-                      : '')}
-              </span>
-            </div>
-            {assistant.running ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                className="h-7 shrink-0 rounded-full px-2.5"
-                disabled={stopping || !connected}
-                aria-label="Stop the assistant"
-                title="Stop the assistant"
-                onClick={() => void stop()}
-              >
-                <Square className="fill-current" />
-                {stopping ? 'Stopping…' : 'Stop'}
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                size="icon-sm"
-                aria-label="Send to assistant"
-                title="Send (Enter). Shift+Enter adds a line."
-                disabled={
-                  !!blockedReason || assistant.pending !== null || !draft.trim()
-                }
-                className="size-7 shrink-0 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-              >
-                <ArrowUp />
-              </Button>
-            )}
-          </div>
-        </div>
+          <ComposerToolbar
+            start={
+              <>
+                <ModelPicker
+                  provider={pick.provider}
+                  model={pick.model}
+                  effort={pick.effort}
+                  statuses={statuses}
+                  disabled={!connected || assistant.pending !== null}
+                  onChange={(provider, model, effort) => {
+                    const next = { provider, model, effort };
+                    savePick(hostId, next);
+                    setSavedPicks(previous => ({
+                      ...previous,
+                      [hostId]: next,
+                    }));
+                  }}
+                  onRefreshProvider={onRefreshProvider}
+                />
+                <span role="status" className="min-w-0 truncate">
+                  {blockedReason ||
+                    (assistant.newConversation
+                      ? 'Starts a new conversation with this model.'
+                      : assistant.running
+                        ? 'Working…'
+                        : '')}
+                </span>
+              </>
+            }
+            end={
+              assistant.running ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-full"
+                  disabled={stopping || !connected}
+                  aria-label="Stop the assistant"
+                  onClick={() => void stop()}
+                >
+                  <Square className="fill-current" />
+                  {stopping ? 'Stopping…' : 'Stop'}
+                </Button>
+              ) : (
+                <ComposerSend
+                  label="Send to assistant"
+                  shortcut="Enter"
+                  disabled={
+                    !!blockedReason ||
+                    assistant.pending !== null ||
+                    !draft.trim()
+                  }
+                />
+              )
+            }
+          />
+        </Composer>
       </form>
     </section>
   );
