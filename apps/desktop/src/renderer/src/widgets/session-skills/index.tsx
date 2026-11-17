@@ -5,13 +5,22 @@ import type {
   SkillCatalog,
   SkillEntry,
 } from '@nesvo/contracts';
-import { BookOpen, ChevronRight, RefreshCw, X } from 'lucide-react';
+import { BookOpen, RefreshCw, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { errorDetail } from '@/entities/session';
 import { usePanelWidth } from '@/shared/lib/use-panel-width';
-import { PanelAction, PanelHeader, PanelSearch } from '@/shared/ui/panel';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { KeyValueList, type KeyValueEntry } from '@/shared/ui/key-value-list';
+import {
+  Panel,
+  PanelAction,
+  PanelHeader,
+  PanelSearch,
+} from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelSurface } from '@/shared/ui/panel-styles';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   session: Session;
@@ -31,113 +40,125 @@ const sourceLabels: Record<SkillEntry['source'], string> = {
 const declaredValue = (value: boolean | null) =>
   value === null ? 'Not reported' : value ? 'Yes' : 'No';
 
+const invocationLabel = (skill: SkillEntry) =>
+  skill.invocation === 'blocked'
+    ? skill.invocationReason || 'Unavailable for this connection'
+    : skill.invocation === 'instructions'
+      ? 'Shared instructions'
+      : skill.invocation === 'native'
+        ? 'Native skill'
+        : skill.enabled === false
+          ? 'Disabled'
+          : '';
+
+const skillDetails = (skill: SkillEntry): KeyValueEntry[] => [
+  {
+    key: 'source-flag',
+    label: 'Source flag',
+    value:
+      skill.enabled === null
+        ? 'Not reported'
+        : skill.enabled
+          ? 'Enabled at source'
+          : 'Disabled at source',
+  },
+  {
+    key: 'format',
+    label: 'Format',
+    value: skill.kind === 'skill' ? 'Skill' : 'Command',
+  },
+  ...(skill.invocation
+    ? [
+        {
+          key: 'delivery',
+          label: 'Delivery',
+          value:
+            skill.invocation === 'instructions'
+              ? 'Shared instructions · static snapshot for this message'
+              : skill.invocation === 'native'
+                ? 'Native skill'
+                : skill.invocationReason || 'Blocked for this connection',
+        },
+      ]
+    : []),
+  ...(skill.origins?.length
+    ? [{ key: 'origins', label: 'Origins', value: skill.origins.join(', ') }]
+    : []),
+  ...(skill.userInvocable !== null
+    ? [
+        {
+          key: 'manual',
+          label: 'Declared manual use',
+          value: declaredValue(skill.userInvocable),
+        },
+      ]
+    : []),
+  ...(skill.modelInvocable !== null
+    ? [
+        {
+          key: 'automatic',
+          label: 'Declared automatic use',
+          value: declaredValue(skill.modelInvocable),
+        },
+      ]
+    : []),
+  ...(skill.path
+    ? [
+        {
+          key: 'path',
+          label: 'Source file',
+          value: <span className="font-mono text-2xs">{skill.path}</span>,
+        },
+      ]
+    : []),
+  ...(skill.contentHash
+    ? [
+        {
+          key: 'hash',
+          label: 'Content SHA-256',
+          value: (
+            <span className="font-mono text-2xs">{skill.contentHash}</span>
+          ),
+        },
+      ]
+    : []),
+];
+
 function SkillRow({ skill }: { skill: SkillEntry }) {
+  const [open, setOpen] = useState(false);
+  const invocation = invocationLabel(skill);
   return (
-    <details data-skill-id={skill.id} className="group">
-      <summary
-        aria-label={`Details for ${skill.name}`}
-        className="flex cursor-pointer list-none gap-2 rounded-md px-2 py-2 outline-none transition-colors duration-100 hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring group-open:bg-accent [&::-webkit-details-marker]:hidden"
-      >
-        <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <span className="min-w-0 text-[13px] font-medium [overflow-wrap:anywhere]">
-              {skill.name}
-            </span>
-            <span className="shrink-0 text-2xs text-muted-foreground">
-              {[skill.origins?.join(', '), sourceLabels[skill.source]]
-                .filter(Boolean)
-                .join(' · ')}
-            </span>
-          </div>
-          {skill.description && (
-            <p className="mt-1 line-clamp-2 text-2xs leading-5 text-muted-foreground group-open:hidden [overflow-wrap:anywhere]">
-              {skill.description}
-            </p>
-          )}
-          {skill.invocation && (
-            <p className="mt-1 text-2xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
-              {skill.invocation === 'blocked'
-                ? skill.invocationReason || 'Unavailable for this connection'
-                : skill.invocation === 'instructions'
-                  ? 'Shared instructions'
-                  : 'Native skill'}
-            </p>
-          )}
-          {!skill.invocation && skill.enabled === false && (
-            <p className="mt-1 text-2xs text-muted-foreground">Disabled</p>
-          )}
-        </div>
-      </summary>
-      <div className="space-y-3 px-2 pt-2 pb-3 pl-7.5 text-xs leading-5 text-muted-foreground">
-        {skill.description && (
-          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {skill.description}
-          </p>
-        )}
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-          <dt>Source flag</dt>
-          <dd>
-            {skill.enabled === null
-              ? 'Not reported'
-              : skill.enabled
-                ? 'Enabled at source'
-                : 'Disabled at source'}
-          </dd>
-          <dt>Format</dt>
-          <dd>{skill.kind === 'skill' ? 'Skill' : 'Command'}</dd>
-          {skill.invocation && (
-            <>
-              <dt>Delivery</dt>
-              <dd>
-                {skill.invocation === 'instructions'
-                  ? 'Shared instructions · static snapshot for this message'
-                  : skill.invocation === 'native'
-                    ? 'Native skill'
-                    : skill.invocationReason || 'Blocked for this connection'}
-              </dd>
-            </>
-          )}
-          {skill.origins?.length ? (
-            <>
-              <dt>Origins</dt>
-              <dd>{skill.origins.join(', ')}</dd>
-            </>
-          ) : null}
-          {skill.userInvocable !== null && (
-            <>
-              <dt>Declared manual use</dt>
-              <dd>{declaredValue(skill.userInvocable)}</dd>
-            </>
-          )}
-          {skill.modelInvocable !== null && (
-            <>
-              <dt>Declared automatic use</dt>
-              <dd>{declaredValue(skill.modelInvocable)}</dd>
-            </>
-          )}
-        </dl>
-        {skill.path && (
-          <div>
-            <p className="mb-1">Source file</p>
-            <p className="font-mono text-2xs [overflow-wrap:anywhere]">
-              {skill.path}
-            </p>
-          </div>
-        )}
-        {skill.detail && (
-          <p className="[overflow-wrap:anywhere]">{skill.detail}</p>
-        )}
-        {skill.contentHash && (
-          <div>
-            <p>Content SHA-256</p>
-            <p className="font-mono text-2xs [overflow-wrap:anywhere]">
-              {skill.contentHash}
-            </p>
-          </div>
-        )}
-      </div>
-    </details>
+    <Disclosure
+      data-skill-id={skill.id}
+      open={open}
+      onOpenChange={setOpen}
+      triggerLabel={`Details for ${skill.name}`}
+      title={skill.name}
+      meta={[skill.origins?.join(', '), sourceLabels[skill.source]]
+        .filter(Boolean)
+        .join(' · ')}
+      description={
+        (skill.description && !open) || invocation ? (
+          <>
+            {skill.description && !open && (
+              <span className="line-clamp-2">{skill.description}</span>
+            )}
+            {invocation && <span>{invocation}</span>}
+          </>
+        ) : undefined
+      }
+      contentClassName="space-y-3 pr-2 pb-3"
+    >
+      {skill.description && (
+        <p className="leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {skill.description}
+        </p>
+      )}
+      <KeyValueList entries={skillDetails(skill)} />
+      {skill.detail && (
+        <p className="leading-5 [overflow-wrap:anywhere]">{skill.detail}</p>
+      )}
+    </Disclosure>
   );
 }
 
@@ -217,16 +238,13 @@ function Catalog({
         meta={session.provider}
       >
         <PanelAction
-          aria-label="Refresh skills"
-          title="Refresh skills"
+          label="Refresh skills"
           disabled={loading}
           onClick={onRefresh}
         >
-          <RefreshCw
-            className={cn(loading && 'animate-spin motion-reduce:animate-none')}
-          />
+          <RefreshCw className={cn(loading && 'animate-spin')} />
         </PanelAction>
-        <PanelAction aria-label="Close skills" onClick={onClose}>
+        <PanelAction label="Close skills" onClick={onClose}>
           <X className="size-4" />
         </PanelAction>
       </PanelHeader>
@@ -258,47 +276,49 @@ function Catalog({
       )}
       <div className="min-h-0 flex-1 space-y-px overflow-y-auto px-1.5 pb-1.5">
         {loading && (
-          <p role="status" className="p-4 text-xs text-muted-foreground">
+          <StatusMessage tone="loading" className="p-3">
             Discovering skills…
-          </p>
+          </StatusMessage>
         )}
         {error && (
-          <p
-            role="alert"
-            className="p-4 text-xs text-destructive [overflow-wrap:anywhere]"
-          >
+          <StatusMessage tone="error" className="p-3">
             {error}
-          </p>
+          </StatusMessage>
         )}
         {catalog && skills.length === 0 && (
-          <p className="p-4 text-xs text-muted-foreground">
-            {term
-              ? 'No matching skills'
-              : catalog.status === 'unsupported'
-                ? 'Skill discovery is not supported by this provider version.'
-                : catalog.status === 'unavailable'
-                  ? 'Skill discovery is unavailable.'
-                  : 'No skills found in the checked sources.'}
-          </p>
+          <EmptyState
+            size="sm"
+            icon={BookOpen}
+            title={term ? 'No matching skills' : 'No skills'}
+            description={
+              term
+                ? undefined
+                : catalog.status === 'unsupported'
+                  ? 'Skill discovery is not supported by this provider version.'
+                  : catalog.status === 'unavailable'
+                    ? 'Skill discovery is unavailable.'
+                    : 'No skills found in the checked sources.'
+            }
+          />
         )}
         {skills.map(skill => (
           <SkillRow key={skill.id} skill={skill} />
         ))}
         {catalog && (catalog.issues.length > 0 || catalog.truncated) && (
-          <details className="mt-1.5 border-t px-2 py-3 text-2xs text-muted-foreground">
-            <summary className="cursor-pointer">
-              {catalog.status === 'unavailable' ||
+          <Disclosure
+            title={
+              catalog.status === 'unavailable' ||
               catalog.status === 'unsupported'
                 ? 'Discovery details'
-                : 'Some sources could not be verified'}
-            </summary>
-            <ul className="mt-3 space-y-3 leading-5">
+                : 'Some sources could not be verified'
+            }
+            className="mt-1.5 border-t pt-1.5"
+          >
+            <ul className="space-y-3 pt-1 pb-2 text-2xs leading-5">
               {catalog.issues.map((issue, index) => (
                 <li key={index} className="[overflow-wrap:anywhere]">
                   <p>{issue.message}</p>
-                  {issue.path && (
-                    <p className="mt-1 font-mono text-2xs">{issue.path}</p>
-                  )}
+                  {issue.path && <p className="mt-1 font-mono">{issue.path}</p>}
                 </li>
               ))}
               {catalog.truncated && (
@@ -307,7 +327,7 @@ function Catalog({
                 </li>
               )}
             </ul>
-          </details>
+          </Disclosure>
         )}
       </div>
       <footer className="shrink-0 border-t px-3 py-2.5 text-2xs text-muted-foreground">
@@ -339,7 +359,7 @@ export default function SessionSkills(props: Props) {
     resizer,
   } = usePanelWidth('skills', defaultPanelWidth);
   return (
-    <section
+    <Panel
       aria-label="Session skills"
       data-session-id={props.session.id}
       ref={attachPanel}
@@ -352,6 +372,6 @@ export default function SessionSkills(props: Props) {
         {...props}
         onRefresh={() => setRefresh(value => value + 1)}
       />
-    </section>
+    </Panel>
   );
 }
