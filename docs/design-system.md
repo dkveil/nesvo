@@ -62,6 +62,7 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 | sm   | 28 px  | `sm` (default) | `28` (default) | `sm` (default) | `md` (default) |
 | md   | 32 px  | `md`       | `32`       | `md`           | —      |
 | lg   | 36 px  | `lg`       | —          | `lg`           | —      |
+| xl   | 40 px  | —          | `40`       | —              | —      |
 
 28 px is the default for app controls. Rows: tree 22 px, compact 28 px, two-line 44 px, grid 32 px. Panel headers are 40 px (`h-10`), toolbars 36 px (`h-9`).
 
@@ -115,7 +116,7 @@ Paths are relative to `apps/desktop/src/renderer/src`.
 **Button** — `shared/ui/button.tsx`. Labelled commands. Variants `default` (primary), `secondary`, `outline`, `ghost`, `destructive`, `link`; sizes `xs` `sm` `md` `lg`, `inline` (no height or padding, inherits the text size) for a `link` inside a sentence or a title, icon sizes `icon-xs` (24) `icon-sm` (28) `icon-md` (32). `selected` marks a ghost button as current. Not for glyph-only buttons (use IconButton) or list rows (use ListRow/NavItem). Do put the icon first as a child; don't override height with `h-*`, pick the size.
 Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `icon` = 36 px, `icon-lg` = 40 px. Before this change `sm` meant 32 px and the implicit default 36 px; existing callers were moved to `md` and `lg` so they render as before.
 
-**IconButton** — `shared/ui/icon-button.tsx`. Glyph-only commands. `label` is required and becomes the accessible name and the tooltip (`tooltip={false}` when a parent already shows one; `shortcut` adds a key hint). Sizes `16 20 24 28 32` (default 28), `tone` `default | sidebar | danger`, `shape` `square | round`, `appearance="send"` for the round primary send button with idle disabled colours, `pressed` for toggles. `current` marks a navigation destination (`aria-current="page"`, selected look); `marker` adds the navigation rail's 2 px bar beside the button while it is current. Not for text buttons.
+**IconButton** — `shared/ui/icon-button.tsx`. Glyph-only commands. `label` is required and becomes the accessible name and the tooltip (`tooltip={false}` when a parent already shows one; `shortcut` adds a key hint). Sizes `16 20 24 28 32 40` (default 28; 40 is for floating launchers such as the workflow assistant, usually `shape="round"` with `glass-popover border`), `tone` `default | sidebar | danger`, `shape` `square | round`, `appearance="send"` for the round primary send button with idle disabled colours, `pressed` for toggles. `current` marks a navigation destination (`aria-current="page"`, selected look); `marker` adds the navigation rail's 2 px bar beside the button while it is current. Not for text buttons.
 
 **Chip** — `shared/ui/chip.tsx`. Compact triggers in composers, filters and toolbars (`ComposerChip` re-exports it). Sizes `sm` (24) and `md` (28, default), optional `icon`, `selected`, `interactive={false}` for a static span. Wrap the label in a `<span>` so it truncates at 224 px.
 

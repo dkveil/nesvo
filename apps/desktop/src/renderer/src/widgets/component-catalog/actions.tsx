@@ -10,6 +10,7 @@ import {
   PanelLeft,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
@@ -34,7 +35,7 @@ const VARIANTS = [
 
 const SIZES = ['xs', 'sm', 'md', 'lg'] as const;
 
-const ICON_SIZES = [16, 20, 24, 28, 32] as const;
+const ICON_SIZES = [16, 20, 24, 28, 32, 40] as const;
 
 export function ActionsSection() {
   return (
@@ -211,6 +212,16 @@ export function ActionsSection() {
           <StateCaption label="round">
             <IconButton label="Collapse" shape="round" data-preview-hover="">
               <ChevronDown />
+            </IconButton>
+          </StateCaption>
+          <StateCaption label="40 · floating launcher">
+            <IconButton
+              label="Open assistant"
+              size={40}
+              shape="round"
+              className="glass-popover border text-foreground"
+            >
+              <Sparkles />
             </IconButton>
           </StateCaption>
         </SpecimenRow>

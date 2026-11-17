@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react';
 import { cn } from '@/shared/lib/cn';
 import { Hint } from '@/shared/ui/tooltip';
 
-type IconButtonSize = 16 | 20 | 24 | 28 | 32;
+type IconButtonSize = 16 | 20 | 24 | 28 | 32 | 40;
 
 type IconButtonProps = Omit<ComponentProps<'button'>, 'aria-label'> & {
   label: string;
@@ -24,6 +24,7 @@ const sizeClasses: Record<IconButtonSize, string> = {
   24: "size-6 rounded-control [&_svg:not([class*='size-'])]:size-3.5",
   28: "size-7 rounded-control [&_svg:not([class*='size-'])]:size-4",
   32: "size-8 rounded-control [&_svg:not([class*='size-'])]:size-4",
+  40: "size-10 rounded-surface [&_svg:not([class*='size-'])]:size-4.5",
 };
 
 export function IconButton({

@@ -522,7 +522,7 @@ export default function WorkflowAssistantDock({
   if (collapsed)
     return (
       <IconButton
-        size={32}
+        size={40}
         shape="round"
         data-assistant-toggle
         label={
