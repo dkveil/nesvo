@@ -365,7 +365,11 @@ export function GroupedSessions({
     const expanded = searching || !isCollapsed(stored);
     const editing = renaming === key;
     return (
-      <li key={key} className="flex flex-col gap-0.5">
+      <li
+        key={key}
+        className="flex flex-col gap-0.5"
+        data-sidebar-section={depth === 1 ? 'group' : undefined}
+      >
         <ListRow
           tone="sidebar"
           size="sm"

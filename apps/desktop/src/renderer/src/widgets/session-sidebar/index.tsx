@@ -20,14 +20,19 @@ import {
 import type { Computer } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import { entityKey } from '@/shared/lib/host-key';
+import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import {
   directoryLabel,
   ProviderGlyph,
+  sessionFilterLabels,
+  sessionFilters,
   sessionStatusLabel,
   statusTones,
   type Session,
+  type SessionFilter,
+  type SessionFilterKeys,
 } from '@/entities/session';
 import { StatusIcon, toneText } from '@/entities/status';
 import {
@@ -47,6 +52,7 @@ import { NavItem } from '@/shared/ui/nav-list';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { SearchField } from '@/shared/ui/search-field';
 import { SkeletonList } from '@/shared/ui/skeleton';
+import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
@@ -89,6 +95,9 @@ type Props = {
   housekeeping?: SidebarHousekeeping;
   currentHostId?: string;
   loading?: boolean;
+  filter?: SessionFilter;
+  filterKeys?: SessionFilterKeys;
+  onFilterChange?: (filter: SessionFilter) => void;
 };
 
 const TREE_INDENT_PX = 12;
@@ -178,6 +187,9 @@ export function SessionSidebar({
   loading = false,
   housekeeping,
   currentHostId = 'local',
+  filter = 'all',
+  filterKeys,
+  onFilterChange,
 }: Props) {
   const [search, setSearch] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -196,7 +208,14 @@ export function SessionSidebar({
   const inline = navigation === 'inline';
   const computerOf = (session: Session) =>
     computers.find(item => item.id === session.hostId);
+  const filtering = filter !== 'all' && !!filterKeys;
+  const narrowed = !!search.trim() || filtering;
+  const matchesStatus = (session: Session) =>
+    filter === 'all' ||
+    !filterKeys ||
+    filterKeys[filter].has(entityKey(session));
   const matches = (session: Session) =>
+    matchesStatus(session) &&
     `${session.title} ${directoryLabel(session.directory)} ${computerOf(session)?.name ?? ''}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
@@ -243,7 +262,7 @@ export function SessionSidebar({
   });
   const allRoots = roots;
   const automationSessions = sessions.filter(
-    session => session.scheduledJobId && (!search.trim() || matches(session)),
+    session => session.scheduledJobId && (!narrowed || matches(session)),
   );
   const filtered = roots.filter(
     root =>
@@ -273,7 +292,8 @@ export function SessionSidebar({
       group =>
         group.roots.length > 0 ||
         group.automations.length > 0 ||
-        (!!housekeeping &&
+        (!filtering &&
+          !!housekeeping &&
           organized(group.computer.id) &&
           (housekeeping.groups(group.computer.id).length > 0 ||
             roots.some(
@@ -468,7 +488,7 @@ export function SessionSidebar({
     const key = entityKey(root);
     const expanded =
       childToggles[key] ??
-      (!!search.trim() || children.some(child => isSelected(child)));
+      (narrowed || children.some(child => isSelected(child)));
     return [
       row(root, {
         childCount: children.length,
@@ -502,7 +522,7 @@ export function SessionSidebar({
           <IconButton
             ref={collapseToggleRef}
             label="Toggle sidebar"
-            shortcut="Ctrl B"
+            shortcut={shortcutKeys('toggleSidebar')}
             tone="sidebar"
             aria-pressed="true"
             onClick={onCollapse}
@@ -550,6 +570,7 @@ export function SessionSidebar({
           )}
           <IconButton
             label="New session"
+            shortcut={shortcutKeys('newSession')}
             tone="sidebar"
             tooltipSide="bottom"
             onClick={onCreate}
@@ -557,6 +578,29 @@ export function SessionSidebar({
             <SquarePen />
           </IconButton>
         </div>
+        {filterKeys && onFilterChange && (
+          <SegmentedControl
+            label="Filter sessions by status"
+            size="sm"
+            fullWidth
+            value={filter}
+            onChange={onFilterChange}
+            className="mt-1 mb-0.5"
+            options={sessionFilters.map(value => {
+              const count =
+                value === 'all' ? undefined : filterKeys[value].size;
+              return {
+                value,
+                label: sessionFilterLabels[value],
+                count: count || undefined,
+                ariaLabel:
+                  count == null
+                    ? sessionFilterLabels[value]
+                    : `${sessionFilterLabels[value]} (${count})`,
+              };
+            })}
+          />
+        )}
         {search.trim() && (
           <NavItem
             tone="sidebar"
@@ -645,7 +689,11 @@ export function SessionSidebar({
           {groups.map(({ computer, roots, automations: jobGroups }) => {
             const closed = grouped && closedHosts.includes(computer.id);
             return (
-              <section key={computer.id} aria-label={computer.name}>
+              <section
+                key={computer.id}
+                aria-label={computer.name}
+                data-sidebar-section={grouped ? 'computer' : undefined}
+              >
                 {grouped && (
                   <ListRow
                     tone="sidebar"
@@ -680,7 +728,7 @@ export function SessionSidebar({
                       const automationRows = jobGroups.map(group => {
                         const expanded =
                           jobToggles[group.key] ??
-                          (!!search.trim() ||
+                          (narrowed ||
                             group.runs.some(
                               session =>
                                 !inbox && selectedId === entityKey(session),
@@ -742,7 +790,7 @@ export function SessionSidebar({
                             root => root.hostId === computer.id,
                           )}
                           housekeeping={housekeeping}
-                          searching={!!search.trim()}
+                          searching={narrowed}
                           renaming={renaming}
                           onRenamingChange={setRenaming}
                           archivedOpen={archivedHosts.includes(computer.id)}
@@ -779,7 +827,13 @@ export function SessionSidebar({
           {groups.length === 0 && !loading && (
             <EmptyState
               size="sm"
-              title={search ? 'No matching sessions.' : 'No sessions yet.'}
+              title={
+                narrowed
+                  ? filtering && !search.trim()
+                    ? `No sessions match ${sessionFilterLabels[filter]}.`
+                    : 'No matching sessions.'
+                  : 'No sessions yet.'
+              }
               className="text-sidebar-muted-foreground"
             />
           )}
@@ -787,7 +841,12 @@ export function SessionSidebar({
       </div>
       {inline && (
         <div className="flex h-10 shrink-0 items-center gap-0.5 px-(--sidebar-inset)">
-          <IconButton label="Settings" tone="sidebar" onClick={onSettings}>
+          <IconButton
+            label="Settings"
+            shortcut={shortcutKeys('settings')}
+            tone="sidebar"
+            onClick={onSettings}
+          >
             <Settings />
           </IconButton>
           {footerStart}

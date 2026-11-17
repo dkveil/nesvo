@@ -10,6 +10,13 @@ export type { DesktopSession as Session } from '@nesvo/contracts';
 export { ProviderGlyph } from './provider-glyph';
 export { effortLabel } from './effort-label';
 export { ModeIcon } from './mode-icon';
+export {
+  sessionFilterKeys,
+  sessionFilterLabels,
+  sessionFilters,
+  type SessionFilter,
+  type SessionFilterKeys,
+} from './session-filters';
 
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',
