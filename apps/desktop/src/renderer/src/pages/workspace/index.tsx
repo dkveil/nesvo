@@ -47,6 +47,7 @@ import {
 } from '@/features/new-workflow/new-workflow-sheet';
 import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
+import { readThreadSetup, saveThreadSetup } from './thread-setup';
 import { resolveGate } from '@/features/new-thread/workflow-choice';
 import {
   AutomationEditor,
@@ -555,6 +556,10 @@ export function Workspace() {
     mode: 'read-only',
     directory: '',
   });
+  const changeThreadSetup = (setup: ThreadSetup) => {
+    setThreadSetup(setup);
+    saveThreadSetup(setup);
+  };
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
@@ -686,7 +691,9 @@ export function Workspace() {
             session.status,
           ) ||
           session.pendingApprovals.length > 0 ||
-          session.delegations.some(item => item.status === 'pending')
+          session.delegations.some(
+            item => item.status === 'pending' || item.status === 'plan-ready',
+          )
         );
       })
       .map(entityKey),
@@ -960,6 +967,18 @@ export function Workspace() {
     setInbox(false);
     setWorkflowsView(false);
     setAutomation('');
+    const remembered = readThreadSetup(threadSetup.hostId);
+    if (remembered) setThreadSetup(remembered);
+    else if (selected && !selected.parentId)
+      setThreadSetup({
+        ...threadSetup,
+        hostId: selected.hostId,
+        directory: selected.directory,
+        provider: selected.provider,
+        mode: selected.mode,
+        model: 'default',
+        effort: '',
+      });
     setCreating(true);
   };
   const changeDraft = (id: string, value: string) => {
@@ -1167,6 +1186,7 @@ export function Workspace() {
     const origin = navigationVersion.current;
     try {
       const session = await desktopApi(hostId).createSession(input);
+      saveThreadSetup(threadSetup);
       store.merge([session]);
       const key = entityKey(session);
       draftVersions.current[key] = (draftVersions.current[key] ?? 0) + 1;
@@ -1767,7 +1787,8 @@ export function Workspace() {
             ? session.pendingApprovals.length +
               session.delegations.filter(
                 item =>
-                  item.runId === session.runId && item.status === 'pending',
+                  item.runId === session.runId &&
+                  (item.status === 'pending' || item.status === 'plan-ready'),
               ).length
             : 0),
         0,
@@ -2193,7 +2214,7 @@ export function Workspace() {
           {showingNewThread ? (
             <NewThread
               setup={threadSetup}
-              onSetupChange={setThreadSetup}
+              onSetupChange={changeThreadSetup}
               computers={store.computers}
               statuses={store.providerStates(threadSetup.hostId)}
               onRefreshProvider={provider =>
@@ -2360,6 +2381,9 @@ export function Workspace() {
               }
               onDelegation={(input, hostId) =>
                 void decideDelegation(input, hostId)
+              }
+              onWorkerPlan={(input, hostId) =>
+                void decideWorkerPlan(input, hostId)
               }
               onSession={select}
               onRefresh={store.reload}

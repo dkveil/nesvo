@@ -10,6 +10,8 @@ export { ProviderGlyph } from './provider-glyph';
 export { effortLabel } from './effort-label';
 export { ModeIcon } from './mode-icon';
 
+export const workerPlanRoundLimit = 5;
+
 export const roleLabels: Record<Session['role'], string> = {
   orchestrator: 'Orchestrator',
   standalone: 'Session',

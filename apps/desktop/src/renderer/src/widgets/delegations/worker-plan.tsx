@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { DecideWorkerPlanInput } from '@nesvo/contracts';
+import { workerPlanRoundLimit } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
 import { MessageBody } from '@/widgets/conversation/message-body';
@@ -24,6 +25,7 @@ export function WorkerPlan({
 }: Props) {
   const [correction, setCorrection] = useState('');
   const trimmed = correction.trim();
+  const correctionLocked = round > workerPlanRoundLimit;
   const submitCorrection = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canDecide || !trimmed) return;
@@ -63,17 +65,22 @@ export function WorkerPlan({
           placeholder="Describe what the plan should change"
           maxLength={4000}
           value={correction}
-          disabled={!canDecide}
+          disabled={!canDecide || correctionLocked}
           onChange={event => setCorrection(event.target.value)}
         />
         <Button
           type="submit"
           size="sm"
           variant="outline"
-          disabled={!canDecide || !trimmed}
+          disabled={!canDecide || correctionLocked || !trimmed}
         >
           Send correction
         </Button>
+        {correctionLocked && (
+          <p role="note" className="text-xs text-muted-foreground">
+            This worker revised its plan five times. Accept or decline it.
+          </p>
+        )}
       </form>
       <p className="text-xs text-muted-foreground">
         {deciding

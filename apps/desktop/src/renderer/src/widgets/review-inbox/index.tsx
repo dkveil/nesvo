@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type {
   DecideDelegationInput,
+  DecideWorkerPlanInput,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
@@ -24,6 +25,7 @@ import {
   type ReviewDecisionProps,
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
+import { WorkerPlanRow } from './worker-plan-row';
 import { Label } from '@/shared/ui/label';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
@@ -47,6 +49,7 @@ type Props = ReviewDecisionProps & {
   delegationPending: Record<string, boolean>;
   onApproval: (input: RespondApprovalInput, hostId: string) => void;
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
+  onWorkerPlan: (input: DecideWorkerPlanInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
   onRefresh: () => void;
   originLabel?: (review: Review) => string;
@@ -65,7 +68,7 @@ type ActionRow =
       id: string;
     }
   | {
-      type: 'delegation';
+      type: 'delegation' | 'plan';
       session: Session;
       delegation: Session['delegations'][number];
       at: string;
@@ -133,6 +136,7 @@ export function ReviewInbox({
   delegationPending,
   onApproval,
   onDelegation,
+  onWorkerPlan,
   onSession,
   onRefresh,
   originLabel,
@@ -167,11 +171,12 @@ export function ReviewInbox({
         });
       for (const delegation of session.delegations)
         if (
-          delegation.status === 'pending' &&
+          (delegation.status === 'pending' ||
+            delegation.status === 'plan-ready') &&
           delegation.runId === session.runId
         )
           rows.push({
-            type: 'delegation',
+            type: delegation.status === 'pending' ? 'delegation' : 'plan',
             session,
             delegation,
             at: session.updatedAt,
@@ -488,6 +493,47 @@ export function ReviewInbox({
               const deciding = !!delegationPending[row.id];
               const enabled =
                 operationEnabled && isOperationEnabled(session) && !deciding;
+              if (row.type === 'plan')
+                return (
+                  <WorkerPlanRow
+                    key={`plan/${row.id}/${delegation.planRound}`}
+                    session={session}
+                    delegation={delegation}
+                    className={rowClass}
+                    sessionLink={sessionLink(
+                      entityKey(session),
+                      session.title,
+                      `delegation-${delegation.id}`,
+                    )}
+                    hostLabel={
+                      session.hostId !== 'local' ||
+                      computers.length > 1 ||
+                      !isOperationEnabled(session)
+                        ? `${computerName}${
+                            !isOperationEnabled(session)
+                              ? ' · Offline snapshot'
+                              : ''
+                          }`
+                        : ''
+                    }
+                    enabled={enabled}
+                    deciding={deciding}
+                    error={operationErrors[entityKey(session)] ?? ''}
+                    onDecision={(decision, correction) => {
+                      if (session.runId)
+                        onWorkerPlan(
+                          {
+                            sessionId: session.id,
+                            runId: session.runId,
+                            delegationId: delegation.id,
+                            decision,
+                            ...(correction ? { correction } : {}),
+                          },
+                          session.hostId,
+                        );
+                    }}
+                  />
+                );
               return (
                 <article
                   key={`delegation/${row.id}`}
