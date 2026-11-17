@@ -43,7 +43,12 @@ import { MergeControl } from './merge-control';
 import { mergeHint } from './merge-hint';
 import { openExternal } from './open-external';
 import { PanelTabs, type PanelTab } from './panel-tabs';
-import { threadPrompt, threadsPrompt } from './session-prompt';
+import {
+  discussionPrompt,
+  threadPrompt,
+  threadsPrompt,
+  type TimelineDiscussion,
+} from './session-prompt';
 import { SummaryTab } from './summary-tab';
 import { ThreadCard } from './thread-card';
 import { TimelineTab } from './timeline-tab';
@@ -175,7 +180,17 @@ export default function PullRequestPanel({
     });
   const sendReason = sendTargetTitle
     ? ''
-    : 'Open a session to send review threads to it.';
+    : 'Open a session to send review comments to it.';
+  const sendDiscussion = (item: TimelineDiscussion) => {
+    if (!sendTargetTitle) return;
+    onSendToSession(
+      discussionPrompt(
+        reference,
+        item,
+        item.kind === 'review' ? 'review' : 'comment',
+      ),
+    );
+  };
   const sendThreads = (items: PullRequestThread[]) => {
     if (!sendTargetTitle || items.length === 0) return;
     onSendToSession(
@@ -502,6 +517,8 @@ export default function PullRequestPanel({
                   pullRequest={data}
                   now={now}
                   blockedReason={blockedReason}
+                  sendReason={sendReason}
+                  onSend={sendDiscussion}
                   commentState={actions.states.comment}
                   onCommentEdit={() => actions.clear('comment')}
                   onComment={async body => {
@@ -531,9 +548,9 @@ export default function PullRequestPanel({
                 />
               )}
             </div>
-            {sendTargetTitle && tab === 'code' && (
+            {sendTargetTitle && tab !== 'summary' && (
               <p className="shrink-0 truncate border-t px-3 py-1 text-2xs text-muted-foreground">
-                Threads go to the composer of{' '}
+                Comments go to the composer of{' '}
                 <span className="text-foreground">{sendTargetTitle}</span>.
                 Nothing is sent until you press Send.
               </p>

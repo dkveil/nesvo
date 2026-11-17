@@ -1,7 +1,16 @@
-import type { PullRequestReference, PullRequestThread } from '@nesvo/contracts';
+import type {
+  PullRequestReference,
+  PullRequestThread,
+  PullRequestTimelineItem,
+} from '@nesvo/contracts';
 import { pullRequestUrl } from '@/entities/pull-request';
 
 const PROMPT_LIMIT_CHARACTERS = 30_000;
+
+export type TimelineDiscussion = Exclude<
+  PullRequestTimelineItem,
+  { kind: 'commit' }
+>;
 
 const quote = (text: string) =>
   text
@@ -52,4 +61,27 @@ export function threadsPrompt(
   return limit(
     `Please address these ${threads.length} open review threads on pull request ${heading(reference)}.\n\n${blocks}`,
   );
+}
+
+const discussionAuthor = (item: TimelineDiscussion) =>
+  item.author?.login ?? 'unknown';
+
+export function discussionPrompt(
+  reference: PullRequestReference,
+  item: TimelineDiscussion,
+  label: string,
+) {
+  return limit(
+    `Please address this ${label} on pull request ${heading(reference)}.
+
+> **${discussionAuthor(item)}**
+${quote(item.body)}`,
+  );
+}
+
+export function replyQuote(item: TimelineDiscussion) {
+  return `> **${discussionAuthor(item)}** wrote:
+${quote(item.body)}
+
+`;
 }

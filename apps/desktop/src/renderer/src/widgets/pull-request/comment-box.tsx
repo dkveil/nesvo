@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from 'react';
+import type { FormEvent, ReactNode, Ref } from 'react';
 import { pullRequestLimits } from '@nesvo/contracts';
 import { cn } from 'cn';
 import { Button } from '@/shared/ui/button';
@@ -18,6 +18,7 @@ type CommentBoxProps = {
   onCancel?: () => void;
   controls?: ReactNode;
   autoFocus?: boolean;
+  textareaRef?: Ref<HTMLTextAreaElement>;
   className?: string;
 };
 
@@ -34,6 +35,7 @@ export function CommentBox({
   onCancel,
   controls,
   autoFocus = false,
+  textareaRef,
   className,
 }: CommentBoxProps) {
   const pending = state?.status === 'pending';
@@ -51,6 +53,7 @@ export function CommentBox({
       )}
     >
       <textarea
+        ref={textareaRef}
         aria-label={label}
         value={value}
         placeholder={placeholder}
