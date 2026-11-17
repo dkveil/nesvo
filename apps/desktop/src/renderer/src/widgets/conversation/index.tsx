@@ -36,6 +36,7 @@ import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
 import { ModeSwitch } from '@/features/session-mode/mode-switch';
 import { cycleMode } from '@/features/session-mode/cycle-mode';
+import { mcpChangeLabel } from '@/features/session-mcp/mcp-labels';
 import {
   modelEfforts,
   resolveEffort,
@@ -110,6 +111,7 @@ type Props = {
   onSelectMode: (mode: SessionMode | null) => void;
   canChangeMode: boolean;
   workflowChip?: ReactNode;
+  mcpChip?: ReactNode;
 };
 
 export function Conversation({
@@ -151,6 +153,7 @@ export function Conversation({
   onSelectMode,
   canChangeMode,
   workflowChip,
+  mcpChip,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -202,6 +205,7 @@ export function Conversation({
   const selectionChanges = new Map<string, string>();
   let recorded: Session['messages'][number] | undefined;
   let recordedMode: SessionMode | null = null;
+  let recordedMcp: Session['messages'][number]['mcp'] = null;
   for (const message of session.messages) {
     if (message.author !== 'operator') continue;
     const changes: string[] = [];
@@ -222,6 +226,11 @@ export function Conversation({
           `Mode changed to ${modeLabel(session.provider, message.mode)}`,
         );
       recordedMode = message.mode;
+    }
+    if (message.mcp) {
+      const change = recordedMcp && mcpChangeLabel(recordedMcp, message.mcp);
+      if (change) changes.push(change);
+      recordedMcp = message.mcp;
     }
     if (changes.length > 0)
       selectionChanges.set(message.id, changes.join(' · '));
@@ -475,6 +484,7 @@ export function Conversation({
                     onChange={chooseMode}
                   />
                   {workflowChip}
+                  {mcpChip}
                   <span
                     role="status"
                     className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground"

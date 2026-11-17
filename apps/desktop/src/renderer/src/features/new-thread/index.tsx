@@ -5,6 +5,7 @@ import type {
   CreateSessionInput,
   DefinitionIssue,
   DesktopApi,
+  McpSelection,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
 import {
@@ -20,6 +21,7 @@ import {
   type TypedSubmission,
 } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
+import { McpChip } from '@/features/session-mcp/mcp-chip';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
 import { HostPicker } from './host-picker';
@@ -64,6 +66,7 @@ type Props = {
 };
 
 const MAX_MESSAGE_LENGTH = 32000;
+const NO_MCP: McpSelection = { servers: [], hooks: false };
 
 export function NewThread({
   setup,
@@ -85,6 +88,10 @@ export function NewThread({
   const [workflow, setWorkflow] = useState<WorkflowChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
   const [startNotice, setStartNotice] = useState('');
+  const [mcpChoice, setMcpChoice] = useState({
+    target: '',
+    selection: NO_MCP,
+  });
   const piped = !!workflow?.workflowName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
@@ -114,6 +121,11 @@ export function NewThread({
     modelEfforts(providerState, model),
     setup.effort,
   );
+  const mcpTarget = [setup.hostId, setup.provider, setup.directory.trim()].join(
+    '|',
+  );
+  const mcp = mcpChoice.target === mcpTarget ? mcpChoice.selection : NO_MCP;
+  const supportsMcp = !!computer?.capabilities.includes('mcp-servers');
   const project = setup.directory.trim()
     ? directoryLabel(setup.directory.trim())
     : '';
@@ -222,6 +234,7 @@ export function NewThread({
           ...(effort ? { effort } : {}),
           mode: setup.mode,
           directory: setup.directory.trim(),
+          ...(supportsMcp && (mcp.servers.length || mcp.hooks) ? { mcp } : {}),
         },
         message,
         chosen,
@@ -417,6 +430,25 @@ export function NewThread({
                   }}
                 />
                 <div className="flex-1" />
+                <McpChip
+                  key={mcpTarget}
+                  hostId={setup.hostId}
+                  provider={setup.provider}
+                  target={{
+                    provider: setup.provider,
+                    directory: setup.directory.trim(),
+                  }}
+                  selection={mcp}
+                  readOnly={setup.mode === 'read-only'}
+                  disabled={pending || !connected}
+                  unsupported={!supportsMcp}
+                  lockedReason={
+                    piped ? 'Workflow tasks start without MCP servers' : ''
+                  }
+                  onChange={selection =>
+                    setMcpChoice({ target: mcpTarget, selection })
+                  }
+                />
                 <PermissionPicker
                   provider={setup.provider}
                   modes={providerModes(setup.provider, providerState.status)}
