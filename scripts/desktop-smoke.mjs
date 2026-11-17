@@ -1437,7 +1437,37 @@ try {
   const approvalTarget = (
     await page.evaluate(() => window.nesvo.listSessions())
   ).find(session => session.id === codex.id);
-  await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
+  const statusFilter = page.getByRole('radiogroup', {
+    name: 'Filter sessions by status',
+    exact: true,
+  });
+  const needsMeFilter = statusFilter.getByRole('radio', { name: /^Needs me/ });
+  await needsMeFilter.click();
+  assert.equal(await needsMeFilter.getAttribute('aria-checked'), 'true');
+  await navigation.getByRole('button', { name: /^Supervised Codex/ }).waitFor();
+  await navigation
+    .getByRole('button', { name: /^Prototype analysis/ })
+    .waitFor({ state: 'hidden' });
+  await screenshot('-keyboard-filter');
+  await statusFilter.getByRole('radio', { name: 'All', exact: true }).click();
+  await navigation
+    .getByRole('button', { name: /^Prototype analysis/ })
+    .waitFor();
+  await page.keyboard.press('Control+Shift+P');
+  const palette = page.getByRole('combobox', {
+    name: 'Command palette',
+    exact: true,
+  });
+  await palette.waitFor();
+  await palette.fill('Prototype analysis');
+  await page
+    .getByRole('listbox', { name: 'Commands and sessions', exact: true })
+    .getByRole('option', { name: /^Prototype analysis/ })
+    .first()
+    .waitFor();
+  await screenshot('-keyboard-palette');
+  await palette.press('Enter');
+  await palette.waitFor({ state: 'hidden' });
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
