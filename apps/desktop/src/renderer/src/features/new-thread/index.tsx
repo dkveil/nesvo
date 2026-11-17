@@ -271,7 +271,6 @@ export function NewThread({
           onFocusMessage={() => input.current?.focus()}
         >
           {({
-            trigger,
             anchor,
             notice,
             onKeyDown: onSkillKeyDown,
@@ -328,7 +327,18 @@ export function NewThread({
                   />
                   <div className="flex items-center justify-between gap-3 pt-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      {trigger}
+                      <WorkflowPicker
+                        key={`${setup.hostId}:${setup.directory.trim()}`}
+                        hostId={setup.hostId}
+                        directory={setup.directory}
+                        connected={connected}
+                        authorProvider={setup.provider}
+                        statuses={statuses}
+                        api={hostApi.workflows}
+                        value={workflow}
+                        disabled={pending}
+                        onChange={changeWorkflow}
+                      />
                       <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
                         {pending ? 'Starting…' : blockedReason}
                       </span>
@@ -405,18 +415,6 @@ export function NewThread({
                     }
                     onSetupChange({ ...setup, directory });
                   }}
-                />
-                <WorkflowPicker
-                  key={`${setup.hostId}:${setup.directory.trim()}`}
-                  hostId={setup.hostId}
-                  directory={setup.directory}
-                  connected={connected}
-                  authorProvider={setup.provider}
-                  statuses={statuses}
-                  api={hostApi.workflows}
-                  value={workflow}
-                  disabled={pending}
-                  onChange={changeWorkflow}
                 />
                 <div className="flex-1" />
                 <PermissionPicker
