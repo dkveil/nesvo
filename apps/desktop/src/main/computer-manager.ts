@@ -122,6 +122,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to search its history.',
   'session-groups':
     'This computer runs an older Nesvo host without session groups. Update the host, then reconnect.',
+  'mcp-servers':
+    'This computer runs an older Nesvo host without MCP servers and hooks. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -142,6 +144,16 @@ function requiredCapability(
   )
     return 'session-groups';
   if (method === 'assign-session-workflow') return 'session-workflow';
+  if (method === 'list-mcp-servers' || method === 'set-session-mcp')
+    return 'mcp-servers';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'mcp' in input &&
+    input.mcp
+  )
+    return 'mcp-servers';
   if (
     method === 'list-workflow-definitions' ||
     method === 'validate-workflow-definitions'
@@ -634,6 +646,8 @@ export class ComputerManager {
       'create-session': 'session',
       'send-message': 'session',
       'assign-session-workflow': 'session',
+      'set-session-mcp': 'session',
+      'list-mcp-servers': 'mcp-servers',
       'queue-message': 'session',
       'cancel-queued': 'session',
       'start-queued': 'session',
@@ -672,6 +686,8 @@ export class ComputerManager {
         return response.status;
       case 'skills':
         return response.catalog;
+      case 'mcp-servers':
+        return response.list;
       case 'workspace-directory':
         return response.directory;
       case 'workspace-search':

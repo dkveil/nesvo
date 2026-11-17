@@ -44,6 +44,8 @@ import {
   linkSessionPullRequestSchema,
   findSessionPullRequestSchema,
   discoverSkillsSchema,
+  listMcpServersSchema,
+  setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
   providerUsageInputSchema,
@@ -646,6 +648,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:list-mcp-servers',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-mcp-servers',
+        listMcpServersSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:set-session-mcp',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'set-session-mcp',
+        setSessionMcpSchema.parse(input),
         route(hostId),
       );
     },

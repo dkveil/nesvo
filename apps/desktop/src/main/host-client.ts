@@ -27,6 +27,8 @@ import {
   type SearchWorkspaceFilesInput,
   type ReadWorkspaceFileInput,
   type DiscoverSkillsInput,
+  type ListMcpServersInput,
+  type SetSessionMcpInput,
 } from '@nesvo/contracts';
 
 export function startHost(directory: string) {
@@ -100,6 +102,8 @@ export function startHost(directory: string) {
             : method === 'claude-status' ||
                 method === 'codex-status' ||
                 method === 'create-session' ||
+                method === 'list-mcp-servers' ||
+                method === 'set-session-mcp' ||
                 method === 'list-pull-requests' ||
                 method === 'read-pull-request' ||
                 method === 'read-pull-request-files' ||
@@ -184,6 +188,18 @@ export function startHost(directory: string) {
       if (response.type !== 'skills')
         throw new Error('Unexpected host response');
       return response.catalog;
+    },
+    listMcpServers: async (input: ListMcpServersInput) => {
+      const response = await request('list-mcp-servers', input);
+      if (response.type !== 'mcp-servers')
+        throw new Error('Unexpected host response');
+      return response.list;
+    },
+    setSessionMcp: async (input: SetSessionMcpInput) => {
+      const response = await request('set-session-mcp', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
     },
     listWorkspaceDirectory: async (input: ListWorkspaceDirectoryInput) => {
       const response = await request('list-workspace-directory', input);

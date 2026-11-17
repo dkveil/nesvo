@@ -45,6 +45,9 @@ import {
   workspaceSearchSchema,
   workspaceFileSchema,
   discoverSkillsSchema,
+  listMcpServersSchema,
+  mcpServerListSchema,
+  setSessionMcpSchema,
   skillCatalogSchema,
   computerSchema,
   desktopSessionSchema,
@@ -481,6 +484,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listMcpServers: async (input, hostId) =>
+    mcpServerListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-mcp-servers',
+        listMcpServersSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setSessionMcp: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-session-mcp',
+        setSessionMcpSchema.parse(input),
         route(hostId),
       ),
     ),
