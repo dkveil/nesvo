@@ -108,7 +108,7 @@ function ActionItem({
 }: ActionItemProps) {
   return (
     <article {...props}>
-      <ListRow density="block" columns={ROW_COLUMNS} className="px-1">
+      <ListRow density="block" columns={ROW_COLUMNS}>
         <div className="min-w-0 space-y-1">
           <Button
             variant="link"
@@ -322,7 +322,7 @@ export function ReviewInbox({
         aria-label="Inbox"
         className="mx-auto w-full max-w-4xl px-5 py-6 lg:px-8"
       >
-        <div className="mb-3 flex items-center justify-between gap-3 px-3">
+        <div className="mb-3 flex items-center justify-between gap-3 px-2">
           <span className="text-xs text-muted-foreground tabular-nums">
             {rows.length}{' '}
             {filter === 'history'
@@ -353,7 +353,7 @@ export function ReviewInbox({
         </div>
         {notice}
         {error && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 px-3">
+          <div className="mb-4 flex flex-wrap items-center gap-3 px-2">
             <StatusMessage tone="error">{error}</StatusMessage>
             <Button variant="ghost" onClick={onRefresh}>
               Refresh results
@@ -361,21 +361,21 @@ export function ReviewInbox({
           </div>
         )}
         {loading && (
-          <StatusMessage tone="loading" className="px-3 py-3">
+          <StatusMessage tone="loading" className="px-2 py-3">
             Loading results…
           </StatusMessage>
         )}
         {filter !== 'history' &&
           decisionProps.blockedReason &&
           reviews.some(review => review.status === 'pending') && (
-            <StatusMessage className="mb-3 px-3">
+            <StatusMessage className="mb-3 px-2">
               {decisionProps.blockedReason}
             </StatusMessage>
           )}
         {filter !== 'history' &&
           !operationEnabled &&
           rows.some(row => row.type !== 'review') && (
-            <StatusMessage className="mb-3 px-3">
+            <StatusMessage className="mb-3 px-2">
               Reconnect to respond to pending requests.
             </StatusMessage>
           )}
