@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { OwnedProcessError, runOwnedProcess } from './owned-process';
 
 const maxConcurrentProcesses = 6;
+const maxQueuedProcesses = 32;
 const installation =
   'Install the GitHub CLI (gh) on this computer and run gh auth login.';
 const signIn = 'Sign in with gh auth login on this computer.';
@@ -166,17 +167,40 @@ type GhOptions = {
 
 export class GitHubCli {
   private active = 0;
+  private readonly waiting: (() => void)[] = [];
 
   constructor(private readonly signal: AbortSignal) {}
 
-  async run(args: string[], options: GhOptions = {}) {
-    if (this.active >= maxConcurrentProcesses)
+  private async acquire() {
+    if (this.active < maxConcurrentProcesses) {
+      this.active++;
+      return;
+    }
+    if (this.waiting.length >= maxQueuedProcesses)
       throw new PullRequestError(
         'busy',
         'Too many GitHub CLI requests. Try again shortly.',
       );
+    await new Promise<void>(resolve => this.waiting.push(resolve));
+  }
+
+  private release() {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.active--;
+  }
+
+  async run(args: string[], options: GhOptions = {}) {
+    await this.acquire();
+    try {
+      return await this.execute(args, options);
+    } finally {
+      this.release();
+    }
+  }
+
+  private async execute(args: string[], options: GhOptions) {
     const { command, prefix } = ghExecutable();
-    this.active++;
     try {
       const result = await runOwnedProcess({
         command,
@@ -224,8 +248,6 @@ export class GitHubCli {
           ? 'The GitHub CLI request timed out.'
           : 'The GitHub CLI process did not finish cleanly.',
       );
-    } finally {
-      this.active--;
     }
   }
 
