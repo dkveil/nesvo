@@ -16643,11 +16643,20 @@ test(
       'base64',
     );
     const stage = async (sessionId, kind, name, mediaType, content) => {
-      const id = randomUUID();
-      const folder = join(directory, 'attachments', sessionId);
-      await mkdir(folder, { recursive: true });
-      await writeFile(join(folder, id), content);
-      return { id, kind, name, mediaType, bytes: content.length };
+      const attachment = {
+        id: randomUUID(),
+        kind,
+        name,
+        mediaType,
+        bytes: content.length,
+      };
+      const staged = await host.request('stage-attachment', {
+        sessionId,
+        attachment,
+        data: content.toString('base64'),
+      });
+      assert.equal(staged.type, 'attachment-staged', JSON.stringify(staged));
+      return attachment;
     };
     const run = async (session, attachments) => {
       const sent = await host.request('send-message', {
@@ -16703,12 +16712,21 @@ test(
       'image',
       'large.png',
       'image/png',
+      png,
+    );
+    await writeFile(
+      join(directory, 'attachments', claude.id, large.id),
       Buffer.alloc(5 * 1024 * 1024 + 1),
     );
-    const refused = await run(claude, [large]);
-    assert.equal(refused.status, 'failed');
-    assert.equal(refused.failure.kind, 'provider');
-    assert.match(refused.failure.message, /large\.png is larger than 5 MB/);
+    const refused = await host.request('send-message', {
+      sessionId: claude.id,
+      messageId: randomUUID(),
+      text: 'fixture:continue',
+      attachments: [large],
+    });
+    assert.equal(refused.type, 'error', JSON.stringify(refused));
+    assert.equal(refused.code, 'invalid-request');
+    assert.equal(refused.message, 'Attachment is not staged.');
 
     const codex = await create('Codex', 'fixture-codex');
     const codexImage = await stage(
