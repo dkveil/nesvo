@@ -2,14 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Computer, DefinitionScope, WorkflowsApi } from '@nesvo/contracts';
 import {
   ChevronDown,
-  CircleX,
   Plus,
   RefreshCw,
   SquarePen,
-  TriangleAlert,
   Workflow,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { StatusIcon } from '@/entities/status';
 import {
   phaseLabels,
   phaseOrder,
@@ -20,18 +19,13 @@ import {
 } from '@/entities/workflow';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import {
-  cardIcon,
-  cardIconButton,
-  cardRow,
-  cardRowAction,
-  cardSection,
-  cardSectionHeader,
-  cardValue,
-  fieldSurface,
-} from '@/shared/ui/card-row-styles';
+import { CodeBlock } from '@/shared/ui/code-block';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { Field } from '@/shared/ui/field';
+import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
+import { ListRow } from '@/shared/ui/list-row';
+import { SectionLabel } from '@/shared/ui/section-label';
 import {
   Select,
   SelectContent,
@@ -39,6 +33,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
+import { AddedByAssistantBadge } from '@/widgets/workflow-assistant/added-by-assistant-badge';
 
 export type EditorDraft = {
   name: string;
@@ -137,47 +134,46 @@ function DefinitionStep({
   const [open, setOpen] = useState(false);
   const details = !!step.body.trim() || step.notes.length > 0;
   const meta = stepMeta(step);
-  const row = (
-    <>
-      <span className="w-4 shrink-0 text-center text-2xs text-muted-foreground tabular-nums">
-        {index + 1}
-      </span>
-      <span className="min-w-0 shrink-0 truncate">{step.name}</span>
-      <span className="min-w-0 flex-1 truncate text-right text-2xs font-normal text-muted-foreground">
+  const title = (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <span className="shrink-0 font-medium">{step.name}</span>
+      <span className="min-w-0 flex-1 truncate text-right text-2xs text-muted-foreground">
         {meta}
       </span>
-    </>
+    </span>
+  );
+  const leading = (
+    <span className="w-4 text-center text-2xs tabular-nums">{index + 1}</span>
   );
   return (
     <li data-definition-step={step.name}>
       {details ? (
-        <button
-          type="button"
-          aria-expanded={open}
-          title={meta}
+        <ListRow
+          leading={leading}
+          title={title}
+          trailing={
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                'size-3.5 transition-transform duration-base ease-out',
+                open && 'rotate-180',
+              )}
+            />
+          }
           onClick={() => setOpen(value => !value)}
-          className={cardRowAction}
-        >
-          {row}
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150',
-              open && 'rotate-180',
-            )}
-          />
-        </button>
+          mainProps={{ 'aria-expanded': open, title: meta }}
+        />
       ) : (
-        <div title={meta} className={cardRow}>
-          {row}
-        </div>
+        <ListRow leading={leading} title={title} />
       )}
       {open && (
-        <div className="space-y-1.5 pt-1 pr-2.5 pb-2 pl-9">
+        <div className="space-y-1.5 pt-1 pr-2 pb-2 pl-8">
           {step.body.trim() && (
-            <pre className="max-h-40 overflow-auto rounded-md bg-code-background px-2.5 py-2 font-mono text-2xs leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
-              {step.body.trim()}
-            </pre>
+            <CodeBlock
+              code={step.body.trim()}
+              wrap
+              maxHeightClassName="max-h-40"
+            />
           )}
           {step.notes.map(note => (
             <p key={note} className="text-2xs text-muted-foreground">
@@ -202,19 +198,16 @@ function WorkflowDetail({ workflow }: { workflow: ResolvedWorkflow }) {
   return (
     <section
       aria-label={`${workflow.name} steps`}
-      className={cn(fieldSurface, 'min-w-0 divide-y')}
+      className="min-w-0 divide-y rounded-surface border"
     >
-      <div className="space-y-0.5 px-4 py-3">
-        <h3 className="text-[13px] font-semibold">{workflow.name}</h3>
+      <div className="space-y-0.5 px-3 py-3">
+        <h3 className="text-ui font-semibold">{workflow.name}</h3>
         {workflow.description && (
           <p className="text-xs leading-5 text-muted-foreground">
             {workflow.description}
           </p>
         )}
-        <p
-          className="truncate font-mono text-2xs text-muted-foreground"
-          title={workflow.source.path}
-        >
+        <p className="truncate font-mono text-2xs text-muted-foreground">
           {scopeLabels[workflow.source.scope]} · {workflow.source.path}
         </p>
         {workflow.notes.map(note => (
@@ -224,10 +217,10 @@ function WorkflowDetail({ workflow }: { workflow: ResolvedWorkflow }) {
         ))}
       </div>
       {phases.map(group => (
-        <div key={group.phase} className={cardSection}>
-          <h4 className={cardSectionHeader}>
-            {phaseLabels[group.phase]} · {group.steps.length}
-          </h4>
+        <div key={group.phase} className="p-1">
+          <SectionLabel as="h4" count={group.steps.length}>
+            {phaseLabels[group.phase]}
+          </SectionLabel>
           <ol className="space-y-px">
             {group.steps.map(({ step, index }) => (
               <DefinitionStep key={step.name} step={step} index={index} />
@@ -328,7 +321,7 @@ export default function WorkflowDefinitions({
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
     >
       <div className="mx-auto w-full max-w-5xl space-y-4 px-5 py-6 lg:px-8">
-        <div className="flex items-center justify-between gap-3 px-3">
+        <div className="flex items-center justify-between gap-3 px-2">
           <span className="text-xs text-muted-foreground tabular-nums">
             {!catalog
               ? 'Workflows are read from the files on the chosen computer'
@@ -339,18 +332,16 @@ export default function WorkflowDefinitions({
           {onCreate && (
             <Button
               type="button"
-              size="sm"
               variant="ghost"
-              className="h-7 gap-1.5 px-2 text-xs"
               disabled={!connected}
               title={
                 connected
-                  ? 'New workflow'
+                  ? undefined
                   : 'Connect the computer to create a workflow.'
               }
               onClick={() => onCreate({ hostId, directory })}
             >
-              <Plus className="size-3.5" />
+              <Plus />
               New workflow
             </Button>
           )}
@@ -362,38 +353,38 @@ export default function WorkflowDefinitions({
             load(hostId, directory);
           }}
         >
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="workflows-computer" className="text-2xs">
-              Computer
-            </Label>
-            <Select
-              value={hostId}
-              onValueChange={value => {
-                setHostId(value);
-                load(value, directory);
-              }}
-            >
-              <SelectTrigger
-                id="workflows-computer"
-                size="md"
-                className="h-8 w-44 text-xs"
+          <Field id="workflows-computer" label="Computer">
+            <div>
+              <Select
+                value={hostId}
+                onValueChange={value => {
+                  setHostId(value);
+                  load(value, directory);
+                }}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {computers.map(item => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                    {item.status === 'connected' ? '' : ' · Offline'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex min-w-48 flex-1 flex-col gap-1">
-            <Label htmlFor="workflows-directory" className="text-2xs">
-              Project folder
-            </Label>
+                <SelectTrigger
+                  id="workflows-computer"
+                  size="md"
+                  className="w-44"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {computers.map(item => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                      {item.status === 'connected' ? '' : ' · Offline'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </Field>
+          <Field
+            id="workflows-directory"
+            label="Project folder"
+            className="min-w-48 flex-1"
+          >
             <Input
               size="md"
               id="workflows-directory"
@@ -401,14 +392,12 @@ export default function WorkflowDefinitions({
               value={directory}
               maxLength={4096}
               onChange={event => setDirectory(event.target.value)}
-              className="h-8 text-xs md:text-xs"
             />
-          </div>
+          </Field>
           <Button
             type="submit"
             variant="outline"
             size="md"
-            className="h-8"
             disabled={!connected || state.status === 'loading'}
           >
             <RefreshCw
@@ -427,48 +416,72 @@ export default function WorkflowDefinitions({
           </p>
         )}
         {state.status === 'loading' && (
-          <p role="status" className="text-xs text-muted-foreground">
-            Reading workflows…
-          </p>
+          <StatusMessage tone="loading">Reading workflows…</StatusMessage>
         )}
         {state.status === 'error' && (
-          <p
-            role="alert"
-            className="text-xs text-destructive [overflow-wrap:anywhere]"
-          >
-            {state.message}
-          </p>
+          <StatusMessage tone="error">{state.message}</StatusMessage>
         )}
         {catalog && (
           <>
             <p className="space-x-3 text-2xs text-muted-foreground">
-              <span title={catalog.roots.global ?? undefined}>
-                Global: {catalog.roots.global ?? 'none'}
-              </span>
-              <span title={catalog.roots.project ?? undefined}>
-                Project: {catalog.roots.project ?? 'none'}
-              </span>
+              <span>Global: {catalog.roots.global ?? 'none'}</span>
+              <span>Project: {catalog.roots.project ?? 'none'}</span>
             </p>
             <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)]">
               <ul
                 aria-label="Workflow definitions"
-                className={cn(fieldSurface, 'h-fit min-w-0 space-y-px p-1.5')}
+                className="h-fit min-w-0 space-y-px rounded-surface border p-1"
               >
                 {catalog.workflows.map(workflow => {
                   const count = workflowIssueCount(catalog, workflow);
                   const active = selected?.name === workflow.name;
                   return (
-                    <li
-                      key={workflow.name}
-                      className="flex items-center gap-0.5"
-                    >
-                      <button
-                        type="button"
-                        aria-pressed={active}
-                        data-definition={workflow.name}
-                        title={[workflow.description, phaseCounts(workflow)]
-                          .filter(Boolean)
-                          .join(' · ')}
+                    <li key={workflow.name}>
+                      <ListRow
+                        selected={active}
+                        leading={<Workflow aria-hidden="true" />}
+                        title={
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate font-medium">
+                              {workflow.name}
+                            </span>
+                            {highlighted.includes(workflow.name) &&
+                              !reviewed.includes(workflow.name) && (
+                                <AddedByAssistantBadge />
+                              )}
+                          </span>
+                        }
+                        trailing={
+                          <>
+                            {count > 0 && (
+                              <span className="text-warning-foreground">
+                                {count} {count === 1 ? 'issue' : 'issues'}
+                              </span>
+                            )}
+                            <span>
+                              {workflow.steps.length}{' '}
+                              {workflow.steps.length === 1 ? 'step' : 'steps'}
+                            </span>
+                          </>
+                        }
+                        actions={
+                          onEdit && (
+                            <IconButton
+                              size={24}
+                              label={`Edit ${workflow.name}`}
+                              onClick={() =>
+                                onEdit({
+                                  hostId,
+                                  directory,
+                                  workflowName: workflow.name,
+                                  catalog,
+                                })
+                              }
+                            >
+                              <SquarePen />
+                            </IconButton>
+                          )
+                        }
                         onClick={() => {
                           setSelectedName(workflow.name);
                           setReviewed(current =>
@@ -477,58 +490,21 @@ export default function WorkflowDefinitions({
                               : [...current, workflow.name],
                           );
                         }}
-                        className={cn(
-                          cardRowAction,
-                          'min-w-0 flex-1 aria-pressed:bg-highlight',
-                        )}
-                      >
-                        <Workflow className={cardIcon} aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {workflow.name}
-                        </span>
-                        {highlighted.includes(workflow.name) &&
-                          !reviewed.includes(workflow.name) && (
-                            <span
-                              data-added-by-assistant
-                              title="Added by the assistant"
-                              className="shrink-0 rounded-full border border-info-foreground/40 px-1.5 text-[10px] leading-4 font-normal text-info-foreground"
-                            >
-                              Assistant
-                            </span>
-                          )}
-                        {count > 0 && (
-                          <span className="shrink-0 text-2xs font-normal text-warning-foreground tabular-nums">
-                            {count} {count === 1 ? 'issue' : 'issues'}
-                          </span>
-                        )}
-                        <span className={cardValue}>
-                          {workflow.steps.length}{' '}
-                          {workflow.steps.length === 1 ? 'step' : 'steps'}
-                        </span>
-                      </button>
-                      {onEdit && (
-                        <button
-                          type="button"
-                          aria-label={`Edit ${workflow.name}`}
-                          title="Edit in the graph editor"
-                          onClick={() =>
-                            onEdit({
-                              hostId,
-                              directory,
-                              workflowName: workflow.name,
-                              catalog,
-                            })
-                          }
-                          className={cardIconButton}
-                        >
-                          <SquarePen className="size-3.5" aria-hidden="true" />
-                        </button>
-                      )}
+                        mainProps={{
+                          'aria-pressed': active,
+                          'aria-current': undefined,
+                          title:
+                            [workflow.description, phaseCounts(workflow)]
+                              .filter(Boolean)
+                              .join(' · ') || undefined,
+                          ...{ 'data-definition': workflow.name },
+                        }}
+                      />
                     </li>
                   );
                 })}
                 {catalog.workflows.length === 0 && (
-                  <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
+                  <li className="px-2 py-1.5 text-xs text-muted-foreground">
                     No valid workflows in this folder or the global folder.
                   </li>
                 )}
@@ -536,67 +512,55 @@ export default function WorkflowDefinitions({
               {selected ? (
                 <WorkflowDetail workflow={selected} />
               ) : (
-                <div className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
-                  <span className="mb-2 flex size-10 items-center justify-center rounded-xl border bg-card text-muted-foreground">
-                    <Workflow className="size-4.5" aria-hidden="true" />
-                  </span>
-                  <h2 className="text-[15px] font-semibold tracking-tight">
-                    No workflows yet
-                  </h2>
-                  <p className="max-w-sm text-xs leading-5 text-muted-foreground">
-                    A workflow is a graph of checks, agents, approvals and
-                    actions that runs on a task. Build one in the graph editor.
-                  </p>
-                  {onCreate && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      className="mt-2 h-7 text-xs"
-                      disabled={!connected}
-                      onClick={() => onCreate({ hostId, directory })}
-                    >
-                      New workflow
-                    </Button>
-                  )}
-                </div>
+                <EmptyState
+                  icon={Workflow}
+                  title="No workflows yet"
+                  description="A workflow is a graph of checks, agents, approvals and actions that runs on a task. Build one in the graph editor."
+                  className="min-h-64"
+                  action={
+                    onCreate && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!connected}
+                        onClick={() => onCreate({ hostId, directory })}
+                      >
+                        New workflow
+                      </Button>
+                    )
+                  }
+                />
               )}
             </div>
             {catalog.issues.length > 0 && (
-              <section aria-label="Validation issues" className="space-y-2">
-                <h3 className="px-1 text-2xs text-muted-foreground">
+              <section aria-label="Validation issues" className="space-y-1">
+                <SectionLabel>
                   {catalog.issues.length} validation{' '}
                   {catalog.issues.length === 1 ? 'issue' : 'issues'}
-                </h3>
-                <ul className={cn(fieldSurface, 'space-y-px p-1.5')}>
+                </SectionLabel>
+                <ul className="space-y-px rounded-surface border p-1">
                   {catalog.issues.map((issue, index) => {
                     const error = issue.severity === 'error';
-                    const Icon = error ? CircleX : TriangleAlert;
                     return (
                       <li
                         key={index}
-                        className="flex min-h-7 min-w-0 items-start gap-2.5 rounded-md px-2.5 py-1 text-xs"
+                        className="flex min-h-7 min-w-0 items-start gap-2 px-2 py-1 text-xs"
                       >
-                        <Icon
-                          role="img"
-                          aria-label={error ? 'Error' : 'Warning'}
-                          className={cn(
-                            'mt-0.5 size-4 shrink-0',
-                            error
-                              ? 'text-error-foreground'
-                              : 'text-warning-foreground',
-                          )}
+                        <StatusIcon
+                          status={error ? 'error' : 'warning'}
+                          label={error ? 'Error' : 'Warning'}
+                          className="mt-1"
                         />
                         <span className="min-w-0 flex-1 leading-5 [overflow-wrap:anywhere]">
                           {issue.message}
                         </span>
-                        <span
-                          className="max-w-48 shrink-0 truncate font-mono text-2xs leading-5 text-muted-foreground"
-                          title={issue.path}
-                        >
-                          {issueScope(catalog, issue)} · {fileName(issue.path)}
-                          {issue.line ? `:${issue.line}` : ''}
-                        </span>
+                        <Hint label={issue.path}>
+                          <span className="max-w-48 shrink-0 truncate font-mono text-2xs leading-5 text-muted-foreground">
+                            {issueScope(catalog, issue)} ·{' '}
+                            {fileName(issue.path)}
+                            {issue.line ? `:${issue.line}` : ''}
+                          </span>
+                        </Hint>
                       </li>
                     );
                   })}
