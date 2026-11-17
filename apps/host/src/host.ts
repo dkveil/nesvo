@@ -66,11 +66,14 @@ import {
   ScheduledJobService,
 } from './scheduled-jobs/service';
 import { SessionLauncher } from './scheduled-jobs/launcher';
+import { AttachmentError, SessionAttachments } from './sessions/attachments';
 
+const CONCURRENT_ATTACHMENT_REQUESTS = 4;
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
   'send-message',
   'queue-message',
+  'stage-attachment',
   'assign-session-workflow',
   'cancel-queued',
   'start-queued',
@@ -140,6 +143,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
+      const attachments = new SessionAttachments(directory);
       let outgoing = Promise.resolve();
       const emit = (message: HostMessage) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
@@ -166,6 +170,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 workflowRunStore.interruptActiveRuns(at);
               },
               {
+                attachments,
                 environment: session => {
                   const run = session.workflowRunId
                     ? workflowRunStore.getRun(session.workflowRunId)
@@ -349,6 +354,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       observeAssistant = session => assistant.observe(session);
       let evidenceRequests = 0;
+      let attachmentRequests = 0;
       let workspaceRequests = 0;
       let skillRequests = 0;
       let definitionRequests = 0;
@@ -716,6 +722,80 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             };
           }
           yield* Effect.tryPromise(() => send(response));
+          continue;
+        }
+        if (
+          request.method === 'stage-attachment' ||
+          request.method === 'read-attachment'
+        ) {
+          const owned = store.get(request.input.sessionId);
+          const refusal = !owned
+            ? ({
+                code: 'not-found',
+                message: 'Session not found. Refresh the list.',
+              } as const)
+            : request.method === 'stage-attachment' && owned.workflowStepId
+              ? ({
+                  code: 'invalid-request',
+                  message: 'This session does not accept messages.',
+                } as const)
+              : attachmentRequests >= CONCURRENT_ATTACHMENT_REQUESTS
+                ? ({
+                    code: 'busy',
+                    message: 'Too many attachment requests. Try again shortly.',
+                  } as const)
+                : null;
+          if (!owned || refusal) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: refusal?.code ?? 'not-found',
+                message: refusal?.message,
+              }),
+            );
+            continue;
+          }
+          attachmentRequests++;
+          const operation = async (): Promise<HostResponse> =>
+            request.method === 'stage-attachment'
+              ? {
+                  type: 'attachment-staged',
+                  id: request.id,
+                  attachmentId: await attachments.stage(
+                    owned.id,
+                    request.input.attachment,
+                    request.input.data,
+                  ),
+                }
+              : {
+                  type: 'attachment',
+                  id: request.id,
+                  staged: await attachments.read(
+                    owned.id,
+                    request.input.attachmentId,
+                  ),
+                };
+          const pending = operation()
+            .then(send)
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof AttachmentError ? error.code : 'unavailable',
+                message:
+                  error instanceof AttachmentError
+                    ? error.message
+                    : 'The attachment could not be processed. Try again.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              attachmentRequests--;
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
           continue;
         }
         if (request.method === 'read-workflow-evidence') {

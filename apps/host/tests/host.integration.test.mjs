@@ -367,6 +367,7 @@ test(
         'permission-modes',
         'session-workflow',
         'prompts',
+        'attachments',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -4927,6 +4928,7 @@ test(
       'permission-modes',
       'session-workflow',
       'prompts',
+      'attachments',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -16607,6 +16609,7 @@ test(
 
 test(
   'staged attachments reach the provider input and oversized files refuse the turn',
+  'host stages, validates and records message attachments',
   { timeout: 60_000 },
   async t => {
     const directory = await realpath(
@@ -16628,6 +16631,10 @@ test(
         }
       }
       await bounded(host.exited, 'Test host did not exit');
+    const host = launch(directory, join(directory, 'pids.json'));
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
       await rm(directory, {
         recursive: true,
         force: true,
@@ -16727,5 +16734,123 @@ test(
         path: join(directory, 'attachments', codex.id, codexImage.id),
       },
     ]);
+    const session = (
+      await host.request('create-session', {
+        title: 'Attachments',
+        model: 'sonnet',
+        directory: '',
+      })
+    ).session;
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const image = {
+      id: randomUUID(),
+      kind: 'image',
+      name: 'pixel.png',
+      mediaType: 'image/png',
+      bytes: png.length,
+    };
+    const stage = (attachment, data) =>
+      host.request('stage-attachment', {
+        sessionId: session.id,
+        attachment,
+        data: data.toString('base64'),
+      });
+    assert.equal(
+      (await stage({ ...image, mediaType: 'image/jpeg' }, png)).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await stage({ ...image, bytes: png.length + 1 }, png)).code,
+      'invalid-request',
+    );
+    assert.equal((await stage(image, png)).attachmentId, image.id);
+    assert.equal((await stage(image, png)).attachmentId, image.id);
+    assert.equal(
+      (await stage({ ...image, name: 'other.png' }, png)).code,
+      'invalid-request',
+    );
+    const text = {
+      id: randomUUID(),
+      kind: 'text',
+      name: 'notes.txt',
+      mediaType: 'text/plain',
+      bytes: 5,
+    };
+    assert.equal(
+      (await stage(text, Buffer.from([0x68, 0x00, 0x69, 0x21, 0x0a]))).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await stage(text, Buffer.from('hello'))).attachmentId,
+      text.id,
+    );
+    const stored = join(directory, 'attachments', session.id, image.id);
+    assert.deepEqual(await readFile(stored), png);
+    if (process.platform !== 'win32')
+      assert.equal((await stat(stored)).mode & 0o777, 0o600);
+    const read = await host.request('read-attachment', {
+      sessionId: session.id,
+      attachmentId: image.id,
+    });
+    assert.deepEqual(read.staged, {
+      attachment: image,
+      data: png.toString('base64'),
+    });
+    assert.equal(
+      (
+        await host.request('read-attachment', {
+          sessionId: randomUUID(),
+          attachmentId: image.id,
+        })
+      ).code,
+      'not-found',
+    );
+    assert.equal(
+      (
+        await host.request('send-message', {
+          sessionId: session.id,
+          messageId: randomUUID(),
+          text: 'fixture:stream',
+          attachments: [{ ...image, id: randomUUID() }],
+        })
+      ).message,
+      'Attachment is not staged.',
+    );
+    assert.equal(
+      (
+        await host.request('send-message', {
+          sessionId: session.id,
+          messageId: randomUUID(),
+          text: '',
+        })
+      ).code,
+      'invalid-request',
+    );
+    const input = {
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text: 'fixture:stream',
+      attachments: [image, text],
+    };
+    const running = (await host.request('send-message', input)).session;
+    assert.deepEqual(running.messages[0].attachments, [image, text]);
+    assert.deepEqual(running.messages[1].attachments, []);
+    assert.equal(
+      (await host.request('send-message', { ...input, attachments: [image] }))
+        .code,
+      'invalid-request',
+    );
+    const completed = await host.event(
+      value => value.runId === running.runId && value.status === 'completed',
+    );
+    assert.deepEqual(completed.messages[0].attachments, [image, text]);
+    const listed = (await host.request('list-sessions')).sessions.find(
+      item => item.id === session.id,
+    );
+    assert.deepEqual(listed.messages[0].attachments, [image, text]);
+    await host.stop();
   },
 );
