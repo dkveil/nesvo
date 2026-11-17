@@ -13,7 +13,7 @@ import {
 } from '@/shared/ui/dialog';
 import { ActionFeedback } from './action-feedback';
 import { DisabledHint } from './disabled-hint';
-import type { ActionState } from './use-pull-request-actions';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type CheckoutControlProps = {
   pullRequest: PullRequest;
@@ -32,6 +32,7 @@ export function CheckoutControl({
 }: CheckoutControlProps) {
   const [confirming, setConfirming] = useState(false);
   const pending = state?.status === 'pending';
+  const locked = isActionLocked(state);
   const busy = session.status === 'running' || session.status === 'stopping';
   const reason =
     blockedReason ||
@@ -47,7 +48,7 @@ export function CheckoutControl({
           type="button"
           variant="ghost"
           size="xs"
-          disabled={!!reason || pending}
+          disabled={!!reason || locked}
           onClick={() => setConfirming(true)}
           className="h-7 text-xs text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed"
         >
@@ -58,7 +59,7 @@ export function CheckoutControl({
       <Dialog
         open={confirming}
         onOpenChange={open => {
-          if (!pending) setConfirming(open);
+          if (!locked) setConfirming(open);
         }}
       >
         <DialogContent className="sm:max-w-md">
@@ -77,13 +78,15 @@ export function CheckoutControl({
               permissions stay the same.
             </DialogDescription>
           </DialogHeader>
-          {state?.status === 'error' && <ActionFeedback state={state} />}
+          {(state?.status === 'error' || state?.status === 'unknown') && (
+            <ActionFeedback state={state} />
+          )}
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={pending}
+              disabled={locked}
               onClick={() => setConfirming(false)}
             >
               Cancel
@@ -91,7 +94,7 @@ export function CheckoutControl({
             <Button
               type="button"
               size="sm"
-              disabled={pending}
+              disabled={locked}
               onClick={() => void confirm()}
             >
               {pending ? 'Checking out…' : 'Check out'}

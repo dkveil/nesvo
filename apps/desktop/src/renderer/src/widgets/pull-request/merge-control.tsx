@@ -24,16 +24,19 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { ActionFeedback } from './action-feedback';
 import { DisabledHint } from './disabled-hint';
-import type { ActionState } from './use-pull-request-actions';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 const METHOD_ORDER: MergeMethod[] = ['squash', 'merge', 'rebase'];
 
 type MergeControlProps = {
   pullRequest: PullRequest;
   blockedReason: string;
+  staleReason: string;
   state: ActionState | undefined;
-  onMerge: (method: MergeMethod, deleteBranch: boolean) => Promise<boolean>;
+  onMerge: (method: MergeMethod, expectedHeadSha: string) => Promise<boolean>;
 };
+
+type PinnedMerge = { sha: string; method: MergeMethod };
 
 function mergeBlockedReason(pullRequest: PullRequest, blockedReason: string) {
   if (blockedReason) return blockedReason;
@@ -53,6 +56,7 @@ function mergeBlockedReason(pullRequest: PullRequest, blockedReason: string) {
 export function MergeControl({
   pullRequest,
   blockedReason,
+  staleReason,
   state,
   onMerge,
 }: MergeControlProps) {
@@ -61,15 +65,21 @@ export function MergeControl({
   );
   const [chosen, setChosen] = useState<MergeMethod | null>(null);
   const method = chosen && methods.includes(chosen) ? chosen : methods[0];
-  const [confirming, setConfirming] = useState(false);
-  const [deleteBranch, setDeleteBranch] = useState(false);
-  const reason = mergeBlockedReason(pullRequest, blockedReason);
+  const [pinned, setPinned] = useState<PinnedMerge | null>(null);
+  const reason = mergeBlockedReason(pullRequest, blockedReason) || staleReason;
   const pending = state?.status === 'pending';
-  const disabled = !!reason || !method || pending;
+  const locked = isActionLocked(state);
+  const disabled = !!reason || !method || locked;
+  const confirming =
+    !!pinned &&
+    (locked || (pinned.sha === pullRequest.headSha && !staleReason));
   if (pullRequest.state !== 'open') return null;
+  const open = () => {
+    if (method) setPinned({ sha: pullRequest.headSha, method });
+  };
   const confirm = async () => {
-    if (!method) return;
-    if (await onMerge(method, deleteBranch)) setConfirming(false);
+    if (!pinned) return;
+    if (await onMerge(pinned.method, pinned.sha)) setPinned(null);
   };
   return (
     <>
@@ -79,7 +89,7 @@ export function MergeControl({
             type="button"
             size="xs"
             disabled={disabled}
-            onClick={() => setConfirming(true)}
+            onClick={open}
             className="h-7 rounded-r-none px-2.5 text-xs disabled:cursor-not-allowed"
           >
             {pending ? 'Merging…' : mergeMethodLabels[method ?? 'squash']}
@@ -113,8 +123,8 @@ export function MergeControl({
       </DisabledHint>
       <Dialog
         open={confirming}
-        onOpenChange={open => {
-          if (!pending) setConfirming(open);
+        onOpenChange={next => {
+          if (!next && !locked) setPinned(null);
         }}
       >
         <DialogContent className="sm:max-w-md">
@@ -125,42 +135,37 @@ export function MergeControl({
             <DialogDescription className="text-xs leading-5">
               Merges commit{' '}
               <code className="rounded-sm bg-accent px-1 font-mono">
-                {shortSha(pullRequest.headSha)}
+                {shortSha(pinned?.sha ?? pullRequest.headSha)}
               </code>{' '}
               of <span className="font-mono">{pullRequest.headRefName}</span>{' '}
               into <span className="font-mono">{pullRequest.baseRefName}</span>{' '}
-              using {method ? mergeMethodVerbs[method] : 'squash'}. If the
-              branch gains new commits first, the merge is refused.
+              using {mergeMethodVerbs[pinned?.method ?? 'squash']}. If the
+              branch gains new commits first, the merge is refused. The head
+              branch is kept.
             </DialogDescription>
           </DialogHeader>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={deleteBranch}
-              disabled={pending}
-              onChange={event => setDeleteBranch(event.target.checked)}
-              className="size-3.5 accent-foreground"
-            />
-            Delete the head branch after merging
-          </label>
-          {state?.status === 'error' && <ActionFeedback state={state} />}
+          {(state?.status === 'error' || state?.status === 'unknown') && (
+            <ActionFeedback state={state} />
+          )}
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={pending}
-              onClick={() => setConfirming(false)}
+              disabled={locked}
+              onClick={() => setPinned(null)}
             >
               Cancel
             </Button>
             <Button
               type="button"
               size="sm"
-              disabled={pending || !method}
+              disabled={locked || !pinned}
               onClick={() => void confirm()}
             >
-              {pending ? 'Merging…' : mergeMethodLabels[method ?? 'squash']}
+              {pending
+                ? 'Merging…'
+                : mergeMethodLabels[pinned?.method ?? 'squash']}
             </Button>
           </DialogFooter>
         </DialogContent>

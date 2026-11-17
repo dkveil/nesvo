@@ -12,7 +12,7 @@ import { MessageBody } from '@/widgets/conversation/message-body';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { CommentBox } from './comment-box';
 import { openExternal } from './open-external';
-import type { ActionState } from './use-pull-request-actions';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type ReviewEvent = 'approve' | 'request-changes' | 'comment';
 
@@ -236,7 +236,7 @@ export function SummaryTab({
                     label: REVIEW_EVENT_LABELS[value],
                   }))}
                   onChange={setChosen}
-                  disabled={reviewState?.status === 'pending'}
+                  disabled={isActionLocked(reviewState)}
                 />
               )
             }

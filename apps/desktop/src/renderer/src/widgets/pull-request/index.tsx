@@ -52,6 +52,9 @@ import { useResource } from './use-resource';
 
 const RELATIVE_TIME_REFRESH_MS = 60_000;
 
+const STALE_REVISION_REASON =
+  'The pull request changed. Refresh to review the latest commit.';
+
 const HINT_TONES = {
   success: 'text-success-foreground',
   warning: 'text-warning-foreground',
@@ -113,9 +116,21 @@ export default function PullRequestPanel({
     `threads:${versions.threads}`,
     readable && codeRequested,
   );
-  const actions = usePullRequestActions({ api, reference, blockedReason });
   const bump = (key: keyof typeof versions) =>
     setVersions(previous => ({ ...previous, [key]: previous[key] + 1 }));
+  const refreshAll = () => {
+    setVersions(previous => ({
+      pullRequest: previous.pullRequest + 1,
+      files: previous.files + 1,
+      threads: previous.threads + 1,
+    }));
+  };
+  const actions = usePullRequestActions({
+    api,
+    reference,
+    blockedReason,
+    onRefresh: refreshAll,
+  });
   useEffect(() => {
     closeButton.current?.focus();
     const escape = (event: KeyboardEvent) => {
@@ -143,6 +158,10 @@ export default function PullRequestPanel({
   const data = pullRequest.data;
   const url = data?.url ?? pullRequestUrl(reference);
   const headSha = files.data?.headSha ?? data?.headSha ?? '';
+  const staleReason =
+    data && files.data && files.data.headSha !== data.headSha
+      ? STALE_REVISION_REASON
+      : '';
   const viewedPaths = new Set(viewed[headSha] ?? []);
   const toggleViewed = (path: string) =>
     setViewed(previous => {
@@ -164,13 +183,6 @@ export default function PullRequestPanel({
         ? threadPrompt(reference, items[0]!)
         : threadsPrompt(reference, items),
     );
-  };
-  const refreshAll = () => {
-    setVersions(previous => ({
-      pullRequest: previous.pullRequest + 1,
-      files: previous.files + 1,
-      threads: previous.threads + 1,
-    }));
   };
   const copyLink = () => {
     void navigator.clipboard.writeText(url).then(
@@ -292,16 +304,12 @@ export default function PullRequestPanel({
               <MergeControl
                 pullRequest={data}
                 blockedReason={blockedReason}
+                staleReason={staleReason}
                 state={actions.states.merge}
-                onMerge={async (method, deleteBranch) => {
+                onMerge={async (method, expectedHeadSha) => {
                   const done = await actions.run(
                     'merge',
-                    {
-                      action: 'merge',
-                      method,
-                      expectedHeadSha: data.headSha,
-                      deleteBranch,
-                    },
+                    { action: 'merge', method, expectedHeadSha },
                     'Merged.',
                   );
                   if (done) bump('pullRequest');

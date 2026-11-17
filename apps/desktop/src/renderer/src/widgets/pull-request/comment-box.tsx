@@ -3,7 +3,7 @@ import { pullRequestLimits } from '@nesvo/contracts';
 import { cn } from 'cn';
 import { Button } from '@/shared/ui/button';
 import { ActionFeedback } from './action-feedback';
-import type { ActionState } from './use-pull-request-actions';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type CommentBoxProps = {
   label: string;
@@ -37,9 +37,10 @@ export function CommentBox({
   className,
 }: CommentBoxProps) {
   const pending = state?.status === 'pending';
+  const locked = isActionLocked(state);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (canSubmit && !pending && !blockedReason) onSubmit();
+    if (canSubmit && !locked && !blockedReason) onSubmit();
   };
   return (
     <form
@@ -54,15 +55,15 @@ export function CommentBox({
         value={value}
         placeholder={placeholder}
         maxLength={pullRequestLimits.commentLength}
-        disabled={pending || !!blockedReason}
+        disabled={locked || !!blockedReason}
         autoFocus={autoFocus}
         onChange={event => onChange(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
             event.preventDefault();
-            if (canSubmit && !pending && !blockedReason) onSubmit();
+            if (canSubmit && !locked && !blockedReason) onSubmit();
           }
-          if (event.key === 'Escape' && onCancel) {
+          if (event.key === 'Escape' && onCancel && !locked) {
             event.preventDefault();
             event.stopPropagation();
             onCancel();
@@ -86,7 +87,7 @@ export function CommentBox({
             type="button"
             variant="ghost"
             size="xs"
-            disabled={pending}
+            disabled={locked}
             onClick={onCancel}
             className="text-muted-foreground"
           >
@@ -96,7 +97,7 @@ export function CommentBox({
         <Button
           type="submit"
           size="xs"
-          disabled={!canSubmit || pending || !!blockedReason}
+          disabled={!canSubmit || locked || !!blockedReason}
           className="disabled:cursor-not-allowed"
         >
           {pending ? 'Sending…' : submitLabel}

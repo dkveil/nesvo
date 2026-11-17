@@ -7,7 +7,7 @@ import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { Button } from '@/shared/ui/button';
 import { ActionFeedback } from './action-feedback';
 import { CommentBox } from './comment-box';
-import type { ActionState } from './use-pull-request-actions';
+import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type ThreadCardProps = {
   thread: PullRequestThread;
@@ -41,6 +41,7 @@ export function ThreadCard({
   const [body, setBody] = useState('');
   const first = thread.comments[0];
   const resolving = resolveState?.status === 'pending';
+  const resolveLocked = isActionLocked(resolveState);
   const submitReply = async () => {
     if (!(await onReply(body.trim()))) return;
     setBody('');
@@ -159,7 +160,7 @@ export function ThreadCard({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  disabled={!!blockedReason || resolving}
+                  disabled={!!blockedReason || resolveLocked}
                   title={blockedReason || undefined}
                   onClick={() => onResolve(!thread.isResolved)}
                   className="text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed"
