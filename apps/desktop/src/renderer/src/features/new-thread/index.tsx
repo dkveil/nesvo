@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp } from 'lucide-react';
 import type {
   Computer,
   CreateSessionInput,
@@ -22,8 +21,14 @@ import {
 } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
-import { Button } from '@/shared/ui/button';
-import { Textarea } from '@/shared/ui/textarea';
+import {
+  Composer,
+  ComposerInput,
+  ComposerSend,
+  ComposerToolbar,
+} from '@/shared/ui/composer';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
 import { ModelPicker } from './model-picker';
@@ -257,13 +262,14 @@ export function NewThread({
           <h2 className="text-2xl font-normal tracking-tight text-foreground sm:text-3xl">
             What should we build?
           </h2>
-          <p
-            data-thread-project
-            className="truncate text-[13px] font-semibold text-foreground"
-            title={setup.directory.trim() || 'Isolated folder'}
-          >
-            {project || 'No project'}
-          </p>
+          <Hint label={setup.directory.trim() || 'Isolated folder'}>
+            <p
+              data-thread-project
+              className="truncate text-ui font-semibold text-foreground"
+            >
+              {project || 'No project'}
+            </p>
+          </Hint>
         </header>
         <SelectSkill
           scope={{
@@ -302,16 +308,14 @@ export function NewThread({
                 Message
               </label>
               {anchor(
-                <div className="glass-composer relative z-10 rounded-2xl border px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-input">
+                <Composer className="z-10">
                   {skill && (
                     <SelectedSkillChip
                       skill={skill}
                       onRemove={() => setSkill(null)}
                     />
                   )}
-                  <Textarea
-                    variant="ghost"
-                    size="lg"
+                  <ComposerInput
                     ref={input}
                     id="thread-input"
                     autoFocus
@@ -338,69 +342,61 @@ export function NewThread({
                     }}
                     maxLength={MAX_MESSAGE_LENGTH}
                     disabled={pending}
-                    className="max-h-48 min-h-11 resize-none rounded-none border-0 bg-transparent px-1 py-0 text-sm leading-5 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 dark:bg-transparent"
                   />
-                  <div className="flex items-center justify-between gap-3 pt-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <WorkflowPicker
-                        key={`${setup.hostId}:${setup.directory.trim()}`}
-                        hostId={setup.hostId}
-                        directory={setup.directory}
-                        connected={connected}
-                        authorProvider={setup.provider}
-                        statuses={statuses}
-                        api={hostApi.workflows}
-                        value={workflow}
-                        disabled={pending}
-                        onChange={changeWorkflow}
-                      />
-                      <span className="min-w-0 truncate text-[11px] leading-7 text-muted-foreground">
-                        {pending ? 'Starting…' : blockedReason}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <ModelPicker
-                        provider={setup.provider}
-                        model={model}
-                        effort={effort}
-                        statuses={statuses}
-                        disabled={pending}
-                        onChange={(provider, nextModel, nextEffort) => {
-                          if (provider !== setup.provider) setSkill(null);
-                          onSetupChange({
-                            ...setup,
-                            provider,
-                            model: nextModel,
-                            effort: nextEffort,
-                            mode: providerModes(
+                  <ComposerToolbar
+                    start={
+                      <>
+                        <WorkflowPicker
+                          key={`${setup.hostId}:${setup.directory.trim()}`}
+                          hostId={setup.hostId}
+                          directory={setup.directory}
+                          connected={connected}
+                          authorProvider={setup.provider}
+                          statuses={statuses}
+                          api={hostApi.workflows}
+                          value={workflow}
+                          disabled={pending}
+                          onChange={changeWorkflow}
+                        />
+                        <span className="min-w-0 truncate">
+                          {pending ? 'Starting…' : blockedReason}
+                        </span>
+                      </>
+                    }
+                    end={
+                      <>
+                        <ModelPicker
+                          provider={setup.provider}
+                          model={model}
+                          effort={effort}
+                          statuses={statuses}
+                          disabled={pending}
+                          onChange={(provider, nextModel, nextEffort) => {
+                            if (provider !== setup.provider) setSkill(null);
+                            onSetupChange({
+                              ...setup,
                               provider,
-                              statuses[provider].status,
-                            ).includes(setup.mode)
-                              ? setup.mode
-                              : 'read-only',
-                          });
-                        }}
-                        onRefreshProvider={onRefreshProvider}
-                      />
-                      <Button
-                        type="submit"
-                        size="icon-sm"
-                        className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-                        disabled={!canSend}
-                        aria-label={
-                          piped ? 'Start workflow task' : 'Send message'
-                        }
-                        title={
-                          piped
-                            ? 'Start workflow task (Enter)'
-                            : 'Send message (Enter)'
-                        }
-                      >
-                        <ArrowUp />
-                      </Button>
-                    </div>
-                  </div>
-                </div>,
+                              model: nextModel,
+                              effort: nextEffort,
+                              mode: providerModes(
+                                provider,
+                                statuses[provider].status,
+                              ).includes(setup.mode)
+                                ? setup.mode
+                                : 'read-only',
+                            });
+                          }}
+                          onRefreshProvider={onRefreshProvider}
+                        />
+                        <ComposerSend
+                          disabled={!canSend}
+                          label={piped ? 'Start workflow task' : 'Send message'}
+                          shortcut="Enter"
+                        />
+                      </>
+                    }
+                  />
+                </Composer>,
               )}
               {notice}
               <div className="flex min-w-0 flex-wrap items-center gap-1 px-2">
@@ -460,20 +456,14 @@ export function NewThread({
                 />
               </div>
               {error && (
-                <p
-                  role="alert"
-                  className="px-1 text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]"
-                >
+                <StatusMessage tone="error" variant="notice">
                   {error}
-                </p>
+                </StatusMessage>
               )}
               {startNotice && (
-                <p
-                  role="status"
-                  className="px-1 text-sm leading-relaxed text-muted-foreground"
-                >
+                <StatusMessage tone="success" variant="notice">
                   {startNotice}
-                </p>
+                </StatusMessage>
               )}
               {issues.length > 0 && (
                 <ul
