@@ -86,7 +86,8 @@ export function UsageIndicator({
         side={layout === 'row' ? 'top' : layout === 'column' ? 'right' : 'left'}
         align="center"
         collisionPadding={12}
-        className="block w-80 px-3 py-2 font-normal select-text"
+        variant="panel"
+        className="w-80"
       >
         <IndicatorTooltip
           provider={provider}

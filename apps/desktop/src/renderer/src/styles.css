@@ -45,6 +45,9 @@
   --color-code-background: var(--code-background);
   --color-message-surface: var(--message-surface);
   --color-kbd: var(--kbd);
+  --color-tooltip: var(--tooltip);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-tooltip-key: var(--tooltip-key);
   --color-segment-track: var(--segment-track);
   --color-segment-active: var(--segment-active);
   --color-send-idle: var(--send-idle);
@@ -118,6 +121,10 @@
   --popover-glass: rgb(255 255 255 / var(--glass-opacity));
   --popover-border: #e4e4e7;
   --popover-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  --tooltip: #18181b;
+  --tooltip-foreground: #fafafa;
+  --tooltip-key: rgb(255 255 255 / 14%);
+  --tooltip-shadow: 0 8px 24px -10px rgb(0 0 0 / 45%);
   --overlay: rgb(0 0 0 / 24%);
   --dialog-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
   --message-surface: #ebebed;
@@ -188,6 +195,11 @@
   --popover-glass: rgb(20 20 20 / var(--glass-opacity));
   --popover-border: rgb(255 255 255 / 10%);
   --popover-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  --tooltip: #1b1b1b;
+  --tooltip-foreground: #ededed;
+  --tooltip-key: rgb(255 255 255 / 9%);
+  --tooltip-shadow:
+    0 0 0 1px rgb(255 255 255 / 7%), 0 10px 28px -10px rgb(0 0 0 / 90%);
   --overlay: rgb(0 0 0 / 60%);
   --dialog-shadow:
     inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%);
