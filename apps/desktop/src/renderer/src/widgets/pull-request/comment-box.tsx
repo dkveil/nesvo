@@ -1,8 +1,13 @@
 import type { FormEvent, ReactNode, Ref } from 'react';
 import { pullRequestLimits } from '@nesvo/contracts';
-import { ArrowUp, LoaderCircle } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
+import {
+  Composer,
+  ComposerInput,
+  ComposerSend,
+  ComposerToolbar,
+} from '@/shared/ui/composer';
 import { ActionFeedback } from './action-feedback';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
@@ -39,80 +44,77 @@ export function CommentBox({
   textareaRef,
   className,
 }: CommentBoxProps) {
-  const pending = state?.status === 'pending';
   const locked = isActionLocked(state);
+  const disabled = !canSubmit || locked || !!blockedReason;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (canSubmit && !locked && !blockedReason) onSubmit();
+    if (!disabled) onSubmit();
   };
-  const disabled = !canSubmit || locked || !!blockedReason;
   return (
     <form
       onSubmit={submit}
       className={cn(
-        'glass-composer animate-in rounded-xl border px-3 pt-2.5 pb-2 duration-150 ease-out fade-in-0 slide-in-from-top-0.5 focus-within:border-input motion-reduce:animate-none',
+        'animate-in duration-base ease-out fade-in-0 slide-in-from-top-0.5',
         className,
       )}
     >
-      <textarea
-        ref={textareaRef}
-        aria-label={label}
-        value={value}
-        placeholder={placeholder}
-        maxLength={pullRequestLimits.commentLength}
-        disabled={locked || !!blockedReason}
-        autoFocus={autoFocus}
-        rows={1}
-        onChange={event => onChange(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-            event.preventDefault();
-            if (!disabled) onSubmit();
+      <Composer variant="compact">
+        <ComposerInput
+          ref={textareaRef}
+          aria-label={label}
+          value={value}
+          placeholder={placeholder}
+          maxLength={pullRequestLimits.commentLength}
+          disabled={locked || !!blockedReason}
+          autoFocus={autoFocus}
+          onChange={event => onChange(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              if (!disabled) onSubmit();
+            }
+            if (event.key === 'Escape' && onCancel && !locked) {
+              event.preventDefault();
+              event.stopPropagation();
+              onCancel();
+            }
+          }}
+        />
+        <ComposerToolbar
+          className="gap-2"
+          start={
+            <>
+              {controls}
+              {blockedReason ? (
+                <span className="truncate">{blockedReason}</span>
+              ) : (
+                <ActionFeedback state={state} />
+              )}
+            </>
           }
-          if (event.key === 'Escape' && onCancel && !locked) {
-            event.preventDefault();
-            event.stopPropagation();
-            onCancel();
+          end={
+            <>
+              {onCancel && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  disabled={locked}
+                  onClick={onCancel}
+                >
+                  Cancel
+                </Button>
+              )}
+              <ComposerSend
+                label={submitLabel}
+                shortcut="Ctrl Enter"
+                pending={state?.status === 'pending'}
+                disabled={disabled}
+              />
+            </>
           }
-        }}
-        className="field-sizing-content block max-h-60 min-h-10 w-full resize-none bg-transparent px-0.5 font-sans text-[13px] leading-5 text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-60"
-      />
-      <div className="mt-1.5 flex min-w-0 items-center gap-2">
-        <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-2xs text-muted-foreground">
-          {controls}
-          {blockedReason ? (
-            <span className="truncate">{blockedReason}</span>
-          ) : (
-            <ActionFeedback state={state} />
-          )}
-        </span>
-        {onCancel && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={locked}
-            onClick={onCancel}
-            className="h-6 px-2 text-xs text-muted-foreground enabled:hover:text-foreground"
-          >
-            Cancel
-          </Button>
-        )}
-        <Button
-          type="submit"
-          size="icon-sm"
-          disabled={disabled}
-          aria-label={pending ? 'Sending' : submitLabel}
-          title={`${submitLabel} (Ctrl+Enter)`}
-          className="size-7 rounded-full disabled:bg-send-idle disabled:text-send-idle-foreground disabled:opacity-100 [&_svg]:size-4"
-        >
-          {pending ? (
-            <LoaderCircle className="animate-spin motion-reduce:animate-none" />
-          ) : (
-            <ArrowUp />
-          )}
-        </Button>
-      </div>
+        />
+      </Composer>
     </form>
   );
 }

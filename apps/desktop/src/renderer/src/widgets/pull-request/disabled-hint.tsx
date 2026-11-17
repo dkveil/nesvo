@@ -1,24 +1,34 @@
 import type { ReactNode } from 'react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
+import {
+  Hint,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/shared/ui/tooltip';
 
 type DisabledHintProps = {
   reason: string;
+  hint?: string;
   children: ReactNode;
 };
 
-export function DisabledHint({ reason, children }: DisabledHintProps) {
-  if (!reason) return children;
+export function DisabledHint({ reason, hint, children }: DisabledHintProps) {
+  if (!reason)
+    return hint ? (
+      <Hint label={hint} side="bottom">
+        {children}
+      </Hint>
+    ) : (
+      children
+    );
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          tabIndex={0}
-          className="inline-flex rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
+        <span tabIndex={0} className="focus-ring inline-flex rounded-control">
           {children}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="bottom" variant="panel" className="max-w-64">
+      <TooltipContent side="bottom" variant="panel">
         {reason}
       </TooltipContent>
     </Tooltip>
