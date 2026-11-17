@@ -19,7 +19,18 @@ import {
 } from '@nesvo/contracts';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
-import { sessionFailure, textFailureKind, type FailureKind } from './failure';
+import {
+  attachmentText,
+  checkAttachments,
+  loadAttachments,
+  type ProviderAttachment,
+} from './attachments';
+import {
+  ProviderFailureError,
+  sessionFailure,
+  textFailureKind,
+  type FailureKind,
+} from './failure';
 import {
   descendantScanMs,
   recordDescendants,
@@ -1347,6 +1358,7 @@ export function startCodex(options: {
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   instructionsOnly?: boolean;
+  attachments?: ReadonlyArray<ProviderAttachment>;
 }): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
@@ -1954,6 +1966,24 @@ export function startCodex(options: {
         (!options.sessionId || options.sessionId.length > 200)
       )
         throw new Error('Codex resume requires a valid provider thread ID.');
+      const attachments = options.attachments ?? [];
+      await checkAttachments(attachments);
+      const texts = await loadAttachments(
+        attachments.filter(attachment => attachment.kind === 'text'),
+      );
+      const attachmentInput = [
+        ...attachments
+          .filter(attachment => attachment.kind === 'image')
+          .map(attachment => ({ type: 'localImage', path: attachment.path })),
+        ...texts.map(attachment => ({
+          type: 'text',
+          text: attachmentText(
+            attachment.name,
+            attachment.content.toString('utf8'),
+          ),
+          text_elements: [],
+        })),
+      ];
       const executable = await executablePath();
       if (stopped) return { status: 'stopped', error: null };
       if (!executable)
@@ -2149,6 +2179,7 @@ export function startCodex(options: {
           ...(skill
             ? [{ type: 'skill', name: skill.name, path: skill.path }]
             : []),
+          ...attachmentInput,
         ],
         cwd: options.directory,
         approvalPolicy: turnApprovalPolicy,
@@ -2181,18 +2212,20 @@ export function startCodex(options: {
         ? { status: 'failed', error: failure }
         : stopped
           ? { status: 'stopped', error: null }
-          : error instanceof CodexDisconnectedError
-            ? {
-                status: 'interrupted',
-                interruption: 'provider-disconnected',
-                error: error.message,
-              }
-            : {
-                status: 'failed',
-                error: safeMessage(
-                  error instanceof Error ? error.message : 'Codex failed.',
-                ),
-              };
+          : error instanceof ProviderFailureError
+            ? { status: 'failed', error: error.message, failure: error.failure }
+            : error instanceof CodexDisconnectedError
+              ? {
+                  status: 'interrupted',
+                  interruption: 'provider-disconnected',
+                  error: error.message,
+                }
+              : {
+                  status: 'failed',
+                  error: safeMessage(
+                    error instanceof Error ? error.message : 'Codex failed.',
+                  ),
+                };
     } finally {
       clearTimeout(timer);
       finished = true;

@@ -20,6 +20,11 @@ import {
 import { readFrames } from '../daemon-channel';
 import { makeActivity, type ProviderActivity } from './activity';
 import {
+  attachmentText,
+  loadAttachments,
+  type ProviderAttachment,
+} from './attachments';
+import {
   ProviderFailureError,
   sessionFailure,
   textFailureKind,
@@ -871,6 +876,7 @@ export function startClaude(options: {
   instructionsOnly?: boolean;
   assistantPrompt?: string;
   mode: SessionMode;
+  attachments?: ReadonlyArray<ProviderAttachment>;
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -988,6 +994,29 @@ export function startClaude(options: {
         args.push('--append-system-prompt', options.assistantPrompt);
       if (options.outputSchema)
         args.push('--json-schema', JSON.stringify(options.outputSchema));
+      const attachments = await loadAttachments(options.attachments ?? []);
+      const userContent = [
+        ...attachments
+          .filter(attachment => attachment.kind === 'image')
+          .map(attachment => ({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: attachment.mediaType,
+              data: attachment.content.toString('base64'),
+            },
+          })),
+        { type: 'text', text: options.prompt },
+        ...attachments
+          .filter(attachment => attachment.kind === 'text')
+          .map(attachment => ({
+            type: 'text',
+            text: attachmentText(
+              attachment.name,
+              attachment.content.toString('utf8'),
+            ),
+          })),
+      ];
       if (stopped) return { status: 'stopped', error: null };
       owned = ownProcess(
         inspection.executable,
@@ -1386,10 +1415,7 @@ export function startClaude(options: {
           deliver(() =>
             write({
               type: 'user',
-              message: {
-                role: 'user',
-                content: [{ type: 'text', text: options.prompt }],
-              },
+              message: { role: 'user', content: userContent },
             }),
           );
         } else if (value.type === 'control_cancel_request') {

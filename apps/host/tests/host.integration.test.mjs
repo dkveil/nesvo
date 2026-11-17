@@ -16604,3 +16604,128 @@ test(
     assert.equal(commands[1].detail, 'echo done');
   },
 );
+
+test(
+  'staged attachments reach the provider input and oversized files refuse the turn',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-attachments-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const inputLog = join(directory, 'claude-input.jsonl');
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const host = launch(directory, pidFile, {
+      NESVO_FIXTURE_INPUT_LOG: inputLog,
+    });
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await bounded(host.exited, 'Test host did not exit');
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const stage = async (sessionId, kind, name, mediaType, content) => {
+      const id = randomUUID();
+      const folder = join(directory, 'attachments', sessionId);
+      await mkdir(folder, { recursive: true });
+      await writeFile(join(folder, id), content);
+      return { id, kind, name, mediaType, bytes: content.length };
+    };
+    const run = async (session, attachments) => {
+      const sent = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'fixture:continue',
+        attachments,
+      });
+      assert.equal(sent.type, 'session', JSON.stringify(sent));
+      return host.event(
+        value =>
+          value.id === session.id &&
+          value.runId === sent.session.runId &&
+          !['running', 'stopping'].includes(value.status),
+      );
+    };
+    const create = async (provider, model) =>
+      (
+        await host.request('create-session', {
+          title: `${provider} attachments`,
+          provider,
+          model,
+          directory: project,
+        })
+      ).session;
+    const claude = await create('Claude Code', 'sonnet');
+    const image = await stage(
+      claude.id,
+      'image',
+      'pixel.png',
+      'image/png',
+      png,
+    );
+    const notes = await stage(
+      claude.id,
+      'text',
+      'notes.txt',
+      'text/plain',
+      Buffer.from('Remember the edge case.'),
+    );
+    assert.equal((await run(claude, [image, notes])).status, 'completed');
+    const [input] = (await readFile(inputLog, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    assert.deepEqual(input.content, [
+      { type: 'image', mediaType: 'image/png', bytes: png.length },
+      { type: 'text', text: 'fixture:continue' },
+      { type: 'text', text: 'Attachment notes.txt:\nRemember the edge case.' },
+    ]);
+    const large = await stage(
+      claude.id,
+      'image',
+      'large.png',
+      'image/png',
+      Buffer.alloc(5 * 1024 * 1024 + 1),
+    );
+    const refused = await run(claude, [large]);
+    assert.equal(refused.status, 'failed');
+    assert.equal(refused.failure.kind, 'provider');
+    assert.match(refused.failure.message, /large\.png is larger than 5 MB/);
+
+    const codex = await create('Codex', 'fixture-codex');
+    const codexImage = await stage(
+      codex.id,
+      'image',
+      'pixel.png',
+      'image/png',
+      png,
+    );
+    assert.equal((await run(codex, [codexImage])).status, 'completed');
+    const turns = (await readFile(pidFile + '.turns', 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+    assert.deepEqual(turns.at(-1).extraInput, [
+      {
+        type: 'localImage',
+        path: join(directory, 'attachments', codex.id, codexImage.id),
+      },
+    ]);
+  },
+);

@@ -234,6 +234,18 @@ export const createSessionSchema = z
             : 'Choose a specific Codex model to set a reasoning effort',
       });
   });
+export const messageAttachmentSchema = z.strictObject({
+  id: z.uuid(),
+  kind: z.enum(['image', 'text']),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .regex(/^[^\\/\u0000-\u001f\u007f]+$/),
+  mediaType: z.string().trim().min(1).max(200),
+  bytes: z.number().int().nonnegative(),
+});
 export const sendMessageSchema = z.strictObject({
   sessionId: z.uuid(),
   messageId: z.uuid(),
@@ -243,6 +255,7 @@ export const sendMessageSchema = z.strictObject({
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
+  attachments: z.array(messageAttachmentSchema).max(10).optional(),
 });
 export const assignSessionWorkflowSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -398,6 +411,7 @@ export type SessionIsolation = z.infer<typeof sessionIsolationSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;

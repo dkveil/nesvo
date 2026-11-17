@@ -689,7 +689,16 @@ if (args.length === 1 && args[0] === '--version') {
         readOnlyTurn ? { type: 'readOnly', networkAccess: false } : policy(),
       );
       assert.equal(params.effort ?? null, thread.effort);
-      assert.equal(params.input.length, selectedSkills ? 2 : 1);
+      const attachmentItems = params.input.filter(
+        (item, index) =>
+          index > 0 && (item.type === 'localImage' || item.type === 'text'),
+      );
+      for (const item of attachmentItems)
+        if (item.type === 'localImage') assert.ok(existsSync(item.path));
+      assert.equal(
+        params.input.length - attachmentItems.length,
+        selectedSkills ? 2 : 1,
+      );
       assert.equal(params.input[0].type, 'text');
       assert.ok(params.input[0].text.trim());
       if (selectedSkills) {
@@ -733,6 +742,7 @@ if (args.length === 1 && args[0] === '--version') {
           JSON.stringify({
             sessionId: thread.id,
             prompt,
+            extraInput: params.input.slice(1),
             effort: params.effort ?? null,
             sandbox: params.sandboxPolicy.type,
             environment: runEnvironment(),
