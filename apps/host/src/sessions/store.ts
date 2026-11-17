@@ -74,6 +74,7 @@ const SESSION_COLUMNS =
 
 const toSession = (row: Record<string, SQLOutputValue>): Session =>
   sessionSchema.parse({
+    pullRequest: null,
     ...JSON.parse(String(row.document)),
     scheduledJobId: row.scheduledJobId ?? null,
     scheduledJobRunId: row.scheduledJobRunId ?? null,
@@ -131,6 +132,7 @@ export class SessionStore {
       scope: null,
       delegations: [],
       workflow: null,
+      pullRequest: null,
       ...originLinks(origin, input),
     };
     this.save(session);
@@ -191,6 +193,7 @@ export class SessionStore {
       workflowRunId: null,
       workflowStepId: null,
       workflow: null,
+      pullRequest: null,
       scheduledJobId: null,
       scheduledJobRunId: null,
       providerSessionId:

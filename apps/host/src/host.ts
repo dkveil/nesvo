@@ -20,6 +20,8 @@ import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
 import { ReviewStore } from './review/store';
+import { PullRequests } from './pull-requests';
+import { PullRequestError } from './process/github-cli';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { FolderError, resolveFolder } from './workspace/folder';
 import { GitBranchError, readGitBranch } from './workspace/git-branch';
@@ -68,6 +70,8 @@ import {
 import { SessionLauncher } from './scheduled-jobs/launcher';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
+  'act-on-pull-request',
+  'link-session-pull-request',
   'create-session',
   'send-message',
   'queue-message',
@@ -198,6 +202,14 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             state.controller.abort();
             await Promise.all(state.pending);
           }),
+      );
+      const pullRequests = new PullRequests(
+        probes.controller.signal,
+        id => store.get(id),
+        (id, run) =>
+          sessions
+            .withPullRequestCheckout(id, run)
+            .finally(() => wakeIdleRuns()),
       );
       const usage = new ProviderUsageService(probes.controller.signal);
       const evidence = new EvidenceStore(directory, id =>
@@ -910,6 +922,78 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           continue;
         }
         if (
+          request.method === 'list-pull-requests' ||
+          request.method === 'read-pull-request' ||
+          request.method === 'read-pull-request-files' ||
+          request.method === 'read-pull-request-threads' ||
+          request.method === 'act-on-pull-request' ||
+          request.method === 'find-session-pull-request'
+        ) {
+          const { id } = request;
+          const operation = async (): Promise<HostResponse> => {
+            switch (request.method) {
+              case 'list-pull-requests':
+                return {
+                  type: 'pull-request-list',
+                  id,
+                  list: await pullRequests.list(request.input),
+                };
+              case 'read-pull-request':
+                return {
+                  type: 'pull-request',
+                  id,
+                  pullRequest: await pullRequests.read(request.input),
+                };
+              case 'read-pull-request-files':
+                return {
+                  type: 'pull-request-files',
+                  id,
+                  files: await pullRequests.files(request.input),
+                };
+              case 'read-pull-request-threads':
+                return {
+                  type: 'pull-request-threads',
+                  id,
+                  threads: await pullRequests.threads(request.input),
+                };
+              case 'act-on-pull-request':
+                return {
+                  type: 'pull-request-action',
+                  id,
+                  result: await pullRequests.act(request.input),
+                };
+              case 'find-session-pull-request':
+                return {
+                  type: 'pull-request-reference',
+                  id,
+                  reference: await pullRequests.find(request.input.sessionId),
+                };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error => {
+              const known =
+                error instanceof PullRequestError ||
+                error instanceof SessionError ||
+                error instanceof FolderError;
+              return send({
+                type: 'error',
+                id,
+                code: known ? error.code : 'unavailable',
+                message: known
+                  ? error.message
+                  : 'The GitHub pull request operation failed.',
+              });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
           request.method === 'list-workspace-directory' ||
           request.method === 'search-workspace-files' ||
           request.method === 'read-workspace-file' ||
@@ -1001,6 +1085,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
         }
         const response = yield* Effect.sync((): HostResponse => {
           try {
+            if (request.method === 'link-session-pull-request')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.linkPullRequest(request.input),
+              };
             if (request.method === 'list-reviews')
               return {
                 type: 'reviews',

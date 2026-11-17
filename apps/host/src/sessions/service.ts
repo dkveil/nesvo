@@ -11,6 +11,7 @@ import {
   sessionQueueLimit,
   workerProposalSchema,
   type AssignSessionWorkflowInput,
+  type LinkSessionPullRequestInput,
   type CreateSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
@@ -283,6 +284,7 @@ export class SessionService {
   private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
+  private checkingOut = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
 
@@ -437,7 +439,12 @@ export class SessionService {
   }
 
   isBusy(): boolean {
-    return this.closing || this.active.size > 0 || !!this.reviewDecision;
+    return (
+      this.closing ||
+      this.checkingOut ||
+      this.active.size > 0 ||
+      !!this.reviewDecision
+    );
   }
 
   recordOperatorActivity(at = new Date()): void {
@@ -836,6 +843,57 @@ export class SessionService {
       previousSelection,
     });
     return structuredClone(session);
+  }
+
+  linkPullRequest(input: LinkSessionPullRequestInput): Session {
+    const session =
+      this.active.get(input.sessionId)?.session ??
+      this.unsaved.get(input.sessionId) ??
+      this.store.get(input.sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    const previous = session.pullRequest;
+    if (
+      previous?.repository === input.pullRequest?.repository &&
+      previous?.number === input.pullRequest?.number
+    )
+      return structuredClone(session);
+    session.pullRequest = input.pullRequest;
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.pullRequest = previous;
+      throw error;
+    }
+    return structuredClone(session);
+  }
+
+  async withPullRequestCheckout(
+    sessionId: string,
+    run: (session: Session) => Promise<void>,
+  ): Promise<void> {
+    const session =
+      this.active.get(sessionId)?.session ?? this.store.get(sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    if (
+      session.status === 'running' ||
+      session.status === 'stopping' ||
+      this.active.has(sessionId)
+    )
+      throw new SessionError(
+        'busy',
+        'Stop the session before checking out a pull request.',
+      );
+    if (this.isBusy())
+      throw new SessionError(
+        'busy',
+        'Wait for the active workspace operation to finish before checking out a pull request.',
+      );
+    this.checkingOut = true;
+    try {
+      await run(session);
+    } finally {
+      this.checkingOut = false;
+    }
   }
 
   async assignWorkflow(

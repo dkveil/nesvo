@@ -18,6 +18,7 @@ export type OwnedProcessOptions = {
   timeoutMs: number;
   maxOutputBytes: number;
   signal?: AbortSignal;
+  stdin?: string;
   onStdout?: (chunk: string) => void;
 };
 
@@ -32,9 +33,7 @@ export type OwnedProcessResult = {
 };
 
 export type OwnedProcessErrorCode =
-  | 'spawn-failed'
-  | 'cancelled'
-  | 'unconfirmed-close';
+  'spawn-failed' | 'cancelled' | 'unconfirmed-close';
 
 export class OwnedProcessError extends Error {
   readonly code: OwnedProcessErrorCode;
@@ -110,14 +109,21 @@ export function runOwnedProcess(
       new OwnedProcessError('cancelled', 'The process was cancelled.'),
     );
   const started = performance.now();
-  const child = spawn(options.command, [...options.args], {
+  const spawnOptions = {
     cwd: options.cwd,
     env: options.env,
     shell: false,
     windowsHide: true,
     detached: process.platform !== 'win32',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  };
+  const args = [...options.args];
+  const child =
+    options.stdin === undefined
+      ? spawn(options.command, args, {
+          ...spawnOptions,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      : spawn(options.command, args, { ...spawnOptions, stdio: 'pipe' });
   const stdout = boundedOutput();
   const stderr = boundedOutput();
   const decoder = new StringDecoder('utf8');
@@ -200,7 +206,9 @@ export function runOwnedProcess(
       }
       const exit = await closed;
       if (cancelled) {
-        settle(new OwnedProcessError('cancelled', 'The process was cancelled.'));
+        settle(
+          new OwnedProcessError('cancelled', 'The process was cancelled.'),
+        );
         return;
       }
       settle({
@@ -249,6 +257,7 @@ export function runOwnedProcess(
     });
     child.stdout.on('error', () => void stop());
     child.stderr.on('error', () => void stop());
+    child.stdin?.on('error', () => {});
     child.once('exit', () => {
       hasExited = true;
       void stop();
@@ -260,5 +269,6 @@ export function runOwnedProcess(
       closeResolve({ code, signal: exitSignal });
       if (child.pid !== undefined) void finish();
     });
+    child.stdin?.end(options.stdin);
   });
 }
