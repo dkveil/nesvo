@@ -7,9 +7,13 @@ import {
 import { Monitor, Plus, Server } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { Field } from '@/shared/ui/field';
+import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
+import { KeyValueList, type KeyValueEntry } from '@/shared/ui/key-value-list';
 import { SettingsSection } from '@/shared/ui/settings-section';
+import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
 
 type Props = {
   computers: Computer[];
@@ -19,6 +23,35 @@ type Props = {
   >;
   onBusyChange?: (busy: boolean) => void;
 };
+
+const syncFormat = new Intl.DateTimeFormat('en', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+const statusTones: Record<Computer['status'], StatusTone> = {
+  connected: 'success',
+  connecting: 'loading',
+  syncing: 'loading',
+  disconnected: 'info',
+  error: 'warning',
+};
+
+function connectionEntries({ lastSyncedAt, ssh }: Computer): KeyValueEntry[] {
+  const entries: Array<[string, string, string | null | undefined]> = [
+    [
+      'synced',
+      'Last synced',
+      lastSyncedAt && syncFormat.format(new Date(lastSyncedAt)),
+    ],
+    ['entry', 'Host entry', ssh?.entryPath],
+    ['node', 'Node executable', ssh?.nodePath],
+    ['runtime', 'Runtime directory', ssh?.runtimeDirectory],
+  ];
+  return entries.flatMap(([key, label, value]) =>
+    value ? [{ key, label, value }] : [],
+  );
+}
 
 const statusLabels: Record<Computer['status'], string> = {
   connected: 'Connected',
@@ -93,10 +126,9 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
     placeholder = '',
     required = false,
   ) => (
-    <div className="space-y-1.5">
-      <Label htmlFor={`computer-${name}`}>{label}</Label>
+    <Field id={`computer-${name}`} label={label}>
       <Input
-        size="lg"
+        size="md"
         id={`computer-${name}`}
         value={fields[name]}
         onChange={event =>
@@ -109,7 +141,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
         type={name === 'port' ? 'number' : 'text'}
         {...(name === 'port' ? { min: 1, max: 65535 } : {})}
       />
-    </div>
+    </Field>
   );
   return (
     <div className="space-y-8">
@@ -121,7 +153,6 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
               <Button
                 variant="ghost"
                 size="xs"
-                className="text-muted-foreground hover:text-foreground"
                 disabled={!!pending}
                 onClick={() => setAdding(true)}
               >
@@ -143,23 +174,18 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                 ) : (
                   <Server className="mt-1 size-4 text-muted-foreground" />
                 )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <p className="truncate text-ui font-medium">
                     {computer.name}
                   </p>
-                  <p
-                    role="status"
-                    className="mt-0.5 text-xs text-muted-foreground"
-                  >
+                  <StatusMessage tone={statusTones[computer.status]}>
                     {statusLabels[computer.status]}
                     {computer.kind === 'local' ? ' · This computer' : ''}
-                  </p>
+                  </StatusMessage>
                   {computer.ssh && (
-                    <p
-                      className="mt-1 truncate text-xs text-muted-foreground"
-                      title={`${computer.ssh.username ? `${computer.ssh.username}@` : ''}${computer.ssh.hostname}:${computer.ssh.port}`}
-                    >
-                      {computer.ssh.hostname}
+                    <p className="truncate text-xs text-muted-foreground">
+                      {computer.ssh.username ? `${computer.ssh.username}@` : ''}
+                      {computer.ssh.hostname}:{computer.ssh.port}
                     </p>
                   )}
                 </div>
@@ -167,7 +193,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                   {computer.status === 'connected' &&
                   computer.kind === 'ssh' ? (
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="ghost"
                       disabled={!!pending}
                       onClick={() =>
@@ -180,7 +206,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                     </Button>
                   ) : computer.status !== 'connected' ? (
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       disabled={
                         !!pending ||
@@ -198,7 +224,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                   ) : null}
                   {computer.kind === 'ssh' && (
                     <Button
-                      size="xs"
+                      size="sm"
                       variant="ghost"
                       disabled={
                         !!pending ||
@@ -218,47 +244,27 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                 </div>
               </div>
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
-                <details className="pl-7 text-xs text-muted-foreground">
-                  <summary className="cursor-pointer">
-                    Connection details
-                  </summary>
-                  <div className="mt-2 space-y-2 leading-5 [overflow-wrap:anywhere]">
-                    {computer.error && (
-                      <p role="alert" className="text-destructive">
-                        {computer.error}
-                      </p>
-                    )}
-                    {computer.lastSyncedAt && (
-                      <p>
-                        Last synced:{' '}
-                        {new Intl.DateTimeFormat('en', {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                        }).format(new Date(computer.lastSyncedAt))}
-                      </p>
-                    )}
-                    {computer.ssh && (
-                      <>
-                        <p>Host entry: {computer.ssh.entryPath}</p>
-                        {computer.ssh.nodePath && (
-                          <p>Node executable: {computer.ssh.nodePath}</p>
-                        )}
-                        <p>
-                          Runtime directory: {computer.ssh.runtimeDirectory}
-                        </p>
-                        <p>
-                          SSH uses your existing identity and verified
-                          known_hosts. Verify new or changed server identities
-                          in your terminal before connecting.
-                        </p>
-                      </>
-                    )}
+                <Disclosure
+                  title="Connection details"
+                  className="ml-5"
+                  contentClassName="space-y-2 pt-1 pb-0 leading-5"
+                >
+                  {computer.error && (
+                    <StatusMessage tone="error">{computer.error}</StatusMessage>
+                  )}
+                  <KeyValueList entries={connectionEntries(computer)} />
+                  {computer.ssh && (
                     <p>
-                      Disconnecting does not stop remote work. Offline snapshots
-                      may be out of date; no commands are queued.
+                      SSH uses your existing identity and verified known_hosts.
+                      Verify new or changed server identities in your terminal
+                      before connecting.
                     </p>
-                  </div>
-                </details>
+                  )}
+                  <p>
+                    Disconnecting does not stop remote work. Offline snapshots
+                    may be out of date; no commands are queued.
+                  </p>
+                </Disclosure>
               )}
             </section>
           ))}
@@ -293,23 +299,18 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
               'Node executable',
               'Optional, for example /usr/bin/node',
             )}
-            <details className="text-xs">
-              <summary className="cursor-pointer text-muted-foreground">
-                Advanced SSH options
-              </summary>
-              <div className="mt-3 space-y-4">
-                {field(
-                  'identityFile',
-                  'Identity file',
-                  'Use SSH configuration',
-                )}
-                {field(
-                  'knownHostsFile',
-                  'Known hosts file',
-                  'Use SSH configuration',
-                )}
-              </div>
-            </details>
+            <Disclosure
+              title="Advanced SSH options"
+              className="-mx-2"
+              contentClassName="space-y-4 px-2 pt-3 text-foreground"
+            >
+              {field('identityFile', 'Identity file', 'Use SSH configuration')}
+              {field(
+                'knownHostsFile',
+                'Known hosts file',
+                'Use SSH configuration',
+              )}
+            </Disclosure>
             <p className="text-xs leading-5 text-muted-foreground">
               Requires an installed, running Linux host and Node, from the path
               above or the remote PATH. Credentials and local files are not
@@ -332,14 +333,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
           </form>
         </SettingsSection>
       )}
-      {error && (
-        <p
-          role="alert"
-          className="px-3 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-        >
-          {error}
-        </p>
-      )}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
     </div>
   );
 }

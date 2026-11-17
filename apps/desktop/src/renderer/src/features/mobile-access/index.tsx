@@ -7,6 +7,8 @@ import type {
 import { Copy, Smartphone } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { EmptyState } from '@/shared/ui/empty-state';
+import { InlineNotice } from '@/shared/ui/inline-notice';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { Textarea } from '@/shared/ui/textarea';
 
@@ -79,18 +81,13 @@ export function MobileAccess({ api }: Props) {
     pairing && Date.parse(pairing.expiresAt) > now ? pairing : null;
   return (
     <div className="space-y-8">
-      {error && (
-        <p
-          role="alert"
-          className="px-3 text-xs leading-5 text-destructive [overflow-wrap:anywhere]"
-        >
-          {error}
-        </p>
-      )}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {!status ? (
-        <p className="px-3 text-sm text-muted-foreground">
-          {error ? 'Phone access is unavailable.' : 'Loading devices…'}
-        </p>
+        error ? (
+          <InlineNotice>Phone access is unavailable.</InlineNotice>
+        ) : (
+          <InlineNotice tone="loading">Loading devices…</InlineNotice>
+        )
       ) : (
         <>
           <SettingsSection title="Phone access">
@@ -105,7 +102,6 @@ export function MobileAccess({ api }: Props) {
               }
             >
               <Button
-                size="xs"
                 variant="outline"
                 disabled={!!pending}
                 onClick={() =>
@@ -128,9 +124,8 @@ export function MobileAccess({ api }: Props) {
             {status.enabled && (
               <div className="space-y-3 px-3 py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-[13px] font-medium">Pair a phone</p>
+                  <p className="text-ui font-medium">Pair a phone</p>
                   <Button
-                    size="xs"
                     disabled={!!pending}
                     onClick={() =>
                       void action('pair', async () => {
@@ -154,7 +149,7 @@ export function MobileAccess({ api }: Props) {
                       expires in two minutes.
                     </p>
                     <Textarea
-                      size="lg"
+                      size="md"
                       aria-label="Pairing link"
                       value={validPairing.link}
                       readOnly
@@ -163,7 +158,6 @@ export function MobileAccess({ api }: Props) {
                     />
                     <Button
                       variant="outline"
-                      size="xs"
                       onClick={() =>
                         void action('copy', async () => {
                           await navigator.clipboard.writeText(
@@ -195,9 +189,12 @@ export function MobileAccess({ api }: Props) {
           </SettingsSection>
           <SettingsSection title="Paired devices">
             {status.devices.length === 0 ? (
-              <p className="px-3 py-4 text-xs text-muted-foreground">
-                No paired devices yet.
-              </p>
+              <EmptyState
+                size="sm"
+                icon={Smartphone}
+                title="No paired devices yet"
+                description="Devices you pair appear here and can be revoked at any time."
+              />
             ) : (
               status.devices.map(device => (
                 <SettingsRow
@@ -216,8 +213,6 @@ export function MobileAccess({ api }: Props) {
                 >
                   <Button
                     variant="ghost"
-                    size="xs"
-                    className="text-muted-foreground hover:text-foreground"
                     disabled={!!pending}
                     aria-label={`Revoke ${device.name}`}
                     onClick={() =>

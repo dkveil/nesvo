@@ -1,11 +1,18 @@
-import { Circle, RefreshCw } from 'lucide-react';
-import { Button } from '@/shared/ui/button';
+import { RefreshCw } from 'lucide-react';
+import { IconButton } from '@/shared/ui/icon-button';
+import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
 
 type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
   onRefresh: () => void;
   name?: string;
   local?: boolean;
+};
+
+const connectionTones: Record<Props['connection'], StatusTone> = {
+  connecting: 'loading',
+  ready: 'success',
+  unavailable: 'warning',
 };
 
 export function HostStatus({
@@ -20,28 +27,16 @@ export function HostStatus({
     unavailable: `${name} is offline`,
   }[connection];
   return (
-    <div className="flex items-center gap-2">
-      <span
-        role="status"
-        className="flex items-center gap-1.5 text-xs text-muted-foreground"
-        title={label}
-      >
-        <Circle
-          className={connection === 'ready' ? 'size-2 fill-current' : 'size-2'}
-          aria-hidden="true"
-        />
-        <span>{label}</span>
-      </span>
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Refresh connection"
-        title="Refresh connection"
+    <div className="flex items-center gap-1.5">
+      <StatusMessage tone={connectionTones[connection]}>{label}</StatusMessage>
+      <IconButton
+        size={24}
+        label="Refresh connection"
         disabled={connection === 'connecting'}
         onClick={onRefresh}
       >
         <RefreshCw />
-      </Button>
+      </IconButton>
     </div>
   );
 }
