@@ -649,6 +649,8 @@ try {
     'reasoning-effort',
     'workflows',
     'git-branch',
+    'permission-modes',
+    'session-workflow',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
