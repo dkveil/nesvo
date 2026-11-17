@@ -74,9 +74,8 @@ export function Delegations({
           session.runId === delegation.runId &&
           !deciding;
         const canDecide = isCurrentRun && delegation.status === 'pending';
-        const isPlanning =
-          delegation.status === 'planning' ||
-          delegation.status === 'plan-ready';
+        const showsChildStatus =
+          delegation.status === 'running' || delegation.status === 'completed';
         return (
           <section
             key={delegation.id}
@@ -94,7 +93,7 @@ export function Delegations({
                 )}
               </div>
               <span className="text-xs text-muted-foreground">
-                {child && !isPlanning
+                {child && showsChildStatus
                   ? sessionStatusLabel(child)
                   : delegationStatusLabels[delegation.status]}
               </span>
