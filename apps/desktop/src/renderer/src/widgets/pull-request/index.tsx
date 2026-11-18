@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { PullRequestThread } from '@nesvo/contracts';
 import {
+  Bot,
   Copy,
   Ellipsis,
   ExternalLink,
@@ -39,6 +40,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { Hint } from '@/shared/ui/tooltip';
+import { AgentReviewTab, type AgentReviewApi } from './agent-review-tab';
 import { CheckoutControl } from './checkout-control';
 import { CodeTab } from './code-tab';
 import { MergeControl } from './merge-control';
@@ -72,12 +74,16 @@ const PANEL_ID_PREFIX = 'pull-request';
 
 const EMPTY_REVIEW_DRAFT: ReviewDraft = { event: 'comment', body: '' };
 
-type PanelTab = 'summary' | 'timeline' | 'code';
+type PanelTab = 'summary' | 'timeline' | 'code' | 'agent-review';
 
 type PullRequestPanelProps = {
   target: PullRequestTarget;
-  api: PullRequestApi;
+  api: PullRequestApi & AgentReviewApi;
   blockedReason: string;
+  reviewBlockedReason?: string;
+  reviewDirectory?: string;
+  onOpenSession?: (sessionId: string) => void;
+  onOpenCodeReviewSettings?: () => void;
   linkedSession: Session | null;
   sendTargetTitle: string;
   onSendToSession: (text: string) => void;
@@ -89,6 +95,10 @@ export default function PullRequestPanel({
   target,
   api,
   blockedReason,
+  reviewBlockedReason = '',
+  reviewDirectory = '',
+  onOpenSession,
+  onOpenCodeReviewSettings,
   linkedSession,
   sendTargetTitle,
   onSendToSession,
@@ -99,6 +109,7 @@ export default function PullRequestPanel({
   const now = useNow(RELATIVE_TIME_REFRESH_MS);
   const [tab, setTab] = useState<PanelTab>('summary');
   const [codeRequested, setCodeRequested] = useState(false);
+  const [reviewRequest, setReviewRequest] = useState(0);
   const [versions, setVersions] = useState({
     pullRequest: 0,
     files: 0,
@@ -383,6 +394,18 @@ export default function PullRequestPanel({
             }}
           />
         )}
+        <Hint label="Review with agent" side="bottom">
+          <PanelAction
+            aria-label="Review with agent"
+            disabled={!!(blockedReason || reviewBlockedReason)}
+            onClick={() => {
+              changeTab('agent-review');
+              setReviewRequest(value => value + 1);
+            }}
+          >
+            <Bot />
+          </PanelAction>
+        </Hint>
         <DropdownMenu>
           <Hint label="More" side="bottom">
             <DropdownMenuTrigger asChild>
@@ -518,6 +541,7 @@ export default function PullRequestPanel({
                   count: data.timeline.length,
                 },
                 { value: 'code', label: 'Code', count: data.changedFiles },
+                { value: 'agent-review', label: 'Agent review' },
               ]}
               className="min-w-0 flex-1 border-b-0"
             />
@@ -547,7 +571,7 @@ export default function PullRequestPanel({
             value={tab}
             className={cn(
               'flex min-h-0 flex-1 flex-col',
-              tab !== 'code' && 'overflow-y-auto',
+              tab !== 'code' && tab !== 'agent-review' && 'overflow-y-auto',
             )}
           >
             {tab === 'summary' && (
@@ -619,8 +643,22 @@ export default function PullRequestPanel({
                 renderThread={renderThread}
               />
             )}
+            {tab === 'agent-review' && (
+              <AgentReviewTab
+                api={api}
+                hostId={target.hostId}
+                reference={reference}
+                currentHeadSha={headSha}
+                defaultDirectory={reviewDirectory}
+                blockedReason={blockedReason || reviewBlockedReason}
+                now={now}
+                startRequest={reviewRequest}
+                onOpenSession={sessionId => onOpenSession?.(sessionId)}
+                onOpenSettings={onOpenCodeReviewSettings}
+              />
+            )}
           </TabPanel>
-          {sendTargetTitle && tab !== 'summary' && (
+          {sendTargetTitle && tab !== 'summary' && tab !== 'agent-review' && (
             <p className="shrink-0 truncate border-t px-3 py-1 text-2xs text-muted-foreground">
               Comments go to the composer of{' '}
               <span className="text-foreground">{sendTargetTitle}</span>.
