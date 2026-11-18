@@ -51,6 +51,7 @@ export type WorkspaceCommandActions = {
   nextNeedsMe: () => void;
   needsMeCount: number;
   lastSession: Action;
+  conversation: PaletteCommand[];
 };
 
 type CommandSpec = Omit<PaletteCommand, 'run'> & { run: Action };
@@ -148,6 +149,7 @@ export function workspaceCommands(
       keywords: 'shared library current session',
       run: actions.skills,
     },
+    ...actions.conversation,
     {
       id: 'search-history',
       label: 'Search all history',

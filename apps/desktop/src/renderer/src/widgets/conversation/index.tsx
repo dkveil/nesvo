@@ -139,6 +139,7 @@ type Props = {
   canChangeMode: boolean;
   workflowChip?: ReactNode;
   mcpChip?: ReactNode;
+  contextMeter?: ReactNode;
   onLoadEarlier: () => Promise<boolean>;
   attachments: ConversationAttachments;
 };
@@ -185,6 +186,7 @@ export function Conversation({
   canChangeMode,
   workflowChip,
   mcpChip,
+  contextMeter,
   onLoadEarlier,
   attachments,
 }: Props) {
@@ -275,6 +277,9 @@ export function Conversation({
       workers.some(worker => worker.parentRunId === session.runId));
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
   const threadStarts = new Set(session.providerThreadStarts);
+  const compactedAt = new Set(
+    session.compactions.map(compaction => compaction.index),
+  );
   const empty =
     session.messageCount === 0 &&
     !session.pendingClaudeFork &&
@@ -667,6 +672,7 @@ export function Conversation({
                 }
                 end={
                   <>
+                    {contextMeter}
                     <ModelPicker
                       provider={session.provider}
                       model={pendingSelection?.model ?? session.model}
@@ -934,9 +940,13 @@ export function Conversation({
                     showInterruption={message.runId !== session.runId}
                     selectionChange={selectionChanges.get(message.id)}
                     threadStart={threadStarts.has(firstIndex + index)}
+                    compacted={compactedAt.has(firstIndex + index)}
                   />
                 );
               })}
+              {compactedAt.has(session.messageCount) && (
+                <Separator label="Conversation compacted" />
+              )}
               {threadStarts.has(session.messageCount) && (
                 <Separator label="Session restarted" />
               )}

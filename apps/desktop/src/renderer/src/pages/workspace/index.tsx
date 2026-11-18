@@ -46,7 +46,6 @@ import {
   Menu,
   PanelRight,
   Plus,
-  RotateCcw,
   SquareDashed,
   SquareTerminal,
   WifiOff,
@@ -164,6 +163,9 @@ import { SessionWorkflowChip } from '@/features/session-workflow';
 import { imageSupport } from '@/features/attach-images/image-support';
 import { useComposerAttachments } from '@/features/attach-images/use-composer-attachments';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
+import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
+import { ContextMeter } from '@/features/conversation-context/context-meter';
+import { conversationActions } from '@/features/conversation-context/conversation-actions';
 import { SessionPullRequest } from '@/features/session-pull-request';
 import {
   pullRequestsUnavailableReason,
@@ -747,6 +749,14 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('mcp-servers');
+  const supportsSessionFork = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-fork');
+  const supportsCompaction = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('conversation-compaction');
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -759,6 +769,8 @@ export function Workspace() {
   const [restartTarget, setRestartTarget] = useState<Session | null>(null);
   const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
+  const [compactTarget, setCompactTarget] = useState<Session | null>(null);
+  const [compactError, setCompactError] = useState('');
   const [finishingWorktree, setFinishingWorktree] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [moveTarget, setMoveTarget] = useState<Session | null>(null);
@@ -2195,38 +2207,76 @@ ${text}`
       setThreadActionPending(false);
     }
   };
+  const compactSession = async (target: Session, instructions?: string) => {
+    setThreadActionPending(true);
+    setCompactError('');
+    const key = entityKey(target);
+    try {
+      const session = await desktopApi(target.hostId).compactSession({
+        sessionId: target.id,
+        revision: target.revision,
+        ...(instructions ? { instructions } : {}),
+      });
+      store.merge([session]);
+      setErrors(previous => ({ ...previous, [key]: '' }));
+      return true;
+    } catch (error) {
+      const detail = `The conversation could not be compacted. ${errorDetail(error)}`;
+      if (instructions) setCompactError(detail);
+      else setErrors(previous => ({ ...previous, [key]: detail }));
+      return false;
+    } finally {
+      setThreadActionPending(false);
+    }
+  };
+  const managedSession = (session: Session) =>
+    session.role === 'worker' ||
+    !!session.workflowRunId ||
+    !!session.scheduledJobId;
+  const threadActionBusy = (session: Session) =>
+    threadActionPending ||
+    !store.hostReady(session.hostId) ||
+    session.status === 'running' ||
+    session.status === 'stopping';
+  const sessionConversationActions = (session: Session) =>
+    !window.nesvo || managedSession(session)
+      ? []
+      : conversationActions({
+          session,
+          canCompact: supportsCompaction(session.hostId),
+          canRestart: supportsSessionFork(session.hostId),
+          busy: threadActionBusy(session),
+          onCompact: () => void compactSession(session),
+          onCompactWithInstructions: () => {
+            setCompactError('');
+            setCompactTarget(session);
+          },
+          onRestart: () => {
+            setRestartError('');
+            setRestartTarget(session);
+          },
+        });
   const threadActions = (session: Session): RowAction[] => {
-    if (
-      !window.nesvo ||
-      session.role === 'worker' ||
-      session.workflowRunId ||
-      session.scheduledJobId ||
-      !store.computers
-        .find(computer => computer.id === session.hostId)
-        ?.capabilities.includes('session-fork')
-    )
-      return [];
-    const disabled =
-      threadActionPending ||
-      !store.hostReady(session.hostId) ||
-      session.status === 'running' ||
-      session.status === 'stopping';
+    if (!window.nesvo || managedSession(session)) return [];
+    const conversation = sessionConversationActions(session).map(action => ({
+      label: action.label,
+      icon: action.icon,
+      disabled: action.disabled,
+      onSelect: action.run,
+    }));
     return [
-      {
-        label: 'Fork session',
-        icon: <GitFork />,
-        disabled: disabled || !session.providerInitialized,
-        onSelect: () => void chooseFork(session),
-      },
-      {
-        label: 'Restart session…',
-        icon: <RotateCcw />,
-        disabled,
-        onSelect: () => {
-          setRestartError('');
-          setRestartTarget(session);
-        },
-      },
+      ...(supportsSessionFork(session.hostId)
+        ? [
+            {
+              label: 'Fork session',
+              icon: <GitFork />,
+              disabled:
+                threadActionBusy(session) || !session.providerInitialized,
+              onSelect: () => void chooseFork(session),
+            },
+          ]
+        : []),
+      ...conversation,
     ];
   };
   const terminalResumeOf = (session: Session) =>
@@ -2729,6 +2779,17 @@ ${text}`
       nextNeedsMe,
       needsMeCount: filterKeys['needs-me'].size,
       lastSession,
+      conversation:
+        !sessionPanels && !browsing && !creating && selected
+          ? sessionConversationActions(selected).map(action => ({
+              id: action.id,
+              label: action.label,
+              icon: action.icon,
+              keywords: `${action.keywords} current session`,
+              disabled: action.disabled,
+              run: action.run,
+            }))
+          : [],
     }).concat(
       sessionPanels && selected
         ? sessionCommands(selected)
@@ -2874,6 +2935,17 @@ ${text}`
             store.remove(deletion.hostId, deletion.sessionIds)
           }
           onRestored={session => store.merge([session])}
+        />
+      )}
+      {compactTarget && (
+        <CompactInstructionsDialog
+          key={entityKey(compactTarget)}
+          title={compactTarget.title}
+          error={compactError}
+          onCompact={instructions =>
+            compactSession(compactTarget, instructions)
+          }
+          onClose={() => setCompactTarget(null)}
         />
       )}
       {historySearch && (
@@ -3910,6 +3982,15 @@ ${text}`
                   />
                 }
                 onLoadEarlier={() => loadEarlier(selectedKey)}
+                contextMeter={
+                  <ContextMeter
+                    context={selected.context}
+                    provider={selected.provider}
+                    compact={sessionConversationActions(selected).find(
+                      action => action.id === 'compact',
+                    )}
+                  />
+                }
                 mcpChip={
                   <McpChip
                     hostId={selected.hostId}

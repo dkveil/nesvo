@@ -25,6 +25,7 @@ type MessageArticleProps = {
   showInterruption: boolean;
   selectionChange: string | undefined;
   threadStart: boolean;
+  compacted: boolean;
 };
 
 function sameRenderedMessage(previous: Message, next: Message) {
@@ -56,6 +57,7 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
     previous.showInterruption === next.showInterruption &&
     previous.selectionChange === next.selectionChange &&
     previous.threadStart === next.threadStart &&
+    previous.compacted === next.compacted &&
     sameRenderedMessage(previous.message, next.message)
   );
 }
@@ -70,9 +72,11 @@ export const MessageArticle = memo(function MessageArticle({
   showInterruption,
   selectionChange,
   threadStart,
+  compacted,
 }: MessageArticleProps) {
   return (
     <>
+      {compacted && <Separator label="Conversation compacted" />}
       {threadStart && <Separator label="Session restarted" />}
       {selectionChange && <Separator label={selectionChange} />}
       <article
