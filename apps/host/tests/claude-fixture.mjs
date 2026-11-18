@@ -65,11 +65,18 @@ const INPUT_HELP = [
 ].join('\n');
 const READ_TOOLS = 'Read,Glob,Grep';
 const EDIT_TOOLS = `${READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit`;
+const WORK_TOOLS = 'TodoWrite,Agent,Skill';
 const MODE_TOOLS = new Map([
   ['plan', READ_TOOLS],
   ['dontAsk', READ_TOOLS],
-  ['acceptEdits', EDIT_TOOLS],
-  ['auto', `${EDIT_TOOLS},Bash`],
+  ['acceptEdits', `${EDIT_TOOLS},${WORK_TOOLS}`],
+  ['auto', `${EDIT_TOOLS},Bash,${WORK_TOOLS}`],
+]);
+const MODE_ALLOWED = new Map([
+  ['plan', READ_TOOLS],
+  ['dontAsk', READ_TOOLS],
+  ['acceptEdits', `${READ_TOOLS},TodoWrite`],
+  ['auto', `${READ_TOOLS},TodoWrite`],
 ]);
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
@@ -317,7 +324,7 @@ if (args.length === 1 && args[0] === '--version') {
     ['--output-format', 'stream-json'],
     ['--permission-prompts', hostPrompts ? 'host' : 'none'],
     ['--tools', MODE_TOOLS.get(permissionMode)],
-    ['--allowedTools', READ_TOOLS],
+    ['--allowedTools', MODE_ALLOWED.get(permissionMode)],
   ])
     assert.equal(values.get(flag), expected, flag);
 
@@ -889,6 +896,93 @@ if (args.length === 1 && args[0] === '--version') {
     else verdict('I could not fill the verdict.', undefined);
   } else if (command === 'fixture:verdict-invalid-twice') {
     verdict('Verdict recorded.', { verdict: 'looks fine' });
+  } else if (command === 'fixture:work-tools') {
+    const tools = values.get('--tools').split(',');
+    for (const tool of ['TodoWrite', 'Agent', 'Skill'])
+      assert.ok(tools.includes(tool), tool);
+    const useTool = (id, name, input) =>
+      emit({
+        type: 'assistant',
+        message: {
+          id: `fixture-${id}`,
+          content: [{ type: 'tool_use', id, name, input }],
+        },
+      });
+    const toolResult = (id, content, isError = false) =>
+      emit({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: id,
+              is_error: isError,
+              content,
+            },
+          ],
+        },
+      });
+    const todoId = `fixture-todo-${turn}`;
+    const agentId = `fixture-agent-${turn}`;
+    const skillId = `fixture-skill-${turn}`;
+    start('Fixture works with native tools. ');
+    useTool(todoId, 'TodoWrite', {
+      todos: [
+        {
+          content: 'Read the spec',
+          status: 'completed',
+          activeForm: 'Reading',
+        },
+        {
+          content: 'Write the change',
+          status: 'in_progress',
+          activeForm: 'Writing',
+        },
+        { content: 'Run checks', status: 'pending', activeForm: 'Checking' },
+      ],
+    });
+    toolResult(todoId, 'Todos have been modified successfully.');
+    useTool(agentId, 'Agent', {
+      description: 'Inspect the module',
+      subagent_type: 'Explore',
+      prompt: 'Look around the module.',
+    });
+    emit({
+      type: 'assistant',
+      parent_tool_use_id: agentId,
+      message: {
+        id: `fixture-subagent-${turn}`,
+        content: [{ type: 'text', text: 'Subagent text stays private.' }],
+      },
+    });
+    let decision = 'not asked';
+    if (hostPrompts) {
+      const requestId = randomUUID();
+      emit({
+        type: 'control_request',
+        request_id: requestId,
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: 'Write',
+          input: {
+            file_path: join(process.cwd(), 'subagent-note.txt'),
+            content: 'subagent',
+          },
+          tool_use_id: `fixture-subagent-write-${turn}`,
+          decision_reason: 'The subagent asks before writing',
+        },
+      });
+      const frame = await nextFrame();
+      assert.ok(frame, 'The host closed input before answering the subagent');
+      assert.equal(frame.response.request_id, requestId);
+      decision = frame.response.response.behavior;
+    }
+    toolResult(agentId, `Subagent finished; its write was ${decision}.`);
+    useTool(skillId, 'Skill', { skill: 'fixture-skill', args: 'check' });
+    toolResult(skillId, 'Launching skill: fixture-skill');
+    finish(
+      `Fixture native tools finished; the subagent write was ${decision}.`,
+    );
   } else if (command === 'fixture:chatty') {
     start('Fixture is busy');
     const until = Date.now() + Number(process.env.NESVO_FIXTURE_CHATTY_MS);

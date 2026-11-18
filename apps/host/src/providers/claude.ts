@@ -121,17 +121,19 @@ const isolatedToolArgs = [
 ];
 const readTools = ['Read', 'Glob', 'Grep'];
 const editTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+const workTools = ['TodoWrite', 'Agent', 'Skill'];
+const workAllowed = [...readTools, 'TodoWrite'];
 const claudeModes = {
   'read-only': { cli: 'plan', tools: readTools, allowed: readTools },
   'accept-edits': {
     cli: 'acceptEdits',
-    tools: [...readTools, ...editTools],
-    allowed: readTools,
+    tools: [...readTools, ...editTools, ...workTools],
+    allowed: workAllowed,
   },
   auto: {
     cli: 'auto',
-    tools: [...readTools, ...editTools, 'Bash'],
-    allowed: readTools,
+    tools: [...readTools, ...editTools, 'Bash', ...workTools],
+    allowed: workAllowed,
   },
 } as const satisfies Record<
   ClaudeMode,
@@ -147,6 +149,9 @@ const toolPresentation = {
   Write: { kind: 'file-change', title: 'Write file' },
   NotebookEdit: { kind: 'file-change', title: 'Edit notebook' },
   Bash: { kind: 'command', title: 'Run command' },
+  TodoWrite: { kind: 'tool', title: 'Update plan' },
+  Agent: { kind: 'tool', title: 'Run subagent' },
+  Skill: { kind: 'tool', title: 'Use skill' },
 } as const satisfies Record<
   string,
   { kind: ProviderActivity['kind']; title: string }
@@ -160,6 +165,47 @@ function object(value: unknown): RecordValue | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as RecordValue)
     : null;
+}
+
+function textField(input: RecordValue | null, key: string): string {
+  const value = input?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+const todoMarks: Record<string, string> = {
+  completed: '[x]',
+  in_progress: '[>]',
+};
+
+function workToolDetail(
+  name: 'TodoWrite' | 'Agent' | 'Skill',
+  input: RecordValue | null,
+): string | null {
+  if (name === 'TodoWrite') {
+    const todos = Array.isArray(input?.todos) ? input.todos.map(object) : [];
+    return (
+      todos
+        .map(todo => {
+          const content = textField(todo, 'content');
+          return content
+            ? `${todoMarks[textField(todo, 'status')] ?? '[ ]'} ${content}`
+            : '';
+        })
+        .filter(Boolean)
+        .join('\n') || null
+    );
+  }
+  if (name === 'Agent')
+    return (
+      [textField(input, 'subagent_type'), textField(input, 'description')]
+        .filter(Boolean)
+        .join(': ') || null
+    );
+  return (
+    [textField(input, 'skill'), textField(input, 'args')]
+      .filter(Boolean)
+      .join(' ') || null
+  );
 }
 
 function safeMessage(value: string): string {
@@ -1279,14 +1325,16 @@ export function startClaude(options: {
           const command =
             typeof input?.command === 'string' ? input.command : null;
           const detail =
-            name === 'Bash'
-              ? command
-              : [
-                  typeof input?.pattern === 'string' ? input.pattern : '',
-                  ...paths,
-                ]
-                  .filter(Boolean)
-                  .join('\n') || null;
+            name === 'TodoWrite' || name === 'Agent' || name === 'Skill'
+              ? workToolDetail(name, input)
+              : name === 'Bash'
+                ? command
+                : [
+                    typeof input?.pattern === 'string' ? input.pattern : '',
+                    ...paths,
+                  ]
+                    .filter(Boolean)
+                    .join('\n') || null;
           const next = makeActivity({
             id: block.id,
             kind: toolPresentation[name].kind,

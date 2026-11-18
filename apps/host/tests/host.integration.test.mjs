@@ -16811,7 +16811,12 @@ test(
     const tools = args[args.indexOf('--tools') + 1].split(',');
     assert.ok(tools.includes('Edit'));
     assert.equal(tools.includes('Bash'), false);
-    assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Glob,Grep');
+    for (const tool of ['TodoWrite', 'Agent', 'Skill'])
+      assert.ok(tools.includes(tool), tool);
+    assert.equal(
+      args[args.indexOf('--allowedTools') + 1],
+      'Read,Glob,Grep,TodoWrite',
+    );
 
     const codex = await host.request('create-session', {
       title: 'Codex modes',
@@ -19726,6 +19731,7 @@ test(
     ]);
     assert.deepEqual(applied.hooks, {});
     assert.equal(applied.settingSources, 'user');
+    assert.equal(applied.allowedTools, 'Read,Glob,Grep,TodoWrite');
     const listFor = async (session, client = host) => {
       const response = await client.request('list-mcp-servers', {
         sessionId: session.id,
@@ -22454,4 +22460,124 @@ test('Claude Code effort applies from creation and the next turn and fails visib
   const recovered = await turn('Default again.', { effort: null });
   assert.equal(recovered.status, 'completed', recovered.error);
   assert.deepEqual(await launchedEfforts(), ['high', 'max', null, 'max', null]);
+});
+
+test('Claude Code writable modes add plan, subagent and skill tools while subagent actions still ask the operator', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-claude-work-tools-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const launchLog = join(directory, 'launches.jsonl');
+  await mkdir(project);
+  const host = launch(directory, pidFile, {
+    NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const create = async mode => {
+    const created = await host.request('create-session', {
+      title: `Claude ${mode} tools`,
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    return created.session.id;
+  };
+  const send = async (sessionId, text) => {
+    const response = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return response.session;
+  };
+  const lastTools = async () => {
+    const args = (await readFile(launchLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line).args)
+      .filter(item => item.includes('--include-partial-messages'))
+      .at(-1);
+    return [
+      args[args.indexOf('--tools') + 1],
+      args[args.indexOf('--allowedTools') + 1],
+    ];
+  };
+
+  const sessionId = await create('accept-edits');
+  const run = await send(sessionId, 'fixture:work-tools');
+  const pending = await host.event(
+    session =>
+      session.id === sessionId &&
+      session.runId === run.runId &&
+      session.pendingApprovals.length === 1,
+  );
+  const approval = pending.pendingApprovals[0];
+  assert.equal(approval.title, 'Write file');
+  assert.match(approval.detail, /The subagent asks before writing/);
+  const byTitle = (session, title) =>
+    session.activities.find(
+      item => item.runId === run.runId && item.title === title,
+    );
+  assert.equal(byTitle(pending, 'Run subagent').status, 'running');
+  assert.equal(
+    byTitle(pending, 'Run subagent').detail,
+    'Explore: Inspect the module',
+  );
+  assert.equal(byTitle(pending, 'Update plan').status, 'completed');
+  assert.equal(
+    byTitle(pending, 'Update plan').detail,
+    '[x] Read the spec\n[>] Write the change\n[ ] Run checks',
+  );
+  const answered = await host.request('respond-approval', {
+    sessionId,
+    runId: run.runId,
+    requestId: approval.id,
+    decision: 'decline',
+    fingerprint: approval.fingerprint,
+  });
+  assert.equal(answered.type, 'session', JSON.stringify(answered));
+  const done = await host.event(
+    session =>
+      session.id === sessionId &&
+      session.runId === run.runId &&
+      !['running', 'stopping'].includes(session.status),
+  );
+  assert.equal(done.status, 'completed', done.error);
+  assert.match(done.messages.at(-1).body, /the subagent write was deny/);
+  assert.equal(
+    done.messages.some(message =>
+      message.body.includes('Subagent text stays private'),
+    ),
+    false,
+  );
+  assert.equal(byTitle(done, 'Run subagent').status, 'completed');
+  assert.equal(byTitle(done, 'Use skill').detail, 'fixture-skill check');
+  assert.ok(
+    ['Update plan', 'Run subagent', 'Use skill'].every(
+      title => byTitle(done, title).kind === 'tool',
+    ),
+  );
+  assert.equal(existsSync(join(project, 'subagent-note.txt')), false);
+  assert.deepEqual(await lastTools(), [
+    'Read,Glob,Grep,Edit,Write,MultiEdit,NotebookEdit,TodoWrite,Agent,Skill',
+    'Read,Glob,Grep,TodoWrite',
+  ]);
+
+  const planId = await create('read-only');
+  const planRun = await send(planId, 'Plan only.');
+  const planned = await host.event(
+    session =>
+      session.id === planId &&
+      session.runId === planRun.runId &&
+      !['running', 'stopping'].includes(session.status),
+  );
+  assert.equal(planned.status, 'completed', planned.error);
+  assert.deepEqual(await lastTools(), ['Read,Glob,Grep', 'Read,Glob,Grep']);
 });
