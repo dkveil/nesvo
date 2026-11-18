@@ -25,6 +25,7 @@ import type {
 import { exhaustedUntil } from '../../scheduled-jobs/limit-gate';
 import { discoverDirectorySkills } from '../../skills/service';
 import type { StepExecution, StepExecutor, StepOutcome } from '../runner';
+import { maskProbeText } from './sensitive-patterns';
 
 export const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
@@ -37,7 +38,7 @@ const DIFF_CHARS = 200_000;
 const AUTHOR_RESPONSE_CHARS = 60_000;
 const PREVIOUS_ANSWER_CHARS = 4_000;
 const QUOTED_MARKERS =
-  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema|previous-answer)\b/gi;
+  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema|previous-answer|probe-findings)\b/gi;
 
 export type AgentStepSessions = Pick<
   SessionService,
@@ -130,12 +131,14 @@ export const verdictPrompt = ({
   hasSession,
   body,
   skill,
+  probeFindings = [],
 }: {
   spec: string | null;
   review: Review | undefined;
   hasSession: boolean;
   body: string;
   skill: string | null;
+  probeFindings?: readonly Evidence[];
 }): string => {
   const instructions = skill
     ? [
@@ -157,7 +160,17 @@ export const verdictPrompt = ({
       : quoted(spec.trim()),
     '</task-spec>',
     '',
-    ...diffSection(review, hasSession),
+    ...(probeFindings.length > 0
+      ? [
+          'Assess every probe finding below. For each ID, include an evidence item with the ID verbatim in reference and a note beginning with "Justified:" or "Fix required:" followed by a concrete explanation. Use fail if any finding needs a fix. Keep the response and evidence free of credential values and personal data.',
+          '',
+          '<probe-findings>',
+          quoted(
+            probeFindings.map(item => item.label + ' ' + item.text).join('\n'),
+          ),
+          '</probe-findings>',
+        ]
+      : diffSection(review, hasSession)),
     '',
     ...instructions,
     '',
@@ -270,6 +283,46 @@ const verdictEvidence = (verdict: AgentVerdict): Evidence[] =>
     url: null,
   }));
 
+function assessmentFor(
+  verdict: AgentVerdict,
+  item: Evidence,
+): string | undefined {
+  const note = verdict.evidence
+    .find(entry => entry.reference === item.label)
+    ?.note.trim();
+  return note && /^(?:Justified|Fix required):\s*\S/.test(note)
+    ? note
+    : undefined;
+}
+
+function assessmentEvidence(
+  verdict: AgentVerdict,
+  findings: readonly Evidence[],
+  display: (text: string) => string,
+): Evidence[] {
+  if (findings.length === 0) return verdictEvidence(verdict);
+  const assessed = new Set(findings.map(item => item.label));
+  const ordinary = verdictEvidence({
+    ...verdict,
+    evidence: verdict.evidence.filter(item => !assessed.has(item.reference)),
+  }).map(item => ({
+    ...item,
+    label: display(item.label).slice(0, stepResultLimits.evidenceLabel),
+    text: display(item.text ?? '').slice(0, stepResultLimits.evidenceText),
+  }));
+  return [
+    ...findings.map(item => ({
+      ...item,
+      text: (
+        item.text +
+        '\n' +
+        display(assessmentFor(verdict, item) ?? '')
+      ).slice(0, stepResultLimits.evidenceText),
+    })),
+    ...ordinary,
+  ].slice(0, stepResultLimits.evidence);
+}
+
 const resolveStepSkill = async (
   ports: AgentStepPorts,
   execution: StepExecution,
@@ -329,6 +382,9 @@ export const createAgentExecutor =
     const { run, step, definition, signal } = execution;
     const startedAt = step.startedAt ?? execution.now().toISOString();
     const usages: TurnUsage[] = [];
+    const findings = execution.probeFindings ?? [];
+    const privateResponse = findings.length > 0;
+    const display = privateResponse ? maskProbeText : (text: string) => text;
     const result = (
       status: StepResult['status'],
       summary: string,
@@ -342,9 +398,15 @@ export const createAgentExecutor =
           type: step.type,
           phase: step.phase,
           status,
-          summary: summary.slice(0, stepResultLimits.summary),
-          evidence: verdict ? verdictEvidence(verdict) : [],
-          outputs: verdict?.outputs ?? {},
+          summary: display(summary).slice(0, stepResultLimits.summary),
+          evidence: verdict
+            ? assessmentEvidence(verdict, findings, display)
+            : [],
+          outputs: Object.fromEntries(
+            Object.entries(verdict?.outputs ?? {})
+              .filter(([key]) => display(key) === key)
+              .map(([key, value]) => [key, display(value)]),
+          ),
           startedAt,
           finishedAt,
           durationMs: Math.max(
@@ -384,13 +446,15 @@ export const createAgentExecutor =
     const spec = await ports.spec(run, signal).catch(() => null);
     if (signal.aborted) return interrupted;
     const prompt = verdictPrompt({
-      spec,
-      review: run.sessionId
-        ? ports.sessions.latestReview(run.sessionId)
-        : undefined,
+      spec: spec === null ? null : display(spec),
+      review:
+        run.sessionId && !privateResponse
+          ? ports.sessions.latestReview(run.sessionId)
+          : undefined,
       hasSession: run.sessionId !== null,
-      body: definition.body,
+      body: display(definition.body),
       skill: definition.skill,
+      probeFindings: findings,
     });
 
     const input: CreateSessionInput = {
@@ -457,6 +521,7 @@ export const createAgentExecutor =
             readOnly: true,
             outputSchema: agentVerdictJsonSchema(),
             ephemeral: true,
+            privateResponse,
             instructionsOnly: true,
             ...(skill
               ? {
@@ -485,10 +550,27 @@ export const createAgentExecutor =
           aborted: signal.aborted,
           timeout,
         });
+        if (evaluation.kind === 'verdict' && privateResponse) {
+          const missing = findings.find(
+            finding => !assessmentFor(evaluation.verdict, finding),
+          );
+          if (missing)
+            return {
+              kind: 'invalid',
+              issues:
+                'Give a justification or a required fix for every probe finding',
+              previous: null,
+            };
+        }
         return evaluation.kind === 'invalid'
           ? {
               ...evaluation,
-              previous: ports.sessions.turnReply(session.id, messageId),
+              issues: privateResponse
+                ? 'Return the structured verdict and assess every probe finding'
+                : evaluation.issues,
+              previous: privateResponse
+                ? null
+                : ports.sessions.turnReply(session.id, messageId),
             }
           : evaluation;
       } catch (error) {
@@ -506,7 +588,13 @@ export const createAgentExecutor =
       if (evaluation.kind === 'interrupted') return interrupted;
       if (evaluation.kind === 'verdict')
         return result(
-          evaluation.verdict.status,
+          findings.some(finding =>
+            assessmentFor(evaluation.verdict, finding)?.startsWith(
+              'Fix required:',
+            ),
+          )
+            ? 'fail'
+            : evaluation.verdict.status,
           evaluation.verdict.summary,
           evaluation.verdict,
         );

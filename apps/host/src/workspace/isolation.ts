@@ -246,6 +246,96 @@ export async function runGit({
   return result;
 }
 
+export async function readWorkflowDiff(
+  directory: string,
+  base: string | undefined,
+  signal: AbortSignal,
+): Promise<{ patches: string[]; complete: boolean }> {
+  const maxBytes = 2 * 1024 * 1024;
+  const timeoutMs = 10_000;
+  const boundedSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(timeoutMs),
+  ]);
+  const options = { cwd: directory, signal: boundedSignal, timeoutMs };
+  const flags = [
+    '--no-ext-diff',
+    '--no-textconv',
+    '--no-color',
+    '--no-renames',
+    '--unified=0',
+  ];
+  const reference = base && /^[a-f0-9]{40,64}$/.test(base) ? base : 'HEAD';
+  const patches: string[] = [];
+  let remaining = maxBytes;
+  try {
+    const tracked = await runGit({
+      ...options,
+      args: [
+        '-c',
+        'core.quotePath=false',
+        '-c',
+        'core.fsmonitor=false',
+        '-c',
+        'diff.autoRefreshIndex=false',
+        'diff',
+        ...flags,
+        '--relative',
+        '--src-prefix=a/',
+        '--dst-prefix=b/',
+        reference,
+        '--',
+        '.',
+      ],
+      maxOutputBytes: remaining,
+    });
+    if (tracked.code !== 0 || tracked.outputTruncated)
+      return { patches, complete: false };
+    patches.push(tracked.stdout);
+    remaining -= Buffer.byteLength(tracked.stdout);
+    const untracked = await runGit({
+      ...options,
+      args: ['ls-files', '--others', '--exclude-standard', '-z', '--', '.'],
+      maxOutputBytes: 128 * 1024,
+    });
+    if (untracked.code !== 0 || untracked.outputTruncated)
+      return { patches, complete: false };
+    const files = untracked.stdout.split('\0').filter(Boolean);
+    for (const name of files.slice(0, 80)) {
+      if (remaining <= 0 || boundedSignal.aborted)
+        return { patches, complete: false };
+      const path = resolve(directory, name);
+      if (
+        !isInside(directory, path) ||
+        realpathSync.native(path) !== path ||
+        !lstatSync(path).isFile()
+      )
+        return { patches, complete: false };
+      const patch = await runGit({
+        ...options,
+        args: [
+          '-c',
+          'core.quotePath=false',
+          'diff',
+          '--no-index',
+          ...flags,
+          '--',
+          '/dev/null',
+          './' + name,
+        ],
+        maxOutputBytes: remaining,
+      });
+      if ((patch.code !== 0 && patch.code !== 1) || patch.outputTruncated)
+        return { patches, complete: false };
+      patches.push(patch.stdout);
+      remaining -= Buffer.byteLength(patch.stdout);
+    }
+    return { patches, complete: files.length <= 80 };
+  } catch {
+    return { patches, complete: false };
+  }
+}
+
 function gitMessage(result: OwnedProcessResult): string {
   const detail = result.stderr.trim().split(/\r?\n/).at(-1)?.slice(0, 300);
   return detail ? `Git failed: ${detail}` : 'Git failed.';

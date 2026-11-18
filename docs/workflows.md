@@ -41,7 +41,7 @@ bun run lint
 | Field | Values | Meaning |
 | -- | -- | -- |
 | `name` | lowercase letters, digits and inner hyphens | Must match the file name. |
-| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
+| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until`, `probe` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
 | `retries` | 0 to 5 | Default 0. `retries: 2` allows up to three attempts. The run records each attempt, then applies the normal failure route and `on_fail`. Human decisions never retry. |
@@ -64,7 +64,7 @@ Outputs are `status` (`success`, `failure` or `timeout`), `failing_checks` (newl
 
 ### Repeating a sequence
 
-An `until` step follows the steps it repeats. Set `repeat` to their names in order, `condition` to a string comparison and `max_iterations` to a number from 1 to 20. For example:
+An `until` step follows the steps it repeats. Set `repeat` to their names in order, `condition` to a string comparison and `max_iterations` to a number from 1 to 20. The following step checks the output of `read-status`.
 
 ```yaml
 name: ready
@@ -78,6 +78,14 @@ max_iterations: 4
 Connect the body and the loop control in one same-phase success chain. The body can receive incoming edges at its first step, and exits go from the control step. Loops cannot overlap or nest. Only a current iteration's output can satisfy the condition. A missing output does not match either comparison. A body failure follows the normal failure route. When the limit is reached without a match, the control step fails.
 
 The run records both the iteration and the attempt. Shell steps in the body receive `NESVO_STEP_ITERATION`, starting at 1. Each iteration has its own retry allowance. Include a human gate in the repeated sequence when each repetition needs a decision.
+
+### Probing the current diff
+
+A `probe` step reads the current Git diff in the task directory without opening a model turn. It compares staged and working files with the task worktree's recorded base, or with `HEAD` for a run without an isolated worktree. It includes unignored untracked regular files. Patch input is bounded to 2 MiB, 80 untracked files and 10 seconds. Incomplete scans report a finding and set `complete` to `false`.
+
+Set `probe` to `all` (default), `secrets`, `personal-data`, `test-integrity` or `change-size`. Findings include common credential assignments, tokens and private keys, email and phone patterns, checksum-validated IBAN and national IDs (PESEL, DNI/NIE and labeled NIF), removed assertions, skipped or focused tests, and signs that lint, type or CI enforcement changed. A diff above 20 files or 500 changed lines includes a split suggestion. Findings are signals for review. The run records the finding and changed-file counts and a bounded set of locations with masked values.
+
+Connect the probe to an agent in the graph. The next downstream agent sees the upstream findings and must justify each one or identify the fix required. Separate phases can also pass findings forward. The agent remains read-only and can report a required correction, which fails its step. The probe itself passes even when it reports findings. View the findings on the probe result and the assessments in the agent result. For large sets the agent also receives a grouped item for the overflow. Probe-review turns send masked context and display the reviewed findings and sanitized assessments in the workflow result.
 
 ## The workflow file
 
@@ -164,7 +172,7 @@ The run passes when the last phase passes. A `human` gate binds to the latest sa
 ## How a run moves through a graph
 
 - **Ready steps.** A step starts when every incoming edge has fired and every step that precedes it through any edges has finished. A step with no incoming edge starts with its phase.
-- **Parallel.** Up to four `command` and `action` steps of a run run at once. `agent` and `human` steps run one at a time, because the computer runs one session at a time and a gate binds to one result. A human gate and an action never run together.
+- **Parallel.** Up to four non-agent checks and actions can run at once. `agent` and `human` steps run one at a time, because the computer runs one session at a time and a gate binds to one result. A human gate and an action never run together.
 - **Joins.** A step with several incoming edges is an and-join: it starts only when all of them have fired.
 - **Failure branches.** An edge `on failure` fires when its source fails. Use it for work that should happen before the failure takes effect, such as collecting logs. It never turns the failure into a pass: when the phase settles, the failed gate still applies its `on_fail`.
 - **Not reached.** A step cut off because a step it needed failed, or passed when only an `on failure` edge led to it, is recorded as Not reached with the reason, for example `Not reached: "unit" failed`. Its own outgoing edges then die in turn.

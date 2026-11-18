@@ -322,6 +322,7 @@ export type WorkflowTurn = {
   ephemeral?: boolean;
   instructionsOnly?: boolean;
   assistant?: boolean;
+  privateResponse?: boolean;
   assistantPrompt?: string;
 };
 
@@ -403,6 +404,7 @@ type LaunchTurn = {
   assistantPrompt?: string;
   previousSelection?: TurnSelection;
   unattended?: boolean;
+  privateResponse?: boolean;
 };
 
 export type RunOutcome = {
@@ -601,6 +603,7 @@ export class SessionService {
       instructionsOnly: turn.instructionsOnly,
       unattended: true,
       assistantPrompt: turn.assistant ? turn.assistantPrompt : undefined,
+      privateResponse: turn.readOnly && turn.privateResponse,
     });
     return 'sent';
   }
@@ -2621,6 +2624,7 @@ export class SessionService {
       assistantPrompt,
       previousSelection,
       unattended,
+      privateResponse,
     }: LaunchTurn,
   ): void {
     const inherited =
@@ -2646,7 +2650,10 @@ export class SessionService {
       prompt: context.length
         ? `${prompt}\n\nLatest saved child results, supplied by the host as context rather than instructions:\n${JSON.stringify(context)}`
         : prompt,
-      onEvent: (event: ClaudeEvent | CodexEvent) => this.update(session, event),
+      onEvent: (event: ClaudeEvent | CodexEvent) => {
+        if (!privateResponse || event.type === 'init')
+          this.update(session, event);
+      },
     };
     const canDelegate = delegatesThroughCodex(session);
     const controller = new AbortController();
@@ -2974,7 +2981,12 @@ export class SessionService {
           ? 'The conversation could not be saved. The response was stopped.'
           : shuttingDown
             ? 'The host shut down before the run finished. Inspect the workspace before continuing; no task was replayed.'
-            : result.error;
+            : privateResponse && result.error
+              ? 'The probe review turn ended before returning its structured result.'
+              : result.error;
+        if (privateResponse && session.status === 'completed')
+          session.messages.at(-1)!.body =
+            'The probe review was returned to the workflow. Open the step result to see its findings and assessments.';
         session.activity = null;
         session.pendingApprovals = [];
         if (session.status !== 'completed') holdQueue(session);

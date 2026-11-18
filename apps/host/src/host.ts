@@ -71,6 +71,7 @@ import {
   WorkflowAssistantError,
 } from './workflows/assistant';
 import { EvidenceError, EvidenceStore } from './workflows/evidence';
+import { probeExecutor } from './workflows/steps/probe';
 import { createWaitCiExecutor } from './workflows/steps/wait-ci';
 import { WorkflowRunError, WorkflowRunner } from './workflows/runner';
 import { WorkflowGates } from './workflows/gates';
@@ -382,6 +383,7 @@ export const serveHost = ({
             evidence,
             stepExecutors: {
               command: commandExecutor,
+              probe: probeExecutor,
               action: actionExecutor,
               'wait-ci': createWaitCiExecutor({
                 read: (target, cwd, signal) =>

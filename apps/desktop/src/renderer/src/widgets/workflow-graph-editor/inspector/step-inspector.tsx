@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import {
   workflowDefinitionLimits,
   stepTypeSchema,
+  probeKindSchema,
   type StepPhase,
 } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
@@ -179,24 +180,29 @@ export function StepInspectorForm({
             )}
           />
         </Field>
-        <Field
-          id={fieldId('type')}
-          label="Type"
-          as="span"
-          messages={notesOf('type')}
-        >
-          <SegmentedControl
-            fullWidth
-            label="Type"
+        <Field id={fieldId('type')} label="Type" messages={notesOf('type')}>
+          <Select
             value={step.type}
-            options={stepTypeSchema.options.map(type => ({
-              value: type,
-              label: typeLabels[type],
-            }))}
-            invalid={hasError(notesOf('type'))}
-            describedBy={describedBy(fieldId('type'), notesOf('type'))}
-            onChange={type => onChange(withType(step, type))}
-          />
+            onValueChange={type =>
+              onChange(withType(step, stepTypeSchema.parse(type)))
+            }
+          >
+            <SelectTrigger
+              id={fieldId('type')}
+              size="sm"
+              aria-invalid={hasError(notesOf('type')) || undefined}
+              aria-describedby={describedBy(fieldId('type'), notesOf('type'))}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              {stepTypeSchema.options.map(type => (
+                <SelectItem key={type} value={type}>
+                  {typeLabels[type]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field id={fieldId('phase')} label="Phase" messages={notesOf('phase')}>
           <Select
@@ -258,6 +264,31 @@ export function StepInspectorForm({
               notes={notesOf('skill')}
               onChange={skill => update({ skill })}
             />
+          </Field>
+        )}
+        {step.type === 'probe' && (
+          <Field
+            id={fieldId('probe')}
+            label="Checks"
+            messages={notesOf('probe')}
+          >
+            <Select
+              value={step.probe ?? 'all'}
+              onValueChange={value =>
+                update({ probe: probeKindSchema.parse(value) })
+              }
+            >
+              <SelectTrigger id={fieldId('probe')} size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value="all">All checks</SelectItem>
+                <SelectItem value="secrets">Secrets</SelectItem>
+                <SelectItem value="personal-data">Personal data</SelectItem>
+                <SelectItem value="test-integrity">Test integrity</SelectItem>
+                <SelectItem value="change-size">Change size</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
         )}
         {step.type === 'until' && (

@@ -40,12 +40,13 @@ export function WorkflowStepRow({
   onSession,
 }: Props) {
   const duration = stepDuration(step, now);
-  const maxAttempts = step.definition.retries + 1;
-  const attempt = step.attempts > 1 ? `${step.attempts}/${maxAttempts}` : '';
+  const iteration = step.record?.iteration;
+  const attempt = step.attempts > 1 ? `Attempt ${step.attempts}` : '';
   const label = [
     step.definition.name,
     stepStateLabels[step.state],
-    attempt ? `attempt ${step.attempts} of ${maxAttempts}` : '',
+    iteration ? `Iteration ${iteration}` : '',
+    attempt,
     duration,
   ]
     .filter(Boolean)
@@ -60,9 +61,13 @@ export function WorkflowStepRow({
             title={step.definition.name}
             trailing={
               <>
-                {attempt && (
-                  <span className="text-warning-foreground">{attempt}</span>
-                )}
+                {iteration ? (
+                  <span className="text-muted-foreground">
+                    Iteration {iteration}
+                  </span>
+                ) : attempt ? (
+                  <span className="text-muted-foreground">{attempt}</span>
+                ) : null}
                 {duration}
               </>
             }

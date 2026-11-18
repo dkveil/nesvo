@@ -3,6 +3,7 @@ import {
   Hand,
   Clock,
   Repeat,
+  ScanSearch,
   Terminal,
   Zap,
   type LucideIcon,
@@ -17,6 +18,7 @@ const glyphs: Record<StepType, LucideIcon> = {
   action: Zap,
   'wait-ci': Clock,
   until: Repeat,
+  probe: ScanSearch,
 };
 
 type Props = { type: StepType; className?: string };

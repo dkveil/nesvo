@@ -135,6 +135,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'repeat',
     'condition',
     'max_iterations',
+    'probe',
     'on_fail',
     'effect',
     'needs',

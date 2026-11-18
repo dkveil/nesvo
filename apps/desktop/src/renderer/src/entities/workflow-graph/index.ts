@@ -98,6 +98,7 @@ export const stepTypeLabels: Record<StepType, string> = {
   action: 'Action',
   'wait-ci': 'Wait for PR checks',
   until: 'Loop until',
+  probe: 'Diff probe',
 };
 
 export const stepTypeOrder: StepType[] = [
@@ -107,6 +108,7 @@ export const stepTypeOrder: StepType[] = [
   'action',
   'wait-ci',
   'until',
+  'probe',
 ];
 
 export const phaseTones: Record<StepPhase, WorkflowTone> = {
@@ -224,6 +226,7 @@ export const stepDefinitionOf = (
   repeat: step.repeat?.map(name => name.trim()),
   condition: step.condition,
   max_iterations: step.max_iterations,
+  probe: step.probe,
   on_fail: step.on_fail,
   effect: step.effect,
   needs: [...step.needs],
@@ -541,6 +544,7 @@ export const stepFileText = (step: StepDefinition): string => {
     lines.push(`repeat: [${step.repeat.map(yamlName).join(', ')}]`);
   if (step.condition) lines.push(`condition: ${yamlText(step.condition)}`);
   if (step.max_iterations) lines.push(`max_iterations: ${step.max_iterations}`);
+  if (step.probe) lines.push(`probe: ${step.probe}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);

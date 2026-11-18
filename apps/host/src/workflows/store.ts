@@ -290,9 +290,12 @@ export class WorkflowRunStore {
 
   interruptActiveRuns(at: string): void {
     this.transact(() => {
-      const readOnlyWaitRunIds = this.database.prepare(
-        "SELECT DISTINCT wait.run_id FROM workflow_steps AS wait WHERE wait.state = 'running' AND wait.type = 'wait-ci' AND NOT EXISTS (SELECT 1 FROM workflow_steps AS other WHERE other.run_id = wait.run_id AND other.state = 'running' AND other.type <> 'wait-ci')",
-      ).all().map(row => String(row.run_id));
+      const readOnlyWaitRunIds = this.database
+        .prepare(
+          "SELECT DISTINCT wait.run_id FROM workflow_steps AS wait JOIN workflow_runs AS run ON run.id = wait.run_id WHERE run.status = 'checking' AND wait.state = 'running' AND wait.type = 'wait-ci' AND NOT EXISTS (SELECT 1 FROM workflow_steps AS other WHERE other.run_id = wait.run_id AND other.state = 'running' AND other.type <> 'wait-ci')",
+        )
+        .all()
+        .map(row => String(row.run_id));
       const uncertainRunIds = this.database
         .prepare(
           "SELECT DISTINCT run_id FROM workflow_steps WHERE state = 'running' AND type = 'action'",
@@ -307,7 +310,11 @@ export class WorkflowRunStore {
       const interrupt = this.database.prepare(
         `UPDATE workflow_runs SET document = json_set(document, '$.status', 'interrupted', '$.revision', revision + 1, '$.updatedAt', ?), status = 'interrupted', revision = revision + 1, updated_at = ? WHERE status IN (${RUNNING_SQL}) AND id NOT IN (SELECT value FROM json_each(?))`,
       );
-      interrupt.run(at, at, JSON.stringify([...uncertainRunIds, ...readOnlyWaitRunIds]));
+      interrupt.run(
+        at,
+        at,
+        JSON.stringify([...uncertainRunIds, ...readOnlyWaitRunIds]),
+      );
       this.database
         .prepare(
           `UPDATE workflow_runs SET document = json_set(document, '$.status', 'needs-attention', '$.attention', ?, '$.revision', revision + 1, '$.updatedAt', ?), status = 'needs-attention', revision = revision + 1, updated_at = ? WHERE status IN (${RECOVERABLE_SQL}) AND id IN (SELECT value FROM json_each(?))`,

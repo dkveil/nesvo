@@ -11,7 +11,12 @@ export function parseUntilCondition(expression: string) {
   try {
     const value: unknown = JSON.parse(condition[3]!);
     if (typeof value !== 'string') return null;
-    return { step: reference[1]!, key: reference[2]!, operator: condition[2]!, value };
+    return {
+      step: reference[1]!,
+      key: reference[2]!,
+      operator: condition[2]!,
+      value,
+    };
   } catch {
     return null;
   }

@@ -19,6 +19,7 @@ import {
   type RunWorkflowStepsInput,
   type StepPhase,
   type StepResult,
+  type Evidence,
   type StepType,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -90,6 +91,7 @@ export type StepExecution = {
   step: WorkflowStepRecord;
   definition: ResolvedStep;
   outputs: ReadonlyMap<string, Readonly<Record<string, string>>>;
+  probeFindings?: readonly Evidence[];
   signal: AbortSignal;
   evidence: StepEvidence;
   environment: NodeJS.ProcessEnv;
@@ -463,6 +465,7 @@ const EXCLUSIVE_STEP_TYPES = {
   human: ['action'],
   'wait-ci': [],
   until: [],
+  probe: [],
 } as const satisfies Record<StepType, readonly StepType[]>;
 
 const admits = (
@@ -536,7 +539,8 @@ const checkingMove = (
     ? []
     : pending.filter(
         step =>
-          (!step.retryAt || Date.parse(step.retryAt) <= (context.now ?? Date.now())) &&
+          (!step.retryAt ||
+            Date.parse(step.retryAt) <= (context.now ?? Date.now())) &&
           edgesInto(step).every(edge => edge.state === 'fired') &&
           ancestors(run.workflow.graph, step.name).every(name =>
             Boolean(outcomeOf(named.get(name))),
@@ -563,7 +567,10 @@ const checkingMove = (
   }
   if (
     ready.length > 0 ||
-    pending.some(step => step.retryAt && Date.parse(step.retryAt) > (context.now ?? Date.now())) ||
+    pending.some(
+      step =>
+        step.retryAt && Date.parse(step.retryAt) > (context.now ?? Date.now()),
+    ) ||
     rows.some(step => ACTIVE_STEP_STATES.includes(step.state))
   )
     return WAIT;
@@ -630,7 +637,10 @@ export class WorkflowRunner {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
-  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly retryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private readonly busy = new Map<string, BusyTurn>();
   private readonly pending = new Set<Promise<unknown>>();
   private closed = false;
@@ -894,9 +904,16 @@ export class WorkflowRunner {
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       const steps = this.store.stepsForRun(runId);
-      if (run.status === 'checking' || run.status === 'awaiting-human')
+      if (
+        !TERMINAL_STATUSES.includes(run.status) &&
+        run.status !== 'needs-attention'
+      )
         for (const step of steps)
-          if (step.type === 'wait-ci' && step.state === 'running' && !this.active.has(step.id))
+          if (
+            step.type === 'wait-ci' &&
+            step.state === 'running' &&
+            !this.active.has(step.id)
+          )
             this.executeStep(run, steps, step);
       const author = this.author;
       const move = nextMove(run, steps, {
@@ -914,17 +931,28 @@ export class WorkflowRunner {
     }
   }
 
-  private scheduleRetry(runId: string, steps: readonly WorkflowStepRecord[]): void {
+  private scheduleRetry(
+    runId: string,
+    steps: readonly WorkflowStepRecord[],
+  ): void {
     const now = this.clock.now().getTime();
-    const due = Math.min(...[...latestAttempts(steps).values()].flatMap(step => {
-      const time = step.state === 'pending' && step.retryAt ? Date.parse(step.retryAt) : 0;
-      return time > now ? [time] : [];
-    }));
+    const due = Math.min(
+      ...[...latestAttempts(steps).values()].flatMap(step => {
+        const time =
+          step.state === 'pending' && step.retryAt
+            ? Date.parse(step.retryAt)
+            : 0;
+        return time > now ? [time] : [];
+      }),
+    );
     if (!Number.isFinite(due)) return;
-    this.retryTimers.set(runId, setTimeout(() => {
-      this.retryTimers.delete(runId);
-      this.track(this.advanceRun(runId));
-    }, due - now));
+    this.retryTimers.set(
+      runId,
+      setTimeout(() => {
+        this.retryTimers.delete(runId);
+        this.track(this.advanceRun(runId));
+      }, due - now),
+    );
   }
 
   private perform(
@@ -1035,9 +1063,13 @@ export class WorkflowRunner {
     };
     const existing = latestAttempts(this.store.stepsForRun(run.id));
     const created: WorkflowStepRecord[] = [];
-    const loopMembers = new Set(run.workflow.steps.flatMap(definition =>
-      definition.type === 'until' ? [definition.name, ...(definition.repeat ?? [])] : [],
-    ));
+    const loopMembers = new Set(
+      run.workflow.steps.flatMap(definition =>
+        definition.type === 'until'
+          ? [definition.name, ...(definition.repeat ?? [])]
+          : [],
+      ),
+    );
     const written = this.store.transact(() => {
       if (!this.store.replaceRun(next, run.revision)) return false;
       for (const index of indices) {
@@ -1104,7 +1136,11 @@ export class WorkflowRunner {
     this.executeStep(run, steps, running);
   }
 
-  private executeStep(run: WorkflowRun, steps: readonly WorkflowStepRecord[], running: WorkflowStepRecord): void {
+  private executeStep(
+    run: WorkflowRun,
+    steps: readonly WorkflowStepRecord[],
+    running: WorkflowStepRecord,
+  ): void {
     const definition = run.workflow.steps[running.index];
     if (!definition) return;
     const controller = new AbortController();
@@ -1113,6 +1149,10 @@ export class WorkflowRunner {
       step: running,
       definition,
       outputs: ancestorOutputs(run, steps, running),
+      probeFindings:
+        definition.type === 'agent'
+          ? pendingProbeFindings(run, steps, running)
+          : undefined,
       signal: controller.signal,
       evidence: this.evidence,
       environment: this.environment,
@@ -1120,10 +1160,15 @@ export class WorkflowRunner {
       link: sessionId => this.linkStep(running, sessionId),
       saveCiWait: ciWait => {
         const current = this.store.getStep(running.id);
-        return current?.state === 'running' && this.writeStep(current, { ciWait });
+        return (
+          current?.state === 'running' && this.writeStep(current, { ciWait })
+        );
       },
     };
-    const executor = definition.type === 'until' ? untilExecutor : this.executors[definition.type] ?? unavailableExecutor;
+    const executor =
+      definition.type === 'until'
+        ? untilExecutor
+        : (this.executors[definition.type] ?? unavailableExecutor);
     const done = Promise.resolve()
       .then(() => executor(execution))
       .catch(
@@ -1200,24 +1245,33 @@ export class WorkflowRunner {
     const state = VERDICT_STATES[result.status];
     const run = this.store.getRun(current.runId);
     const definition = run?.workflow.steps[current.index];
-    if (run && parsed.success && outcome.kind === 'repeat' && definition?.type === 'until') {
+    if (
+      run &&
+      parsed.success &&
+      outcome.kind === 'repeat' &&
+      definition?.type === 'until'
+    ) {
       this.repeatSequence(run, current, definition.repeat ?? [], result);
       return;
     }
     const retry = current.retry ?? 0;
     if (
-      run?.status === 'checking' &&
+      (run?.status === 'checking' || run?.status === 'awaiting-human') &&
       definition &&
       retry < definition.retries &&
       FAILED_STEP_STATES.includes(state) &&
       mayRetry(run, definition)
     ) {
       const now = this.clock.now();
-      const backoff = definition.retry_backoff ? parseDurationMs(definition.retry_backoff) ?? 0 : 0;
+      const backoff = definition.retry_backoff
+        ? (parseDurationMs(definition.retry_backoff) ?? 0)
+        : 0;
       const next = {
         ...nextAttempt(current, now.toISOString()),
         retry: retry + 1,
-        ...(backoff > 0 ? { retryAt: new Date(now.getTime() + backoff).toISOString() } : {}),
+        ...(backoff > 0
+          ? { retryAt: new Date(now.getTime() + backoff).toISOString() }
+          : {}),
       };
       this.finishAndQueue(current, state, result, [next]);
       return;
@@ -1225,15 +1279,22 @@ export class WorkflowRunner {
     this.writeStep(current, { state, result });
   }
 
-  private repeatSequence(run: WorkflowRun, control: WorkflowStepRecord, repeat: readonly string[], result: StepResult): void {
+  private repeatSequence(
+    run: WorkflowRun,
+    control: WorkflowStepRecord,
+    repeat: readonly string[],
+    result: StepResult,
+  ): void {
     const iteration = (control.iteration ?? 1) + 1;
     const latest = [...latestAttempts(this.store.stepsForRun(run.id)).values()];
     const names = new Set([...repeat, control.name]);
     const now = this.timestamp();
-    const next = latest.filter(step => names.has(step.name)).map(step => ({
-      ...nextAttempt(step, now),
-      iteration,
-    }));
+    const next = latest
+      .filter(step => names.has(step.name))
+      .map(step => ({
+        ...nextAttempt(step, now),
+        iteration,
+      }));
     this.finishAndQueue(control, 'passed', result, next);
   }
 
@@ -1243,17 +1304,24 @@ export class WorkflowRunner {
     result: StepResult,
     queued: readonly WorkflowStepRecord[],
   ): void {
-    const finished = { ...current, state, result, revision: current.revision + 1, updatedAt: this.timestamp() };
-      const written = this.store.transact(() => {
-        if (!this.store.replaceStep(finished, current.revision)) return false;
-        for (const step of queued)
-          if (!this.store.insertStep(step)) throw new Error('Step row exists.');
-        return true;
-      });
-      if (written) {
-        this.emit({ type: 'workflow-step-changed', step: finished });
-        for (const step of queued) this.emit({ type: 'workflow-step-changed', step });
-      }
+    const finished = {
+      ...current,
+      state,
+      result,
+      revision: current.revision + 1,
+      updatedAt: this.timestamp(),
+    };
+    const written = this.store.transact(() => {
+      if (!this.store.replaceStep(finished, current.revision)) return false;
+      for (const step of queued)
+        if (!this.store.insertStep(step)) throw new Error('Step row exists.');
+      return true;
+    });
+    if (written) {
+      this.emit({ type: 'workflow-step-changed', step: finished });
+      for (const step of queued)
+        this.emit({ type: 'workflow-step-changed', step });
+    }
   }
 
   private awaitHuman(
@@ -1372,7 +1440,10 @@ export class WorkflowRunner {
   private writeStep(
     step: WorkflowStepRecord,
     changes: Partial<
-      Pick<WorkflowStepRecord, 'state' | 'result' | 'skip' | 'sessionId' | 'ciWait'>
+      Pick<
+        WorkflowStepRecord,
+        'state' | 'result' | 'skip' | 'sessionId' | 'ciWait'
+      >
     >,
   ): boolean {
     const next: WorkflowStepRecord = {
@@ -1478,11 +1549,64 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
 
 function mayRetry(run: WorkflowRun, step: ResolvedStep): boolean {
   if (step.type === 'human') return false;
-  if (step.idempotent || step.type === 'wait-ci') return true;
-  if (step.type !== 'command' || step.effect === 'external' || looksExternal(step.body)) return false;
+  if (step.idempotent || step.type === 'wait-ci' || step.type === 'probe')
+    return true;
+  if (
+    step.type !== 'command' ||
+    step.effect === 'external' ||
+    looksExternal(step.body)
+  )
+    return false;
   const before = new Set(ancestors(run.workflow.graph, step.name));
-  return !run.workflow.steps.some(other => other.type === 'human' &&
-    (before.has(other.name) || PHASE_RANK[other.phase] < PHASE_RANK[step.phase]));
+  return !run.workflow.steps.some(
+    other =>
+      other.type === 'human' &&
+      (before.has(other.name) ||
+        PHASE_RANK[other.phase] < PHASE_RANK[step.phase]),
+  );
+}
+
+function precedingSteps(
+  run: WorkflowRun,
+  steps: readonly WorkflowStepRecord[],
+  step: WorkflowStepRecord,
+) {
+  const visible = new Set(ancestors(run.workflow.graph, step.name));
+  return [...latestAttempts(steps).values()].filter(
+    other =>
+      visible.has(other.name) ||
+      PHASE_RANK[other.phase] < PHASE_RANK[step.phase],
+  );
+}
+
+function pendingProbeFindings(
+  run: WorkflowRun,
+  steps: readonly WorkflowStepRecord[],
+  step: WorkflowStepRecord,
+): Evidence[] {
+  const preceding = precedingSteps(run, steps, step);
+  const addressed = new Set(
+    preceding
+      .filter(other => other.type === 'agent')
+      .flatMap(other => other.result?.evidence.map(item => item.label) ?? []),
+  );
+  const pending = preceding
+    .filter(other => other.type === 'probe')
+    .flatMap(
+      other =>
+        other.result?.evidence.filter(item => !addressed.has(item.label)) ?? [],
+    );
+  if (pending.length <= 24) return pending;
+  return [
+    ...pending.slice(0, 23),
+    {
+      kind: 'text',
+      label: `probe/${step.id}/overflow`,
+      path: null,
+      url: null,
+      text: `${pending.length - 23} additional findings are listed on the upstream probe steps. Review the remaining changed files for the same categories of findings and give a disposition.`,
+    },
+  ];
 }
 
 function ancestorOutputs(
@@ -1490,16 +1614,11 @@ function ancestorOutputs(
   steps: readonly WorkflowStepRecord[],
   step: WorkflowStepRecord,
 ): Map<string, Record<string, string>> {
-  const visible = new Set(ancestors(run.workflow.graph, step.name));
   const outputs = new Map<string, Record<string, string>>();
-  for (const other of [...latestAttempts(steps).values()].sort(
+  for (const other of precedingSteps(run, steps, step).sort(
     (left, right) => left.index - right.index,
   ))
-    if (
-      (visible.has(other.name) || PHASE_RANK[other.phase] < PHASE_RANK[step.phase]) &&
-      other.result &&
-      Object.keys(other.result.outputs).length > 0
-    )
+    if (other.result && Object.keys(other.result.outputs).length > 0)
       outputs.set(other.name, other.result.outputs);
   return outputs;
 }

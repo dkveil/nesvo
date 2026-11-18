@@ -58,6 +58,15 @@ export const stepTypeSchema = z.enum([
   'action',
   'wait-ci',
   'until',
+  'probe',
+]);
+
+export const probeKindSchema = z.enum([
+  'all',
+  'secrets',
+  'personal-data',
+  'test-integrity',
+  'change-size',
 ]);
 
 export const PULL_REQUEST_NUMBER = /^[1-9]\d{0,8}$/;
@@ -108,6 +117,7 @@ const stepDefinitionShape = {
   skill: stepSkillSchema.nullable().default(null),
   timeout: durationSchema.default('15m'),
   pr: prExpressionSchema.optional(),
+  probe: probeKindSchema.optional(),
   repeat: z
     .array(stepNameSchema)
     .min(1)
@@ -157,6 +167,7 @@ type StepRuleSubject = {
   skill: string | null;
   retries: number;
   pr?: string;
+  probe?: z.infer<typeof probeKindSchema>;
   repeat?: string[];
   condition?: string;
   max_iterations?: number;
@@ -168,6 +179,12 @@ type StepRuleSubject = {
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
+  if (value.probe !== undefined && value.type !== 'probe')
+    context.addIssue({
+      code: 'custom',
+      path: ['probe'],
+      message: 'This field belongs to a Diff probe step.',
+    });
   for (const field of ['repeat', 'condition', 'max_iterations'] as const)
     if ((value.type === 'until') !== (value[field] !== undefined))
       context.addIssue({
@@ -220,6 +237,7 @@ const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
     !value.body.trim() &&
     value.type !== 'wait-ci' &&
     value.type !== 'until' &&
+    value.type !== 'probe' &&
     (value.type !== 'agent' || value.skill === null)
   )
     context.addIssue({

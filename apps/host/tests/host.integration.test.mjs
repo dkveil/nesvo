@@ -1112,7 +1112,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
-      contractRevision: 2,
+      contractRevision: 3,
       instanceId,
       capabilities: [
         'scheduled-jobs',
@@ -9143,6 +9143,121 @@ test(
             );
           }
         }
+      },
+    );
+
+    await t.test(
+      'diff probes report masked findings and require assessments in the next agent result',
+      async () => {
+        const probeProject = await createProject(
+          'probes',
+          [
+            { name: 'inspect', type: 'probe', probe: 'all', body: '' },
+            { name: 'assess', type: 'agent', body: 'fixture:verdict-probes' },
+            {
+              name: 'omit-assessment',
+              type: 'agent',
+              body: 'fixture:verdict-pass',
+            },
+          ],
+          {
+            probe: ['inspect', 'assess'],
+            'missing-assessment': ['inspect', 'omit-assessment'],
+          },
+        );
+        const git = (...args) =>
+          promisify(execFile)('git', args, { cwd: probeProject });
+        await git('init', '-q');
+        const sample = join(probeProject, 'sample.test.ts');
+        await write(
+          sample,
+          'test("case", () => {\n  assert.equal(actual, expected);\n});\n',
+        );
+        await write(join(probeProject, 'tsconfig.json'), '{"strict": true}\n');
+        await git('add', '.');
+        await git(
+          '-c',
+          'user.name=Fixture',
+          '-c',
+          'user.email=fixture@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-qm',
+          'Fixture baseline',
+        );
+        await write(
+          sample,
+          'test.skip("case", () => {});\n' +
+            'different fixture text\n'.repeat(520),
+        );
+        await write(join(probeProject, 'tsconfig.json'), '{"strict": false}\n');
+        await git('add', 'tsconfig.json');
+        const secret = 'sk-abcdefghijklmnopqrstuv';
+        const personal = [
+          'person@example.invalid',
+          '+48 501 234 567',
+          'GB82 WEST 1234 5698 7654 32',
+          '44051401458',
+          '12345678Z',
+        ];
+        await write(
+          join(probeProject, 'details.txt'),
+          [`API_KEY="${secret}"`, ...personal, '44051401459', '12345678A'].join(
+            '\n',
+          ),
+        );
+        const run = await start(probeProject, 'probe');
+        const current = await settled(run.id);
+        assert.equal(current.run.status, 'passed', JSON.stringify(current));
+        const scan = stepNamed(current, 'inspect').result;
+        const assessment = stepNamed(current, 'assess').result;
+        assert.equal(scan.outputs.complete, 'true');
+        const findings = scan.evidence.map(item => item.text).join('\n');
+        assert.doesNotMatch(findings, /Credential assignment/);
+        for (const label of [
+          'Access token [masked]',
+          'Email address [masked]',
+          'Phone number [masked]',
+          'IBAN [masked]',
+          'National ID (PESEL) [masked]',
+          'National ID (DNI or NIE) [masked]',
+          'Assertion removed',
+          'Test skipped or focused',
+          'Validation or CI configuration may be weaker',
+          'Large diff',
+          'Consider separating',
+        ])
+          assert.ok(findings.includes(label), findings);
+        assert.equal(
+          scan.evidence.filter(item => item.text.includes('National ID'))
+            .length,
+          2,
+        );
+        assert.equal(assessment.evidence.length, scan.evidence.length);
+        assert.ok(
+          assessment.evidence.every(item =>
+            item.text.includes('Justified: fixture evidence'),
+          ),
+        );
+        const transcript = await host.request('get-session', {
+          sessionId: stepNamed(current, 'assess').sessionId,
+          limit: 20,
+        });
+        assert.equal(transcript.type, 'session', JSON.stringify(transcript));
+        const serialized = JSON.stringify([current, transcript]);
+        for (const value of [secret, ...personal])
+          assert.ok(
+            !serialized.includes(value),
+            'A raw finding appeared in the protocol.',
+          );
+        const incomplete = await start(probeProject, 'missing-assessment');
+        const failed = await settled(incomplete.id);
+        assert.equal(failed.run.status, 'failed');
+        assert.match(
+          stepNamed(failed, 'omit-assessment').result.summary,
+          /every probe finding/,
+        );
       },
     );
 

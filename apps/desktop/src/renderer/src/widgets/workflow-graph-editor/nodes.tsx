@@ -22,6 +22,7 @@ import {
   NODE_WIDTH_PX,
   phaseTones,
   START_NODE_WIDTH_PX,
+  stepTypeLabels,
   type EdgeCondition,
   type EditorNode,
   type NodeIssue,
@@ -80,6 +81,8 @@ const stepDetail = (step: EditorNode['step']) => {
   if (step.type === 'human') return 'Waits for your decision';
   if (step.type === 'agent')
     return step.skill ? `Skill ${step.skill}` : 'Agent review';
+  if (step.type !== 'command' && step.type !== 'action')
+    return stepTypeLabels[step.type];
   const line = step.body
     .split('\n')
     .map(item => item.trim())
@@ -147,6 +150,7 @@ const typeTileTone: Record<StepType, string> = {
   action: 'text-error-foreground',
   'wait-ci': 'text-info-foreground',
   until: 'text-info-foreground',
+  probe: 'text-info-foreground',
 };
 
 export function StepNodeView({ data, selected }: NodeProps<StepNode>) {

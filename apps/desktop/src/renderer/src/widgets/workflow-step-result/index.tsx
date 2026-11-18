@@ -24,13 +24,20 @@ import {
   type WorkflowStepRecord,
 } from '@/entities/workflow';
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
+import { stepTypeLabels } from '@/entities/workflow-graph';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 import { SectionLabel } from '@/shared/ui/section-label';
-import { SegmentedControl } from '@/shared/ui/segmented-control';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 export type InboxTarget = {
@@ -206,7 +213,7 @@ export function StepResult({
         </div>
         <p className="text-2xs text-muted-foreground">
           {[
-            definition.type[0]!.toUpperCase() + definition.type.slice(1),
+            stepTypeLabels[definition.type],
             phaseLabels[definition.phase],
             definition.skill ? `Skill ${definition.skill}` : '',
             definition.on_fail === 'fix' ? 'Sends failures back for a fix' : '',
@@ -216,19 +223,22 @@ export function StepResult({
         </p>
       </div>
       {attempts.length > 1 && (
-        <SegmentedControl
-          label="Attempt"
+        <Select
           value={String(record?.attempt ?? '')}
-          onChange={value => setAttempt(Number(value))}
-          options={attempts.map(item => ({
-            value: String(item.attempt),
-            label: item.iteration
-              ? `${item.iteration} ? ${item.attempt}`
-              : String(item.attempt),
-            ariaLabel: `Attempt ${item.attempt} · ${stepStateLabels[item.state]}`,
-            icon: <StepStateIcon state={item.state} />,
-          }))}
-        />
+          onValueChange={value => setAttempt(Number(value))}
+        >
+          <SelectTrigger aria-label="Attempt history" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            {attempts.map(item => (
+              <SelectItem key={item.id} value={String(item.attempt)}>
+                {item.iteration ? `Iteration ${item.iteration} · ` : ''}
+                Attempt {item.attempt} · {stepStateLabels[item.state]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )}
       {record?.skip ? (
         <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">

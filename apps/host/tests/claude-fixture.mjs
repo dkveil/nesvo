@@ -883,6 +883,26 @@ if (args.length === 1 && args[0] === '--version') {
       },
       modelUsage: contextWindow,
     });
+  } else if (command === 'fixture:verdict-probes') {
+    const findings =
+      /<probe-findings>\n([\s\S]*?)\n<\/probe-findings>/.exec(prompt)?.[1] ??
+      '';
+    const addresses = [...findings.matchAll(/^(probe\/\S+) /gm)].map(
+      match => match[1],
+    );
+    assert.ok(addresses.length > 0);
+    assert.doesNotMatch(
+      prompt,
+      /person@example\.invalid|sk-abcdefghijklmnopqrstuv/,
+    );
+    verdict('person@example.invalid sk-abcdefghijklmnopqrstuv', {
+      status: 'pass',
+      summary: 'Synthetic probe review for person@example.invalid',
+      evidence: addresses.map(reference => ({
+        reference,
+        note: 'Justified: fixture evidence was synthetic for person@example.invalid.',
+      })),
+    });
   } else if (command === 'fixture:verdict-pass') {
     verdict('Verdict recorded.', passVerdict);
   } else if (command === 'fixture:verdict-fail-no-evidence') {

@@ -4,6 +4,7 @@ import {
   type StepType,
 } from '@nesvo/contracts';
 import type { StepDraft } from '@/entities/workflow-graph';
+export { stepTypeLabels as typeLabels } from '@/entities/workflow-graph';
 import { schemaNotes } from './field-notes';
 
 export const stepFields = [
@@ -21,6 +22,7 @@ export const stepFields = [
   'repeat',
   'condition',
   'max_iterations',
+  'probe',
   'on_fail',
   'needs',
   'effect',
@@ -58,6 +60,7 @@ export const bodyLabels: Record<StepType, string> = {
   human: 'Description',
   'wait-ci': 'Notes',
   until: 'Notes',
+  probe: 'Notes',
 };
 
 export const bodyPlaceholders: Record<StepType, string> = {
@@ -67,15 +70,7 @@ export const bodyPlaceholders: Record<StepType, string> = {
   human: 'What the reviewer looks at before deciding.',
   'wait-ci': '',
   until: '',
-};
-
-export const typeLabels: Record<StepType, string> = {
-  command: 'Command',
-  agent: 'Agent',
-  human: 'Human',
-  action: 'Action',
-  'wait-ci': 'Wait for PR checks',
-  until: 'Loop until',
+  probe: '',
 };
 
 export const declaresEffect = (type: StepType) =>
@@ -84,6 +79,7 @@ export const declaresEffect = (type: StepType) =>
 export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   ...step,
   type,
+  probe: type === 'probe' ? step.probe : undefined,
   repeat: type === 'until' ? (step.repeat ?? []) : undefined,
   condition: type === 'until' ? (step.condition ?? '') : undefined,
   max_iterations: type === 'until' ? (step.max_iterations ?? 3) : undefined,
@@ -114,6 +110,7 @@ export const stepNotes = (step: StepDraft) =>
       repeat: step.repeat?.map(name => name.trim()),
       condition: step.condition,
       max_iterations: step.max_iterations,
+      probe: step.probe,
       on_fail: step.on_fail,
       effect: step.effect,
       needs: step.needs,
