@@ -9,7 +9,7 @@ import { installTranscriptIndex } from './sessions/transcript-index';
 import { installCodeReviewTables } from './code-review/store';
 import { installTrackedRepositoryTables } from './tracked-repositories';
 
-const DATABASE_VERSION = 20;
+const DATABASE_VERSION = 21;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
