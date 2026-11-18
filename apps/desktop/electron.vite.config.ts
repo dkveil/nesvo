@@ -31,7 +31,19 @@ export default defineConfig({
   renderer: {
     root: resolve(directory, 'src/renderer'),
     resolve: { alias: { '@': resolve(directory, 'src/renderer/src') } },
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'renderer-dev-csp',
+        apply: 'serve',
+        transformIndexHtml: html =>
+          html.replace(
+            "connect-src 'self';",
+            "connect-src 'self' ws://localhost:* ws://127.0.0.1:*;",
+          ),
+      },
+    ],
     build: { outDir: resolve(directory, 'dist/renderer') },
   },
 });

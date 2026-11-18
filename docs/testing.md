@@ -24,7 +24,7 @@ Current checks:
 | Desktop scenario                 | Electron/preload/host/database path, decisions, worker tree, reload and group shutdown       |
 
 Tests use dedicated temporary directories and no provider accounts. They must not operate real project data or existing agent processes.
-The desktop smoke scenario can run against either build output or an unpacked package.
+The desktop smoke scenario runs against build output. The separate packaged startup check uses an unpacked package.
 
 D65 extends the existing host cases and principal desktop scenario with metadata-only usage reads. Provider fixtures reject user/model/thread/turn calls from inspection, record the exact account/usage protocol, and check confirmed process cleanup. Assertions cover shared concurrent reads, cache reuse, unchanged session history, real reported percentages/reset timestamps, account metadata and unavailable windows without invented zero usage. Desktop checks cover provider/account entry points, refresh, focus return and unavailable data after restart. The same remote scenario compares different Local and SSH-host usage states and rejects offline reads without reconnect. Actual installed-provider reads are recorded separately without model tasks; fixtures do not prove subscription access. No new suite or component snapshot baseline is added.
 
@@ -92,7 +92,7 @@ The assistant dock follows in the same scenario. Before the editor, `window.nesv
 
 Run bun run check and bun run build for foundation changes.
 Run bun run smoke:desktop when a desktop or host transport/lifecycle change affects that path.
-After packaging, run the same scenario with NESVO_PACKAGED_EXECUTABLE set to the executable.
+After packaging, run `bun run smoke:desktop:package` with `NESVO_PACKAGED_EXECUTABLE` set to the executable.
 Run a focused regression check after a fix. Do not rerun unrelated suites without a new reason.
 
 Record OS, commit, command and result. Automated native execution, a successful build and the owner's visual acceptance are separate evidence.

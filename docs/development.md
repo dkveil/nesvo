@@ -34,9 +34,13 @@ For a packaged Windows check in PowerShell:
 
 ```powershell
 $env:NESVO_PACKAGED_EXECUTABLE = (Resolve-Path 'apps/desktop/release/win-unpacked/Nesvo.exe').Path
-bun run smoke:desktop
+bun run smoke:desktop:package
 Remove-Item Env:NESVO_PACKAGED_EXECUTABLE
 ```
+
+The packaged check launches with a fresh temporary profile, verifies the renderer's connection to the local host, and exercises `ELECTRON_RUN_AS_NODE`. It connects to the renderer over loopback because packaged builds disable the Node inspector.
+
+Packaging refreshes the macOS ad hoc signature after changing the Electron fuses so Apple silicon can load the modified binary. The release uses no developer signing identity.
 
 Optional NESVO_SCREENSHOT saves the smoke scenario's visible state to an explicit path.
 The scenario starts a hidden window, uses an isolated temporary directory and explicitly selects the CLI fixture. It never uses a provider account. Fixture text is test evidence, not proof of model availability.

@@ -30,8 +30,7 @@ const skillsLog = join(directory, 'skills-probes.jsonl');
 const usageLog = join(directory, 'usage-probes.jsonl');
 const usageControl = join(directory, 'usage-control.json');
 const requireDesktop = createRequire(resolve('apps/desktop/package.json'));
-const executablePath =
-  process.env.NESVO_PACKAGED_EXECUTABLE || requireDesktop('electron');
+const executablePath = requireDesktop('electron');
 const env = {
   ...process.env,
   NESVO_SMOKE_TEST: '1',
@@ -57,9 +56,7 @@ let application;
 let hostPid;
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
-const launchArgs = process.env.NESVO_PACKAGED_EXECUTABLE
-  ? []
-  : [resolve('apps/desktop')];
+const launchArgs = [resolve('apps/desktop')];
 const launchApplication = () =>
   electron.launch({
     executablePath,
