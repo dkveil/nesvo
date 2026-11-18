@@ -56,7 +56,18 @@ import {
   type MessageAttachment,
   type TurnUsage,
   type SessionParentRequest,
+  type SessionMode,
+  type SessionStageRecord,
+  type StageActor,
+  type StageQuestion,
+  type StageReport,
+  type decideSessionPlanSchema,
+  type answerSessionQuestionSchema,
+  parseFencedStageReport,
+  pendingStageQuestion,
   sessionControlToolDefinitions,
+  sessionPlanLimits,
+  stageToolDefinitions,
 } from '@nesvo/contracts';
 import {
   interactiveMcpSession,
@@ -85,6 +96,16 @@ import {
 } from '../providers/codex';
 import { shiftPlacement } from '../providers/interleave';
 import { SessionStore, type SessionOrigin } from './store';
+import {
+  appendStageRecord,
+  approvedPlanMessage,
+  correctedPlanMessage,
+  decisionMessageId,
+  derivedUuid,
+  hasStageTools,
+  planTurnPrompt,
+  questionAnswerMessage,
+} from './stages';
 import type {
   SessionControlBridge,
   SessionControlCall,
@@ -511,6 +532,10 @@ export class SessionService {
   private readonly structuredOutputs = new Map<string, unknown>();
   private readonly pendingCreates = new Map<string, Promise<Session>>();
   private readonly planRuns = new Set<string>();
+  private readonly capturedPlans = new Map<string, string>();
+  private readonly stageListeners = new Set<
+    (session: Session, records: readonly SessionStageRecord[]) => void
+  >();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private readonly emittedRevisions = new Map<string, number>();
   private readonly folders = new FolderLocks();
@@ -688,6 +713,30 @@ export class SessionService {
       if (error instanceof AttachmentError)
         throw new SessionError(error.code, error.message);
       throw error;
+    }
+  }
+
+  onStageRecords(
+    listener: (
+      session: Session,
+      records: readonly SessionStageRecord[],
+    ) => void,
+  ): () => void {
+    this.stageListeners.add(listener);
+    return () => this.stageListeners.delete(listener);
+  }
+
+  private announceStage(
+    session: Session,
+    records: readonly SessionStageRecord[],
+  ): void {
+    if (!records.length) return;
+    for (const listener of this.stageListeners) {
+      try {
+        listener(structuredClone(session), records);
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -2033,7 +2082,9 @@ export class SessionService {
 
   send(
     input: SendMessageInput,
-    turn: Pick<LaunchTurn, 'outputSchema' | 'instructionsOnly'> = {},
+    turn: Pick<LaunchTurn, 'outputSchema' | 'instructionsOnly'> & {
+      session?: Session;
+    } = {},
   ): Session {
     if (this.unsaved.size) {
       this.list();
@@ -2044,6 +2095,7 @@ export class SessionService {
         );
     }
     const session =
+      turn.session ??
       this.active.get(input.sessionId)?.session ??
       this.store.get(input.sessionId);
     if (!session)
@@ -2081,12 +2133,14 @@ export class SessionService {
       session,
       'Wait for this session to finish or use Stop.',
     );
+    this.ensureNoStageDecision(session);
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
-    const selection = resolveTurnSelection(session, input);
+    const planning = session.plan?.status === 'planning';
+    const selection = this.turnSelection(session, input);
     this.ensureFolderFree(session, accessFor(selection.mode));
     this.confirmAttachments(input.attachments);
     this.confirmForkPoint(session);
@@ -2097,7 +2151,10 @@ export class SessionService {
       input.codeComments,
       input.attachments,
     );
-    const prompt = this.recoveryPrompt(session, delivered.text);
+    const prompt = this.recoveryPrompt(
+      session,
+      planning ? planTurnPrompt(delivered.text) : delivered.text,
+    );
     const previousSelection = {
       model: session.model,
       effort: session.effort,
@@ -2116,6 +2173,10 @@ export class SessionService {
       input.attachments,
       input.codeComments,
     );
+    if (planning && session.plan && session.runId) {
+      session.plan = { ...session.plan, runId: session.runId };
+      this.planRuns.add(session.runId);
+    }
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
@@ -2349,17 +2410,21 @@ export class SessionService {
     return structuredClone(current);
   }
 
-  queue(input: SendMessageInput): Session {
-    const session = this.acceptingSession(input.sessionId);
+  queue(
+    input: SendMessageInput,
+    placement: { session?: Session; front?: boolean } = {},
+  ): Session {
+    const session = placement.session ?? this.acceptingSession(input.sessionId);
     if (session.externalAttachment)
       throw new SessionError('busy', TERMINAL_ATTACHED_MESSAGE);
     this.ensureWorktreeOpen(session);
+    this.ensureNoStageDecision(session);
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
-    const selection = resolveTurnSelection(session, input);
+    const selection = this.turnSelection(session, input);
     this.confirmAttachments(input.attachments);
     if (
       session.queue.some(item => item.id === input.messageId) ||
@@ -2374,13 +2439,17 @@ export class SessionService {
       running ||
       this.closing ||
       !!this.folderWait(this.runRequest(session, accessFor(selection.mode)));
-    if (!blocked) return this.send(input);
+    if (!blocked)
+      return this.send(
+        input,
+        placement.session ? { session: placement.session } : {},
+      );
     if (session.queue.length >= sessionQueueLimit)
       throw new SessionError(
         'invalid-request',
         'The queue is full. Remove a queued message first.',
       );
-    session.queue.push({
+    session.queue[placement.front ? 'unshift' : 'push']({
       id: input.messageId,
       text: input.text,
       ...(input.skillId ? { skillId: input.skillId } : {}),
@@ -2398,11 +2467,355 @@ export class SessionService {
     try {
       this.publish(session);
     } catch (error) {
-      session.queue.pop();
+      session.queue = session.queue.filter(item => item.id !== input.messageId);
       if (!waited) this.waiting.delete(session.id);
       throw error;
     }
     return structuredClone(session);
+  }
+
+  private turnSelection(
+    session: Session,
+    input: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
+  ): TurnSelection {
+    return resolveTurnSelection(
+      session,
+      session.plan?.status === 'planning'
+        ? { ...input, mode: 'read-only' }
+        : input,
+    );
+  }
+
+  private ensureNoStageDecision(session: Session): void {
+    if (session.plan?.status === 'plan-ready')
+      throw new SessionError(
+        'invalid-request',
+        'This session waits for a decision on its plan. Approve, correct or reject the plan first.',
+      );
+    if (pendingStageQuestion(session))
+      throw new SessionError(
+        'invalid-request',
+        'This session waits for an answer to its question. Answer the question first.',
+      );
+  }
+
+  decideSessionPlan(
+    input: z.output<typeof decideSessionPlanSchema>,
+    actor: StageActor,
+  ): Session {
+    const session = this.acceptingSession(input.sessionId);
+    if (session.stageRecords.some(record => record.id === input.decisionId))
+      return structuredClone(session);
+    const plan = session.plan;
+    if (!plan || plan.status !== 'plan-ready' || plan.id !== input.planId)
+      throw new SessionError(
+        'not-found',
+        'This plan is no longer waiting for a decision. Refresh the session.',
+      );
+    this.ensureSessionIdle(
+      session,
+      'Wait for this session to finish before deciding its plan.',
+    );
+    if (
+      input.decision === 'correct' &&
+      plan.round + 1 >= sessionPlanLimits.rounds
+    )
+      throw new SessionError(
+        'invalid-request',
+        `A plan can be corrected at most ${sessionPlanLimits.rounds - 1} times. Approve or reject it.`,
+      );
+    const mode: SessionMode | null =
+      input.decision === 'accept' ? (input.mode ?? plan.targetMode) : null;
+    if (mode && !isProviderSessionMode(session.provider, mode))
+      throw new SessionError(
+        'invalid-request',
+        `${session.provider} does not support the ${mode} permission mode.`,
+      );
+    const previous = {
+      plan,
+      records: session.stageRecords,
+      queue: session.queue,
+    };
+    const at = new Date().toISOString();
+    const messageId =
+      input.decision === 'decline' ? null : decisionMessageId(input.decisionId);
+    session.plan = {
+      ...plan,
+      status:
+        input.decision === 'accept'
+          ? 'accepted'
+          : input.decision === 'correct'
+            ? 'planning'
+            : 'declined',
+      round: input.decision === 'correct' ? plan.round + 1 : plan.round,
+      ...(mode ? { targetMode: mode } : {}),
+    };
+    const added: SessionStageRecord[] = [
+      {
+        kind: 'plan-decision',
+        id: input.decisionId,
+        at,
+        planId: plan.id,
+        decision: input.decision,
+        by: actor,
+        mode,
+        text: input.text ?? null,
+        messageId,
+      },
+    ];
+    if (mode && mode !== session.mode)
+      added.push({
+        kind: 'mode-change',
+        id: derivedUuid(input.decisionId, 'mode'),
+        at,
+        from: session.mode,
+        to: mode,
+        by: actor,
+      });
+    for (const record of added) appendStageRecord(session, record);
+    let result: Session;
+    try {
+      if (!messageId) {
+        this.publish(session);
+        result = structuredClone(session);
+      } else
+        result = this.queue(
+          {
+            sessionId: session.id,
+            messageId,
+            text:
+              input.decision === 'accept'
+                ? approvedPlanMessage(plan.text ?? '', input.text)
+                : correctedPlanMessage(input.text ?? ''),
+            mode: mode ?? 'read-only',
+          },
+          { session, front: true },
+        );
+    } catch (error) {
+      session.plan = previous.plan;
+      session.stageRecords = previous.records;
+      session.queue = previous.queue;
+      throw error;
+    }
+    this.announceStage(session, added);
+    return result;
+  }
+
+  setPlanTargetMode(sessionId: string, mode: SessionMode): Session {
+    const session = this.acceptingSession(sessionId);
+    const plan = session.plan;
+    if (!plan || (plan.status !== 'planning' && plan.status !== 'plan-ready'))
+      throw new SessionError(
+        'invalid-request',
+        'This session has no plan waiting for a decision.',
+      );
+    if (!isProviderSessionMode(session.provider, mode))
+      throw new SessionError(
+        'invalid-request',
+        `${session.provider} does not support the ${mode} permission mode.`,
+      );
+    session.plan = { ...plan, targetMode: mode };
+    this.publish(session);
+    return structuredClone(session);
+  }
+
+  answerStageQuestion(
+    input: z.output<typeof answerSessionQuestionSchema>,
+    actor: StageActor,
+  ): Session {
+    const session = this.acceptingSession(input.sessionId);
+    const index = session.stageRecords.findIndex(
+      record => record.kind === 'question' && record.id === input.questionId,
+    );
+    const record = session.stageRecords[index];
+    if (!record || record.kind !== 'question')
+      throw new SessionError(
+        'not-found',
+        'This question no longer exists. Refresh the session.',
+      );
+    const messageId = decisionMessageId(input.decisionId);
+    if (record.status === 'answered') {
+      if (record.answer?.messageId === messageId)
+        return structuredClone(session);
+      throw new SessionError(
+        'not-found',
+        'This question was already answered. Refresh the session.',
+      );
+    }
+    this.ensureSessionIdle(
+      session,
+      'Wait for this session to finish its turn before answering.',
+    );
+    const requested = input.option?.toLowerCase();
+    const option = requested
+      ? record.question.options.find(
+          candidate => candidate.label.toLowerCase() === requested,
+        )?.label
+      : null;
+    if (requested && !option)
+      throw new SessionError(
+        'invalid-request',
+        'Choose one of the offered options or answer in your own words.',
+      );
+    const previous = { records: session.stageRecords, queue: session.queue };
+    const answered: SessionStageRecord = {
+      ...record,
+      status: 'answered',
+      answer: {
+        at: new Date().toISOString(),
+        by: actor,
+        option: option ?? null,
+        text: input.text ?? null,
+        messageId,
+      },
+    };
+    session.stageRecords = session.stageRecords.map((item, position) =>
+      position === index ? answered : item,
+    );
+    let result: Session;
+    try {
+      result = this.queue(
+        {
+          sessionId: session.id,
+          messageId,
+          text: questionAnswerMessage(
+            record,
+            option ?? null,
+            input.text ?? null,
+          ),
+        },
+        { session, front: true },
+      );
+    } catch (error) {
+      session.stageRecords = previous.records;
+      session.queue = previous.queue;
+      throw error;
+    }
+    this.announceStage(session, [answered]);
+    return result;
+  }
+
+  recordStage(
+    caller: { sessionId: string; runId: string },
+    recordId: string,
+    entry:
+      | { kind: 'report'; report: StageReport }
+      | { kind: 'question'; question: StageQuestion }
+      | { kind: 'progress'; text: string },
+  ): SessionStageRecord {
+    const session = this.active.get(caller.sessionId)?.session;
+    if (
+      !session ||
+      session.runId !== caller.runId ||
+      session.status !== 'running' ||
+      !hasStageTools(session)
+    )
+      throw new SessionError(
+        'invalid-request',
+        'Only the running turn of a child or workflow session can use stage tools.',
+      );
+    const existing = session.stageRecords.find(item => item.id === recordId);
+    if (existing) return existing;
+    if (entry.kind === 'question' && pendingStageQuestion(session))
+      throw new SessionError(
+        'busy',
+        'This session already waits for an answer to another question.',
+      );
+    const base = {
+      id: recordId,
+      at: new Date().toISOString(),
+      runId: caller.runId,
+    };
+    const record: SessionStageRecord =
+      entry.kind === 'report'
+        ? { ...base, kind: 'report', source: 'tool', report: entry.report }
+        : entry.kind === 'question'
+          ? {
+              ...base,
+              kind: 'question',
+              question: entry.question,
+              status: 'pending',
+              answer: null,
+            }
+          : { ...base, kind: 'progress', text: entry.text };
+    const records = session.stageRecords;
+    appendStageRecord(session, record);
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.stageRecords = records;
+      throw error;
+    }
+    this.announceStage(session, [record]);
+    return record;
+  }
+
+  private finishStage(session: Session): SessionStageRecord[] {
+    const runId = session.runId;
+    if (!runId) return [];
+    const captured = this.capturedPlans.get(runId);
+    this.capturedPlans.delete(runId);
+    const reply = session.messages.at(-1);
+    const at = new Date().toISOString();
+    const added: SessionStageRecord[] = [];
+    const plan = session.plan;
+    if (plan?.status === 'planning' && plan.runId === runId) {
+      if (session.status === 'completed') {
+        const text = (captured ?? reply?.body ?? '').slice(
+          0,
+          sessionPlanLimits.text,
+        );
+        const planId = randomUUID();
+        session.plan = {
+          ...plan,
+          id: planId,
+          status: 'plan-ready',
+          text,
+          readyAt: at,
+        };
+        added.push({
+          kind: 'plan',
+          id: randomUUID(),
+          at,
+          planId,
+          runId,
+          round: plan.round,
+          text,
+        });
+      }
+    } else if (
+      session.status === 'completed' &&
+      reply?.author === 'agent' &&
+      !session.stageRecords.some(
+        record =>
+          (record.kind === 'report' || record.kind === 'report-invalid') &&
+          record.runId === runId,
+      )
+    ) {
+      const fenced = parseFencedStageReport(reply.body);
+      if (fenced.status === 'valid')
+        added.push({
+          kind: 'report',
+          id: randomUUID(),
+          at,
+          runId,
+          source: 'answer',
+          report: fenced.report,
+        });
+      else if (fenced.status === 'invalid')
+        added.push({
+          kind: 'report-invalid',
+          id: randomUUID(),
+          at,
+          runId,
+          source: 'answer',
+          error: fenced.error,
+        });
+    }
+    for (const record of added) appendStageRecord(session, record);
+    if (session.plan?.status === 'plan-ready' || pendingStageQuestion(session))
+      holdQueue(session);
+    return added;
   }
 
   cancelQueued(input: QueuedMessageRefInput): Session {
@@ -2724,6 +3137,7 @@ export class SessionService {
   changeSelection(
     sessionId: string,
     change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
+    actor?: StageActor,
   ): Session {
     const session = this.acceptingSession(sessionId);
     this.ensureSessionIdle(
@@ -2731,10 +3145,26 @@ export class SessionService {
       'This session is running. Change it after the turn finishes or send the change with the next message.',
     );
     const selection = resolveTurnSelection(session, change);
+    const from = session.mode;
     session.model = selection.model;
     session.effort = selection.effort;
     session.mode = selection.mode;
+    const added: SessionStageRecord[] =
+      actor && from !== selection.mode
+        ? [
+            {
+              kind: 'mode-change',
+              id: randomUUID(),
+              at: new Date().toISOString(),
+              from,
+              to: selection.mode,
+              by: actor,
+            },
+          ]
+        : [];
+    for (const record of added) appendStageRecord(session, record);
     this.publish(session);
+    this.announceStage(session, added);
     return structuredClone(session);
   }
 
@@ -3030,9 +3460,10 @@ export class SessionService {
       },
     };
     const canDelegate = delegatesThroughCodex(session);
+    const coordinating = isCoordinatorCandidate(session);
     const control =
       this.options.control &&
-      isCoordinatorCandidate(session) &&
+      (coordinating || hasStageTools(session)) &&
       session.runId &&
       !readOnly &&
       !outputSchema &&
@@ -3049,9 +3480,22 @@ export class SessionService {
       ? (call: SessionControlCall, signal: AbortSignal) =>
           control.call(controlCaller, call, signal)
       : undefined;
-    const controlTools = control?.available(session)
-      ? sessionControlToolDefinitions()
-      : undefined;
+    const controlTools = !control
+      ? undefined
+      : !coordinating
+        ? stageToolDefinitions()
+        : control.available(session)
+          ? sessionControlToolDefinitions()
+          : undefined;
+    const stageThread =
+      session.provider === 'Codex' &&
+      !coordinating &&
+      !!controlCall &&
+      (!session.providerInitialized || session.stageTools);
+    if (stageThread) session.stageTools = true;
+    const planTurn =
+      session.plan?.status === 'planning' &&
+      session.plan.runId === session.runId;
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
     let provider: ActiveRun['handle'] | undefined;
@@ -3287,6 +3731,13 @@ export class SessionService {
                         : {}),
                     }
                   : {}),
+                ...(stageThread && controlCall
+                  ? {
+                      onControl: controlCall,
+                      ...(controlTools ? { controlTools } : {}),
+                      experimentalApi: true,
+                    }
+                  : {}),
               })
             : startClaude({
                 ...options,
@@ -3324,6 +3775,7 @@ export class SessionService {
                 ...(controlCall && controlTools
                   ? { control: { tools: controlTools, call: controlCall } }
                   : {}),
+                ...(planTurn ? { planTurn } : {}),
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
               });
@@ -3412,6 +3864,7 @@ export class SessionService {
             reportedAt: session.messages.at(-1)!.completedAt!,
           };
         finishActivities(session, session.status);
+        const stageRecords = this.finishStage(session);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'
             ? compareWorkspace(
@@ -3428,6 +3881,7 @@ export class SessionService {
               };
         baseline = null;
         await this.saveTerminal(session, diff);
+        this.announceStage(session, stageRecords);
       })
       .catch(async () => {
         active.finalizing = true;
@@ -3891,6 +4345,9 @@ export class SessionService {
       if (session.status === 'running' && !session.pendingApprovals.length)
         session.activity = `${session.provider} is working…`;
       this.publish(session);
+      return;
+    } else if (event.type === 'plan') {
+      if (session.runId) this.capturedPlans.set(session.runId, event.text);
       return;
     } else if (event.type === 'text') {
       session.messages.at(-1)!.body = event.text;

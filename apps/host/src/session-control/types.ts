@@ -1,4 +1,8 @@
-import type { Session, sessionControlToolDefinitions } from '@nesvo/contracts';
+import type {
+  Session,
+  sessionControlToolDefinitions,
+  stageToolDefinitions,
+} from '@nesvo/contracts';
 
 export type SessionControlCaller = { sessionId: string; runId: string };
 
@@ -15,9 +19,9 @@ export type SessionControlHandler = (
   signal: AbortSignal,
 ) => Promise<SessionControlReply>;
 
-export type SessionControlToolDefinition = ReturnType<
-  typeof sessionControlToolDefinitions
->[number];
+export type SessionControlToolDefinition =
+  | ReturnType<typeof sessionControlToolDefinitions>[number]
+  | ReturnType<typeof stageToolDefinitions>[number];
 
 export type SessionControlTurn = {
   tools: SessionControlToolDefinition[];

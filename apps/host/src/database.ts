@@ -12,7 +12,7 @@ import { installTrackedRepositoryTables } from './tracked-repositories';
 import { installWorktreeRecipeTables } from './worktree-recipes/store';
 import { installSessionControlTables } from './session-control/store';
 
-const DATABASE_VERSION = 23;
+const DATABASE_VERSION = 24;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;

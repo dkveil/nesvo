@@ -5,8 +5,11 @@ import {
   createSessionSchema,
   isProviderSessionMode,
   isSessionControlToolName,
+  isStageToolName,
+  pendingStageQuestion,
   sessionControlLimits,
   sessionControlTools,
+  stageTools,
   type CoordinatorPolicy,
   type DecideSessionParentInput,
   type Session,
@@ -15,6 +18,9 @@ import {
   type SessionControlToolInput,
   type SessionControlToolName,
   type SessionMode,
+  type SessionStageRecord,
+  type StageToolInput,
+  type StageToolName,
 } from '@nesvo/contracts';
 import {
   isCoordinatorCandidate,
@@ -22,6 +28,14 @@ import {
   type SessionService,
 } from '../sessions/service';
 import { SessionError } from '../sessions/session-error';
+import {
+  actorLabel,
+  coordinatorActor,
+  decisionMessageId,
+  derivedUuid,
+  hasStageTools,
+  QUESTION_RECORDED_MESSAGE,
+} from '../sessions/stages';
 import type { SessionControlStore } from './store';
 import type {
   SessionControlBridge,
@@ -44,7 +58,6 @@ type Handler<T extends SessionControlToolName> = (context: {
   signal: AbortSignal;
 }) => Promise<SessionControlReply> | SessionControlReply;
 
-const PLAN_TEXT_LIMIT = 12_000;
 const SEEN_APPROVALS_LIMIT = 1000;
 
 const success = (data: Record<string, unknown>): SessionControlReply => ({
@@ -84,24 +97,7 @@ const refusalFor = (error: unknown): SessionControlReply => {
   return refusal(code, error.message);
 };
 
-const derivedId = (actionId: string, purpose: string): string => {
-  const hex = createHash('sha256')
-    .update(`${actionId}\n${purpose}`)
-    .digest('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${(
-    (parseInt(hex[16] ?? '0', 16) & 0x3) |
-    0x8
-  ).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-};
-
-const planPrompt = (prompt: string) =>
-  `${prompt}\n\nFirst produce a plan only: list the files you would change and the steps, do not change anything yet.`;
-
-const approvedPlanPrompt = (plan: string, resolutions?: string) =>
-  `The plan was accepted. Carry it out now.\n\nApproved plan:\n${plan}${resolutions ? `\n\nResolutions from the coordinator:\n${resolutions}` : ''}`;
-
-const correctedPlanPrompt = (correction: string) =>
-  `Revise the plan with this correction from the coordinator and return the full plan again. Do not change anything yet.\n\nCorrection:\n${correction}`;
+const derivedId = derivedUuid;
 
 const lastReply = (session: Session) =>
   session.messages.findLast(message => message.author === 'agent');
@@ -184,10 +180,11 @@ export class SessionControl {
     call: SessionControlCall,
     signal: AbortSignal,
   ): Promise<SessionControlReply> {
-    if (!isSessionControlToolName(call.tool))
+    const stage = isStageToolName(call.tool);
+    if (!stage && !isSessionControlToolName(call.tool))
       return refusal('unsupported', `Nesvo has no tool named ${call.tool}.`);
-    const tool = call.tool;
-    if (!sessionControlTools[tool].mutation)
+    const tool = call.tool as SessionControlToolName | StageToolName;
+    if (!isStageToolName(tool) && !sessionControlTools[tool].mutation)
       return this.execute(caller, tool, call.input, '', signal);
     const actionId = createHash('sha256')
       .update(`${caller.sessionId}\n${call.callId}`)
@@ -196,7 +193,11 @@ export class SessionControl {
     if (stored) return JSON.parse(stored.result) as SessionControlReply;
     const running = this.inFlight.get(actionId);
     if (running) return running;
-    const execution = this.execute(caller, tool, call.input, actionId, signal)
+    const execution = (
+      isStageToolName(tool)
+        ? Promise.resolve(this.executeStage(caller, tool, call.input, actionId))
+        : this.execute(caller, tool, call.input, actionId, signal)
+    )
       .then(reply => {
         const recorded = reply.ok
           ? {
@@ -268,13 +269,10 @@ export class SessionControl {
     if (!record) return;
     const child = this.params.sessions.snapshot(finished.sessionId);
     if (!child || child.parentId !== record.parentId) return;
-    if (record.planStatus === 'planning' && finished.status === 'completed') {
-      const plan = (lastReply(child)?.body ?? '').slice(0, PLAN_TEXT_LIMIT);
-      this.params.store.saveChild({
-        ...record,
-        planStatus: 'plan-ready',
-        plan,
-      });
+    if (
+      child.plan?.status === 'plan-ready' &&
+      child.plan.runId === finished.runId
+    ) {
       this.record(record.parentId, {
         sessionId: child.id,
         runId: finished.runId,
@@ -294,6 +292,122 @@ export class SessionControl {
         ? `${child.title} finished its turn.`
         : `${child.title} ended as ${finished.status}${child.error ? `: ${child.error}` : '.'}`,
     });
+  }
+
+  stageRecorded(session: Session, records: readonly SessionStageRecord[]) {
+    const record = this.params.store.child(session.id);
+    if (!record || !session.parentId || record.parentId !== session.parentId)
+      return;
+    for (const entry of records) {
+      const event = this.stageEvent(session, entry);
+      if (event) this.record(record.parentId, event);
+    }
+  }
+
+  private stageEvent(
+    session: Session,
+    entry: SessionStageRecord,
+  ): Omit<Parameters<SessionControlStore['appendEvent']>[0], 'parentId'> | null {
+    const base = {
+      sessionId: session.id,
+      runId: 'runId' in entry ? entry.runId : session.runId,
+      status: session.status,
+    };
+    if (entry.kind === 'plan-decision') {
+      const action =
+        entry.decision === 'accept'
+          ? `approved the plan of ${session.title}${entry.mode ? ` in ${entry.mode}` : ''}`
+          : entry.decision === 'correct'
+            ? `asked ${session.title} to correct its plan`
+            : `rejected the plan of ${session.title}`;
+      return {
+        ...base,
+        type: 'plan-decided',
+        summary: `${actorLabel(entry.by)} ${action}.${entry.text ? ` ${entry.text}` : ''}`,
+      };
+    }
+    if (entry.kind === 'report')
+      return {
+        ...base,
+        type: 'reported',
+        summary: `${session.title} reported ${entry.report.status}: ${entry.report.summary}`,
+      };
+    if (entry.kind === 'report-invalid')
+      return {
+        ...base,
+        type: 'reported',
+        summary: `${session.title} ended with an invalid report: ${entry.error}`,
+      };
+    if (entry.kind === 'question')
+      return entry.status === 'pending'
+        ? {
+            ...base,
+            type: 'question',
+            summary: `${session.title} asks a ${entry.question.kind} question: ${entry.question.question}`,
+          }
+        : {
+            ...base,
+            type: 'question-answered',
+            summary: `${entry.answer ? actorLabel(entry.answer.by) : 'The owner'} answered the question of ${session.title}${entry.answer?.option ? `: ${entry.answer.option}` : '.'}`,
+          };
+    if (entry.kind === 'progress')
+      return {
+        ...base,
+        type: 'progress',
+        summary: `${session.title}: ${entry.text}`,
+      };
+    return null;
+  }
+
+  private executeStage(
+    caller: SessionControlCaller,
+    tool: StageToolName,
+    input: unknown,
+    actionId: string,
+  ): SessionControlReply {
+    const session = this.params.sessions.snapshot(caller.sessionId);
+    if (!session || session.runId !== caller.runId || !hasStageTools(session))
+      return refusal(
+        'unsupported',
+        'Only the running turn of a child or workflow session can use stage tools.',
+      );
+    const parsed = stageTools[tool].input.safeParse(input);
+    if (!parsed.success)
+      return refusal(
+        'invalid',
+        parsed.error.issues
+          .slice(0, 5)
+          .map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`)
+          .join('; '),
+      );
+    const recordId = derivedId(actionId, 'record');
+    try {
+      if (tool === 'stage_report') {
+        this.params.sessions.recordStage(caller, recordId, {
+          kind: 'report',
+          report: parsed.data as StageToolInput<'stage_report'>,
+        });
+        return success({ recorded: 'report', recordId });
+      }
+      if (tool === 'stage_question') {
+        this.params.sessions.recordStage(caller, recordId, {
+          kind: 'question',
+          question: parsed.data as StageToolInput<'stage_question'>,
+        });
+        return success({
+          recorded: 'question',
+          questionId: recordId,
+          message: QUESTION_RECORDED_MESSAGE,
+        });
+      }
+      this.params.sessions.recordStage(caller, recordId, {
+        kind: 'progress',
+        text: (parsed.data as StageToolInput<'stage_progress'>).text,
+      });
+      return success({ recorded: 'progress', recordId });
+    } catch (error) {
+      return refusalFor(error);
+    }
   }
 
   observe(session: Session): void {
@@ -406,7 +520,8 @@ export class SessionControl {
 
   private summary(child: Session): SessionControlChild {
     const window = this.params.sessions.window(child, 1);
-    const plan = this.params.store.child(child.id)?.planStatus;
+    const plan = child.plan?.status;
+    const question = !!pendingStageQuestion(child);
     const running = child.status === 'running' || child.status === 'stopping';
     return {
       sessionId: child.id,
@@ -421,14 +536,17 @@ export class SessionControl {
       waitingFor:
         plan === 'plan-ready'
           ? 'plan'
-          : child.pendingApprovals.length
+          : question
+            ? 'question'
+            : child.pendingApprovals.length
             ? 'approval'
             : window.waitingFor
               ? 'folder'
               : child.queue.length && !running
                 ? 'queue'
                 : null,
-      needsDecision: plan === 'plan-ready' || child.pendingApprovals.length > 0,
+      needsDecision:
+        plan === 'plan-ready' || question || child.pendingApprovals.length > 0,
       queued: child.queue.length,
       lastActivityAt: child.updatedAt,
       pullRequest: child.pullRequest,
@@ -538,7 +656,8 @@ export class SessionControl {
         title: input.title,
         provider,
         model,
-        mode: input.planFirst ? 'read-only' : input.mode,
+        mode: input.mode,
+        ...(input.planFirst ? { planFirst: true } : {}),
         ...(placement.directory ? { directory: placement.directory } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
         ...(input.worktree
@@ -567,16 +686,16 @@ export class SessionControl {
         this.params.store.saveChild({
           sessionId: child.id,
           parentId: coordinator.id,
-          planStatus: input.planFirst ? 'planning' : null,
+          planStatus: null,
           planRound: 0,
-          targetMode: input.planFirst ? input.mode : null,
+          targetMode: null,
           plan: null,
         });
       const messageId = derivedId(actionId, 'message');
       this.params.sessions.queue({
         sessionId: child.id,
         messageId,
-        text: input.planFirst ? planPrompt(input.prompt) : input.prompt,
+        text: input.prompt,
       });
       return success({
         sessionId: child.id,
@@ -642,57 +761,45 @@ export class SessionControl {
           'forbidden-by-policy',
           'The coordinator policy does not allow deciding plans. The owner decides them.',
         );
-      const record = this.params.store.child(child.id);
-      if (!record || record.planStatus !== 'plan-ready')
+      const plan = child.plan;
+      if (!plan || plan.status !== 'plan-ready')
         return refusal(
           'invalid',
           'This session has no plan waiting for a decision.',
         );
-      const messageId = derivedId(actionId, 'message');
-      if (input.decision === 'decline') {
-        this.params.store.saveChild({ ...record, planStatus: 'declined' });
+      if (input.decision === 'accept') {
+        const refused = this.refuseMode(policy, plan.targetMode);
+        if (refused) return refused;
+      }
+      if (
+        input.decision === 'correct' &&
+        plan.round + 1 >= sessionControlLimits.planRounds
+      )
+        return refusal(
+          'invalid',
+          `A plan can be corrected at most ${sessionControlLimits.planRounds - 1} times. Accept or decline it.`,
+        );
+      const decisionId = derivedId(actionId, 'decision');
+      const decided = this.params.sessions.decideSessionPlan(
+        {
+          sessionId: child.id,
+          planId: plan.id,
+          decisionId,
+          decision: input.decision,
+          ...(input.text ? { text: input.text } : {}),
+          via: 'desktop',
+        },
+        coordinatorActor(coordinator.id),
+      );
+      if (input.decision === 'decline')
         return success({ sessionId: child.id, decision: 'decline' });
-      }
-      if (input.decision === 'correct') {
-        if (record.planRound + 1 >= sessionControlLimits.planRounds)
-          return refusal(
-            'invalid',
-            `A plan can be corrected at most ${sessionControlLimits.planRounds - 1} times. Accept or decline it.`,
-          );
-        this.params.sessions.queue({
-          sessionId: child.id,
-          messageId,
-          text: correctedPlanPrompt(input.text ?? ''),
-          mode: 'read-only',
-        });
-        this.params.store.saveChild({
-          ...record,
-          planStatus: 'planning',
-          planRound: record.planRound + 1,
-        });
-        return success({
-          sessionId: child.id,
-          decision: 'correct',
-          messageId,
-          ...this.delivery(child, messageId),
-        });
-      }
-      const mode = record.targetMode ?? child.mode;
-      const refused = this.refuseMode(policy, mode);
-      if (refused) return refused;
-      this.params.sessions.queue({
-        sessionId: child.id,
-        messageId,
-        text: approvedPlanPrompt(record.plan ?? '', input.text),
-        mode,
-      });
-      this.params.store.saveChild({ ...record, planStatus: 'accepted' });
+      const messageId = decisionMessageId(decisionId);
       return success({
         sessionId: child.id,
-        decision: 'accept',
-        mode,
+        decision: input.decision,
+        ...(input.decision === 'accept' ? { mode: plan.targetMode } : {}),
         messageId,
-        ...this.delivery(child, messageId),
+        ...this.delivery(decided, messageId),
       });
     },
     session_set_model: ({ coordinator, input, policy }) => {
@@ -728,21 +835,22 @@ export class SessionControl {
           'invalid',
           `${child.provider} does not support the ${input.mode} permission mode.`,
         );
-      const record = this.params.store.child(child.id);
       if (
-        record?.planStatus === 'planning' ||
-        record?.planStatus === 'plan-ready'
+        child.plan?.status === 'planning' ||
+        child.plan?.status === 'plan-ready'
       ) {
-        this.params.store.saveChild({ ...record, targetMode: input.mode });
+        this.params.sessions.setPlanTargetMode(child.id, input.mode);
         return success({
           sessionId: child.id,
           mode: input.mode,
           appliesFrom: 'accepted-plan',
         });
       }
-      const updated = this.params.sessions.changeSelection(child.id, {
-        mode: input.mode,
-      });
+      const updated = this.params.sessions.changeSelection(
+        child.id,
+        { mode: input.mode },
+        coordinatorActor(coordinator.id),
+      );
       return success({
         sessionId: child.id,
         mode: updated.mode,
@@ -831,6 +939,39 @@ export class SessionControl {
           return success({ events: [], cursor: input.cursor, timedOut: true });
         await this.wait(coordinator.id, remaining, signal);
       }
+    },
+    session_answer: ({ coordinator, input, actionId }) => {
+      const child = this.child(coordinator, input.sessionId);
+      const question = pendingStageQuestion(child);
+      if (!question)
+        return refusal(
+          'invalid',
+          'This session has no question waiting for an answer.',
+        );
+      if (question.question.kind === 'product')
+        return refusal(
+          'human-only',
+          'Product questions belong to the computer owner. Wait for their answer with events_wait.',
+        );
+      const decisionId = derivedId(actionId, 'answer');
+      const answered = this.params.sessions.answerStageQuestion(
+        {
+          sessionId: child.id,
+          questionId: question.id,
+          decisionId,
+          ...(input.option ? { option: input.option } : {}),
+          ...(input.text ? { text: input.text } : {}),
+          via: 'desktop',
+        },
+        coordinatorActor(coordinator.id),
+      );
+      const messageId = decisionMessageId(decisionId);
+      return success({
+        sessionId: child.id,
+        questionId: question.id,
+        messageId,
+        ...this.delivery(answered, messageId),
+      });
     },
   };
 }

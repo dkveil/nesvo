@@ -39,6 +39,8 @@ export type MobileGatewayWorkspace = Pick<
   | 'stopRun'
   | 'respondApproval'
   | 'decideDelegation'
+  | 'decideSessionPlan'
+  | 'answerSessionQuestion'
   | 'subscribe'
 >;
 export type MobileGatewayOptions = {
@@ -579,7 +581,17 @@ export class MobileGateway {
             ? workspace.stopRun(command.input, command.hostId)
             : command.method === 'respond-approval'
               ? workspace.respondApproval(command.input, command.hostId)
-              : workspace.decideDelegation(command.input, command.hostId);
+              : command.method === 'decide-delegation'
+                ? workspace.decideDelegation(command.input, command.hostId)
+                : command.method === 'decide-session-plan'
+                  ? workspace.decideSessionPlan(
+                      { ...command.input, via: 'mobile' },
+                      command.hostId,
+                    )
+                  : workspace.answerSessionQuestion(
+                      { ...command.input, via: 'mobile' },
+                      command.hostId,
+                    );
       const session = await deadline(operation);
       this.checkDevice(device.id);
       this.reply(

@@ -16,6 +16,7 @@ import {
   type Delegation,
 } from '@nesvo/contracts';
 import { saveCostTurn } from '../cost-store';
+import { startingPlan } from './stages';
 
 export type WorkflowSessionOrigin = {
   kind: 'workflow';
@@ -365,6 +366,7 @@ export class SessionStore {
     const settings = { ...input };
     delete settings.requestId;
     delete settings.isolation;
+    delete settings.planFirst;
     const now = new Date().toISOString();
     const session: Session = {
       ...settings,
@@ -416,8 +418,12 @@ export class SessionStore {
       archivedAt: null,
       externalAttachment: null,
       parentRequest: null,
+      plan: input.planFirst ? startingPlan(input) : null,
+      stageRecords: [],
+      stageTools: false,
       ...originLinks(origin, input),
     };
+    if (session.plan) session.mode = 'read-only';
     return session;
   }
 
@@ -521,6 +527,9 @@ export class SessionStore {
       archivedAt: null,
       externalAttachment: null,
       parentRequest: null,
+      plan: null,
+      stageRecords: [],
+      stageTools: false,
     };
   }
 

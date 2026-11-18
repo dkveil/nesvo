@@ -327,10 +327,19 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.has('--json-schema'), false);
     assert.equal(values.has('--append-system-prompt'), false);
   } else assert.equal(values.has('--permission-prompt-tool'), false);
+  const presentsPlan =
+    permissionMode === 'plan' &&
+    hostPrompts &&
+    values.get('--tools') === `${READ_TOOLS},ExitPlanMode`;
   for (const [flag, expected] of [
     ['--output-format', 'stream-json'],
     ['--permission-prompts', hostPrompts ? 'host' : 'none'],
-    ['--tools', MODE_TOOLS.get(permissionMode)],
+    [
+      '--tools',
+      presentsPlan
+        ? `${READ_TOOLS},ExitPlanMode`
+        : MODE_TOOLS.get(permissionMode),
+    ],
     ['--allowedTools', MODE_ALLOWED.get(permissionMode)],
   ])
     assert.equal(values.get(flag), expected, flag);
@@ -344,8 +353,9 @@ if (args.length === 1 && args[0] === '--version') {
   assert.equal(values.has('--strict-mcp-config'), true);
   if (permissionMode === 'plan' || permissionMode === 'dontAsk') {
     assert.equal(settings.disableAllHooks, true);
-    if (hostPrompts) assert.deepEqual(settings.permissions.ask, ['mcp__*']);
-    else assert.deepEqual(config, { mcpServers: {} });
+    if (!hostPrompts) assert.deepEqual(config, { mcpServers: {} });
+    else if (settings.permissions || Object.keys(config.mcpServers).length)
+      assert.deepEqual(settings.permissions.ask, ['mcp__*']);
   }
   if (process.env.NESVO_FIXTURE_MCP_LOG)
     writeFileSync(
@@ -1562,6 +1572,60 @@ if (args.length === 1 && args[0] === '--version') {
     const text = command.slice('fixture:say '.length);
     start(text);
     finish(text);
+  } else if (command.startsWith('fixture:say-lines ')) {
+    const text = JSON.parse(command.slice('fixture:say-lines '.length)).join(
+      '\n',
+    );
+    start(text);
+    finish(text);
+  } else if (command.startsWith('fixture:exit-plan ')) {
+    assert.ok(presentsPlan, 'A plan turn offers ExitPlanMode');
+    const plan = command.slice('fixture:exit-plan '.length);
+    const toolUse = `fixture-exit-plan-${turn}`;
+    const block = {
+      type: 'tool_use',
+      id: toolUse,
+      name: 'ExitPlanMode',
+      input: { plan },
+    };
+    start('Presenting the plan. ');
+    stream({
+      type: 'content_block_start',
+      index: 1,
+      content_block: { ...block, input: {} },
+    });
+    emit({
+      type: 'assistant',
+      message: { id: `fixture-exit-plan-${turn}`, content: [block] },
+    });
+    const requestId = randomUUID();
+    emit({
+      type: 'control_request',
+      request_id: requestId,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'ExitPlanMode',
+        input: { plan },
+        tool_use_id: toolUse,
+      },
+    });
+    const answer = await nextFrame();
+    assert.equal(answer.response.request_id, requestId);
+    assert.equal(answer.response.response.behavior, 'deny');
+    emit({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUse,
+            is_error: true,
+            content: answer.response.response.message,
+          },
+        ],
+      },
+    });
+    finish('Presenting the plan. The plan waits for the owner.');
   } else if (command === 'fixture:assistant-prose') {
     const text = 'I would add a lint step before the approval.';
     start(text);

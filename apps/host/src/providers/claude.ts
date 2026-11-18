@@ -57,6 +57,7 @@ import {
   withoutControlServer,
 } from './claude-control';
 import type { SessionControlTurn } from '../session-control/types';
+import { PLAN_RECEIVED_MESSAGE } from '../sessions/stages';
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -64,7 +65,8 @@ export type ClaudeEvent =
   | { type: 'activity'; text: string }
   | { type: 'tool-activity'; activity: ProviderActivity }
   | { type: 'approval'; approval: Approval }
-  | { type: 'approval-resolved'; id: string };
+  | { type: 'approval-resolved'; id: string }
+  | { type: 'plan'; text: string };
 
 export type ClaudeResult = {
   status: 'completed' | 'stopped' | 'failed' | 'interrupted';
@@ -153,6 +155,7 @@ const claudeModes = {
   { cli: string; tools: string[]; allowed: string[] }
 >;
 const optionalModes = ['accept-edits', 'auto'] as const;
+const EXIT_PLAN_TOOL = 'ExitPlanMode';
 const toolPresentation = {
   Read: { kind: 'read', title: 'Read file' },
   Glob: { kind: 'search', title: 'Find files' },
@@ -165,6 +168,7 @@ const toolPresentation = {
   TodoWrite: { kind: 'tool', title: 'Update plan' },
   Agent: { kind: 'tool', title: 'Run subagent' },
   Skill: { kind: 'tool', title: 'Use skill' },
+  ExitPlanMode: { kind: 'tool', title: 'Present plan' },
 } as const satisfies Record<
   string,
   { kind: ProviderActivity['kind']; title: string }
@@ -957,6 +961,7 @@ export function startClaude(options: {
   mcpTurn?: { verify: VerifyMcpTurn; dataDirectory: string };
   compact?: { instructions: string | null };
   control?: SessionControlTurn;
+  planTurn?: boolean;
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -1046,7 +1051,15 @@ export function startClaude(options: {
           'This Claude Code version does not support native session forking.',
         );
       const permission = claudeModes[options.mode];
-      const tools = permission.tools.join(',');
+      const presentsPlan =
+        options.planTurn === true &&
+        options.mode === 'read-only' &&
+        options.approvals === true &&
+        inspection.supportsHostPrompts === true;
+      const tools = [
+        ...permission.tools,
+        ...(presentsPlan ? [EXIT_PLAN_TOOL] : []),
+      ].join(',');
       const allowedTools = permission.allowed.join(',');
       const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
@@ -1071,7 +1084,11 @@ export function startClaude(options: {
         inspection.supportsHostPrompts === true;
       const controlled = !!options.control && canAsk;
       const hostPrompts =
-        canAsk && (!readOnly || Object.keys(servers).length > 0 || controlled);
+        canAsk &&
+        (!readOnly ||
+          Object.keys(servers).length > 0 ||
+          controlled ||
+          presentsPlan);
       if (integrations && options.mcpTurn)
         runConfig = await writeClaudeRunConfig(
           options.mcpTurn.dataDirectory,
@@ -1319,6 +1336,13 @@ export function startClaude(options: {
           } catch {
             fail('Claude permission answer could not be delivered.');
           }
+          return;
+        }
+        if (presentsPlan && request.tool_name === EXIT_PLAN_TOOL) {
+          const plan = ask.input.plan;
+          if (typeof plan === 'string' && plan.trim())
+            emit({ type: 'plan', text: plan });
+          deny(ask.requestId, PLAN_RECEIVED_MESSAGE);
           return;
         }
         if (readOnly && !String(request.tool_name).startsWith('mcp__')) {

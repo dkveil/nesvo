@@ -105,6 +105,7 @@ import { RunningAppsError } from './running-apps/scan';
 import { DefaultSessionFolder } from './workspace/default-folder';
 import { SessionControl } from './session-control/router';
 import { SessionControlStore } from './session-control/store';
+import { ownerActor } from './sessions/stages';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -152,6 +153,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'decide-delegation',
   'decide-worker-plan',
   'decide-session-parent',
+  'decide-session-plan',
+  'answer-session-question',
   'save-session-control-policy',
   'decide-review',
   'start-workflow-task',
@@ -405,6 +408,14 @@ export const serveHost = ({
         Effect.sync(() =>
           sessions.onRunFinished(finished =>
             sessionControl.runFinished(finished),
+          ),
+        ),
+        release => Effect.sync(() => release()),
+      );
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onStageRecords((session, records) =>
+            sessionControl.stageRecorded(session, records),
           ),
         ),
         release => Effect.sync(() => release()),
@@ -2539,6 +2550,24 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessionControl.decideParent(request.input),
+              };
+            if (request.method === 'decide-session-plan')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.decideSessionPlan(
+                  request.input,
+                  ownerActor(request.input.via),
+                ),
+              };
+            if (request.method === 'answer-session-question')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.answerStageQuestion(
+                  request.input,
+                  ownerActor(request.input.via),
+                ),
               };
             if (request.method === 'list-scheduled-jobs')
               return {

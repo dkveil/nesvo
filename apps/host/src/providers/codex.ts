@@ -2484,7 +2484,9 @@ export function startCodex(options: CodexRunOptions): {
             ? { threadId: options.sessionId, excludeTurns: true }
             : {}),
           ...model,
-          ...(!options.resume && !options.fork && options.onDelegate
+          ...(!options.resume &&
+          !options.fork &&
+          (options.onDelegate || options.controlTools?.length)
             ? {
                 dynamicTools: [
                   ...(options.controlTools?.length
@@ -2492,8 +2494,9 @@ export function startCodex(options: CodexRunOptions): {
                         {
                           type: 'namespace',
                           name: SESSION_CONTROL_NAMESPACE,
-                          description:
-                            'Nesvo session control: create, steer and wait for your child sessions on this computer.',
+                          description: options.onDelegate
+                            ? 'Nesvo session control: create, steer and wait for your child sessions on this computer.'
+                            : 'Nesvo stage tools: report the end of your stage, ask a blocking question or share progress.',
                           tools: options.controlTools.map(tool => ({
                             type: 'function',
                             name: tool.name,
@@ -2503,13 +2506,17 @@ export function startCodex(options: CodexRunOptions): {
                         },
                       ]
                     : []),
-                  {
-                    type: 'function',
-                    name: 'nesvo_delegate',
-                    description: `When the task benefits from delegation, propose one or two visible workers with separate tasks and explicit scopes. Each worker starts only after operator approval. Use existing directories within this workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). Set planFirst when a worker should propose a plan before acting: its first turn is read-only and returns a plan that the operator accepts or corrects before the worker continues. The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. ${options.mode === 'supervised' ? 'This session has write access, so every proposed worker must use read-only mode. Use a separate read-only session when workers need to change files.' : 'This session is read-only. Workers may use supervised mode to change files in non-overlapping directories.'}`,
-                    inputSchema: options.delegationSchema,
-                    deferLoading: false,
-                  },
+                  ...(options.onDelegate
+                    ? [
+                        {
+                          type: 'function',
+                          name: 'nesvo_delegate',
+                          description: `When the task benefits from delegation, propose one or two visible workers with separate tasks and explicit scopes. Each worker starts only after operator approval. Use existing directories within this workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). Set planFirst when a worker should propose a plan before acting: its first turn is read-only and returns a plan that the operator accepts or corrects before the worker continues. The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. ${options.mode === 'supervised' ? 'This session has write access, so every proposed worker must use read-only mode. Use a separate read-only session when workers need to change files.' : 'This session is read-only. Workers may use supervised mode to change files in non-overlapping directories.'}`,
+                          inputSchema: options.delegationSchema,
+                          deferLoading: false,
+                        },
+                      ]
+                    : []),
                 ],
               }
             : {}),

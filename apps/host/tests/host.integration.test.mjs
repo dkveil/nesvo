@@ -1378,6 +1378,7 @@ test(
         'session-control',
         'workflow-sharing',
         'workflow-child-sessions',
+        'session-stages',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2384,7 +2385,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      23,
+      24,
     );
     migrated.close();
     const reopened = open();
@@ -4768,7 +4769,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 24');
+    database.exec('PRAGMA user_version = 25');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4785,7 +4786,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 24);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -6579,6 +6580,7 @@ test(
       'session-control',
       'workflow-sharing',
       'workflow-child-sessions',
+      'session-stages',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7455,7 +7457,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            23,
+            24,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7538,11 +7540,11 @@ test(
       }
     });
 
-    await t.test('a version 24 database is refused', async () => {
+    await t.test('a version 25 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 24');
+      newer.exec('PRAGMA user_version = 25');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7554,7 +7556,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          24,
+          25,
         );
       } finally {
         check.close();
@@ -10595,7 +10597,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        23,
+        24,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -10646,7 +10648,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        23,
+        24,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20202,7 +20204,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      23,
+      24,
     );
     database
       .prepare(
@@ -20565,7 +20567,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 23);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 24);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -20580,7 +20582,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        23,
+        24,
       );
       assert.deepEqual(
         migrated
@@ -20760,7 +20762,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 23);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 24);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -24798,9 +24800,15 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       .trim()
       .split('\n')
       .map(line => JSON.parse(line));
-    assert.equal(logged.length, 1, 'Children do not receive Nesvo tools');
+    assert.equal(logged.length, 3);
     assert.equal(logged[0].permissionMode, 'plan');
     assert.ok(logged[0].tools.includes('events_wait'));
+    for (const child of logged.slice(1))
+      assert.deepEqual(
+        [...child.tools].sort(),
+        ['stage_progress', 'stage_question', 'stage_report'],
+        'Children receive only the stage tools',
+      );
 
     const decided = await controlTurn(host, coordinator.id, [
       { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 10 } },
@@ -24884,7 +24892,14 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     ]);
     assert.deepEqual(
       blocked[0].result.events.map(event => [event.sessionId, event.type]),
-      [[childB, 'finished']],
+      [
+        [childB, 'plan-decided'],
+        [childB, 'finished'],
+      ],
+    );
+    assert.match(
+      blocked[0].result.events[0].summary,
+      /^The coordinator approved the plan of Child B in accept-edits\. Keep the change small\.$/,
     );
     assert.equal(blocked[1].result.status, 'started');
     assert.deepEqual(
@@ -25408,6 +25423,548 @@ test('workflow sharing reads the files, blocks secrets and imports a bundle with
       await readFile(join(home, 'workflows', 'release.md'), 'utf8'),
       release,
     );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const settledTurn = (host, sessionId, runId) =>
+  host.event(
+    item =>
+      item.id === sessionId &&
+      item.runId === runId &&
+      item.status !== 'running' &&
+      item.status !== 'stopping' &&
+      item.messages.at(-1)?.author === 'agent',
+  );
+
+const recordsOf = (session, kind) =>
+  session.stageRecords.filter(record => record.kind === kind);
+
+test('a plan-first Claude session waits for an approval that switches the mode and sends the resolutions in one step', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-plan-first-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const cwd = await realpath(directory);
+  let host;
+  const open = () => launch(directory, pidFile);
+  try {
+    host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'session-stages',
+      ),
+    );
+    const created = (
+      await host.request('create-session', {
+        title: 'Planned work',
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'accept-edits',
+        directory: cwd,
+        planFirst: true,
+      })
+    ).session;
+    assert.equal(created.mode, 'read-only');
+    assert.equal(created.plan.status, 'planning');
+    assert.equal(created.plan.targetMode, 'accept-edits');
+    const first = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'fixture:exit-plan Step 1: edit notes.txt',
+      mode: 'auto',
+    });
+    assert.equal(first.type, 'session', JSON.stringify(first));
+    const planned = await settledTurn(host, created.id, first.session.runId);
+    assert.equal(planned.status, 'completed', planned.error);
+    assert.equal(planned.plan.status, 'plan-ready');
+    assert.equal(planned.plan.text, 'Step 1: edit notes.txt');
+    assert.equal(planned.mode, 'read-only');
+    assert.equal(planned.messages.at(-2).mode, 'read-only');
+    assert.deepEqual(
+      recordsOf(planned, 'plan').map(record => record.text),
+      ['Step 1: edit notes.txt'],
+    );
+    assert.equal(
+      (await host.request('list-reviews')).reviews.filter(
+        review => review.sessionId === created.id,
+      ).length,
+      0,
+      'A plan turn saves no result',
+    );
+    const blocked = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'Just do it.',
+    });
+    assert.equal(blocked.code, 'invalid-request');
+    assert.match(blocked.message, /waits for a decision on its plan/);
+
+    const correctionId = randomUUID();
+    const corrected = await host.request('decide-session-plan', {
+      sessionId: created.id,
+      planId: planned.plan.id,
+      decisionId: correctionId,
+      decision: 'correct',
+      text: 'Also update the changelog.',
+    });
+    assert.equal(corrected.type, 'session', JSON.stringify(corrected));
+    assert.equal(corrected.session.plan.status, 'planning');
+    assert.equal(corrected.session.plan.round, 1);
+    const revised = await settledTurn(
+      host,
+      created.id,
+      corrected.session.runId,
+    );
+    const correctionTurn = revised.messages.at(-2);
+    assert.equal(correctionTurn.mode, 'read-only');
+    assert.match(correctionTurn.body, /Also update the changelog\./);
+    assert.equal(revised.plan.status, 'plan-ready');
+    assert.notEqual(revised.plan.id, planned.plan.id);
+    const stale = await host.request('decide-session-plan', {
+      sessionId: created.id,
+      planId: planned.plan.id,
+      decisionId: randomUUID(),
+      decision: 'accept',
+    });
+    assert.equal(stale.code, 'not-found');
+
+    await host.stop();
+    host = open();
+    const restored = (
+      await host.request('get-session', { sessionId: created.id })
+    ).session;
+    assert.equal(restored.plan.status, 'plan-ready');
+    assert.equal(restored.plan.id, revised.plan.id);
+
+    const decisionId = randomUUID();
+    const approval = {
+      sessionId: created.id,
+      planId: revised.plan.id,
+      decisionId,
+      decision: 'accept',
+      mode: 'auto',
+      text: 'Keep the public API unchanged.',
+    };
+    const approved = await host.request('decide-session-plan', approval);
+    assert.equal(approved.type, 'session', JSON.stringify(approved));
+    assert.equal(approved.session.status, 'running');
+    assert.equal(approved.session.mode, 'auto');
+    assert.equal(approved.session.plan.status, 'accepted');
+    const approvedTurn = approved.session.messages.at(-2);
+    assert.equal(approvedTurn.author, 'operator');
+    assert.equal(approvedTurn.mode, 'auto');
+    assert.match(
+      approvedTurn.body,
+      /^The plan was accepted\. Carry it out now\./,
+    );
+    assert.match(approvedTurn.body, /Approved plan:\nFixture resumed reply\./);
+    assert.match(
+      approvedTurn.body,
+      /Resolutions:\nKeep the public API unchanged\./,
+    );
+    const decisions = recordsOf(approved.session, 'plan-decision');
+    assert.deepEqual(
+      decisions.map(record => [record.decision, record.by.kind, record.by.via]),
+      [
+        ['correct', 'owner', 'desktop'],
+        ['accept', 'owner', 'desktop'],
+      ],
+    );
+    assert.equal(decisions[1].messageId, approvedTurn.id);
+    assert.deepEqual(
+      recordsOf(approved.session, 'mode-change').map(record => [
+        record.from,
+        record.to,
+      ]),
+      [['read-only', 'auto']],
+    );
+    const repeated = await host.request('decide-session-plan', approval);
+    assert.equal(repeated.type, 'session');
+    const executed = await settledTurn(
+      host,
+      created.id,
+      approved.session.runId,
+    );
+    assert.equal(executed.status, 'completed', executed.error);
+    assert.equal(
+      executed.messages.filter(message => message.author === 'operator').length,
+      3,
+    );
+    assert.ok(
+      (await host.request('list-reviews')).reviews.some(
+        review =>
+          review.sessionId === created.id &&
+          review.runId === approved.session.runId,
+      ),
+    );
+
+    const rejected = (
+      await host.request('create-session', {
+        title: 'Rejected plan',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+        planFirst: true,
+      })
+    ).session;
+    assert.equal(rejected.plan.targetMode, 'accept-edits');
+    const asked = await host.request('send-message', {
+      sessionId: rejected.id,
+      messageId: randomUUID(),
+      text: 'fixture:say Plan: delete everything',
+    });
+    const ready = await settledTurn(host, rejected.id, asked.session.runId);
+    assert.equal(ready.plan.text, 'Plan: delete everything');
+    const declined = await host.request('decide-session-plan', {
+      sessionId: rejected.id,
+      planId: ready.plan.id,
+      decisionId: randomUUID(),
+      decision: 'decline',
+      via: 'mobile',
+    });
+    assert.equal(declined.type, 'session', JSON.stringify(declined));
+    assert.equal(declined.session.plan.status, 'declined');
+    assert.equal(declined.session.status, 'completed');
+    assert.equal(declined.session.mode, 'read-only');
+    assert.deepEqual(
+      recordsOf(declined.session, 'plan-decision').map(record => [
+        record.decision,
+        record.by.via,
+        record.messageId,
+      ]),
+      [['decline', 'mobile', null]],
+    );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('child sessions report stages and ask blocking questions that reach the coordinator and survive a restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-stage-records-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const cwd = await realpath(directory);
+  let host;
+  const open = () => launch(directory, pidFile);
+  try {
+    host = open();
+    const policy = await host.request('read-session-control-policy');
+    await host.request('save-session-control-policy', {
+      ...policy.policy,
+      enabled: true,
+    });
+    const coordinator = (
+      await host.request('create-session', {
+        title: 'Coordinator',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+      })
+    ).session;
+    const report = {
+      status: 'ok',
+      summary: 'The parser handles empty files.',
+      links: [{ url: 'https://github.com/acme/app/pull/7', title: 'PR 7' }],
+      notes: { assumptions: ['UTF-8 input'], later: ['Stream large files'] },
+    };
+    const question = {
+      question: 'Should empty files fail the import?',
+      options: [
+        { label: 'Fail', consequences: 'Users see an error.' },
+        { label: 'Skip', consequences: 'Empty files are ignored.' },
+      ],
+      recommendation: 'Skip, because uploads often contain empty files.',
+      kind: 'product',
+    };
+    const fenced = [
+      'The tests failed.',
+      '```nesvo-report',
+      JSON.stringify({ status: 'fail', summary: 'Two tests fail.' }),
+      '```',
+    ];
+    const created = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Reporter',
+          prompt: `fixture:nesvo ${JSON.stringify([
+            { tool: 'stage_progress', arguments: { text: 'Gate 1 passed.' } },
+            {
+              tool: 'stage_report',
+              id: 'toolu_stage_report',
+              arguments: report,
+            },
+            { tool: 'stage_report', arguments: { status: 'maybe' } },
+          ])}`,
+        },
+      },
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Asker',
+          prompt: `fixture:nesvo ${JSON.stringify([
+            { tool: 'stage_question', arguments: question },
+            { tool: 'stage_question', arguments: question },
+          ])}`,
+        },
+      },
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Fenced',
+          prompt: `fixture:say-lines ${JSON.stringify(fenced)}`,
+        },
+      },
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Broken',
+          prompt: `fixture:say-lines ${JSON.stringify(['```nesvo-report', '{"status":"ok"}', '```'])}`,
+        },
+      },
+    ]);
+    const [reporter, asker, fencedChild, broken] = created.map(
+      item => item.result.sessionId,
+    );
+    const reported = await finishedChild(host, reporter);
+    const toolResults = JSON.parse(agent(reported).body);
+    assert.deepEqual(
+      toolResults.map(item => item.isError),
+      [false, false, true],
+    );
+    assert.equal(toolResults[2].result.code, 'invalid');
+    assert.deepEqual(
+      reported.stageRecords.map(record => record.kind),
+      ['progress', 'report'],
+    );
+    const [, toolReport] = reported.stageRecords;
+    assert.equal(toolReport.source, 'tool');
+    assert.deepEqual(toolReport.report.notes, {
+      deadEnds: [],
+      assumptions: ['UTF-8 input'],
+      later: ['Stream large files'],
+      systemRemarks: [],
+    });
+    const waiting = await finishedChild(host, asker);
+    const askResults = JSON.parse(agent(waiting).body);
+    assert.equal(askResults[0].isError, false);
+    assert.match(askResults[0].result.message, /End your turn now/);
+    assert.equal(askResults[1].result.code, 'busy');
+    const [pending] = recordsOf(waiting, 'question');
+    assert.equal(pending.status, 'pending');
+    assert.equal(pending.question.kind, 'product');
+    const fencedDone = await finishedChild(host, fencedChild);
+    assert.deepEqual(
+      recordsOf(fencedDone, 'report').map(record => [
+        record.source,
+        record.report.status,
+        record.report.summary,
+      ]),
+      [['answer', 'fail', 'Two tests fail.']],
+    );
+    const brokenDone = await finishedChild(host, broken);
+    assert.match(
+      recordsOf(brokenDone, 'report-invalid')[0].error,
+      /^summary: /,
+    );
+    const refusedSend = await host.request('send-message', {
+      sessionId: asker,
+      messageId: randomUUID(),
+      text: 'Hello?',
+    });
+    assert.match(refusedSend.message, /waits for an answer to its question/);
+
+    await host.stop();
+    host = open();
+    const restored = (await host.request('get-session', { sessionId: asker }))
+      .session;
+    assert.equal(recordsOf(restored, 'question')[0].status, 'pending');
+    const coordinated = await controlTurn(host, coordinator.id, [
+      { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 10 } },
+      { tool: 'session_status', arguments: { sessionIds: [asker] } },
+      {
+        tool: 'session_answer',
+        arguments: { sessionId: asker, option: 'Skip' },
+      },
+    ]);
+    const types = coordinated[0].result.events
+      .filter(event => event.sessionId !== broken)
+      .map(event => [event.sessionId, event.type]);
+    for (const expected of [
+      [reporter, 'progress'],
+      [reporter, 'reported'],
+      [reporter, 'finished'],
+      [asker, 'question'],
+      [asker, 'finished'],
+      [fencedChild, 'reported'],
+    ])
+      assert.ok(
+        types.some(
+          ([sessionId, type]) =>
+            sessionId === expected[0] && type === expected[1],
+        ),
+        JSON.stringify(expected),
+      );
+    assert.match(
+      coordinated[0].result.events.find(event => event.type === 'question')
+        .summary,
+      /asks a product question: Should empty files fail the import\?/,
+    );
+    assert.equal(coordinated[1].result.sessions[0].waitingFor, 'question');
+    assert.equal(coordinated[1].result.sessions[0].needsDecision, true);
+    assert.equal(coordinated[2].result.code, 'human-only');
+
+    const answerId = randomUUID();
+    const answered = await host.request('answer-session-question', {
+      sessionId: asker,
+      questionId: pending.id,
+      decisionId: answerId,
+      option: 'skip',
+      text: 'Log a warning too.',
+    });
+    assert.equal(answered.type, 'session', JSON.stringify(answered));
+    assert.equal(answered.session.status, 'running');
+    const answerTurn = answered.session.messages.at(-2);
+    assert.match(
+      answerTurn.body,
+      /^Answer to your question: Should empty files fail the import\?\n\nChosen option: Skip\n\nLog a warning too\.$/,
+    );
+    const [closed] = recordsOf(answered.session, 'question');
+    assert.equal(closed.status, 'answered');
+    assert.equal(closed.answer.option, 'Skip');
+    assert.equal(closed.answer.by.kind, 'owner');
+    assert.equal(closed.answer.messageId, answerTurn.id);
+    await settledTurn(host, asker, answered.session.runId);
+    const again = await host.request('answer-session-question', {
+      sessionId: asker,
+      questionId: pending.id,
+      decisionId: randomUUID(),
+      option: 'Fail',
+    });
+    assert.equal(again.code, 'not-found');
+    const followed = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'events_wait',
+        arguments: {
+          cursor: coordinated[0].result.cursor,
+          timeoutSeconds: 10,
+        },
+      },
+    ]);
+    assert.ok(
+      followed[0].result.events.some(
+        event =>
+          event.sessionId === asker &&
+          event.type === 'question-answered' &&
+          /The owner answered the question of Asker: Skip/.test(event.summary),
+      ),
+      JSON.stringify(followed[0].result.events),
+    );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Codex children receive the stage tools at thread start and a plan-first Codex session switches to workspace edits on approval', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-stage-codex-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const controlLog = join(directory, 'control.log');
+  const cwd = await realpath(directory);
+  let host;
+  try {
+    host = launch(directory, pidFile, {
+      NESVO_FIXTURE_CONTROL_LOG: controlLog,
+    });
+    await host.request('save-session-control-policy', {
+      enabled: true,
+      providers: ['Codex'],
+      models: [],
+      childModes: ['read-only'],
+      worktrees: false,
+      acceptPlans: true,
+    });
+    const coordinator = (
+      await host.request('create-session', {
+        title: 'Codex coordinator',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        directory: cwd,
+      })
+    ).session;
+    const created = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Codex reporter',
+          prompt: `fixture:nesvo ${JSON.stringify([
+            {
+              tool: 'stage_report',
+              arguments: { status: 'ok', summary: 'Done in Codex.' },
+            },
+          ])}`,
+        },
+      },
+    ]);
+    const child = created[0].result.sessionId;
+    const reported = await finishedChild(host, child);
+    assert.equal(reported.stageTools, true);
+    assert.deepEqual(
+      recordsOf(reported, 'report').map(record => record.report.summary),
+      ['Done in Codex.'],
+    );
+    const resumedTurn = await host.request('send-message', {
+      sessionId: child,
+      messageId: randomUUID(),
+      text: `fixture:nesvo ${JSON.stringify([
+        { tool: 'stage_progress', arguments: { text: 'Still going.' } },
+      ])}`,
+    });
+    const resumed = await settledTurn(host, child, resumedTurn.session.runId);
+    assert.equal(resumed.status, 'completed', resumed.error);
+    assert.deepEqual(
+      recordsOf(resumed, 'progress').map(record => record.text),
+      ['Still going.'],
+    );
+    const logged = (await readFile(controlLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.deepEqual([...logged.at(-1).tools].sort(), [
+      'stage_progress',
+      'stage_question',
+      'stage_report',
+    ]);
+
+    const planned = (
+      await host.request('create-session', {
+        title: 'Codex plan',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        directory: cwd,
+        planFirst: true,
+      })
+    ).session;
+    assert.equal(planned.plan.targetMode, 'supervised');
+    const first = await host.request('send-message', {
+      sessionId: planned.id,
+      messageId: randomUUID(),
+      text: 'Plan the change.',
+    });
+    const ready = await settledTurn(host, planned.id, first.session.runId);
+    assert.equal(ready.plan.status, 'plan-ready');
+    const approved = await host.request('decide-session-plan', {
+      sessionId: planned.id,
+      planId: ready.plan.id,
+      decisionId: randomUUID(),
+      decision: 'accept',
+    });
+    assert.equal(approved.type, 'session', JSON.stringify(approved));
+    assert.equal(approved.session.mode, 'supervised');
+    assert.equal(approved.session.messages.at(-2).mode, 'supervised');
+    const done = await settledTurn(host, planned.id, approved.session.runId);
+    assert.equal(done.status, 'completed', done.error);
   } finally {
     await host?.stop();
     await rm(directory, { recursive: true, force: true });
