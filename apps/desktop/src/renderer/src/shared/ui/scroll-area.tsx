@@ -17,7 +17,7 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-ring size-full rounded-[inherit]"
+        className="focus-ring size-full rounded-[inherit] [&>div]:block!"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
