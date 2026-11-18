@@ -445,7 +445,9 @@ try {
   const screenshot = async suffix => {
     const target = suffix.startsWith('-mcp-')
       ? process.env.NESVO_MCP_TRUST_SCREENSHOT
-      : process.env.NESVO_SCREENSHOT;
+      : suffix.startsWith('-inbox-rules-')
+        ? process.env.NESVO_INBOX_RULES_SCREENSHOT
+        : process.env.NESVO_SCREENSHOT;
     if (!target) return;
     await page.evaluate(
       () =>
@@ -462,7 +464,10 @@ try {
       return image.toPNG().toString('base64');
     });
     await writeFile(
-      target.replace(/\.png$/, suffix.replace(/^-mcp/, '') + '.png'),
+      target.replace(
+        /\.png$/,
+        suffix.replace(/^-mcp/, '').replace(/^-inbox-rules/, '') + '.png',
+      ),
       Buffer.from(encoded, 'base64'),
     );
   };
@@ -2056,6 +2061,90 @@ try {
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
     .waitFor();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const inboxRulesDialog = page.getByRole('dialog', {
+    name: 'Settings',
+    exact: true,
+  });
+  await inboxRulesDialog
+    .getByRole('button', { name: 'Inbox rules', exact: true })
+    .click();
+  const inboxRulesPage = inboxRulesDialog.locator(
+    '[data-settings="inbox-rules"]',
+  );
+  await inboxRulesPage.waitFor();
+  const suggestions = inboxRulesPage.getByRole('region', {
+    name: 'Suggestions',
+    exact: true,
+  });
+  await suggestions
+    .getByText('Before push: review the diff locally', { exact: true })
+    .waitFor();
+  await suggestions
+    .getByRole('button', { name: 'Add', exact: true })
+    .first()
+    .click();
+  await suggestions
+    .getByRole('button', { name: 'Added', exact: true })
+    .waitFor();
+  await inboxRulesPage
+    .getByRole('region', { name: 'Rules', exact: true })
+    .getByRole('switch', { name: 'Enable review-before-push', exact: true })
+    .waitFor();
+  const presetCatalog = await page.evaluate(() =>
+    window.nesvo.listInboxRules({}, 'local'),
+  );
+  const presetRule = presetCatalog.rules.find(
+    rule => rule.name === 'review-before-push',
+  );
+  assert.equal(presetRule.scope, 'global');
+  assert.equal(presetRule.active, true);
+  assert.match(presetRule.text, /pattern: "git push\*"/);
+  await screenshot('-inbox-rules-settings');
+  await page.keyboard.press('Escape');
+  await inboxRulesDialog.waitFor({ state: 'hidden' });
+  const inboxRuleFolder = join(directory, 'inbox-rules-project');
+  await mkdir(inboxRuleFolder);
+  const inboxRuleSession = await page.evaluate(
+    input => window.nesvo.createSession(input),
+    {
+      title: 'Release check',
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'auto',
+      directory: inboxRuleFolder,
+    },
+  );
+  await page.evaluate(input => window.nesvo.sendMessage(input), {
+    sessionId: inboxRuleSession.id,
+    messageId: crypto.randomUUID(),
+    text: 'fixture:bash git push origin main',
+  });
+  await openInbox();
+  const ruleRow = page.getByRole('article', {
+    name: 'Inbox rule review-before-push: Release check',
+    exact: true,
+  });
+  await ruleRow.getByText('git push origin main').first().waitFor();
+  await screenshot('-inbox-rules-item');
+  await ruleRow.getByRole('button', { name: 'Decline', exact: true }).click();
+  const declinedRule = await waitState(inboxRuleSession.id, 'completed');
+  assert.match(
+    declinedRule.messages.at(-1).body,
+    /Inbox rule "review-before-push"/,
+  );
+  await page.evaluate(
+    rule =>
+      window.nesvo.deleteInboxRule(
+        {
+          scope: 'global',
+          name: rule.name,
+          expectedHash: rule.contentHash,
+        },
+        'local',
+      ),
+    presetRule,
+  );
   const unrelatedBeforeApproval = (
     await page.evaluate(() => window.nesvo.listSessions())
   ).find(session => session.id === first.id);
