@@ -160,6 +160,10 @@ export const createSessionAuthor = ({
       return sessions.continueWithFeedback(sessionId, turn.prompt, turn.messageId);
     const spec = snapshots.read(run.id);
     if (spec === null) return 'unavailable';
+    const plan = sessions.turnReply(
+      sessionId,
+      turnMessageId(run.id, 'plan', 1),
+    );
     return turn.kind === 'plan'
       ? sessions.sendWorkflowTurn({
           sessionId,
@@ -170,10 +174,7 @@ export const createSessionAuthor = ({
       : sessions.sendWorkflowTurn({
           sessionId,
           messageId: turn.messageId,
-          text: implementPrompt(
-            spec,
-            sessions.turnReply(sessionId, turnMessageId(run.id, 'plan', 1)),
-          ),
+          text: run.parent && !plan ? spec : implementPrompt(spec, plan),
         });
   };
   return {

@@ -34,7 +34,9 @@ import { Hint } from '@/shared/ui/tooltip';
 import type { StepInspectorProps } from './index';
 import { NeedsField } from './needs-field';
 import { SkillField } from './skill-field';
+import { ChildFields } from './child-fields';
 import {
+  allowsRetries,
   bodyLabels,
   bodyPlaceholders,
   declaresEffect,
@@ -115,7 +117,7 @@ export function StepInspectorForm({
   const blocked = Object.keys(client).length > 0;
   const update = (patch: Partial<StepDraft>) => onChange({ ...step, ...patch });
   const human = step.type === 'human';
-  const canRetry = !human && step.type !== 'until';
+  const canRetry = allowsRetries(step.type);
   const shared = mode === 'edit' && usedBy.length > 0;
   const phaseMoved = shared && step.phase !== origin.phase;
   const duration = splitDuration(step.timeout);
@@ -344,6 +346,14 @@ export function StepInspectorForm({
               />
             </Field>
           </>
+        )}
+        {step.session && (
+          <ChildFields
+            step={step}
+            fieldId={fieldId}
+            notesOf={notesOf}
+            update={update}
+          />
         )}
         {step.type === 'wait-ci' && (
           <>

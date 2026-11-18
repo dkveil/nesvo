@@ -4,6 +4,7 @@ import {
   parseDurationMs,
   looksExternal,
   incoming,
+  isChildWorkflowStep,
   workflowLimits,
   stepResultSchema,
   type DefinitionCatalog,
@@ -11,6 +12,7 @@ import {
   type DesktopEvent,
   type WorkflowRun,
   type WorkflowCiWait,
+  type WorkflowChildItem,
   type WorkflowRunStatus,
   type WorkflowStepRecord,
   type WorkflowStepState,
@@ -67,7 +69,7 @@ export type AuthorPort = {
   stop: (runId: string) => void;
 };
 
-const deterministicId = (seed: string): string => {
+export const deterministicId = (seed: string): string => {
   const hex = createHash('sha256').update(seed).digest('hex');
   const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
@@ -98,6 +100,8 @@ export type StepExecution = {
   now: () => Date;
   link: (sessionId: string) => void;
   saveCiWait?: (checkpoint: WorkflowCiWait) => boolean;
+  saveChildren?: (items: WorkflowChildItem[]) => boolean;
+  recovering?: boolean;
 };
 
 export type StepEvidence = Pick<
@@ -165,6 +169,8 @@ export type RunnerPorts = {
   evidence: StepEvidence & Partial<Pick<EvidenceStore, 'stopOrphans'>>;
   stepExecutors: Partial<Record<StepType, StepExecutor>>;
   author?: AuthorPort;
+  stopChildren?: (runId: string) => void;
+  createManualSession?: (run: WorkflowRun) => string;
   environment?: NodeJS.ProcessEnv;
 };
 
@@ -417,7 +423,7 @@ const authorMove = (
 };
 
 const completedPhase = (run: WorkflowRun, context: MoveContext): Move => {
-  if (!run.sessionId) return { kind: 'finish', status: 'passed' };
+  if (!run.sessionId || run.manual) return { kind: 'finish', status: 'passed' };
   if (!context.hasAuthor)
     return { kind: 'attention', message: NO_AUTHOR_ATTENTION };
   if (run.phase === 'plan') return { kind: 'status', status: 'implementing' };
@@ -466,6 +472,8 @@ const EXCLUSIVE_STEP_TYPES = {
   'wait-ci': [],
   until: [],
   probe: [],
+  session: [],
+  'fan-out': [],
 } as const satisfies Record<StepType, readonly StepType[]>;
 
 const admits = (
@@ -594,7 +602,7 @@ const runMove = (
   context: MoveContext,
 ): Move => {
   if (WAITING_STATUSES.includes(run.status)) return WAIT;
-  if (run.sessionId && AUTHOR_STATUSES.includes(run.status))
+  if (run.sessionId && !run.manual && AUTHOR_STATUSES.includes(run.status))
     return context.hasAuthor
       ? authorMove(run, steps, context)
       : { kind: 'attention', message: NO_AUTHOR_ATTENTION };
@@ -634,6 +642,8 @@ export class WorkflowRunner {
   private readonly evidence: RunnerPorts['evidence'];
   private readonly executors: RunnerPorts['stepExecutors'];
   private readonly author: AuthorPort | undefined;
+  private readonly stopChildren: RunnerPorts['stopChildren'];
+  private readonly createManualSession: RunnerPorts['createManualSession'];
   private readonly environment: NodeJS.ProcessEnv;
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
@@ -643,6 +653,7 @@ export class WorkflowRunner {
   >();
   private readonly busy = new Map<string, BusyTurn>();
   private readonly pending = new Set<Promise<unknown>>();
+  private readonly observingRecoveredChildren = new Set<string>();
   private closed = false;
 
   constructor(ports: RunnerPorts) {
@@ -653,6 +664,8 @@ export class WorkflowRunner {
     this.evidence = ports.evidence;
     this.executors = ports.stepExecutors;
     this.author = ports.author;
+    this.stopChildren = ports.stopChildren;
+    this.createManualSession = ports.createManualSession;
     this.environment = ports.environment ?? process.env;
   }
 
@@ -712,11 +725,28 @@ export class WorkflowRunner {
       updatedAt: now,
       finishedAt: null,
     };
+    const needsSession = workflow.steps.some(
+      step => step.phase === phase && isChildWorkflowStep(step.type),
+    );
+    if (needsSession) run.manual = true;
     if (!this.store.insertRun(run))
       throw new WorkflowRunError(
         'unavailable',
         'The run could not be saved. Try again.',
       );
+    if (needsSession && this.createManualSession) {
+      try {
+        run.sessionId = this.createManualSession(run);
+      } catch (error) {
+        this.writeRun(run, { status: 'failed', finishedAt: this.timestamp() });
+        throw error;
+      }
+      if (!this.store.replaceRun(run, run.revision))
+        throw new WorkflowRunError(
+          'unavailable',
+          'The workflow run could not be linked to its session.',
+        );
+    }
     this.emit({ type: 'workflow-run-changed', run });
     this.store.prune(directory);
     this.track(this.advanceRun(run.id));
@@ -762,6 +792,8 @@ export class WorkflowRunner {
       this.emit({ type: 'workflow-run-changed', run: stopped });
       if (run.sessionId) this.author?.stop(runId);
       this.abortSteps(runId);
+      this.stopChildren?.(runId);
+      this.observingRecoveredChildren.delete(runId);
       this.track(this.advanceRun(runId));
       return stopped;
     }
@@ -776,7 +808,18 @@ export class WorkflowRunner {
     for (const id of ids) {
       const run = this.store.getRun(id);
       if (run && run.status === 'pending')
-        this.writeRun(run, { status: 'interrupted', finishedAt: this.timestamp() });
+        this.writeRun(run, {
+          status: 'interrupted',
+          finishedAt: this.timestamp(),
+        });
+      if (
+        this.store
+          .stepsForRun(id)
+          .some(
+            step => step.state === 'running' && isChildWorkflowStep(step.type),
+          )
+      )
+        this.observingRecoveredChildren.add(id);
     }
     const passes = Promise.resolve(this.evidence.stopOrphans?.())
       .catch(() => undefined)
@@ -809,7 +852,9 @@ export class WorkflowRunner {
         'invalid-request',
         `Step \`${uncertain.name}\` may already have run. Mark it done or run it again.`,
       );
-    const active = this.store.activeRunForDirectory(run.projectRoot);
+    const active = run.parent
+      ? undefined
+      : this.store.activeRunForDirectory(run.projectRoot);
     if (active && active.id !== run.id)
       throw new WorkflowRunError(
         'busy',
@@ -904,6 +949,7 @@ export class WorkflowRunner {
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       const steps = this.store.stepsForRun(runId);
+      if (this.observeRecoveringChildren(run, steps)) return;
       if (
         !TERMINAL_STATUSES.includes(run.status) &&
         run.status !== 'needs-attention'
@@ -929,6 +975,39 @@ export class WorkflowRunner {
       }
       if (!this.perform(run, steps, move)) return;
     }
+  }
+
+  private observeRecoveringChildren(
+    run: WorkflowRun,
+    steps: WorkflowStepRecord[],
+  ): boolean {
+    if (!this.observingRecoveredChildren.has(run.id)) return false;
+    const rows = [...latestAttempts(steps).values()];
+    const waiting = rows.filter(
+      step => step.state === 'running' && isChildWorkflowStep(step.type),
+    );
+    if (waiting.length) {
+      for (const step of waiting)
+        if (!this.active.has(step.id)) this.executeStep(run, steps, step, true);
+      return true;
+    }
+    this.observingRecoveredChildren.delete(run.id);
+    if (run.status !== 'checking') return false;
+    if (
+      rows.some(
+        step =>
+          step.state === 'interrupted' ||
+          step.children?.some(item => item.report?.status === 'interrupted'),
+      )
+    ) {
+      this.writeRun(run, {
+        status: 'needs-attention',
+        attention:
+          'The host restarted while child sessions were running. Review the results before resuming.',
+      });
+      return true;
+    }
+    return false;
   }
 
   private scheduleRetry(
@@ -1140,6 +1219,7 @@ export class WorkflowRunner {
     run: WorkflowRun,
     steps: readonly WorkflowStepRecord[],
     running: WorkflowStepRecord,
+    recovering = false,
   ): void {
     const definition = run.workflow.steps[running.index];
     if (!definition) return;
@@ -1158,6 +1238,13 @@ export class WorkflowRunner {
       environment: this.environment,
       now: () => this.clock.now(),
       link: sessionId => this.linkStep(running, sessionId),
+      recovering,
+      saveChildren: children => {
+        const current = this.store.getStep(running.id);
+        return (
+          current?.state === 'running' && this.writeStep(current, { children })
+        );
+      },
       saveCiWait: ciWait => {
         const current = this.store.getStep(running.id);
         return (
@@ -1442,7 +1529,7 @@ export class WorkflowRunner {
     changes: Partial<
       Pick<
         WorkflowStepRecord,
-        'state' | 'result' | 'skip' | 'sessionId' | 'ciWait'
+        'state' | 'result' | 'skip' | 'sessionId' | 'ciWait' | 'children'
       >
     >,
   ): boolean {
@@ -1510,7 +1597,7 @@ function resumeStatus(
   const begun = (phase: StepPhase) =>
     phaseIndices(run.workflow, phase).some(index => latest.has(index));
   if (run.phase === 'pre-done' || run.phase === 'pre-push') return 'checking';
-  if (!run.sessionId)
+  if (!run.sessionId || run.manual)
     return run.phase && begun(run.phase) ? 'checking' : 'pending';
   if (turn('implement') !== 'none') return 'implementing';
   if (run.phase === 'plan' && begun('plan'))
@@ -1531,6 +1618,7 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
     retry: undefined,
     retryAt: undefined,
     ciWait: undefined,
+    children: undefined,
     id: randomUUID(),
     revision: 1,
     state: 'pending',

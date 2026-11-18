@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { providerSchema } from '../sessions';
+import { workflowChildQueueSchema } from './children';
 import { stepNameSchema, stepPhaseSchema, stepTypeSchema } from './definitions';
 
 export const stepResultLimits = {
@@ -75,6 +76,7 @@ export const stepResultSchema = z
       stepResultLimits.outputs,
       stepResultLimits.outputValue,
     ),
+    items: workflowChildQueueSchema.optional(),
     startedAt: z.iso.datetime(),
     finishedAt: z.iso.datetime(),
     durationMs: z.number().int().nonnegative(),

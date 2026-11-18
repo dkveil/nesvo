@@ -281,6 +281,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to let sessions coordinate other sessions.',
   'workflow-sharing':
     'Update this computer’s Nesvo host and reconnect to share or import workflows.',
+  'workflow-child-sessions':
+    'Update this computer’s Nesvo host and reconnect to run child workflow sessions.',
 };
 
 const hasFileAttachments = (input: unknown) =>

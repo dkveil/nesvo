@@ -243,6 +243,10 @@ export function SessionSidebar({
         (a, b) =>
           a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
       );
+  const branchMatches = (session: Session): boolean =>
+    matches(session) || childrenOf(session).some(branchMatches);
+  const branchSelected = (session: Session): boolean =>
+    isSelected(session) || childrenOf(session).some(branchSelected);
   const automationKey = (session: Session) =>
     session.scheduledJobId ? `${session.hostId}/${session.scheduledJobId}` : '';
   const roots = sessions.filter(session => {
@@ -261,8 +265,7 @@ export function SessionSidebar({
     session => session.scheduledJobId && (!narrowed || matches(session)),
   );
   const filtered = roots.filter(
-    root =>
-      !hidesArchived(root) && (matches(root) || childrenOf(root).some(matches)),
+    root => !hidesArchived(root) && branchMatches(root),
   );
   const groups = computers
     .map(computer => ({
@@ -495,8 +498,8 @@ export function SessionSidebar({
             size={20}
             tone="sidebar"
             aria-expanded={expanded}
-            className="absolute top-4.5"
-            style={{ left: 2 + depth * TREE_INDENT_PX }}
+            className={cn('absolute', child ? 'top-0' : 'top-4.5')}
+            style={{ left: 2 + (depth + (child ? 1 : 0)) * TREE_INDENT_PX }}
             onClick={onToggle}
           >
             <ChevronDown
@@ -511,18 +514,26 @@ export function SessionSidebar({
       </li>
     );
   };
-  const rootWithChildren = (root: Session, decoration?: RowDecoration) => {
+  const rootWithChildren = (
+    root: Session,
+    decoration?: RowDecoration,
+    child = false,
+    ancestorMatches = false,
+  ): ReturnType<typeof row>[] => {
+    const includeAll = ancestorMatches || matches(root);
     const children = childrenOf(root).filter(
-      child => matches(root) || matches(child),
+      item => includeAll || branchMatches(item),
     );
-    const childDecoration = decoration && { depth: decoration.depth };
-    if (children.length === 0) return [row(root, { decoration })];
+    const childDecoration = {
+      depth: (decoration?.depth ?? 0) + (child ? 1 : 0),
+    };
+    if (children.length === 0) return [row(root, { child, decoration })];
     const key = entityKey(root);
     const expanded =
-      childToggles[key] ??
-      (narrowed || children.some(child => isSelected(child)));
+      childToggles[key] ?? (narrowed || children.some(branchSelected));
     return [
       row(root, {
+        child,
         childCount: children.length,
         expanded,
         onToggle: () =>
@@ -530,8 +541,8 @@ export function SessionSidebar({
         decoration,
       }),
       ...(expanded
-        ? children.map(child =>
-            row(child, { child: true, decoration: childDecoration }),
+        ? children.flatMap(item =>
+            rootWithChildren(item, childDecoration, true, includeAll),
           )
         : []),
     ];

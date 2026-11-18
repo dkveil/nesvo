@@ -10,6 +10,7 @@ import {
   stepTypeSchema,
 } from './definitions';
 import { stepResultSchema } from './results';
+import { workflowChildQueueSchema } from './children';
 
 export const workflowLimits = {
   runsPerHost: 200,
@@ -90,6 +91,16 @@ export const workflowRunSchema = z.strictObject({
   specHash: definitionHashSchema,
   specTitle: z.string().min(1).max(workflowDefinitionLimits.specTitle),
   sessionId: idSchema.nullable(),
+  manual: z.literal(true).optional(),
+  parent: z
+    .strictObject({
+      runId: idSchema,
+      stepId: idSchema,
+      index: z.number().int().nonnegative(),
+      depth: z.number().int().positive(),
+      maxDepth: z.number().int().positive(),
+    })
+    .optional(),
   directory: directorySchema,
   projectRoot: z.string().min(1).max(workflowLimits.directory),
   isolation: workflowIsolationSchema.nullable(),
@@ -141,6 +152,7 @@ export const workflowStepRecordSchema = z.strictObject({
     .optional(),
   retryAt: z.iso.datetime().optional(),
   ciWait: ciWaitSchema.optional(),
+  children: workflowChildQueueSchema.optional(),
   iteration: z
     .number()
     .int()

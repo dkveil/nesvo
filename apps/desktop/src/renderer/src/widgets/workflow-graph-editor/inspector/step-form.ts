@@ -1,6 +1,8 @@
 import {
   workflowDefinitionLimits,
   stepDefinitionSchema,
+  isChildWorkflowStep,
+  workflowItemsSchema,
   type StepType,
 } from '@nesvo/contracts';
 import type { StepDraft } from '@/entities/workflow-graph';
@@ -26,6 +28,10 @@ export const stepFields = [
   'on_fail',
   'needs',
   'effect',
+  'session',
+  'items',
+  'policy',
+  'max_depth',
 ] as const;
 
 export const durationUnits = ['s', 'm', 'h'] as const;
@@ -61,6 +67,8 @@ export const bodyLabels: Record<StepType, string> = {
   'wait-ci': 'Notes',
   until: 'Notes',
   probe: 'Notes',
+  session: 'First prompt',
+  'fan-out': 'First prompt per item',
 };
 
 export const bodyPlaceholders: Record<StepType, string> = {
@@ -71,10 +79,15 @@ export const bodyPlaceholders: Record<StepType, string> = {
   'wait-ci': '',
   until: '',
   probe: '',
+  session: 'Use {{ steps.prepare.outputs.task }} to insert an upstream output.',
+  'fan-out': 'Implement stage {{ item.id }}. {{ item.task }}',
 };
 
 export const declaresEffect = (type: StepType) =>
   type === 'command' || type === 'action';
+
+export const allowsRetries = (type: StepType) =>
+  type !== 'human' && type !== 'until' && !isChildWorkflowStep(type);
 
 export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   ...step,
@@ -86,16 +99,48 @@ export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   pr: type === 'wait-ci' ? step.pr : undefined,
   poll_interval: type === 'wait-ci' ? step.poll_interval : undefined,
   skill: type === 'agent' ? step.skill : null,
-  retries: type === 'human' || type === 'until' ? 0 : step.retries,
-  retry_backoff:
-    type === 'human' || type === 'until' ? undefined : step.retry_backoff,
-  idempotent: type === 'human' ? undefined : step.idempotent,
+  retries: allowsRetries(type) ? step.retries : 0,
+  retry_backoff: allowsRetries(type) ? step.retry_backoff : undefined,
+  idempotent: allowsRetries(type) ? step.idempotent : undefined,
+  session: isChildWorkflowStep(type)
+    ? (step.session ?? {
+        workflow: '',
+        title: '',
+        provider: 'Codex',
+        model: 'default',
+        mode: 'read-only',
+      })
+    : undefined,
+  items:
+    type === 'fan-out'
+      ? (step.items ?? { kind: 'inline', values: [] })
+      : undefined,
+  policy:
+    type === 'fan-out'
+      ? (step.policy ?? {
+          max_parallel: 1,
+          min_free_ram_mb: 1024,
+          min_plan_remaining_percent: 20,
+          on_fail: 'fail-run',
+        })
+      : undefined,
+  max_depth: isChildWorkflowStep(type) ? step.max_depth : undefined,
+  itemsText: type === 'fan-out' ? step.itemsText : undefined,
   on_fail: type === 'human' ? 'stop' : step.on_fail,
   effect: declaresEffect(type) ? step.effect : 'local',
 });
 
-export const stepNotes = (step: StepDraft) =>
-  schemaNotes(
+export const readInlineItems = (text: string) => {
+  try {
+    const parsed = workflowItemsSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
+
+export const stepNotes = (step: StepDraft) => ({
+  ...schemaNotes(
     stepDefinitionSchema.safeParse({
       name: step.name,
       type: step.type,
@@ -111,12 +156,29 @@ export const stepNotes = (step: StepDraft) =>
       condition: step.condition,
       max_iterations: step.max_iterations,
       probe: step.probe,
+      session: step.session,
+      items: step.items,
+      policy: step.policy,
+      max_depth: step.max_depth,
       on_fail: step.on_fail,
       effect: step.effect,
       needs: step.needs,
       body: step.body,
     }),
-  );
+  ),
+  ...(step.items?.kind === 'inline' &&
+  step.itemsText !== undefined &&
+  !readInlineItems(step.itemsText)
+    ? {
+        items: [
+          {
+            severity: 'error' as const,
+            message: 'Enter a JSON list of strings or flat objects.',
+          },
+        ],
+      }
+    : {}),
+});
 
 export const retryOptions = Array.from(
   { length: workflowDefinitionLimits.retries + 1 },

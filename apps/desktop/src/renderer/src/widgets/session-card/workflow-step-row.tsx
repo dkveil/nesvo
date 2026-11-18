@@ -41,12 +41,18 @@ export function WorkflowStepRow({
 }: Props) {
   const duration = stepDuration(step, now);
   const iteration = step.record?.iteration;
+  const queued =
+    step.state === 'running'
+      ? (step.record?.children?.filter(item => item.state === 'waiting')
+          .length ?? 0)
+      : 0;
   const attempt = step.attempts > 1 ? `Attempt ${step.attempts}` : '';
   const label = [
     step.definition.name,
     stepStateLabels[step.state],
     iteration ? `Iteration ${iteration}` : '',
     attempt,
+    queued ? `${queued} queued` : '',
     duration,
   ]
     .filter(Boolean)
@@ -61,7 +67,9 @@ export function WorkflowStepRow({
             title={step.definition.name}
             trailing={
               <>
-                {iteration ? (
+                {queued > 0 ? (
+                  <span className="text-muted-foreground">{queued} queued</span>
+                ) : iteration ? (
                   <span className="text-muted-foreground">
                     Iteration {iteration}
                   </span>

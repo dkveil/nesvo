@@ -1,5 +1,6 @@
 import {
   Bot,
+  GitFork,
   Hand,
   Clock,
   Repeat,
@@ -19,6 +20,8 @@ const glyphs: Record<StepType, LucideIcon> = {
   'wait-ci': Clock,
   until: Repeat,
   probe: ScanSearch,
+  session: Bot,
+  'fan-out': GitFork,
 };
 
 type Props = { type: StepType; className?: string };

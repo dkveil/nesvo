@@ -31,6 +31,7 @@ export type DraftStep = StepDefinition & {
 export type StepDraft = StepDefinition & {
   scope: DefinitionScope;
   hash: string | null;
+  itemsText?: string;
 };
 
 export type NodeIssue = { severity: 'error' | 'warning'; message: string };
@@ -99,6 +100,8 @@ export const stepTypeLabels: Record<StepType, string> = {
   'wait-ci': 'Wait for PR checks',
   until: 'Loop until',
   probe: 'Diff probe',
+  session: 'Child session',
+  'fan-out': 'Fan-out',
 };
 
 export const stepTypeOrder: StepType[] = [
@@ -109,6 +112,8 @@ export const stepTypeOrder: StepType[] = [
   'wait-ci',
   'until',
   'probe',
+  'session',
+  'fan-out',
 ];
 
 export const phaseTones: Record<StepPhase, WorkflowTone> = {
@@ -227,6 +232,10 @@ export const stepDefinitionOf = (
   condition: step.condition,
   max_iterations: step.max_iterations,
   probe: step.probe,
+  session: step.session,
+  items: step.items,
+  policy: step.policy,
+  max_depth: step.max_depth,
   on_fail: step.on_fail,
   effect: step.effect,
   needs: [...step.needs],
@@ -548,6 +557,10 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);
+  if (step.session) lines.push(`session: ${JSON.stringify(step.session)}`);
+  if (step.items) lines.push(`items: ${JSON.stringify(step.items)}`);
+  if (step.policy) lines.push(`policy: ${JSON.stringify(step.policy)}`);
+  if (step.max_depth) lines.push(`max_depth: ${step.max_depth}`);
   const body = step.body.endsWith('\n') ? step.body : `${step.body}\n`;
   return `---\n${lines.join('\n')}\n---\n${body}`;
 };

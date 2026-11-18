@@ -151,6 +151,8 @@ const typeTileTone: Record<StepType, string> = {
   'wait-ci': 'text-info-foreground',
   until: 'text-info-foreground',
   probe: 'text-info-foreground',
+  session: 'text-info-foreground',
+  'fan-out': 'text-info-foreground',
 };
 
 export function StepNodeView({ data, selected }: NodeProps<StepNode>) {

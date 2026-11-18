@@ -1377,6 +1377,7 @@ test(
         'worktree-recipes',
         'session-control',
         'workflow-sharing',
+        'workflow-child-sessions',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6577,6 +6578,7 @@ test(
       'worktree-recipes',
       'session-control',
       'workflow-sharing',
+      'workflow-child-sessions',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -11533,6 +11535,326 @@ const loadWorkflowTaskModules = async directory => {
   );
   return Object.assign({}, ...modules);
 };
+
+test(
+  'child workflows report results, gate starts, stop together and recover without replay',
+  { timeout: 120_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-children-')),
+    );
+    const project = join(root, 'project');
+    const directory = join(root, 'data');
+    const resources = join(root, 'resources.json');
+    const hosts = [];
+    t.after(async () => {
+      for (const instance of hosts) {
+        if (
+          instance.child.exitCode === null &&
+          instance.child.signalCode === null
+        )
+          instance.child.kill();
+        await instance.exited.catch(() => undefined);
+      }
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 150,
+      });
+    });
+    const write = async (path, content) => {
+      const location = join(project, path);
+      await mkdir(join(location, '..'), { recursive: true });
+      await writeFile(location, content);
+    };
+    const definition = (kind, name, fields, body = '') =>
+      write(
+        `.agents/workflows/${kind}/${name}.md`,
+        `---\nname: ${name}\n${fields}\n---\n${body}\n`,
+      );
+    const workflow = (name, steps) =>
+      definition('workflows', name, `steps: ${JSON.stringify(steps)}`);
+    const step = (name, type, fields, body) =>
+      definition(
+        'steps',
+        name,
+        `type: ${type}\nphase: pre-done\n${fields}`,
+        body,
+      );
+    const session = (child, title, worktree = false) =>
+      JSON.stringify({
+        workflow: child,
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'read-only',
+        worktree,
+        title,
+      });
+    const cmd = (posix, windows) =>
+      process.platform === 'win32' ? windows : posix;
+    await step(
+      'verify',
+      'action',
+      '',
+      cmd(`echo '{"report":"verified"}'`, 'echo {"report":"verified"}'),
+    );
+    await workflow('worker-gates', ['verify']);
+    await step(
+      'prepare',
+      'action',
+      '',
+      cmd(
+        `echo '{"task":"fixture:context","stage":"W5"}'`,
+        'echo {"task":"fixture:context","stage":"W5"}',
+      ),
+    );
+    await step(
+      'grandchild',
+      'session',
+      `session: ${session('worker-gates', 'Verification')}`,
+      'fixture:context',
+    );
+    await workflow('nested', ['grandchild']);
+    await step(
+      'worker',
+      'session',
+      `session: ${session('nested', '{{ steps.prepare.outputs.stage }}', true)}`,
+      '{{ steps.prepare.outputs.task }}',
+    );
+    await workflow('single', ['prepare', 'worker']);
+    const policy = (maxParallel, softLimit) =>
+      JSON.stringify({
+        max_parallel: maxParallel,
+        ...(softLimit ? { soft_limit: softLimit } : {}),
+        min_free_ram_mb: 1024,
+        min_plan_remaining_percent: 20,
+        on_fail: 'continue',
+      });
+    const fanOut = async (
+      name,
+      parallel,
+      softLimit,
+      worker = 'worker-gates',
+    ) => {
+      await step(
+        name,
+        'fan-out',
+        [
+          'timeout: 1m',
+          `session: ${session(worker, '{{ item.id }}')}`,
+          name === 'review-restart'
+            ? 'items: { kind: inline, values: [{ id: review, task: "fixture:context" }] }'
+            : 'items: { kind: file, path: stages.md }',
+          `policy: ${policy(parallel, softLimit)}`,
+        ].join('\n'),
+        '{{ item.task }}',
+      );
+      await workflow(name, [name]);
+    };
+    await fanOut('batch', 2, 1);
+    await fanOut('restart', 1);
+    await step('review', 'human', '', 'Approve the result.');
+    await workflow('review-worker', ['review']);
+    await fanOut('review-restart', 1, undefined, 'review-worker');
+    await write(
+      'stages.md',
+      '| id | task |\n| --- | --- |\n| A | fixture:chatty |\n| B | fixture:chatty |\n| C | fixture:chatty |\n',
+    );
+    for (const name of ['single', 'batch', 'restart', 'review-restart'])
+      await write(
+        `${name}.md`,
+        `---\nworkflow: ${name}\n---\nRun the workflow.\n`,
+      );
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.test',
+          ...args,
+        ],
+        { cwd: project },
+      );
+    await git('init', '-q');
+    await git('add', '.');
+    await git('commit', '-qm', 'Workflow fixtures');
+    const setResources = (freeRamMb, remainingPercent) =>
+      writeFile(resources, JSON.stringify({ freeRamMb, remainingPercent }));
+    const boot = () => {
+      const instance = launch(directory, join(directory, 'provider-pid.json'), {
+        NESVO_TEST_MODE: '1',
+        NESVO_WORKFLOWS_HOME: join(root, 'empty-home'),
+        NESVO_TEST_WORKFLOW_RESOURCES: resources,
+        NESVO_FIXTURE_CHATTY_MS: '30000',
+      });
+      hosts.push(instance);
+      return instance;
+    };
+    let host = boot();
+    const start = async name => {
+      const response = await host.request('run-workflow-steps', {
+        directory: project,
+        specPath: `${name}.md`,
+      });
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
+      return response.run;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-workflow-run', { runId });
+      assert.equal(
+        response.type,
+        'workflow-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const wait = async (run, check) => {
+      const deadline = Date.now() + 25_000;
+      for (;;) {
+        const current = await detail(run.id);
+        const matched = check(current);
+        if (matched) return matched;
+        assert.ok(Date.now() < deadline, JSON.stringify(current));
+        await delay(100);
+      }
+    };
+    const items = current => current.steps.at(-1)?.children ?? [];
+    const sessions = async parent =>
+      (await host.request('list-sessions')).sessions.filter(
+        session => session.parentId === parent.sessionId,
+      );
+
+    const single = await start('single');
+    const passed = await wait(
+      single,
+      current => current.run.status === 'passed' && current,
+    );
+    const worker = (await sessions(single))[0];
+    assert.equal(worker.title, 'W5');
+    assert.ok(worker.worktree);
+    assert.notEqual(worker.directory, project);
+    assert.equal(worker.messages[0].body, 'fixture:context');
+    const verification = await sessions({ sessionId: worker.id });
+    assert.equal(verification.length, 1);
+    const item = passed.steps.at(-1).result.items[0];
+    assert.equal(item.sessionId, worker.id);
+    assert.equal(item.report.status, 'passed');
+    assert.equal(item.report.summary, 'Fixture context reply.');
+    assert.equal(item.report.outputs.report, 'verified');
+
+    await writeFile(join(directory, 'usage-control.json'), '{}');
+    await setResources(0, 100);
+    const batch = await start('batch');
+    await wait(batch, current =>
+      items(current)[0]?.reason?.includes('free RAM below'),
+    );
+    assert.equal((await sessions(batch)).length, 0);
+    await setResources(2048, 10);
+    await wait(batch, current =>
+      items(current)[0]?.reason?.includes('provider limit below 20%'),
+    );
+    assert.equal((await sessions(batch)).length, 0);
+    await setResources(1100, 100);
+    await wait(batch, current =>
+      items(current)[1]?.reason?.includes('free RAM below 1280'),
+    );
+    assert.equal((await sessions(batch)).length, 1);
+    await setResources(4096, 100);
+    await wait(batch, current =>
+      items(current)[2]?.reason?.includes('parallel slots'),
+    );
+    const active = await sessions(batch);
+    assert.equal(active.length, 2);
+    for (const child of active)
+      await host.event(
+        value =>
+          value.id === child.id &&
+          agent(value)?.body.includes('Fixture is busy'),
+      );
+    assert.equal(
+      (await host.request('stop-workflow-run', { runId: batch.id })).run.status,
+      'stopped',
+    );
+    for (const child of active)
+      assert.equal((await detail(child.workflowRunId)).run.status, 'stopped');
+    assert.equal((await sessions(batch)).length, 2);
+
+    const restart = await start('restart');
+    await wait(restart, current =>
+      items(current)[1]?.reason?.includes('parallel slots'),
+    );
+    const [before] = await sessions(restart);
+    await host.event(
+      value =>
+        value.id === before.id &&
+        agent(value)?.body.includes('Fixture is busy'),
+    );
+    host.child.kill();
+    await host.exited;
+    host = boot();
+    const recovered = await wait(
+      restart,
+      current => current.steps.at(-1)?.result?.items,
+    );
+    assert.equal(recovered[0].sessionId, before.id);
+    assert.equal(recovered[1].sessionId, null);
+    assert.deepEqual(
+      recovered.map(item => item.report.status),
+      ['interrupted', 'interrupted', 'interrupted'],
+    );
+    const after = await sessions(restart);
+    assert.deepEqual(
+      after.map(child => child.id),
+      [before.id],
+    );
+    assert.equal(
+      after[0].messages.filter(message => message.author === 'operator').length,
+      1,
+    );
+    const humanParent = await start('review-restart');
+    const waiting = await wait(
+      humanParent,
+      current => items(current)[0]?.sessionId,
+    );
+    const [reviewChild] = await sessions(humanParent);
+    assert.equal(reviewChild.id, waiting);
+    await wait(
+      { id: reviewChild.workflowRunId },
+      current => current.run.status === 'awaiting-human',
+    );
+    await host.stop();
+    host = boot();
+    const humanChild = await wait(
+      { id: reviewChild.workflowRunId },
+      current => current.run.status === 'awaiting-human' && current,
+    );
+    assert.equal((await detail(humanParent.id)).run.status, 'checking');
+    assert.deepEqual(
+      (await sessions(humanParent)).map(child => child.id),
+      [reviewChild.id],
+    );
+    const gate = humanChild.steps[0];
+    const accepted = await host.request('decide-workflow-gate', {
+      runId: humanChild.run.id,
+      stepId: gate.id,
+      reviewId: gate.reviewId,
+      version: gate.reviewVersion,
+      decisionId: randomUUID(),
+      decision: 'accept',
+      comment: 'Approved after restart.',
+    });
+    assert.equal(accepted.type, 'workflow-run', JSON.stringify(accepted));
+    const reviewed = await wait(
+      humanParent,
+      current => current.run.status === 'passed' && current,
+    );
+    assert.equal(reviewed.steps[0].result.items[0].report.status, 'passed');
+    await host.stop();
+  },
+);
 
 test(
   'workflow tasks run on a bound session and move only through the runner',

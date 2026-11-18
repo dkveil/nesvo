@@ -73,6 +73,8 @@ import {
 } from './workflows/assistant';
 import { EvidenceError, EvidenceStore } from './workflows/evidence';
 import { probeExecutor } from './workflows/steps/probe';
+import { createChildExecutor } from './workflows/steps/children';
+import { ChildRuns } from './workflows/child-runs';
 import { createWaitCiExecutor } from './workflows/steps/wait-ci';
 import { WorkflowRunError, WorkflowRunner } from './workflows/runner';
 import { WorkflowGates } from './workflows/gates';
@@ -334,7 +336,11 @@ export const serveHost = ({
                     ? workflowRunStore.getRun(session.workflowRunId)
                     : undefined;
                   return {
-                    ...recipes.current?.environment(session),
+                    ...recipes.current?.environment(
+                      run?.parent && session.worktree
+                        ? { ...session, parentId: null }
+                        : session,
+                    ),
                     ...(run ? runEnvironment(run) : {}),
                     [PROVIDER_SESSION_VARIABLE]: session.id,
                   };
@@ -460,10 +466,47 @@ export const serveHost = ({
       const snapshots = new SpecSnapshots(directory);
       const workflows = yield* Effect.acquireRelease(
         Effect.sync(() => {
+          const children = new ChildRuns({
+            workflows: workflowRunStore,
+            store,
+            sessions,
+            snapshots,
+            emit,
+            advance: (id): Promise<void> => runner.advanceRun(id),
+            stop: id => {
+              runner.stop(id);
+            },
+            stopSetup: sessionId => {
+              const recipe = worktreeRecipes.read(sessionId);
+              if (recipe?.status === 'running')
+                void worktreeRecipes
+                  .decide({
+                    sessionId,
+                    sha256: recipe.recipe.sha256,
+                    decision: 'stop',
+                  })
+                  .catch(() => undefined);
+            },
+          });
+          const childExecutor = createChildExecutor(children, provider =>
+            usage.read({ provider }),
+          );
           const runner = new WorkflowRunner({
             store: workflowRunStore,
             emit,
             evidence,
+            stopChildren: id => children.stopChildren(id),
+            createManualSession: run =>
+              sessions.create(
+                {
+                  title: run.specTitle,
+                  directory: run.directory,
+                  provider: run.gateProvider,
+                  model: run.gateModel,
+                  mode: 'read-only',
+                },
+                { origin: { kind: 'workflow', runId: run.id } },
+              ).id,
             stepExecutors: {
               command: commandExecutor,
               probe: probeExecutor,
@@ -492,6 +535,8 @@ export const serveHost = ({
                     : null;
                 },
               }),
+              session: childExecutor,
+              'fan-out': childExecutor,
             },
             author: createSessionAuthor({
               sessions,
@@ -500,6 +545,7 @@ export const serveHost = ({
             }),
           });
           const events = bindRunEvents(sessions, runner);
+          children.recoverStopped();
           void runner.recover();
           return { runner, events };
         }),

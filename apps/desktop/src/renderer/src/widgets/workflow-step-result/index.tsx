@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { ChildQueue } from './child-queue';
 
 export type InboxTarget = {
   hostId: string;
@@ -180,7 +181,10 @@ export function StepResult({
         );
     }
   };
-  const outputs = Object.entries(result?.outputs ?? {});
+  const children = result?.items ?? record?.children;
+  const outputs = Object.entries(result?.outputs ?? {}).filter(
+    ([key]) => !children || key !== 'items',
+  );
   const evidence = result?.evidence ?? [];
   return (
     <div className="space-y-4 text-xs">
@@ -273,7 +277,14 @@ export function StepResult({
           Open in Inbox
         </Button>
       )}
-      {record?.sessionId && (
+      {children && (
+        <ChildQueue
+          items={children}
+          hostId={run.hostId}
+          onSession={onSession}
+        />
+      )}
+      {record?.sessionId && !children && (
         <Button
           type="button"
           variant="outline"

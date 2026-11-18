@@ -160,7 +160,7 @@ export class WorkflowRunStore {
   activeRunForDirectory(projectRoot: string): WorkflowRun | undefined {
     const row = this.database
       .prepare(
-        `SELECT document FROM workflow_runs WHERE project_root = ? AND status IN (${IN_PROGRESS_SQL}) ORDER BY created_at DESC, id DESC LIMIT 1`,
+        `SELECT document FROM workflow_runs WHERE project_root = ? AND status IN (${IN_PROGRESS_SQL}) AND json_extract(document, '$.parent') IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
       .get(projectRoot);
     return row ? toRun(row) : undefined;
@@ -282,7 +282,7 @@ export class WorkflowRunStore {
     this.transact(() =>
       this.database
         .prepare(
-          `DELETE FROM workflow_runs WHERE project_root = ? AND status IN (${FINISHED_SQL}) AND id NOT IN (SELECT id FROM workflow_runs WHERE project_root = ? AND status IN (${FINISHED_SQL}) ORDER BY created_at DESC, id DESC LIMIT ?)`,
+          `DELETE FROM workflow_runs WHERE project_root = ? AND status IN (${FINISHED_SQL}) AND id NOT IN (SELECT id FROM workflow_runs WHERE project_root = ? AND status IN (${FINISHED_SQL}) ORDER BY created_at DESC, id DESC LIMIT ?) AND NOT EXISTS (SELECT 1 FROM workflow_runs AS parent WHERE parent.id = json_extract(workflow_runs.document, '$.parent.runId') AND parent.status NOT IN (${TERMINAL_SQL}))`,
         )
         .run(projectRoot, projectRoot, keep),
     );
@@ -292,7 +292,7 @@ export class WorkflowRunStore {
     this.transact(() => {
       const readOnlyWaitRunIds = this.database
         .prepare(
-          "SELECT DISTINCT wait.run_id FROM workflow_steps AS wait JOIN workflow_runs AS run ON run.id = wait.run_id WHERE run.status = 'checking' AND wait.state = 'running' AND wait.type = 'wait-ci' AND NOT EXISTS (SELECT 1 FROM workflow_steps AS other WHERE other.run_id = wait.run_id AND other.state = 'running' AND other.type <> 'wait-ci')",
+          "SELECT DISTINCT wait.run_id FROM workflow_steps AS wait JOIN workflow_runs AS run ON run.id = wait.run_id WHERE run.status = 'checking' AND wait.state = 'running' AND (wait.type IN ('session', 'fan-out') OR (wait.type = 'wait-ci' AND NOT EXISTS (SELECT 1 FROM workflow_steps AS other WHERE other.run_id = wait.run_id AND other.state = 'running' AND other.type <> 'wait-ci')))",
         )
         .all()
         .map(row => String(row.run_id));
@@ -304,7 +304,7 @@ export class WorkflowRunStore {
         .map(row => String(row.run_id));
       this.database
         .prepare(
-          "UPDATE workflow_steps SET document = json_set(document, '$.state', CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, '$.revision', revision + 1, '$.updatedAt', ?), state = CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, revision = revision + 1, updated_at = ? WHERE state = 'running' AND type <> 'wait-ci'",
+          "UPDATE workflow_steps SET document = json_set(document, '$.state', CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, '$.revision', revision + 1, '$.updatedAt', ?), state = CASE WHEN type = 'action' THEN 'uncertain' ELSE 'interrupted' END, revision = revision + 1, updated_at = ? WHERE state = 'running' AND type <> 'wait-ci' AND (type NOT IN ('session', 'fan-out') OR run_id IN (SELECT id FROM workflow_runs WHERE status = 'stopped'))",
         )
         .run(at, at);
       const interrupt = this.database.prepare(
@@ -330,6 +330,15 @@ export class WorkflowRunStore {
       )
       .all()
       .map(row => String(row.id));
+  }
+
+  childRuns(runId: string): WorkflowRun[] {
+    return this.database
+      .prepare(
+        "SELECT document FROM workflow_runs WHERE json_extract(document, '$.parent.runId') = ?",
+      )
+      .all(runId)
+      .map(toRun);
   }
 
   linkSession(

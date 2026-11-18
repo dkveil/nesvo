@@ -61,7 +61,7 @@ export const createHumanExecutor =
   execution => {
     const { run, step, now } = execution;
     const at = now().toISOString();
-    if (!run.sessionId)
+    if (!run.sessionId || run.manual)
       return Promise.resolve(
         precedesExternalStep(execution)
           ? blocked(step, MANUAL_EXTERNAL_GATE_BLOCK, at)

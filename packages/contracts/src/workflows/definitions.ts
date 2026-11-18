@@ -2,6 +2,11 @@ import { z } from 'zod';
 import { parsePullRequestUrl } from '../pull-requests';
 import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 import {
+  workflowChildPolicySchema,
+  workflowChildSessionSchema,
+  workflowItemSourceSchema,
+} from './children';
+import {
   implicitEdges,
   WORKFLOW_EDGE_CONDITIONS,
   WORKFLOW_EDGE_PATTERN,
@@ -59,7 +64,12 @@ export const stepTypeSchema = z.enum([
   'wait-ci',
   'until',
   'probe',
+  'session',
+  'fan-out',
 ]);
+
+export const isChildWorkflowStep = (type: z.infer<typeof stepTypeSchema>) =>
+  type === 'session' || type === 'fan-out';
 
 export const probeKindSchema = z.enum([
   'all',
@@ -118,6 +128,10 @@ const stepDefinitionShape = {
   timeout: durationSchema.default('15m'),
   pr: prExpressionSchema.optional(),
   probe: probeKindSchema.optional(),
+  session: workflowChildSessionSchema.optional(),
+  items: workflowItemSourceSchema.optional(),
+  policy: workflowChildPolicySchema.optional(),
+  max_depth: z.number().int().min(1).max(8).optional(),
   repeat: z
     .array(stepNameSchema)
     .min(1)
@@ -168,6 +182,10 @@ type StepRuleSubject = {
   retries: number;
   pr?: string;
   probe?: z.infer<typeof probeKindSchema>;
+  session?: z.infer<typeof workflowChildSessionSchema>;
+  items?: z.infer<typeof workflowItemSourceSchema>;
+  policy?: z.infer<typeof workflowChildPolicySchema>;
+  max_depth?: number;
   repeat?: string[];
   condition?: string;
   max_iterations?: number;
@@ -179,6 +197,33 @@ type StepRuleSubject = {
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
+  const child = isChildWorkflowStep(value.type);
+  const fanOut = value.type === 'fan-out';
+  for (const [field, required] of [
+    ['session', child],
+    ['items', fanOut],
+    ['policy', fanOut],
+  ] as const)
+    if ((value[field] !== undefined) !== required)
+      context.addIssue({
+        code: 'custom',
+        path: [field],
+        message: required
+          ? 'This field is required for this step type.'
+          : 'This field belongs to a child workflow step.',
+      });
+  if (value.max_depth !== undefined && !child)
+    context.addIssue({
+      code: 'custom',
+      path: ['max_depth'],
+      message: 'This field belongs to a child workflow step.',
+    });
+  if (child && (value.retries !== 0 || value.retry_backoff || value.idempotent))
+    context.addIssue({
+      code: 'custom',
+      path: ['retries'],
+      message: 'Child workflow steps do not retry automatically.',
+    });
   if (value.probe !== undefined && value.type !== 'probe')
     context.addIssue({
       code: 'custom',
