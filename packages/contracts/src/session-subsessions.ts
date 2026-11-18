@@ -133,14 +133,6 @@ export const subsessionOverview = <T extends SubsessionSource>(
 const countLabel = (count: number, noun: string) =>
   `${count} ${noun}${count === 1 ? '' : 's'}`;
 
-export const waitingLabel = (workers: number, commands: number): string => {
-  const parts = [
-    ...(workers > 0 ? [countLabel(workers, 'worker')] : []),
-    ...(commands > 0 ? [countLabel(commands, 'command')] : []),
-  ];
-  return parts.length ? `Waiting on ${parts.join(' and ')}` : '';
-};
-
 export const activityLabel = (workers: number, commands: number): string => {
   if (workers > 0)
     return commands > 0

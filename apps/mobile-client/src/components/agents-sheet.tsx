@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
@@ -15,6 +16,7 @@ import { formatElapsed } from '@/utils/elapsed';
 type AgentsSheetProps = {
   visible: boolean;
   entries: SubsessionEntry<DesktopSession>[];
+  parentDirectory: string;
   isStopDisabled: (session: DesktopSession) => boolean;
   onClose: () => void;
   onOpen: (session: DesktopSession) => void;
@@ -24,6 +26,7 @@ type AgentsSheetProps = {
 type AgentRowProps = {
   entry: SubsessionEntry<DesktopSession>;
   now: number;
+  parentDirectory: string;
   stopDisabled: boolean;
   onOpen: () => void;
   onStop: () => void;
@@ -54,24 +57,37 @@ const stateColor = (session: DesktopSession) => {
   if (session.status === 'running' || session.status === 'stopping')
     return colors.info;
   if (session.status === 'completed') return colors.success;
-  if (session.status === 'failed') return colors.error;
+  if (session.status === 'failed' || session.status === 'interrupted')
+    return colors.error;
   return colors.muted;
 };
 
-const locationOf = (session: DesktopSession) =>
-  session.worktree?.branch ??
-  session.directory.split(/[\\/]/).filter(Boolean).at(-1) ??
-  session.directory;
+const needsAttention = (session: DesktopSession) =>
+  needsApproval(session) ||
+  session.status === 'failed' ||
+  session.status === 'interrupted';
 
-function AgentRow({ entry, now, stopDisabled, onOpen, onStop }: AgentRowProps) {
+const folderOf = (directory: string) =>
+  directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory;
+
+function AgentRow({
+  entry,
+  now,
+  parentDirectory,
+  stopDisabled,
+  onOpen,
+  onStop,
+}: AgentRowProps) {
   const { session, active, startedAt, finishedAt } = entry;
   const state = needsApproval(session)
     ? 'Needs approval'
     : statusLabels[session.status];
   const elapsed = formatElapsed(startedAt, finishedAt, now);
   const model = session.actualModel ?? session.model;
-  const location = locationOf(session);
+  const folder =
+    session.directory === parentDirectory ? '' : folderOf(session.directory);
   const color = stateColor(session);
+  const attention = needsAttention(session);
   return (
     <View
       style={[styles.row, !active && styles.finished]}
@@ -79,25 +95,38 @@ function AgentRow({ entry, now, stopDisabled, onOpen, onStop }: AgentRowProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${session.title}, ${state}${elapsed ? `, ${elapsed}` : ''}, ${session.provider} ${model}, ${location}`}
+        accessibilityLabel={[
+          `Open ${session.title}`,
+          state,
+          elapsed,
+          `${session.provider} ${model}`,
+          folder,
+        ]
+          .filter(Boolean)
+          .join(', ')}
         onPress={onOpen}
         style={({ pressed }) => [styles.main, pressed && styles.pressed]}
         testID={`agent-open-${session.id}`}
       >
-        <View style={[styles.dot, { backgroundColor: color }]} />
+        <View style={styles.marker}>
+          {active && !attention ? (
+            <ActivityIndicator size="small" color={color} />
+          ) : (
+            <View style={[styles.dot, { backgroundColor: color }]} />
+          )}
+        </View>
         <View style={styles.text}>
           <View style={styles.line}>
             <Text numberOfLines={1} style={styles.title}>
               {session.title}
             </Text>
-            <Text style={[styles.meta, { color }]}>{state}</Text>
+            {attention && <Text style={[styles.meta, { color }]}>{state}</Text>}
             {!!elapsed && <Text style={styles.meta}>{elapsed}</Text>}
           </View>
           <Text numberOfLines={1} style={styles.detail}>
-            {session.provider} · {model} · {location}
+            {[session.provider, model, folder].filter(Boolean).join(' · ')}
           </Text>
         </View>
-        <Text style={styles.chevron}>›</Text>
       </Pressable>
       {active && (
         <Pressable
@@ -123,6 +152,7 @@ function AgentRow({ entry, now, stopDisabled, onOpen, onStop }: AgentRowProps) {
 export function AgentsSheet({
   visible,
   entries,
+  parentDirectory,
   isStopDisabled,
   onClose,
   onOpen,
@@ -171,6 +201,7 @@ export function AgentsSheet({
                 key={entry.session.id}
                 entry={entry}
                 now={now}
+                parentDirectory={parentDirectory}
                 stopDisabled={isStopDisabled(entry.session)}
                 onOpen={() => onOpen(entry.session)}
                 onStop={() => onStop(entry.session)}
@@ -225,8 +256,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
   },
   finished: { opacity: 0.6 },
   main: {
@@ -234,34 +263,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderRadius: 12,
+  },
+  marker: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
   text: { flex: 1, gap: 3 },
   line: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title: { flexShrink: 1, color: colors.text, fontSize: 15 },
+  title: { flex: 1, color: colors.text, fontSize: 15 },
   meta: {
     color: colors.muted,
     fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
-  detail: { color: colors.muted, fontSize: 13 },
-  chevron: { color: colors.muted, fontSize: 20 },
+  detail: { color: colors.muted, fontSize: 12 },
   stop: {
     width: 44,
     height: 44,
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.dangerSurface,
   },
   stopPressed: { opacity: 0.7 },
   stopGlyph: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    backgroundColor: colors.danger,
+    width: 12,
+    height: 12,
+    borderRadius: 2,
+    backgroundColor: colors.muted,
   },
   pressed: { backgroundColor: colors.border },
   disabled: { opacity: 0.5 },

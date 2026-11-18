@@ -10,8 +10,8 @@ import {
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
+  activityLabel,
   subsessionOverview,
-  waitingLabel,
   type DesktopSession,
 } from '@nesvo/contracts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -77,21 +77,6 @@ export default function ConversationScreen() {
     ];
   const childStopDisabled = (child: DesktopSession) =>
     !ready || child.status !== 'running' || stopPending(child);
-  const stopGroup = () => {
-    if (session.status === 'running') {
-      void store.act(session, 'stop-run');
-      return;
-    }
-    for (const entry of activity.entries)
-      if (!childStopDisabled(entry.session))
-        void store.act(entry.session, 'stop-run');
-  };
-  const groupStopDisabled =
-    !ready ||
-    (session.status === 'running'
-      ? stopPending(session)
-      : session.status === 'stopping' ||
-        !activity.entries.some(entry => !childStopDisabled(entry.session)));
   const firstAgents = new Map<string, string>();
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
@@ -408,17 +393,9 @@ export default function ConversationScreen() {
       >
         {activity.visible && (
           <SubsessionBar
-            label={waitingLabel(activity.running, activity.commands)}
-            running={activity.running}
-            total={activity.entries.length}
-            stopLabel={
-              activity.entries.length > 0
-                ? 'Stop this session and its workers'
-                : 'Stop this session'
-            }
-            stopDisabled={groupStopDisabled}
+            label={activityLabel(activity.running, activity.commands)}
+            hasChildren={activity.entries.length > 0}
             onOpen={() => setAgentsOpen(true)}
-            onStop={stopGroup}
           />
         )}
         <AgentsSheet
@@ -426,6 +403,7 @@ export default function ConversationScreen() {
             agentsOpen && activity.visible && activity.entries.length > 0
           }
           entries={activity.entries}
+          parentDirectory={session.directory}
           isStopDisabled={childStopDisabled}
           onClose={() => setAgentsOpen(false)}
           onOpen={child => {

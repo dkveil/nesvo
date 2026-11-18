@@ -817,10 +817,9 @@ try {
       ),
     'Phone held workers did not start',
   );
-  await node('Waiting on 2 workers, show agents');
-  await node('2 of 2 workers running, show agents');
+  await node('2 workers running, show agents');
   await screenshot('09-subsession-bar.png');
-  await tap('subsession-bar-count');
+  await tap('subsession-bar');
   await node('agents-sheet');
   const [stoppedChild, runningChild] = heldChildren;
   await node(`agent-stop-${runningChild.id}`);
@@ -832,8 +831,8 @@ try {
   await node(`Open ${stoppedChild.title}, Stopped`, { includes: true });
   await screenshot('11-agents-stopped.png');
   await tap('agents-close');
-  await node('1 of 2 workers running, show agents');
-  await tap('subsession-bar-stop');
+  await node('1 worker running, show agents');
+  await tap('stop-run');
   await waitState(workers.id, 'stopped');
   await waitState(runningChild.id, 'stopped');
   phase('reconnecting-active-run');
