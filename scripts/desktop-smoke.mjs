@@ -908,6 +908,7 @@ try {
     'tracked-repositories',
     'running-apps',
     'default-session-folder',
+    'worktree-recipes',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

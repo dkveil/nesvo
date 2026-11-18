@@ -156,6 +156,13 @@ const readUserContent = content => {
 const runEnvironment = () => ({
   NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,
   NESVO_PROJECT_ROOT: process.env.NESVO_PROJECT_ROOT ?? null,
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([name]) =>
+      /^(?:NESVO_PORT_\d+|NESVO_RESOURCE_TAG|NESVO_TEMP_DIR|RECIPE_FIXTURE_MODE)$/.test(
+        name,
+      ),
+    ),
+  ),
 });
 
 if (args.length === 1 && args[0] === '--version') {

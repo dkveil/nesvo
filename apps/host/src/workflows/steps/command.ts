@@ -80,7 +80,7 @@ export function stepEnvironment(execution: StepExecution): {
   };
 }
 
-type StepShell = {
+export type StepShell = {
   command: string;
   args: string[];
   windowsVerbatimArguments: boolean;
@@ -90,7 +90,7 @@ type StepShell = {
 const windowsScript = (body: string) =>
   ['@echo off', 'chcp 65001 >nul', ...body.split(/\r?\n/), ''].join('\r\n');
 
-const prepareShell = async (body: string): Promise<StepShell> => {
+export const prepareShell = async (body: string): Promise<StepShell> => {
   if (process.platform !== 'win32')
     return {
       command: '/bin/sh',

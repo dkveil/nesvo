@@ -96,6 +96,8 @@ import {
 import { SessionLauncher } from './scheduled-jobs/launcher';
 import { PROVIDER_SESSION_VARIABLE } from './process/provider-processes';
 import { RunningApps } from './running-apps/service';
+import { WorktreeRecipes } from './worktree-recipes/service';
+import { WorktreeRecipeStore } from './worktree-recipes/store';
 import { RunningAppsError } from './running-apps/scan';
 import { DefaultSessionFolder } from './workspace/default-folder';
 
@@ -112,6 +114,11 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'finish-session-worktree',
   'run-session-worktree-setup',
   'remove-orphaned-session-worktree',
+  'save-worktree-recipe',
+  'delete-worktree-recipe',
+  'start-worktree-recipe-trial',
+  'stop-worktree-recipe-trial',
+  'decide-session-worktree-recipe',
   'fork-session',
   'restart-session',
   'compact-session',
@@ -264,6 +271,7 @@ export const serveHost = ({
       const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       const sessionChanges = new SessionChangeReader(id => store.get(id));
+      const recipes: { current?: WorktreeRecipes } = {};
       let outgoing = Promise.resolve();
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
@@ -298,10 +306,15 @@ export const serveHost = ({
                     ? workflowRunStore.getRun(session.workflowRunId)
                     : undefined;
                   return {
+                    ...recipes.current?.environment(session),
                     ...(run ? runEnvironment(run) : {}),
                     [PROVIDER_SESSION_VARIABLE]: session.id,
                   };
                 },
+                worktreeCreated: session => recipes.current?.created(session),
+                worktreeFinishing: (sessionId, signal) =>
+                  recipes.current?.finishing(sessionId, signal) ??
+                  Promise.resolve(),
                 isKnownGroup: groupId => !!groupStore.get(groupId),
                 defaultDirectory: groupId =>
                   (groupId && groupStore.get(groupId)?.defaults.directory) ||
@@ -335,6 +348,19 @@ export const serveHost = ({
           }),
       );
       windowOf = session => sessions.window(session);
+      const worktreeRecipes = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new WorktreeRecipes({
+              dataDirectory: directory,
+              store: new WorktreeRecipeStore(database),
+              session: id => store.get(id),
+              claim: id => sessions.claimWorktreeSetup(id),
+            }),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
+      recipes.current = worktreeRecipes;
       const housekeeping = new SessionHousekeeping(sessions, groupStore, emit);
       const deletions = yield* Effect.acquireRelease(
         Effect.sync(() => {
@@ -721,6 +747,102 @@ export const serveHost = ({
             .catch(() => undefined);
           probes.pending.add(inspection);
           void inspection.finally(() => probes.pending.delete(inspection));
+          continue;
+        }
+        if (
+          request.method === 'list-worktree-recipes' ||
+          request.method === 'save-worktree-recipe' ||
+          request.method === 'delete-worktree-recipe' ||
+          request.method === 'match-worktree-recipe' ||
+          request.method === 'start-worktree-recipe-trial' ||
+          request.method === 'read-worktree-recipe-trial' ||
+          request.method === 'stop-worktree-recipe-trial' ||
+          request.method === 'read-session-worktree-recipe' ||
+          request.method === 'decide-session-worktree-recipe'
+        ) {
+          const { id } = request;
+          const signal = probes.controller.signal;
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'list-worktree-recipes':
+                return {
+                  type: 'worktree-recipes',
+                  id,
+                  recipes: worktreeRecipes.list(),
+                };
+              case 'save-worktree-recipe':
+                return {
+                  type: 'worktree-recipes',
+                  id,
+                  recipes: await worktreeRecipes.save(request.input, signal),
+                };
+              case 'delete-worktree-recipe':
+                return {
+                  type: 'worktree-recipes',
+                  id,
+                  recipes: worktreeRecipes.delete(request.input.id),
+                };
+              case 'match-worktree-recipe':
+                return {
+                  type: 'worktree-recipe-match',
+                  id,
+                  match: await worktreeRecipes.match(
+                    request.input.directory,
+                    signal,
+                  ),
+                };
+              case 'start-worktree-recipe-trial':
+                return {
+                  type: 'worktree-recipe-trial',
+                  id,
+                  trial: await worktreeRecipes.startTrial(
+                    request.input,
+                    signal,
+                  ),
+                };
+              case 'read-worktree-recipe-trial':
+                return {
+                  type: 'worktree-recipe-trial',
+                  id,
+                  trial: worktreeRecipes.readTrial(request.input.id),
+                };
+              case 'stop-worktree-recipe-trial':
+                return {
+                  type: 'worktree-recipe-trial',
+                  id,
+                  trial: await worktreeRecipes.stopTrial(request.input.id),
+                };
+              case 'read-session-worktree-recipe':
+                return {
+                  type: 'session-worktree-recipe',
+                  id,
+                  run: worktreeRecipes.read(request.input.sessionId),
+                };
+              case 'decide-session-worktree-recipe':
+                return {
+                  type: 'session-worktree-recipe',
+                  id,
+                  run: await worktreeRecipes.decide(request.input),
+                };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error =>
+              send({
+                type: 'error',
+                id,
+                ...worktreeFailure(
+                  error,
+                  'The worktree recipe operation could not be completed.',
+                ),
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
           continue;
         }
         if (request.method === 'list-running-apps') {

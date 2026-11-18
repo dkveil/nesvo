@@ -341,7 +341,7 @@ function gitMessage(result: OwnedProcessResult): string {
   return detail ? `Git failed: ${detail}` : 'Git failed.';
 }
 
-async function repositoryRoot(
+export async function repositoryRoot(
   directory: string,
   signal: AbortSignal,
 ): Promise<string> {

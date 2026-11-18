@@ -108,14 +108,15 @@ export function copyWorktreeIncludes(
   source: string,
   target: string,
   paths: string[],
+  limits = { maxFiles: maxIncludeFiles, maxBytes: maxIncludeBytes },
 ) {
   let copied = 0;
   let bytes = 0;
   for (const path of paths) {
-    if (copied >= maxIncludeFiles) break;
+    if (copied >= limits.maxFiles) break;
     try {
       const parts = safeParts(path);
-      const contents = readWorktreeFile(source, path, maxIncludeBytes - bytes);
+      const contents = readWorktreeFile(source, path, limits.maxBytes - bytes);
       bytes += contents.length;
       const parent = parentDirectory(target, parts, true);
       const destination = `${parent}${sep}${parts.at(-1)!}`;
@@ -135,5 +136,5 @@ export function copyWorktreeIncludes(
       continue;
     }
   }
-  return { copied, skipped: paths.length - copied };
+  return { copied, skipped: paths.length - copied, bytes };
 }

@@ -98,6 +98,13 @@ import {
   listConversationsSchema,
   listPullRequestsSchema,
   addTrackedRepositorySchema,
+  saveWorktreeRecipeSchema,
+  deleteWorktreeRecipeSchema,
+  matchWorktreeRecipeSchema,
+  startWorktreeRecipeTrialSchema,
+  worktreeRecipeTrialRefSchema,
+  readSessionWorktreeRecipeSchema,
+  decideSessionWorktreeRecipeSchema,
   removeTrackedRepositorySchema,
   setDefaultSessionFolderSchema,
   reorderTrackedRepositoriesSchema,
@@ -910,6 +917,32 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:list-worktree-recipes', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-worktree-recipes', undefined, route(hostId));
+  });
+  const worktreeRecipeCommands = {
+    'save-worktree-recipe': saveWorktreeRecipeSchema,
+    'delete-worktree-recipe': deleteWorktreeRecipeSchema,
+    'match-worktree-recipe': matchWorktreeRecipeSchema,
+    'start-worktree-recipe-trial': startWorktreeRecipeTrialSchema,
+    'read-worktree-recipe-trial': worktreeRecipeTrialRefSchema,
+    'stop-worktree-recipe-trial': worktreeRecipeTrialRefSchema,
+    'read-session-worktree-recipe': readSessionWorktreeRecipeSchema,
+    'decide-session-worktree-recipe': decideSessionWorktreeRecipeSchema,
+  } as const;
+  for (const method of Object.keys(
+    worktreeRecipeCommands,
+  ) as (keyof typeof worktreeRecipeCommands)[]) {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        method,
+        worktreeRecipeCommands[method].parse(input),
+        route(hostId),
+      );
+    });
+  }
   for (const method of [
     'list-tracked-repositories',
     'suggest-tracked-repositories',

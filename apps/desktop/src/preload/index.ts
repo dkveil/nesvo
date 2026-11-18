@@ -100,6 +100,16 @@ import {
   runningAppListSchema,
   defaultSessionFolderSchema,
   setDefaultSessionFolderSchema,
+  saveWorktreeRecipeSchema,
+  deleteWorktreeRecipeSchema,
+  matchWorktreeRecipeSchema,
+  startWorktreeRecipeTrialSchema,
+  worktreeRecipeTrialRefSchema,
+  readSessionWorktreeRecipeSchema,
+  decideSessionWorktreeRecipeSchema,
+  worktreeRecipeListSchema,
+  worktreeRecipeMatchSchema,
+  worktreeRecipeRunSchema,
   trackedRepositorySuggestionListSchema,
   trackedPullRequestListsSchema,
   readPullRequestSchema,
@@ -1098,6 +1108,84 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
+  listWorktreeRecipes: async hostId =>
+    worktreeRecipeListSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-worktree-recipes', route(hostId)),
+    ),
+  saveWorktreeRecipe: async (input, hostId) =>
+    worktreeRecipeListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-worktree-recipe',
+        saveWorktreeRecipeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteWorktreeRecipe: async (input, hostId) =>
+    worktreeRecipeListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-worktree-recipe',
+        deleteWorktreeRecipeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  matchWorktreeRecipe: async (input, hostId) =>
+    worktreeRecipeMatchSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:match-worktree-recipe',
+        matchWorktreeRecipeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  startWorktreeRecipeTrial: async (input, hostId) =>
+    worktreeRecipeRunSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:start-worktree-recipe-trial',
+          startWorktreeRecipeTrialSchema.parse(input),
+          route(hostId),
+        ),
+      ),
+  readWorktreeRecipeTrial: async (input, hostId) =>
+    worktreeRecipeRunSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:read-worktree-recipe-trial',
+          worktreeRecipeTrialRefSchema.parse(input),
+          route(hostId),
+        ),
+      ),
+  stopWorktreeRecipeTrial: async (input, hostId) =>
+    worktreeRecipeRunSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:stop-worktree-recipe-trial',
+          worktreeRecipeTrialRefSchema.parse(input),
+          route(hostId),
+        ),
+      ),
+  readSessionWorktreeRecipe: async (input, hostId) =>
+    worktreeRecipeRunSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:read-session-worktree-recipe',
+          readSessionWorktreeRecipeSchema.parse(input),
+          route(hostId),
+        ),
+      ),
+  decideSessionWorktreeRecipe: async (input, hostId) =>
+    worktreeRecipeRunSchema
+      .nullable()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:decide-session-worktree-recipe',
+          decideSessionWorktreeRecipeSchema.parse(input),
+          route(hostId),
+        ),
+      ),
   listTrackedRepositories: async hostId =>
     trackedRepositoryListSchema.parse(
       await ipcRenderer.invoke(

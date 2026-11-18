@@ -393,6 +393,8 @@ export type SessionServiceOptions = {
   isHeldByWorkflow?: (review: Review) => boolean;
   isKnownGroup?: (groupId: string) => boolean;
   defaultDirectory?: (groupId?: string) => string | null;
+  worktreeCreated?: (session: Session) => void;
+  worktreeFinishing?: (sessionId: string, signal: AbortSignal) => Promise<void>;
 };
 
 export const GATE_PENDING_MESSAGE =
@@ -523,6 +525,13 @@ export class SessionService {
 
   onFolderReleased(listener: () => void): () => void {
     return this.folders.onRelease(listener);
+  }
+
+  claimWorktreeSetup(sessionId: string): () => void {
+    const session =
+      this.active.get(sessionId)?.session ?? this.store.get(sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    return this.claimFolders([session.directory], 'worktree-setup', session.id);
   }
 
   folderBusyMessage(directory: string, access: FolderAccess): string | null {
@@ -1186,6 +1195,7 @@ export class SessionService {
       options.worktree,
     );
     this.emitSession(session);
+    if (options.worktree) this.options.worktreeCreated?.(session);
     return session;
   }
 
@@ -1276,6 +1286,7 @@ export class SessionService {
         worktree,
       );
       this.emitSession(session);
+      if (worktree) this.options.worktreeCreated?.(session);
       return session;
     } catch (error) {
       throw new SessionError(
@@ -1833,6 +1844,9 @@ export class SessionService {
     );
     this.removingWorktrees++;
     try {
+      await this.options
+        .worktreeFinishing?.(record.id, signal)
+        .catch(() => undefined);
       await removeSessionWorktree({
         ...record,
         dataDirectory: this.directory,
@@ -1877,6 +1891,9 @@ export class SessionService {
       'worktree-removal',
       session.id,
     );
+    await this.options
+      .worktreeFinishing?.(session.id, signal)
+      .catch(() => undefined);
     if (input.action.kind !== 'remove') {
       release();
       if (metadata.state === 'active')

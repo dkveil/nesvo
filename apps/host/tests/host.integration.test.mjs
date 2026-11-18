@@ -1374,6 +1374,7 @@ test(
         'tracked-repositories',
         'running-apps',
         'default-session-folder',
+        'worktree-recipes',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2380,7 +2381,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      21,
+      22,
     );
     migrated.close();
     const reopened = open();
@@ -4764,7 +4765,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 22');
+    database.exec('PRAGMA user_version = 23');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4781,7 +4782,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 22);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 23);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -6571,6 +6572,7 @@ test(
       'tracked-repositories',
       'running-apps',
       'default-session-folder',
+      'worktree-recipes',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7441,7 +7443,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            21,
+            22,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7524,11 +7526,11 @@ test(
       }
     });
 
-    await t.test('a version 22 database is refused', async () => {
+    await t.test('a version 23 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 22');
+      newer.exec('PRAGMA user_version = 23');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7540,7 +7542,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          22,
+          23,
         );
       } finally {
         check.close();
@@ -10581,7 +10583,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        21,
+        22,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -10632,7 +10634,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        21,
+        22,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -19868,7 +19870,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      21,
+      22,
     );
     database
       .prepare(
@@ -20231,7 +20233,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 21);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 22);
     } finally {
       check.close();
     }
@@ -20396,7 +20398,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 21);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 22);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -23835,3 +23837,443 @@ test('Claude Code writable modes add plan, subagent and skill tools while subage
   assert.equal(planned.status, 'completed', planned.error);
   assert.deepEqual(await lastTools(), ['Read,Glob,Grep', 'Read,Glob,Grep']);
 });
+
+test(
+  'Worktree recipes copy files, run approved setup with session resources and clean up',
+  { timeout: 180_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-worktree-recipes-')),
+    );
+    const project = join(root, 'project');
+    const plain = join(root, 'plain');
+    const data = join(root, 'data');
+    const hold = join(root, 'hold');
+    const cleanups = join(root, 'cleanups');
+    const launchLog = join(root, 'launches.jsonl');
+    await mkdir(join(project, 'scripts'), { recursive: true });
+    await mkdir(join(project, 'config'));
+    await mkdir(join(project, '.nesvo'));
+    await mkdir(plain);
+    await mkdir(cleanups);
+    const git = async (cwd, ...args) =>
+      (
+        await promisify(execFile)(
+          'git',
+          [
+            '-c',
+            'user.name=Nesvo Test',
+            '-c',
+            'user.email=test@example.invalid',
+            '-c',
+            'commit.gpgsign=false',
+            ...args,
+          ],
+          { cwd },
+        )
+      ).stdout.trim();
+    for (const repository of [project, plain]) {
+      await git(repository, 'init', '-q', '--initial-branch=main');
+      await git(repository, 'config', 'core.autocrlf', 'false');
+    }
+    await git(
+      project,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/Example/Recipe-Demo.git',
+    );
+    await writeFile(
+      join(project, '.gitignore'),
+      '.env.local\nconfig/secret.json\nsetup-env.json\nrepo-setup.txt\n',
+    );
+    await writeFile(
+      join(project, 'scripts', 'setup.cjs'),
+      `const fs = require('node:fs');
+      const deadline = Date.now() + 20000;
+      while (fs.existsSync(process.env.RECIPE_HOLD_FILE) && Date.now() < deadline)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      console.log('installing dependencies');
+      fs.writeFileSync('setup-env.json', JSON.stringify({
+        cwd: process.cwd(),
+        ports: [process.env.NESVO_PORT_1, process.env.NESVO_PORT_2],
+        tag: process.env.NESVO_RESOURCE_TAG,
+        temp: process.env.NESVO_TEMP_DIR,
+        mode: process.env.RECIPE_FIXTURE_MODE,
+        env: fs.existsSync('.env.local'),
+        repo: fs.existsSync('repo-setup.txt'),
+        tempExists: fs.existsSync(process.env.NESVO_TEMP_DIR),
+      }));
+      if (process.argv[2] === 'fail') process.exitCode = 3;`,
+    );
+    await writeFile(
+      join(project, 'scripts', 'cleanup.cjs'),
+      `const fs = require('node:fs');
+      const path = require('node:path');
+      fs.writeFileSync(
+        path.join(process.env.RECIPE_CLEANUP_DIR, process.env.NESVO_RESOURCE_TAG + '.json'),
+        JSON.stringify({ cwd: process.cwd(), port: process.env.NESVO_PORT_1 }),
+      );`,
+    );
+    await writeFile(
+      join(project, '.nesvo', 'worktree-setup'),
+      `require('node:fs').writeFileSync('repo-setup.txt', 'repo');`,
+    );
+    await writeFile(join(plain, 'readme.txt'), 'plain\n');
+    for (const repository of [project, plain]) {
+      await git(repository, 'add', '.');
+      await git(repository, 'commit', '-qm', 'Initial commit');
+    }
+    await writeFile(join(project, '.env.local'), 'LOCAL=1\n');
+    await writeFile(join(project, 'config', 'secret.json'), '{"secret":1}');
+
+    const { createServer } = await import('node:net');
+    const findBase = async () => {
+      for (let base = 43100; base < 60000; base += 37) {
+        const servers = [];
+        let free = true;
+        for (let port = base; port <= base + 6 && free; port++) {
+          const server = createServer();
+          free = await new Promise(resolve => {
+            server.once('error', () => resolve(false));
+            server.listen(port, '127.0.0.1', () => resolve(true));
+          });
+          if (free) servers.push(server);
+        }
+        await Promise.all(
+          servers.map(server => new Promise(done => server.close(done))),
+        );
+        if (free) return base;
+      }
+      throw new Error('No free port range.');
+    };
+    const base = await findBase();
+    const occupied = createServer();
+    await new Promise(resolve => occupied.listen(base, '127.0.0.1', resolve));
+
+    const open = () =>
+      launch(data, join(root, 'pids.json'), {
+        NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      });
+    let host = open();
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+      await new Promise(done => occupied.close(done));
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const request = (method, input) => host.request(method, input);
+    const health = await request('health');
+    assert.ok(
+      health.health?.capabilities.includes('worktree-recipes'),
+      JSON.stringify(health),
+    );
+    const sessionFrom = response => {
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const runOf = async sessionId => {
+      const response = await request('read-session-worktree-recipe', {
+        sessionId,
+      });
+      assert.equal(response.type, 'session-worktree-recipe');
+      return response.run;
+    };
+    const settled = async (read, status = ['ready', 'failed']) => {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        const run = await read();
+        if (run && status.includes(run.status)) return run;
+        await delay(50);
+      }
+      throw new Error(`Recipe did not settle: ${JSON.stringify(await read())}`);
+    };
+    const create = async title =>
+      sessionFrom(
+        await request('create-session', {
+          title,
+          provider: 'Claude Code',
+          model: 'sonnet',
+          mode: 'read-only',
+          directory: project,
+          isolation: { kind: 'worktree' },
+        }),
+      );
+
+    const plainMatch = await request('match-worktree-recipe', {
+      directory: plain,
+    });
+    assert.equal(plainMatch.match.repository.kind, 'path');
+    assert.equal(plainMatch.match.recipe, null);
+    const unmatched = await request('match-worktree-recipe', {
+      directory: join(project, 'scripts'),
+    });
+    assert.equal(unmatched.type, 'worktree-recipe-match');
+    assert.deepEqual(unmatched.match.repository, {
+      key: 'github.com/example/recipe-demo',
+      kind: 'remote',
+      label: 'github.com/Example/Recipe-Demo',
+    });
+    assert.equal(unmatched.match.directory, project);
+    assert.equal(unmatched.match.repositoryScript.approved, false);
+
+    const recipeInput = {
+      id: null,
+      name: 'Recipe demo',
+      directory: project,
+      copy: {
+        patterns: ['.env.local', 'config/**'],
+        maxFiles: 10,
+        maxBytes: 1024 * 1024,
+      },
+      setup: { command: 'node scripts/setup.cjs', timeoutSeconds: 120 },
+      cleanup: { command: 'node scripts/cleanup.cjs', timeoutSeconds: 60 },
+      environment: [
+        { name: 'RECIPE_FIXTURE_MODE', value: 'test' },
+        { name: 'RECIPE_HOLD_FILE', value: hold },
+        { name: 'RECIPE_CLEANUP_DIR', value: cleanups },
+      ],
+      resources: {
+        ports: 2,
+        portRange: { from: base, to: base + 6 },
+        tag: true,
+        tempDirectory: true,
+      },
+    };
+    const saved = await request('save-worktree-recipe', recipeInput);
+    assert.equal(saved.type, 'worktree-recipes', JSON.stringify(saved));
+    const [recipe] = saved.recipes;
+    assert.equal(recipe.approved, false);
+    assert.equal(recipe.repository.key, 'github.com/example/recipe-demo');
+    assert.equal(
+      (
+        await request('save-worktree-recipe', {
+          ...recipeInput,
+          directory: join(project, 'config'),
+        })
+      ).code,
+      'invalid-request',
+    );
+
+    const trial = await request('start-worktree-recipe-trial', {
+      id: recipe.id,
+      directory: project,
+    });
+    assert.equal(trial.type, 'worktree-recipe-trial', JSON.stringify(trial));
+    const tried = await settled(async () => {
+      const current = await request('read-worktree-recipe-trial', {
+        id: recipe.id,
+      });
+      return current.trial?.released ? current.trial : null;
+    });
+    assert.equal(tried.status, 'ready', JSON.stringify(tried));
+    assert.deepEqual(
+      tried.steps.map(step => [step.kind, step.status]),
+      [
+        ['copy', 'completed'],
+        ['setup', 'completed'],
+        ['cleanup', 'completed'],
+      ],
+    );
+    assert.match(tried.steps[1].output, /installing dependencies/);
+    assert.equal(existsSync(tried.directory), false);
+    assert.equal(existsSync(tried.resources.tempDirectory), false);
+    assert.equal((await readdir(cleanups)).length, 1);
+    await rm(join(cleanups, (await readdir(cleanups))[0]));
+
+    await writeFile(hold, '');
+    const first = await create('First recipe session');
+    const pending = await runOf(first.id);
+    assert.equal(pending.status, 'needs-approval');
+    assert.equal(pending.resources, null);
+    assert.equal(pending.recipe.sha256, recipe.sha256);
+    assert.equal(pending.repositoryScript.approved, false);
+    assert.equal(existsSync(join(first.directory, '.env.local')), false);
+    const refused = await request('send-message', {
+      sessionId: first.id,
+      messageId: randomUUID(),
+      text: 'fixture:continue',
+    });
+    assert.equal(refused.code, 'busy');
+    assert.match(refused.message, /setup script/);
+    const queued = sessionFrom(
+      await request('queue-message', {
+        sessionId: first.id,
+        messageId: randomUUID(),
+        text: 'fixture:continue',
+      }),
+    );
+    assert.equal(queued.queue.length, 1);
+    assert.equal(
+      (
+        await request('decide-session-worktree-recipe', {
+          sessionId: first.id,
+          decision: 'approve',
+          sha256: 'f'.repeat(64),
+        })
+      ).code,
+      'invalid-request',
+    );
+    const approved = await request('decide-session-worktree-recipe', {
+      sessionId: first.id,
+      decision: 'approve',
+      sha256: recipe.sha256,
+    });
+    assert.equal(approved.run.status, 'running', JSON.stringify(approved));
+    await delay(300);
+    assert.equal((await runOf(first.id)).status, 'running');
+    assert.equal(queued.messages.length, 0);
+    await rm(hold);
+    const ready = await settled(() => runOf(first.id));
+    assert.equal(ready.status, 'ready', JSON.stringify(ready));
+    assert.deepEqual(
+      ready.steps.map(step => [step.kind, step.status]),
+      [
+        ['repository-script', 'completed'],
+        ['copy', 'completed'],
+        ['setup', 'completed'],
+      ],
+    );
+    assert.equal(ready.copied.copied, 2);
+    assert.equal(ready.resources.ports.length, 2);
+    assert.ok(!ready.resources.ports.includes(base));
+    assert.match(ready.resources.tag, /^nesvo-[0-9a-f]{12}$/);
+    const written = JSON.parse(
+      await readFile(join(first.directory, 'setup-env.json'), 'utf8'),
+    );
+    assert.deepEqual(written, {
+      cwd: first.directory,
+      ports: ready.resources.ports.map(String),
+      tag: ready.resources.tag,
+      temp: ready.resources.tempDirectory,
+      mode: 'test',
+      env: true,
+      repo: true,
+      tempExists: true,
+    });
+    assert.equal(
+      await readFile(join(first.directory, 'config', 'secret.json'), 'utf8'),
+      '{"secret":1}',
+    );
+    const completed = await host.event(
+      session => session.id === first.id && session.status === 'completed',
+    );
+    assert.equal(completed.queue.length, 0);
+    const launches = (await readFile(launchLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.deepEqual(launches.at(-1).environment, {
+      NESVO_RUN_ID: null,
+      NESVO_PROJECT_ROOT: null,
+      NESVO_PORT_1: String(ready.resources.ports[0]),
+      NESVO_PORT_2: String(ready.resources.ports[1]),
+      NESVO_RESOURCE_TAG: ready.resources.tag,
+      NESVO_TEMP_DIR: ready.resources.tempDirectory,
+      RECIPE_FIXTURE_MODE: 'test',
+    });
+
+    const [second, third] = await Promise.all([
+      create('Second recipe session'),
+      create('Third recipe session'),
+    ]);
+    const parallel = await Promise.all(
+      [second, third].map(session => settled(() => runOf(session.id))),
+    );
+    for (const run of parallel) assert.equal(run.status, 'ready');
+    const allocated = [ready, ...parallel].flatMap(run => run.resources.ports);
+    assert.equal(new Set(allocated).size, 6);
+    assert.ok(allocated.every(port => port > base && port <= base + 6));
+    assert.equal(
+      new Set([ready, ...parallel].map(run => run.resources.tag)).size,
+      3,
+    );
+
+    const fourth = await create('Fourth recipe session');
+    const exhausted = await settled(() => runOf(fourth.id));
+    assert.equal(exhausted.status, 'failed');
+    assert.match(exhausted.error, /Only 0 of 2 ports are free/);
+
+    const removed = await request('finish-session-worktree', {
+      sessionId: first.id,
+      action: { kind: 'remove', force: true },
+    });
+    assert.equal(removed.session.worktree.state, 'removed');
+    const cleaned = await runOf(first.id);
+    assert.equal(cleaned.released, true);
+    assert.equal(cleaned.steps.at(-1).kind, 'cleanup');
+    assert.equal(cleaned.steps.at(-1).status, 'completed');
+    assert.equal(existsSync(ready.resources.tempDirectory), false);
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(cleanups, `${ready.resources.tag}.json`), 'utf8'),
+      ),
+      { cwd: first.directory, port: String(ready.resources.ports[0]) },
+    );
+
+    const retried = await request('decide-session-worktree-recipe', {
+      sessionId: fourth.id,
+      decision: 'approve',
+      sha256: recipe.sha256,
+    });
+    assert.equal(retried.type, 'session-worktree-recipe');
+    const reused = await settled(() => runOf(fourth.id));
+    assert.equal(reused.status, 'ready', JSON.stringify(reused));
+    assert.deepEqual(
+      [...reused.resources.ports].sort(),
+      [...ready.resources.ports].sort(),
+    );
+
+    const changed = await request('save-worktree-recipe', {
+      ...recipeInput,
+      id: recipe.id,
+      setup: { command: 'node scripts/setup.cjs fail', timeoutSeconds: 120 },
+    });
+    const [updated] = changed.recipes;
+    assert.notEqual(updated.sha256, recipe.sha256);
+    assert.equal(updated.approved, false);
+    const fifth = await create('Fifth recipe session');
+    const review = await runOf(fifth.id);
+    assert.equal(review.status, 'needs-approval');
+    assert.equal(review.recipe.sha256, updated.sha256);
+    assert.equal(review.repositoryScript.approved, true);
+    const skipped = await request('decide-session-worktree-recipe', {
+      sessionId: fifth.id,
+      decision: 'skip',
+      sha256: updated.sha256,
+    });
+    assert.equal(skipped.run.status, 'skipped');
+    const direct = sessionFrom(
+      await request('send-message', {
+        sessionId: fifth.id,
+        messageId: randomUUID(),
+        text: 'fixture:continue',
+      }),
+    );
+    await host.event(
+      session =>
+        session.id === fifth.id &&
+        session.runId === direct.runId &&
+        session.status === 'completed',
+    );
+
+    await host.stop();
+    host = open();
+    const restored = await runOf(second.id);
+    assert.equal(restored.status, 'ready');
+    assert.equal(restored.released, false);
+    const kept = await request('finish-session-worktree', {
+      sessionId: second.id,
+      action: { kind: 'keep' },
+    });
+    assert.equal(kept.session.worktree.state, 'kept');
+    const released = await runOf(second.id);
+    assert.equal(released.released, true);
+    assert.equal(existsSync(parallel[0].resources.tempDirectory), false);
+    assert.ok(existsSync(join(cleanups, `${parallel[0].resources.tag}.json`)));
+    assert.deepEqual(
+      (await request('delete-worktree-recipe', { id: recipe.id })).recipes,
+      [],
+    );
+  },
+);

@@ -56,6 +56,7 @@ export const hostCapabilitySchema = z.enum([
   'tracked-repositories',
   'running-apps',
   'default-session-folder',
+  'worktree-recipes',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

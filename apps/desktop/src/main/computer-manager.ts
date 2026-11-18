@@ -155,6 +155,18 @@ const trackedRepositoryResponses = {
   'list-tracked-pull-requests': 'tracked-pull-request-lists',
 } as const;
 
+const worktreeRecipeResponses = {
+  'list-worktree-recipes': 'worktree-recipes',
+  'save-worktree-recipe': 'worktree-recipes',
+  'delete-worktree-recipe': 'worktree-recipes',
+  'match-worktree-recipe': 'worktree-recipe-match',
+  'start-worktree-recipe-trial': 'worktree-recipe-trial',
+  'read-worktree-recipe-trial': 'worktree-recipe-trial',
+  'stop-worktree-recipe-trial': 'worktree-recipe-trial',
+  'read-session-worktree-recipe': 'session-worktree-recipe',
+  'decide-session-worktree-recipe': 'session-worktree-recipe',
+} as const;
+
 const codeReviewResponses = {
   'read-code-review-settings': 'code-review-settings',
   'save-reviewer-profile': 'code-review-settings',
@@ -260,6 +272,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to see running apps.',
   'default-session-folder':
     'Update this computer’s Nesvo host and reconnect to set a default session folder.',
+  'worktree-recipes':
+    'Update this computer’s Nesvo host and reconnect to use worktree recipes.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -288,6 +302,7 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(trackedRepositoryResponses, method))
     return 'tracked-repositories';
+  if (Object.hasOwn(worktreeRecipeResponses, method)) return 'worktree-recipes';
   if (Object.hasOwn(codeReviewResponses, method)) return 'pull-request-reviews';
   if (
     method === 'act-on-pull-request' &&
@@ -1128,6 +1143,7 @@ export class ComputerManager {
       ...sessionDeletionResponses,
       ...pullRequestResponses,
       ...trackedRepositoryResponses,
+      ...worktreeRecipeResponses,
       ...codeReviewResponses,
       ...costResponses,
     }[method];
@@ -1189,6 +1205,14 @@ export class ComputerManager {
         return response.list;
       case 'default-session-folder':
         return response.directory;
+      case 'worktree-recipes':
+        return response.recipes;
+      case 'worktree-recipe-match':
+        return response.match;
+      case 'worktree-recipe-trial':
+        return response.trial;
+      case 'session-worktree-recipe':
+        return response.run;
       case 'tracked-repository-suggestions':
         return response.suggestions;
       case 'tracked-pull-request-lists':

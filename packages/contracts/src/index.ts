@@ -380,6 +380,27 @@ import {
   setDefaultSessionFolderSchema,
   type DefaultSessionFolder,
 } from './default-session-folder';
+  decideSessionWorktreeRecipeSchema,
+  deleteWorktreeRecipeSchema,
+  matchWorktreeRecipeSchema,
+  readSessionWorktreeRecipeSchema,
+  saveWorktreeRecipeSchema,
+  startWorktreeRecipeTrialSchema,
+  worktreeRecipeListSchema,
+  worktreeRecipeMatchSchema,
+  worktreeRecipeRunSchema,
+  worktreeRecipeTrialRefSchema,
+  type DecideSessionWorktreeRecipeInput,
+  type DeleteWorktreeRecipeInput,
+  type MatchWorktreeRecipeInput,
+  type ReadSessionWorktreeRecipeInput,
+  type SaveWorktreeRecipeInput,
+  type StartWorktreeRecipeTrialInput,
+  type WorktreeRecipe,
+  type WorktreeRecipeMatch,
+  type WorktreeRecipeRun,
+  type WorktreeRecipeTrialRefInput,
+} from './worktree-recipes';
 
 export * from './sessions';
 export * from './session-history';
@@ -392,6 +413,7 @@ export * from './code-review';
 export * from './tracked-repositories';
 export * from './running-apps';
 export * from './default-session-folder';
+export * from './worktree-recipes';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -809,6 +831,47 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('set-default-session-folder'),
     input: setDefaultSessionFolderSchema,
+    method: z.literal('list-worktree-recipes'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-worktree-recipe'),
+    input: saveWorktreeRecipeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-worktree-recipe'),
+    input: deleteWorktreeRecipeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('match-worktree-recipe'),
+    input: matchWorktreeRecipeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('start-worktree-recipe-trial'),
+    input: startWorktreeRecipeTrialSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-worktree-recipe-trial'),
+    input: worktreeRecipeTrialRefSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('stop-worktree-recipe-trial'),
+    input: worktreeRecipeTrialRefSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-worktree-recipe'),
+    input: readSessionWorktreeRecipeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-session-worktree-recipe'),
+    input: decideSessionWorktreeRecipeSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1311,6 +1374,24 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
+    type: z.literal('worktree-recipes'),
+    id: z.uuid(),
+    recipes: worktreeRecipeListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('worktree-recipe-match'),
+    id: z.uuid(),
+    match: worktreeRecipeMatchSchema,
+  }),
+  z.strictObject({
+    type: z.literal('worktree-recipe-trial'),
+    id: z.uuid(),
+    trial: worktreeRecipeRunSchema.nullable(),
+  }),
+  z.strictObject({
+    type: z.literal('session-worktree-recipe'),
+    id: z.uuid(),
+    run: worktreeRecipeRunSchema.nullable(),
   }),
   z.strictObject({
     type: z.literal('tracked-repository-suggestions'),
@@ -1835,6 +1916,39 @@ export type DesktopApi = {
     directory: string | null,
     hostId?: HostId,
   ) => Promise<DefaultSessionFolder>;
+  listWorktreeRecipes: (hostId?: HostId) => Promise<WorktreeRecipe[]>;
+  saveWorktreeRecipe: (
+    input: SaveWorktreeRecipeInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipe[]>;
+  deleteWorktreeRecipe: (
+    input: DeleteWorktreeRecipeInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipe[]>;
+  matchWorktreeRecipe: (
+    input: MatchWorktreeRecipeInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeMatch>;
+  startWorktreeRecipeTrial: (
+    input: StartWorktreeRecipeTrialInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeRun | null>;
+  readWorktreeRecipeTrial: (
+    input: WorktreeRecipeTrialRefInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeRun | null>;
+  stopWorktreeRecipeTrial: (
+    input: WorktreeRecipeTrialRefInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeRun | null>;
+  readSessionWorktreeRecipe: (
+    input: ReadSessionWorktreeRecipeInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeRun | null>;
+  decideSessionWorktreeRecipe: (
+    input: DecideSessionWorktreeRecipeInput,
+    hostId?: HostId,
+  ) => Promise<WorktreeRecipeRun | null>;
   addTrackedRepository: (
     input: AddTrackedRepositoryInput,
     hostId?: HostId,

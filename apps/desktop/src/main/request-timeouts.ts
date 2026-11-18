@@ -20,6 +20,9 @@ const longRequests = new Set<HostRequest['method']>([
   'backup-database',
   'run-session-worktree-setup',
   'search-transcripts',
+  'start-worktree-recipe-trial',
+  'stop-worktree-recipe-trial',
+  'decide-session-worktree-recipe',
 ]);
 
 const providerRequests = new Set<HostRequest['method']>([
@@ -42,6 +45,8 @@ const providerRequests = new Set<HostRequest['method']>([
   'start-pull-request-review',
   'read-session-worktree',
   'read-session-worktree-setup',
+  'match-worktree-recipe',
+  'save-worktree-recipe',
 ]);
 
 const createsWorktree = (method: HostRequest['method'], input: unknown) =>
