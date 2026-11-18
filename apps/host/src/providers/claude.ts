@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
+  reasoningEffortSchema,
   type Approval,
   type ImageMediaType,
   type ClaudeStatus,
@@ -60,6 +61,7 @@ export type ClaudeResult = {
   limit?: { resetsAt: string | null };
   structured?: unknown;
   modeUnavailable?: true;
+  effortUnavailable?: true;
   context?: ContextFill;
   compacted?: true;
 };
@@ -176,6 +178,22 @@ function permissionChoices(help: string, flag = '--permission-mode'): string[] {
   const segment = end < 0 ? rest : rest.slice(0, end);
   const choices = /\(choices:([^)]*)\)/.exec(segment)?.[1] ?? '';
   return [...choices.matchAll(/"([^"]+)"/g)].map(match => match[1]!);
+}
+
+function effortChoices(help: string): ClaudeStatus['efforts'] {
+  const start = help.search(/(?:^|\s)--effort\s/);
+  if (start < 0) return [];
+  const rest = help.slice(start).replace(/^\s/, '');
+  const end = rest.slice(1).search(/\n\s*-/);
+  const segment = end < 0 ? rest : rest.slice(0, end + 1);
+  const listed = /\(([a-z][a-z0-9_-]*(?:\s*,\s*[a-z][a-z0-9_-]*)*)\)/.exec(
+    segment,
+  )?.[1];
+  if (!listed) return [];
+  return [...new Set(listed.split(',').map(choice => choice.trim()))]
+    .filter(choice => reasoningEffortSchema.safeParse(choice).success)
+    .slice(0, 16)
+    .map(id => ({ id, description: `Claude Code ${id} effort` }));
 }
 
 function acceptsStreamInput(help: string): boolean {
@@ -477,6 +495,7 @@ async function inspect(
   let version: string | null = null;
   let permissionModes: string[] = [];
   let imageInput = false;
+  let efforts: ClaudeStatus['efforts'] = [];
   const status = (
     state: ClaudeStatus['status'],
     detail: string | null,
@@ -485,11 +504,17 @@ async function inspect(
     version,
     detail,
     models: state === 'ready' ? models.map(model => ({ ...model })) : [],
-    effort: {
-      status: 'unsupported',
-      reason:
-        'Nesvo runs Claude Code without a reasoning effort setting, so the CLI default applies.',
-    },
+    effort:
+      state === 'ready' && efforts.length
+        ? { status: 'per-model' }
+        : {
+            status: 'unsupported',
+            reason:
+              state === 'ready'
+                ? 'This Claude Code version does not offer an effort setting. Update the CLI to choose an effort.'
+                : 'Claude Code is not ready on this computer.',
+          },
+    efforts: state === 'ready' ? efforts.map(option => ({ ...option })) : [],
     modes: state === 'ready' ? supportedModes(permissionModes) : [],
     images:
       state === 'ready' && imageInput
@@ -540,6 +565,7 @@ async function inspect(
       null;
     permissionModes = permissionChoices(help.stdout);
     imageInput = acceptsStreamInput(help.stdout);
+    efforts = effortChoices(help.stdout);
     const missing = requiredFlags.filter(flag => !help.stdout.includes(flag));
     if (help.code !== 0 || missing.length > 0 || !version) {
       return {
@@ -851,6 +877,7 @@ export function startClaude(options: {
   resume: boolean;
   forkFrom?: string;
   model: string;
+  effort?: string | null;
   prompt: string;
   environment?: Readonly<Record<string, string>>;
   outputSchema?: Record<string, unknown>;
@@ -908,6 +935,15 @@ export function startClaude(options: {
           error:
             'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
           modeUnavailable: true,
+        };
+      if (
+        options.effort &&
+        !inspection.status.efforts.some(option => option.id === options.effort)
+      )
+        return {
+          status: 'failed',
+          error: `This Claude Code version does not offer the ${options.effort} effort. Update the CLI or choose another effort.`,
+          effortUnavailable: true,
         };
       if (
         options.images?.length &&
@@ -1020,6 +1056,7 @@ export function startClaude(options: {
             .join(','),
         );
       if (options.model !== 'default') args.push('--model', options.model);
+      if (options.effort) args.push('--effort', options.effort);
       if (options.ephemeral) args.push('--no-session-persistence');
       if (options.assistantPrompt)
         args.push('--append-system-prompt', options.assistantPrompt);

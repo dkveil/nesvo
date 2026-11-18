@@ -41,7 +41,9 @@ const flags = [
   '--append-system-prompt',
   '--add-dir',
   '--disallowedTools',
+  '--effort',
 ];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PERMISSION_HELP = [
   '--permission-mode <mode>  Permission mode to use for the session',
   '                          (choices: "acceptEdits", "auto",',
@@ -52,6 +54,10 @@ const PROMPTS_HELP = [
   '                               --print: "host" (the SDK host or',
   '                               --permission-prompt-tool) or "none"',
   '                               (choices: "host", "none")',
+].join('\n');
+const EFFORT_HELP = [
+  '  --effort <level>                      Effort level for the current session',
+  `                                        (${EFFORTS.join(', ')})`,
 ].join('\n');
 const INPUT_HELP = [
   '--input-format <format>  Input format (only works with --print)',
@@ -150,14 +156,20 @@ if (args.length === 1 && args[0] === '--version') {
 } else if (args.length === 1 && args[0] === '--help') {
   console.log(
     flags
+      .filter(
+        flag => flag !== '--effort' || !process.env.NESVO_FIXTURE_NO_EFFORT,
+      )
       .map(flag =>
-        flag === '--permission-mode'
-          ? PERMISSION_HELP
-          : flag === '--permission-prompts'
-            ? PROMPTS_HELP
-            : flag === '--input-format' && !process.env.NESVO_FIXTURE_TEXT_INPUT
-              ? INPUT_HELP
-              : flag,
+        flag === '--effort'
+          ? EFFORT_HELP
+          : flag === '--permission-mode'
+            ? PERMISSION_HELP
+            : flag === '--permission-prompts'
+              ? PROMPTS_HELP
+              : flag === '--input-format' &&
+                  !process.env.NESVO_FIXTURE_TEXT_INPUT
+                ? INPUT_HELP
+                : flag,
       )
       .join('\n'),
   );
@@ -356,6 +368,10 @@ if (args.length === 1 && args[0] === '--version') {
   assert.match(sessionId, /^[0-9a-f-]{36}$/);
   if (values.has('--model'))
     assert.ok(['opus', 'sonnet', 'haiku'].includes(values.get('--model')));
+  if (values.has('--effort')) {
+    assert.equal(process.env.NESVO_FIXTURE_NO_EFFORT, undefined);
+    assert.ok(EFFORTS.includes(values.get('--effort')), values.get('--effort'));
+  }
   let prompt = '';
   const frames = [];
   const readers = [];

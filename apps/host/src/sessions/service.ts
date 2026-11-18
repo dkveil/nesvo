@@ -62,6 +62,7 @@ import {
 } from '../mcp/service';
 import {
   confirmClaudeFork,
+  inspectClaude,
   reportedClaudeModes,
   startClaude,
   claudeSupportsHostPrompts,
@@ -134,6 +135,26 @@ export async function confirmCodexEffort(
     throw new SessionError(
       'invalid-request',
       `Codex does not report the ${effort} reasoning effort for ${model}.`,
+    );
+}
+
+export async function confirmClaudeEffort(
+  effort: string,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+): Promise<void> {
+  const status = await inspectClaude(signal, environment);
+  if (status.status !== 'ready')
+    throw new SessionError(
+      'unavailable',
+      'Claude Code is not ready, so the effort could not be confirmed. Refresh Claude Code and try again.',
+    );
+  if (!status.efforts.some(option => option.id === effort))
+    throw new SessionError(
+      'invalid-request',
+      status.effort.status === 'unsupported'
+        ? status.effort.reason
+        : `Claude Code does not offer the ${effort} effort.`,
     );
 }
 
@@ -227,12 +248,7 @@ function resolveTurnSelection(
       'invalid-request',
       'Unsupported Claude Code model. Choose default, opus, sonnet or haiku.',
     );
-  if (effort && session.provider === 'Claude Code')
-    throw new SessionError(
-      'invalid-request',
-      'Claude Code sessions do not accept a reasoning effort.',
-    );
-  if (effort && model === 'default')
+  if (effort && session.provider === 'Codex' && model === 'default')
     throw new SessionError(
       'invalid-request',
       'Choose a specific Codex model to set a reasoning effort.',
@@ -1421,7 +1437,13 @@ export class SessionService {
       input.profileId,
       signal,
     );
-    if (input.effort)
+    if (input.effort && input.provider === 'Claude Code')
+      await confirmClaudeEffort(
+        input.effort,
+        signal,
+        profileEnvironment(input.provider, profileDirectory),
+      );
+    else if (input.effort)
       await confirmCodexEffort(
         input.model,
         input.effort,
@@ -2849,6 +2871,7 @@ export class SessionService {
               })
             : startClaude({
                 ...options,
+                effort: session.effort,
                 environment: turnEnvironment,
                 mcpTurn,
                 prompt: selected?.snapshot
@@ -2897,8 +2920,9 @@ export class SessionService {
     active.finished = handle.done
       .then(async result => {
         active.finalizing = true;
-        const { limit, modeUnavailable } = result as ClaudeResult;
-        if (modeUnavailable && previousSelection) {
+        const { limit, modeUnavailable, effortUnavailable } =
+          result as ClaudeResult;
+        if ((modeUnavailable || effortUnavailable) && previousSelection) {
           session.model = previousSelection.model;
           session.effort = previousSelection.effort;
           session.mode = previousSelection.mode;

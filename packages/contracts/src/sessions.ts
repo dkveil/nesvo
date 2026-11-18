@@ -4,6 +4,7 @@ import { activityLimits, sessionActivitySchema } from './activities';
 import {
   effortSupportSchema,
   modelEffortsSchema,
+  reasoningEffortOptionSchema,
   reasoningEffortSchema,
 } from './reasoning-effort';
 import { skillHashSchema, skillReferenceSchema } from './skills';
@@ -221,17 +222,11 @@ export const createSessionSchema = z
         code: 'custom',
         message: `Unsupported ${value.provider} model or mode`,
       });
-    if (
-      value.effort &&
-      (value.provider === 'Claude Code' || value.model === 'default')
-    )
+    if (value.effort && value.provider === 'Codex' && value.model === 'default')
       context.addIssue({
         code: 'custom',
         path: ['effort'],
-        message:
-          value.provider === 'Claude Code'
-            ? 'Claude Code sessions do not accept a reasoning effort'
-            : 'Choose a specific Codex model to set a reasoning effort',
+        message: 'Choose a specific Codex model to set a reasoning effort',
       });
   });
 export const sendMessageSchema = z.strictObject({
@@ -462,17 +457,20 @@ export const claudeStatusSchema = z.strictObject({
     reason:
       'This computer runs an older Nesvo host that cannot send images. Update the host to attach images.',
   }),
+  efforts: z.array(reasoningEffortOptionSchema).max(16).default([]),
 });
-export const codexStatusSchema = claudeStatusSchema.extend({
-  models: z.array(
-    z.strictObject({
-      id: modelSchema,
-      label: z.string(),
-      efforts: modelEffortsSchema.nullable().default(null),
-      images: z.boolean().default(false),
-    }),
-  ),
-});
+export const codexStatusSchema = claudeStatusSchema
+  .omit({ efforts: true })
+  .extend({
+    models: z.array(
+      z.strictObject({
+        id: modelSchema,
+        label: z.string(),
+        efforts: modelEffortsSchema.nullable().default(null),
+        images: z.boolean().default(false),
+      }),
+    ),
+  });
 
 export type SessionIsolation = z.infer<typeof sessionIsolationSchema>;
 export type SessionWorktree = z.infer<typeof sessionWorktreeSchema>;

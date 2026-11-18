@@ -78,7 +78,7 @@ export const startWorkflowTaskSchema = z
         path: ['effort'],
         message:
           value.provider === 'Claude Code'
-            ? 'Claude Code sessions do not accept a reasoning effort'
+            ? 'Claude Code workflow tasks do not accept an effort yet'
             : 'Choose a specific Codex model to set a reasoning effort',
       });
     if (

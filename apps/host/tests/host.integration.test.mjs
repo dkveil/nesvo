@@ -2321,7 +2321,6 @@ test(
       defaultEffort: 'medium',
     });
     for (const input of [
-      { ...create(''), effort: 'high' },
       { ...create(''), provider: 'Codex', model: 'default', effort: 'high' },
       { ...create(''), provider: 'Codex', model: 'fixture-codex', effort: '' },
       {
@@ -22349,4 +22348,110 @@ test('provider turns fail only after a period without provider activity', async 
       `${provider}: ${approved.error}`,
     );
   }
+});
+
+test('Claude Code effort applies from creation and the next turn and fails visibly when unsupported', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-claude-effort-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const launchLog = join(directory, 'launches.jsonl');
+  await mkdir(project);
+  const open = (extra = {}) =>
+    launch(directory, pidFile, {
+      NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      ...extra,
+    });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const status = await host.request('claude-status');
+  assert.equal(status.status.status, 'ready', JSON.stringify(status));
+  assert.deepEqual(status.status.effort, { status: 'per-model' });
+  assert.deepEqual(
+    status.status.efforts.map(option => option.id),
+    efforts,
+  );
+  const createInput = effort => ({
+    title: 'Claude effort',
+    provider: 'Claude Code',
+    model: 'default',
+    mode: 'read-only',
+    directory: project,
+    ...(effort === undefined ? {} : { effort }),
+  });
+  const refused = await host.request('create-session', createInput('turbo'));
+  assert.equal(refused.code, 'invalid-request', JSON.stringify(refused));
+  assert.match(refused.message, /does not offer the turbo effort/);
+  const created = await host.request('create-session', createInput('high'));
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  assert.equal(created.session.effort, 'high');
+  const sessionId = created.session.id;
+  const launchedEfforts = async () =>
+    (await readFile(launchLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line).args)
+      .filter(args => args.includes('--include-partial-messages'))
+      .map(args =>
+        args.includes('--effort') ? args[args.indexOf('--effort') + 1] : null,
+      );
+  const turn = async (text, selection = {}) => {
+    const response = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+      ...selection,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === response.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  };
+  let session = await turn('Reason carefully.');
+  assert.equal(session.status, 'completed', session.error);
+  session = await turn('Think harder.', { effort: 'max' });
+  assert.equal(session.status, 'completed', session.error);
+  assert.equal(session.effort, 'max');
+  assert.deepEqual(
+    session.messages
+      .filter(message => message.author === 'operator')
+      .map(message => message.effort),
+    ['high', 'max'],
+  );
+  session = await turn('Use the default.', { effort: null });
+  assert.equal(session.status, 'completed', session.error);
+  assert.equal(session.effort, null);
+  session = await turn('Back to max.', { effort: 'max' });
+  assert.equal(session.status, 'completed', session.error);
+  assert.deepEqual(await launchedEfforts(), ['high', 'max', null, 'max']);
+
+  await host.stop();
+  host = open({ NESVO_FIXTURE_NO_EFFORT: '1' });
+  const older = await host.request('claude-status');
+  assert.equal(older.status.status, 'ready', JSON.stringify(older));
+  assert.equal(older.status.effort.status, 'unsupported');
+  assert.match(older.status.effort.reason, /does not offer an effort setting/);
+  assert.deepEqual(older.status.efforts, []);
+  const olderRefused = await host.request(
+    'create-session',
+    createInput('high'),
+  );
+  assert.equal(olderRefused.code, 'invalid-request');
+  assert.match(olderRefused.message, /does not offer an effort setting/);
+  const failed = await turn('Still max.');
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.error, /does not offer the max effort/);
+  assert.equal(failed.effort, 'max');
+  assert.deepEqual(await launchedEfforts(), ['high', 'max', null, 'max']);
+  const recovered = await turn('Default again.', { effort: null });
+  assert.equal(recovered.status, 'completed', recovered.error);
+  assert.deepEqual(await launchedEfforts(), ['high', 'max', null, 'max', null]);
 });
