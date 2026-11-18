@@ -18,6 +18,10 @@ Connection details show the host connection and separate Claude Code and Codex a
 
 Install GitHub CLI on each computer that serves pull requests and run `gh auth login` as the same user that runs the Nesvo host. The host locates `gh` on its PATH. Set `NESVO_GH_EXECUTABLE` to an absolute executable path to override discovery. An absolute `.js`, `.mjs` or `.cjs` fixture runs with the host's Node executable. The integration test selects its fixture this way and uses a private temporary directory.
 
+## Pull requests in a session
+
+When an agent reply contains a link to a pull request in the session's repository, for example after `gh pr create`, Nesvo links that pull request to the session; a worktree session is also linked once its branch has a pull request. Unlinking from the pull request menu is remembered and the same pull request is not linked again automatically. Each pull request link in a reply shows a card with its state, changed files, checks and review state. **Review** opens the pull request beside the conversation, with Summary, Code and Threads, the review submission and the viewed-files count; **Open** shows it in the Pull requests view, where checkout and merge are available. The linked pull request also appears as a chip in the session header, in the session details and under Session results. Ctrl+Shift+G or the **Review pull request** command toggles the review panel for the current session.
+
 ## Build and check
 
 ```sh
