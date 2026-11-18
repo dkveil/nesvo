@@ -56,14 +56,8 @@ export function ContextMeter({ context, provider, compact }: Props) {
           </span>
         </TooltipContent>
       </Tooltip>
-      {high && compact && (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          disabled={compact.disabled}
-          onClick={compact.run}
-        >
+      {high && compact && !compact.disabled && (
+        <Button type="button" size="xs" variant="ghost" onClick={compact.run}>
           Compact
         </Button>
       )}

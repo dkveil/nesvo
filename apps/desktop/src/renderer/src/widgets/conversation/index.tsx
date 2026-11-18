@@ -280,6 +280,9 @@ export function Conversation({
   const compactedAt = new Set(
     session.compactions.map(compaction => compaction.index),
   );
+  const runWithoutMessages =
+    running &&
+    !session.messages.some(message => message.runId === session.runId);
   const empty =
     session.messageCount === 0 &&
     !session.pendingClaudeFork &&
@@ -946,6 +949,11 @@ export function Conversation({
               })}
               {compactedAt.has(session.messageCount) && (
                 <Separator label="Conversation compacted" />
+              )}
+              {runWithoutMessages && (
+                <StatusMessage tone="loading">
+                  {session.activity ?? `${session.provider} is working…`}
+                </StatusMessage>
               )}
               {threadStarts.has(session.messageCount) && (
                 <Separator label="Session restarted" />
