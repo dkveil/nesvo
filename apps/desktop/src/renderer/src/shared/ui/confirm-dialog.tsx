@@ -1,0 +1,98 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Button } from '@/shared/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog';
+
+type ConfirmDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: ReactNode;
+  description: ReactNode;
+  confirmLabel: string;
+  pendingLabel?: string;
+  cancelLabel?: string;
+  tone?: 'destructive' | 'default';
+  onConfirm: () => unknown;
+  children?: ReactNode;
+};
+
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  pendingLabel,
+  cancelLabel = 'Cancel',
+  tone = 'destructive',
+  onConfirm,
+  children,
+}: ConfirmDialogProps) {
+  const [pending, setPending] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const confirm = async () => {
+    setPending(true);
+    try {
+      await onConfirm();
+    } finally {
+      if (mounted.current) {
+        setPending(false);
+        onOpenChange(false);
+      }
+    }
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={next => {
+        if (!pending) onOpenChange(next);
+      }}
+    >
+      <DialogContent
+        data-slot="confirm-dialog"
+        role="alertdialog"
+        className="sm:max-w-sm"
+        showCloseButton={!pending}
+      >
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {children}
+        <DialogFooter>
+          <Button
+            size="lg"
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+          >
+            {cancelLabel}
+          </Button>
+          <Button
+            size="lg"
+            type="button"
+            variant={tone === 'destructive' ? 'destructive' : 'default'}
+            disabled={pending}
+            aria-busy={pending || undefined}
+            onClick={() => void confirm()}
+          >
+            {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

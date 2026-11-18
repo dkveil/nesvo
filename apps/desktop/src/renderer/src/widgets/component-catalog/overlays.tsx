@@ -12,6 +12,7 @@ import {
 import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
   DialogClose,
@@ -215,6 +216,52 @@ function PickerSpecimens() {
   );
 }
 
+const SAMPLE_CONFIRM_DELAY_MS = 900;
+
+function ConfirmSpecimens() {
+  const [open, setOpen] = useState<'destructive' | 'default' | null>(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="outline"
+        aria-haspopup="dialog"
+        onClick={() => setOpen('destructive')}
+      >
+        Remove sample computer
+      </Button>
+      <Button
+        variant="outline"
+        aria-haspopup="dialog"
+        onClick={() => setOpen('default')}
+      >
+        Confirm sample action
+      </Button>
+      <ConfirmDialog
+        open={open === 'destructive'}
+        onOpenChange={next => setOpen(next ? 'destructive' : null)}
+        title="Remove sample computer?"
+        description="Nesvo forgets this computer. Work on it keeps running."
+        confirmLabel="Remove computer"
+        pendingLabel="Removing…"
+        onConfirm={() =>
+          new Promise(resolve =>
+            window.setTimeout(resolve, SAMPLE_CONFIRM_DELAY_MS),
+          )
+        }
+      />
+      <ConfirmDialog
+        open={open === 'default'}
+        onOpenChange={next => setOpen(next ? 'default' : null)}
+        tone="default"
+        title="Start the sample run now?"
+        description="The run starts outside its schedule."
+        confirmLabel="Run now"
+        onConfirm={() => undefined}
+      />
+    </div>
+  );
+}
+
 export function OverlaysSection() {
   return (
     <CatalogSection
@@ -292,6 +339,9 @@ export function OverlaysSection() {
       </Specimen>
       <Specimen title="Listbox and Combobox" source="shared/ui/listbox.tsx">
         <PickerSpecimens />
+      </Specimen>
+      <Specimen title="ConfirmDialog" source="shared/ui/confirm-dialog.tsx">
+        <ConfirmSpecimens />
       </Specimen>
       <Specimen title="Dialog and Sheet" source="dialog.tsx · sheet.tsx">
         <div className="flex flex-wrap items-center gap-2">

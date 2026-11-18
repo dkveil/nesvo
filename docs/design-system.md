@@ -144,6 +144,8 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Dialog / Sheet** — `shared/ui/dialog.tsx`, `shared/ui/sheet.tsx`. Dialog titles are `text-base` semibold and descriptions `text-xs` muted by default; don't override them. Sheet content is `bg-card` with no padding; SheetHeader has the bordered `px-5 py-4` layout and SheetFooter a bordered action row. Both close with a 28 px IconButton.
 
+**ConfirmDialog** — `shared/ui/confirm-dialog.tsx`. Confirmation before an action that cannot be undone from the same place: removing a computer, revoking a device, deleting an automation. An `alertdialog` with `title`, `description`, optional `children` for extra context, a ghost Cancel that takes the initial focus and a `confirmLabel` button (`tone` `destructive` default, or `default`). `onConfirm` may return a promise; while it runs both buttons are disabled, `pendingLabel` replaces the label, Escape and the backdrop do nothing, and the dialog closes when it settles. Reversible actions (archive, move) do not ask. Name the confirm button with the verb and object, not "OK". Triggers carry `aria-haspopup="dialog"`.
+
 **Badge / CountBadge** — `shared/ui/badge.tsx`. Short status labels. `tone` `neutral | info | success | warning | error | accent`, `appearance` `soft | outline`, `size` `xs | sm`. CountBadge shows a number (`max` collapses to `99+`), `strong` or `muted`. Not for interactive filters (use Chip).
 
 **StatusDot** — `shared/ui/status-dot.tsx`. A 6 or 8 px dot with the same tones plus `strong`, `pulse`, and `ringClassName` to cut it out of a surface. Give it a `label` when the dot is the only signal.
@@ -233,4 +235,5 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | A widget-level `<TooltipProvider>`                                            | Remove it; the app shell provides one                              |
 | `title="…"` on icon-only buttons                                              | IconButton `label` (tooltip included)                              |
 | Hand-written `role="separator"` drag strips, resize corner `<button>`s         | `<ResizeHandle variant="edge" | "corner">`                       |
+| Hand-built Cancel + destructive Dialog footers                                | `<ConfirmDialog>`                                                  |
 | Dashed `border-dashed` "add" buttons                                         | `<AddTile>`                                                        |

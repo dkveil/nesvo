@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type {
   DesktopApi,
+  MobileDevice,
   MobileGatewayStatus,
   MobilePairing,
 } from '@nesvo/contracts';
 import { Copy, Smartphone } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
@@ -26,6 +28,7 @@ type Props = {
 export function MobileAccess({ api }: Props) {
   const [status, setStatus] = useState<MobileGatewayStatus | null>(null);
   const [pairing, setPairing] = useState<MobilePairing | null>(null);
+  const [revoking, setRevoking] = useState<MobileDevice | null>(null);
   const [pending, setPending] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -215,11 +218,8 @@ export function MobileAccess({ api }: Props) {
                     variant="ghost"
                     disabled={!!pending}
                     aria-label={`Revoke ${device.name}`}
-                    onClick={() =>
-                      void action(device.id, async () => {
-                        setStatus(await api.revokeMobile(device.id));
-                      })
-                    }
+                    aria-haspopup="dialog"
+                    onClick={() => setRevoking(device)}
                   >
                     Revoke
                   </Button>
@@ -229,6 +229,22 @@ export function MobileAccess({ api }: Props) {
           </SettingsSection>
         </>
       )}
+      <ConfirmDialog
+        open={!!revoking}
+        onOpenChange={open => {
+          if (!open) setRevoking(null);
+        }}
+        title={`Revoke ${revoking?.name ?? 'device'}?`}
+        description="The phone is disconnected and can no longer reach your sessions. Pair it again to restore access."
+        confirmLabel="Revoke device"
+        pendingLabel="Revoking…"
+        onConfirm={() =>
+          revoking &&
+          action(revoking.id, async () => {
+            setStatus(await api.revokeMobile(revoking.id));
+          })
+        }
+      />
     </div>
   );
 }

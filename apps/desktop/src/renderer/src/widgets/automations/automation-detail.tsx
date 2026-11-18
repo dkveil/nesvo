@@ -23,14 +23,7 @@ import type { Review } from '@/entities/review';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Badge } from '@/shared/ui/badge';
 import {
   DropdownMenu,
@@ -115,7 +108,6 @@ export function AutomationDetail({
 }: Props) {
   const now = useNow(30_000);
   const [confirming, setConfirming] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const activeRun = runs.find(isActiveRun);
   const connected = computer?.status === 'connected';
   const reviewOf = (run: ScheduledJobRun) =>
@@ -334,47 +326,15 @@ export function AutomationDetail({
           )}
         </section>
       </section>
-      <Dialog
+      <ConfirmDialog
         open={confirming}
-        onOpenChange={open => {
-          if (!deleting) setConfirming(open);
-        }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete {job.name}?</DialogTitle>
-            <DialogDescription>
-              Its schedule and run history are removed. Sessions and results it
-              created stay in your history.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              size="lg"
-              type="button"
-              variant="ghost"
-              disabled={deleting}
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="lg"
-              type="button"
-              variant="destructive"
-              disabled={deleting}
-              onClick={async () => {
-                setDeleting(true);
-                const deleted = await onDelete();
-                setDeleting(false);
-                if (!deleted) setConfirming(false);
-              }}
-            >
-              {deleting ? 'Deleting…' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setConfirming}
+        title={`Delete ${job.name}?`}
+        description="Its schedule and run history are removed. Sessions and results it created stay in your history."
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        onConfirm={onDelete}
+      />
     </ScrollArea>
   );
 }

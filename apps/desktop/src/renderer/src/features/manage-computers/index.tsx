@@ -7,6 +7,7 @@ import {
 import { Monitor, Plus, Server } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { Field } from '@/shared/ui/field';
 import { InlineNotice } from '@/shared/ui/inline-notice';
@@ -65,6 +66,7 @@ const statusLabels: Record<Computer['status'], string> = {
 
 export function ManageComputers({ computers, api, onBusyChange }: Props) {
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
   useEffect(() => {
     onBusyChange?.(!!pending);
@@ -233,11 +235,8 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                         computer.status === 'connecting' ||
                         computer.status === 'syncing'
                       }
-                      onClick={() =>
-                        void action(computer.id, () =>
-                          api.removeComputer(computer.id),
-                        )
-                      }
+                      aria-haspopup="dialog"
+                      onClick={() => setRemoving(computer)}
                       aria-label={`Remove computer: ${computer.name}`}
                     >
                       Remove
@@ -275,6 +274,19 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
           Sessions, files and provider accounts stay on their computer.
         </p>
       </div>
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={open => {
+          if (!open) setRemoving(null);
+        }}
+        title={`Remove ${removing?.name ?? 'computer'}?`}
+        description="Nesvo forgets this computer and its offline snapshot. Work on the computer keeps running and its sessions stay there; add it again to reconnect."
+        confirmLabel="Remove computer"
+        pendingLabel="Removing…"
+        onConfirm={() =>
+          removing && action(removing.id, () => api.removeComputer(removing.id))
+        }
+      />
       {adding && (
         <SettingsSection title="Add SSH computer">
           <form className="space-y-4 p-3" onSubmit={submit}>
