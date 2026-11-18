@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promptSkillSchema } from '../skills';
 import { stepNameSchema } from '../workflows/definitions';
 import { claudeModelSchema } from '../sessions';
 import {
@@ -153,6 +154,7 @@ const scheduledJobDefinitionShape = {
     .trim()
     .max(scheduledJobLimits.prompt)
     .regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/),
+  promptSkill: promptSkillSchema.optional(),
   directory: z.string().trim().max(scheduledJobLimits.directory),
   provider: scheduledJobProviderSchema,
   model: z.string().trim().min(1).max(scheduledJobLimits.model),
@@ -182,6 +184,11 @@ const enforceRitualRules = (
 ) => {
   const issue = (field: string, message: string) =>
     context.addIssue({ code: 'custom', path: [field], message });
+  if (
+    value.promptSkill &&
+    (value.pullRequestReview || (value.workflow && !value.browser))
+  )
+    issue('promptSkill', 'Choose a skill for a prompt that starts a session.');
   if (value.mode !== 'read-only') {
     if (
       value.mode !==

@@ -18,6 +18,7 @@ import {
   type SessionService,
 } from '../sessions/service';
 import { WorkflowRunError } from '../workflows/runner';
+import { savedSkillInput } from '../skills/service';
 import { FolderError, resolveFolder } from '../workspace/folder';
 import {
   WorkspaceIsolationError,
@@ -74,6 +75,7 @@ export type ScheduledWorkflows = {
       previousReport?: string;
       browser?: boolean;
       prompt?: string;
+      promptSkill?: ScheduledJob['promptSkill'];
     },
   ) => Promise<WorkflowRun>;
   getRun: (runId: string) => WorkflowRun | undefined;
@@ -396,6 +398,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
           previousReport,
           browser: scheduledJob.browser,
           prompt: scheduledJob.browser ? scheduledJob.prompt : undefined,
+          promptSkill: scheduledJob.promptSkill,
         },
       );
     } catch (error) {
@@ -511,6 +514,11 @@ export class SessionLauncher implements ScheduledJobLauncher {
       const task = ciHead
         ? `${scheduledJob.prompt}\n\nInvestigate the failing checks, apply a fix in this worktree and report the checks you ran. Pull request and log data:\n${ciHead.context}`
         : scheduledJob.prompt;
+      const skill = scheduledJob.promptSkill
+        ? savedSkillInput(scheduledJob.promptSkill, session.worktree && writable
+            ? { projectDirectory: session.worktree.projectDirectory, directory: session.directory }
+            : undefined)
+        : undefined;
       for (;;) {
         this.controller.signal.throwIfAborted();
         try {
@@ -519,7 +527,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
             messageId: firstMessageId(run.id),
             ...(writable ? { mode: scheduledJob.mode } : {}),
             text: automationContext(task, previousReport),
-          });
+            ...(skill ? { skillId: skill.skillId, skillHash: skill.skillHash } : {}),
+          }, { savedSkill: skill?.savedSkill });
           return { sessionId, runId: started.runId! };
         } catch (error) {
           if (!(error instanceof FolderBusyError)) throw error;
@@ -556,8 +565,9 @@ export class SessionLauncher implements ScheduledJobLauncher {
     this.deadlines.add(deadline);
     const check = () => {
       this.deadlines.delete(poll);
-      const status = this.settledStatus(workflows, workflowRunId);
-      if (!status) return schedule();
+      const workflow = this.settledRun(workflows, workflowRunId);
+      if (!workflow) return schedule();
+      const { status } = workflow;
       this.clock.clearTimer(deadline);
       this.deadlines.delete(deadline);
       try {
@@ -565,6 +575,9 @@ export class SessionLauncher implements ScheduledJobLauncher {
           ...toWorkflowOutcome(status, timedOut),
           ...(status === 'passed'
             ? { report: workflows.report?.(workflowRunId) }
+            : {}),
+          ...(status === 'failed' && scheduledJob.promptSkill && workflow.attention
+            ? { detail: workflow.attention.slice(0, 400) }
             : {}),
         });
       } catch {
@@ -578,13 +591,13 @@ export class SessionLauncher implements ScheduledJobLauncher {
     schedule();
   }
 
-  private settledStatus(
+  private settledRun(
     workflows: ScheduledWorkflows,
     workflowRunId: string,
-  ): WorkflowRun['status'] | null {
+  ): WorkflowRun | null {
     try {
-      const status = workflows.getRun(workflowRunId)?.status;
-      return status && WORKFLOW_SETTLED.has(status) ? status : null;
+      const run = workflows.getRun(workflowRunId);
+      return run && WORKFLOW_SETTLED.has(run.status) ? run : null;
     } catch {
       return null;
     }
@@ -613,6 +626,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
           const result = toRunOutcome(outcome, timedOut);
           if (result.resetAt)
             this.limits.remember(scheduledJob.provider, result.resetAt);
+          if (scheduledJob.promptSkill && result.status === 'failed' && outcome.error)
+            return { ...result, detail: outcome.error.slice(0, 400) };
           return result;
         },
         (): ScheduledJobRunOutcome => ({

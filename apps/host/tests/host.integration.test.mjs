@@ -6780,6 +6780,147 @@ test(
 );
 
 test(
+  'a saved automation revalidates its selected skill in the managed worktree before each turn',
+  { timeout: 60_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-prompt-skill-')),
+    );
+    const data = join(root, 'data');
+    const project = join(root, 'project');
+    const pidFile = join(root, 'pids.json');
+    const skillPath = join(
+      project,
+      '.agents',
+      'skills',
+      'fixture-project-skill',
+      'SKILL.md',
+    );
+    await mkdir(join(skillPath, '..'), { recursive: true });
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=fixture@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        { cwd: project },
+      );
+    const snapshot =
+      '---\nname: Fixture project skill\ndescription: Fixture instructions.\n---\nInspect the project.\n';
+    const commitSkill = async text => {
+      await writeFile(skillPath, text);
+      await git('add', '.agents');
+      await git('commit', '-qm', 'Update skill fixture');
+    };
+    await git('init', '-qb', 'main');
+    await git('config', 'core.autocrlf', 'false');
+    await commitSkill(snapshot);
+    let host = launch(data, pidFile);
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited.catch(() => undefined);
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const catalog = await host.request('discover-skills', {
+      provider: 'Codex',
+      directory: project,
+    });
+    assert.equal(catalog.type, 'skills', JSON.stringify(catalog));
+    const entry = catalog.catalog.skills.find(item => item.path === skillPath);
+    assert.equal(entry?.invocation, 'native');
+    const { id: skillId, name, path, source, origins, contentHash } = entry;
+    const promptSkill = {
+      id: skillId,
+      name,
+      path,
+      source,
+      origins,
+      contentHash,
+      delivery: 'native',
+    };
+    const id = randomUUID();
+    const saved = await host.request('save-scheduled-job', {
+      id,
+      expectedRevision: null,
+      name: 'Saved skill ritual',
+      prompt: 'Summarize the project.',
+      promptSkill,
+      directory: project,
+      provider: 'codex',
+      model: 'default',
+      effort: null,
+      mode: 'supervised',
+      schedule: { kind: 'daily', time: '09:00' },
+      active: false,
+    });
+    assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+    assert.deepEqual(saved.scheduledJob.promptSkill, promptSkill);
+    await host.stop();
+    host = launch(data, pidFile);
+
+    const runNow = async () => {
+      const started = await host.request('run-scheduled-job-now', {
+        id,
+        requestId: randomUUID(),
+      });
+      assert.equal(started.type, 'scheduled-job-run', JSON.stringify(started));
+      const deadline = Date.now() + 20_000;
+      for (;;) {
+        const page = await host.request('list-scheduled-job-runs', {
+          scheduledJobId: id,
+        });
+        const run = page.page.runs.find(item => item.id === started.run.id);
+        if (run?.finishedAt) return run;
+        assert.ok(Date.now() < deadline, JSON.stringify(page));
+        await delay(50);
+      }
+    };
+    const completed = await runNow();
+    assert.equal(completed.status, 'completed', JSON.stringify(completed));
+    const session = (
+      await host.request('get-session', { sessionId: completed.sessionId })
+    ).session;
+    assert.ok(session.worktree);
+    assert.equal(session.mode, 'supervised');
+    assert.equal(session.messages[0].skillId, skillId);
+    assert.equal(session.messages[0].skill.contentHash, contentHash);
+    assert.equal(session.messages[0].skill.delivery, 'native');
+    assert.equal(
+      session.messages[0].skill.path,
+      join(
+        session.directory,
+        '.agents',
+        'skills',
+        'fixture-project-skill',
+        'SKILL.md',
+      ),
+    );
+    const loggedTurns = await readFile(pidFile + '.turns', 'utf8');
+    assert.match(loggedTurns, /Summarize the project/);
+
+    await commitSkill(
+      snapshot.replace('Inspect the project.', 'Different instructions.'),
+    );
+    const changed = await runNow();
+    assert.equal(changed.status, 'failed');
+    assert.match(changed.detail, /selected skill changed/i);
+    await commitSkill(
+      snapshot.replace('description:', 'enabled: false\ndescription:'),
+    );
+    const disabled = await runNow();
+    assert.equal(disabled.status, 'failed');
+    assert.match(disabled.detail, /disabled/i);
+    assert.equal(await readFile(pidFile + '.turns', 'utf8'), loggedTurns);
+  },
+);
+
+test(
   'host serves scheduled job commands, interrupts claimed runs and keeps sessions on delete',
   { timeout: 60_000 },
   async t => {

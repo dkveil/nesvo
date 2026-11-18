@@ -99,7 +99,12 @@ const jobValues = (job: ScheduledJob) => [
   job.pendingStart ? JSON.stringify(job.pendingStart) : null,
   job.nextRunAt,
   job.updatedAt,
-  JSON.stringify({ mode: job.mode, browser: job.browser, redCi: job.redCi }),
+  JSON.stringify({
+    mode: job.mode,
+    browser: job.browser,
+    redCi: job.redCi,
+    promptSkill: job.promptSkill,
+  }),
 ];
 
 const CURSOR_PATTERN =

@@ -1,8 +1,9 @@
 import { lstat, realpath } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   skillCatalogSchema,
   skillLimits,
+  type PromptSkill,
   type Session,
   type SkillEntry,
   type SkillReference,
@@ -222,27 +223,78 @@ export async function discoverDirectorySkills(
     .catalog;
 }
 
+type SkillWorktree = { projectDirectory: string; directory: string };
+
+export type SavedSkill = {
+  reference: PromptSkill;
+  worktree?: SkillWorktree;
+};
+
+export const savedSkillInput = (
+  reference: PromptSkill,
+  worktree?: SkillWorktree,
+) => ({
+  skillId: reference.id,
+  skillHash: reference.contentHash,
+  savedSkill: { reference, worktree },
+});
+
+const worktreeSkillPath = (
+  reference: PromptSkill,
+  worktree?: SkillWorktree,
+) => {
+  if (!worktree || reference.source !== 'project') return;
+  const path = relative(worktree.projectDirectory, reference.path);
+  if (
+    path &&
+    !isAbsolute(path) &&
+    path !== '..' &&
+    !path.startsWith('..' + sep)
+  )
+    return resolve(worktree.directory, path);
+};
+
 export async function resolveSessionSkill(
   session: Session,
   skillId: string,
   expectedHash: string | undefined,
   signal: AbortSignal,
   profileDirectory?: string,
+  saved?: SavedSkill,
 ) {
   const { catalog, nativeById, snapshots, rootsSupported } = await loadLibrary(
     session,
     signal,
     profileDirectory,
   );
-  const entry = catalog.skills.find(skill => skill.id === skillId);
+  const referencePath =
+    saved && worktreeSkillPath(saved.reference, saved.worktree);
+  const entry = catalog.skills.find(skill =>
+    referencePath
+      ? skill.path && pathKey(skill.path) === pathKey(referencePath)
+      : skill.id === skillId,
+  );
   if (!entry)
     throw new Error(
       'The selected skill is no longer available. Refresh the library and select it again.',
+    );
+  if (entry.enabled === false)
+    throw new Error(
+      'The selected skill is disabled. Enable it in its source or select another skill.',
     );
   if (entry.invocation === 'blocked' || !entry.path)
     throw new Error(
       entry.invocationReason ||
         'The selected skill is not compatible with this connection.',
+    );
+  if (
+    saved &&
+    (pathKey(entry.path) !== pathKey(referencePath ?? saved.reference.path) ||
+      entry.source !== saved.reference.source ||
+      entry.invocation !== saved.reference.delivery)
+  )
+    throw new Error(
+      'The selected skill cannot be used with this provider or source. Select it again.',
     );
   if (entry.contentHash && entry.contentHash !== expectedHash)
     throw new Error(

@@ -126,6 +126,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'type',
     'phase',
     'skill',
+    'prompt_skill',
     'timeout',
     'retries',
     'retry_backoff',

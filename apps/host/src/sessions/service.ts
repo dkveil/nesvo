@@ -131,7 +131,7 @@ import {
   type FolderRequest,
   type FolderWait,
 } from './folder-locks';
-import { resolveSessionSkill } from '../skills/service';
+import { resolveSessionSkill, type SavedSkill } from '../skills/service';
 import {
   readSkillSnapshot,
   sharedSkillPrompt,
@@ -401,6 +401,7 @@ export type WorkflowTurn = {
   readOnly?: boolean;
   skillId?: string;
   skillHash?: string;
+  savedSkill?: SavedSkill;
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
   instructionsOnly?: boolean;
@@ -490,6 +491,7 @@ const sameAttachments = (
 type LaunchTurn = {
   skillId?: string;
   skillHash?: string;
+  savedSkill?: SavedSkill;
   attachments?: readonly MessageAttachment[];
   readOnly?: boolean;
   outputSchema?: Record<string, unknown>;
@@ -789,6 +791,15 @@ export class SessionService {
     return reply ? 'running' : 'failed';
   }
 
+  failedSkillTurn(sessionId: string, messageId: string): string | null {
+    const session = this.unsaved.get(sessionId) ?? this.store.get(sessionId);
+    if (!session || session.status !== 'failed') return null;
+    const request = session.messages.find(message => message.id === messageId);
+    return request?.skillId && request.runId === session.runId
+      ? session.error
+      : null;
+  }
+
   turnReply(sessionId: string, messageId: string): string | null {
     const session =
       this.active.get(sessionId)?.session ?? this.store.get(sessionId);
@@ -857,6 +868,7 @@ export class SessionService {
       readOnly: turn.readOnly,
       skillId: turn.skillId,
       skillHash: turn.skillHash,
+      savedSkill: turn.savedSkill,
       outputSchema: turn.outputSchema,
       ephemeral,
       instructionsOnly: turn.instructionsOnly,
@@ -2221,7 +2233,10 @@ export class SessionService {
 
   send(
     input: SendMessageInput,
-    turn: Pick<LaunchTurn, 'outputSchema' | 'instructionsOnly'> & {
+    turn: Pick<
+      LaunchTurn,
+      'outputSchema' | 'instructionsOnly' | 'savedSkill'
+    > & {
       session?: Session;
     } = {},
   ): Session {
@@ -2325,6 +2340,7 @@ export class SessionService {
     this.launch(session, prompt, {
       skillId: input.skillId,
       skillHash: input.skillHash,
+      savedSkill: turn.savedSkill,
       ...(delivered.attachments ? { attachments: delivered.attachments } : {}),
       ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
       ...(turn.instructionsOnly ? { instructionsOnly: true } : {}),
@@ -3561,6 +3577,7 @@ export class SessionService {
     {
       skillId,
       skillHash,
+      savedSkill,
       attachments = [],
       readOnly,
       outputSchema,
@@ -3654,7 +3671,8 @@ export class SessionService {
       );
       if (
         !message ||
-        message.skillId !== skill.id ||
+        message.skillId !== skillId ||
+        (!savedSkill && skillId !== skill.id) ||
         message.skillHash !== skillHash
       )
         throw new Error('Skill selection no longer matches this message.');
@@ -3734,6 +3752,7 @@ export class SessionService {
               skillHash,
               controller.signal,
               profileDirectory,
+              savedSkill,
             );
             if (selected.reference.delivery === 'instructions')
               recordSkill(selected.reference);

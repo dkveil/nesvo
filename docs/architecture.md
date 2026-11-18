@@ -1,5 +1,9 @@
 # Architecture
 
+## Saved prompt skills
+
+Automation prompts and workflow steps keep the skill ID, source and snapshot hash. The host checks the current provider catalog and snapshot before the turn. For a project skill in a managed worktree it checks the corresponding file in the worktree. Codex receives the native skill input, and Claude Code receives validated shared instructions. The turn keeps its existing permission mode.
+
 ## Workspace shell
 
 The desktop shell is one resizable sidebar and a conversation column. The navigation rail holds the sidebar toggle and the shell draws the product name in the title row at a fixed offset from the rail, so neither moves when the sidebar collapses. The sidebar carries a search row with the new-session action, the Inbox entry, the session list and a footer. The footer holds Settings and one usage ring per provider on the left, and the selected computer (opening Settings › Computers) on the right. Sessions are grouped by computer when more than one computer is known; each row shows one status dot (a spinner while it works, warning when it needs the operator, error, success, a neutral dot when idle and a hollow ring when its computer is offline, with the full status in a tooltip and in the accessible name), the title, the relative time of the last update or a warning-toned `Needs you`, the working-directory basename, a cloud mark for remote sessions and the provider mark, with workers nested under their parent. Provider marks are small inline SVG drawings in the current text colour, a ray burst for Claude Code and an interlaced knot for Codex, used wherever the app identifies a provider: session rows, usage rings and bars, the model picker, the composer and the session card. The header shows a breadcrumb of project chip, directory and session title and keeps the workflow status or session details button and the skills, files and context toggles at the right.

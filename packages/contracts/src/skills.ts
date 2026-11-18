@@ -49,6 +49,13 @@ export const skillReferenceSchema = skillEntrySchema
     contentHash: skillHashSchema.optional(),
   });
 
+export const promptSkillSchema = skillReferenceSchema.extend({
+  delivery: z.enum(['native', 'instructions']),
+  contentHash: skillHashSchema,
+});
+
+export type PromptSkill = z.infer<typeof promptSkillSchema>;
+
 export const skillDiscoverySchema = z.strictObject({
   provider: skillProviderSchema,
   method: z.enum(['native', 'filesystem', 'library']),

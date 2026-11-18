@@ -126,6 +126,7 @@ export const automationsIn = (
 const automationDefinition = (job: ScheduledJob) => ({
   name: job.name,
   prompt: job.prompt,
+  ...(job.promptSkill ? { promptSkill: job.promptSkill } : {}),
   directory: job.directory,
   provider: job.provider,
   model: job.model,

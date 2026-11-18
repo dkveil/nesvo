@@ -23,7 +23,7 @@ import type {
   SessionService,
 } from '../../sessions/service';
 import { exhaustedUntil } from '../../scheduled-jobs/limit-gate';
-import { discoverDirectorySkills } from '../../skills/service';
+import { discoverDirectorySkills, savedSkillInput } from '../../skills/service';
 import type { StepExecution, StepExecutor, StepOutcome } from '../runner';
 import { maskProbeText } from './sensitive-patterns';
 
@@ -436,7 +436,12 @@ export const createAgentExecutor =
     const quota = quotaReason(usage, execution.now());
     if (quota) return result('blocked', quota);
 
-    let skill: StepSkill | null = null;
+    let skill: StepSkill | ReturnType<typeof savedSkillInput> | null =
+      definition.prompt_skill
+        ? savedSkillInput(definition.prompt_skill, run.isolation
+            ? { projectDirectory: run.projectRoot, directory: run.isolation.worktree }
+            : undefined)
+        : null;
     if (definition.skill) {
       const resolved = await resolveStepSkill(
         ports,
@@ -469,7 +474,7 @@ export const createAgentExecutor =
           : undefined,
       hasSession: run.sessionId !== null,
       body: display(definition.body),
-      skill: definition.skill,
+      skill: definition.prompt_skill?.name ?? definition.skill,
       probeFindings: findings,
     });
 
@@ -540,12 +545,7 @@ export const createAgentExecutor =
             ephemeral: true,
             privateResponse,
             instructionsOnly: true,
-            ...(skill
-              ? {
-                  skillId: skill.skillId,
-                  ...(skill.skillHash ? { skillHash: skill.skillHash } : {}),
-                }
-              : {}),
+            ...skill,
           });
         let sent = send();
         while (sent === 'busy') {

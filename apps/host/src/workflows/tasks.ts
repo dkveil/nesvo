@@ -20,6 +20,7 @@ import {
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { adoptLegacyFolder } from './legacy-folders';
 import { automationContext } from '../scheduled-jobs/reports';
+import { savedSkillInput } from '../skills/service';
 import {
   BudgetRefusal,
   SessionError,
@@ -62,11 +63,12 @@ type WorkflowAutomationContext = {
   previousReport?: string;
   browser?: boolean;
   prompt?: string;
+  promptSkill?: WorkflowRun['promptSkill'];
 };
 
 type AuthorSessions = Pick<
   SessionService,
-  'turnState' | 'turnReply' | 'sendWorkflowTurn' | 'continueWithFeedback' | 'stopActive'
+  'turnState' | 'turnReply' | 'failedSkillTurn' | 'sendWorkflowTurn' | 'continueWithFeedback' | 'stopActive'
 >;
 
 type TaskSessions = Pick<
@@ -171,22 +173,33 @@ export const createSessionAuthor = ({
       sessionId,
       turnMessageId(run.id, 'plan', 1),
     );
+    const parent = run.parent ? store.getRun(run.parent.runId) : undefined;
+    const worktree = run.isolation ?? parent?.isolation;
+    const skill = run.promptSkill && (turn.kind === 'plan' || !plan)
+      ? savedSkillInput(run.promptSkill, worktree
+          ? { projectDirectory: parent?.projectRoot ?? run.projectRoot, directory: worktree.worktree }
+          : undefined)
+      : undefined;
     return turn.kind === 'plan'
       ? sessions.sendWorkflowTurn({
           sessionId,
           messageId: turn.messageId,
           text: planPrompt(spec),
+          ...skill,
           readOnly: true,
         })
       : sessions.sendWorkflowTurn({
           sessionId,
           messageId: turn.messageId,
           text: run.parent && !plan ? spec : implementPrompt(spec, plan),
+          ...skill,
         });
   };
   return {
     turnState: (run, messageId): WorkflowTurnState =>
       run.sessionId ? sessions.turnState(run.sessionId, messageId) : 'none',
+    failedSkillTurn: (run, messageId) =>
+      run.sessionId ? sessions.failedSkillTurn(run.sessionId, messageId) : null,
     sendTurn: turn => {
       const run = store.getRun(turn.runId);
       if (!run?.sessionId) return 'unavailable';
@@ -369,6 +382,7 @@ export class WorkflowTasks {
           : loaded.spec.body,
         workflow,
         isolation,
+        promptSkill: automation?.promptSkill,
       });
     } catch (error) {
       if (isolation && !this.ports.store.getRun(runId))
@@ -398,6 +412,7 @@ export class WorkflowTasks {
       body,
       workflow,
       isolation,
+      promptSkill,
     }: {
       runId: string;
       title: string;
@@ -406,6 +421,7 @@ export class WorkflowTasks {
       body: string;
       workflow: ResolvedWorkflow;
       isolation: WorkflowIsolation | null;
+      promptSkill?: WorkflowRun['promptSkill'];
     },
   ): WorkflowRun {
     this.ensureIdle(projectRoot);
@@ -421,6 +437,7 @@ export class WorkflowTasks {
       specPath: loaded.source.path,
       specHash: loaded.source.contentHash,
       specTitle: title,
+      ...(promptSkill ? { promptSkill } : {}),
       sessionId: null,
       directory: runDirectory,
       projectRoot,

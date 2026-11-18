@@ -1,3 +1,4 @@
+import { savedSkillInput } from '../skills/service';
 import {
   ASSISTANT_CHANGE_FENCE,
   assistantOperationSchema,
@@ -230,6 +231,7 @@ export class WorkflowAssistant {
         }),
         changed,
         input.text,
+        input.promptSkill,
       );
     }
     const sessionInput = existing ? null : this.sessionInput(input, directory);
@@ -260,6 +262,7 @@ export class WorkflowAssistant {
       }),
       document,
       input.text,
+      input.promptSkill,
     );
   }
 
@@ -277,9 +280,10 @@ export class WorkflowAssistant {
     text: string,
     document: WorkflowAssistantDocument | null,
     request: string,
+    skill?: AssistantSendInput['promptSkill'],
   ): WorkflowAssistantTurn {
     const messageId = randomUUID();
-    if (this.sendTurn(sessionId, messageId, text) === 'busy') throw this.busy();
+    if (this.sendTurn(sessionId, messageId, text, skill) === 'busy') throw this.busy();
     if (document) this.lastHash.set(sessionId, document.contentHash);
     this.pending.set(sessionId, {
       context: { conversationId: sessionId, messageId, directory },
@@ -294,7 +298,12 @@ export class WorkflowAssistant {
     return { sessionId, messageId };
   }
 
-  private sendTurn(sessionId: string, messageId: string, text: string) {
+  private sendTurn(
+    sessionId: string,
+    messageId: string,
+    text: string,
+    skill?: AssistantSendInput['promptSkill'],
+  ) {
     return this.ports.sessions.sendWorkflowTurn({
       sessionId,
       messageId,
@@ -302,6 +311,7 @@ export class WorkflowAssistant {
       readOnly: true,
       assistant: true,
       assistantPrompt: ASSISTANT_SYSTEM_PROMPT,
+      ...(skill ? savedSkillInput(skill) : {}),
     });
   }
 

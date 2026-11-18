@@ -63,6 +63,7 @@ export type AuthorTurn =
 
 export type AuthorPort = {
   turnState: (run: WorkflowRun, messageId: string) => TurnState;
+  failedSkillTurn?: (run: WorkflowRun, messageId: string) => string | null;
   sendTurn: (
     turn: AuthorTurn,
   ) => 'sent' | 'busy' | 'unavailable' | { refusal: string };
@@ -269,6 +270,7 @@ export type Move =
 
 export type MoveContext = {
   turnState: (messageId: string) => TurnState;
+  failedSkillTurn?: (messageId: string) => string | null;
   hasAuthor: boolean;
   now?: number;
 };
@@ -335,15 +337,17 @@ const turnMove = (
   state: TurnState,
   turn: AuthorTurn,
   completed: () => Move,
+  failedSkillTurn?: MoveContext['failedSkillTurn'],
 ): Move => {
   const label = TURN_LABELS[turn.kind];
   if (state === 'none') return { kind: 'send-turn', turn };
   if (state === 'completed') return completed();
-  if (state === 'failed')
-    return {
-      kind: 'attention',
-      message: `The ${label} turn failed. Open the session for details.`,
-    };
+  if (state === 'failed') {
+    const skillFailure = failedSkillTurn?.(turn.messageId);
+    return skillFailure
+      ? { kind: 'finish', status: 'failed', message: skillFailure }
+      : { kind: 'attention', message: `The ${label} turn failed. Open the session for details.` };
+  }
   if (state === 'stopped')
     return {
       kind: 'finish',
@@ -409,15 +413,11 @@ const authorMove = (
       : afterPlanning(run);
   if (run.status === 'planning') {
     const turn = authorTurn(run, 'plan');
-    return turnMove(context.turnState(turn.messageId), turn, () =>
-      afterPlanning(run),
-    );
+    return turnMove(context.turnState(turn.messageId), turn, () => afterPlanning(run), context.failedSkillTurn);
   }
   if (run.status === 'implementing') {
     const turn = authorTurn(run, 'implement');
-    return turnMove(context.turnState(turn.messageId), turn, () =>
-      afterImplementation(run),
-    );
+    return turnMove(context.turnState(turn.messageId), turn, () => afterImplementation(run), context.failedSkillTurn);
   }
   if (run.status === 'fixing') return fixMove(run, steps, context);
   return WAIT;
@@ -968,6 +968,7 @@ export class WorkflowRunner {
       const move = nextMove(run, steps, {
         turnState: messageId =>
           run.sessionId && author ? author.turnState(run, messageId) : 'none',
+        failedSkillTurn: run.promptSkill ? messageId => author?.failedSkillTurn?.(run, messageId) ?? null : undefined,
         hasAuthor: Boolean(author),
         now: this.clock.now().getTime(),
       });

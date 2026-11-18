@@ -144,6 +144,7 @@ export class ChildRuns {
       specPath: run.specPath,
       specHash: createHash('sha256').update(item.prompt).digest('hex'),
       specTitle: item.title,
+      ...(execution.definition.prompt_skill ? { promptSkill: execution.definition.prompt_skill } : {}),
       sessionId: session.id,
       parent: {
         runId: run.id,

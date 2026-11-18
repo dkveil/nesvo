@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promptSkillSchema, type PromptSkill } from '../skills';
 import { parsePullRequestUrl } from '../pull-requests';
 import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 import {
@@ -125,6 +126,7 @@ const stepDefinitionShape = {
   type: stepTypeSchema,
   phase: stepPhaseSchema,
   skill: stepSkillSchema.nullable().default(null),
+  prompt_skill: promptSkillSchema.optional(),
   timeout: durationSchema.default('15m'),
   pr: prExpressionSchema.optional(),
   probe: probeKindSchema.optional(),
@@ -179,6 +181,7 @@ const stepDefinitionShape = {
 type StepRuleSubject = {
   type: z.infer<typeof stepTypeSchema>;
   skill: string | null;
+  prompt_skill?: PromptSkill;
   retries: number;
   pr?: string;
   probe?: z.infer<typeof probeKindSchema>;
@@ -271,6 +274,15 @@ const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
       code: 'custom',
       path: ['effect'],
       message: 'Only command and action steps declare an external effect.',
+    });
+  if (
+    value.prompt_skill &&
+    ((!child && value.type !== 'agent') || value.skill !== null)
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['prompt_skill'],
+      message: 'Choose one skill for an agent or child session prompt.',
     });
   if (value.type !== 'agent' && value.skill !== null)
     context.addIssue({

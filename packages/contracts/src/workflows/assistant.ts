@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promptSkillSchema } from '../skills';
 import { reasoningEffortSchema } from '../reasoning-effort';
 import { providerSchema } from '../sessions';
 import {
@@ -53,6 +54,7 @@ export const workflowAssistantSendSchema = z.strictObject({
   model: z.string().trim().min(1).max(workflowAssistantLimits.model),
   effort: reasoningEffortSchema.nullable().default(null),
   text: z.string().trim().min(1).max(workflowAssistantLimits.text),
+  promptSkill: promptSkillSchema.optional(),
   context: workflowAssistantContextSchema,
 });
 

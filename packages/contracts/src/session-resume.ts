@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promptSkillSchema } from './skills';
 import type { Session } from './sessions';
 
 export const resumableSessionStates = [
@@ -12,6 +13,7 @@ export const resumeSessionSchema = z.strictObject({
   messageId: z.uuid(),
   revision: z.number().int().nonnegative(),
   text: z.string().trim().min(1).max(32000),
+  promptSkill: promptSkillSchema.optional(),
 });
 export type ResumeSessionInput = z.infer<typeof resumeSessionSchema>;
 

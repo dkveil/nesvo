@@ -5,15 +5,10 @@ import {
   type Session,
 } from '@nesvo/contracts';
 import { SessionError } from './session-error';
+import { savedSkillInput } from '../skills/service';
+import type { SessionService } from './service';
 
-type ResumeSessions = {
-  snapshot: (sessionId: string) => Session | undefined;
-  send: (input: {
-    sessionId: string;
-    messageId: string;
-    text: string;
-  }) => Session;
-};
+type ResumeSessions = Pick<SessionService, 'snapshot' | 'send'>;
 
 export const resumeSession = (
   sessions: ResumeSessions,
@@ -22,13 +17,17 @@ export const resumeSession = (
   const session = sessions.snapshot(input.sessionId);
   if (!session)
     throw new SessionError('not-found', 'Session not found. Refresh the list.');
+  const skill = input.promptSkill
+    ? savedSkillInput(input.promptSkill)
+    : undefined;
   const message = {
     sessionId: input.sessionId,
     messageId: input.messageId,
     text: input.text,
+    ...(skill ? { skillId: skill.skillId, skillHash: skill.skillHash } : {}),
   };
   if (session.messages.some(item => item.id === input.messageId))
-    return sessions.send(message);
+    return sessions.send(message, { savedSkill: skill?.savedSkill });
   const blocker = sessionResumeBlocker(session);
   if (blocker)
     throw new SessionError(
@@ -42,5 +41,5 @@ export const resumeSession = (
       'invalid-request',
       'The session changed. Review the continuation message and resume again.',
     );
-  return sessions.send(message);
+  return sessions.send(message, { savedSkill: skill?.savedSkill });
 };

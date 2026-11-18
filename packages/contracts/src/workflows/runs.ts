@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { promptSkillSchema } from '../skills';
 import { providerSchema } from '../sessions';
 import { pullRequestReferenceSchema } from '../pull-requests';
 import {
@@ -92,6 +93,7 @@ export const workflowRunSchema = z.strictObject({
   specTitle: z.string().min(1).max(workflowDefinitionLimits.specTitle),
   sessionId: idSchema.nullable(),
   manual: z.literal(true).optional(),
+  promptSkill: promptSkillSchema.optional(),
   parent: z
     .strictObject({
       runId: idSchema,
