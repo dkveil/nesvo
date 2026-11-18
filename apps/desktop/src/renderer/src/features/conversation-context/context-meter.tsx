@@ -23,9 +23,8 @@ const reportedTime = (iso: string) =>
   });
 
 export function ContextMeter({ context, provider, compact }: Props) {
-  if (!context) return null;
+  if (!context || !suggestsCompaction(context)) return null;
   const percent = contextPercent(context);
-  const high = suggestsCompaction(context);
   return (
     <div className="flex shrink-0 items-center gap-1" data-context-meter="">
       <Tooltip>
@@ -37,7 +36,7 @@ export function ContextMeter({ context, provider, compact }: Props) {
             <Meter
               value={percent}
               label="Context window"
-              tone={high ? 'warning' : 'neutral'}
+              tone="warning"
               className="w-10"
             />
             {percent}%
@@ -56,7 +55,7 @@ export function ContextMeter({ context, provider, compact }: Props) {
           </span>
         </TooltipContent>
       </Tooltip>
-      {high && compact && !compact.disabled && (
+      {compact && !compact.disabled && (
         <Button type="button" size="xs" variant="ghost" onClick={compact.run}>
           Compact
         </Button>
