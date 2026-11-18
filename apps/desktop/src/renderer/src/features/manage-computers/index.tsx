@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   sshComputerInputSchema,
+  workLaptopRestriction,
   type Computer,
   type DesktopApi,
 } from '@nesvo/contracts';
@@ -25,7 +26,11 @@ type Props = {
   defaultFolders: DefaultSessionFolders;
   api: Pick<
     DesktopApi,
-    'addComputer' | 'connectComputer' | 'disconnectComputer' | 'removeComputer'
+    | 'workLaptopPolicy'
+    | 'addComputer'
+    | 'connectComputer'
+    | 'disconnectComputer'
+    | 'removeComputer'
   >;
   onBusyChange?: (busy: boolean) => void;
 };
@@ -75,6 +80,14 @@ export function ManageComputers({
   api,
   onBusyChange,
 }: Props) {
+  const [error, setError] = useState('');
+  const { workLaptopPolicy } = api;
+  const [restricted, setRestricted] = useState<boolean>();
+  useEffect(() => {
+    void workLaptopPolicy()
+      .then(policy => setRestricted(policy.enabled))
+      .catch(failure => setError(errorDetail(failure)));
+  }, [workLaptopPolicy]);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
@@ -83,7 +96,6 @@ export function ManageComputers({
   }, [pending, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
-  const [error, setError] = useState('');
   const [fields, setFields] = useState({
     name: '',
     hostname: '',
@@ -173,6 +185,7 @@ export function ManageComputers({
         <SettingsSection
           title="Computers"
           action={
+            restricted === false &&
             !adding && (
               <Button
                 variant="ghost"
@@ -186,6 +199,7 @@ export function ManageComputers({
             )
           }
         >
+          {restricted && <InlineNotice>{workLaptopRestriction}</InlineNotice>}
           {computers.map(computer => (
             <section
               key={computer.id}

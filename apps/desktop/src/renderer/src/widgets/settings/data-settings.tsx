@@ -4,16 +4,11 @@ import { errorDetail } from '@/entities/session';
 import { OrphanedWorktrees } from '@/features/session-worktree/orphaned-worktrees';
 import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
+import { DataPrivacySettings } from './data-privacy-settings';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
-  api: Pick<
-    DesktopApi,
-    | 'backupDatabase'
-    | 'showBackup'
-    | 'listOrphanedSessionWorktrees'
-    | 'removeOrphanedSessionWorktree'
-  >;
+  api: DesktopApi;
   computers: Computer[];
 };
 
@@ -70,6 +65,13 @@ export function DataSettings({ api, computers }: Props) {
   };
   return (
     <div className="space-y-8">
+      <DataPrivacySettings
+        api={api}
+        localConnected={computers.some(
+          computer =>
+            computer.kind === 'local' && computer.status === 'connected',
+        )}
+      />
       <SettingsSection title="Backups">
         {computers.map(computer => {
           const state = backups[computer.id] ?? { status: 'idle' };

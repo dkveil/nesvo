@@ -4,6 +4,8 @@ The Expo app in `apps/mobile-client` connects to the same sessions as Nesvo Desk
 
 ## Connection model
 
+Work laptop mode blocks Phone access before the desktop opens a listener or loads pairing data. The operator can see the effective policy in Settings › Data.
+
 ```text
 Expo app on Android or iOS
   |

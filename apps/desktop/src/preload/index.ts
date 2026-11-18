@@ -1,3 +1,8 @@
+import {
+  retentionDaysSchema,
+  transcriptRetentionSchema,
+  workLaptopPolicySchema,
+} from '@nesvo/contracts';
 import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
 import {
   aboutInfoSchema,
@@ -469,6 +474,32 @@ const api: DesktopApi = {
         'nesvo:save-text-file',
         saveTextFileSchema.parse(input),
       ),
+    ),
+  transcriptRetention: async () =>
+    transcriptRetentionSchema.parse(
+      await ipcRenderer.invoke('nesvo:get-transcript-retention'),
+    ),
+  setTranscriptRetention: async days =>
+    transcriptRetentionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-transcript-retention',
+        retentionDaysSchema.parse(days),
+      ),
+    ),
+  purgeTranscripts: async () =>
+    transcriptRetentionSchema.parse(
+      await ipcRenderer.invoke('nesvo:purge-transcripts'),
+    ),
+  deleteLocalData: async confirmation => {
+    await ipcRenderer.invoke('nesvo:delete-local-data', confirmation);
+  },
+  workLaptopPolicy: async () =>
+    workLaptopPolicySchema.parse(
+      await ipcRenderer.invoke('nesvo:work-laptop-policy'),
+    ),
+  setWorkLaptopPolicy: async enabled =>
+    workLaptopPolicySchema.parse(
+      await ipcRenderer.invoke('nesvo:set-work-laptop-policy', enabled),
     ),
   backupDatabase: async hostId =>
     databaseBackupSchema.parse(

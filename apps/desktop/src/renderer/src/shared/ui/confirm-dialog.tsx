@@ -17,6 +17,7 @@ type ConfirmDialogProps = {
   description: ReactNode;
   confirmLabel: string;
   pendingLabel?: string;
+  confirmDisabled?: boolean;
   cancelLabel?: string;
   tone?: 'destructive' | 'default';
   onConfirm: () => unknown;
@@ -30,6 +31,7 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   pendingLabel,
+  confirmDisabled = false,
   cancelLabel = 'Cancel',
   tone = 'destructive',
   onConfirm,
@@ -81,7 +83,7 @@ export function ConfirmDialog({
             size="lg"
             type="button"
             variant={tone === 'destructive' ? 'destructive' : 'default'}
-            disabled={pending}
+            disabled={pending || confirmDisabled}
             aria-busy={pending || undefined}
             onClick={() => void confirm()}
           >

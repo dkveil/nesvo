@@ -1,4 +1,7 @@
 import { installTestCommandAudit } from '@nesvo/host';
+import { deleteLocalData } from './delete-local-data';
+import { deleteLocalDataPhrase, retentionDaysSchema } from '@nesvo/contracts';
+import { workLaptopPolicy } from './work-laptop-policy';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import {
@@ -19,7 +22,7 @@ import {
   saveKeepRunningInBackground,
 } from './background-store';
 import { startHost } from './host-client';
-import { initializeLogging, log, logsDirectory } from './logging';
+import { stopLogging, initializeLogging, log, logsDirectory } from './logging';
 import {
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
@@ -287,13 +290,20 @@ void app.whenReady().then(async () => {
       });
     return host;
   };
+  const policy = workLaptopPolicy(app.getPath('userData'));
   const computers = new ComputerManager(
     app.getPath('userData'),
     startLocalHost,
+    policy.enabled,
   );
-  const mobile = mobileAccess(app.getPath('userData'), computers);
+  const mobile = mobileAccess(
+    app.getPath('userData'),
+    computers,
+    policy.enabled,
+  );
   let window: BrowserWindow | null = null;
   let quitting = false;
+  let erasing = false;
   let keepRunning = readKeepRunningInBackground(app.getPath('userData'));
   app.once('before-quit', () => {
     quitting = true;
@@ -404,7 +414,7 @@ void app.whenReady().then(async () => {
     );
     next.on('focus', () => next.flashFrame(false));
     next.on('close', event => {
-      saveWindowState(userData, next);
+      if (!erasing) saveWindowState(userData, next);
       if (quitting || !keepRunning || smokeTest) return;
       event.preventDefault();
       next.hide();
@@ -445,6 +455,7 @@ void app.whenReady().then(async () => {
   const authorize = (
     event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
   ) => {
+    if (erasing) throw new Error('Nesvo is deleting its local data.');
     if (
       !window ||
       event.sender !== window.webContents ||
@@ -530,7 +541,13 @@ void app.whenReady().then(async () => {
   });
   handle('nesvo:set-attention', (event, attention: unknown) => {
     authorize(event);
-    indicators.update(desktopAttentionSchema.parse(attention));
+    const state = desktopAttentionSchema.parse(attention);
+    if (policy.enabled)
+      state.sessions = state.sessions.map(item => ({
+        ...item,
+        title: 'Session needs attention',
+      }));
+    indicators.update(state);
   });
   handle('nesvo:keep-running-in-background', event => {
     authorize(event);
@@ -577,6 +594,63 @@ void app.whenReady().then(async () => {
       return;
     }
     log.error(`Window reported a ${report.data.kind} error.`);
+  });
+  handle('nesvo:delete-local-data', (event, confirmation: unknown) => {
+    authorize(event);
+    if (confirmation !== deleteLocalDataPhrase)
+      throw new Error('Enter the full confirmation to delete local data.');
+    if (erasing || closing) throw new Error('Nesvo is already closing.');
+    erasing = true;
+    setImmediate(() => {
+      void closeWorkspace()
+        .then(async () => {
+          const storage = window?.webContents.session;
+          window?.destroy();
+          await storage?.clearStorageData();
+          await storage?.clearCache();
+          stopLogging();
+          await deleteLocalData(app.getPath('userData'), logsDirectory());
+        })
+        .catch(() => {
+          if (smokeTest) {
+            process.exitCode = 1;
+            return;
+          }
+          dialog.showErrorBox(
+            'Nesvo data could not be deleted',
+            'Some local data may remain. Open Nesvo and try again.',
+          );
+        })
+        .finally(() => {
+          closed = true;
+          app.quit();
+        });
+    });
+  });
+  handle('nesvo:get-transcript-retention', event => {
+    authorize(event);
+    return computers.execute('get-transcript-retention', undefined);
+  });
+  handle('nesvo:set-transcript-retention', (event, days: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'set-transcript-retention',
+      retentionDaysSchema.parse(days),
+    );
+  });
+  handle('nesvo:purge-transcripts', event => {
+    authorize(event);
+    return computers.execute('purge-transcripts', undefined);
+  });
+  handle('nesvo:work-laptop-policy', event => {
+    authorize(event);
+    return policy.status();
+  });
+  handle('nesvo:set-work-laptop-policy', (event, enabled: unknown) => {
+    authorize(event);
+    if (typeof enabled !== 'boolean')
+      throw new Error('Invalid work laptop mode.');
+    return policy.set(enabled);
   });
   handle('nesvo:mobile-status', event => {
     authorize(event);
@@ -1500,6 +1574,7 @@ void app.whenReady().then(async () => {
     .catch(() => log.error('Computers could not be initialized.'));
   powerMonitor.on('resume', () => computers.resume());
   app.on('second-instance', () => {
+    if (erasing) return;
     if (!window) createWindow();
     if (window && !smokeTest) {
       if (window.isMinimized()) window.restore();
@@ -1508,27 +1583,29 @@ void app.whenReady().then(async () => {
     }
   });
   app.on('activate', () => {
+    if (erasing) return;
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else if (window && !window.isVisible()) showWindow();
   });
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' || smokeTest) app.quit();
+    if (!erasing && (process.platform !== 'darwin' || smokeTest)) app.quit();
   });
   let closing = false;
   let closed = false;
+  const closeWorkspace = async () => {
+    quitting = true;
+    await mobile.close().catch(() => undefined);
+    await computers.close();
+    indicators.destroy();
+  };
   app.on('before-quit', event => {
     if (closed) return;
     event.preventDefault();
-    if (closing) return;
+    if (closing || erasing) return;
     closing = true;
-    void mobile
-      .close()
-      .catch(() => undefined)
-      .then(() => computers.close())
-      .finally(() => {
-        indicators.destroy();
-        closed = true;
-        app.quit();
-      });
+    void closeWorkspace().finally(() => {
+      closed = true;
+      app.quit();
+    });
   });
 });

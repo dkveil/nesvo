@@ -1,5 +1,9 @@
 # Selective testing policy
 
+The host suite scans desktop and host sources for login registration, scheduled tasks, service registration and app scripting. In test mode the desktop and host also record the executable and whether a spawned command matches these patterns. Tests require observed child processes and zero forbidden matches. The Linux service-unit command remains print-only. The check exercises Nesvo-owned processes in fixture scenarios and does not audit commands chosen by real providers or the operator.
+
+The host retention test uses an isolated SQLite database, an archived session, a live-list session, a pending deletion, a cached transcript and an attachment. It checks the persisted period, purge and search boundary, Undo and the untouched provider file. Diagnostics tests exercise secret formats and secret-named environment values. The desktop smoke starts with a separate enforced profile, attempts Phone access and remote computer requests through the preload boundary, reports synthetic diagnostic payloads, and uses the typed delete confirmation to verify removal of the database, backup, attachment and logs after host exit. The provider-file and managed-policy sentinels must survive.
+
 Damian explicitly chose limited testing for prototype delivery. Protect meaningful behavior without filling the repository with repetitive tests.
 
 ## Required checks

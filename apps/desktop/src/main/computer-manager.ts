@@ -1,3 +1,4 @@
+import { workLaptopRestriction } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
 import {
   type Computer,
@@ -430,6 +431,7 @@ export class ComputerManager {
   constructor(
     directory: string,
     private readonly startLocal: () => LocalHost,
+    private readonly workLaptopMode: boolean,
   ) {
     this.store = new ComputerStore(directory);
     this.loaded = new Promise(resolve => {
@@ -452,7 +454,7 @@ export class ComputerManager {
 
   async initialize() {
     try {
-      await this.loadSavedComputers();
+      if (!this.workLaptopMode) await this.loadSavedComputers();
     } finally {
       this.resolveLoaded();
     }
@@ -706,6 +708,7 @@ export class ComputerManager {
   }
 
   async addComputer(input: SshComputerInput) {
+    if (this.workLaptopMode) throw new Error(workLaptopRestriction);
     await this.loaded;
     if (this.closing) throw new Error('Nesvo is closing.');
     if (this.entries.size >= 9)
@@ -1254,6 +1257,7 @@ export class ComputerManager {
 
   async close() {
     this.closing = true;
+    await this.loaded;
     clearTimeout(this.cacheTimer);
     for (const entry of this.entries.values())
       clearTimeout(entry.recoveryTimer);
@@ -1263,11 +1267,14 @@ export class ComputerManager {
         ++entry.generation;
         entry.unsubscribe?.();
         await entry.connection?.close();
+        await entry.connecting;
       }),
     );
   }
 
   private get(hostId: string) {
+    if (this.workLaptopMode && hostId !== 'local')
+      throw new Error(workLaptopRestriction);
     const entry = this.entries.get(hostId);
     if (!entry) throw new Error('Computer not found.');
     return entry;
@@ -1666,6 +1673,7 @@ export class ComputerManager {
   }
 
   private persistCache() {
+    if (this.workLaptopMode) return Promise.resolve();
     const computers: CachedComputer[] = [];
     const value = { version: 2, computers };
     for (const entry of this.entries.values()) {

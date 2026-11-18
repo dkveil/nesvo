@@ -9,10 +9,12 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from 'playwright';
@@ -39,6 +41,7 @@ const env = {
   NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
   NESVO_DATA_DIR: directory,
   NESVO_TEST_PID_FILE: pidFile,
+  NESVO_TEST_COMMAND_LOG: join(directory, 'commands.jsonl'),
   NESVO_CLAUDE_EXECUTABLE: resolve('apps/host/tests/claude-fixture.mjs'),
   NESVO_FIXTURE_PID_FILE: providerPidFile,
   NESVO_FIXTURE_SKILL_LOG: join(directory, 'shared-instructions.jsonl'),
@@ -55,6 +58,7 @@ const env = {
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
+delete env.NESVO_WORK_LAPTOP_MODE;
 let application;
 let hostPid;
 const fullSessions = target =>
@@ -73,11 +77,11 @@ const fullSessions = target =>
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const launchArgs = [resolve('apps/desktop')];
-const launchApplication = () =>
+const launchApplication = (overrides = {}) =>
   electron.launch({
     executablePath,
     args: launchArgs,
-    env,
+    env: { ...env, ...overrides },
     timeout: 30000,
   });
 let smokeFailure;
@@ -96,6 +100,164 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 try {
+  const policyDirectory = join(directory, 'policy-data');
+  const policyHost = join(policyDirectory, 'host');
+  const policyPidFile = join(policyDirectory, 'host-pid.json');
+  const managedPolicy = join(policyDirectory, 'work-laptop-policy');
+  const providerConfig = join(policyDirectory, 'provider-settings.json');
+  const remoteId = randomUUID();
+  const target = {
+    name: 'Fixture remote',
+    hostname: '127.0.0.1',
+    port: 1,
+    username: 'fixture',
+    entryPath: '/fixture/host.mjs',
+    runtimeDirectory: '/fixture/runtime',
+    identityFile: join(directory, 'unused-identity'),
+    knownHostsFile: join(directory, 'unused-known-hosts'),
+  };
+  await mkdir(policyDirectory);
+  await writeFile(managedPolicy, '');
+  await writeFile(providerConfig, 'provider-owned settings');
+  await writeFile(
+    join(policyDirectory, 'computers.json'),
+    JSON.stringify({
+      version: 1,
+      computers: [{ id: remoteId, input: target, instanceId: null }],
+    }),
+  );
+  application = await launchApplication({
+    NESVO_DATA_DIR: policyDirectory,
+    NESVO_WORKFLOWS_HOME: join(policyDirectory, 'workflows-home'),
+    NESVO_TEST_PID_FILE: policyPidFile,
+    CLAUDE_CONFIG_DIR: join(policyDirectory, 'claude'),
+    CODEX_HOME: join(policyDirectory, 'codex'),
+    NESVO_TEST_SKILLS_HOME: join(policyDirectory, 'skills'),
+    NESVO_FIXTURE_USAGE_LOG: join(policyDirectory, 'usage-probes.jsonl'),
+    NESVO_FIXTURE_USAGE_CONTROL: join(policyDirectory, 'usage-control.json'),
+    NESVO_CODEX_FIXTURE_PID_FILE: join(policyDirectory, 'codex-pid.json'),
+    NESVO_CODEX_FIXTURE_STATE_DIR: join(policyDirectory, 'codex-state'),
+    NESVO_CODEX_FIXTURE_SKILLS_LOG: join(
+      policyDirectory,
+      'skills-probes.jsonl',
+    ),
+    NESVO_MOBILE_PORT: '0',
+  });
+  const policyPage = await application.firstWindow();
+  await policyPage.waitForFunction(async () =>
+    (await window.nesvo.listComputers()).some(
+      computer => computer.status === 'connected',
+    ),
+  );
+  const expectedPolicy = { enabled: true, requested: true, enforced: true };
+  assert.deepEqual(
+    await policyPage.evaluate(() => window.nesvo.workLaptopPolicy()),
+    expectedPolicy,
+  );
+  assert.deepEqual(
+    await policyPage.evaluate(async () =>
+      (await window.nesvo.listComputers()).map(computer => computer.id),
+    ),
+    ['local'],
+  );
+  await assert.rejects(
+    policyPage.evaluate(() => window.nesvo.setWorkLaptopPolicy(false)),
+    /enforced by policy/,
+  );
+  await assert.rejects(
+    policyPage.evaluate(() => window.nesvo.enableMobile()),
+    /Work laptop mode blocks/,
+  );
+  await assert.rejects(
+    policyPage.evaluate(input => window.nesvo.addComputer(input), target),
+    /Work laptop mode blocks/,
+  );
+  await assert.rejects(
+    policyPage.evaluate(id => window.nesvo.connectComputer(id), remoteId),
+    /Work laptop mode blocks/,
+  );
+  await assert.rejects(
+    policyPage.evaluate(id => window.nesvo.listSessions(id), remoteId),
+    /Work laptop mode blocks/,
+  );
+  await assert.rejects(
+    policyPage.evaluate(() => window.nesvo.deleteLocalData('delete')),
+    /full confirmation/,
+  );
+
+  const privateValues = [
+    'ghp_smokefixturetoken123456',
+    'physical-key-fixture',
+    'private conversation fixture',
+  ];
+  await policyPage.evaluate(
+    values =>
+      window.nesvo.reportError({
+        kind: 'render',
+        message: 'Authorization: Bearer ' + values[0],
+        stack: 'PRIVATE_KEY=' + values[1],
+        componentStack: values[2],
+      }),
+    privateValues,
+  );
+  await policyPage
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  const settings = policyPage.getByRole('dialog', {
+    name: 'Settings',
+    exact: true,
+  });
+  await settings.getByRole('button', { name: 'Data', exact: true }).click();
+  await settings
+    .getByText('On · Enforced by policy', { exact: true })
+    .waitFor();
+  const backup = await policyPage.evaluate(() => window.nesvo.backupDatabase());
+  const attachment = join(policyHost, 'attachments', 'fixture.txt');
+  await mkdir(join(policyHost, 'attachments'), { recursive: true });
+  await writeFile(attachment, 'fixture attachment');
+  const policyLog = join(policyDirectory, 'logs', 'main.log');
+  const log = await readFile(policyLog, 'utf8');
+  assert.match(log, /Window reported a render error/);
+  for (const value of privateValues) assert.ok(!log.includes(value));
+
+  await settings
+    .getByRole('button', { name: 'Delete all data', exact: true })
+    .click();
+  const confirmation = policyPage.getByRole('alertdialog');
+  const deleteButton = confirmation.getByRole('button', {
+    name: 'Delete all data',
+    exact: true,
+  });
+  assert.equal(await deleteButton.isDisabled(), true);
+  await confirmation.getByLabel('Confirmation').fill('DELETE ALL NESVO DATA');
+  const policyPid = JSON.parse(await readFile(policyPidFile, 'utf8')).host;
+  const policyExited = once(application.process(), 'exit', {
+    signal: AbortSignal.timeout(30000),
+  });
+  await deleteButton.click();
+  const [policyExitCode] = await policyExited;
+  assert.equal(policyExitCode, 0);
+  application = undefined;
+  await waitDead(policyPid);
+  for (const removed of [
+    join(policyHost, 'nesvo.sqlite'),
+    backup.path,
+    attachment,
+    policyLog,
+    join(policyDirectory, 'computers.json'),
+  ])
+    await assert.rejects(stat(removed), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(providerConfig, 'utf8'),
+    'provider-owned settings',
+  );
+  assert.equal(await readFile(managedPolicy, 'utf8'), '');
+  console.log(
+    JSON.stringify({
+      dataPrivacy: 'policy, diagnostics and local erase verified',
+    }),
+  );
+
   await writeFile(usageControl, '{}');
   await mkdir(claudeConfigDirectory, { recursive: true });
   await writeFile(
@@ -151,6 +313,14 @@ try {
   await mkdir(join(userSkillPath, '..'), { recursive: true });
   await writeFile(userSkillPath, userSkillText);
   application = await launchApplication();
+  const defaultPolicy = await (
+    await application.firstWindow()
+  ).evaluate(() => window.nesvo.workLaptopPolicy());
+  assert.deepEqual(defaultPolicy, {
+    enabled: false,
+    requested: false,
+    enforced: false,
+  });
   const page = await application.firstWindow();
   page.setDefaultTimeout(20000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -4279,6 +4449,12 @@ try {
   application = undefined;
   await waitDead(hostPid);
   hostPid = undefined;
+  const commands = (await readFile(env.NESVO_TEST_COMMAND_LOG, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  assert.ok(commands.length > 0);
+  assert.ok(commands.every(command => command.forbidden === false));
   console.log(
     JSON.stringify({
       result: 'passed',

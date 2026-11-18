@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { retentionDaysSchema, transcriptRetentionSchema } from './data-policy';
+import {
+  retentionDaysSchema,
+  transcriptRetentionSchema,
+  type TranscriptRetention,
+  type WorkLaptopPolicy,
+} from './data-policy';
 export * from './data-policy';
 import {
   createProviderProfileSchema,
@@ -1556,6 +1561,12 @@ export type DesktopApi = {
   showBackup: (path: string) => Promise<void>;
   openLicenses: () => Promise<void>;
   saveTextFile: (input: SaveTextFileInput) => Promise<SavedTextFile>;
+  transcriptRetention: () => Promise<TranscriptRetention>;
+  setTranscriptRetention: (days: number | null) => Promise<TranscriptRetention>;
+  purgeTranscripts: () => Promise<TranscriptRetention>;
+  deleteLocalData: (confirmation: string) => Promise<void>;
+  workLaptopPolicy: () => Promise<WorkLaptopPolicy>;
+  setWorkLaptopPolicy: (enabled: boolean) => Promise<WorkLaptopPolicy>;
   backupDatabase: (hostId?: HostId) => Promise<DatabaseBackup>;
   focusWindow: () => Promise<void>;
   requestAttention: () => Promise<void>;

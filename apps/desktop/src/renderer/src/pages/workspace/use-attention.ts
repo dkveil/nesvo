@@ -22,7 +22,6 @@ function notify(
   const key = entityKey(session);
   const show = () => {
     const notification = new Notification(title, {
-      body: session.title,
       tag: key,
     });
     notification.onclick = () => {

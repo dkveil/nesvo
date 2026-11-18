@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { desktopSessionSchema } from '@nesvo/contracts';
+import { desktopSessionSchema, workLaptopRestriction } from '@nesvo/contracts';
 import {
   createMobileGateway,
   type MobileGatewayOptions,
@@ -45,7 +45,11 @@ async function networkOptions(): Promise<MobileGatewayOptions['network']> {
   };
 }
 
-export function mobileAccess(directory: string, computers: ComputerManager) {
+export function mobileAccess(
+  directory: string,
+  computers: ComputerManager,
+  workLaptopMode: boolean,
+) {
   let gateway: ReturnType<typeof createMobileGateway> | undefined;
   let closing = false;
   const workspace: MobileGatewayWorkspace = {
@@ -72,6 +76,7 @@ export function mobileAccess(directory: string, computers: ComputerManager) {
     subscribe: listener => computers.subscribe(listener),
   };
   const get = () => {
+    if (workLaptopMode) return Promise.reject(new Error(workLaptopRestriction));
     if (closing) return Promise.reject(new Error('Nesvo is closing.'));
     if (!gateway) {
       gateway = networkOptions()
