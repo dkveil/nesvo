@@ -1952,6 +1952,26 @@ try {
     child => child.title === 'Fixture worker B',
   );
   await screenshot('-workers');
+  const subsessionBar = page.locator('[data-subsession-bar]');
+  await subsessionBar
+    .getByRole('button', { name: 'Waiting on 2 workers', exact: true })
+    .waitFor();
+  const showAgents = running =>
+    subsessionBar.getByRole('button', {
+      name: `${running} of 2 workers running, show agents`,
+      exact: true,
+    });
+  await showAgents(2).click();
+  const agentsPanel = page.getByRole('dialog', { name: 'Agents' });
+  await agentsPanel
+    .getByRole('button', { name: /^Open Fixture worker A, Working/ })
+    .waitFor();
+  await agentsPanel
+    .getByRole('button', { name: 'Stop Fixture worker B', exact: true })
+    .waitFor();
+  await screenshot('-agents');
+  await page.keyboard.press('Escape');
+  await agentsPanel.waitFor({ state: 'detached' });
   await proposal('Fixture worker A')
     .getByRole('button', { name: 'Open worker session', exact: true })
     .click();
@@ -1969,6 +1989,16 @@ try {
   await page
     .getByRole('button', { name: 'Back to parent session', exact: true })
     .click();
+  await subsessionBar
+    .getByRole('button', { name: 'Waiting on 1 worker', exact: true })
+    .waitFor();
+  await showAgents(1).click();
+  await agentsPanel
+    .getByRole('button', { name: /^Open Fixture worker A, Stopped/ })
+    .waitFor();
+  await screenshot('-agents-stopped');
+  await page.keyboard.press('Escape');
+  await agentsPanel.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'Stop group', exact: true }).click();
   await waitState(orchestrator.id, 'stopped');
   await waitState(childB.id, 'stopped');
