@@ -45,6 +45,7 @@ import {
   FileDown,
   GitFork,
   GitPullRequest,
+  GitCompareArrows,
   History,
   Menu,
   PanelRight,
@@ -190,6 +191,7 @@ import {
   restoreCodeComments,
 } from '@/features/code-comments/store';
 import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
+import { ChangesRow } from '@/features/session-changes/changes-row';
 import {
   placeInText,
   withoutPlacement,
@@ -242,6 +244,7 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
 const PullRequestPanel = lazy(() => import('@/widgets/pull-request'));
+const SessionChangesPanel = lazy(() => import('@/widgets/session-changes'));
 
 const isAgentReviewSession = (session: Session) =>
   !!session.pullRequest &&
@@ -333,7 +336,7 @@ export function Workspace() {
     null,
   );
   const [panel, setPanel] = useState<
-    'diff' | 'files' | 'skills' | 'pull-request' | null
+    'diff' | 'files' | 'skills' | 'pull-request' | 'changes' | null
   >(location.diff ? 'diff' : null);
   const [pullRequestsView, setPullRequestsView] = useState(false);
   const [pullRequestHandoff, setPullRequestHandoff] = useState<Session | null>(
@@ -808,6 +811,10 @@ export function Workspace() {
       return true;
     },
   });
+  const supportsSessionChanges = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-changes');
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -1165,6 +1172,11 @@ export function Workspace() {
       setDiffTarget(latest ? { reviewId: latest.id } : null);
     }
     setPanel('files');
+  };
+  const openChanges = () => {
+    diffTrigger.current = panelTrigger();
+    setCardOpen(false);
+    setPanel(panel === 'changes' ? null : 'changes');
   };
   const closeCard = () => {
     setCardOpen(false);
@@ -3535,6 +3547,19 @@ ${text}`
               <FolderOpen />
             </IconButton>
           )}
+          {!browsing &&
+            !creating &&
+            selected &&
+            supportsSessionChanges(selectedHostId) && (
+              <IconButton
+                size={32}
+                label="Open changes"
+                pressed={panel === 'changes'}
+                onClick={openChanges}
+              >
+                <GitCompareArrows />
+              </IconButton>
+            )}
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
@@ -3610,6 +3635,17 @@ ${text}`
               }
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
+              changes={
+                cardSession &&
+                store.hostReady(cardSession.hostId) &&
+                supportsSessionChanges(cardSession.hostId) && (
+                  <ChangesRow
+                    session={cardSession}
+                    api={desktopApi(cardSession.hostId)}
+                    onOpen={openChanges}
+                  />
+                )
+              }
               onRunWorkflow={() =>
                 cardSession && void runAssignedWorkflow(cardSession)
               }
@@ -4464,6 +4500,34 @@ ${text}`
                 },
               )}
               onLinked={session => store.merge([session])}
+              onClose={closeDiff}
+            />
+          </Suspense>
+        )}
+      {panel === 'changes' &&
+        !browsing &&
+        !creating &&
+        selected &&
+        store.hostReady(selectedHostId) &&
+        supportsSessionChanges(selectedHostId) && (
+          <Suspense
+            fallback={
+              <PanelPlaceholder
+                kind="changes"
+                icon={GitCompareArrows}
+                title="Changes"
+              >
+                <StatusMessage tone="loading" className="p-3">
+                  Loading changes…
+                </StatusMessage>
+              </PanelPlaceholder>
+            }
+          >
+            <SessionChangesPanel
+              key={selectedKey}
+              session={selected}
+              api={desktopApi(selectedHostId)}
+              agentComments={agentCommentsFor(selected, true, () => undefined)}
               onClose={closeDiff}
             />
           </Suspense>

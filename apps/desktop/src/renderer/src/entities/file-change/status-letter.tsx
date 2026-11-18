@@ -1,7 +1,7 @@
 import type { PullRequestFile } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 
-export type FileChangeStatus = PullRequestFile['status'];
+export type FileChangeStatus = PullRequestFile['status'] | 'untracked';
 
 const STATUS_GLYPHS: Record<
   FileChangeStatus,
@@ -14,6 +14,11 @@ const STATUS_GLYPHS: Record<
   copied: { letter: 'C', tone: 'text-info-foreground', label: 'Copied' },
   changed: { letter: 'M', tone: 'text-warning-foreground', label: 'Changed' },
   unchanged: { letter: '·', tone: 'text-muted-foreground', label: 'Unchanged' },
+  untracked: {
+    letter: 'U',
+    tone: 'text-success-foreground',
+    label: 'Untracked',
+  },
 };
 
 type StatusLetterProps = { status: FileChangeStatus; className?: string };

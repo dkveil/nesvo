@@ -41,6 +41,7 @@ type Props = {
   workers: ReactNode;
   usage: ReactNode;
   context: ReactNode;
+  changes?: ReactNode;
   onComputers: () => void;
   onFiles: () => void;
   onRunWorkflow: () => void;
@@ -117,6 +118,7 @@ export function SessionCard({
   workers,
   usage,
   context,
+  changes,
   onComputers,
   onFiles,
   onRunWorkflow,
@@ -206,6 +208,11 @@ export function SessionCard({
         </div>
       )}
       {pullRequest}
+      {changes && (
+        <div className={cardSection} data-session-changes-section>
+          {changes}
+        </div>
+      )}
       {session && (
         <div className={cardSection} data-session-workflow-section>
           <SectionLabel

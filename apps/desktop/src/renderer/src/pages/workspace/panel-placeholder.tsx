@@ -25,6 +25,7 @@ const defaultWidths: Record<PanelKind, (viewportWidth: number) => number> = {
     Math.min(PULL_REQUEST_MAX_WIDTH_PX, viewport * PULL_REQUEST_WIDTH_RATIO),
   'pull-request-review': viewport =>
     Math.min(REVIEW_MAX_WIDTH_PX, viewport * REVIEW_WIDTH_RATIO),
+  changes: viewport => Math.min(DIFF_MAX_WIDTH_PX, viewport * DIFF_WIDTH_RATIO),
   'files-tree': () => PANEL_MIN_WIDTH_PX,
   'files-editor': () => PANEL_MIN_WIDTH_PX,
   skills: viewport =>
