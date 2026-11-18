@@ -873,6 +873,18 @@ if (args.length === 1 && args[0] === '--version') {
     else verdict('I could not fill the verdict.', undefined);
   } else if (command === 'fixture:verdict-invalid-twice') {
     verdict('Verdict recorded.', { verdict: 'looks fine' });
+  } else if (command === 'fixture:chatty') {
+    start('Fixture is busy');
+    const until = Date.now() + Number(process.env.NESVO_FIXTURE_CHATTY_MS);
+    while (Date.now() < until) {
+      await setTimeout(150);
+      stream({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '.' },
+      });
+    }
+    finish('Fixture finished a long active turn.');
   } else if (command === 'fixture:hold' || command === 'fixture:hold-exit') {
     const child = spawn(
       process.execPath,

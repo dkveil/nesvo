@@ -1171,6 +1171,13 @@ if (args.length === 1 && args[0] === '--version') {
       } else if (command === 'fixture:approval-hold') {
         await hold();
         requestApproval('command');
+      } else if (command === 'fixture:chatty') {
+        const until = Date.now() + Number(process.env.NESVO_FIXTURE_CHATTY_MS);
+        while (Date.now() < until) {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          delta('.');
+        }
+        complete('Codex fixture finished a long active turn.');
       } else if (command === 'fixture:hold') {
         await hold();
       } else if (command === 'fixture:verdict-pass') {

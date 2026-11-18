@@ -26,6 +26,13 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import {
+  inactivityFailure,
+  type InactivityWatchdog,
+  maxTurnOutputBytes,
+  providerInactivityLimit,
+  watchInactivity,
+} from './inactivity';
 import { interleave } from './interleave';
 import { readCodexUsage } from './codex-usage';
 import {
@@ -88,10 +95,8 @@ const mcpOnlyApprovalPolicy = {
   },
 };
 const maxLineBytes = 1024 * 1024;
-const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
 const probeTimeoutMs = 10_000;
-const runTimeoutMs = 10 * 60_000;
 const isolatedFeatures = [
   'hooks',
   'plugins',
@@ -447,7 +452,7 @@ function rpcPeer(
   owned.child.stdout.on('data', (chunk: string) => {
     if (closed || failureError) return;
     bytes += Buffer.byteLength(chunk);
-    if (bytes > maxOutputBytes)
+    if (bytes > maxTurnOutputBytes)
       return fail('Codex streaming output exceeded the supported size.');
     line += chunk;
     let newline: number;
@@ -1474,6 +1479,7 @@ export function startCodex(options: CodexRunOptions): {
   let startingTurn = false;
   let failure: string | null = null;
   let stopTask: Promise<void> | null = null;
+  let watchdog: InactivityWatchdog | null = null;
   const approvals = new Map<
     string,
     { rpcId: RpcId; threadId: string; turnId: string; mcp?: boolean }
@@ -1652,6 +1658,7 @@ export function startCodex(options: CodexRunOptions): {
   const consume = (message: RecordValue) => {
     if (!peer) return;
     if (finished || stopped || failure) return;
+    watchdog?.touch();
     if (startingTurn) {
       if (queued.length >= 1000)
         throw new Error('Codex sent too many events before starting the turn.');
@@ -2106,10 +2113,12 @@ export function startCodex(options: CodexRunOptions): {
     }
   };
   const done = (async (): Promise<CodexResult> => {
-    const timer = setTimeout(
-      () => fail('Codex turn timed out after ten minutes.'),
-      runTimeoutMs,
-    );
+    const inactivityLimit = providerInactivityLimit();
+    watchdog = watchInactivity({
+      limitMs: inactivityLimit,
+      isWaiting: () => approvals.size > 0 || pendingDelegates.size > 0,
+      onInactive: () => fail(inactivityFailure('Codex', inactivityLimit)),
+    });
     let result: CodexResult;
     try {
       if (!isAbsolute(options.directory))
@@ -2510,7 +2519,7 @@ export function startCodex(options: CodexRunOptions): {
                 ),
               };
     } finally {
-      clearTimeout(timer);
+      watchdog.stop();
       finished = true;
       delegationController.abort();
       pendingDelegates.clear();

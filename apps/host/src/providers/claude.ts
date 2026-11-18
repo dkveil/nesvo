@@ -24,6 +24,12 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import {
+  inactivityFailure,
+  maxTurnOutputBytes,
+  providerInactivityLimit,
+  watchInactivity,
+} from './inactivity';
 import { interleave } from './interleave';
 import {
   claudeApprovalTimeoutMs,
@@ -144,11 +150,9 @@ const toolPresentation = {
   { kind: ProviderActivity['kind']; title: string }
 >;
 const maxLineBytes = 1024 * 1024;
-const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
 const thinkingEmitIntervalMs = 250;
 const probeTimeoutMs = 5_000;
-const runTimeoutMs = 10 * 60_000;
 
 function object(value: unknown): RecordValue | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -1578,12 +1582,19 @@ export function startClaude(options: {
           );
         }
       };
+      const inactivityLimit = providerInactivityLimit();
+      const watchdog = watchInactivity({
+        limitMs: inactivityLimit,
+        isWaiting: () => approvals.size > 0,
+        onInactive: () => fail(inactivityFailure('Claude', inactivityLimit)),
+      });
       running.child.stdout.setEncoding('utf8');
       running.child.stderr.setEncoding('utf8');
       running.child.stdout.on('data', (chunk: string) => {
         if (failure || stopped) return;
+        watchdog.touch();
         stdoutBytes += Buffer.byteLength(chunk);
-        if (stdoutBytes > maxOutputBytes) {
+        if (stdoutBytes > maxTurnOutputBytes) {
           fail('Claude streaming output exceeded the supported size.');
           return;
         }
@@ -1605,10 +1616,6 @@ export function startClaude(options: {
         stderrBytes += Buffer.byteLength(chunk);
         if (stderrBytes <= 16_384) stderr += chunk;
       });
-      const timer = setTimeout(
-        () => fail('Claude turn timed out after ten minutes.'),
-        runTimeoutMs,
-      );
       if (hostPrompts) {
         try {
           writeFrame({
@@ -1627,15 +1634,10 @@ export function startClaude(options: {
       } else running.child.stdin.end(input.payload);
       let exit: ProcessExit;
       try {
-        exit = await Promise.race([
-          running.closed,
-          wait(runTimeoutMs + cleanupTimeoutMs * 2).then(() => {
-            throw new Error('Claude process did not close after cleanup.');
-          }),
-        ]);
+        exit = await running.closed;
         if (line) consume(line);
       } finally {
-        clearTimeout(timer);
+        watchdog.stop();
         releaseApprovals();
         await running.stop();
       }

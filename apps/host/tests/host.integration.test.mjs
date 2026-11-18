@@ -22259,3 +22259,94 @@ test('code comments reach Claude Code as structured context at their positions',
     { type: 'error', id: null, code: 'invalid-request' },
   );
 });
+
+test('provider turns fail only after a period without provider activity', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-inactivity-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const inactivityMs = 1000;
+  const host = launch(directory, pidFile, {
+    NESVO_TEST_MODE: '1',
+    NESVO_TEST_PROVIDER_INACTIVITY_MS: String(inactivityMs),
+    NESVO_FIXTURE_CHATTY_MS: String(inactivityMs * 4),
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const settled = run =>
+    host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  for (const [provider, model, mode, approvalPrompt] of [
+    ['Claude Code', 'sonnet', 'accept-edits', 'fixture:ask-write'],
+    ['Codex', 'fixture-codex', 'supervised', 'fixture:approve'],
+  ]) {
+    const created = await host.request('create-session', {
+      title: `${provider} inactivity`,
+      provider,
+      model,
+      mode,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const sessionId = created.session.id;
+    const send = async text => {
+      const response = await host.request('send-message', {
+        sessionId,
+        messageId: randomUUID(),
+        text,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+
+    const startedAt = Date.now();
+    const chatty = await settled(await send('fixture:chatty'));
+    assert.equal(chatty.status, 'completed', `${provider}: ${chatty.error}`);
+    assert.ok(Date.now() - startedAt >= inactivityMs * 3, provider);
+    assert.match(
+      chatty.messages.at(-1).body,
+      /finished a long active turn/,
+      provider,
+    );
+
+    const silent = await settled(await send('fixture:hold'));
+    assert.equal(silent.status, 'failed', provider);
+    assert.match(
+      silent.error,
+      /turn stopped after 1 second without any activity from the provider/,
+      provider,
+    );
+
+    const asking = await send(approvalPrompt);
+    const pending = await host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === asking.runId &&
+        session.pendingApprovals.length === 1,
+    );
+    await delay(inactivityMs * 3);
+    const approval = pending.pendingApprovals[0];
+    const answered = await host.request('respond-approval', {
+      sessionId,
+      runId: asking.runId,
+      requestId: approval.id,
+      decision: 'accept',
+      ...(approval.fingerprint ? { fingerprint: approval.fingerprint } : {}),
+    });
+    assert.equal(answered.type, 'session', JSON.stringify(answered));
+    const approved = await settled(asking);
+    assert.equal(
+      approved.status,
+      'completed',
+      `${provider}: ${approved.error}`,
+    );
+  }
+});
