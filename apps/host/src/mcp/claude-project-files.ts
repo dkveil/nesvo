@@ -46,8 +46,8 @@ const reviewedFolders: ReviewedFolder[] = [
     id: 'skills',
     path: join('.claude', 'skills'),
     label: 'Project skills',
-    includes: name => name === 'SKILL.md',
-    entryName: parts => parts.join('/'),
+    includes: () => true,
+    entryName: (parts, name) => [...parts, name].join('/'),
   },
   {
     id: 'output-styles',
