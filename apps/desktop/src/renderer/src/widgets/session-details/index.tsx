@@ -1,14 +1,20 @@
 import {
+  formatAgo,
+  formatDateTime,
   modelLabel,
+  sessionLastActivityAt,
   modeLabel,
   sessionRoleLabel,
   statusLabels,
   type Session,
 } from '@/entities/session';
 import { formatCost } from '@/shared/lib/format-cost';
+import { useNow } from '@/shared/lib/use-now';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 
 type Props = { session: Session };
+
+const DETAILS_CLOCK_MS = 60_000;
 
 function formatTokens(value: number | null) {
   const count = value ?? 0;
@@ -36,6 +42,8 @@ function sessionUsage({ usageTotals: totals }: Session) {
 export function SessionDetails({ session }: Props) {
   const role = sessionRoleLabel(session);
   const usage = sessionUsage(session);
+  const now = useNow(DETAILS_CLOCK_MS);
+  const lastActivity = sessionLastActivityAt(session);
   return (
     <div className="space-y-6 p-5">
       <section aria-label="Session details" className="space-y-4">
@@ -59,6 +67,16 @@ export function SessionDetails({ session }: Props) {
               key: 'directory',
               label: 'Working directory',
               value: session.directory,
+            },
+            {
+              key: 'created',
+              label: 'Created',
+              value: `${formatDateTime(session.createdAt)} (${formatAgo(session.createdAt, now)})`,
+            },
+            {
+              key: 'last-activity',
+              label: 'Last activity',
+              value: `${formatAgo(lastActivity, now)} · ${formatDateTime(lastActivity)}`,
             },
           ]}
         />

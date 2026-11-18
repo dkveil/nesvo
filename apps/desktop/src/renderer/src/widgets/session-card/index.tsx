@@ -22,6 +22,7 @@ import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { cardRowProps } from './card-row';
+import { LifecycleSection } from './lifecycle-section';
 
 export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
@@ -207,6 +208,7 @@ export function SessionCard({
           />
         </div>
       )}
+      {session && <LifecycleSection session={session} />}
       {pullRequest}
       {changes && (
         <div className={cardSection} data-session-changes-section>

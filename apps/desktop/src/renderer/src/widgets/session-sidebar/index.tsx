@@ -29,6 +29,8 @@ import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import {
+  sessionLifecycle,
+  sessionLifecycleLines,
   sessionProjectLabel,
   ProviderGlyph,
   sessionFilterLabels,
@@ -328,6 +330,8 @@ export function SessionSidebar({
       awaitsReview: !!filterKeys?.['needs-me'].has(entityKey(session)),
       now,
     });
+    const lifecycle = sessionLifecycleLines(sessionLifecycle(session, now));
+    const lifecycleId = `session-lifecycle-${entityKey(session)}`;
     const status = (
       <SessionMeta session={session} indicator={indicator} now={now} />
     );
@@ -427,7 +431,7 @@ export function SessionSidebar({
             className="absolute top-1/2 -left-2 -translate-y-1/2"
           />
         )}
-        <SessionIndicatorDot indicator={indicator} />
+        <SessionIndicatorDot indicator={indicator} lifecycle={lifecycle} />
       </span>
     );
     return (
@@ -467,10 +471,14 @@ export function SessionSidebar({
               'data-session-id': session.id,
             },
             'aria-current': selected ? 'page' : undefined,
+            'aria-describedby': lifecycleId,
             'aria-label': `${session.title} · ${directory} · ${indicator.label}${indicator.needsYou ? ' · Needs you' : ''}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}`,
           }}
           {...decoration?.item}
         />
+        <span id={lifecycleId} className="sr-only">
+          {lifecycle.join('. ')}
+        </span>
         {childCount > 0 && onToggle && (
           <IconButton
             label={`${expanded ? 'Hide' : 'Show'} ${childCount} subsessions of ${session.title}`}

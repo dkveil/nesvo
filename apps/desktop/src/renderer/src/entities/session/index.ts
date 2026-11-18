@@ -12,6 +12,14 @@ export { ModeIcon } from './mode-icon';
 export { sessionMarkdown, sessionMarkdownFileName } from './session-markdown';
 export { folderBlocker, foldersOverlap } from './folder-blocker';
 export {
+  formatAgo,
+  formatDateTime,
+  sessionLastActivityAt,
+  sessionLifecycle,
+  sessionLifecycleLines,
+  type SessionLifecycle,
+} from './session-lifecycle';
+export {
   sessionFilterKeys,
   sessionFilterLabels,
   sessionFilters,
