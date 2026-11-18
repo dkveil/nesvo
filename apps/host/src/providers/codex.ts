@@ -2187,28 +2187,27 @@ export function startCodex(options: CodexRunOptions): {
         );
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       const integrations = isolateTools ? undefined : await options.mcpTurn?.();
-      const projectOverrides = integrations
-        ? [
-            ...Object.entries(integrations.projectServers).flatMap(
-              ([name, value]) => [
-                '-c',
-                'mcp_servers.' + name + '=' + tomlInline(value),
-              ],
-            ),
-            ...(!hooksOff && Object.keys(integrations.projectHooks).length
-              ? ['-c', 'hooks=' + tomlInline(integrations.projectHooks)]
-              : []),
-          ]
-        : [];
+      const processOverrides: string[] = [];
+      const projectServers = integrations?.projectServers ?? {};
+      const threadIntegrations = Object.fromEntries(
+        Object.entries(projectServers).map(([name, value]) => [
+          'mcp_servers.' + name,
+          value,
+        ]),
+      );
+      if (
+        integrations &&
+        !hooksOff &&
+        Object.keys(integrations.projectHooks).length
+      )
+        threadIntegrations.hooks = integrations.projectHooks;
       const expected = {
         ...configured,
         ...Object.fromEntries(
-          Object.entries(integrations?.projectServers ?? {}).map(
-            ([name, value]) => [
-              name,
-              { ...object(configured[name]), ...object(value) },
-            ],
-          ),
+          Object.entries(projectServers).map(([name, value]) => [
+            name,
+            { ...object(configured[name]), ...object(value) },
+          ]),
         ),
       };
       if (readOnly && !isolateTools) {
@@ -2229,17 +2228,18 @@ export function startCodex(options: CodexRunOptions): {
               : {}),
           };
           expected[name] = { ...object(expected[name]), ...policy };
-          projectOverrides.push(
-            '-c',
-            'mcp_servers.' + name + '.default_tools_approval_mode="prompt"',
-          );
-          if ('tools' in policy)
-            projectOverrides.push(
-              '-c',
-              'mcp_servers.' + name + '.tools=' + tomlInline(policy.tools),
-            );
+          const key = 'mcp_servers.' + name;
+          if (Object.hasOwn(projectServers, name))
+            threadIntegrations[key] = {
+              ...object(projectServers[name]),
+              ...policy,
+            };
+          else {
+            threadIntegrations[key + '.default_tools_approval_mode'] = 'prompt';
+            if (policy.tools) threadIntegrations[key + '.tools'] = policy.tools;
+          }
         }
-        projectOverrides.push(
+        processOverrides.push(
           '-c',
           'approval_policy=' + tomlInline(mcpOnlyApprovalPolicy),
         );
@@ -2249,7 +2249,7 @@ export function startCodex(options: CodexRunOptions): {
         if (
           !isDeepStrictEqual(integrations, await options.mcpTurn?.()) ||
           !isDeepStrictEqual(
-            activeServers(expected),
+            activeServers(configured),
             activeServers(
               await codexServerDefinitions(peer, options.directory),
             ),
@@ -2266,7 +2266,7 @@ export function startCodex(options: CodexRunOptions): {
         consume,
         disabledServers,
         options.environment,
-        projectOverrides,
+        processOverrides,
         features,
       );
       await initialize(
@@ -2345,9 +2345,14 @@ export function startCodex(options: CodexRunOptions): {
       const hookStates = hooksOff
         ? {}
         : await codexHookStates(peer, options.directory);
+      if (Object.keys(hookStates).length) {
+        const hooks = object(threadIntegrations.hooks);
+        if (hooks) threadIntegrations.hooks = { ...hooks, state: hookStates };
+        else threadIntegrations['hooks.state'] = hookStates;
+      }
       await verifyDefinitions();
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
-      const response = await peer.request(
+      const threadRequest = peer.request(
         options.fork
           ? 'thread/fork'
           : options.resume
@@ -2378,9 +2383,7 @@ export function startCodex(options: CodexRunOptions): {
             options.mode === 'read-only' ? 'read-only' : 'workspace-write',
           config: {
             ...toolPolicyConfig(features),
-            ...(Object.keys(hookStates).length
-              ? { 'hooks.state': hookStates }
-              : {}),
+            ...threadIntegrations,
             ...(options.effort
               ? { model_reasoning_effort: options.effort }
               : {}),
@@ -2403,6 +2406,16 @@ export function startCodex(options: CodexRunOptions): {
           },
         },
       );
+      const response = await threadRequest.catch(error => {
+        if (
+          error instanceof CodexRpcError &&
+          Object.keys(threadIntegrations).length
+        )
+          throw new Error(
+            'Codex could not apply the reviewed MCP or hook settings.',
+          );
+        throw error;
+      });
       const thread = object(response.thread);
       const sandbox = object(response.sandbox);
       if (

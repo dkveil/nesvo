@@ -1,4 +1,5 @@
 import type { VerifyMcpTurn } from '../mcp/service';
+import { writeClaudeRunConfig } from '../mcp/claude-config-file';
 import { spawn } from 'node:child_process';
 import { providerEnvironment } from './profiles';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -940,7 +941,7 @@ export function startClaude(options: {
   images?: readonly ClaudeImage[];
   readDirectories?: readonly string[];
   approvals?: boolean;
-  mcpTurn?: VerifyMcpTurn;
+  mcpTurn?: { verify: VerifyMcpTurn; dataDirectory: string };
   compact?: { instructions: string | null };
   onEvent: (event: ClaudeEvent) => void;
 }): {
@@ -958,6 +959,7 @@ export function startClaude(options: {
   let releaseApprovals: (() => void) | null = null;
   const done = (async (): Promise<ClaudeResult> => {
     let failure: string | null = null;
+    let runConfig: Awaited<ReturnType<typeof writeClaudeRunConfig>> | undefined;
     try {
       if (!models.some(model => model.id === options.model))
         throw new Error(
@@ -1040,7 +1042,7 @@ export function startClaude(options: {
           ? assistantMode
           : permission.cli;
       const readOnly = options.mode === 'read-only';
-      const integrations = await options.mcpTurn?.();
+      const integrations = await options.mcpTurn?.verify();
       const servers = integrations
         ? { ...integrations.servers, ...integrations.projectServers }
         : {};
@@ -1052,18 +1054,24 @@ export function startClaude(options: {
         inspection.supportsHostPrompts === true;
       const hostPrompts =
         canAsk && (!readOnly || Object.keys(servers).length > 0);
-      const mcpArgs = integrations
+      if (integrations && options.mcpTurn)
+        runConfig = await writeClaudeRunConfig(
+          options.mcpTurn.dataDirectory,
+          !readOnly || canAsk ? servers : {},
+          {
+            ...(readOnly || integrations.projectDisablesHooks
+              ? { disableAllHooks: true }
+              : { hooks: integrations.projectHooks }),
+            ...(readOnly ? { permissions: { ask: ['mcp__*'] } } : {}),
+          },
+        );
+      const mcpArgs = runConfig
         ? [
             '--strict-mcp-config',
             '--mcp-config',
-            JSON.stringify({ mcpServers: !readOnly || canAsk ? servers : {} }),
+            runConfig.mcpPath,
             '--settings',
-            JSON.stringify({
-              ...(readOnly || integrations.projectDisablesHooks
-                ? { disableAllHooks: true }
-                : { hooks: integrations.projectHooks }),
-              ...(readOnly ? { permissions: { ask: ['mcp__*'] } } : {}),
-            }),
+            runConfig.settingsPath,
             '--setting-sources',
             'user',
           ]
@@ -1799,6 +1807,8 @@ export function startClaude(options: {
                 error instanceof Error ? error.message : 'Claude Code failed.',
               ),
             };
+    } finally {
+      await runConfig?.dispose();
     }
   })();
   return {

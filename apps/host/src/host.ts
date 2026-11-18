@@ -1,4 +1,5 @@
 import { McpPolicy } from './mcp/service';
+import { sweepClaudeRunConfigs } from './mcp/claude-config-file';
 import {
   HOST_CONTRACT_REVISION,
   hostHealthSchema,
@@ -223,6 +224,7 @@ export const serveHost = ({
       const send = (message: HostReply | DesktopEvent) =>
         deliver(toHostMessage(message));
       yield* ownDataDirectory(directory);
+      yield* Effect.try(() => sweepClaudeRunConfigs(directory));
       const database = yield* openDatabase(directory);
       const backupDatabase = () => {
         try {

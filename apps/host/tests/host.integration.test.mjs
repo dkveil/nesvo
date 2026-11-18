@@ -17,7 +17,7 @@ import {
 } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19927,7 +19927,7 @@ test(
     );
     await writeFile(
       join(project, '.codex', 'config.toml'),
-      '[mcp_servers.project]\ncommand = "fixture-project-server"\n',
+      `[mcp_servers.project]\ncommand = "fixture-project-server"\nargs = ["--token", "${secret}"]\n`,
     );
     await writeFile(
       join(project, '.codex', 'hooks.json'),
@@ -19998,6 +19998,7 @@ test(
     const open = (extra = {}) => {
       const host = launch(directory, pidFile, {
         NESVO_FIXTURE_MCP_LOG: claudeLog,
+        NESVO_FIXTURE_MCP_ARGV: '1',
         NESVO_CODEX_FIXTURE_MCP_LOG: codexLog,
         NESVO_TEST_MODE: '1',
         NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
@@ -20011,12 +20012,23 @@ test(
         .split('\n')
         .filter(Boolean)
         .map(line => JSON.parse(line));
+    const leftover = join(directory, 'mcp-run-' + randomUUID());
+    await mkdir(leftover);
+    await writeFile(join(leftover, 'mcp.json'), '{}');
     const host = open();
     assert.ok(
       (await host.request('health')).health.capabilities.includes(
         'mcp-servers',
       ),
     );
+    await assert.rejects(stat(leftover), { code: 'ENOENT' });
+    const privateConfigPath = ({ args }) => {
+      assert.ok(args.every(arg => !arg.includes(secret)));
+      const path = args[args.indexOf('--mcp-config') + 1];
+      assert.ok(isAbsolute(path));
+      assert.equal(dirname(dirname(path)), directory);
+      return path;
+    };
 
     const claudeList = await host.request('list-mcp-servers', {
       provider: 'Claude Code',
@@ -20084,6 +20096,9 @@ test(
       null,
     );
     const applied = (await logged(claudeLog)).at(-1);
+    await assert.rejects(stat(dirname(privateConfigPath(applied))), {
+      code: 'ENOENT',
+    });
     assert.deepEqual(Object.keys(applied.config.mcpServers).sort(), [
       'docs',
       'tracker',
@@ -20130,7 +20145,11 @@ test(
       }),
     );
     assert.equal((await turn(claude, 'accept-edits')).status, 'completed');
-    assert.deepEqual((await logged(claudeLog)).at(-1), applied);
+    const { args: _changedArgs, ...changedLaunch } = (
+      await logged(claudeLog)
+    ).at(-1);
+    const { args: _initialArgs, ...initialLaunch } = applied;
+    assert.deepEqual(changedLaunch, initialLaunch);
     const changed = await listFor(claude);
     assert.equal(changed.repository.status, 'needs-trust');
     assert.equal(changed.repository.changed, true);
@@ -20159,6 +20178,17 @@ test(
     );
     const approval = pending.pendingApprovals[0];
     assert.equal(approval.kind, 'tool');
+    const configPath = privateConfigPath((await logged(claudeLog)).at(-1));
+    const duringTurn = JSON.parse(await readFile(configPath, 'utf8'));
+    assert.equal(duringTurn.mcpServers.docs.env.DOCS_TOKEN, secret);
+    assert.equal(
+      duringTurn.mcpServers.tracker.headers.Authorization,
+      `Bearer ${secret}`,
+    );
+    if (process.platform !== 'win32') {
+      assert.equal((await stat(dirname(configPath))).mode & 0o777, 0o700);
+      assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+    }
     assert.equal(
       (
         await host.request('respond-approval', {
@@ -20178,6 +20208,7 @@ test(
         value.status === 'completed',
     );
     assert.equal(decided.messages.at(-1).body, 'Fixture action allowed.');
+    await assert.rejects(stat(dirname(configPath)), { code: 'ENOENT' });
     const planned = (await logged(claudeLog)).at(-1);
     assert.equal(planned.permissionMode, 'plan');
     assert.equal(planned.hostPrompts, true);
@@ -20186,6 +20217,25 @@ test(
       'tracker',
     ]);
     assert.equal(planned.hooksDisabled, true);
+    const stopping = await sendTurn(claude, 'read-only', 'fixture:ask-mcp');
+    await host.event(
+      value =>
+        value.id === claude.id &&
+        value.runId === stopping.runId &&
+        value.pendingApprovals.length === 1,
+    );
+    const stoppedConfig = privateConfigPath((await logged(claudeLog)).at(-1));
+    await host.request('stop-run', {
+      sessionId: claude.id,
+      runId: stopping.runId,
+    });
+    await host.event(
+      value =>
+        value.id === claude.id &&
+        value.runId === stopping.runId &&
+        value.status === 'stopped',
+    );
+    await assert.rejects(stat(dirname(stoppedConfig)), { code: 'ENOENT' });
 
     const codexList = await host.request('list-mcp-servers', {
       provider: 'Codex',
@@ -20233,7 +20283,8 @@ test(
         .status,
       'trusted',
     );
-    assert.equal((await turn(codex, 'supervised')).status, 'completed');
+    const codexWithTrust = await turn(codex, 'supervised');
+    assert.equal(codexWithTrust.status, 'completed', codexWithTrust.error);
     const codexTrusted = (await logged(codexLog)).at(-1);
     assert.deepEqual(codexTrusted.inheritedServers, [
       'search',
@@ -20241,6 +20292,7 @@ test(
       'project',
     ]);
     assert.deepEqual(codexTrusted.hooks, projectHooks);
+    assert.ok(codexTrusted.args.every(arg => !arg.includes(secret)));
     await writeFile(
       join(project, '.codex', 'hooks.json'),
       JSON.stringify({ hooks: hook('changed-hook') }),

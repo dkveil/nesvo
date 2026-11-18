@@ -39,7 +39,8 @@ const isolatedConfig = {
   },
 };
 
-const effectiveConfig = () => {
+let threadConfig = {};
+const effectiveConfig = (config = {}) => {
   const file = join(process.env.CODEX_HOME ?? '\0', 'config.toml');
   const configured = existsSync(file)
     ? (parseToml(readFileSync(file, 'utf8')).mcp_servers ?? {})
@@ -52,19 +53,14 @@ const effectiveConfig = () => {
       args[index - 1] === '--disable' ? [value] : [],
     ),
   );
-  const snapshot = overrides
-    .filter(value => /^mcp_servers\.[\w-]+=/.test(value))
-    .map(value => parseToml(value).mcp_servers);
   const merged = { ...configured };
-  for (const table of snapshot)
-    for (const [name, value] of Object.entries(table))
-      merged[name] = { ...merged[name], ...value };
-  for (const override of overrides.filter(value =>
-    /^mcp_servers\.[\w-]+\.(?:default_tools_approval_mode|tools)=/.test(value),
-  )) {
-    const table = parseToml(override).mcp_servers;
-    for (const [name, value] of Object.entries(table))
-      merged[name] = { ...merged[name], ...value };
+  for (const [key, value] of Object.entries(config)) {
+    const [table, name, option] = key.split('.');
+    if (table !== 'mcp_servers' || !name) continue;
+    merged[name] = {
+      ...merged[name],
+      ...(option ? { [option]: value } : value),
+    };
   }
   const servers = Object.fromEntries(
     Object.entries(merged).map(([name, server]) => [
@@ -89,9 +85,7 @@ const effectiveConfig = () => {
         )
       : {}),
     mcp_servers: servers,
-    hooks: overrides.find(value => value.startsWith('hooks='))
-      ? parseToml(overrides.find(value => value.startsWith('hooks='))).hooks
-      : {},
+    hooks: config.hooks ?? {},
     features: {
       ...isolatedConfig.features,
       hooks: !disabledFeatures.has('hooks') && disabledFeatures.size > 0,
@@ -692,6 +686,7 @@ if (args.length === 1 && args[0] === '--version') {
     } else if (
       ['thread/start', 'thread/resume', 'thread/fork'].includes(method)
     ) {
+      threadConfig = params.config ?? {};
       assert.ok(isAbsolute(params.cwd));
       assert.ok(['read-only', 'workspace-write'].includes(params.sandbox));
       const supervised = params.sandbox === 'workspace-write';
@@ -718,11 +713,13 @@ if (args.length === 1 && args[0] === '--version') {
             approvalPolicy: params.approvalPolicy,
             args,
             mcpServers: params.config?.mcp_servers ?? null,
-            inheritedServers: Object.entries(effectiveConfig().mcp_servers)
+            inheritedServers: Object.entries(
+              effectiveConfig(threadConfig).mcp_servers,
+            )
               .filter(([, server]) => server.enabled)
               .map(([name]) => name),
             hooksFeature: params.config?.['features.hooks'] ?? null,
-            hooks: effectiveConfig().hooks,
+            hooks: effectiveConfig(threadConfig).hooks,
           }) + '\n',
           { flag: 'a' },
         );
@@ -909,7 +906,7 @@ if (args.length === 1 && args[0] === '--version') {
       );
       const prompt = turnText;
       if (prompt === 'fixture:ask-mcp') {
-        const server = effectiveConfig().mcp_servers.search;
+        const server = effectiveConfig(threadConfig).mcp_servers.search;
         assert.equal(server.default_tools_approval_mode, 'prompt');
         assert.equal(effectiveConfig().features.hooks, false);
         const requestId = randomUUID();

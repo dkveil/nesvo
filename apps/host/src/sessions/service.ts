@@ -2890,7 +2890,14 @@ export class SessionService {
                 ...options,
                 effort: session.effort,
                 environment: turnEnvironment,
-                mcpTurn,
+                ...(mcpTurn
+                  ? {
+                      mcpTurn: {
+                        verify: mcpTurn,
+                        dataDirectory: this.directory,
+                      },
+                    }
+                  : {}),
                 prompt: selected?.snapshot
                   ? sharedSkillPrompt(selected.snapshot, images.prompt)
                   : images.prompt,

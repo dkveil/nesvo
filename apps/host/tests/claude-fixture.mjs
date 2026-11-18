@@ -329,8 +329,10 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.get(flag), expected, flag);
 
   const settingSources = values.get('--setting-sources');
-  const settings = JSON.parse(values.get('--settings'));
-  const config = JSON.parse(values.get('--mcp-config'));
+  const readConfig = value =>
+    JSON.parse(value.startsWith('{') ? value : readFileSync(value, 'utf8'));
+  const settings = readConfig(values.get('--settings'));
+  const config = readConfig(values.get('--mcp-config'));
   assert.ok(['', 'user'].includes(settingSources));
   assert.equal(values.has('--strict-mcp-config'), true);
   if (permissionMode === 'plan' || permissionMode === 'dontAsk') {
@@ -349,6 +351,7 @@ if (args.length === 1 && args[0] === '--version') {
         config,
         hooks: settings.hooks ?? {},
         settingSources,
+        ...(process.env.NESVO_FIXTURE_MCP_ARGV === '1' ? { args } : {}),
       }) + '\n',
       { flag: 'a' },
     );
