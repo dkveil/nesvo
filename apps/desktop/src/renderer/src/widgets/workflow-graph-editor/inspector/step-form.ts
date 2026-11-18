@@ -16,6 +16,8 @@ export const stepFields = [
   'retries',
   'retry_backoff',
   'idempotent',
+  'pr',
+  'poll_interval',
   'on_fail',
   'needs',
   'effect',
@@ -51,6 +53,7 @@ export const bodyLabels: Record<StepType, string> = {
   action: 'Command',
   agent: 'Instructions',
   human: 'Description',
+  'wait-ci': 'Notes',
 };
 
 export const bodyPlaceholders: Record<StepType, string> = {
@@ -58,6 +61,7 @@ export const bodyPlaceholders: Record<StepType, string> = {
   action: 'gh release create "$VERSION"',
   agent: 'What the agent checks and how it reports the verdict.',
   human: 'What the reviewer looks at before deciding.',
+  'wait-ci': '',
 };
 
 export const typeLabels: Record<StepType, string> = {
@@ -65,6 +69,7 @@ export const typeLabels: Record<StepType, string> = {
   agent: 'Agent',
   human: 'Human',
   action: 'Action',
+  'wait-ci': 'Wait for PR checks',
 };
 
 export const declaresEffect = (type: StepType) =>
@@ -73,6 +78,8 @@ export const declaresEffect = (type: StepType) =>
 export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   ...step,
   type,
+  pr: type === 'wait-ci' ? step.pr : undefined,
+  poll_interval: type === 'wait-ci' ? step.poll_interval : undefined,
   skill: type === 'agent' ? step.skill : null,
   retries: type === 'human' ? 0 : step.retries,
   retry_backoff: type === 'human' ? undefined : step.retry_backoff,
@@ -92,6 +99,8 @@ export const stepNotes = (step: StepDraft) =>
       retries: step.retries,
       retry_backoff: step.retry_backoff,
       idempotent: step.idempotent,
+      pr: step.pr,
+      poll_interval: step.poll_interval,
       on_fail: step.on_fail,
       effect: step.effect,
       needs: step.needs,

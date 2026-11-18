@@ -130,6 +130,8 @@ const knownFields: Record<Kind, readonly string[]> = {
     'retries',
     'retry_backoff',
     'idempotent',
+    'pr',
+    'poll_interval',
     'on_fail',
     'effect',
     'needs',

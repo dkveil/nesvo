@@ -259,6 +259,40 @@ export function StepInspectorForm({
             />
           </Field>
         )}
+        {step.type === 'wait-ci' && (
+          <>
+            <Field
+              id={fieldId('pr')}
+              label="Pull request"
+              hint="Leave empty to use the session link. Accepts a URL, number or steps.<step>.outputs.<key>."
+              messages={notesOf('pr')}
+            >
+              <Input
+                size="sm"
+                id={fieldId('pr')}
+                value={step.pr ?? ''}
+                onChange={event =>
+                  update({ pr: event.target.value || undefined })
+                }
+              />
+            </Field>
+            <Field
+              id={fieldId('poll_interval')}
+              label="Poll interval"
+              hint="From 1s to 1m. Defaults to 10s."
+              messages={notesOf('poll_interval')}
+            >
+              <Input
+                size="sm"
+                id={fieldId('poll_interval')}
+                value={step.poll_interval ?? ''}
+                onChange={event =>
+                  update({ poll_interval: event.target.value || undefined })
+                }
+              />
+            </Field>
+          </>
+        )}
         <Field
           id={fieldId('body')}
           label={bodyLabels[step.type]}

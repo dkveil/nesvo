@@ -71,6 +71,7 @@ import {
   WorkflowAssistantError,
 } from './workflows/assistant';
 import { EvidenceError, EvidenceStore } from './workflows/evidence';
+import { createWaitCiExecutor } from './workflows/steps/wait-ci';
 import { WorkflowRunError, WorkflowRunner } from './workflows/runner';
 import { WorkflowGates } from './workflows/gates';
 import { actionExecutor } from './workflows/steps/action';
@@ -382,6 +383,11 @@ export const serveHost = ({
             stepExecutors: {
               command: commandExecutor,
               action: actionExecutor,
+              'wait-ci': createWaitCiExecutor({
+                read: (target, cwd, signal) =>
+                  pullRequests.workflowChecks(target, cwd, signal),
+                linked: id => store.get(id)?.pullRequest ?? null,
+              }),
               human: createHumanExecutor({
                 latest: sessionId => reviewStore.latest(sessionId),
               }),

@@ -23,6 +23,8 @@ import {
   WorkspaceIsolationError,
 } from './workspace/isolation';
 import {
+  check,
+  pullRequestChecksSchema,
   detail,
   detailFields,
   detailSchema,
@@ -149,6 +151,25 @@ export class PullRequests {
     private readonly checkoutWorkspace: Checkout,
   ) {
     this.gh = new GitHubCli(signal);
+  }
+
+  async workflowChecks(target: string, cwd: string, signal: AbortSignal) {
+    const raw = await this.gh.json(
+      pullRequestChecksSchema,
+      ['pr', 'view', target, '--json', 'url,headRefOid,statusCheckRollup'],
+      { cwd, signal, maxOutputBytes: 512 * 1024 },
+    );
+    const reference = parsePullRequestUrl(raw.url);
+    if (!reference)
+      throw new PullRequestError(
+        'unavailable',
+        'The pull request URL is invalid.',
+      );
+    return {
+      reference,
+      headSha: raw.headRefOid,
+      checks: (raw.statusCheckRollup ?? []).map(check),
+    };
   }
 
   async list(

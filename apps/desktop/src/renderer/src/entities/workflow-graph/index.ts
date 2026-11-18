@@ -96,6 +96,7 @@ export const stepTypeLabels: Record<StepType, string> = {
   agent: 'Agent',
   human: 'Human',
   action: 'Action',
+  'wait-ci': 'Wait for PR checks',
 };
 
 export const stepTypeOrder: StepType[] = [
@@ -103,6 +104,7 @@ export const stepTypeOrder: StepType[] = [
   'agent',
   'human',
   'action',
+  'wait-ci',
 ];
 
 export const phaseTones: Record<StepPhase, WorkflowTone> = {
@@ -215,6 +217,8 @@ export const stepDefinitionOf = (
   retries: step.retries,
   retry_backoff: step.retry_backoff,
   idempotent: step.idempotent,
+  pr: step.pr,
+  poll_interval: step.poll_interval,
   on_fail: step.on_fail,
   effect: step.effect,
   needs: [...step.needs],
@@ -523,6 +527,8 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.retries) lines.push(`retries: ${step.retries}`);
   if (step.retry_backoff) lines.push(`retry_backoff: ${step.retry_backoff}`);
   if (step.idempotent) lines.push('idempotent: true');
+  if (step.pr) lines.push(`pr: ${yamlText(step.pr)}`);
+  if (step.poll_interval) lines.push(`poll_interval: ${step.poll_interval}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);

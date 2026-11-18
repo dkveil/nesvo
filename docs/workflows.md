@@ -41,7 +41,7 @@ bun run lint
 | Field | Values | Meaning |
 | -- | -- | -- |
 | `name` | lowercase letters, digits and inner hyphens | Must match the file name. |
-| `type` | `command`, `agent`, `human`, `action` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
+| `type` | `command`, `agent`, `human`, `action`, `wait-ci` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
 | `retries` | 0 to 5 | Default 0. `retries: 2` allows up to three attempts. The run records each attempt, then applies the normal failure route and `on_fail`. Human decisions never retry. |
@@ -53,6 +53,14 @@ bun run lint
 | `needs` | `env:NAME`, `browser` | A missing `env:NAME` variable blocks the step with a readable reason instead of running it. `browser` is not available on this host yet and always blocks the step. |
 
 Body by type: a `command` or `action` body is a shell script run in the task directory; an `agent` body holds the instructions for the verifying session; a `human` body is the question shown at the gate. Command and action steps do not inherit variables ending in `KEY`, `TOKEN`, `SECRET` or `PASSWORD`; list them in `needs` when a step really needs one.
+
+### Waiting for pull request checks
+
+A `wait-ci` step polls on the session host using the installed `gh` CLI. The body is optional. The `pr` field can contain a pull request URL, a quoted number resolved in the task folder, or `steps.<step>.outputs.<key>` resolving to either. Without it, the runner uses the task session's linked pull request. Use an upstream step for output references.
+
+`timeout` includes time while the host is down. Set `poll_interval` between `1s` and `1m` (default `10s`). The runner records the pull request and head SHA and resumes the same attempt after restart when only CI waits were active. A changed head fails the attempt. A known failed check ends the wait early. An empty check list waits until checks appear or time expires.
+
+Outputs are `status` (`success`, `failure` or `timeout`), `failing_checks` (newline-separated names), and `head_sha` when known. Failure and timeout follow the same routing and retry rules as other failed checks.
 
 ## The workflow file
 

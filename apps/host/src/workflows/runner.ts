@@ -9,6 +9,7 @@ import {
   type GraphEdge,
   type DesktopEvent,
   type WorkflowRun,
+  type WorkflowCiWait,
   type WorkflowRunStatus,
   type WorkflowStepRecord,
   type WorkflowStepState,
@@ -93,6 +94,7 @@ export type StepExecution = {
   environment: NodeJS.ProcessEnv;
   now: () => Date;
   link: (sessionId: string) => void;
+  saveCiWait?: (checkpoint: WorkflowCiWait) => boolean;
 };
 
 export type StepEvidence = Pick<
@@ -158,7 +160,7 @@ export type RunnerPorts = {
   clock?: RunnerClock;
   emit: (event: DesktopEvent) => void;
   evidence: StepEvidence & Partial<Pick<EvidenceStore, 'stopOrphans'>>;
-  stepExecutors: Record<StepType, StepExecutor>;
+  stepExecutors: Partial<Record<StepType, StepExecutor>>;
   author?: AuthorPort;
   environment?: NodeJS.ProcessEnv;
 };
@@ -458,6 +460,7 @@ const EXCLUSIVE_STEP_TYPES = {
   action: ['human'],
   agent: [],
   human: ['action'],
+  'wait-ci': [],
 } as const satisfies Record<StepType, readonly StepType[]>;
 
 const admits = (
@@ -620,7 +623,7 @@ export class WorkflowRunner {
   private readonly clock: RunnerClock;
   private readonly emit: (event: DesktopEvent) => void;
   private readonly evidence: RunnerPorts['evidence'];
-  private readonly executors: Record<StepType, StepExecutor>;
+  private readonly executors: RunnerPorts['stepExecutors'];
   private readonly author: AuthorPort | undefined;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly passes = new Map<string, PassState>();
@@ -889,6 +892,10 @@ export class WorkflowRunner {
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       const steps = this.store.stepsForRun(runId);
+      if (run.status === 'checking' || run.status === 'awaiting-human')
+        for (const step of steps)
+          if (step.type === 'wait-ci' && step.state === 'running' && !this.active.has(step.id))
+            this.executeStep(run, steps, step);
       const author = this.author;
       const move = nextMove(run, steps, {
         turnState: messageId =>
@@ -1088,17 +1095,27 @@ export class WorkflowRunner {
     const running = this.store.beginStep(step.id, step.revision, this.timestamp());
     if (!running) return;
     this.emit({ type: 'workflow-step-changed', step: running });
+    this.executeStep(run, steps, running);
+  }
+
+  private executeStep(run: WorkflowRun, steps: readonly WorkflowStepRecord[], running: WorkflowStepRecord): void {
+    const definition = run.workflow.steps[running.index];
+    if (!definition) return;
     const controller = new AbortController();
     const execution: StepExecution = {
       run: this.store.getRun(run.id) ?? run,
       step: running,
       definition,
-      outputs: ancestorOutputs(run, steps, step),
+      outputs: ancestorOutputs(run, steps, running),
       signal: controller.signal,
       evidence: this.evidence,
       environment: this.environment,
       now: () => this.clock.now(),
       link: sessionId => this.linkStep(running, sessionId),
+      saveCiWait: ciWait => {
+        const current = this.store.getStep(running.id);
+        return current?.state === 'running' && this.writeStep(current, { ciWait });
+      },
     };
     const executor = this.executors[definition.type] ?? unavailableExecutor;
     const done = Promise.resolve()
@@ -1323,7 +1340,7 @@ export class WorkflowRunner {
   private writeStep(
     step: WorkflowStepRecord,
     changes: Partial<
-      Pick<WorkflowStepRecord, 'state' | 'result' | 'skip' | 'sessionId'>
+      Pick<WorkflowStepRecord, 'state' | 'result' | 'skip' | 'sessionId' | 'ciWait'>
     >,
   ): boolean {
     const next: WorkflowStepRecord = {
@@ -1410,6 +1427,7 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
     ...step,
     retry: undefined,
     retryAt: undefined,
+    ciWait: undefined,
     id: randomUUID(),
     revision: 1,
     state: 'pending',
@@ -1428,7 +1446,7 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
 
 function mayRetry(run: WorkflowRun, step: ResolvedStep): boolean {
   if (step.type === 'human') return false;
-  if (step.idempotent) return true;
+  if (step.idempotent || step.type === 'wait-ci') return true;
   if (step.type !== 'command' || step.effect === 'external' || looksExternal(step.body)) return false;
   const before = new Set(ancestors(run.workflow.graph, step.name));
   return !run.workflow.steps.some(other => other.type === 'human' &&

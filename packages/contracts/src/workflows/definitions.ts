@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parsePullRequestUrl } from '../pull-requests';
 import {
   implicitEdges,
   WORKFLOW_EDGE_CONDITIONS,
@@ -48,7 +49,26 @@ export const parseDurationMs = (value: string): number | null => {
     : null;
 };
 
-export const stepTypeSchema = z.enum(['command', 'agent', 'human', 'action']);
+export const stepTypeSchema = z.enum([
+  'command',
+  'agent',
+  'human',
+  'action',
+  'wait-ci',
+]);
+export const STEP_OUTPUT_REFERENCE =
+  /^steps\.([a-z0-9]+(?:-[a-z0-9]+)*)\.outputs\.([A-Za-z][A-Za-z0-9_.-]{0,63})$/;
+export const PULL_REQUEST_NUMBER = /^[1-9]\d{0,8}$/;
+const prExpressionSchema = z
+  .string()
+  .max(250)
+  .refine(
+    value =>
+      STEP_OUTPUT_REFERENCE.test(value) ||
+      PULL_REQUEST_NUMBER.test(value) ||
+      parsePullRequestUrl(value) !== null,
+    'Enter a pull request URL, number or steps.<step>.outputs.<key>.',
+  );
 export const stepPhaseSchema = z.enum(['plan', 'pre-done', 'pre-push']);
 export const stepOnFailSchema = z.enum(['fix', 'stop']);
 export const stepEffectSchema = z.enum(['local', 'external']);
@@ -85,6 +105,13 @@ const stepDefinitionShape = {
   phase: stepPhaseSchema,
   skill: stepSkillSchema.nullable().default(null),
   timeout: durationSchema.default('15m'),
+  pr: prExpressionSchema.optional(),
+  poll_interval: durationSchema
+    .refine(
+      value => (parseDurationMs(value) ?? Infinity) <= 60_000,
+      'Poll every 1s to 1m.',
+    )
+    .optional(),
   retry_backoff: durationSchema.optional(),
   idempotent: z.boolean().optional(),
   retries: z
@@ -107,6 +134,8 @@ type StepRuleSubject = {
   type: z.infer<typeof stepTypeSchema>;
   skill: string | null;
   retries: number;
+  pr?: string;
+  poll_interval?: string;
   retry_backoff?: string;
   idempotent?: boolean;
   effect: z.infer<typeof stepEffectSchema>;
@@ -114,6 +143,13 @@ type StepRuleSubject = {
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
+  for (const field of ['pr', 'poll_interval'] as const)
+    if (value.type !== 'wait-ci' && value[field] !== undefined)
+      context.addIssue({
+        code: 'custom',
+        path: [field],
+        message: 'This field belongs to a Wait for PR checks step.',
+      });
   if (
     value.type === 'human' &&
     (value.retries !== 0 || value.retry_backoff || value.idempotent)
@@ -139,7 +175,11 @@ const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
       path: ['skill'],
       message: 'Only agent steps invoke a skill.',
     });
-  if (!value.body.trim() && (value.type !== 'agent' || value.skill === null))
+  if (
+    !value.body.trim() &&
+    value.type !== 'wait-ci' &&
+    (value.type !== 'agent' || value.skill === null)
+  )
     context.addIssue({
       code: 'custom',
       path: ['body'],

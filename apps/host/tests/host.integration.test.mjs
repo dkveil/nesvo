@@ -8774,62 +8774,125 @@ test(
     );
 
     await t.test(
-      'automatic retries respect backoff, effect safety and final failure',
-      async () => {
-        const retriesProject = await createProject(
-          'retries',
+      'pull request checks resume the same attempt after a host restart',
+      async subtest => {
+        const fresh = join(directory, 'ci-data');
+        const cli = join(directory, 'ci-cli.mjs');
+        const checks = join(directory, 'ci-checks.json');
+        await write(
+          cli,
+          [
+            "import assert from 'node:assert/strict';",
+            "import { readFileSync } from 'node:fs';",
+            "assert.deepEqual(process.argv.slice(2), ['pr', 'view', 'https://github.com/example/fixture/pull/1', '--json', 'url,headRefOid,statusCheckRollup']);",
+            "process.stdout.write(readFileSync(new URL('./ci-checks.json', import.meta.url)));",
+          ].join('\n'),
+        );
+        const setChecks = async (status, conclusion) =>
+          write(
+            checks,
+            JSON.stringify({
+              url: 'https://github.com/example/fixture/pull/1',
+              headRefOid: 'a'.repeat(40),
+              statusCheckRollup: [
+                {
+                  __typename: 'CheckRun',
+                  name: 'fixture-tests',
+                  status,
+                  conclusion,
+                },
+              ],
+            }),
+          );
+        const boot = () =>
+          launch(fresh, join(directory, 'ci-pids.json'), {
+            NESVO_GH_EXECUTABLE: cli,
+          });
+        let waiter = boot();
+        subtest.after(() => waiter.stop());
+        await setChecks('IN_PROGRESS', '');
+        const ciProject = await createProject(
+          'ci',
           [
             {
-              name: 'retry-local',
-              type: 'command',
-              retries: 2,
-              retry_backoff: '1s',
-              body: 'exit 1',
+              name: 'resolve-pr',
+              type: 'action',
+              body: shellBody(
+                'echo \'{"url":"https://github.com/example/fixture/pull/1"}\'',
+                'echo {"url":"https://github.com/example/fixture/pull/1"}',
+              ),
             },
             {
-              name: 'retry-unsafe',
-              type: 'action',
-              retries: 2,
-              body: 'exit 1',
+              name: 'checks',
+              type: 'wait-ci',
+              pr: 'steps.resolve-pr.outputs.url',
+              timeout: '20s',
+              poll_interval: '1s',
+              body: '',
             },
             {
-              name: 'retry-safe',
-              type: 'action',
-              retries: 2,
-              idempotent: true,
-              on_fail: 'fix',
-              body: 'exit 1',
+              name: 'timeout',
+              type: 'wait-ci',
+              pr: 'https://github.com/example/fixture/pull/1',
+              timeout: '2s',
+              poll_interval: '1s',
+              body: '',
             },
           ],
-          {
-            'retry-local': ['retry-local'],
-            'retry-unsafe': ['retry-unsafe'],
-            'retry-safe': ['retry-safe'],
-          },
+          { checks: ['resolve-pr', 'checks'], timeout: ['timeout'] },
         );
-        for (const [name, count, status] of [
-          ['retry-local', 3, 'failed'],
-          ['retry-unsafe', 1, 'failed'],
-          ['retry-safe', 3, 'needs-attention'],
-        ]) {
-          const run = await start(retriesProject, name);
-          const current = await settled(run.id);
-          assert.equal(current.run.status, status);
-          assert.deepEqual(
-            current.steps.map(step => step.attempt),
-            Array.from({ length: count }, (_, index) => index + 1),
-          );
-          if (name === 'retry-local') {
-            for (const [index, step] of current.steps.entries()) {
-              if (index === 0) continue;
-              assert.ok(
-                Date.parse(step.startedAt) -
-                  Date.parse(current.steps[index - 1].result.finishedAt) >=
-                  1000,
-              );
-            }
+        const begin = async name => {
+          const response = await waiter.request('run-workflow-steps', {
+            directory: ciProject,
+            specPath: join('.agents', 'tasks', name + '.md'),
+          });
+          assert.equal(response.type, 'workflow-run', JSON.stringify(response));
+          return response.run.id;
+        };
+        const wait = async (id, done) => {
+          const deadline = Date.now() + 15_000;
+          while (Date.now() < deadline) {
+            const response = await waiter.request('get-workflow-run', {
+              runId: id,
+            });
+            assert.equal(
+              response.type,
+              'workflow-run-detail',
+              JSON.stringify(response),
+            );
+            if (done(response.detail)) return response.detail;
+            await delay(50);
           }
-        }
+          assert.fail('The check wait did not reach the expected state.');
+        };
+        const id = await begin('checks');
+        const original = await wait(id, state =>
+          state.steps.some(step => step.ciWait?.headSha),
+        );
+        await waiter.stop();
+        await setChecks('COMPLETED', 'FAILURE');
+        waiter = boot();
+        const failed = await wait(id, state => state.run.status === 'failed');
+        assert.equal(failed.steps.length, 2);
+        assert.equal(failed.steps[1].id, original.steps[1].id);
+        assert.equal(failed.steps[1].startedAt, original.steps[1].startedAt);
+        assert.deepEqual(failed.steps[1].result.outputs, {
+          status: 'failure',
+          failing_checks: 'fixture-tests',
+          head_sha: 'a'.repeat(40),
+        });
+        await setChecks('COMPLETED', 'SUCCESS');
+        const passed = await wait(
+          await begin('checks'),
+          state => state.run.status === 'passed',
+        );
+        assert.equal(passed.steps[1].result.outputs.status, 'success');
+        await setChecks('IN_PROGRESS', '');
+        const timedOut = await wait(
+          await begin('timeout'),
+          state => state.run.status === 'failed',
+        );
+        assert.equal(timedOut.steps[0].result.outputs.status, 'timeout');
       },
     );
 
@@ -8962,6 +9025,66 @@ test(
       });
       assert.equal(unknownRun.code, 'not-found');
     });
+
+    await t.test(
+      'automatic retries respect backoff, effect safety and final failure',
+      async () => {
+        const retriesProject = await createProject(
+          'retries',
+          [
+            {
+              name: 'retry-local',
+              type: 'command',
+              retries: 2,
+              retry_backoff: '1s',
+              body: 'exit 1',
+            },
+            {
+              name: 'retry-unsafe',
+              type: 'action',
+              retries: 2,
+              body: 'exit 1',
+            },
+            {
+              name: 'retry-safe',
+              type: 'action',
+              retries: 2,
+              idempotent: true,
+              on_fail: 'fix',
+              body: 'exit 1',
+            },
+          ],
+          {
+            'retry-local': ['retry-local'],
+            'retry-unsafe': ['retry-unsafe'],
+            'retry-safe': ['retry-safe'],
+          },
+        );
+        for (const [name, count, status] of [
+          ['retry-local', 3, 'failed'],
+          ['retry-unsafe', 1, 'failed'],
+          ['retry-safe', 3, 'needs-attention'],
+        ]) {
+          const run = await start(retriesProject, name);
+          const current = await settled(run.id);
+          assert.equal(current.run.status, status);
+          assert.deepEqual(
+            current.steps.map(step => step.attempt),
+            Array.from({ length: count }, (_, index) => index + 1),
+          );
+          if (name === 'retry-local') {
+            for (const [index, step] of current.steps.entries()) {
+              if (index === 0) continue;
+              assert.ok(
+                Date.parse(step.startedAt) -
+                  Date.parse(current.steps[index - 1].result.finishedAt) >=
+                  1000,
+              );
+            }
+          }
+        }
+      },
+    );
 
     await t.test(
       'the portability fixture produces the expected results',

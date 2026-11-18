@@ -1,4 +1,4 @@
-import { Bot, Hand, Terminal, Zap, type LucideIcon } from 'lucide-react';
+import { Bot, Hand, Clock, Terminal, Zap, type LucideIcon } from 'lucide-react';
 import type { StepType } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 
@@ -7,6 +7,7 @@ const glyphs: Record<StepType, LucideIcon> = {
   agent: Bot,
   human: Hand,
   action: Zap,
+  'wait-ci': Clock,
 };
 
 type Props = { type: StepType; className?: string };

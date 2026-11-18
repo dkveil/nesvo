@@ -44,6 +44,12 @@ const checkSchema = z.discriminatedUnion('__typename', [
   }),
 ]);
 
+export const pullRequestChecksSchema = z.object({
+  url: z.url(),
+  headRefOid: shaSchema,
+  statusCheckRollup: z.array(checkSchema).max(500).nullable(),
+});
+
 export const summaryFields = [
   'number',
   'title',
@@ -180,7 +186,7 @@ const conclusions = {
   STALE: 'stale',
 } as const;
 
-function check(raw: z.infer<typeof checkSchema>): PullRequestCheck {
+export function check(raw: z.infer<typeof checkSchema>): PullRequestCheck {
   const state = raw.__typename === 'CheckRun' ? raw.conclusion : raw.state;
   const conclusion =
     state && Object.hasOwn(conclusions, state)

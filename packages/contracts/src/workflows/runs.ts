@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { providerSchema } from '../sessions';
+import { pullRequestReferenceSchema } from '../pull-requests';
 import {
   definitionHashSchema,
   workflowDefinitionLimits,
@@ -108,6 +109,16 @@ export const workflowRunSchema = z.strictObject({
   finishedAt: z.iso.datetime().nullable(),
 });
 
+const ciWaitSchema = z.strictObject({
+  reference: pullRequestReferenceSchema,
+  headSha: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
+});
+
+export type WorkflowCiWait = z.infer<typeof ciWaitSchema>;
+
 export const workflowStepRecordSchema = z.strictObject({
   id: idSchema,
   runId: idSchema,
@@ -129,6 +140,7 @@ export const workflowStepRecordSchema = z.strictObject({
     .max(workflowDefinitionLimits.retries)
     .optional(),
   retryAt: z.iso.datetime().optional(),
+  ciWait: ciWaitSchema.optional(),
   result: stepResultSchema.nullable(),
   sessionId: idSchema.nullable(),
   reviewId: idSchema.nullable(),
