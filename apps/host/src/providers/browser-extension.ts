@@ -14,8 +14,6 @@ export const unattendedBrowserTools = [
   'read_page',
   'get_page_text',
   'find',
-  'read_console_messages',
-  'read_network_requests',
 ].map(tool => `mcp__${claudeBrowserServerName}__${tool}`);
 
 const browserDataDirectories = (): string[] => {

@@ -647,6 +647,11 @@ export class SessionControl {
           'invalid',
           `${provider} does not support the ${input.mode} permission mode.`,
         );
+      if (input.browser && !policy.browser)
+        return refusal(
+          'forbidden-by-policy',
+          'The coordinator policy does not allow children with browser access.',
+        );
       if (input.worktree && !policy.worktrees)
         return refusal(
           'forbidden-by-policy',

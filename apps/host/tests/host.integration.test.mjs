@@ -24537,18 +24537,29 @@ test(
       await writeFile(path, content);
     };
     await mkdir(join(project, '.git'), { recursive: true });
+    const stepFile = (name, body) =>
+      `---\nname: ${name}\nphase: pre-done\n${body}\n`;
+    await write(
+      join(process.env.NESVO_WORKFLOWS_HOME, 'steps', 'look.md'),
+      stepFile(
+        'look',
+        'type: agent\nneeds: [browser]\n---\nfixture:verdict-pass\nOpen the staging page and record what it shows.',
+      ),
+    );
     const steps = {
-      look: 'type: agent\nneeds: [browser]\n---\nfixture:verdict-pass\nOpen the staging page and record what it shows.',
       page: 'type: command\nneeds: [browser]\n---\necho never',
+      'repo-look':
+        'type: agent\nneeds: [browser]\n---\nfixture:verdict-pass\nOpen any page.',
     };
     for (const [name, body] of Object.entries(steps))
       await write(
         join(project, '.agents', 'workflows', 'steps', `${name}.md`),
-        `---\nname: ${name}\nphase: pre-done\n${body}\n`,
+        stepFile(name, body),
       );
     for (const [workflow, step] of [
       ['browse', 'look'],
       ['shell', 'page'],
+      ['repository', 'repo-look'],
     ]) {
       await write(
         join(project, '.agents', 'workflows', 'workflows', `${workflow}.md`),
@@ -24605,14 +24616,24 @@ test(
     assert.ok(allowed.includes('mcp__claude-in-chrome__navigate'));
     assert.ok(allowed.includes('mcp__claude-in-chrome__get_page_text'));
     assert.equal(allowed.includes('mcp__claude-in-chrome__computer'), false);
-    assert.equal(
-      allowed.includes('mcp__claude-in-chrome__javascript_tool'),
-      false,
+    assert.deepEqual(
+      allowed.filter(tool => tool.startsWith('mcp__claude-in-chrome__')),
+      [
+        'tabs_context_mcp',
+        'tabs_create_mcp',
+        'navigate',
+        'read_page',
+        'get_page_text',
+        'find',
+      ].map(tool => `mcp__claude-in-chrome__${tool}`),
     );
 
     const page = await run('shell');
     assert.equal(page.state, 'blocked');
     assert.equal(page.result.summary, 'Only agent steps can use the browser');
+    const repository = await run('repository');
+    assert.equal(repository.state, 'blocked');
+    assert.match(repository.result.summary, /own workflows folder/);
 
     await host.stop();
     host = launch(join(directory, 'data'), pidFile, {
@@ -25139,6 +25160,7 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       childModes: ['read-only', 'accept-edits'],
       worktrees: false,
       acceptPlans: true,
+      browser: false,
     });
     const coordinator = (
       await host.request('create-session', {

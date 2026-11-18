@@ -210,6 +210,19 @@ export function SessionControlSettings({
           />
         </SettingsRow>
         <SettingsRow
+          title={
+            <label htmlFor="session-control-browser">Browser access</label>
+          }
+          description="Let a coordinating session start children that can open pages in your browser."
+        >
+          <Switch
+            id="session-control-browser"
+            checked={policy.browser}
+            disabled={locked}
+            onCheckedChange={browser => void save({ ...policy, browser })}
+          />
+        </SettingsRow>
+        <SettingsRow
           title={<label htmlFor="session-control-plans">Decide plans</label>}
           description="Let a coordinating session accept, correct or decline the plans of its plan-first children."
         >

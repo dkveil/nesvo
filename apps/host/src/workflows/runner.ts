@@ -1480,6 +1480,8 @@ export class WorkflowRunner {
           return 'Browser steps are not available on this host';
         if (definition.type !== 'agent')
           return 'Only agent steps can use the browser';
+        if (definition.source.scope !== 'global')
+          return 'Browser steps must be defined in your own workflows folder, not in the repository';
         continue;
       }
       const name = need.slice('env:'.length);

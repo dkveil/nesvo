@@ -48,6 +48,7 @@ export const coordinatorPolicySchema = z.strictObject({
     .transform(values => [...new Set(values)]),
   worktrees: z.boolean().default(false),
   acceptPlans: z.boolean().default(true),
+  browser: z.boolean().default(false),
 });
 export type CoordinatorPolicy = z.infer<typeof coordinatorPolicySchema>;
 export const defaultCoordinatorPolicy: CoordinatorPolicy =

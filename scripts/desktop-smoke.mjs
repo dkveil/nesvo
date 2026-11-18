@@ -688,6 +688,7 @@ try {
       childModes: ['read-only', 'accept-edits'],
       worktrees: false,
       acceptPlans: true,
+      browser: false,
     },
   );
   await screenshot('-session-control-settings');
