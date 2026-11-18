@@ -226,25 +226,29 @@ export function connectSshHost(
             ),
           );
         },
-        method === 'discover-skills' ||
-          method === 'start-workflow-task' ||
-          method === 'workflow-assistant-send' ||
-          method === 'act-on-pull-request'
-          ? 60_000
-          : method === 'provider-usage'
-            ? 40_000
-            : method === 'claude-status' ||
-                method === 'codex-status' ||
-                method === 'create-session' ||
-                method === 'list-conversations' ||
-                method === 'adopt-conversation' ||
-                method === 'list-pull-requests' ||
-                method === 'read-pull-request' ||
-                method === 'read-pull-request-files' ||
-                method === 'read-pull-request-threads' ||
-                method === 'find-session-pull-request'
-              ? 30_000
-              : 15_000,
+        method === 'finish-session-worktree' ||
+          (payload.method === 'create-session' && payload.input.isolation)
+          ? 120_000
+          : method === 'discover-skills' ||
+              method === 'start-workflow-task' ||
+              method === 'workflow-assistant-send' ||
+              method === 'act-on-pull-request'
+            ? 60_000
+            : method === 'provider-usage'
+              ? 40_000
+              : method === 'claude-status' ||
+                  method === 'codex-status' ||
+                  method === 'create-session' ||
+                  method === 'list-conversations' ||
+                  method === 'adopt-conversation' ||
+                  method === 'list-pull-requests' ||
+                  method === 'read-pull-request' ||
+                  method === 'read-pull-request-files' ||
+                  method === 'read-pull-request-threads' ||
+                  method === 'find-session-pull-request' ||
+                  method === 'read-session-worktree'
+                ? 30_000
+                : 15_000,
       );
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(line);

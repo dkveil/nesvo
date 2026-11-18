@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { GitFork } from 'lucide-react';
+import { sessionIsolationSchema } from '@nesvo/contracts';
 import type {
   Computer,
   CreateSessionInput,
@@ -30,6 +32,9 @@ import {
   ComposerToolbar,
 } from '@/shared/ui/composer';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Chip } from '@/shared/ui/chip';
+import { Field } from '@/shared/ui/field';
+import { Input } from '@/shared/ui/input';
 import { Hint } from '@/shared/ui/tooltip';
 import { HostPicker } from './host-picker';
 import { LocationPicker } from './location-picker';
@@ -66,6 +71,7 @@ type Props = {
     'discoverSkills' | 'workflows' | 'listConversations' | 'adoptConversation'
   >;
   onAdopted: (session: DesktopSession) => void;
+  gitRepository: boolean;
   onStart: (
     input: CreateSessionInput,
     text: string,
@@ -87,6 +93,7 @@ export function NewThread({
   onRefreshProvider,
   onManageComputers,
   busyReason,
+  gitRepository,
   hostApi,
   onStart,
   onAdopted,
@@ -100,6 +107,8 @@ export function NewThread({
   const [workflow, setWorkflow] = useState<WorkflowChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
   const [startNotice, setStartNotice] = useState('');
+  const [useWorktree, setUseWorktree] = useState(false);
+  const [worktreeBranch, setWorktreeBranch] = useState('');
   const [mcpChoice, setMcpChoice] = useState({
     target: '',
     selection: NO_MCP,
@@ -120,6 +129,14 @@ export function NewThread({
   }, []);
   const computer = computers.find(item => item.id === setup.hostId);
   const connected = computer?.status === 'connected';
+  const worktreeAvailable =
+    !piped &&
+    gitRepository &&
+    !!computer?.capabilities.includes('session-worktrees');
+  const isolation = sessionIsolationSchema.safeParse({
+    kind: 'worktree',
+    branch: worktreeBranch.trim() || undefined,
+  });
   const providerState = statuses[setup.provider];
   const providerReady =
     providerState.status?.status === 'ready' &&
@@ -153,6 +170,7 @@ export function NewThread({
   const canSend =
     !pending &&
     !blockedReason &&
+    (piped || !useWorktree || (worktreeAvailable && isolation.success)) &&
     (workflow?.workflowName ? !!workflow.specPath.trim() : !!text.trim());
   const changeWorkflow = (next: WorkflowChoice | null) => {
     if (next?.workflowName) setSkill(null);
@@ -246,6 +264,9 @@ export function NewThread({
           ...(effort ? { effort } : {}),
           mode: setup.mode,
           directory: setup.directory.trim(),
+          ...(useWorktree && isolation.success
+            ? { isolation: isolation.data }
+            : {}),
           ...(supportsMcp && (mcp.servers.length || mcp.hooks) ? { mcp } : {}),
         },
         message,
@@ -415,6 +436,8 @@ export function NewThread({
                     if (hostId !== setup.hostId) {
                       setSkill(null);
                       changeWorkflow(null);
+                      setUseWorktree(false);
+                      setWorktreeBranch('');
                     }
                     onSetupChange({ ...setup, hostId });
                   }}
@@ -430,10 +453,24 @@ export function NewThread({
                     if (directory !== setup.directory) {
                       setSkill(null);
                       changeWorkflow(null);
+                      setUseWorktree(false);
+                      setWorktreeBranch('');
                     }
                     onSetupChange({ ...setup, directory });
                   }}
                 />
+                {worktreeAvailable && (
+                  <Chip
+                    type="button"
+                    icon={<GitFork aria-hidden="true" />}
+                    selected={useWorktree}
+                    aria-pressed={useWorktree}
+                    disabled={pending}
+                    onClick={() => setUseWorktree(value => !value)}
+                  >
+                    <span>Worktree</span>
+                  </Chip>
+                )}
                 <div className="flex-1" />
                 <McpChip
                   key={mcpTarget}
@@ -462,6 +499,45 @@ export function NewThread({
                   onChange={mode => onSetupChange({ ...setup, mode })}
                 />
               </div>
+              {worktreeAvailable && useWorktree && (
+                <Field
+                  id="thread-worktree-branch"
+                  label="Branch name (optional)"
+                  hint="Starts from the current commit with tracked files only."
+                  messages={
+                    isolation.success
+                      ? []
+                      : [
+                          {
+                            severity: 'error',
+                            message: 'Use a valid Git branch name.',
+                          },
+                        ]
+                  }
+                  className="px-2"
+                >
+                  <Input
+                    id="thread-worktree-branch"
+                    aria-describedby={
+                      isolation.success
+                        ? 'thread-worktree-branch-hint'
+                        : 'thread-worktree-branch-messages'
+                    }
+                    aria-invalid={!isolation.success}
+                    placeholder="Generate a branch name"
+                    value={worktreeBranch}
+                    maxLength={200}
+                    spellCheck={false}
+                    disabled={pending}
+                    onChange={event => setWorktreeBranch(event.target.value)}
+                  />
+                </Field>
+              )}
+              {!piped && useWorktree && !worktreeAvailable && (
+                <StatusMessage tone="warning" variant="notice">
+                  Choose a Git project folder to create the worktree.
+                </StatusMessage>
+              )}
               {error && (
                 <StatusMessage tone="error" variant="notice">
                   {error}

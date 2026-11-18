@@ -120,6 +120,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
   'conversation-import':
     'This computer runs an older Nesvo host without conversation import. Update the host, then reconnect.',
+  'session-worktrees':
+    'This computer runs an older Nesvo host without session worktrees. Update the host, then reconnect.',
   'history-search':
     'Update this computer’s Nesvo host and reconnect to search its history.',
   'session-groups':
@@ -135,6 +137,19 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
+  if (
+    method === 'read-session-worktree' ||
+    method === 'finish-session-worktree'
+  )
+    return 'session-worktrees';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'isolation' in input &&
+    input.isolation
+  )
+    return 'session-worktrees';
   if (method === 'search-history') return 'history-search';
   if (method === 'list-conversations' || method === 'adopt-conversation')
     return 'conversation-import';
@@ -164,14 +179,6 @@ function requiredCapability(
   )
     return null;
   if (isWorkflowMethod(method)) return 'workflows';
-  if (
-    method === 'create-session' &&
-    typeof input === 'object' &&
-    input !== null &&
-    'isolation' in input &&
-    input.isolation
-  )
-    return 'workflows';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -648,6 +655,8 @@ export class ComputerManager {
       'codex-status': 'codex-status',
       'provider-usage': 'provider-usage',
       'create-session': 'session',
+      'read-session-worktree': 'session-worktree-status',
+      'finish-session-worktree': 'session',
       'send-message': 'session',
       'assign-session-workflow': 'session',
       'set-session-mcp': 'session',
@@ -716,6 +725,8 @@ export class ComputerManager {
         return response.branch;
       case 'conversation-import-catalog':
         return response.catalog;
+      case 'session-worktree-status':
+        return response.worktree;
       case 'history-search':
         return response.search;
       case 'session-groups':

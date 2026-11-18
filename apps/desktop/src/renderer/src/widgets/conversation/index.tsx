@@ -110,6 +110,7 @@ type Props = {
   onStop: () => void;
   onResend: () => void;
   canQueue: boolean;
+  finishedWorktree?: boolean;
   onQueuedCancel: (messageId: string) => void;
   onQueuedStart: (messageId: string) => void;
   onQueuedEdit: (messageId: string, text: string) => void;
@@ -152,6 +153,7 @@ export function Conversation({
   onStop,
   onResend,
   canQueue,
+  finishedWorktree,
   onQueuedCancel,
   onQueuedStart,
   onQueuedEdit,
@@ -1028,7 +1030,7 @@ export function Conversation({
           <div ref={bottom} />
         </div>
       </ScrollArea>
-      {empty && (
+      {empty && !finishedWorktree && (
         <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
           <h2 className="text-2xl font-normal tracking-tight sm:text-3xl">
             What would you like to work on?
@@ -1055,7 +1057,16 @@ export function Conversation({
             <ArrowDown />
           </IconButton>
         )}
-        {composer}
+        {finishedWorktree ? (
+          <StatusMessage
+            tone="info"
+            className="mx-auto max-w-(--composer-max-width)"
+          >
+            This worktree session is finished.
+          </StatusMessage>
+        ) : (
+          composer
+        )}
       </div>
     </section>
   );

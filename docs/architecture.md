@@ -29,6 +29,16 @@ The header breadcrumb shows a read-only Git branch chip after the project name, 
 
 Host health lists the capabilities `scheduled-jobs`, `reasoning-effort` and `git-branch`. Electron records them per computer at synchronization and refuses a scheduled job command, an effort request or a branch read locally for a host that does not list the matching capability, because an older host rejects unknown fields without a request ID and the SSH client treats that as a protocol failure. Status from such a host defaults to Claude-style `unsupported` effort with an update reason and models without efforts, so the picker offers no effort.
 
+## Interactive session worktrees
+
+A connected host advertises `session-worktrees`. When its Git branch reader recognizes the selected folder, the new-thread setup offers Worktree and an optional branch name. The host resolves the folder to its Git repository root, allocates a session ID and creates a new branch from the current HEAD, using `nesvo/<slug>-<id8>` when no name is supplied. The provider starts at the root of the new checkout. The session document stores the source root, branch, starting commit and worktree state alongside its working directory. Existing sessions have no worktree record.
+
+Interactive checkouts live in the host data directory under `session-worktrees/`. Workflow checkouts use their own `worktrees/` directory and removal API. Both use the same bounded Git executable and branch creation path. Session isolation keeps concurrent checkouts apart. Workers still share their parent's directory boundary and follow the existing delegation and write-scope rules.
+
+The session header shows the recorded branch with a worktree icon. Finish reads Git status and requires an operator action while the host has no active turn or workspace mutation. Keep records the session as finished and retains its checkout. Open pull request also retains it and opens the existing Pull requests view on the same computer, using the source repository and a search filtered to the recorded branch. Publishing the branch and creating the pull request are separate operator actions. Remove uses the registered checkout under the host's session-worktrees directory. It refuses uncommitted changes and local files unless the operator confirms their removal, and retains the branch. The removal lock keeps turns and PR checkouts from starting while Git removes the directory.
+
+Finished worktree sessions retain history and saved results and cannot start new turns, including corrections and worker continuations. Queued messages are held. A kept checkout can be removed later. Reopening the client or restarting the host restores the recorded state without repeating any action. GitHub lookup uses the recorded branch and source repository even after removal.
+
 ## Mobile companion
 
 D66 adds an Expo React Native client in `apps/mobile-client` and a narrow opt-in HTTP/WebSocket gateway. The reusable gateway belongs to `apps/host/src/mobile`; Electron supplies its lifetime and an adapter to the existing ComputerManager. It routes to Local or an already-connected SSH host without creating another host runtime or database. Mobile and desktop share Zod contracts, session revisions and action identities; native views remain separate from the desktop component library.

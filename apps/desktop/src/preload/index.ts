@@ -6,6 +6,9 @@ import {
   appliedColorSchemeSchema,
   respondApprovalSchema,
   createSessionSchema,
+  readSessionWorktreeSchema,
+  sessionWorktreeStatusSchema,
+  finishSessionWorktreeSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideReviewSchema,
@@ -478,6 +481,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:create-session',
         createSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionWorktree: async (input, hostId) =>
+    sessionWorktreeStatusSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-worktree',
+        readSessionWorktreeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  finishSessionWorktree: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:finish-session-worktree',
+        finishSessionWorktreeSchema.parse(input),
         route(hostId),
       ),
     ),

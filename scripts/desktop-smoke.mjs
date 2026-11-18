@@ -650,6 +650,7 @@ try {
     'reasoning-effort',
     'workflows',
     'git-branch',
+    'session-worktrees',
     'permission-modes',
     'session-workflow',
     'pull-requests',

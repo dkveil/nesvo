@@ -75,6 +75,8 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
+import { useGitBranch } from '@/features/git-branch/use-git-branch';
+import { FinishWorktree } from '@/features/session-worktree/finish-worktree';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ProjectChip } from '@/shared/ui/project-chip';
@@ -220,6 +222,9 @@ export function Workspace() {
     'diff' | 'files' | 'skills' | 'pull-request' | null
   >(location.diff ? 'diff' : null);
   const [pullRequestsView, setPullRequestsView] = useState(false);
+  const [pullRequestHandoff, setPullRequestHandoff] = useState<Session | null>(
+    null,
+  );
   const [pullRequestTarget, setPullRequestTarget] =
     useState<PullRequestTarget | null>(null);
   const [workflowsView, setWorkflowsView] = useState(false);
@@ -1029,9 +1034,9 @@ export function Workspace() {
     setNavigationOpen(false);
   };
   const openPullRequests = () => guardEditor(openPullRequestsNow);
-  const openPullRequestsNow = () => {
+  const openPullRequestsNow = (handoff: Session | null = null) => {
     navigationVersion.current += 1;
-    if (panel !== 'pull-request') setPanel(null);
+    if (handoff || panel !== 'pull-request') setPanel(null);
     setDiffTarget(null);
     setCreating(false);
     setInbox(false);
@@ -1040,6 +1045,7 @@ export function Workspace() {
     setWorkflowsView(false);
     setAutomation('');
     setPullRequestsView(true);
+    setPullRequestHandoff(handoff);
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
@@ -2016,7 +2022,7 @@ ${text}`
   const breadcrumbDirectory = showingNewThread
     ? threadSetup.directory.trim()
     : !browsing && selected
-      ? selected.directory
+      ? (selected.worktree?.projectDirectory ?? selected.directory)
       : null;
   const breadcrumbHostId = showingNewThread
     ? threadSetup.hostId
@@ -2027,6 +2033,17 @@ ${text}`
     !!store.computers
       .find(computer => computer.id === breadcrumbHostId)
       ?.capabilities.includes('git-branch');
+  const headerWorktree =
+    !showingNewThread && !browsing ? selected?.worktree : undefined;
+  const branch = useGitBranch({
+    hostId: breadcrumbHostId,
+    directory: breadcrumbDirectory ?? '',
+    enabled: branchReadable && !headerWorktree,
+    api: window.nesvo ? desktopApi(breadcrumbHostId) : undefined,
+  });
+  const sessionWorktree = selected?.worktree ?? parentSession?.worktree;
+  const finishedWorktree =
+    !!sessionWorktree && sessionWorktree.state !== 'active';
   const providerIssue =
     !browsing &&
     !creating &&
@@ -2177,12 +2194,7 @@ ${text}`
                         ? directoryLabel(breadcrumbDirectory)
                         : 'No project'}
                     </span>
-                    <BranchChip
-                      hostId={breadcrumbHostId}
-                      directory={breadcrumbDirectory}
-                      enabled={branchReadable}
-                      api={desktopApi(breadcrumbHostId)}
-                    />
+                    <BranchChip branch={branch} worktree={headerWorktree} />
                   </li>
                   <li
                     aria-hidden="true"
@@ -2276,6 +2288,29 @@ ${text}`
                 {sessionStatusLabel(selected)}
               </span>
             )}
+          {headerWorktree && selected && window.nesvo && (
+            <FinishWorktree
+              key={selectedKey}
+              sessionId={selected.id}
+              worktree={headerWorktree}
+              api={desktopApi(selectedHostId)}
+              blockedReason={
+                !store.hostReady(selectedHostId)
+                  ? 'Connect this computer to finish the worktree.'
+                  : !selectedComputer?.capabilities.includes(
+                        'session-worktrees',
+                      )
+                    ? 'Update the host and reconnect to finish the worktree.'
+                    : activeRun || sending
+                      ? 'Wait for active work on this computer to finish.'
+                      : ''
+              }
+              onFinished={(session, choice) => {
+                store.merge([session]);
+                if (choice === 'pull-request') openPullRequestsNow(session);
+              }}
+            />
+          )}
           <IconButton
             size={32}
             className="md:hidden"
@@ -2432,6 +2467,7 @@ ${text}`
               }
               onManageComputers={() => setSettingsPage('computers')}
               busyReason={threadBusyReason}
+              gitRepository={!!branch && branch.kind !== 'none'}
               hostApi={desktopApi(threadSetup.hostId)}
               onAdopted={session => {
                 store.merge([session]);
@@ -2588,9 +2624,25 @@ ${text}`
               )}
             >
               <PullRequestsView
+                key={
+                  pullRequestHandoff
+                    ? entityKey(pullRequestHandoff)
+                    : 'pull-requests'
+                }
                 computers={store.computers}
-                hostId={selected?.hostId ?? 'local'}
-                directory={selected?.directory ?? ''}
+                hostId={
+                  pullRequestHandoff?.hostId ?? selected?.hostId ?? 'local'
+                }
+                directory={
+                  pullRequestHandoff?.worktree?.projectDirectory ??
+                  selected?.directory ??
+                  ''
+                }
+                initialQuery={
+                  pullRequestHandoff?.worktree
+                    ? `head:${pullRequestHandoff.worktree.branch}`
+                    : undefined
+                }
                 apiFor={pullRequestApi}
                 openTarget={panel === 'pull-request' ? pullRequestTarget : null}
                 onOpen={openPullRequest}
@@ -2815,8 +2867,10 @@ ${text}`
                 computerName={selectedComputer?.name ?? selectedHostId}
                 onSkillChange={skill => changeSkill(selectedKey, skill)}
                 sending={sending}
+                finishedWorktree={finishedWorktree}
                 canSend={
                   !sending &&
+                  !finishedWorktree &&
                   !activeRun &&
                   connection === 'ready' &&
                   selectedProviderState?.status?.status === 'ready' &&
@@ -2853,7 +2907,10 @@ ${text}`
                 onSend={typed => void send(typed)}
                 onStop={() => void stop()}
                 canQueue={
-                  !sending && connection === 'ready' && !selected.workflowStepId
+                  !sending &&
+                  !finishedWorktree &&
+                  connection === 'ready' &&
+                  !selected.workflowStepId
                 }
                 onQueuedCancel={messageId =>
                   void changeQueued(selected, messageId, 'cancel')

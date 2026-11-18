@@ -46,6 +46,7 @@ type PullRequestsViewProps = {
   computers: Computer[];
   hostId: string;
   directory: string;
+  initialQuery?: string;
   apiFor: (hostId: string) => PullRequestApi | null;
   openTarget: PullRequestTarget | null;
   onOpen: (target: PullRequestTarget) => void;
@@ -55,6 +56,7 @@ export function PullRequestsView({
   computers,
   hostId: sessionHostId,
   directory: sessionDirectory,
+  initialQuery = '',
   apiFor,
   openTarget,
   onOpen,
@@ -70,7 +72,7 @@ export function PullRequestsView({
   const [repository, setRepository] = useState('');
   const [repositoryError, setRepositoryError] = useState('');
   const [scope, setScope] = useState<PullRequestListScope>('open');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [refresh, setRefresh] = useState(0);
   const [reference, setReference] = useState('');
   const [referenceError, setReferenceError] = useState('');
@@ -167,7 +169,7 @@ export function PullRequestsView({
           <PanelSearch
             aria-label="Search pull requests"
             placeholder="Search"
-            maxLength={200}
+            maxLength={205}
             value={query}
             onChange={event => setQuery(event.target.value)}
             onClear={() => setQuery('')}

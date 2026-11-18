@@ -10,6 +10,8 @@ import {
   type LinkSessionPullRequestInput,
   type FindSessionPullRequestInput,
   type CreateSessionInput,
+  type ReadSessionWorktreeInput,
+  type FinishSessionWorktreeInput,
   type DecideDelegationInput,
   type DecideWorkerPlanInput,
   type DecideReviewInput,
@@ -92,27 +94,32 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'discover-skills' ||
-          method === 'start-workflow-task' ||
-          method === 'workflow-assistant-send' ||
-          method === 'act-on-pull-request'
-          ? 60000
-          : method === 'provider-usage'
-            ? 40000
-            : method === 'claude-status' ||
-                method === 'codex-status' ||
-                method === 'create-session' ||
-                method === 'list-mcp-servers' ||
-                method === 'list-conversations' ||
-                method === 'adopt-conversation' ||
-                method === 'set-session-mcp' ||
-                method === 'list-pull-requests' ||
-                method === 'read-pull-request' ||
-                method === 'read-pull-request-files' ||
-                method === 'read-pull-request-threads' ||
-                method === 'find-session-pull-request'
-              ? 30000
-              : 15000,
+        method === 'finish-session-worktree' ||
+          (method === 'create-session' &&
+            (input as CreateSessionInput | undefined)?.isolation)
+          ? 120_000
+          : method === 'discover-skills' ||
+              method === 'start-workflow-task' ||
+              method === 'workflow-assistant-send' ||
+              method === 'act-on-pull-request'
+            ? 60000
+            : method === 'provider-usage'
+              ? 40000
+              : method === 'claude-status' ||
+                  method === 'codex-status' ||
+                  method === 'create-session' ||
+                  method === 'list-conversations' ||
+                  method === 'adopt-conversation' ||
+                  method === 'list-mcp-servers' ||
+                  method === 'set-session-mcp' ||
+                  method === 'list-pull-requests' ||
+                  method === 'read-pull-request' ||
+                  method === 'read-pull-request-files' ||
+                  method === 'read-pull-request-threads' ||
+                  method === 'find-session-pull-request' ||
+                  method === 'read-session-worktree'
+                ? 30000
+                : 15000,
       );
       pending.set(id, { resolve, reject, timer });
       try {
@@ -271,6 +278,18 @@ export function startHost(directory: string) {
     },
     createSession: async (input: CreateSessionInput) => {
       const response = await request('create-session', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    readSessionWorktree: async (input: ReadSessionWorktreeInput) => {
+      const response = await request('read-session-worktree', input);
+      if (response.type !== 'session-worktree-status')
+        throw new Error('Unexpected host response');
+      return response.worktree;
+    },
+    finishSessionWorktree: async (input: FinishSessionWorktreeInput) => {
+      const response = await request('finish-session-worktree', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

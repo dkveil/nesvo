@@ -17,6 +17,8 @@ import {
 import {
   colorSchemeSchema,
   createSessionSchema,
+  readSessionWorktreeSchema,
+  finishSessionWorktreeSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideReviewSchema,
@@ -664,6 +666,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:read-session-worktree',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-session-worktree',
+        readSessionWorktreeSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:finish-session-worktree',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'finish-session-worktree',
+        finishSessionWorktreeSchema.parse(input),
         route(hostId),
       );
     },
