@@ -54,6 +54,8 @@ import {
   moveSessionSchema,
   renameSessionSchema,
   setSessionArchivedSchema,
+  deleteSessionSchema,
+  restoreSessionSchema,
   setSessionPinnedSchema,
   updateSessionGroupSchema,
   sendMessageSchema,
@@ -1172,6 +1174,22 @@ void app.whenReady().then(async () => {
     'set-session-pinned': setSessionPinnedSchema,
     'set-session-archived': setSessionArchivedSchema,
   } as const;
+  const sessionDeletionInputs = {
+    'delete-session': deleteSessionSchema,
+    'restore-session': restoreSessionSchema,
+  } as const;
+  for (const method of ['delete-session', 'restore-session'] as const)
+    handle(
+      `nesvo:${method}`,
+      async (event, input: unknown, hostId: unknown) => {
+        authorize(event);
+        return computers.execute(
+          method,
+          sessionDeletionInputs[method].parse(input),
+          route(hostId),
+        );
+      },
+    );
   for (const method of Object.keys(
     sessionGroupInputs,
   ) as (keyof typeof sessionGroupInputs)[])

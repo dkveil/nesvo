@@ -90,6 +90,8 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     renameSession: input => api.renameSession(input, hostId),
     setSessionPinned: input => api.setSessionPinned(input, hostId),
     setSessionArchived: input => api.setSessionArchived(input, hostId),
+    deleteSession: input => api.deleteSession(input, hostId),
+    restoreSession: input => api.restoreSession(input, hostId),
   };
   boundApis.set(hostId, bound);
   return bound;
@@ -299,6 +301,21 @@ export function useSessions() {
     );
     return page.messages.length > 0;
   }, []);
+  const remove = useCallback((hostId: string, sessionIds: string[]) => {
+    const removed = new Set(sessionIds.map(id => hostKey(id, hostId)));
+    setSessions(previous =>
+      previous.some(item => removed.has(entityKey(item)))
+        ? previous.filter(item => !removed.has(entityKey(item)))
+        : previous,
+    );
+    setReviews(previous =>
+      previous.some(item => removed.has(hostKey(item.sessionId, item.hostId)))
+        ? previous.filter(
+            item => !removed.has(hostKey(item.sessionId, item.hostId)),
+          )
+        : previous,
+    );
+  }, []);
   const mergeReviews = useCallback((updates: DesktopReview[]) => {
     setReviews(previous => {
       const merged = new Map(previous.map(item => [entityKey(item), item]));
@@ -460,6 +477,8 @@ export function useSessions() {
       else if (event.type === 'session-message-upserted')
         applyChanges([upsertChange(event)]);
       else if (event.type === 'review-changed') mergeReviews([event.review]);
+      else if (event.type === 'sessions-removed')
+        remove(event.hostId, event.sessionIds);
       else if (event.type === 'workflow-run-changed')
         mergeWorkflowRuns([event.run]);
       else if (event.type === 'workflow-step-changed')
@@ -585,6 +604,7 @@ export function useSessions() {
     inspectProvider,
     merge,
     applyChanges,
+    remove,
     mergeReviews,
     mergeWorkflowRuns,
     mergeWorkflowSteps,
@@ -658,6 +678,7 @@ export function useSessions() {
     merge,
     openSession,
     loadEarlier,
+    remove,
     mergeReviews,
     recover,
     recoverReviews,

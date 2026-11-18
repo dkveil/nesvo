@@ -156,6 +156,11 @@ const sessionGroupResponses = {
   'set-session-archived': 'session',
 } as const;
 
+const sessionDeletionResponses = {
+  'delete-session': 'session-deletion',
+  'restore-session': 'session',
+} as const;
+
 const costResponses = {
   'read-costs': 'costs',
   'list-cost-budgets': 'cost-budgets',
@@ -207,6 +212,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to open its sessions in a terminal.',
   'transcript-search':
     'Update this computer’s Nesvo host and reconnect to search its CLI transcripts.',
+  'session-delete':
+    'Update this computer’s Nesvo host and reconnect to delete sessions.',
 };
 
 function requiredCapability(
@@ -246,6 +253,7 @@ function requiredCapability(
   if (method === 'set-session-terminal') return 'terminal-handoff';
   if (method === 'list-conversations' || method === 'adopt-conversation')
     return 'conversation-import';
+  if (Object.hasOwn(sessionDeletionResponses, method)) return 'session-delete';
   if (Object.hasOwn(sessionGroupResponses, method)) return 'session-groups';
   if (
     method === 'create-session' &&
@@ -960,6 +968,7 @@ export class ComputerManager {
       'adopt-conversation': 'session',
       'backup-database': 'database-backup',
       ...sessionGroupResponses,
+      ...sessionDeletionResponses,
       ...pullRequestResponses,
       ...costResponses,
     }[method];
@@ -1028,6 +1037,12 @@ export class ComputerManager {
         return response.search;
       case 'session-groups':
         return response.list;
+      case 'session-deletion':
+        this.apply(entry, {
+          type: 'sessions-removed',
+          sessionIds: response.deletion.sessionIds,
+        });
+        return { ...response.deletion, hostId };
       case 'session':
         this.apply(entry, {
           type: 'session-changed',
@@ -1250,6 +1265,17 @@ export class ComputerManager {
     }
     if (event.type === 'session-groups-changed') {
       if (publish) this.publish({ ...event, hostId });
+      return;
+    }
+    if (event.type === 'sessions-removed') {
+      const removed = new Set(event.sessionIds);
+      const known = event.sessionIds.filter(id => entry.sessions.delete(id));
+      for (const [id, review] of entry.reviews)
+        if (removed.has(review.sessionId)) entry.reviews.delete(id);
+      if (publish && known.length)
+        this.publish({ type: 'sessions-removed', hostId, sessionIds: known });
+      entry.computer.lastSyncedAt = new Date().toISOString();
+      this.scheduleCache();
       return;
     }
     if (

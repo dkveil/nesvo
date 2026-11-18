@@ -33,6 +33,9 @@ import {
   renameSessionSchema,
   sessionGroupListSchema,
   setSessionArchivedSchema,
+  deleteSessionSchema,
+  desktopSessionDeletionSchema,
+  restoreSessionSchema,
   setSessionPinnedSchema,
   updateSessionGroupSchema,
   sendMessageSchema,
@@ -742,6 +745,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:set-session-archived',
         setSessionArchivedSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteSession: async (input, hostId) =>
+    desktopSessionDeletionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-session',
+        deleteSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  restoreSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:restore-session',
+        restoreSessionSchema.parse(input),
         route(hostId),
       ),
     ),
