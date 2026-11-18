@@ -48,17 +48,9 @@ import {
   type SessionInterruption,
   type McpServerList,
   type MessageAttachment,
-  type SetSessionMcpInput,
   type TurnUsage,
 } from '@nesvo/contracts';
-import { readFingerprintKey } from '../mcp/fingerprint-key';
-import {
-  McpError,
-  listMcpServers,
-  prepareTurnMcp,
-  resolveMcpSelection,
-  type TurnMcp,
-} from '../mcp/service';
+import { listMcpServers } from '../mcp/service';
 import {
   confirmClaudeFork,
   reportedClaudeModes,
@@ -379,7 +371,6 @@ export class SessionService {
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private readonly emittedRevisions = new Map<string, number>();
   private closing = false;
-  private mcpKey?: Buffer;
   private checkingOut = false;
   private removingWorktree = false;
   private creatingWorktrees = 0;
@@ -878,7 +869,6 @@ export class SessionService {
     options: {
       isolatedDirectory?: string;
       origin?: SessionOrigin;
-      mcp?: Session['mcp'];
       worktree?: { id: string; metadata: NonNullable<Session['worktree']> };
     } = {},
   ): Session {
@@ -902,11 +892,6 @@ export class SessionService {
         'invalid-request',
         'The session group no longer exists. Refresh the sidebar and try again.',
       );
-    if (!options.mcp && (input.mcp?.servers.length || input.mcp?.hooks))
-      throw new SessionError(
-        'invalid-request',
-        'MCP servers and hooks must be confirmed by the host before the session is created.',
-      );
     this.options.profiles?.require(input.provider, input.profileId);
     let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
@@ -921,7 +906,6 @@ export class SessionService {
       input,
       directory,
       options.origin,
-      options.mcp,
       options.worktree,
     );
     this.emitSession(session);
@@ -1375,16 +1359,7 @@ export class SessionService {
         signal,
         profileEnvironment(input.provider, profileDirectory),
       );
-    const mcp = input.mcp
-      ? await this.confirmMcp(
-          input.provider,
-          this.draftDirectory(input.directory),
-          input.mcp,
-          signal,
-          profileDirectory,
-        )
-      : undefined;
-    if (!input.isolation) return this.create(input, mcp ? { mcp } : {});
+    if (!input.isolation) return this.create(input);
     if (this.removingWorktree)
       throw new SessionError(
         'busy',
@@ -1402,7 +1377,6 @@ export class SessionService {
       if (this.closing)
         throw new SessionError('busy', 'The host is shutting down.');
       return this.create(input, {
-        mcp,
         isolatedDirectory: isolated.directory,
         worktree: isolated.worktree,
       });
@@ -1664,44 +1638,6 @@ export class SessionService {
     return structuredClone(session);
   }
 
-  async setMcp(
-    input: SetSessionMcpInput,
-    signal: AbortSignal,
-  ): Promise<Session> {
-    const session = this.acceptingSession(input.sessionId);
-    if (session.role === 'worker')
-      throw new SessionError(
-        'invalid-request',
-        'Workers follow the tools their parent approved and cannot change MCP servers or hooks.',
-      );
-    if (session.workflowRunId)
-      throw new SessionError(
-        'invalid-request',
-        'A workflow session keeps the tools its task started with.',
-      );
-    const mcp = await this.confirmMcp(
-      session.provider,
-      this.resolveDirectory(session.directory),
-      input,
-      signal,
-      await this.options.profiles?.directory(
-        session.provider,
-        session.profileId,
-        signal,
-      ),
-    );
-    const current = this.acceptingSession(input.sessionId);
-    const previous = current.mcp;
-    current.mcp = mcp;
-    try {
-      this.publish(current);
-    } catch (error) {
-      current.mcp = previous;
-      throw error;
-    }
-    return structuredClone(current);
-  }
-
   async mcpServers(
     provider: Session['provider'],
     directory: string,
@@ -1713,44 +1649,7 @@ export class SessionService {
       profileId,
       signal,
     );
-    return listMcpServers(
-      this.fingerprintKey(),
-      provider,
-      directory,
-      signal,
-      profileDirectory,
-    );
-  }
-
-  private fingerprintKey(): Buffer {
-    this.mcpKey ??= readFingerprintKey(this.directory);
-    return this.mcpKey;
-  }
-
-  private async confirmMcp(
-    provider: Session['provider'],
-    directory: string,
-    selection: { servers: string[]; hooks: boolean },
-    signal: AbortSignal,
-    profileDirectory?: string,
-  ): Promise<Session['mcp']> {
-    try {
-      return await resolveMcpSelection(
-        this.fingerprintKey(),
-        provider,
-        directory,
-        { servers: selection.servers, hooks: selection.hooks },
-        signal,
-        profileDirectory,
-      );
-    } catch (error) {
-      if (error instanceof McpError)
-        throw new SessionError('invalid-request', error.message);
-      throw new SessionError(
-        'unavailable',
-        'The MCP configuration could not be read. Try again.',
-      );
-    }
+    return listMcpServers(provider, directory, signal, profileDirectory);
   }
 
   draftDirectory(directory: string): string {
@@ -2499,10 +2398,7 @@ export class SessionService {
         model: session.model,
         effort: session.effort,
         mode: session.mode,
-        mcp: {
-          servers: session.mcp.servers.map(server => server.key),
-          hooks: session.mcp.hooks,
-        },
+        mcp: null,
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
         ...(attachments?.length ? { attachments: [...attachments] } : {}),
@@ -2679,38 +2575,6 @@ export class SessionService {
                 };
           }
         }
-        let turnMcp: TurnMcp | null = null;
-        if (
-          !readOnly &&
-          isWritableSessionMode(session.mode) &&
-          (session.mcp.servers.length || session.mcp.hooks)
-        ) {
-          try {
-            if (session.mcp.servers.length)
-              this.update(session, {
-                type: 'activity',
-                text: 'Checking MCP servers…',
-              });
-            turnMcp = await prepareTurnMcp(
-              this.fingerprintKey(),
-              session.provider,
-              session.directory,
-              session.mcp,
-              controller.signal,
-              profileDirectory,
-            );
-          } catch (error) {
-            return controller.signal.aborted
-              ? { status: 'stopped', error: null }
-              : {
-                  status: 'failed',
-                  error:
-                    error instanceof McpError
-                      ? error.message
-                      : 'The MCP configuration could not be read. No provider turn was started.',
-                };
-          }
-        }
         if (isWritableSessionMode(session.mode))
           baseline = await captureWorkspace(
             session.directory,
@@ -2744,14 +2608,6 @@ export class SessionService {
                 ...(images.paths.length ? { images: images.paths } : {}),
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
-                ...(turnMcp
-                  ? {
-                      mcp: {
-                        servers: turnMcp.definitions,
-                        hooks: turnMcp.hooks,
-                      },
-                    }
-                  : {}),
                 ...(selected
                   ? {
                       skillId: selected.native!.id,
@@ -2823,14 +2679,6 @@ export class SessionService {
                   : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
-                ...(turnMcp
-                  ? {
-                      mcp: {
-                        servers: turnMcp.definitions,
-                        hooks: turnMcp.hooks,
-                      },
-                    }
-                  : {}),
                 mode: readOnly ? 'read-only' : session.mode,
                 approvals: !readOnly && !ephemeral,
                 sessionId: session.providerSessionId!,

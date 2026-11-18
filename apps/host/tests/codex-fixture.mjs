@@ -659,6 +659,9 @@ if (args.length === 1 && args[0] === '--version') {
             approvalPolicy: params.approvalPolicy,
             args,
             mcpServers: params.config?.mcp_servers ?? null,
+            inheritedServers: Object.entries(effectiveConfig().mcp_servers)
+              .filter(([, server]) => server.enabled)
+              .map(([name]) => name),
             hooksFeature: params.config?.['features.hooks'] ?? null,
           }) + '\n',
           { flag: 'a' },

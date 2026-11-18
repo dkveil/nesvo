@@ -17,7 +17,6 @@ import {
   type ProviderUsage,
   type TurnUsage,
 } from '@nesvo/contracts';
-import { sameCodexServer } from '../mcp/codex-servers';
 import {
   terminateGraceMs,
   trackProcessTree,
@@ -96,8 +95,7 @@ const isolatedFeatures = [
   'skill_mcp_dependency_install',
   'auth_elicitation',
 ];
-const isolationConfig = (features: readonly string[]) => ({
-  mcp_servers: {},
+const toolPolicyConfig = (features: readonly string[]) => ({
   web_search: 'disabled',
   ...Object.fromEntries(
     features.map(feature => [`features.${feature}`, false]),
@@ -106,11 +104,6 @@ const isolationConfig = (features: readonly string[]) => ({
 const featuresWithoutHooks = isolatedFeatures.filter(
   feature => feature !== 'hooks',
 );
-const mcpMissingMessage = (name: string) =>
-  `The MCP server "${name}" is no longer configured on this computer. Review the MCP selection. No provider turn was started.`;
-const mcpChangedMessage = (name: string) =>
-  `The MCP server "${name}" changed since it was enabled. Review it in the MCP menu and enable it again. No provider turn was started.`;
-
 function object(value: unknown): RecordValue | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as RecordValue)
@@ -323,27 +316,27 @@ function rpcPeer(
   executable: Executable,
   cwd: string | undefined,
   onMessage: (message: RecordValue) => void,
-  disabledServers: string[] = [],
+  disabledServers: string[] | null = [],
   environment?: Readonly<Record<string, string>>,
-  features: readonly string[] = isolatedFeatures,
 ): RpcPeer {
   const args = [
     'app-server',
     '--listen',
     'stdio://',
-    '-c',
-    'mcp_servers={}',
+    ...(disabledServers ? ['-c', 'mcp_servers={}'] : []),
     '-c',
     'web_search="disabled"',
     '-c',
     'notify=[]',
     '-c',
     'allow_login_shell=false',
-    ...disabledServers.flatMap(name => [
+    ...(disabledServers ?? []).flatMap(name => [
       '-c',
       `mcp_servers.${name}.enabled=false`,
     ]),
-    ...features.flatMap(feature => ['--disable', feature]),
+    ...(disabledServers ? isolatedFeatures : featuresWithoutHooks).flatMap(
+      feature => ['--disable', feature],
+    ),
   ];
   const owned = ownProcess(executable, args, cwd, environment);
   const pending = new Map<
@@ -889,34 +882,50 @@ async function registerCodexSkillRoots(
   checkCancelled();
 }
 
-async function verifyCodexSkillIsolation(
+async function configuredCodexServers(
   peer: RpcPeer,
   cwd: string,
-): Promise<void> {
-  const isolated = await peer.request('config/read', {
+): Promise<string[]> {
+  const loaded = await peer.request('config/read', {
     includeLayers: false,
     cwd,
   });
-  const effective = object(isolated.config);
-  const effectiveMcp = object(effective?.mcp_servers);
-  const features = object(effective?.features);
-  if (
-    !effective ||
-    (effective.mcp_servers != null && !effectiveMcp) ||
-    Object.values(effectiveMcp ?? {}).some(
-      value => object(value)?.enabled !== false,
-    ) ||
-    !features ||
-    isolatedFeatures.some(
-      name =>
-        features[name] !== undefined &&
-        features[name] !== false &&
-        features[name] !== null,
-    )
-  )
+  const config = object(loaded.config);
+  const mcp = object(config?.mcp_servers);
+  if (!config || (config.mcp_servers != null && !mcp))
+    throw new Error('Codex MCP configuration could not be verified.');
+  const servers = Object.keys(mcp ?? {});
+  if (servers.some(name => !/^[\w-]+$/.test(name)))
     throw new Error(
-      'Codex could not isolate inherited tools and hooks for skill discovery.',
+      'Codex has an MCP server name that cannot be safely isolated.',
     );
+  return servers;
+}
+
+async function verifyCodexToolPolicy(
+  peer: RpcPeer,
+  cwd: string,
+  isolateTools: boolean,
+): Promise<void> {
+  const loaded = await peer.request('config/read', {
+    includeLayers: false,
+    cwd,
+  });
+  const config = object(loaded.config);
+  const mcp = object(config?.mcp_servers);
+  if (
+    isolateTools &&
+    ((config?.mcp_servers != null && !mcp) ||
+      Object.values(mcp ?? {}).some(value => object(value)?.enabled !== false))
+  )
+    throw new Error('Codex could not disable inherited MCP servers.');
+  const features = object(config?.features);
+  const disabled = isolateTools ? isolatedFeatures : featuresWithoutHooks;
+  if (
+    !features ||
+    disabled.some(name => features[name] != null && features[name] !== false)
+  )
+    throw new Error('Codex could not isolate inherited features.');
 }
 
 function codexSkillListing(
@@ -1102,19 +1111,7 @@ export async function inspectCodexSkills(
       environment,
     );
     await initialize(peer);
-    const loaded = await peer.request('config/read', {
-      includeLayers: false,
-      cwd,
-    });
-    const config = object(loaded.config);
-    const mcp = object(config?.mcp_servers);
-    if (!config || (config.mcp_servers != null && !mcp))
-      throw new Error('Codex tool configuration could not be verified.');
-    const disabledServers = Object.keys(mcp ?? {});
-    if (disabledServers.some(name => !/^[\w-]+$/.test(name)))
-      throw new Error(
-        'Codex has an MCP server name that cannot be safely isolated.',
-      );
+    const disabledServers = await configuredCodexServers(peer, cwd);
     const bootstrapExit = await peer.closeIdle();
     if (!bootstrapExit.confirmed)
       throw new Error(
@@ -1129,7 +1126,7 @@ export async function inspectCodexSkills(
       environment,
     );
     await initialize(peer);
-    await verifyCodexSkillIsolation(peer, cwd);
+    await verifyCodexToolPolicy(peer, cwd, true);
     checkCancelled();
     if (!Array.isArray(extraRoots) || extraRoots.length > 0) {
       try {
@@ -1326,10 +1323,6 @@ type CodexRunOptions = {
   outputSchema?: Record<string, unknown>;
   instructionsOnly?: boolean;
   images?: readonly CodexImage[];
-  mcp?: {
-    servers: Readonly<Record<string, Record<string, unknown>>>;
-    hooks: boolean;
-  };
   compact?: boolean;
   experimentalApi?: boolean;
 } & ({ fork: true; prompt?: never } | { fork?: false; prompt: string });
@@ -1975,6 +1968,12 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error(
           'Install the native Codex CLI and sign in with codex login.',
         );
+      const isolateTools =
+        options.mode === 'read-only' ||
+        options.turnSandbox === 'read-only' ||
+        options.fork ||
+        options.compact ||
+        options.instructionsOnly;
       peer = rpcPeer(
         executable,
         options.directory,
@@ -1990,36 +1989,9 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error(
           'Unsupported Codex model. Refresh the available model list.',
         );
-      const loaded = await peer.request('config/read', {
-        includeLayers: false,
-        cwd: options.directory,
-      });
-      const config = object(loaded.config);
-      if (!config)
-        throw new Error('Codex tool configuration could not be verified.');
-      const mcp = object(config.mcp_servers);
-      if (config.mcp_servers != null && !mcp)
-        throw new Error('Codex MCP configuration could not be verified.');
-      const configuredServers = mcp ?? {};
-      if (Object.keys(configuredServers).some(name => !/^[\w-]+$/.test(name)))
-        throw new Error(
-          'Codex has an MCP server name that cannot be safely isolated.',
-        );
-      const enabledServers = options.mcp?.servers ?? {};
-      for (const [name, definition] of Object.entries(enabledServers)) {
-        if (!Object.hasOwn(configuredServers, name))
-          throw new Error(mcpMissingMessage(name));
-        if (!sameCodexServer(definition, configuredServers[name]))
-          throw new Error(mcpChangedMessage(name));
-      }
-      const disabledServers = Object.fromEntries(
-        Object.keys(configuredServers)
-          .filter(name => !Object.hasOwn(enabledServers, name))
-          .map(name => [name, { enabled: false }]),
-      );
-      const features = options.mcp?.hooks
-        ? featuresWithoutHooks
-        : isolatedFeatures;
+      const disabledServers = isolateTools
+        ? await configuredCodexServers(peer, options.directory)
+        : null;
       const bootstrapExit = await peer.closeIdle();
       if (!bootstrapExit.confirmed)
         throw new Error(
@@ -2030,44 +2002,18 @@ export function startCodex(options: CodexRunOptions): {
         executable,
         options.directory,
         consume,
-        Object.keys(disabledServers),
+        disabledServers,
         options.environment,
-        features,
       );
       await initialize(
         peer,
         Boolean(options.onDelegate) || options.experimentalApi === true,
       );
-      const isolated = await peer.request('config/read', {
-        includeLayers: false,
-        cwd: options.directory,
-      });
-      const effective = object(isolated.config);
-      const effectiveMcp = object(effective?.mcp_servers);
-      if (
-        !effective ||
-        (effective.mcp_servers != null && !effectiveMcp) ||
-        Object.entries(effectiveMcp ?? {}).some(
-          ([name, value]) =>
-            (object(value)?.enabled !== false) !==
-            Object.hasOwn(enabledServers, name),
-        ) ||
-        Object.keys(enabledServers).some(
-          name => !Object.hasOwn(effectiveMcp ?? {}, name),
-        )
-      )
-        throw new Error('Codex could not disable inherited MCP servers.');
-      const effectiveFeatures = object(effective.features);
-      if (
-        !effectiveFeatures ||
-        features.some(
-          name =>
-            effectiveFeatures[name] !== undefined &&
-            effectiveFeatures[name] !== false &&
-            effectiveFeatures[name] !== null,
-        )
-      )
-        throw new Error('Codex could not isolate inherited tools and hooks.');
+      await verifyCodexToolPolicy(
+        peer,
+        options.directory,
+        Boolean(disabledServers),
+      );
       if (
         options.skillRoots !== undefined &&
         (!Array.isArray(options.skillRoots) || options.skillRoots.length > 0)
@@ -2140,12 +2086,20 @@ export function startCodex(options: CodexRunOptions): {
           sandbox:
             options.mode === 'read-only' ? 'read-only' : 'workspace-write',
           config: {
-            ...isolationConfig(features),
+            ...toolPolicyConfig(
+              disabledServers ? isolatedFeatures : featuresWithoutHooks,
+            ),
             ...(options.effort
               ? { model_reasoning_effort: options.effort }
               : {}),
             ...(options.instructionsOnly ? { project_doc_max_bytes: 0 } : {}),
-            mcp_servers: disabledServers,
+            ...(disabledServers
+              ? {
+                  mcp_servers: Object.fromEntries(
+                    disabledServers.map(name => [name, { enabled: false }]),
+                  ),
+                }
+              : {}),
             notify: [],
             allow_login_shell: false,
             sandbox_workspace_write: {

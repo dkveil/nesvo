@@ -17,10 +17,6 @@ import {
 } from '@nesvo/contracts';
 import { readFrames } from '../daemon-channel';
 import {
-  writeClaudeMcpConfig,
-  type ClaudeMcpConfig,
-} from '../mcp/claude-config-file';
-import {
   cleanupTimeoutMs,
   terminateGraceMs,
   trackProcessTree,
@@ -106,6 +102,13 @@ const requiredFlags = [
   '--no-session-persistence',
   '--setting-sources',
   '--model',
+];
+const isolatedToolArgs = [
+  '--strict-mcp-config',
+  '--mcp-config',
+  '{"mcpServers":{}}',
+  '--settings',
+  '{"disableAllHooks":true}',
 ];
 const readTools = ['Read', 'Glob', 'Grep'];
 const editTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
@@ -650,11 +653,7 @@ export async function inspectClaudeUsage(
         'none',
         '--tools',
         '',
-        '--strict-mcp-config',
-        '--mcp-config',
-        '{"mcpServers":{}}',
-        '--settings',
-        '{"disableAllHooks":true}',
+        ...isolatedToolArgs,
       ],
       undefined,
       environment,
@@ -833,10 +832,6 @@ export function startClaude(options: {
   assistantPrompt?: string;
   mode: SessionMode;
   images?: readonly ClaudeImage[];
-  mcp?: {
-    servers: Readonly<Record<string, Record<string, unknown>>>;
-    hooks: boolean;
-  };
   approvals?: boolean;
   compact?: { instructions: string | null };
   onEvent: (event: ClaudeEvent) => void;
@@ -851,7 +846,6 @@ export function startClaude(options: {
 } {
   let stopped = false;
   let owned: OwnedProcess | null = null;
-  let mcpConfig: ClaudeMcpConfig | null = null;
   let respond: ReturnType<typeof startClaude>['respondApproval'] | null = null;
   let releaseApprovals: (() => void) | null = null;
   const done = (async (): Promise<ClaudeResult> => {
@@ -929,7 +923,6 @@ export function startClaude(options: {
         !options.assistantPrompt &&
         !options.outputSchema &&
         inspection.supportsHostPrompts === true;
-      mcpConfig = await writeClaudeMcpConfig(options.mcp?.servers ?? {});
       if (stopped) return { status: 'stopped', error: null };
       const args = [
         '--print',
@@ -949,12 +942,9 @@ export function startClaude(options: {
         tools,
         '--allowedTools',
         allowedTools,
-        '--strict-mcp-config',
-        '--mcp-config',
-        mcpConfig.argument,
-        ...(options.mcp?.hooks
-          ? []
-          : ['--settings', '{"disableAllHooks":true}']),
+        ...(options.mode === 'read-only' || options.instructionsOnly
+          ? isolatedToolArgs
+          : []),
         options.resume ? '--resume' : '--session-id',
         options.sessionId,
         ...(options.forkFrom
@@ -1649,8 +1639,6 @@ export function startClaude(options: {
                 error instanceof Error ? error.message : 'Claude Code failed.',
               ),
             };
-    } finally {
-      await mcpConfig?.dispose().catch(() => undefined);
     }
   })();
   return {

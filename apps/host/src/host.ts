@@ -648,7 +648,6 @@ export const serveHost = ({
           (request.method === 'create-session' &&
             (request.input.profileId ||
               request.input.effort ||
-              request.input.mcp ||
               request.input.isolation)) ||
           request.method === 'read-session-worktree' ||
           request.method === 'finish-session-worktree' ||
@@ -735,24 +734,15 @@ export const serveHost = ({
           continue;
         }
         if (request.method === 'set-session-mcp') {
-          const change = sessions
-            .setMcp(request.input, probes.controller.signal)
-            .then(session => send({ type: 'session', id: request.id, session }))
-            .catch(error =>
-              send({
-                type: 'error',
-                id: request.id,
-                code:
-                  error instanceof SessionError ? error.code : 'unavailable',
-                message:
-                  error instanceof SessionError
-                    ? error.message
-                    : 'MCP servers could not be updated. Refresh the session and try again.',
-              }),
-            )
-            .catch(() => undefined);
-          probes.pending.add(change);
-          void change.finally(() => probes.pending.delete(change));
+          yield* Effect.tryPromise(() =>
+            send({
+              type: 'error',
+              id: request.id,
+              code: 'invalid-request',
+              message:
+                'MCP servers and hooks are managed in the provider configuration.',
+            }),
+          );
           continue;
         }
         if (request.method === 'search-transcripts') {

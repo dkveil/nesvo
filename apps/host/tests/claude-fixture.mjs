@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
 
@@ -251,7 +251,7 @@ if (args.length === 1 && args[0] === '--version') {
     values.set(flag, switches.has(flag) ? true : args[++index]);
   }
   for (const flag of switches)
-    if (flag !== '--no-session-persistence' && flag !== '--fork-session')
+    if (['--print', '--verbose', '--include-partial-messages'].includes(flag))
       assert.equal(values.get(flag), true, flag);
   const permissionMode = values.get('--permission-mode');
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
@@ -274,22 +274,27 @@ if (args.length === 1 && args[0] === '--version') {
     ['--allowedTools', READ_TOOLS],
   ])
     assert.equal(values.get(flag), expected, flag);
-  if (values.has('--settings'))
-    assert.equal(values.get('--settings'), '{"disableAllHooks":true}');
-  const mcpConfig = values.get('--mcp-config');
-  const mcpFile = mcpConfig === '{"mcpServers":{}}' ? null : mcpConfig;
-  if (mcpFile) assert.ok(isAbsolute(mcpFile), 'MCP config must be a file');
+  const isolated =
+    ['plan', 'dontAsk'].includes(permissionMode) ||
+    values.has('--setting-sources');
+  assert.equal(values.has('--strict-mcp-config'), isolated);
+  assert.equal(
+    values.get('--mcp-config'),
+    isolated ? '{"mcpServers":{}}' : undefined,
+  );
+  assert.equal(
+    values.get('--settings'),
+    isolated ? '{"disableAllHooks":true}' : undefined,
+  );
   if (process.env.NESVO_FIXTURE_MCP_LOG)
     writeFileSync(
       process.env.NESVO_FIXTURE_MCP_LOG,
       JSON.stringify({
         permissionMode,
-        tools: values.get('--tools'),
+        hostPrompts,
         allowedTools: values.get('--allowedTools'),
         hooksDisabled: values.has('--settings'),
-        file: mcpFile,
-        mode: mcpFile ? statSync(mcpFile).mode & 0o777 : null,
-        config: JSON.parse(mcpFile ? readFileSync(mcpFile, 'utf8') : mcpConfig),
+        config: JSON.parse(values.get('--mcp-config') ?? 'null'),
       }) + '\n',
       { flag: 'a' },
     );

@@ -12,7 +12,6 @@ import {
   type CreateSessionInput,
   type ScheduledJobSessionOrigin,
   type Session,
-  type SessionMcp,
   type Delegation,
 } from '@nesvo/contracts';
 import { saveCostTurn } from '../cost-store';
@@ -303,10 +302,9 @@ export class SessionStore {
     input: CreateSessionInput,
     directory: string,
     origin?: SessionOrigin,
-    mcp?: SessionMcp,
     worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
-    const session = this.newSession(input, directory, origin, mcp, worktree);
+    const session = this.newSession(input, directory, origin, worktree);
     const { requestId } = input;
     this.saveMany(
       [session],
@@ -340,7 +338,6 @@ export class SessionStore {
       },
       directory,
       undefined,
-      undefined,
       worktree,
     );
     session.forkOf = forkOf;
@@ -360,7 +357,6 @@ export class SessionStore {
     input: CreateSessionInput,
     directory: string,
     origin: SessionOrigin = { kind: 'operator' },
-    mcp: SessionMcp = { servers: [], hooks: false },
     worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
     const settings = { ...input };
@@ -370,7 +366,7 @@ export class SessionStore {
     const session: Session = {
       ...settings,
       profileId: input.profileId ?? null,
-      mcp,
+      mcp: { servers: [], hooks: false },
       effort: input.effort ?? null,
       id:
         worktree?.id ??

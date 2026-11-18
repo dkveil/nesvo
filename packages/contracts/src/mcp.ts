@@ -21,6 +21,7 @@ export const mcpServerSchema = z.strictObject({
 export const mcpServerListSchema = z.strictObject({
   provider: providerSchema,
   servers: z.array(mcpServerSchema).max(mcpLimits.listed),
+  configuration: z.literal('native').optional(),
   issues: z.array(z.string().max(mcpLimits.problem)).max(mcpLimits.issues),
 });
 
