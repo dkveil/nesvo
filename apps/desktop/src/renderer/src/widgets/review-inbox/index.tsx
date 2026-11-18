@@ -75,6 +75,7 @@ type Props = ReviewDecisionProps & {
   onAutomationDecision: (job: ScheduledJob, decision: 'start' | 'skip') => void;
   originLabel?: (review: Review) => string;
   notice?: ReactNode;
+  lessons?: ReactNode;
   stages: StageActions;
 };
 
@@ -324,6 +325,7 @@ export function ReviewInbox({
   onAutomationDecision,
   originLabel,
   notice,
+  lessons,
   stages,
   ...decisionProps
 }: Props) {
@@ -466,6 +468,7 @@ export function ReviewInbox({
           </Select>
         </div>
         {notice}
+        {filter !== 'history' && lessons}
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3 px-2">
             <StatusMessage tone="error">{error}</StatusMessage>

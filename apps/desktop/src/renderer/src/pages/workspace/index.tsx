@@ -190,6 +190,8 @@ import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profil
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
 import { SessionControlSettings } from '@/widgets/session-control-settings';
+import { LessonsSettings } from '@/widgets/lessons-settings';
+import { LessonInbox } from '@/widgets/lesson-inbox';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -4421,6 +4423,13 @@ ${text}`
                     : 'Automation'
                   : '';
               }}
+              lessons={
+                <LessonInbox
+                  computers={store.computers}
+                  api={window.nesvo}
+                  onSession={select}
+                />
+              }
               notice={runningAutomations.map(session => (
                 <div key={entityKey(session)} className="mb-3 space-y-1 px-2">
                   <StatusMessage>{automationBusy(session)}</StatusMessage>
@@ -5259,6 +5268,15 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <SessionControlSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'lessons' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <LessonsSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   api={desktopApi(settingsHostId)}

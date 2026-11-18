@@ -6,6 +6,7 @@ import {
   GitFork,
   Info,
   Keyboard,
+  Lightbulb,
   Monitor,
   Network,
   Palette,
@@ -27,6 +28,7 @@ export type SettingsPage =
   | 'notifications'
   | 'code-review'
   | 'session-control'
+  | 'lessons'
   | 'computers'
   | 'phone'
   | 'repositories'
@@ -105,6 +107,14 @@ export const settingsPages: SettingsPageEntry[] = [
     group: '',
     keywords:
       'coordinator orchestrator agents child sessions tools policy plans worktrees modes',
+  },
+  {
+    id: 'lessons',
+    label: 'Lessons',
+    icon: Lightbulb,
+    group: '',
+    keywords:
+      'learning incidents insights rules review date proposals daily cost norm retire',
   },
   {
     id: 'computers',
