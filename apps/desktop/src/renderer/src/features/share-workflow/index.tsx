@@ -65,7 +65,7 @@ function Findings({ prepared }: { prepared: WorkflowSharePrepared }) {
         {findingCount === 1
           ? 'One line looks like a secret.'
           : `${findingCount} lines look like secrets.`}{' '}
-        Remove them from the files, for example by naming the variable in{' '}
+        Remove each value from its file, for example by naming the variable in{' '}
         <code className="font-mono">needs</code>, then scan again. Nothing is
         uploaded until the files are clean.
       </InlineNotice>
