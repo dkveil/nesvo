@@ -699,7 +699,15 @@ if (args.length === 1 && args[0] === '--version') {
       }) + '\n',
       { flag: 'a' },
     );
-  if (reviewCommand === 'fixture:review-findings') {
+  if (
+    reviewCommand === 'fixture:review-findings' &&
+    process.env.NESVO_FIXTURE_REVIEW_OUTPUT
+  ) {
+    verdict(
+      'Review recorded.',
+      JSON.parse(readFileSync(process.env.NESVO_FIXTURE_REVIEW_OUTPUT, 'utf8')),
+    );
+  } else if (reviewCommand === 'fixture:review-findings') {
     verdict('Review recorded.', {
       summary: 'Fixture summary of the change.',
       findings: [
