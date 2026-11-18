@@ -1195,7 +1195,7 @@ export class WorkflowRunner {
   ): void {
     const definition = run.workflow.steps[step.index];
     if (!definition) return;
-    const blocked = this.unmetNeed(definition);
+    const blocked = this.unmetNeed(definition, run.workflow.source.scope);
     if (blocked) {
       const now = this.timestamp();
       this.writeStep(step, {
@@ -1473,15 +1473,18 @@ export class WorkflowRunner {
     }
   }
 
-  private unmetNeed(definition: ResolvedStep): string | null {
+  private unmetNeed(
+    definition: ResolvedStep,
+    workflowScope: WorkflowRun['workflow']['source']['scope'],
+  ): string | null {
     for (const need of definition.needs) {
       if (need === 'browser') {
         if (!this.browserSteps)
           return 'Browser steps are not available on this host';
         if (definition.type !== 'agent')
           return 'Only agent steps can use the browser';
-        if (definition.source.scope !== 'global')
-          return 'Browser steps must be defined in your own workflows folder, not in the repository';
+        if (definition.source.scope !== 'global' || workflowScope !== 'global')
+          return 'Browser steps and their workflow must be defined in your own workflows folder, not in the repository';
         continue;
       }
       const name = need.slice('env:'.length);

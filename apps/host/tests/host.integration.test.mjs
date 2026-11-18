@@ -24560,9 +24560,18 @@ test(
       ['browse', 'look'],
       ['shell', 'page'],
       ['repository', 'repo-look'],
+      ['mixed', 'look'],
     ]) {
       await write(
-        join(project, '.agents', 'workflows', 'workflows', `${workflow}.md`),
+        workflow === 'browse'
+          ? join(process.env.NESVO_WORKFLOWS_HOME, 'workflows', 'browse.md')
+          : join(
+              project,
+              '.agents',
+              'workflows',
+              'workflows',
+              `${workflow}.md`,
+            ),
         `---\nname: ${workflow}\nsteps: [${step}]\n---\n`,
       );
       await write(
@@ -24634,6 +24643,9 @@ test(
     const repository = await run('repository');
     assert.equal(repository.state, 'blocked');
     assert.match(repository.result.summary, /own workflows folder/);
+    const mixed = await run('mixed');
+    assert.equal(mixed.state, 'blocked');
+    assert.match(mixed.result.summary, /own workflows folder/);
 
     await host.stop();
     host = launch(join(directory, 'data'), pidFile, {
