@@ -65,7 +65,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { showsRunStatus } from '@/entities/workflow';
+import { isRunActive, showsRunStatus } from '@/entities/workflow';
 import type { EditorTarget } from '@/widgets/workflow-definitions';
 import type { AssistantContext } from '@/widgets/workflow-assistant';
 import type { AssistantChange } from '@nesvo/contracts';
@@ -102,7 +102,12 @@ import { MoveToGroupDialog } from '@/widgets/session-sidebar/move-to-group-dialo
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
-import { hasEarlierMessages, terminalResume } from '@nesvo/contracts';
+import {
+  hasEarlierMessages,
+  listSubsessions,
+  subsessionOverview,
+  terminalResume,
+} from '@nesvo/contracts';
 import {
   TerminalCommandDialog,
   TerminalHandoffNotice,
@@ -148,9 +153,10 @@ import {
   WorkflowSection,
   SessionCard,
   UsageSection,
-  WorkersSection,
   PullRequestSection,
+  SubsessionsSection,
 } from '@/widgets/session-card';
+import { SubsessionBar } from '@/widgets/session-subsessions';
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
@@ -1046,6 +1052,13 @@ export function Workspace() {
     session =>
       session.parentId === selected?.id && session.hostId === selected?.hostId,
   );
+  const hostSessions = store.sessions.filter(
+    session => session.hostId === selected?.hostId,
+  );
+  const subsessions = selected ? listSubsessions(selected, hostSessions) : [];
+  const subsessionActivity = selected
+    ? subsessionOverview(selected, hostSessions)
+    : null;
   const selectedProfileStatus = useProfileStatus(
     window.nesvo ? desktopApi(selectedHostId) : undefined,
     selectedHostId,
@@ -2077,6 +2090,28 @@ export function Workspace() {
     } catch (failure) {
       return `Could not stop the workflow. ${errorDetail(failure)}`;
     }
+  };
+  const stopSubsessionGroup = async () => {
+    if (!selected || !subsessionActivity) return;
+    if (selected.status === 'running') {
+      await stop(selected);
+      return;
+    }
+    if (
+      selectedRun &&
+      selectedRun.sessionId === selected.id &&
+      isRunActive(selectedRun)
+    ) {
+      const message = await stopWorkflowRun(selectedRun.hostId, selectedRun.id);
+      if (message)
+        setErrors(previous => ({ ...previous, [selectedKey]: message }));
+      return;
+    }
+    await Promise.all(
+      subsessionActivity.entries
+        .filter(entry => entry.session.status === 'running')
+        .map(entry => stop(entry.session)),
+    );
   };
   const stopAutomation = async (session: Session, reportKey = '') => {
     const error =
@@ -3693,7 +3728,12 @@ ${text}`
               }
               workers={
                 cardSession && (
-                  <WorkersSection workers={workers} onSession={select} />
+                  <SubsessionsSection
+                    entries={subsessions}
+                    connected={store.hostReady(selectedHostId)}
+                    onSession={select}
+                    onStop={child => void stop(child)}
+                  />
                 )
               }
               usage={
@@ -4095,6 +4135,18 @@ ${text}`
                     }
                   />
                 )}
+                activityBar={
+                  subsessionActivity?.visible && (
+                    <SubsessionBar
+                      overview={subsessionActivity}
+                      connected={store.hostReady(selectedHostId)}
+                      stopping={selected.status === 'stopping'}
+                      onStopGroup={() => void stopSubsessionGroup()}
+                      onStopChild={child => void stop(child)}
+                      onOpen={select}
+                    />
+                  )
+                }
                 results={
                   <SessionReviews
                     {...reviewDecisionProps}

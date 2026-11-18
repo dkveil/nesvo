@@ -25,7 +25,7 @@ import { cardRowProps } from './card-row';
 
 export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
-export { WorkersSection } from './workers-section';
+export { SubsessionsSection } from './subsessions-section';
 export { ContextSection } from './context-section';
 export { PullRequestSection } from './pull-request-section';
 

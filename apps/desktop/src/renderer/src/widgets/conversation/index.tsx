@@ -96,6 +96,7 @@ type Props = {
   focusTarget: string;
   messageTarget: { id: string } | null;
   workers: Session[];
+  activityBar?: ReactNode;
   delegations: ReactNode;
   results: ReactNode;
   renderPullRequest?: PullRequestMentionRenderer;
@@ -154,6 +155,7 @@ export function Conversation({
   focusTarget,
   messageTarget,
   workers,
+  activityBar,
   delegations,
   results,
   renderPullRequest,
@@ -535,6 +537,7 @@ export function Conversation({
           }}
         >
           {mcpNotice}
+          {activityBar}
           {anchor(
             <Composer
               className={cn(
