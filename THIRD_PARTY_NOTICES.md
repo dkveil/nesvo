@@ -5,6 +5,31 @@ Electron distributions retain their included license files.
 
 The saved-diff viewer uses @pierre/diffs, licensed under Apache-2.0. Its license and the notices for its bundled dependencies are preserved in apps/desktop/THIRD_PARTY_DIFF_LICENSES.txt and included as THIRD_PARTY_DIFF_LICENSES.txt in desktop distributions.
 
+## Class name utilities
+
+The renderer bundles clsx and tailwind-merge under the MIT License.
+
+Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
+Copyright (c) 2021 Dany Castillo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Mobile WebSocket transport
 
 The mobile WebSocket transport also bundles ws 8.22.1 under its MIT license:
