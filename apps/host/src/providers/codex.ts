@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+import { codexProjectOverride, tomlInline } from '../mcp/codex-overrides';
+import type { VerifyMcpTurn } from '../mcp/service';
 import { spawn } from 'node:child_process';
 import { providerEnvironment } from './profiles';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -42,7 +45,7 @@ export type CodexEvent =
       type: 'approval';
       approval: {
         id: string;
-        kind: 'command' | 'file-change';
+        kind: 'command' | 'file-change' | 'tool';
         title: string;
         detail: string;
         directory: string | null;
@@ -74,6 +77,16 @@ type OwnedProcess = {
   recordDescendants: () => void;
 };
 
+const mcpApprovalFeature = 'tool_call_mcp_elicitation';
+const mcpOnlyApprovalPolicy = {
+  granular: {
+    sandbox_approval: false,
+    rules: false,
+    request_permissions: false,
+    skill_approval: false,
+    mcp_elicitations: true,
+  },
+};
 const maxLineBytes = 1024 * 1024;
 const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
@@ -318,11 +331,15 @@ function rpcPeer(
   onMessage: (message: RecordValue) => void,
   disabledServers: string[] | null = [],
   environment?: Readonly<Record<string, string>>,
+  overrides: string[] = [],
+  features = disabledServers ? isolatedFeatures : featuresWithoutHooks,
 ): RpcPeer {
   const args = [
     'app-server',
     '--listen',
     'stdio://',
+    ...(cwd ? codexProjectOverride(cwd) : []),
+    ...overrides,
     ...(disabledServers ? ['-c', 'mcp_servers={}'] : []),
     '-c',
     'web_search="disabled"',
@@ -334,9 +351,7 @@ function rpcPeer(
       '-c',
       `mcp_servers.${name}.enabled=false`,
     ]),
-    ...(disabledServers ? isolatedFeatures : featuresWithoutHooks).flatMap(
-      feature => ['--disable', feature],
-    ),
+    ...features.flatMap(feature => ['--disable', feature]),
   ];
   const owned = ownProcess(executable, args, cwd, environment);
   const pending = new Map<
@@ -651,6 +666,52 @@ async function readAccountAndModels(
   throw new Error('Codex model catalog exceeded the supported size.');
 }
 
+async function supportsMcpElicitation(peer: RpcPeer) {
+  try {
+    const result = await peer.request('experimentalFeature/list', {
+      limit: 200,
+    });
+    return (
+      Array.isArray(result.data) &&
+      result.data.some(entry => {
+        const feature = object(entry);
+        return feature?.name === mcpApprovalFeature && feature.enabled === true;
+      })
+    );
+  } catch (error) {
+    if (error instanceof CodexRpcError) return false;
+    throw error;
+  }
+}
+
+export async function codexSupportsMcpApprovals(
+  directory: string,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+) {
+  const executable = await executablePath();
+  if (!executable || signal.aborted) return false;
+  const peer = rpcPeer(
+    executable,
+    directory,
+    message => rejectRequest(peer, message),
+    [],
+    environment,
+  );
+  const cancel = () => void peer.close();
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    if (signal.aborted) return false;
+    await initialize(peer);
+    return await supportsMcpElicitation(peer);
+  } catch {
+    return false;
+  } finally {
+    signal.removeEventListener('abort', cancel);
+    await peer.closeIdle();
+  }
+}
+
 export async function inspectCodex(
   signal?: AbortSignal,
   environment?: Readonly<Record<string, string>>,
@@ -882,14 +943,27 @@ async function registerCodexSkillRoots(
   checkCancelled();
 }
 
-async function configuredCodexServers(
+async function codexServerDefinitions(
   peer: RpcPeer,
   cwd: string,
-): Promise<string[]> {
+): Promise<RecordValue> {
   const loaded = await peer.request('config/read', {
-    includeLayers: false,
+    includeLayers: true,
     cwd,
   });
+  if (
+    !Array.isArray(loaded.layers) ||
+    loaded.layers.some(value => {
+      const layer = object(value);
+      return (
+        object(layer?.name)?.type === 'project' &&
+        (typeof layer?.disabledReason !== 'string' || !layer.disabledReason)
+      );
+    })
+  )
+    throw new Error(
+      'Codex could not verify that native project configuration is isolated.',
+    );
   const config = object(loaded.config);
   const mcp = object(config?.mcp_servers);
   if (!config || (config.mcp_servers != null && !mcp))
@@ -899,13 +973,68 @@ async function configuredCodexServers(
     throw new Error(
       'Codex has an MCP server name that cannot be safely isolated.',
     );
-  return servers;
+  return mcp ?? {};
+}
+
+async function configuredCodexServers(
+  peer: RpcPeer,
+  cwd: string,
+): Promise<string[]> {
+  return Object.keys(await codexServerDefinitions(peer, cwd));
+}
+
+async function codexHookStates(peer: RpcPeer, cwd: string) {
+  try {
+    const result = await peer.request('hooks/list', { cwds: [cwd] });
+    const folder =
+      Array.isArray(result.data) && result.data.length === 1
+        ? object(result.data[0])
+        : null;
+    if (!Array.isArray(folder?.hooks))
+      throw new Error('Codex returned an unsupported hook catalog.');
+    return Object.fromEntries(
+      folder.hooks.flatMap(value => {
+        const hook = object(value);
+        if (hook?.source === 'project')
+          throw new Error(
+            'Codex reported a native project hook outside the reviewed configuration.',
+          );
+        if (
+          hook?.enabled !== true ||
+          !['user', 'sessionFlags'].includes(String(hook.source)) ||
+          hook.trustStatus === 'trusted' ||
+          typeof hook.key !== 'string' ||
+          hook.key.length > 8192 ||
+          typeof hook.currentHash !== 'string' ||
+          !/^sha256:[a-f0-9]{64}$/.test(hook.currentHash)
+        )
+          return [];
+        return [[hook.key, { trusted_hash: hook.currentHash }]];
+      }),
+    );
+  } catch (error) {
+    if (error instanceof CodexRpcError && error.code === -32601) return {};
+    throw error;
+  }
+}
+
+function activeServers(table: RecordValue) {
+  return Object.fromEntries(
+    Object.entries(table).flatMap(([name, value]) => {
+      const definition = object(value);
+      if (!definition || definition.enabled === false) return [];
+      const configuration = { ...definition };
+      delete configuration.enabled;
+      return [[name, configuration]];
+    }),
+  );
 }
 
 async function verifyCodexToolPolicy(
   peer: RpcPeer,
   cwd: string,
   isolateTools: boolean,
+  hooksOff = isolateTools,
 ): Promise<void> {
   const loaded = await peer.request('config/read', {
     includeLayers: false,
@@ -920,7 +1049,7 @@ async function verifyCodexToolPolicy(
   )
     throw new Error('Codex could not disable inherited MCP servers.');
   const features = object(config?.features);
-  const disabled = isolateTools ? isolatedFeatures : featuresWithoutHooks;
+  const disabled = hooksOff ? isolatedFeatures : featuresWithoutHooks;
   if (
     !features ||
     disabled.some(name => features[name] != null && features[name] !== false)
@@ -1321,6 +1450,7 @@ type CodexRunOptions = {
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  mcpTurn?: VerifyMcpTurn;
   instructionsOnly?: boolean;
   images?: readonly CodexImage[];
   compact?: boolean;
@@ -1346,8 +1476,9 @@ export function startCodex(options: CodexRunOptions): {
   let stopTask: Promise<void> | null = null;
   const approvals = new Map<
     string,
-    { rpcId: RpcId; threadId: string; turnId: string }
+    { rpcId: RpcId; threadId: string; turnId: string; mcp?: boolean }
   >();
+  let approvedMcpServers: RecordValue | null = null;
   const seenRequests = new Set<string>();
   const seenCalls = new Set<string>();
   const pendingDelegates = new Map<
@@ -1655,6 +1786,47 @@ export function startCodex(options: CodexRunOptions): {
                 false,
               ),
           );
+        return;
+      }
+      if (message.method === 'mcpServer/elicitation/request') {
+        const meta = object(params?.meta);
+        const name = meta?.tool_name;
+        const server = params?.serverName;
+        const detail = JSON.stringify(meta?.tool_params ?? {}, null, 2);
+        if (
+          !approvedMcpServers ||
+          !threadId ||
+          !turnId ||
+          params?.threadId !== threadId ||
+          (params?.turnId != null && params.turnId !== turnId) ||
+          params?.mode !== 'form' ||
+          meta?.codex_approval_kind !== 'mcp_tool_call' ||
+          typeof name !== 'string' ||
+          !name ||
+          name.length > 150 ||
+          typeof server !== 'string' ||
+          !Object.hasOwn(approvedMcpServers, server) ||
+          detail.length > 100_000
+        ) {
+          peer.send({
+            id: rpcId,
+            result: { action: 'decline', content: null },
+          });
+          throw new Error(
+            'Codex requested MCP input that could not be approved in this turn.',
+          );
+        }
+        approvals.set(id, { rpcId, threadId, turnId, mcp: true });
+        emit({
+          type: 'approval',
+          approval: {
+            id,
+            kind: 'tool',
+            title: `Use MCP tool ${server} / ${name}`,
+            detail,
+            directory: options.directory,
+          },
+        });
         return;
       }
       const command =
@@ -1968,8 +2140,9 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error(
           'Install the native Codex CLI and sign in with codex login.',
         );
-      const isolateTools =
-        options.mode === 'read-only' ||
+      const unattended =
+        !options.mcpTurn ||
+        options.outputSchema !== undefined ||
         options.turnSandbox === 'read-only' ||
         options.fork ||
         options.compact ||
@@ -1989,21 +2162,102 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error(
           'Unsupported Codex model. Refresh the available model list.',
         );
-      const disabledServers = isolateTools
-        ? await configuredCodexServers(peer, options.directory)
-        : null;
+      const configured = await codexServerDefinitions(peer, options.directory);
+      const readOnly = options.mode === 'read-only';
+      const nativeMcpApproval =
+        !unattended && (await supportsMcpElicitation(peer));
+      const isolateTools = unattended || (readOnly && !nativeMcpApproval);
+      const hooksOff = isolateTools || readOnly;
+      const features = hooksOff ? isolatedFeatures : featuresWithoutHooks;
+      const disabledServers = isolateTools ? Object.keys(configured) : null;
       const bootstrapExit = await peer.closeIdle();
       if (!bootstrapExit.confirmed)
         throw new Error(
           'Codex inspection process closure could not be confirmed.',
         );
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
+      const integrations = isolateTools ? undefined : await options.mcpTurn?.();
+      const projectOverrides = integrations
+        ? [
+            ...Object.entries(integrations.projectServers).flatMap(
+              ([name, value]) => [
+                '-c',
+                'mcp_servers.' + name + '=' + tomlInline(value),
+              ],
+            ),
+            ...(!hooksOff && Object.keys(integrations.projectHooks).length
+              ? ['-c', 'hooks=' + tomlInline(integrations.projectHooks)]
+              : []),
+          ]
+        : [];
+      const expected = {
+        ...configured,
+        ...Object.fromEntries(
+          Object.entries(integrations?.projectServers ?? {}).map(
+            ([name, value]) => [
+              name,
+              { ...object(configured[name]), ...object(value) },
+            ],
+          ),
+        ),
+      };
+      if (readOnly && !isolateTools) {
+        for (const [name, config] of Object.entries(activeServers(expected))) {
+          const definition = object(config)!;
+          const tools = object(definition.tools) ?? {};
+          const policy = {
+            default_tools_approval_mode: 'prompt',
+            ...(Object.keys(tools).length
+              ? {
+                  tools: Object.fromEntries(
+                    Object.entries(tools).map(([tool, value]) => [
+                      tool,
+                      { ...object(value), approval_mode: 'prompt' },
+                    ]),
+                  ),
+                }
+              : {}),
+          };
+          expected[name] = { ...object(expected[name]), ...policy };
+          projectOverrides.push(
+            '-c',
+            'mcp_servers.' + name + '.default_tools_approval_mode="prompt"',
+          );
+          if ('tools' in policy)
+            projectOverrides.push(
+              '-c',
+              'mcp_servers.' + name + '.tools=' + tomlInline(policy.tools),
+            );
+        }
+        projectOverrides.push(
+          '-c',
+          'approval_policy=' + tomlInline(mcpOnlyApprovalPolicy),
+        );
+      }
+      const verifyDefinitions = async () => {
+        if (!integrations || !peer) return;
+        if (
+          !isDeepStrictEqual(integrations, await options.mcpTurn?.()) ||
+          !isDeepStrictEqual(
+            activeServers(expected),
+            activeServers(
+              await codexServerDefinitions(peer, options.directory),
+            ),
+            { skipPrototype: true },
+          )
+        )
+          throw new Error(
+            'Codex MCP servers or hooks changed while preparing the turn. Send the message again.',
+          );
+      };
       peer = rpcPeer(
         executable,
         options.directory,
         consume,
         disabledServers,
         options.environment,
+        projectOverrides,
+        features,
       );
       await initialize(
         peer,
@@ -2013,7 +2267,26 @@ export function startCodex(options: CodexRunOptions): {
         peer,
         options.directory,
         Boolean(disabledServers),
+        hooksOff,
       );
+      if (readOnly && !isolateTools) {
+        const loaded = await peer.request('config/read', {
+          includeLayers: false,
+          cwd: options.directory,
+        });
+        if (
+          !isDeepStrictEqual(
+            object(loaded.config)?.approval_policy,
+            mcpOnlyApprovalPolicy,
+          ) ||
+          !(await supportsMcpElicitation(peer))
+        )
+          throw new Error(
+            'Codex could not verify a read-only approval policy for MCP tools.',
+          );
+      }
+      if (nativeMcpApproval && !isolateTools)
+        approvedMcpServers = activeServers(expected);
       if (
         options.skillRoots !== undefined &&
         (!Array.isArray(options.skillRoots) || options.skillRoots.length > 0)
@@ -2037,8 +2310,11 @@ export function startCodex(options: CodexRunOptions): {
         }
       }
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
-      const approvalPolicy =
-        options.mode === 'read-only' ? 'never' : 'untrusted';
+      const approvalPolicy = readOnly
+        ? isolateTools
+          ? 'never'
+          : mcpOnlyApprovalPolicy
+        : 'untrusted';
       const sandboxPolicy =
         options.mode === 'read-only'
           ? { type: 'readOnly', networkAccess: false }
@@ -2056,6 +2332,11 @@ export function startCodex(options: CodexRunOptions): {
         : sandboxPolicy;
       const model = options.model === 'default' ? {} : { model: options.model };
       const effort = options.effort ? { effort: options.effort } : {};
+      const hookStates = hooksOff
+        ? {}
+        : await codexHookStates(peer, options.directory);
+      await verifyDefinitions();
+      if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       const response = await peer.request(
         options.fork
           ? 'thread/fork'
@@ -2086,9 +2367,10 @@ export function startCodex(options: CodexRunOptions): {
           sandbox:
             options.mode === 'read-only' ? 'read-only' : 'workspace-write',
           config: {
-            ...toolPolicyConfig(
-              disabledServers ? isolatedFeatures : featuresWithoutHooks,
-            ),
+            ...toolPolicyConfig(features),
+            ...(Object.keys(hookStates).length
+              ? { 'hooks.state': hookStates }
+              : {}),
             ...(options.effort
               ? { model_reasoning_effort: options.effort }
               : {}),
@@ -2123,7 +2405,7 @@ export function startCodex(options: CodexRunOptions): {
       )
         throw new Error('Codex returned an invalid or mismatched thread.');
       if (
-        response.approvalPolicy !== approvalPolicy ||
+        !isDeepStrictEqual(response.approvalPolicy, approvalPolicy) ||
         sandbox?.type !== sandboxPolicy.type ||
         sandbox.networkAccess !== false ||
         (response.approvalsReviewer !== undefined &&
@@ -2163,6 +2445,8 @@ export function startCodex(options: CodexRunOptions): {
           ),
         ]);
       } else {
+        await verifyDefinitions();
+        if (stopped || failure) throw new Error(failure ?? 'Stopped.');
         const started = await peer.request('turn/start', {
           threadId,
           input: codexTurnInput(options.prompt, options.images ?? [], skill),
@@ -2280,7 +2564,15 @@ export function startCodex(options: CodexRunOptions): {
       )
         throw new Error('Codex approval is no longer pending for this turn.');
       try {
-        peer.send({ id: pending.rpcId, result: { decision } });
+        peer.send({
+          id: pending.rpcId,
+          result: pending.mcp
+            ? {
+                action: decision === 'accept' ? 'accept' : 'decline',
+                content: decision === 'accept' ? {} : null,
+              }
+            : { decision },
+        });
         resolveApproval(requestId);
       } catch (error) {
         fail(

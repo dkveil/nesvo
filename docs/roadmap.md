@@ -28,7 +28,7 @@ Dates are delivery targets, not permission to skip acceptance or silently reduce
 Every stage waits for Damian's acceptance of the previous stage unless he explicitly authorizes an exception, as recorded for P3 in D50. Corrections stay within the current stage.
 Provider modes are based on real capabilities; never simulate unsupported features.
 
-The D70 follow-up replaces per-session MCP and hook selection with native provider configuration for writable turns. The composer shows a read-only inventory and hook policy. Read-only turns and internal probes retain tool isolation, and legacy selections do not affect execution.
+The D70 follow-up inherits user MCP configuration for interactive sessions, with one-time tool approvals in read-only modes where the CLI supports them. Repository servers and hooks require a host-side trust decision tied to their definitions. Edit modes use enabled user hooks. Unattended turns and internal probes isolate both integrations.
 
 P4 originally used explicitly selected read-only Codex orchestrators with a native delegation tool and at most two visible workers per run. D55 removes that role prerequisite for new Codex sessions while retaining permissions and operator approval. Workers can use Codex or Claude capabilities already implemented; real P4 demonstration uses Codex while Claude remains quota-limited. Worker scopes stay within the parent directory, and overlapping writable directories are rejected. Stop on the parent cancels its group; Stop on a worker leaves its sibling running. Existing conversations keep their provider threads and recorded delegation capabilities.
 

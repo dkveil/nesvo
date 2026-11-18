@@ -1,3 +1,4 @@
+import type { VerifyMcpTurn } from '../mcp/service';
 import { spawn } from 'node:child_process';
 import { providerEnvironment } from './profiles';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -832,6 +833,14 @@ export async function confirmClaudeFork(
     );
 }
 
+export async function claudeSupportsHostPrompts(
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+): Promise<boolean> {
+  const inspection = await inspect(() => signal.aborted, environment);
+  return inspection.supportsHostPrompts === true;
+}
+
 export function startClaude(options: {
   directory: string;
   sessionId: string;
@@ -848,6 +857,7 @@ export function startClaude(options: {
   images?: readonly ClaudeImage[];
   readDirectories?: readonly string[];
   approvals?: boolean;
+  mcpTurn?: VerifyMcpTurn;
   compact?: { instructions: string | null };
   onEvent: (event: ClaudeEvent) => void;
 }): {
@@ -937,13 +947,39 @@ export function startClaude(options: {
         options.assistantPrompt && options.mode === 'read-only' && assistantMode
           ? assistantMode
           : permission.cli;
-      const hostPrompts =
+      const readOnly = options.mode === 'read-only';
+      const integrations = await options.mcpTurn?.();
+      const servers = integrations
+        ? { ...integrations.servers, ...integrations.projectServers }
+        : {};
+      const canAsk =
         options.approvals === true &&
         !options.compact &&
-        options.mode !== 'read-only' &&
         !options.assistantPrompt &&
         !options.outputSchema &&
         inspection.supportsHostPrompts === true;
+      const hostPrompts =
+        canAsk && (!readOnly || Object.keys(servers).length > 0);
+      const mcpArgs = integrations
+        ? [
+            '--strict-mcp-config',
+            '--mcp-config',
+            JSON.stringify({ mcpServers: !readOnly || canAsk ? servers : {} }),
+            '--settings',
+            JSON.stringify({
+              ...(readOnly || integrations.projectDisablesHooks
+                ? { disableAllHooks: true }
+                : { hooks: integrations.projectHooks }),
+              ...(readOnly ? { permissions: { ask: ['mcp__*'] } } : {}),
+            }),
+            '--setting-sources',
+            'user',
+          ]
+        : [
+            ...isolatedToolArgs,
+            '--setting-sources',
+            options.instructionsOnly ? '' : 'user',
+          ];
       if (stopped) return { status: 'stopped', error: null };
       const args = [
         '--print',
@@ -963,9 +999,7 @@ export function startClaude(options: {
         tools,
         '--allowedTools',
         allowedTools,
-        ...(options.mode === 'read-only' || options.instructionsOnly
-          ? isolatedToolArgs
-          : []),
+        ...mcpArgs,
         options.resume ? '--resume' : '--session-id',
         options.sessionId,
         ...(options.forkFrom
@@ -983,7 +1017,6 @@ export function startClaude(options: {
         );
       if (options.model !== 'default') args.push('--model', options.model);
       if (options.ephemeral) args.push('--no-session-persistence');
-      if (options.instructionsOnly) args.push('--setting-sources', '');
       if (options.assistantPrompt)
         args.push('--append-system-prompt', options.assistantPrompt);
       if (options.outputSchema)
@@ -1126,6 +1159,10 @@ export function startClaude(options: {
           return;
         }
         const { request: ask } = parsed;
+        if (readOnly && !String(request.tool_name).startsWith('mcp__')) {
+          deny(ask.requestId, 'Plan mode only asks for MCP tool approvals.');
+          return;
+        }
         if (approvals.has(ask.requestId)) {
           fail('Claude repeated a permission request.');
           return;

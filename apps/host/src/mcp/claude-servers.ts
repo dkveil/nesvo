@@ -1,144 +1,108 @@
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+﻿import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { mcpLimits, type McpScope, type McpServer } from '@nesvo/contracts';
-import { readConfigFile } from './config-file';
+import { MCP_SERVER_NAME_PATTERN, type McpScope } from '@nesvo/contracts';
 import { describeServer } from './server-summary';
+import {
+  configTable,
+  directoryKey,
+  section,
+  type ConfigTable,
+} from './scoped-config';
 
-const MAX_GLOBAL_CONFIG_BYTES = 32 * 1024 * 1024;
-const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
-const MAX_PARENT_DIRECTORIES = 64;
-
-const serverTableSchema = z.record(z.string(), z.unknown());
-const globalConfigSchema = z.looseObject({
-  mcpServers: serverTableSchema.optional(),
-  projects: z
-    .record(
-      z.string(),
-      z.looseObject({ mcpServers: serverTableSchema.optional() }),
-    )
-    .optional(),
-});
-const projectConfigSchema = z.looseObject({
-  mcpServers: serverTableSchema.optional(),
-});
-const stdioSchema = z.looseObject({
+const stdioSchema = z.strictObject({
   type: z.literal('stdio').optional(),
   command: z.string().min(1).max(4096),
   args: z.array(z.string().max(32_000)).max(500).optional(),
   env: z.record(z.string(), z.string()).optional(),
 });
-const remoteSchema = z.looseObject({
+const remoteSchema = z.strictObject({
   type: z.enum(['http', 'sse']),
   url: z.string().min(1).max(8192),
   headers: z.record(z.string(), z.string()).optional(),
 });
+const serverSchema = z.union([stdioSchema, remoteSchema]);
 
 export const claudeConfigDirectory = (): string =>
   process.env.CLAUDE_CONFIG_DIR?.trim() || homedir();
 
-const projectKey = (path: string): string => {
-  const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-};
-
-const entriesOf = (
-  table: Record<string, unknown> | undefined,
-  scope: McpScope,
-): McpServer[] =>
-  Object.entries(table ?? {}).map(([name, value]) => {
-    const remote = remoteSchema.safeParse(value);
-    const transport = remote.success
-      ? remote.data.type
-      : stdioSchema.safeParse(value).success
-        ? 'stdio'
-        : null;
-    return describeServer(
-      name,
-      scope,
-      transport,
-      transport ? null : 'Server transport could not be identified.',
-    );
-  });
-
-const readGlobal = async (
-  directory: string,
-  issues: string[],
-  signal?: AbortSignal,
-  profileDirectory?: string,
-): Promise<McpServer[]> => {
-  const file = await readConfigFile(
-    join(profileDirectory ?? claudeConfigDirectory(), '.claude.json'),
-    MAX_GLOBAL_CONFIG_BYTES,
-    signal,
+export function claudeServer(name: string, value: unknown, scope: McpScope) {
+  const parsed = serverSchema.safeParse(value);
+  const supported = parsed.success && MCP_SERVER_NAME_PATTERN.test(name);
+  return describeServer(
+    name,
+    scope,
+    parsed.data?.type ?? (parsed.success ? 'stdio' : null),
+    supported ? null : 'Server definition is unsupported.',
   );
-  if (file.status === 'missing') return [];
-  if (file.status !== 'read') {
-    issues.push('The Claude Code user configuration could not be read.');
-    return [];
-  }
-  let parsed: z.infer<typeof globalConfigSchema>;
-  try {
-    const result = globalConfigSchema.safeParse(JSON.parse(file.text));
-    if (!result.success) throw new Error();
-    parsed = result.data;
-  } catch {
-    issues.push('The Claude Code user configuration is not valid.');
-    return [];
-  }
-  const wanted = projectKey(directory);
-  const local = Object.entries(parsed.projects ?? {}).find(
-    ([path]) => projectKey(path) === wanted,
-  )?.[1];
-  return [
-    ...entriesOf(parsed.mcpServers, 'user'),
-    ...entriesOf(local?.mcpServers, 'local'),
-  ];
-};
+}
 
-const readProject = async (
-  directory: string,
+export async function readClaudeConfiguration(
+  folders: string[],
   issues: string[],
-  signal?: AbortSignal,
-): Promise<McpServer[]> => {
-  const entries = new Map<string, McpServer>();
-  let current = directory;
-  for (let depth = 0; depth < MAX_PARENT_DIRECTORIES; depth++) {
-    const file = await readConfigFile(
-      join(current, '.mcp.json'),
-      MAX_PROJECT_CONFIG_BYTES,
-      signal,
-    );
-    if (file.status === 'read') {
-      try {
-        const result = projectConfigSchema.safeParse(JSON.parse(file.text));
-        if (!result.success) throw new Error();
-        for (const entry of entriesOf(result.data.mcpServers, 'project'))
-          if (!entries.has(entry.key)) entries.set(entry.key, entry);
-      } catch {
-        issues.push('A project .mcp.json file is not valid.');
-      }
-    } else if (file.status !== 'missing')
-      issues.push('A project .mcp.json file could not be read.');
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return [...entries.values()];
-};
-
-export const discoverClaudeServers = async (
-  directory: string,
+  projectIssues: string[],
   signal?: AbortSignal,
   profileDirectory?: string,
-): Promise<{ servers: McpServer[]; issues: string[] }> => {
-  const issues: string[] = [];
-  const [global, project] = await Promise.all([
-    readGlobal(directory, issues, signal, profileDirectory),
-    readProject(directory, issues, signal),
+) {
+  const home = profileDirectory ?? claudeConfigDirectory();
+  const [global, userSettings] = await Promise.all([
+    configTable(join(home, '.claude.json'), issues, signal, 32 * 1024 * 1024),
+    configTable(
+      join(
+        profileDirectory ??
+          process.env.CLAUDE_CONFIG_DIR?.trim() ??
+          join(homedir(), '.claude'),
+        'settings.json',
+      ),
+      issues,
+      signal,
+    ),
   ]);
-  return {
-    servers: [...global, ...project].slice(0, mcpLimits.listed),
-    issues: [...new Set(issues)].slice(0, mcpLimits.issues),
-  };
-};
+  const userServers = section(global, 'mcpServers', issues);
+  const userHooks = section(userSettings, 'hooks', issues);
+  const local = section(global, 'projects', issues);
+  const matchingFolders = new Set(folders.map(directoryKey));
+  const localSettings = Object.fromEntries(
+    Object.entries(local).filter(([path]) =>
+      matchingFolders.has(directoryKey(path)),
+    ),
+  );
+  if (issues.length)
+    projectIssues.push('Claude Code local MCP settings could not be verified.');
+
+  const layers = await Promise.all(
+    [...folders].reverse().map(async folder => {
+      const [mcp, settings, localFile] = await Promise.all([
+        configTable(join(folder, '.mcp.json'), projectIssues, signal),
+        configTable(
+          join(folder, '.claude', 'settings.json'),
+          projectIssues,
+          signal,
+        ),
+        configTable(
+          join(folder, '.claude', 'settings.local.json'),
+          projectIssues,
+          signal,
+        ),
+      ]);
+      const localConfig = Object.entries(localSettings).find(
+        ([path]) => directoryKey(path) === directoryKey(folder),
+      )?.[1];
+      const localServers =
+        localConfig && typeof localConfig === 'object'
+          ? section(localConfig as ConfigTable, 'mcpServers', projectIssues)
+          : {};
+      return {
+        folder,
+        servers: section(mcp, 'mcpServers', projectIssues),
+        localServers,
+        hooks: section(settings, 'hooks', projectIssues),
+        localHooks: section(localFile, 'hooks', projectIssues),
+        hooksDisabled:
+          settings.disableAllHooks === true ||
+          localFile.disableAllHooks === true,
+      };
+    }),
+  );
+  return { userServers, userHooks, layers };
+}

@@ -1144,6 +1144,7 @@ test(
         'file-attachments',
         'session-changes',
         'code-comments',
+        'repository-mcp-trust',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6154,6 +6155,7 @@ test(
       'file-attachments',
       'session-changes',
       'code-comments',
+      'repository-mcp-trust',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -19280,7 +19282,7 @@ test(
 );
 
 test(
-  'MCP servers and hooks inherit native configuration in writable turns and preserve read-only isolation',
+  'MCP repository trust binds provider definitions and interactive permissions',
   { timeout: 180_000 },
   async t => {
     const directory = await realpath(
@@ -19308,7 +19310,42 @@ test(
       await rm(directory, { recursive: true, force: true });
     });
     if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
-    await mkdir(join(project, '.git'), { recursive: true });
+    await mkdir(project);
+    await promisify(execFile)('git', ['init', '-q', '-b', 'main'], {
+      cwd: project,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: join(directory, 'gitconfig'),
+      },
+    });
+    const write = async (path, content) => {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, content);
+    };
+    await mkdir(join(project, '.claude'), { recursive: true });
+    await mkdir(join(project, '.codex'), { recursive: true });
+    const hook = command => ({
+      SessionStart: [{ hooks: [{ type: 'command', command }] }],
+    });
+    const projectHooks = hook('fixture-project-hook');
+    const localHooks = hook('fixture-local-hook');
+    await writeFile(
+      join(project, '.claude', 'settings.json'),
+      JSON.stringify({ hooks: projectHooks }),
+    );
+    await writeFile(
+      join(project, '.claude', 'settings.local.json'),
+      JSON.stringify({ hooks: localHooks }),
+    );
+    await writeFile(
+      join(project, '.codex', 'config.toml'),
+      '[mcp_servers.project]\ncommand = "fixture-project-server"\n',
+    );
+    await writeFile(
+      join(project, '.codex', 'hooks.json'),
+      JSON.stringify({ hooks: projectHooks }),
+    );
     await mkdir(claudeConfig, { recursive: true });
     await mkdir(codexConfig, { recursive: true });
     const docs = {
@@ -19371,10 +19408,13 @@ test(
         '',
       ].join('\n'),
     );
-    const open = () => {
+    const open = (extra = {}) => {
       const host = launch(directory, pidFile, {
         NESVO_FIXTURE_MCP_LOG: claudeLog,
         NESVO_CODEX_FIXTURE_MCP_LOG: codexLog,
+        NESVO_TEST_MODE: '1',
+        NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
+        ...extra,
       });
       hosts.push(host);
       return host;
@@ -19429,18 +19469,22 @@ test(
     assert.equal(created.type, 'session', JSON.stringify(created));
     const claude = created.session;
     assert.deepEqual(claude.mcp, { servers: [], hooks: false });
-    const turn = async (session, mode, client = host) => {
+    const sendTurn = async (session, mode, text, client = host) => {
       const sent = await client.request('send-message', {
         sessionId: session.id,
         messageId: randomUUID(),
-        text: 'fixture:continue',
+        text,
         mode,
       });
       assert.equal(sent.type, 'session', JSON.stringify(sent));
+      return sent.session;
+    };
+    const turn = async (session, mode, client = host) => {
+      const sent = await sendTurn(session, mode, 'fixture:continue', client);
       return client.event(
         value =>
           value.id === session.id &&
-          value.runId === sent.session.runId &&
+          value.runId === sent.runId &&
           ['completed', 'failed'].includes(value.status),
       );
     };
@@ -19453,29 +19497,107 @@ test(
       null,
     );
     const applied = (await logged(claudeLog)).at(-1);
-    assert.deepEqual(applied, {
-      permissionMode: 'acceptEdits',
-      hostPrompts: true,
-      allowedTools: 'Read,Glob,Grep',
-      hooksDisabled: false,
-      config: null,
-    });
+    assert.deepEqual(Object.keys(applied.config.mcpServers).sort(), [
+      'docs',
+      'tracker',
+    ]);
+    assert.deepEqual(applied.hooks, {});
+    assert.equal(applied.settingSources, 'user');
+    const listFor = async (session, client = host) => {
+      const response = await client.request('list-mcp-servers', {
+        sessionId: session.id,
+      });
+      assert.equal(response.type, 'mcp-servers', JSON.stringify(response));
+      return response.list;
+    };
+    const trust = (session, fingerprint, client = host) =>
+      client.request('trust-repository-mcp', {
+        sessionId: session.id,
+        fingerprint,
+      });
+    const before = await listFor(claude);
+    assert.equal(before.repository.status, 'needs-trust');
+    assert.equal(before.repository.definitions.length, 4);
+    assert.equal(
+      (await trust(claude, before.repository.fingerprint)).list.repository
+        .status,
+      'trusted',
+    );
+    assert.equal((await turn(claude, 'accept-edits')).status, 'completed');
+    const trusted = (await logged(claudeLog)).at(-1);
+    assert.deepEqual(Object.keys(trusted.config.mcpServers).sort(), [
+      'docs',
+      'local_db',
+      'repo',
+      'tracker',
+    ]);
+    assert.deepEqual(trusted.hooks.SessionStart, [
+      ...projectHooks.SessionStart,
+      ...localHooks.SessionStart,
+    ]);
+    await writeFile(
+      join(project, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: { repo: { command: 'npx', args: ['changed-argument'] } },
+      }),
+    );
+    assert.equal((await turn(claude, 'accept-edits')).status, 'completed');
+    assert.deepEqual((await logged(claudeLog)).at(-1), applied);
+    const changed = await listFor(claude);
+    assert.equal(changed.repository.status, 'needs-trust');
+    assert.equal(changed.repository.changed, true);
+    assert.deepEqual(
+      changed.repository.definitions
+        .filter(definition => definition.change)
+        .map(definition => [definition.name, definition.change]),
+      [['repo', 'changed']],
+    );
+    assert.equal(
+      (await trust(claude, before.repository.fingerprint)).code,
+      'invalid-request',
+    );
     const staleChange = await host.request('set-session-mcp', {
       sessionId: claude.id,
       servers: ['user:docs'],
       hooks: true,
     });
     assert.equal(staleChange.code, 'invalid-request');
-    const plan = await turn(claude, 'read-only');
-    assert.equal(plan.status, 'completed', plan.error);
+    const plan = await sendTurn(claude, 'read-only', 'fixture:ask-mcp');
+    const pending = await host.event(
+      value =>
+        value.id === claude.id &&
+        value.runId === plan.runId &&
+        value.pendingApprovals.length === 1,
+    );
+    const approval = pending.pendingApprovals[0];
+    assert.equal(approval.kind, 'tool');
+    assert.equal(
+      (
+        await host.request('respond-approval', {
+          sessionId: claude.id,
+          runId: plan.runId,
+          requestId: approval.id,
+          fingerprint: approval.fingerprint,
+          decision: 'accept',
+        })
+      ).type,
+      'session',
+    );
+    const decided = await host.event(
+      value =>
+        value.id === claude.id &&
+        value.runId === plan.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(decided.messages.at(-1).body, 'Fixture action allowed.');
     const planned = (await logged(claudeLog)).at(-1);
-    assert.deepEqual(planned, {
-      permissionMode: 'plan',
-      hostPrompts: false,
-      allowedTools: 'Read,Glob,Grep',
-      hooksDisabled: true,
-      config: { mcpServers: {} },
-    });
+    assert.equal(planned.permissionMode, 'plan');
+    assert.equal(planned.hostPrompts, true);
+    assert.deepEqual(Object.keys(planned.config.mcpServers).sort(), [
+      'docs',
+      'tracker',
+    ]);
+    assert.equal(planned.hooksDisabled, true);
 
     const codexList = await host.request('list-mcp-servers', {
       provider: 'Codex',
@@ -19493,6 +19615,7 @@ test(
         ['user:search', 'stdio', false],
         ['user:notes', 'http', false],
         ['user:off', 'stdio', true],
+        ['project:project', 'stdio', false],
       ],
     );
     const codexCreated = await host.request('create-session', {
@@ -19514,6 +19637,33 @@ test(
     assert.ok(codexApplied.args.every(arg => !arg.startsWith('mcp_servers')));
     assert.equal(codexApplied.args.includes('hooks'), false);
     assert.equal(codexApplied.hooksFeature, null);
+    assert.deepEqual(codexApplied.hooks, {});
+    const codexTrust = await listFor(codex);
+    assert.equal(codexTrust.repository.status, 'needs-trust');
+    assert.equal(
+      (await trust(codex, codexTrust.repository.fingerprint)).list.repository
+        .status,
+      'trusted',
+    );
+    assert.equal((await turn(codex, 'supervised')).status, 'completed');
+    const codexTrusted = (await logged(codexLog)).at(-1);
+    assert.deepEqual(codexTrusted.inheritedServers, [
+      'search',
+      'notes',
+      'project',
+    ]);
+    assert.deepEqual(codexTrusted.hooks, projectHooks);
+    await writeFile(
+      join(project, '.codex', 'hooks.json'),
+      JSON.stringify({ hooks: hook('changed-hook') }),
+    );
+    assert.equal((await turn(codex, 'supervised')).status, 'completed');
+    assert.deepEqual((await logged(codexLog)).at(-1), codexApplied);
+    assert.equal((await listFor(codex)).repository.status, 'needs-trust');
+    assert.equal(
+      (await trust(claude, changed.repository.fingerprint)).type,
+      'mcp-servers',
+    );
     const readOnly = await turn(codex, 'read-only');
     assert.equal(readOnly.status, 'completed', readOnly.error);
     const codexReadOnly = (await logged(codexLog)).at(-1);
@@ -19544,7 +19694,11 @@ test(
       database.close();
     }
     await claudeSettings({});
-    const reopened = open();
+    const reopened = open({ NESVO_CODEX_FIXTURE_MCP_APPROVAL: '1' });
+    assert.equal(
+      (await listFor(claude, reopened)).repository.status,
+      'trusted',
+    );
     const restored = (await reopened.request('list-sessions')).sessions.find(
       value => value.id === claude.id,
     );
@@ -19552,7 +19706,120 @@ test(
     const resumed = await turn(restored, 'accept-edits', reopened);
     assert.equal(resumed.status, 'completed', resumed.error);
     assert.equal(resumed.providerSessionId, first.providerSessionId);
-    assert.deepEqual((await logged(claudeLog)).at(-1), applied);
+    assert.equal((await listFor(codex, reopened)).readOnlyMcp, 'approval');
+    const codexRun = await sendTurn(
+      codex,
+      'read-only',
+      'fixture:ask-mcp',
+      reopened,
+    );
+    const codexPending = await reopened.event(
+      value =>
+        value.id === codex.id &&
+        value.runId === codexRun.runId &&
+        value.pendingApprovals.some(item => item.kind === 'tool'),
+    );
+    const codexApproval = codexPending.pendingApprovals[0];
+    assert.equal(codexApproval.title, 'Use MCP tool search / lookup');
+    assert.equal(
+      (
+        await reopened.request('respond-approval', {
+          sessionId: codex.id,
+          runId: codexRun.runId,
+          requestId: codexApproval.id,
+          decision: 'accept',
+        })
+      ).type,
+      'session',
+    );
+    const codexDecided = await reopened.event(
+      value =>
+        value.id === codex.id &&
+        value.runId === codexRun.runId &&
+        value.status === 'completed',
+    );
+    assert.equal(
+      codexDecided.messages.at(-1).body,
+      'Codex fixture MCP accepted once.',
+    );
+    const resumedConfig = (await logged(claudeLog)).at(-1).config.mcpServers;
+    assert.deepEqual(Object.keys(resumedConfig).sort(), ['local_db', 'repo']);
+    assert.deepEqual(resumedConfig.repo.args, ['changed-argument']);
+
+    await writeFile(join(project, 'deleted.txt'), 'Worker fixture baseline.');
+    const workerRun = await sendTurn(
+      codex,
+      'read-only',
+      'fixture:delegate-writable',
+      reopened,
+    );
+    const proposed = await reopened.event(
+      value =>
+        value.id === codex.id &&
+        value.runId === workerRun.runId &&
+        value.delegations.some(item => item.runId === workerRun.runId),
+    );
+    const workerProposal = proposed.delegations.find(
+      item => item.runId === workerRun.runId,
+    );
+    assert.equal(workerProposal.mode, 'supervised');
+    assert.equal(
+      (
+        await reopened.request('decide-delegation', {
+          sessionId: codex.id,
+          runId: workerRun.runId,
+          delegationId: workerProposal.id,
+          decision: 'accept',
+        })
+      ).type,
+      'session',
+    );
+    await reopened.event(
+      value =>
+        value.id === codex.id &&
+        value.runId === workerRun.runId &&
+        value.status === 'completed' &&
+        value.delegations.some(
+          item => item.id === workerProposal.id && item.status === 'completed',
+        ),
+    );
+    const worker = (await logged(codexLog)).at(-1);
+    assert.equal(worker.sandbox, 'workspace-write');
+    assert.deepEqual(worker.inheritedServers, []);
+    assert.equal(worker.hooksFeature, false);
+
+    await write(
+      join(project, '.agents', 'workflows', 'workflows', 'mcp-isolation.md'),
+      '---\nname: mcp-isolation\nsteps: [check]\n---\n',
+    );
+    await write(
+      join(project, '.agents', 'tasks', 'mcp-isolation.md'),
+      '---\nworkflow: mcp-isolation\ntitle: Workflow MCP isolation\n---\nfixture:continue\n',
+    );
+    await write(
+      join(project, '.agents', 'workflows', 'steps', 'check.md'),
+      '---\nname: check\ntype: command\nphase: pre-done\n---\necho checked\n',
+    );
+    const workflow = await reopened.request('start-workflow-task', {
+      specPath: join('.agents', 'tasks', 'mcp-isolation.md'),
+      directory: project,
+      workflowName: 'mcp-isolation',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+      isolation: 'none',
+      gateProvider: 'Codex',
+      gateModel: 'fixture-codex',
+    });
+    assert.equal(workflow.type, 'workflow-run', JSON.stringify(workflow));
+    await reopened.event(
+      value =>
+        value.workflowRunId === workflow.run.id && value.status === 'completed',
+    );
+    const workflowTurn = (await logged(codexLog)).at(-1);
+    assert.equal(workflowTurn.sandbox, 'workspace-write');
+    assert.deepEqual(workflowTurn.inheritedServers, []);
+    assert.equal(workflowTurn.hooksFeature, false);
   },
 );
 

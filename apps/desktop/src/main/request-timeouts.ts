@@ -29,6 +29,7 @@ const providerRequests = new Set<HostRequest['method']>([
   'list-conversations',
   'adopt-conversation',
   'list-mcp-servers',
+  'trust-repository-mcp',
   'set-session-mcp',
   'list-pull-requests',
   'read-pull-request',

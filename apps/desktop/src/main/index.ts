@@ -108,6 +108,7 @@ import {
   findSessionPullRequestSchema,
   discoverSkillsSchema,
   listMcpServersSchema,
+  trustRepositoryMcpSchema,
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
@@ -1284,6 +1285,17 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'remove-orphaned-session-worktree',
         removeOrphanedSessionWorktreeSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:trust-repository-mcp',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'trust-repository-mcp',
+        trustRepositoryMcpSchema.parse(input),
         route(hostId),
       );
     },

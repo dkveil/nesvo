@@ -18,6 +18,8 @@
 !apps/host/tsconfig.json
 !apps/host/src/
 !apps/host/src/*.ts
+!apps/host/src/mcp/
+!apps/host/src/mcp/**
 !apps/host/src/providers/
 !apps/host/src/providers/**
 !apps/host/src/sessions/

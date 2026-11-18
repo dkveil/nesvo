@@ -55,11 +55,16 @@ import {
   type MessageAttachment,
   type TurnUsage,
 } from '@nesvo/contracts';
-import { listMcpServers } from '../mcp/service';
+import {
+  interactiveMcpSession,
+  type McpPolicy,
+  type VerifyMcpTurn,
+} from '../mcp/service';
 import {
   confirmClaudeFork,
   reportedClaudeModes,
   startClaude,
+  claudeSupportsHostPrompts,
   type ClaudeEvent,
   type ClaudeImage,
   type ClaudeResult,
@@ -67,6 +72,7 @@ import {
 import {
   inspectCodex,
   startCodex,
+  codexSupportsMcpApprovals,
   type CodexEvent,
   type CodexImage,
   type CodexResult,
@@ -234,7 +240,9 @@ function resolveTurnSelection(
   return { model, effort, mode };
 }
 
-function asksForApproval(session: Session): boolean {
+function asksForApproval(session: Session, kind: string): boolean {
+  if (session.mode === 'read-only')
+    return kind === 'tool' && interactiveMcpSession(session);
   return session.provider === 'Codex'
     ? session.mode === 'supervised'
     : session.mode === 'accept-edits' || session.mode === 'auto';
@@ -293,6 +301,7 @@ export type WorkflowTurn = {
 
 export type SessionServiceOptions = {
   profiles?: ProviderProfiles;
+  mcp?: McpPolicy;
   checkCostBudgets?: (
     session: Session,
     now: Date,
@@ -367,6 +376,7 @@ type LaunchTurn = {
   instructionsOnly?: boolean;
   assistantPrompt?: string;
   previousSelection?: TurnSelection;
+  unattended?: boolean;
 };
 
 export type RunOutcome = {
@@ -563,6 +573,7 @@ export class SessionService {
       outputSchema: turn.outputSchema,
       ephemeral,
       instructionsOnly: turn.instructionsOnly,
+      unattended: true,
       assistantPrompt: turn.assistant ? turn.assistantPrompt : undefined,
     });
     return 'sent';
@@ -1701,13 +1712,37 @@ export class SessionService {
     directory: string,
     signal: AbortSignal,
     profileId?: string | null,
+    fingerprint?: string,
   ): Promise<McpServerList> {
     const profileDirectory = await this.options.profiles?.directory(
       provider,
       profileId,
       signal,
     );
-    return listMcpServers(provider, directory, signal, profileDirectory);
+    const policy = this.options.mcp!;
+    const list = fingerprint
+      ? await policy.trust(
+          provider,
+          directory,
+          fingerprint,
+          signal,
+          profileDirectory,
+        )
+      : await policy.list(provider, directory, signal, profileDirectory);
+    const canAsk =
+      provider === 'Claude Code'
+        ? await claudeSupportsHostPrompts(
+            signal,
+            profileDirectory
+              ? { CLAUDE_CONFIG_DIR: profileDirectory }
+              : undefined,
+          )
+        : await codexSupportsMcpApprovals(
+            directory,
+            signal,
+            profileDirectory ? { CODEX_HOME: profileDirectory } : undefined,
+          );
+    return { ...list, readOnlyMcp: canAsk ? 'approval' : 'isolated' };
   }
 
   draftDirectory(directory: string): string {
@@ -2351,7 +2386,6 @@ export class SessionService {
       active.finalizing ||
       active.session.runId !== input.runId ||
       active.session.status !== 'running' ||
-      !asksForApproval(active.session) ||
       !('respondApproval' in active.handle)
     )
       throw new SessionError(
@@ -2361,7 +2395,7 @@ export class SessionService {
     const approval = active.session.pendingApprovals.find(
       item => item.id === input.requestId,
     );
-    if (!approval)
+    if (!approval || !asksForApproval(active.session, approval.kind))
       throw new SessionError(
         'invalid-request',
         'This approval request is no longer active in this session.',
@@ -2554,6 +2588,7 @@ export class SessionService {
       instructionsOnly,
       assistantPrompt,
       previousSelection,
+      unattended,
     }: LaunchTurn,
   ): void {
     const inherited =
@@ -2719,12 +2754,45 @@ export class SessionService {
         }
         if (controller.signal.aborted)
           return { status: 'stopped', error: null };
+        let mcpTurn: VerifyMcpTurn | undefined;
+        if (
+          interactiveMcpSession(session) &&
+          !unattended &&
+          !readOnly &&
+          !outputSchema &&
+          !ephemeral &&
+          !instructionsOnly &&
+          !assistantPrompt &&
+          !session.pendingClaudeFork
+        ) {
+          try {
+            mcpTurn = await this.options.mcp?.prepare(
+              session.provider,
+              session.directory,
+              controller.signal,
+              session.provider === 'Codex'
+                ? turnEnvironment?.CODEX_HOME
+                : turnEnvironment?.CLAUDE_CONFIG_DIR,
+            );
+          } catch {
+            return controller.signal.aborted
+              ? { status: 'stopped', error: null }
+              : {
+                  status: 'failed',
+                  error:
+                    'MCP configuration could not be verified. No provider turn was started.',
+                };
+          }
+        }
+        if (controller.signal.aborted)
+          return { status: 'stopped', error: null };
         provider =
           session.provider === 'Codex'
             ? startCodex({
                 ...options,
                 prompt: images.prompt,
                 environment: turnEnvironment,
+                mcpTurn,
                 sessionId: session.providerSessionId,
                 mode:
                   session.mode === 'supervised' ? 'supervised' : 'read-only',
@@ -2782,6 +2850,7 @@ export class SessionService {
             : startClaude({
                 ...options,
                 environment: turnEnvironment,
+                mcpTurn,
                 prompt: selected?.snapshot
                   ? sharedSkillPrompt(selected.snapshot, images.prompt)
                   : images.prompt,
@@ -3342,7 +3411,7 @@ export class SessionService {
       return;
     } else if (event.type === 'approval') {
       if (session.status !== 'running') return;
-      if (!asksForApproval(session))
+      if (!asksForApproval(session, event.approval.kind))
         throw new Error('Unexpected provider approval');
       if (
         session.pendingApprovals.some(

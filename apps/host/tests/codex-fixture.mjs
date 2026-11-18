@@ -52,8 +52,22 @@ const effectiveConfig = () => {
       args[index - 1] === '--disable' ? [value] : [],
     ),
   );
+  const snapshot = overrides
+    .filter(value => /^mcp_servers\.[\w-]+=/.test(value))
+    .map(value => parseToml(value).mcp_servers);
+  const merged = { ...configured };
+  for (const table of snapshot)
+    for (const [name, value] of Object.entries(table))
+      merged[name] = { ...merged[name], ...value };
+  for (const override of overrides.filter(value =>
+    /^mcp_servers\.[\w-]+\.(?:default_tools_approval_mode|tools)=/.test(value),
+  )) {
+    const table = parseToml(override).mcp_servers;
+    for (const [name, value] of Object.entries(table))
+      merged[name] = { ...merged[name], ...value };
+  }
   const servers = Object.fromEntries(
-    Object.entries(configured).map(([name, server]) => [
+    Object.entries(merged).map(([name, server]) => [
       name,
       {
         ...server,
@@ -65,7 +79,19 @@ const effectiveConfig = () => {
   );
   return {
     ...isolatedConfig,
+    ...(overrides.find(value => value.startsWith('approval_policy='))
+      ? JSON.parse(
+          JSON.stringify(
+            parseToml(
+              overrides.find(value => value.startsWith('approval_policy=')),
+            ),
+          ),
+        )
+      : {}),
     mcp_servers: servers,
+    hooks: overrides.find(value => value.startsWith('hooks='))
+      ? parseToml(overrides.find(value => value.startsWith('hooks='))).hooks
+      : {},
     features: {
       ...isolatedConfig.features,
       hooks: !disabledFeatures.has('hooks') && disabledFeatures.size > 0,
@@ -373,6 +399,12 @@ if (args.length === 1 && args[0] === '--version') {
         approval,
         'Approval response must match an outstanding native request',
       );
+      if (approval.kind === 'mcp') {
+        assert.deepEqual(message.result, { action: 'accept', content: {} });
+        approvals.delete(message.id);
+        complete('Codex fixture MCP accepted once.');
+        return;
+      }
       assert.deepEqual(Object.keys(message.result), ['decision']);
       assert.ok(
         ['accept', 'decline', 'cancel'].includes(message.result.decision),
@@ -491,8 +523,16 @@ if (args.length === 1 && args[0] === '--version') {
         rateLimitsByLimitId: null,
         ordinaryUsageAllowed: control.Codex === 'exhausted' ? false : true,
       });
+    } else if (method === 'experimentalFeature/list') {
+      response(id, {
+        data: process.env.NESVO_CODEX_FIXTURE_MCP_APPROVAL
+          ? [{ name: 'tool_call_mcp_elicitation', enabled: true }]
+          : [],
+        nextCursor: null,
+      });
+    } else if (method === 'hooks/list') {
+      emit({ id, error: { code: -32601, message: 'Not supported' } });
     } else if (method === 'config/read') {
-      assert.equal(params.includeLayers, false);
       if (
         typeof params.cwd === 'string' &&
         basename(params.cwd).startsWith('skills-')
@@ -500,7 +540,21 @@ if (args.length === 1 && args[0] === '--version') {
         skillsDirectory = params.cwd;
         skillsTrace(skillsDirectory, method);
       }
-      response(id, { config: effectiveConfig(), origins: {}, layers: null });
+      const override = args.find(value => value.startsWith('projects='));
+      const projects = override ? parseToml(override).projects : {};
+      const cwdUntrusted = projects[params.cwd]?.trust_level === 'untrusted';
+      response(id, {
+        config: effectiveConfig(),
+        origins: {},
+        layers: params.includeLayers
+          ? [
+              {
+                name: { type: 'project' },
+                disabledReason: cwdUntrusted ? 'untrusted' : null,
+              },
+            ]
+          : null,
+      });
     } else if (method === 'skills/extraRoots/set') {
       assert.ok(Array.isArray(params.extraRoots));
       assert.ok(params.extraRoots.length > 0);
@@ -641,7 +695,12 @@ if (args.length === 1 && args[0] === '--version') {
       assert.ok(isAbsolute(params.cwd));
       assert.ok(['read-only', 'workspace-write'].includes(params.sandbox));
       const supervised = params.sandbox === 'workspace-write';
-      assert.equal(params.approvalPolicy, supervised ? 'untrusted' : 'never');
+      assert.deepEqual(
+        params.approvalPolicy,
+        supervised
+          ? 'untrusted'
+          : (effectiveConfig().approval_policy ?? 'never'),
+      );
       assert.equal(params.approvalsReviewer, 'user');
       assert.ok(params.model === undefined || params.model === 'fixture-codex');
       const resumed = method === 'thread/resume';
@@ -663,6 +722,7 @@ if (args.length === 1 && args[0] === '--version') {
               .filter(([, server]) => server.enabled)
               .map(([name]) => name),
             hooksFeature: params.config?.['features.hooks'] ?? null,
+            hooks: effectiveConfig().hooks,
           }) + '\n',
           { flag: 'a' },
         );
@@ -750,9 +810,11 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(params.cwd, thread.cwd);
       const readOnlyTurn =
         thread.supervised && params.sandboxPolicy?.type === 'readOnly';
-      assert.equal(
+      assert.deepEqual(
         params.approvalPolicy,
-        thread.supervised && !readOnlyTurn ? 'untrusted' : 'never',
+        thread.supervised && !readOnlyTurn
+          ? 'untrusted'
+          : (effectiveConfig().approval_policy ?? 'never'),
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.deepEqual(
@@ -846,6 +908,27 @@ if (args.length === 1 && args[0] === '--version') {
         }),
       );
       const prompt = turnText;
+      if (prompt === 'fixture:ask-mcp') {
+        const server = effectiveConfig().mcp_servers.search;
+        assert.equal(server.default_tools_approval_mode, 'prompt');
+        assert.equal(effectiveConfig().features.hooks, false);
+        const requestId = randomUUID();
+        approvals.set(requestId, { kind: 'mcp' });
+        emit({
+          id: requestId,
+          method: 'mcpServer/elicitation/request',
+          params: scoped({
+            mode: 'form',
+            serverName: 'search',
+            meta: {
+              codex_approval_kind: 'mcp_tool_call',
+              tool_name: 'lookup',
+              tool_params: { query: 'status' },
+            },
+          }),
+        });
+        return;
+      }
       if (process.env.NESVO_CODEX_FIXTURE_RUN_LOG)
         writeFileSync(
           process.env.NESVO_CODEX_FIXTURE_RUN_LOG,

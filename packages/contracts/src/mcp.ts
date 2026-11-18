@@ -18,10 +18,37 @@ export const mcpServerSchema = z.strictObject({
   problem: z.string().max(mcpLimits.problem).nullable(),
 });
 
+const mcpRepositoryDefinitionSchema = z.strictObject({
+  id: z.string().min(1).max(400),
+  name: z.string().min(1).max(300),
+  detail: z.string().max(mcpLimits.summary),
+  change: z.enum(['added', 'changed', 'removed']).nullable(),
+});
+
+const mcpRepositorySchema = z.strictObject({
+  name: z.string().max(4096),
+  status: z.enum(['empty', 'needs-trust', 'trusted', 'unavailable']),
+  fingerprint: mcpFingerprintSchema,
+  definitions: z.array(mcpRepositoryDefinitionSchema).max(mcpLimits.listed),
+  changed: z.boolean(),
+});
+
+export const trustRepositoryMcpSchema = z.strictObject({
+  sessionId: z.uuid(),
+  fingerprint: mcpFingerprintSchema,
+});
+
+export type McpRepositoryDefinition = z.infer<
+  typeof mcpRepositoryDefinitionSchema
+>;
+export type TrustRepositoryMcpInput = z.infer<typeof trustRepositoryMcpSchema>;
+
 export const mcpServerListSchema = z.strictObject({
   provider: providerSchema,
   servers: z.array(mcpServerSchema).max(mcpLimits.listed),
   configuration: z.literal('native').optional(),
+  repository: mcpRepositorySchema.optional(),
+  readOnlyMcp: z.enum(['approval', 'isolated']).optional(),
   issues: z.array(z.string().max(mcpLimits.problem)).max(mcpLimits.issues),
 });
 

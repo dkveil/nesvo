@@ -102,6 +102,7 @@ import {
   workspaceFileSchema,
   discoverSkillsSchema,
   listMcpServersSchema,
+  trustRepositoryMcpSchema,
   mcpServerListSchema,
   setSessionMcpSchema,
   skillCatalogSchema,
@@ -805,6 +806,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:send-message',
         sendMessageSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  trustRepositoryMcp: async (input, hostId) =>
+    mcpServerListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:trust-repository-mcp',
+        trustRepositoryMcpSchema.parse(input),
         route(hostId),
       ),
     ),

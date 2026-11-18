@@ -216,6 +216,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to search its history.',
   'session-groups':
     'This computer runs an older Nesvo host without session groups. Update the host, then reconnect.',
+  'repository-mcp-trust':
+    'Update this computer’s Nesvo host and reconnect to review repository MCP servers and hooks.',
   'mcp-servers':
     'This computer runs an older Nesvo host without MCP servers and hooks. Update the host, then reconnect.',
   'claude-approvals':
@@ -356,6 +358,7 @@ function requiredCapability(
       input.attachments)
   )
     return 'message-attachments';
+  if (method === 'trust-repository-mcp') return 'repository-mcp-trust';
   if (method === 'list-mcp-servers' || method === 'set-session-mcp')
     return 'mcp-servers';
   if (
@@ -1061,6 +1064,7 @@ export class ComputerManager {
       'compact-session': 'session',
       'set-session-mcp': 'session',
       'list-mcp-servers': 'mcp-servers',
+      'trust-repository-mcp': 'mcp-servers',
       'queue-message': 'session',
       'cancel-queued': 'session',
       'start-queued': 'session',

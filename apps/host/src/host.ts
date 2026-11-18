@@ -1,3 +1,4 @@
+import { McpPolicy } from './mcp/service';
 import {
   HOST_CONTRACT_REVISION,
   hostHealthSchema,
@@ -118,6 +119,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'delete-session',
   'restore-session',
   'set-session-mcp',
+  'trust-repository-mcp',
   'cancel-queued',
   'start-queued',
   'stop-run',
@@ -273,6 +275,7 @@ export const serveHost = ({
               },
               {
                 profiles,
+                mcp: new McpPolicy(database),
                 checkCostBudgets: (session, now) => costs.check(session, now),
                 environment: session => {
                   const run = session.workflowRunId
@@ -859,7 +862,10 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
-        if (request.method === 'list-mcp-servers') {
+        if (
+          request.method === 'list-mcp-servers' ||
+          request.method === 'trust-repository-mcp'
+        ) {
           const input = request.input;
           const session =
             'sessionId' in input ? store.get(input.sessionId) : undefined;
@@ -921,15 +927,21 @@ export const serveHost = ({
               target.directory,
               probes.controller.signal,
               target.profileId,
+              request.method === 'trust-repository-mcp'
+                ? request.input.fingerprint
+                : undefined,
             )
             .then(list => send({ type: 'mcp-servers', id: request.id, list }))
-            .catch(() =>
+            .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
-                code: 'unavailable',
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
                 message:
-                  'MCP servers could not be read on this computer. Try again.',
+                  error instanceof SessionError
+                    ? error.message
+                    : 'MCP configuration could not be read on this computer. Try again.',
               }),
             )
             .catch(() => undefined);

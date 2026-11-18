@@ -297,7 +297,7 @@ if (args.length === 1 && args[0] === '--version') {
   const streamInput = inputFormat === 'stream-json';
   if (hostPrompts) {
     assert.ok(streamInput);
-    assert.ok(['acceptEdits', 'auto'].includes(permissionMode));
+    assert.ok(['plan', 'acceptEdits', 'auto'].includes(permissionMode));
     assert.equal(values.has('--json-schema'), false);
     assert.equal(values.has('--append-system-prompt'), false);
   } else assert.equal(values.has('--permission-prompt-tool'), false);
@@ -308,18 +308,17 @@ if (args.length === 1 && args[0] === '--version') {
     ['--allowedTools', READ_TOOLS],
   ])
     assert.equal(values.get(flag), expected, flag);
-  const isolated =
-    ['plan', 'dontAsk'].includes(permissionMode) ||
-    values.has('--setting-sources');
-  assert.equal(values.has('--strict-mcp-config'), isolated);
-  assert.equal(
-    values.get('--mcp-config'),
-    isolated ? '{"mcpServers":{}}' : undefined,
-  );
-  assert.equal(
-    values.get('--settings'),
-    isolated ? '{"disableAllHooks":true}' : undefined,
-  );
+
+  const settingSources = values.get('--setting-sources');
+  const settings = JSON.parse(values.get('--settings'));
+  const config = JSON.parse(values.get('--mcp-config'));
+  assert.ok(['', 'user'].includes(settingSources));
+  assert.equal(values.has('--strict-mcp-config'), true);
+  if (permissionMode === 'plan' || permissionMode === 'dontAsk') {
+    assert.equal(settings.disableAllHooks, true);
+    if (hostPrompts) assert.deepEqual(settings.permissions.ask, ['mcp__*']);
+    else assert.deepEqual(config, { mcpServers: {} });
+  }
   if (process.env.NESVO_FIXTURE_MCP_LOG)
     writeFileSync(
       process.env.NESVO_FIXTURE_MCP_LOG,
@@ -327,8 +326,10 @@ if (args.length === 1 && args[0] === '--version') {
         permissionMode,
         hostPrompts,
         allowedTools: values.get('--allowedTools'),
-        hooksDisabled: values.has('--settings'),
-        config: JSON.parse(values.get('--mcp-config') ?? 'null'),
+        hooksDisabled: settings.disableAllHooks === true,
+        config,
+        hooks: settings.hooks ?? {},
+        settingSources,
       }) + '\n',
       { flag: 'a' },
     );
@@ -499,7 +500,7 @@ if (args.length === 1 && args[0] === '--version') {
       'changes',
       'message',
     ]);
-    assert.equal(values.has('--setting-sources'), false);
+    assert.equal(values.get('--setting-sources'), 'user');
     assert.equal(values.has('--no-session-persistence'), false);
   } else if (/fixture:review-[a-z]+/.test(prompt)) {
     const schema = JSON.parse(values.get('--json-schema'));
@@ -510,7 +511,7 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.get('--permission-mode'), 'plan');
   } else {
     assert.equal(values.has('--json-schema'), false);
-    assert.equal(values.has('--setting-sources'), false);
+    assert.equal(values.get('--setting-sources'), 'user');
     assert.equal(values.has('--no-session-persistence'), false);
   }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);

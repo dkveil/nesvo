@@ -387,6 +387,9 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
+      );
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
     } catch (error) {
       database.exec('ROLLBACK');
