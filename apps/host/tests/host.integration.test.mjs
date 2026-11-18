@@ -1713,6 +1713,7 @@ test(
         'external-inbox',
         'claude-autonomy',
         'coordinator-workers',
+        'worker-restart',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -7315,6 +7316,7 @@ test(
       'external-inbox',
       'claude-autonomy',
       'coordinator-workers',
+      'worker-restart',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -30352,4 +30354,159 @@ test('host recovery restores a coordinator wait and Continue starts exactly one 
     ).length,
     1,
   );
+});
+
+test('interrupted workers continue explicitly on their recorded threads and worktrees', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-g3-worker-restart-')),
+  );
+  const project = join(directory, 'project');
+  const data = join(directory, 'host');
+  await mkdir(project);
+  await mkdir(data);
+  const git = (...args) =>
+    promisify(execFile)(
+      'git',
+      [
+        '-c',
+        'user.name=Nesvo Test',
+        '-c',
+        'user.email=test@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      {
+        cwd: project,
+        env: {
+          ...process.env,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: join(directory, 'missing-git-config'),
+        },
+      },
+    );
+  await git('init', '--quiet', '--initial-branch=coordinator');
+  await git('commit', '--allow-empty', '-qm', 'Worker restart baseline');
+  const hosts = [];
+  const start = () => {
+    const host = launch(data, join(data, 'fixture.pid'));
+    hosts.push(host);
+    return host;
+  };
+  t.after(async () => {
+    for (const host of hosts) {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+    }
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  let host = start();
+  await host.request('save-session-control-policy', {
+    enabled: true,
+    worktrees: true,
+    childModes: ['read-only', 'supervised', 'accept-edits'],
+  });
+  const root = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory: project,
+    })
+  ).session;
+  const results = await controlTurn(host, root.id, [
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'Codex worker',
+        mode: 'supervised',
+        prompt: 'fixture:hold',
+      },
+    },
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'Claude worker',
+        provider: 'Claude Code',
+        mode: 'accept-edits',
+        prompt: 'fixture:hold',
+      },
+    },
+  ]);
+  assert.ok(
+    results.every(result => result.success),
+    JSON.stringify(results),
+  );
+  const workers = await Promise.all(
+    results.map(({ result }) =>
+      host.event(
+        item =>
+          item.id === result.sessionId &&
+          item.status === 'running' &&
+          item.providerInitialized,
+      ),
+    ),
+  );
+  await host.stop();
+  host = start();
+  const afterRestart = (await host.request('list-sessions')).sessions;
+  for (const worker of workers) {
+    const restored = afterRestart.find(item => item.id === worker.id);
+    assert.equal(restored.status, 'interrupted');
+    assert.equal(restored.interruption.runId, worker.runId);
+    assert.equal(restored.messages.length, worker.messages.length);
+  }
+  const inputs = workers.map(worker => ({
+    sessionId: root.id,
+    workerId: worker.id,
+    interruptedRunId: worker.runId,
+    messageId: randomUUID(),
+  }));
+  assert.equal(
+    (
+      await host.request('continue-worker', {
+        ...inputs[0],
+        sessionId: randomUUID(),
+      })
+    ).type,
+    'error',
+  );
+  const accepted = await Promise.all(
+    inputs.map(input => host.request('continue-worker', input)),
+  );
+  for (const [index, input] of inputs.entries()) {
+    const worker = workers[index];
+    const started = accepted[index];
+    assert.equal(started.type, 'session', JSON.stringify(started));
+    const done = await host.event(
+      item =>
+        item.id === worker.id &&
+        item.runId === started.session.runId &&
+        item.status === 'completed',
+    );
+    assert.notEqual(done.runId, worker.runId);
+    assert.equal(done.providerSessionId, worker.providerSessionId);
+    assert.equal(done.directory, worker.directory);
+    assert.deepEqual(done.worktree, worker.worktree);
+    assert.equal(done.mode, worker.mode);
+    assert.equal(done.messages.length, worker.messages.length + 2);
+    assert.match(
+      done.messages.at(-2).body,
+      /host restart interrupted the previous turn/,
+    );
+    assert.match(done.messages.at(-1).body, /resumed reply/i);
+    const retry = await host.request('continue-worker', input);
+    assert.equal(retry.session.runId, done.runId);
+    assert.equal(retry.session.messages.length, done.messages.length);
+    assert.equal(
+      (
+        await host.request('continue-worker', {
+          ...input,
+          messageId: randomUUID(),
+        })
+      ).type,
+      'error',
+    );
+  }
 });

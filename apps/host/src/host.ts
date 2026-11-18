@@ -179,6 +179,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'respond-approval',
   'decide-delegation',
   'continue-coordinator',
+  'continue-worker',
   'worker-worktree',
   'decide-worker-plan',
   'decide-session-parent',
@@ -3298,6 +3299,12 @@ export const serveHost = ({
                 session: answered,
               };
             }
+            if (request.method === 'continue-worker')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessionControl.continueWorker(request.input),
+              };
             if (request.method === 'continue-coordinator')
               return {
                 type: 'session',

@@ -1071,6 +1071,7 @@ try {
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
+    'worker-restart',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

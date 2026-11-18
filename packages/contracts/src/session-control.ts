@@ -9,6 +9,7 @@ import {
   SESSION_BRANCH_PATTERN,
   sessionModeSchema,
   sessionStateSchema,
+  type Session,
 } from './sessions';
 import {
   stageLimits,
@@ -82,6 +83,37 @@ export const continueCoordinatorSchema = z.strictObject({
 export type ContinueCoordinatorInput = z.infer<
   typeof continueCoordinatorSchema
 >;
+
+export const continueWorkerSchema = z.strictObject({
+  sessionId: sessionIdSchema,
+  workerId: sessionIdSchema,
+  interruptedRunId: sessionIdSchema,
+  messageId: sessionIdSchema,
+});
+export type ContinueWorkerInput = z.infer<typeof continueWorkerSchema>;
+
+export function isWorkerInterruptedByRestart(
+  worker: Pick<
+    Session,
+    | 'parentId'
+    | 'status'
+    | 'runId'
+    | 'interruption'
+    | 'workflowRunId'
+    | 'scheduledJobId'
+  >,
+): boolean {
+  return (
+    !!worker.parentId &&
+    !worker.workflowRunId &&
+    !worker.scheduledJobId &&
+    worker.status === 'interrupted' &&
+    !!worker.runId &&
+    worker.interruption?.runId === worker.runId &&
+    (worker.interruption.reason === 'host-restart' ||
+      worker.interruption.reason === 'host-shutdown')
+  );
+}
 
 const gitCommit = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/);
 const workerWorktreeTarget = {

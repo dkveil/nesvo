@@ -80,6 +80,7 @@ export const hostCapabilitySchema = z.enum([
   'external-inbox',
   'claude-autonomy',
   'coordinator-workers',
+  'worker-restart',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

@@ -318,6 +318,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage Claude rules and Full access.',
   'coordinator-workers':
     'Update the Nesvo host on this computer and reconnect to manage coordinator workers.',
+  'worker-restart':
+    'Update the Nesvo host on this computer to continue interrupted workers.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -385,6 +387,7 @@ function requiredCapability(
     method === 'decide-session-parent'
   )
     return 'session-control';
+  if (method === 'continue-worker') return 'worker-restart';
   if (method === 'continue-coordinator' || method === 'worker-worktree')
     return 'coordinator-workers';
   if (
@@ -1253,6 +1256,7 @@ export class ComputerManager {
       'respond-approval': 'session',
       'decide-delegation': 'session',
       'continue-coordinator': 'session',
+      'continue-worker': 'session',
       'worker-worktree': 'worker-worktree',
       'decide-worker-plan': 'session',
       'decide-session-parent': 'session',

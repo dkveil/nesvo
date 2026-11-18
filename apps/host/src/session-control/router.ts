@@ -14,6 +14,7 @@ import {
   stageTools,
   type CoordinatorPolicy,
   type ContinueCoordinatorInput,
+  type ContinueWorkerInput,
   type DecideSessionParentInput,
   type Session,
   type SessionControlChild,
@@ -240,6 +241,28 @@ export class SessionControl {
       .finally(() => this.inFlight.delete(actionId));
     this.inFlight.set(actionId, execution);
     return execution;
+  }
+
+  continueWorker(input: ContinueWorkerInput): Session {
+    const parent = this.params.sessions.snapshot(input.sessionId);
+    const worker = this.params.sessions.snapshot(input.workerId);
+    if (!parent || worker?.parentId !== parent.id)
+      throw new SessionError(
+        'not-found',
+        'This worker does not belong to the coordinator.',
+      );
+    return this.params.sessions.continueWorker(input, parent, worker, () => {
+      const root = this.groupRoot(parent);
+      const cap = this.policy().groupSize;
+      if (
+        this.activeWorkerSlots(root) + (this.creating.get(root.id) ?? 0) + 1 >=
+        cap
+      )
+        throw new SessionError(
+          'busy',
+          `The coordinator group is limited to ${cap} sessions.`,
+        );
+    });
   }
 
   continue(input: ContinueCoordinatorInput): Session {

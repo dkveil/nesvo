@@ -35,6 +35,7 @@ import {
   decideWorkerPlanSchema,
   decideSessionParentSchema,
   continueCoordinatorSchema,
+  continueWorkerSchema,
   workerWorktreeInputSchema,
   workerWorktreeResultSchema,
   decideSessionPlanSchema,
@@ -1231,6 +1232,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:decide-worker-plan',
         decideWorkerPlanSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  continueWorker: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:continue-worker',
+        continueWorkerSchema.parse(input),
         route(hostId),
       ),
     ),

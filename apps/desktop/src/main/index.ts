@@ -64,6 +64,7 @@ import {
   decideSessionParentSchema,
   workerWorktreeInputSchema,
   continueCoordinatorSchema,
+  continueWorkerSchema,
   decideSessionPlanSchema,
   decideInboxItemSchema,
   externalInboxDeviceIdSchema,
@@ -1126,6 +1127,14 @@ void app.whenReady().then(async () => {
     return computers.execute(
       'worker-worktree',
       workerWorktreeInputSchema.parse(input),
+      route(hostId),
+    );
+  });
+  handle('nesvo:continue-worker', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'continue-worker',
+      continueWorkerSchema.parse(input),
       route(hostId),
     );
   });

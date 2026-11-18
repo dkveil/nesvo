@@ -10,6 +10,8 @@ import {
   claudeModelSchema,
   isProviderSessionMode,
   isWritableSessionMode,
+  isWorkerInterruptedByRestart,
+  type ContinueWorkerInput,
   sessionHistoryLimits,
   sessionCompactionLimit,
   sessionQueueLimit,
@@ -249,7 +251,10 @@ function resolveTurnMode(
   mode: SendMessageInput['mode'],
 ): Session['mode'] {
   if (!mode || mode === session.mode) return session.mode;
-  if (session.role === 'worker')
+  if (
+    session.role === 'worker' &&
+    !(session.plan?.status === 'accepted' && session.plan.targetMode === mode)
+  )
     throw new SessionError(
       'invalid-request',
       'Worker permissions are set by the parent decision.',
@@ -2430,6 +2435,94 @@ export class SessionService {
     if (!active.finalizing) this.publish(session);
   }
 
+  continueWorker(
+    input: ContinueWorkerInput,
+    parent: Session,
+    worker: Session,
+    checkCapacity: () => void,
+  ): Session {
+    const note =
+      'Continue this assignment after the host restart interrupted the previous turn. Inspect the current workspace and continue from what was saved.';
+    const messageId = derivedUuid(input.messageId, input.interruptedRunId);
+    if (
+      worker.messages.some(
+        message =>
+          message.id === messageId &&
+          message.author === 'operator' &&
+          message.body === note,
+      )
+    )
+      return worker;
+    if (
+      !isWorkerInterruptedByRestart(worker) ||
+      worker.runId !== input.interruptedRunId
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This worker turn is no longer waiting to continue.',
+      );
+    if (!worker.providerInitialized || !worker.providerSessionId)
+      throw new SessionError(
+        'invalid-request',
+        'This worker stopped before a provider thread was recorded.',
+      );
+    if (worker.archivedAt)
+      throw new SessionError(
+        'invalid-request',
+        'Restore this worker from the archive before continuing.',
+      );
+    checkCapacity();
+    const proposal = parent.delegations.find(
+      item => item.childSessionId === worker.id,
+    );
+    if (proposal?.planFirst && !worker.plan) {
+      worker.plan = {
+        id: randomUUID(),
+        status: 'planning',
+        round: proposal.planRound,
+        targetMode: worker.mode,
+        text: null,
+        runId: null,
+        readyAt: null,
+      };
+      worker.mode = 'read-only';
+    }
+    this.ensureContinuedWorkerScope(parent, worker, worker.mode);
+    return this.send(
+      { sessionId: worker.id, messageId, text: note },
+      { session: worker },
+    );
+  }
+
+  private ensureContinuedWorkerScope(
+    parent: Session,
+    worker: Session,
+    mode: SessionMode,
+  ): void {
+    if (worker.role !== 'worker' || worker.worktree) return;
+    const siblings = this.list().filter(
+      session =>
+        session.parentId === parent.id &&
+        session.id !== worker.id &&
+        (session.status === 'running' || session.status === 'stopping') &&
+        !session.worktree,
+    );
+    if (
+      (isWritableSessionMode(mode) && isWritableSessionMode(parent.mode)) ||
+      siblings.some(
+        sibling =>
+          (isWritableSessionMode(mode) ||
+            isWritableSessionMode(sibling.mode)) &&
+          (this.within(worker.directory, sibling.directory) ||
+            this.within(sibling.directory, worker.directory)),
+      )
+    )
+      throw new SessionError(
+        'busy',
+        'This worker would overlap another writable scope.',
+      );
+  }
+
   continueCoordinator(
     input: ContinueCoordinatorInput,
     events: unknown[],
@@ -3052,6 +3145,15 @@ export class SessionService {
       );
     const mode: SessionMode | null =
       input.decision === 'accept' ? (input.mode ?? plan.targetMode) : null;
+    if (mode && session.role === 'worker' && mode !== plan.targetMode)
+      throw new SessionError(
+        'invalid-request',
+        'Use the permission mode approved for this worker.',
+      );
+    if (mode && session.role === 'worker' && session.parentId) {
+      const parent = this.snapshot(session.parentId);
+      if (parent) this.ensureContinuedWorkerScope(parent, session, mode);
+    }
     if (mode && !isProviderSessionMode(session.provider, mode))
       throw new SessionError(
         'invalid-request',
@@ -3797,6 +3899,16 @@ export class SessionService {
       randomUUID(),
       correcting ? input.correction! : proposal.task,
     );
+    if (!correcting)
+      child.plan = {
+        id: proposal.id,
+        status: 'accepted',
+        round: proposal.planRound,
+        targetMode: child.mode,
+        text: proposal.plan,
+        runId: child.runId,
+        readyAt: null,
+      };
     proposal.childRunId = child.runId;
     proposal.status = correcting ? 'planning' : 'running';
     parent.activity = correcting
