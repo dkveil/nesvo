@@ -132,9 +132,18 @@ a {
   pointer-events: none;
 }
 
+.slogan {
+  margin: 22px 0 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
 .tagline {
   max-width: 30em;
-  margin: 22px 0 36px;
+  margin: 6px 0 36px;
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 400;

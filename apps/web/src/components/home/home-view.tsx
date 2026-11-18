@@ -21,8 +21,9 @@ export const HomeView = ({
       <h1 className="home-title">
         <GlitchWordmark />
       </h1>
+      <p className="slogan">Vibe with full control.</p>
       <p className="tagline">
-        Run and supervise Claude Code and Codex sessions from one desktop app.
+        Run Claude Code and Codex sessions in parallel, on your rules.
       </p>
       <DownloadPanel
         release={release}
