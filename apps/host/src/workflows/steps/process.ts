@@ -1,10 +1,5 @@
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
-import {
-  descendantScanMs,
-  recordDescendants,
-  signalRecorded,
-} from '../../providers/process-tree';
+import { trackProcessTree } from '../../process/terminate-tree';
 
 export type OwnedProcessOptions = {
   command: string;
@@ -36,12 +31,6 @@ export class OwnedProcessError extends Error {
   }
 }
 
-const cleanupTimeoutMs = 4_000;
-const graceMs = 300;
-
-const wait = (ms: number) =>
-  new Promise<void>(resolve => setTimeout(resolve, ms).unref());
-
 export class TailBuffer {
   private chunks: Buffer[] = [];
   private size = 0;
@@ -69,32 +58,15 @@ export class TailBuffer {
   }
 }
 
-const taskkill = (pid: number) =>
-  new Promise<void>(resolve => {
-    const killer = spawn(
-      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-      ['/PID', String(pid), '/T', '/F'],
-      { shell: false, windowsHide: true, stdio: 'ignore' },
-    );
-    const timer = setTimeout(() => {
-      killer.kill();
-      resolve();
-    }, cleanupTimeoutMs);
-    const finish = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    killer.once('error', finish);
-    killer.once('close', finish);
-  });
-
 export const runOwnedProcess = (
   options: OwnedProcessOptions,
 ): Promise<OwnedProcessResult> =>
   new Promise((resolve, reject) => {
     const started = Date.now();
     if (options.signal.aborted) {
-      reject(new OwnedProcessError('The process was cancelled before it started.'));
+      reject(
+        new OwnedProcessError('The process was cancelled before it started.'),
+      );
       return;
     }
     const child = spawn(options.command, options.args, {
@@ -109,7 +81,6 @@ export const runOwnedProcess = (
     if (child.pid) options.onSpawn?.(child.pid);
     const stdout = new TailBuffer(options.maxOutputBytes);
     const stderr = new TailBuffer(options.maxOutputBytes);
-    const descendants = new Map<number, number>();
     let exited = false;
     let closed = false;
     let timedOut = false;
@@ -119,35 +90,13 @@ export const runOwnedProcess = (
     const closing = new Promise<void>(done => {
       markClosed = done;
     });
-    const scan =
-      process.platform === 'linux' && child.pid
-        ? setInterval(() => {
-            if (child.pid && !exited) recordDescendants(child.pid, descendants);
-          }, descendantScanMs).unref()
-        : null;
-    const signalGroup = (name: NodeJS.Signals) => {
-      if (!child.pid) return;
-      try {
-        process.kill(-child.pid, name);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !closed)
-          child.kill(name);
-      }
-      signalRecorded(descendants, name);
-    };
+    const tree = trackProcessTree(child, {
+      hasExited: () => exited,
+      hasClosed: () => closed,
+    });
     const stop = () => {
       cleanup ??= (async () => {
-        if (child.pid) {
-          if (process.platform === 'win32') {
-            if (!exited && !closed) await taskkill(child.pid);
-          } else {
-            if (!exited) recordDescendants(child.pid, descendants);
-            signalGroup('SIGTERM');
-            await Promise.race([closing, wait(graceMs)]);
-            signalGroup('SIGKILL');
-          }
-        }
-        await Promise.race([closing, wait(cleanupTimeoutMs)]);
+        await tree.terminate(closing);
         if (!closed) {
           child.kill('SIGKILL');
           child.stdout.destroy();
@@ -177,21 +126,23 @@ export const runOwnedProcess = (
     });
     child.once('exit', () => {
       exited = true;
-      if (scan) clearInterval(scan);
+      tree.stopTracking();
       void stop();
     });
     child.once('close', (code, signal) => {
       closed = true;
       exited = true;
       markClosed();
-      if (scan) clearInterval(scan);
+      tree.stopTracking();
       clearTimeout(timer);
       options.signal.removeEventListener('abort', abort);
       void (async () => {
         await stop();
         if (spawnError && !child.pid) {
           reject(
-            new OwnedProcessError(`The process could not start: ${spawnError.message}`),
+            new OwnedProcessError(
+              `The process could not start: ${spawnError.message}`,
+            ),
           );
           return;
         }

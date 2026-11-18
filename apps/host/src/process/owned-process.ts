@@ -1,14 +1,6 @@
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import {
-  descendantScanMs,
-  recordDescendants,
-  signalRecorded,
-} from '../providers/process-tree';
-
-const terminateGraceMs = 300;
-const cleanupTimeoutMs = 4_000;
+import { terminateGraceMs, trackProcessTree, wait } from './terminate-tree';
 
 export type OwnedProcessOptions = {
   command: string;
@@ -57,30 +49,6 @@ type BoundedOutput = {
   truncated: boolean;
 };
 
-function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms).unref());
-}
-
-async function taskkill(pid: number): Promise<void> {
-  await new Promise<void>(resolve => {
-    const killer = spawn(
-      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-      ['/PID', String(pid), '/T', '/F'],
-      { shell: false, windowsHide: true, stdio: 'ignore' },
-    );
-    const timer = setTimeout(() => {
-      killer.kill();
-      resolve();
-    }, cleanupTimeoutMs);
-    const finish = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    killer.once('error', finish);
-    killer.once('close', finish);
-  });
-}
-
 function capture(output: BoundedOutput, chunk: Buffer, limit: number): Buffer {
   const room = Math.max(0, limit - output.bytes);
   let end = Math.min(room, chunk.length);
@@ -127,7 +95,6 @@ export function runOwnedProcess(
   const stdout = boundedOutput();
   const stderr = boundedOutput();
   const decoder = new StringDecoder('utf8');
-  const descendants = new Map<number, number>();
   let hasExited = false;
   let hasClosed = false;
   let timedOut = false;
@@ -143,36 +110,13 @@ export function runOwnedProcess(
   }>(resolve => {
     closeResolve = resolve;
   });
-  const recordOwnedDescendants = () => {
-    if (child.pid && !hasExited) recordDescendants(child.pid, descendants);
-  };
-  const descendantScan =
-    process.platform === 'linux' && child.pid
-      ? setInterval(recordOwnedDescendants, descendantScanMs).unref()
-      : null;
-  const signalGroup = (kill: NodeJS.Signals) => {
-    if (!child.pid) return;
-    try {
-      process.kill(-child.pid, kill);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !hasClosed)
-        child.kill(kill);
-    }
-    signalRecorded(descendants, kill);
-  };
+  const tree = trackProcessTree(child, {
+    hasExited: () => hasExited,
+    hasClosed: () => hasClosed,
+  });
   const stop = (): Promise<void> => {
     cleanup ??= (async () => {
-      if (child.pid) {
-        if (process.platform === 'win32') {
-          if (!hasExited && !hasClosed) await taskkill(child.pid);
-        } else {
-          recordOwnedDescendants();
-          signalGroup('SIGTERM');
-          await Promise.race([closed, wait(terminateGraceMs)]);
-          signalGroup('SIGKILL');
-        }
-      }
-      await Promise.race([closed, wait(cleanupTimeoutMs)]);
+      await tree.terminate(closed);
       if (!hasClosed) {
         child.kill('SIGKILL');
         child.stdout.destroy();
@@ -188,7 +132,7 @@ export function runOwnedProcess(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (descendantScan) clearInterval(descendantScan);
+      tree.stopTracking();
       signal?.removeEventListener('abort', cancel);
       if (result instanceof OwnedProcessError) reject(result);
       else resolve(result);

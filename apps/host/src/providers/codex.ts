@@ -17,13 +17,13 @@ import {
   type TurnUsage,
 } from '@nesvo/contracts';
 import { sameCodexServer } from '../mcp/codex-servers';
+import {
+  terminateGraceMs,
+  trackProcessTree,
+  wait,
+} from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
-import {
-  descendantScanMs,
-  recordDescendants,
-  signalRecorded,
-} from './process-tree';
 import {
   codexTokenSnapshot,
   codexTurnUsage,
@@ -74,7 +74,6 @@ const maxOutputBytes = 16 * 1024 * 1024;
 const maxTextBytes = 2_000_000;
 const probeTimeoutMs = 10_000;
 const runTimeoutMs = 10 * 60_000;
-const cleanupTimeoutMs = 4_000;
 const isolatedFeatures = [
   'hooks',
   'plugins',
@@ -120,30 +119,6 @@ function safeMessage(value: string): string {
     .slice(0, 800);
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms).unref());
-}
-
-async function taskkill(pid: number): Promise<void> {
-  await new Promise<void>(resolve => {
-    const killer = spawn(
-      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
-      ['/PID', String(pid), '/T', '/F'],
-      { shell: false, windowsHide: true, stdio: 'ignore' },
-    );
-    const timer = setTimeout(() => {
-      killer.kill();
-      resolve();
-    }, cleanupTimeoutMs);
-    const finish = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    killer.once('error', finish);
-    killer.once('close', finish);
-  });
-}
-
 function ownProcess(
   executable: Executable,
   args: string[],
@@ -187,50 +162,20 @@ function ownProcess(
     processError = error;
     void stop();
   });
-  const descendants = new Map<number, number>();
-  const recordOwnedDescendants = () => {
-    if (child.pid && !hasExited) recordDescendants(child.pid, descendants);
-  };
-  const descendantScan =
-    process.platform === 'linux' && child.pid
-      ? setInterval(recordOwnedDescendants, descendantScanMs).unref()
-      : null;
-  const signalGroup = (signal: NodeJS.Signals) => {
-    if (!child.pid) return;
-    try {
-      process.kill(-child.pid, signal);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !hasClosed) {
-        child.kill(signal);
-      }
-    }
-    signalRecorded(descendants, signal);
-  };
+  const tree = trackProcessTree(child, {
+    hasExited: () => hasExited,
+    hasClosed: () => hasClosed,
+    checkWindowsExitCodes: true,
+  });
   function stop(): Promise<void> {
     cleanup ??= (async () => {
-      if (child.pid) {
-        if (process.platform === 'win32') {
-          if (
-            !hasExited &&
-            !hasClosed &&
-            child.exitCode === null &&
-            child.signalCode === null
-          )
-            await taskkill(child.pid);
-        } else {
-          recordOwnedDescendants();
-          signalGroup('SIGTERM');
-          await Promise.race([closed, wait(300)]);
-          signalGroup('SIGKILL');
-        }
-      }
-      await Promise.race([closed, wait(cleanupTimeoutMs)]);
+      await tree.terminate(closed);
       if (!hasClosed) {
         child.kill('SIGKILL');
         child.stdin.destroy();
         child.stdout.destroy();
         child.stderr.destroy();
-        await Promise.race([closed, wait(300)]);
+        await Promise.race([closed, wait(terminateGraceMs)]);
         if (!hasClosed)
           closeResolve({
             code: null,
@@ -243,19 +188,19 @@ function ownProcess(
   }
   child.once('exit', () => {
     hasExited = true;
-    if (descendantScan) clearInterval(descendantScan);
+    tree.stopTracking();
     void stop();
   });
   child.once('close', code => {
     hasClosed = true;
-    if (descendantScan) clearInterval(descendantScan);
+    tree.stopTracking();
     closeResolve({ code, error: processError, confirmed: true });
   });
   return {
     child,
     closed,
     stop,
-    recordDescendants: recordOwnedDescendants,
+    recordDescendants: tree.record,
   };
 }
 
