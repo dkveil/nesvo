@@ -4199,7 +4199,8 @@ try {
       shareServer.shares.get(shareId).revokeToken,
       uploaded.revokeToken,
     );
-  if (!shareServer.fake && process.env.NESVO_SHARE_SCREENSHOT_DIR) {
+  let importLink = `nesvo://import-workflow?share=${shareId}&origin=${encodeURIComponent(shareServer.origin)}`;
+  if (!shareServer.fake) {
     const browser = await chromium.launch();
     try {
       const sharePage = await browser.newPage({
@@ -4211,13 +4212,17 @@ try {
         .getByText('smoke-check', { exact: false })
         .first()
         .waitFor();
-      await sharePage.screenshot({
-        path: join(
-          process.env.NESVO_SHARE_SCREENSHOT_DIR,
-          'share-e2e-web-page.png',
-        ),
-        fullPage: true,
-      });
+      importLink = await sharePage
+        .getByRole('link', { name: 'Open in Nesvo', exact: true })
+        .getAttribute('href');
+      if (process.env.NESVO_SHARE_SCREENSHOT_DIR)
+        await sharePage.screenshot({
+          path: join(
+            process.env.NESVO_SHARE_SCREENSHOT_DIR,
+            'share-e2e-web-page.png',
+          ),
+          fullPage: true,
+        });
     } finally {
       await browser.close();
     }
@@ -4263,9 +4268,7 @@ try {
       filePaths: [folder],
     });
   }, shareTarget);
-  await deliverLink(
-    `nesvo://import-workflow?share=${shareId}&origin=${encodeURIComponent(shareServer.origin)}`,
-  );
+  await deliverLink(importLink);
   const importDialog = restartedPage.getByRole('dialog', {
     name: 'Import smoke',
     exact: true,
