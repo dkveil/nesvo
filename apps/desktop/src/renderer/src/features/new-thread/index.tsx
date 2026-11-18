@@ -13,7 +13,10 @@ import type {
 import {
   directoryLabel,
   errorDetail,
+  providerChecked,
   providerModes,
+  providers,
+  providerUsable,
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
@@ -24,6 +27,7 @@ import {
 } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ImportConversation } from '@/features/import-conversation';
+import { ProviderSetup } from '@/features/provider-setup';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import {
   Composer,
@@ -142,6 +146,17 @@ export function NewThread({
     providerState.status?.status === 'ready' &&
     !providerState.loading &&
     !providerState.error;
+  const noProviderUsable = providers.every(
+    item => providerChecked(statuses[item]) && !providerUsable(statuses[item]),
+  );
+  const someProviderUsable = providers.some(item =>
+    providerUsable(statuses[item]),
+  );
+  const [setupHostId, setSetupHostId] = useState('');
+  if (connected && noProviderUsable && setupHostId !== setup.hostId)
+    setSetupHostId(setup.hostId);
+  if (someProviderUsable && setupHostId === setup.hostId) setSetupHostId('');
+  const showSetup = connected && setupHostId === setup.hostId;
   const models = providerState.status?.models ?? [];
   const model = models.some(option => option.id === setup.model)
     ? setup.model
@@ -286,19 +301,29 @@ export function NewThread({
       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-5 pb-16 lg:px-6"
     >
       <div className="w-full max-w-(--composer-max-width) space-y-5">
-        <header className="space-y-1 text-center">
-          <h2 className="text-display font-normal tracking-tight text-foreground sm:text-display-lg">
-            What should we build?
-          </h2>
-          <Hint label={setup.directory.trim() || 'Isolated folder'}>
-            <p
-              data-thread-project
-              className="truncate text-ui font-semibold text-foreground"
-            >
-              {project || 'No project'}
-            </p>
-          </Hint>
-        </header>
+        {showSetup ? (
+          <ProviderSetup
+            statuses={statuses}
+            computerName={computer?.name ?? 'this computer'}
+            onCheckAgain={() => {
+              for (const item of providers) onRefreshProvider(item);
+            }}
+          />
+        ) : (
+          <header className="space-y-1 text-center">
+            <h2 className="text-display font-normal tracking-tight text-foreground sm:text-display-lg">
+              What should we build?
+            </h2>
+            <Hint label={setup.directory.trim() || 'Isolated folder'}>
+              <p
+                data-thread-project
+                className="truncate text-ui font-semibold text-foreground"
+              >
+                {project || 'No project'}
+              </p>
+            </Hint>
+          </header>
+        )}
         <SelectSkill
           scope={{
             hostId: setup.hostId,

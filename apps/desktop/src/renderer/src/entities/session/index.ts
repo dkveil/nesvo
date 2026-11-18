@@ -59,6 +59,28 @@ export type ProviderState = {
 export type ProviderStates = Record<Provider, ProviderState>;
 
 export const providers: Provider[] = ['Claude Code', 'Codex'];
+export const providerCommands: Record<
+  Provider,
+  { install: string; signIn: string }
+> = {
+  'Claude Code': {
+    install: 'npm install -g @anthropic-ai/claude-code',
+    signIn: 'claude auth login',
+  },
+  Codex: {
+    install: 'npm install -g @openai/codex',
+    signIn: 'codex login',
+  },
+};
+
+export function providerChecked({ status, error }: ProviderState) {
+  return !!status || !!error;
+}
+
+export function providerUsable({ status, error }: ProviderState) {
+  return status?.status === 'ready' && !error;
+}
+
 export const providerSlugs: Record<Provider, string> = {
   'Claude Code': 'claude-code',
   Codex: 'codex',

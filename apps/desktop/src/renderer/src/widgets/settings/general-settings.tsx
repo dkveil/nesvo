@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import {
+  providerCommands,
   providers,
   providerStatusLabel,
   type Provider,
@@ -99,9 +100,7 @@ export function GeneralSettings({
                     <p>
                       Sign in on {name} from its terminal with{' '}
                       <code className="rounded-sm bg-muted px-1 font-mono text-2xs">
-                        {provider === 'Claude Code'
-                          ? 'claude auth login'
-                          : 'codex login'}
+                        {providerCommands[provider].signIn}
                       </code>
                       , then refresh status.
                     </p>
