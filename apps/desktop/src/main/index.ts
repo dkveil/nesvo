@@ -241,6 +241,10 @@ void app.whenReady().then(async () => {
   );
   const mobile = mobileAccess(app.getPath('userData'), computers);
   let window: BrowserWindow | null = null;
+  let quitting = false;
+  app.once('before-quit', () => {
+    quitting = true;
+  });
   const loadRenderer = (target: BrowserWindow) => {
     if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
       void target.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -311,7 +315,8 @@ void app.whenReady().then(async () => {
       log.error(
         `The window renderer stopped: ${details.reason} (exit code ${details.exitCode}).`,
       );
-      if (details.reason === 'clean-exit' || next.isDestroyed()) return;
+      if (details.reason === 'clean-exit' || quitting || next.isDestroyed())
+        return;
       const now = Date.now();
       rendererCrashes = [
         ...rendererCrashes.filter(
