@@ -62,12 +62,7 @@ export function Delegations({
     child =>
       !current.some(delegation => delegation.childSessionId === child.id),
   );
-  if (
-    !session.delegationEnabled &&
-    current.length === 0 &&
-    children.length === 0
-  )
-    return null;
+  if (current.length === 0 && children.length === 0) return null;
   return (
     <section aria-label="Delegation" className="space-y-4 border-t pt-5">
       <h2 className="flex items-center gap-2 text-sm font-medium">
