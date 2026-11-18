@@ -19,7 +19,7 @@ import {
 } from '@/entities/session';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
-import { formatRunTime, type ScheduledJob } from '@/entities/scheduled-job';
+import type { ScheduledJob } from '@/entities/scheduled-job';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -398,7 +398,10 @@ export function ReviewInbox({
         {filter !== 'history' &&
           !operationEnabled &&
           rows.some(
-            row => row.type === 'approval' || row.type === 'delegation',
+            row =>
+              row.type === 'approval' ||
+              row.type === 'delegation' ||
+              row.type === 'automation',
           ) && (
             <StatusMessage className="mb-3 px-2">
               Reconnect to respond to pending requests.
@@ -497,11 +500,15 @@ export function ReviewInbox({
                     openLabel={`Open automation: ${job.name}`}
                     onOpen={() => onAutomation(job)}
                     location={location(job.hostId)}
-                    summary={<p className="text-ui">Check output changed</p>}
+                    summary={
+                      <p className="text-ui text-muted-foreground">
+                        The check output changed since the last run.
+                      </p>
+                    }
                     meta={
                       <>
                         <span>Automation start</span>
-                        <time dateTime={at}>{formatRunTime(at)}</time>
+                        <time dateTime={at}>{reviewDate(at)}</time>
                       </>
                     }
                   >
