@@ -5,7 +5,7 @@ import type {
   WorkflowSharingApi,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
-import { formatExpiry } from '@/features/share-workflow/format-expiry';
+import { formatExpiry } from '@/shared/lib/format-expiry';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';

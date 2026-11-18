@@ -215,7 +215,10 @@ export const createWorkflowSharing = ({
       return;
     }
     try {
-      const bundle = await fetchShare(parsed.origin, parsed.shareId);
+      const { bundle, expiresAt } = await fetchShare(
+        parsed.origin,
+        parsed.shareId,
+      );
       const importId = randomUUID();
       bounded(
         imports,
@@ -228,6 +231,7 @@ export const createWorkflowSharing = ({
         importId,
         shareId: parsed.shareId,
         origin: parsed.origin,
+        expiresAt,
         bundle,
       });
     } catch (error) {

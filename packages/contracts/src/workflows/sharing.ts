@@ -133,6 +133,7 @@ export const workflowImportOfferSchema = z.discriminatedUnion('status', [
     importId: z.uuid(),
     shareId: workflowShareIdSchema,
     origin: z.string().max(workflowSharingLimits.url),
+    expiresAt: z.iso.datetime({ offset: true }).nullable(),
     bundle: workflowShareBundleSchema,
   }),
   z.strictObject({

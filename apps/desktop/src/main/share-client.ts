@@ -1,14 +1,21 @@
 import {
+  WORKFLOW_SHARE_EXPIRES_HEADER,
+  workflowShareApiPath,
   workflowShareBundleSchema,
   workflowShareCreatedSchema,
+  workflowShareErrorSchema,
   workflowShareLimits,
+  workflowShareSecretLabels,
   type WorkflowShareBundle,
   type WorkflowShareCreated,
+  type WorkflowShareError,
 } from '@nesvo/contracts';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CREATED_RESPONSE_BYTES = 16_384;
+const MAX_ERROR_RESPONSE_BYTES = 16_384;
 const MAX_BUNDLE_RESPONSE_BYTES = workflowShareLimits.requestBytes;
+const LISTED_SECRET_LIMIT = 5;
 
 export class ShareRequestError extends Error {
   readonly status: number | null;
@@ -68,7 +75,98 @@ const readJson = async (
 };
 
 const shareUrl = (origin: string, id?: string) =>
-  `${origin}/api/shares${id ? `/${encodeURIComponent(id)}` : ''}`;
+  `${origin}${workflowShareApiPath(id)}`;
+
+const readError = async (
+  response: Response,
+): Promise<WorkflowShareError | null> => {
+  try {
+    const parsed = workflowShareErrorSchema.safeParse(
+      await readJson(response, MAX_ERROR_RESPONSE_BYTES),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
+
+const plural = (count: number, unit: string) =>
+  `${count} ${unit}${count === 1 ? '' : 's'}`;
+
+const retryAfterText = (response: Response): string => {
+  const header = response.headers.get('retry-after') ?? '';
+  if (!/^\d+$/.test(header)) return 'Try again later.';
+  const seconds = Number(header);
+  return seconds < 60
+    ? `Try again in ${plural(seconds, 'second')}.`
+    : `Try again in ${plural(Math.ceil(seconds / 60), 'minute')}.`;
+};
+
+const secretsText = (error: WorkflowShareError | null): string => {
+  const secrets = error?.secrets ?? [];
+  if (!secrets.length) return '';
+  const listed = secrets
+    .slice(0, LISTED_SECRET_LIMIT)
+    .map(
+      secret =>
+        `${secret.fileName} line ${secret.line} (${workflowShareSecretLabels[secret.kind].toLowerCase()})`,
+    )
+    .join(', ');
+  const more =
+    secrets.length > LISTED_SECRET_LIMIT
+      ? ` and ${secrets.length - LISTED_SECRET_LIMIT} more`
+      : '';
+  return ` Check ${listed}${more}.`;
+};
+
+const invalidText = (error: WorkflowShareError | null): string => {
+  const issue = error?.issues?.[0];
+  if (!issue) return '';
+  return issue.path ? ` ${issue.path}: ${issue.message}` : ` ${issue.message}`;
+};
+
+const unavailableError = (status: number) =>
+  new ShareRequestError(
+    'Sharing is not available right now. Try again later.',
+    status,
+  );
+
+const createFailure = async (
+  response: Response,
+): Promise<ShareRequestError> => {
+  const { status } = response;
+  if (status === 429)
+    return new ShareRequestError(
+      `The share site is limiting new links. ${retryAfterText(response)}`,
+      status,
+    );
+  if (status === 413)
+    return new ShareRequestError(
+      `The share site refused the workflow as too large. A shared workflow can be at most ${workflowShareLimits.requestBytes / 1024} KiB.`,
+      status,
+    );
+  if (status === 415)
+    return new ShareRequestError(
+      'The share site did not accept the request format. Update Nesvo and try again.',
+      status,
+    );
+  if (status === 503) return unavailableError(status);
+  const error = await readError(response);
+  if (status === 422 && error?.error === 'secret_detected')
+    return new ShareRequestError(
+      `The share site found what looks like a secret and did not create a link.${secretsText(error)}`,
+      status,
+    );
+  if (status === 400)
+    return new ShareRequestError(
+      `The share site refused the workflow as invalid.${invalidText(error)}`,
+      status,
+    );
+  return new ShareRequestError(
+    `The share site refused the workflow (${status}).`,
+    status,
+  );
+};
 
 export const createShare = async (
   origin: string,
@@ -82,21 +180,11 @@ export const createShare = async (
     },
     body: JSON.stringify(bundle),
   });
-  if (response.status === 413)
-    throw new ShareRequestError(
-      'The share site refused the workflow as too large.',
-      413,
-    );
-  if (response.status === 429)
-    throw new ShareRequestError(
-      'The share site is limiting new links. Try again later.',
-      429,
-    );
-  if (!response.ok)
-    throw new ShareRequestError(
-      `The share site refused the workflow (${response.status}).`,
-      response.status,
-    );
+  if (response.status !== 201) {
+    const failure = await createFailure(response);
+    await response.body?.cancel().catch(() => undefined);
+    throw failure;
+  }
   const parsed = workflowShareCreatedSchema.safeParse(
     await readJson(response, MAX_CREATED_RESPONSE_BYTES),
   );
@@ -109,29 +197,48 @@ export const createShare = async (
   return parsed.data;
 };
 
+export type FetchedShare = {
+  bundle: WorkflowShareBundle;
+  expiresAt: string | null;
+};
+
+const expiryOf = (response: Response): string | null => {
+  const time = Date.parse(
+    response.headers.get(WORKFLOW_SHARE_EXPIRES_HEADER) ?? '',
+  );
+  return Number.isNaN(time) ? null : new Date(time).toISOString();
+};
+
+const fetchFailure = (status: number): ShareRequestError => {
+  if (status === 404)
+    return new ShareRequestError(
+      'This shared workflow does not exist or its link was revoked.',
+      status,
+    );
+  if (status === 410)
+    return new ShareRequestError(
+      'This shared workflow link has expired. Ask for a new link.',
+      status,
+    );
+  if (status === 503) return unavailableError(status);
+  return new ShareRequestError(
+    `The share site could not return the workflow (${status}).`,
+    status,
+  );
+};
+
 export const fetchShare = async (
   origin: string,
   id: string,
-): Promise<WorkflowShareBundle> => {
+): Promise<FetchedShare> => {
   const response = await request(shareUrl(origin, id), {
     method: 'GET',
     headers: { accept: 'application/json' },
   });
-  if (response.status === 404)
-    throw new ShareRequestError(
-      'This shared workflow does not exist or its link was revoked.',
-      404,
-    );
-  if (response.status === 410)
-    throw new ShareRequestError(
-      'This shared workflow link has expired. Ask for a new link.',
-      410,
-    );
-  if (!response.ok)
-    throw new ShareRequestError(
-      `The share site could not return the workflow (${response.status}).`,
-      response.status,
-    );
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw fetchFailure(response.status);
+  }
   const parsed = workflowShareBundleSchema.safeParse(
     await readJson(response, MAX_BUNDLE_RESPONSE_BYTES),
   );
@@ -139,7 +246,7 @@ export const fetchShare = async (
     throw new ShareRequestError(
       'The shared workflow is not in a format this version of Nesvo can read.',
     );
-  return parsed.data;
+  return { bundle: parsed.data, expiresAt: expiryOf(response) };
 };
 
 export const deleteShare = async (
@@ -153,6 +260,11 @@ export const deleteShare = async (
   });
   await response.body?.cancel().catch(() => undefined);
   if (response.status === 404 || response.status === 410) return 'gone';
+  if (response.status === 401 || response.status === 403)
+    throw new ShareRequestError(
+      'The share site did not accept the stored revoke token. Remove the link from this list or let it expire.',
+      response.status,
+    );
   if (!response.ok)
     throw new ShareRequestError(
       `The share site did not revoke the link (${response.status}).`,

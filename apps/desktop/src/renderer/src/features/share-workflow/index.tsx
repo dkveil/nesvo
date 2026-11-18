@@ -22,7 +22,7 @@ import { Input } from '@/shared/ui/input';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { StatusMessage } from '@/shared/ui/status-message';
-import { formatExpiry } from './format-expiry';
+import { formatExpiry } from '@/shared/lib/format-expiry';
 
 const COPIED_FEEDBACK_MS = 1500;
 

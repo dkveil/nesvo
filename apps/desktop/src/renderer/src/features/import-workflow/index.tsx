@@ -9,6 +9,7 @@ import {
   type WorkflowSharingApi,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
+import { formatExpiry } from '@/shared/lib/format-expiry';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
@@ -245,8 +246,9 @@ function ImportReview({
       <DialogHeader>
         <DialogTitle>Import {bundle.name}</DialogTitle>
         <DialogDescription>
-          Shared through {offer.origin.replace(/^https?:\/\//, '')}. Review
-          every step before you save. Nothing runs now.
+          Shared through {offer.origin.replace(/^https?:\/\//, '')}.
+          {offer.expiresAt && ` ${formatExpiry(offer.expiresAt)}.`} Review every
+          step before you save. Nothing runs now.
         </DialogDescription>
       </DialogHeader>
       {bundle.description && (
