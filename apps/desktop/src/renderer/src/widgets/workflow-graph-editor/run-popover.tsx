@@ -15,7 +15,6 @@ import {
 import { resolveGate } from '@/features/new-thread/workflow-choice';
 import { Button } from '@/shared/ui/button';
 import { Field } from '@/shared/ui/field';
-import { Label } from '@/shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import {
   Select,
@@ -171,16 +170,17 @@ export function RunPopover({
             </span>
           </div>
         </Field>
-        <div className="flex items-center justify-between gap-3">
-          <Label htmlFor={`${id}-isolation`} className="text-ui font-normal">
-            Isolate in a Git worktree
-          </Label>
+        <Field
+          id={`${id}-isolation`}
+          label="Isolate in a Git worktree"
+          layout="switch"
+        >
           <Switch
             id={`${id}-isolation`}
             checked={isolation}
             onCheckedChange={setIsolation}
           />
-        </div>
+        </Field>
         {(reason || failure) && (
           <StatusMessage tone={failure ? 'error' : 'info'}>
             {failure || reason}

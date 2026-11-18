@@ -12,6 +12,7 @@ import {
 } from '@/entities/session';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { IconButton } from '@/shared/ui/icon-button';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Listbox } from '@/shared/ui/listbox';
@@ -315,23 +316,24 @@ export function WorkflowPicker({
                 />
               </div>
             </div>
-            <div className="space-y-1 border-t px-1 pt-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="workflow-isolation">
-                  Isolate in a worktree
-                </Label>
-                <Switch
-                  id="workflow-isolation"
-                  checked={value.isolation && !isolationReason}
-                  disabled={!!isolationReason}
-                  onCheckedChange={checked => choose({ isolation: checked })}
-                />
-              </div>
-              <p className="text-2xs text-muted-foreground">
-                {isolationReason ||
-                  'A new branch and worktree from the repository top folder. Nothing is pushed or merged.'}
-              </p>
-            </div>
+            <Field
+              id="workflow-isolation"
+              label="Isolate in a worktree"
+              layout="switch"
+              hint={
+                isolationReason ||
+                'A new branch and worktree from the repository top folder. Nothing is pushed or merged.'
+              }
+              className="border-t px-1 pt-2.5"
+            >
+              <Switch
+                id="workflow-isolation"
+                checked={value.isolation && !isolationReason}
+                disabled={!!isolationReason}
+                aria-describedby="workflow-isolation-hint"
+                onCheckedChange={checked => choose({ isolation: checked })}
+              />
+            </Field>
             <div className="space-y-1.5 border-t px-1 pt-2.5">
               <p className="text-xs font-medium text-muted-foreground">Gates</p>
               <div className="flex items-center gap-2">

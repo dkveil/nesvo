@@ -10,7 +10,6 @@ import type { StepDraft } from '@/entities/workflow-graph';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import {
   Select,
   SelectContent,
@@ -24,7 +23,6 @@ import {
   mergeNotes,
   describedBy,
   hasError,
-  notesId,
   type FieldNote,
 } from './field-notes';
 import { Field, FieldMessages } from '@/shared/ui/field';
@@ -418,35 +416,33 @@ export function StepInspectorForm({
           notes={notesOf('needs')}
           onChange={needs => update({ needs })}
         />
-        <div className="space-y-1" data-field={fieldId('effect')}>
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor={fieldId('effect')} className="text-ui font-normal">
-              External effect
-            </Label>
-            <Switch
-              id={fieldId('effect')}
-              checked={step.effect === 'external'}
-              disabled={!declaresEffect(step.type)}
-              aria-invalid={hasError(notesOf('effect')) || undefined}
-              aria-describedby={describedBy(
-                fieldId('effect'),
-                notesOf('effect'),
-              )}
-              onCheckedChange={checked =>
-                update({ effect: checked ? 'external' : 'local' })
-              }
-            />
-          </div>
-          <p className="text-2xs leading-4 text-muted-foreground">
-            {declaresEffect(step.type)
+        <Field
+          id={fieldId('effect')}
+          label="External effect"
+          layout="switch"
+          hint={
+            declaresEffect(step.type)
               ? 'Reaches beyond this computer, such as a deploy or a message. Put a human step before it.'
-              : 'Only command and action steps declare an external effect.'}
-          </p>
-          <FieldMessages
-            id={notesId(fieldId('effect'))}
-            messages={notesOf('effect')}
+              : 'Only command and action steps declare an external effect.'
+          }
+          messages={notesOf('effect')}
+        >
+          <Switch
+            id={fieldId('effect')}
+            checked={step.effect === 'external'}
+            disabled={!declaresEffect(step.type)}
+            aria-invalid={hasError(notesOf('effect')) || undefined}
+            aria-describedby={[
+              `${fieldId('effect')}-hint`,
+              describedBy(fieldId('effect'), notesOf('effect')),
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            onCheckedChange={checked =>
+              update({ effect: checked ? 'external' : 'local' })
+            }
           />
-        </div>
+        </Field>
         {formNotes.length > 0 && (
           <div role="alert">
             <FieldMessages id={fieldId('form-notes')} messages={formNotes} />

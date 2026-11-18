@@ -8,7 +8,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Switch } from '@/shared/ui/switch';
 import { describedBy, notesId, type FieldNote } from './field-notes';
-import { FieldMessages } from '@/shared/ui/field';
+import { Field, FieldMessages } from '@/shared/ui/field';
 
 type Props = {
   id: string;
@@ -59,10 +59,7 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
       <legend className="text-2xs leading-none font-medium text-muted-foreground">
         Needs
       </legend>
-      <div className="flex items-center justify-between gap-2 pt-1">
-        <Label htmlFor={`${id}-browser`} className="text-ui font-normal">
-          Browser
-        </Label>
+      <Field id={`${id}-browser`} label="Browser" layout="switch">
         <Switch
           id={`${id}-browser`}
           checked={browser}
@@ -75,7 +72,7 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
             )
           }
         />
-      </div>
+      </Field>
       {variables.length > 0 && (
         <ul aria-label="Environment variables" className="flex flex-wrap gap-1">
           {variables.map(item => (
