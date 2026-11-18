@@ -89,7 +89,7 @@ function reconstruct(history, event) {
     messages = [...current.messages];
     messages[event.index] = event.message;
   }
-  const { messageCount, ...rest } = event.session;
+  const { messageCount, usageTotals: _usage, ...rest } = event.session;
   const session = { ...rest, messages };
   if (session.messages.length === messageCount)
     history.set(session.id, session);
@@ -199,7 +199,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   const complete = async session => {
     const known = sessionHistory.get(session.id);
     const offset = session.messageCount - session.messages.length;
-    const { messageCount: _count, ...rest } = session;
+    const { messageCount: _count, usageTotals: _usage, ...rest } = session;
     if (offset === 0) return { ...rest, messages: session.messages };
     if (known && known.messages.length >= offset)
       return {
@@ -215,7 +215,11 @@ function launch(directory, pidFile, extraEnvironment = {}) {
     assert.equal(loaded.session.messageCount, loaded.session.messages.length);
     const history = loaded.session.messages.slice(0, offset);
     if (!known || known.revision <= loaded.session.revision) {
-      const { messageCount: _count, ...full } = loaded.session;
+      const {
+        messageCount: _count,
+        usageTotals: _usage,
+        ...full
+      } = loaded.session;
       sessionHistory.set(session.id, full);
     }
     return { ...rest, messages: [...history, ...session.messages] };
