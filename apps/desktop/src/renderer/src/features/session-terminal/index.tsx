@@ -29,7 +29,7 @@ export function TerminalHandoffNotice({
       data-slot="terminal-handoff"
       className="mx-auto flex max-w-(--composer-max-width) flex-wrap items-start justify-between gap-3 rounded-surface border bg-card px-3.5 py-3"
     >
-      <div className="min-w-0 space-y-0.5">
+      <div className="min-w-0 flex-1 basis-72 space-y-0.5">
         <p className="text-ui font-medium">
           Open in {terminal ?? 'a terminal'}
           <span className="font-normal text-muted-foreground">
