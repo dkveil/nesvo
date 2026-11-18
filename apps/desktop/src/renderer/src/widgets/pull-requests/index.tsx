@@ -2,9 +2,10 @@ import { useState, type ClipboardEvent, type FormEvent } from 'react';
 import {
   GITHUB_REPOSITORY_PATTERN,
   type Computer,
+  type DesktopApi,
   type PullRequestListScope,
 } from '@nesvo/contracts';
-import { GitPullRequest, Link2, RefreshCw } from 'lucide-react';
+import { GitPullRequest, Link2, ListChecks, RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import {
   parseReferenceInput,
@@ -35,6 +36,8 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { PullRequestRow } from './pull-request-row';
 import { MAX_BATCH_REFERENCES, splitReferenceInput } from './reference-batch';
 import { useAddedPullRequests } from './use-added-pull-requests';
+import { ReviewSelectionBar } from './review-selection-bar';
+import { useReviewSelection } from './use-review-selection';
 import { usePullRequestList } from './use-pull-request-list';
 
 const RELATIVE_TIME_REFRESH_MS = 60_000;
@@ -51,10 +54,16 @@ type PullRequestsViewProps = {
   hostId: string;
   directory: string;
   initialQuery?: string;
-  apiFor: (hostId: string) => PullRequestApi | null;
+  apiFor: (hostId: string) => (PullRequestApi & ReviewStartApi) | null;
   openTarget: PullRequestTarget | null;
   onOpen: (target: PullRequestTarget) => void;
+  onOpenCodeReviewSettings?: () => void;
 };
+
+type ReviewStartApi = Pick<
+  DesktopApi,
+  'readCodeReviewSettings' | 'startPullRequestReview'
+>;
 
 export function PullRequestsView({
   computers,
@@ -64,6 +73,7 @@ export function PullRequestsView({
   apiFor,
   openTarget,
   onOpen,
+  onOpenCodeReviewSettings,
 }: PullRequestsViewProps) {
   const capable = computers.filter(computer =>
     computer.capabilities.includes('pull-requests'),
@@ -82,6 +92,8 @@ export function PullRequestsView({
   const [referenceError, setReferenceError] = useState('');
   const batch = useAddedPullRequests();
   const now = useNow(RELATIVE_TIME_REFRESH_MS);
+  const selection = useReviewSelection();
+  const reviewable = !!computer?.capabilities.includes('pull-request-reviews');
   const api = unavailable ? null : apiFor(hostId);
   const result = usePullRequestList({
     api,
@@ -215,6 +227,16 @@ export function PullRequestsView({
             onClear={() => setQuery('')}
             className="w-40"
           />
+          {reviewable && (
+            <IconButton
+              label="Select pull requests to review"
+              pressed={selection.active}
+              disabled={!api}
+              onClick={selection.active ? selection.stop : selection.start}
+            >
+              <ListChecks className="size-3.5" />
+            </IconButton>
+          )}
           <IconButton
             label="Refresh pull requests"
             disabled={!api || result.status === 'loading'}
@@ -326,6 +348,17 @@ export function PullRequestsView({
             </ul>
           </div>
         )}
+        {selection.active && api && (
+          <ReviewSelectionBar
+            api={api}
+            hostId={result.hostId}
+            selected={selection.selected}
+            full={selection.full}
+            directory={directory}
+            onDone={selection.stop}
+            onOpenSettings={onOpenCodeReviewSettings}
+          />
+        )}
         {unavailable ? (
           <InlineNotice>{unavailable}</InlineNotice>
         ) : !directory && !repository ? (
@@ -395,14 +428,17 @@ export function PullRequestsView({
                     openTarget?.hostId === result.hostId &&
                     sameReference(openTarget.reference, item)
                   }
+                  checked={selection.active ? selection.has(item) : undefined}
                   onOpen={() =>
-                    onOpen({
-                      hostId: result.hostId,
-                      reference: {
-                        repository: item.repository,
-                        number: item.number,
-                      },
-                    })
+                    selection.active
+                      ? selection.toggle(item)
+                      : onOpen({
+                          hostId: result.hostId,
+                          reference: {
+                            repository: item.repository,
+                            number: item.number,
+                          },
+                        })
                   }
                 />
               ))}

@@ -1,4 +1,5 @@
 import type { PullRequestSummary } from '@nesvo/contracts';
+import { Square, SquareCheck } from 'lucide-react';
 import {
   ChecksIcon,
   PullRequestStateIcon,
@@ -15,6 +16,7 @@ type PullRequestRowProps = {
   now: number;
   showRepository?: boolean;
   onOpen: () => void;
+  checked?: boolean;
 };
 
 export function PullRequestRow({
@@ -23,18 +25,31 @@ export function PullRequestRow({
   now,
   showRepository = false,
   onOpen,
+  checked,
 }: PullRequestRowProps) {
   const state = visualState(pullRequest);
+  const selecting = checked !== undefined;
+  const SelectionIcon = checked ? SquareCheck : Square;
   return (
     <li>
       <ListRow
         density="two-line"
-        selected={selected}
+        selected={selecting ? checked : selected}
         onClick={onOpen}
         mainProps={{
           'aria-label': `${visualStateLabels[state]} pull request #${pullRequest.number}: ${pullRequest.title}`,
+          ...(selecting ? { 'aria-pressed': checked } : {}),
         }}
-        leading={<PullRequestStateIcon state={state} />}
+        leading={
+          selecting ? (
+            <SelectionIcon
+              aria-hidden="true"
+              className="size-3.5 text-muted-foreground"
+            />
+          ) : (
+            <PullRequestStateIcon state={state} />
+          )
+        }
         title={
           <>
             <span className="font-normal text-muted-foreground tabular-nums">
