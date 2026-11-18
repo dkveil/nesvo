@@ -19,6 +19,7 @@ import { Plus } from 'lucide-react';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { IconButton } from '@/shared/ui/icon-button';
 import {
+  diffLineRangeOf,
   lineRangeOf,
   selectionOf,
   selectionSideOf,
@@ -149,9 +150,9 @@ export function DiffFileView({
     side: AnnotationSide;
   } | null>(null);
   const [selection, setSelection] = useState<SelectedLineRange | null>(null);
-  const latest = useRef({ onDraftRange, commentable });
+  const latest = useRef({ onDraftRange, commentable, diff });
   useLayoutEffect(() => {
-    latest.current = { onDraftRange, commentable };
+    latest.current = { onDraftRange, commentable, diff };
   });
   const draftSide = draft?.side ?? 'new';
   const draftStart = draft?.startLine ?? 0;
@@ -197,7 +198,9 @@ export function DiffFileView({
       onLineSelectionEnd: range => {
         setSelection(null);
         if (range && latest.current.commentable)
-          latest.current.onDraftRange(lineRangeOf(range));
+          latest.current.onDraftRange(
+            diffLineRangeOf(latest.current.diff, range),
+          );
       },
       unsafeCSS: DIFF_CSS,
     }),

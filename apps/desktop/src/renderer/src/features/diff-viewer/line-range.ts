@@ -96,6 +96,40 @@ function rowsOf(diff: FileDiffMetadata): DiffRow[] {
   return rows;
 }
 
+const rowIndexOf = (
+  rows: readonly DiffRow[],
+  line: number,
+  side: CodeCommentSide,
+) =>
+  rows.findIndex(row =>
+    side === 'old' ? row.oldLine === line : row.newLine === line,
+  );
+
+export function diffLineRangeOf(
+  diff: FileDiffMetadata,
+  range: SelectedLineRange,
+): DiffLineRange {
+  const simple = lineRangeOf(range);
+  const startSide = commentSideOf(range.side);
+  const endSide = commentSideOf(range.endSide ?? range.side);
+  if (startSide === endSide) return simple;
+  const rows = rowsOf(diff);
+  const from = rowIndexOf(rows, range.start, startSide);
+  const to = rowIndexOf(rows, range.end, endSide);
+  if (from < 0 || to < 0) return simple;
+  const lines = rows
+    .slice(Math.min(from, to), Math.max(from, to) + 1)
+    .map(row => (endSide === 'old' ? row.oldLine : row.newLine))
+    .filter((line): line is number => line != null);
+  return lines.length
+    ? {
+        side: endSide,
+        startLine: Math.min(...lines),
+        endLine: Math.max(...lines),
+      }
+    : simple;
+}
+
 export function snippetOf(diff: FileDiffMetadata, range: DiffLineRange) {
   const rows = rowsOf(diff);
   const inRange = (row: DiffRow) => {
