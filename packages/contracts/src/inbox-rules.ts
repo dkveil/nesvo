@@ -494,11 +494,23 @@ const commandMatches = (
       .some(segment => segmentMatches(patterns, segment, depth))
   )
     return true;
+  if (!OPAQUE_CONSTRUCTS.test(command)) return false;
+  const unquoted = stripQuotes(command).replace(/\\/g, '');
+  const normalized = unquoted.replace(/[$()`{}<>=;&|]/g, ' ');
+  const tokens = normalized
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap(part => [part, executableName(part)]);
   return (
-    OPAQUE_CONSTRUCTS.test(command) &&
+    containsWordsInOrder(patterns, tokens) ||
     patterns.some(pattern => {
       const literal = pattern.replace(/[*?]/g, '');
-      return !literal || command.includes(literal);
+      return (
+        !literal ||
+        command.includes(literal) ||
+        unquoted.includes(literal) ||
+        normalized.includes(literal)
+      );
     })
   );
 };
