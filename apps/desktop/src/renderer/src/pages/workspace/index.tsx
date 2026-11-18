@@ -140,6 +140,7 @@ import {
 import { useHousekeeping } from './use-housekeeping';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import {
+  ContextSection,
   WorkflowSection,
   SessionCard,
   UsageSection,
@@ -1150,11 +1151,7 @@ export function Workspace() {
       target?.focus();
     });
   };
-  const toggleCard = (trigger: HTMLElement) => {
-    if (cardOpen) {
-      closeCard();
-      return;
-    }
+  const openCard = (trigger: HTMLElement | null) => {
     cardTrigger.current = trigger;
     if (selectedRun)
       setWorkflowErrors(previous => ({
@@ -1162,6 +1159,13 @@ export function Workspace() {
         [entityKey(selectedRun)]: '',
       }));
     setCardOpen(true);
+  };
+  const toggleCard = (trigger: HTMLElement) => {
+    if (cardOpen) {
+      closeCard();
+      return;
+    }
+    openCard(trigger);
   };
   const closeDiff = () => {
     setPanel(null);
@@ -2662,6 +2666,19 @@ ${text}`
       keywords: 'explorer tree panel',
       run: () => openSessionFiles(session),
     });
+    commands.push({
+      id: 'details',
+      label: 'Session details',
+      icon: <Gauge />,
+      keywords:
+        'computer folder branch worktree workflow limits usage context window',
+      run: () =>
+        showSession(session, () =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => openCard(null)),
+          ),
+        ),
+    });
     if (
       supportsMcp(session.hostId) &&
       session.role !== 'worker' &&
@@ -3490,6 +3507,7 @@ ${text}`
               connection={connection}
               session={cardSession}
               run={cardRun}
+              gitBranch={branch}
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
               onRunWorkflow={() =>
@@ -3526,6 +3544,14 @@ ${text}`
                   states={usage.states}
                   connected={store.hostReady(selectedHostId)}
                 />
+              }
+              context={
+                cardSession && (
+                  <ContextSection
+                    context={cardSession.context}
+                    provider={cardSession.provider}
+                  />
+                )
               }
             />
           )}

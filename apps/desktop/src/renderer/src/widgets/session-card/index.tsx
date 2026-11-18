@@ -5,12 +5,19 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type { Computer } from '@nesvo/contracts';
-import { FolderOpen, GitBranch, Monitor, Play, Server } from 'lucide-react';
+import type { Computer, GitBranch } from '@nesvo/contracts';
+import {
+  FolderOpen,
+  GitBranch as GitBranchIcon,
+  GitFork,
+  Monitor,
+  Play,
+  Server,
+} from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
-import { directoryLabel, type Session } from '@/entities/session';
-import { cardSection, cardSurface } from '@/shared/ui/card-row-styles';
+import type { Session } from '@/entities/session';
+import { cardSection, infoPanelSurface } from '@/shared/ui/card-row-styles';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
@@ -19,6 +26,7 @@ import { cardRowProps } from './card-row';
 export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
 export { WorkersSection } from './workers-section';
+export { ContextSection } from './context-section';
 
 type Props = {
   id: string;
@@ -26,9 +34,11 @@ type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
   session: Session | null;
   run: WorkflowRun | undefined;
+  gitBranch: GitBranch | null;
   workflow: ReactNode;
   workers: ReactNode;
   usage: ReactNode;
+  context: ReactNode;
   onComputers: () => void;
   onFiles: () => void;
   onRunWorkflow: () => void;
@@ -76,15 +86,34 @@ const isInsideLayer = (target: EventTarget | null) =>
   target instanceof Element &&
   !!target.closest('[role="dialog"], [role="menu"], [role="alertdialog"]');
 
+const branchOf = (
+  session: Session | null,
+  run: WorkflowRun | undefined,
+  gitBranch: GitBranch | null,
+) => {
+  const worktree = session?.worktree;
+  if (worktree)
+    return { name: worktree.branch, note: 'Worktree', worktree: true };
+  const isolated = run?.isolation?.branch;
+  if (isolated) return { name: isolated, note: 'Worktree', worktree: true };
+  if (gitBranch?.kind === 'branch')
+    return { name: gitBranch.name, note: '', worktree: false };
+  if (gitBranch?.kind === 'detached')
+    return { name: gitBranch.sha, note: 'Detached', worktree: false };
+  return null;
+};
+
 export function SessionCard({
   id,
   computer,
   connection,
   session,
   run,
+  gitBranch,
   workflow,
   workers,
   usage,
+  context,
   onComputers,
   onFiles,
   onRunWorkflow,
@@ -109,7 +138,7 @@ export function SessionCard({
   }, []);
   const name = computer?.name ?? 'Local';
   const HostIcon = computer?.kind === 'ssh' ? Server : Monitor;
-  const branch = run?.isolation?.branch;
+  const branch = branchOf(session, run, gitBranch);
   return (
     <aside
       ref={card}
@@ -118,8 +147,8 @@ export function SessionCard({
       aria-label="Session details"
       onKeyDown={moveBetweenRows}
       className={cn(
-        cardSurface,
-        'absolute top-2 right-3 z-20 flex max-h-[calc(100%-1rem)] w-58 flex-col divide-y overflow-y-auto shadow-(--popover-shadow) outline-none',
+        infoPanelSurface,
+        'absolute top-2 right-3 z-20 flex max-h-[calc(100%-1rem)] w-60 flex-col divide-y divide-info-panel-divider overflow-y-auto shadow-(--popover-shadow) outline-none',
       )}
     >
       <div className={cn(cardSection, 'flex min-w-0 items-center gap-1')}>
@@ -147,7 +176,7 @@ export function SessionCard({
         {session && (
           <IconButton
             size={24}
-            label={`Browse files in ${directoryLabel(session.directory)}`}
+            label={`Browse files in ${session.directory}`}
             className="mr-1"
             onClick={onFiles}
           >
@@ -156,8 +185,21 @@ export function SessionCard({
         )}
       </div>
       {branch && (
-        <div className={cardSection}>
-          <ListRow leading={<GitBranch />} title={branch} />
+        <div
+          className={cardSection}
+          aria-label={`${branch.note ? `${branch.note} branch` : 'Git branch'}: ${branch.name}`}
+          role="group"
+          data-session-branch={branch.name}
+        >
+          <ListRow
+            leading={branch.worktree ? <GitFork /> : <GitBranchIcon />}
+            title={
+              <span className={cn(branch.note === 'Detached' && 'font-mono')}>
+                {branch.name}
+              </span>
+            }
+            trailing={branch.note}
+          />
         </div>
       )}
       {session && (
@@ -193,6 +235,7 @@ export function SessionCard({
       {workflow}
       {workers}
       {usage}
+      {context}
     </aside>
   );
 }
