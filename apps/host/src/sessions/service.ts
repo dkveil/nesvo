@@ -216,6 +216,7 @@ type ActiveRun = {
   finished: Promise<void>;
   evictedActivities: Set<string>;
   timer?: ReturnType<typeof setTimeout>;
+  persistTimer?: ReturnType<typeof setTimeout>;
   persistenceError?: boolean;
   finalizing?: boolean;
 };
@@ -299,6 +300,7 @@ export type RunOutcome = {
 };
 
 const MAX_REMEMBERED_LIMITS = 100;
+const STREAM_PERSIST_INTERVAL = 1000;
 
 type WorkerResult = {
   delegationId: string;
@@ -717,9 +719,20 @@ export class SessionService {
         continue;
       }
     }
+    const sessions = this.store.list().map(session => {
+      const active = this.active.get(session.id);
+      return active && !active.finalizing
+        ? structuredClone(active.session)
+        : session;
+    });
+    sessions.sort(
+      (first, second) =>
+        second.updatedAt.localeCompare(first.updatedAt) ||
+        first.id.localeCompare(second.id),
+    );
     return [
       ...[...this.unsaved.values()].map(session => structuredClone(session)),
-      ...this.store.list().filter(session => !this.unsaved.has(session.id)),
+      ...sessions.filter(session => !this.unsaved.has(session.id)),
     ];
   }
 
@@ -2044,6 +2057,8 @@ export class SessionService {
             child.session.parentRunId === session.runId,
         );
         await Promise.all(children.map(child => child.finished));
+        if (baseline && result.status === 'completed') this.flushStream(active);
+        else this.clearStreamTimer(active);
         const shuttingDown = session.interruption?.reason === 'host-shutdown';
         session.status = active.persistenceError
           ? 'failed'
@@ -2088,6 +2103,7 @@ export class SessionService {
             child.session.parentRunId === session.runId,
         );
         await Promise.all(children.map(child => child.finished));
+        this.clearStreamTimer(active);
         session.status = 'failed';
         session.error =
           'The response could not be saved or finalized. Refresh the session before continuing.';
@@ -2097,9 +2113,13 @@ export class SessionService {
         session.messages.at(-1)!.state = 'failed';
         session.messages.at(-1)!.completedAt ??= new Date().toISOString();
         finishActivities(session, 'failed');
-        session.revision += 1;
-        this.unsaved.set(session.id, session);
-        this.emitSession(session);
+        try {
+          this.publish(session);
+        } catch {
+          session.revision += 1;
+          this.unsaved.set(session.id, session);
+          this.emitSession(session);
+        }
       })
       .finally(() => {
         baseline = null;
@@ -2456,6 +2476,7 @@ export class SessionService {
       session.actualModel = event.model;
       session.activity = `${session.provider} is working…`;
       this.publish(session);
+      return;
     } else if (event.type === 'approval') {
       if (session.status !== 'running') return;
       if (session.provider !== 'Codex' || session.mode !== 'supervised')
@@ -2469,6 +2490,7 @@ export class SessionService {
       session.pendingApprovals.push(event.approval);
       session.activity = 'Waiting for your decision…';
       this.publish(session);
+      return;
     } else if (event.type === 'approval-resolved') {
       session.pendingApprovals = session.pendingApprovals.filter(
         approval => approval.id !== event.id,
@@ -2476,6 +2498,7 @@ export class SessionService {
       if (session.status === 'running' && !session.pendingApprovals.length)
         session.activity = `${session.provider} is working…`;
       this.publish(session);
+      return;
     } else if (event.type === 'text') {
       session.messages.at(-1)!.body = event.text;
       session.activity = session.status === 'stopping' ? 'Stopping…' : null;
@@ -2484,18 +2507,36 @@ export class SessionService {
     }
     if (session.pendingApprovals.length)
       session.activity = 'Waiting for your decision…';
-    if (active && !active.timer) {
+    if (!active) return;
+    active.persistTimer ??= setTimeout(
+      () => this.flushStream(active),
+      STREAM_PERSIST_INTERVAL,
+    );
+    if (!active.timer) {
       active.timer = setTimeout(() => {
         active.timer = undefined;
-        try {
-          this.publish(session);
-        } catch {
-          active.persistenceError = true;
-          this.cancelDelegations(session);
-          void active.handle.stop().catch(() => undefined);
-        }
+        session.revision += 1;
+        session.updatedAt = new Date().toISOString();
+        this.emitSession(session);
       }, 75);
     }
+  }
+
+  private flushStream(active: ActiveRun): void {
+    if (!active.persistTimer) return;
+    this.clearStreamTimer(active);
+    try {
+      this.store.save(active.session);
+    } catch {
+      active.persistenceError = true;
+      this.cancelDelegations(active.session);
+      void active.handle.stop().catch(() => undefined);
+    }
+  }
+
+  private clearStreamTimer(active: ActiveRun): void {
+    clearTimeout(active.persistTimer);
+    active.persistTimer = undefined;
   }
 
   private emitSession(session: Session): void {
@@ -2504,6 +2545,8 @@ export class SessionService {
 
   private publish(session: Session): void {
     this.store.save(session);
+    const active = this.active.get(session.id);
+    if (active) this.clearStreamTimer(active);
     this.emitSession(session);
   }
 

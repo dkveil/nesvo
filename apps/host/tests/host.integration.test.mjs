@@ -4194,6 +4194,76 @@ test('host quarantines incompatible session documents and recovers healthy sessi
   await host.stop();
 });
 
+test('streamed text reaches clients before SQLite and flushes on completion and disposal', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-stream-persistence-'));
+  const host = launch(directory, join(directory, 'pids.json'));
+  t.after(async () => {
+    if (host.child.exitCode === null) host.child.kill();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const path = join(directory, 'nesvo.sqlite');
+  const readSession = id => {
+    const check = new DatabaseSync(path, { readOnly: true });
+    try {
+      return JSON.parse(
+        check.prepare('SELECT document FROM sessions WHERE id = ?').get(id)
+          .document,
+      );
+    } finally {
+      check.close();
+    }
+  };
+  const create = async title =>
+    (
+      await host.request('create-session', {
+        title,
+        directory,
+        model: 'sonnet',
+      })
+    ).session;
+  const send = async (session, text) => {
+    const response = await host.request('send-message', {
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+  };
+
+  const completed = await create('Completed stream');
+  await send(completed, 'fixture:stream');
+  await host.event(
+    session => session.id === completed.id && session.status === 'completed',
+  );
+  assert.equal(
+    agent(readSession(completed.id)).body,
+    'Fixture streamed reply.',
+  );
+
+  const interrupted = await create('Interrupted stream');
+  await send(interrupted, 'fixture:hold');
+  const live = await host.event(
+    session =>
+      session.id === interrupted.id &&
+      agent(session)?.body === 'Fixture is waiting.',
+  );
+  assert.equal(agent(readSession(live.id)).body, '');
+  const listed = (await host.request('list-sessions')).sessions.find(
+    session => session.id === live.id,
+  );
+  assert.equal(agent(listed).body, 'Fixture is waiting.');
+  host.child.stdin.end();
+  assert.deepEqual(
+    await bounded(host.exited, 'Host disposal timed out'),
+    { code: 0, signal: null },
+    host.error(),
+  );
+  const stopped = readSession(live.id);
+  assert.equal(stopped.status, 'interrupted');
+  assert.equal(agent(stopped).body, 'Fixture is waiting.');
+});
+
 const loadScheduledJobContracts = async directory => {
   const outfile = join(directory, 'contracts.mjs');
   await promisify(execFile)('bun', [
