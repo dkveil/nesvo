@@ -1,8 +1,11 @@
+import { isWorkerInterruptedByRestart } from '@nesvo/contracts';
 import { delegationStatusLabels, type Session } from '@/entities/session';
 import {
   subsessionStatus,
   type SubsessionStatus,
 } from '@/entities/session/subsession-status';
+
+export const interruptedByRestart = 'Interrupted by restart';
 
 type Delegation = Session['delegations'][number];
 
@@ -31,6 +34,8 @@ export function workerStatus(
   delegation: Delegation | undefined,
   child: Session | undefined,
 ): SubsessionStatus {
+  if (child && isWorkerInterruptedByRestart(child))
+    return { ...delegationStatuses.interrupted, state: interruptedByRestart };
   if (child && (!delegation || !decidedByOperator.has(delegation.status)))
     return subsessionStatus(child);
   const status = delegation?.status ?? 'stopped';

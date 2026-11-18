@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
-import { ScrollArea } from '@/shared/ui/scroll-area';
+import { WorkerDiff } from './worker-diff';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = { parent: Session; worker: Session; enabled: boolean };
@@ -75,7 +75,7 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
         Review branch
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-3xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-0 sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>{worker.title}</DialogTitle>
             <DialogDescription>
@@ -86,15 +86,11 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
           </DialogHeader>
           {error && <StatusMessage tone="error">{error}</StatusMessage>}
           {pending && (
-            <StatusMessage tone="loading">Working with Git?</StatusMessage>
+            <StatusMessage tone="loading">Reading worker branch</StatusMessage>
           )}
           {result && (
             <>
-              <ScrollArea className="h-72 min-w-0 rounded-md border">
-                <pre className="p-3 font-mono text-xs">
-                  {result.diff || 'No committed changes.'}
-                </pre>
-              </ScrollArea>
+              <WorkerDiff patch={result.diff} truncated={result.truncated} />
               {result.truncated && (
                 <StatusMessage tone="info">
                   This diff is truncated.
@@ -133,7 +129,7 @@ export function WorkerWorktree({ parent, worker, enabled }: Props) {
                 ) : (
                   <>
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       disabled={pending || result.dirty || !enabled}
                       onClick={() => setAction('discard')}
                     >

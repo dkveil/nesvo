@@ -8,6 +8,7 @@ import {
   type Review,
 } from '@/entities/review';
 import { modelLabel } from '@/entities/session';
+import { isDelegationReply } from '@/entities/session/delegation-reply';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -97,12 +98,14 @@ function ReviewVersion({
           Working directory: {review.directory}
         </p>
       </section>
-      <section aria-label="Result summary" className="space-y-2">
-        <h4 className="text-xs font-medium">Summary</h4>
-        <p className="text-sm leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">
-          {review.summary || 'No summary.'}
-        </p>
-      </section>
+      {!isDelegationReply(review.summary) && (
+        <section aria-label="Result summary" className="space-y-2">
+          <h4 className="text-xs font-medium">Summary</h4>
+          <p className="text-sm leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {review.summary || 'No summary.'}
+          </p>
+        </section>
+      )}
       <section aria-label="File changes" className="space-y-2">
         <h4 className="text-xs font-medium">File changes</h4>
         {review.diff.status !== 'not-applicable' && (

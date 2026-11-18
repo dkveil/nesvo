@@ -8,7 +8,12 @@ import {
 } from 'react';
 import { ArrowDown, ChevronDown, ListEnd, Square } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import { hasEarlierMessages, windowOffset } from '@nesvo/contracts';
+import {
+  delegationActivityTitle,
+  hasEarlierMessages,
+  sessionControlToolTitle,
+  windowOffset,
+} from '@nesvo/contracts';
 import type {
   SessionStageRecord,
   DesktopApi,
@@ -67,6 +72,7 @@ import {
 import { MessageBody } from './message-body';
 import { interruptionLabels } from './interruption-labels';
 import { MessageArticle } from './message-article';
+import { isDelegationReply } from '@/entities/session/delegation-reply';
 import {
   PullRequestMentionContext,
   type PullRequestMentionRenderer,
@@ -995,6 +1001,18 @@ export function Conversation({
                     (live ||
                       !!message.completedAt ||
                       activityRunIds.has(message.runId));
+                  const delegated =
+                    message.author === 'agent' &&
+                    (session.delegations.some(
+                      proposal => proposal.runId === message.runId,
+                    ) ||
+                      session.activities.some(
+                        item =>
+                          item.runId === message.runId &&
+                          (item.title === delegationActivityTitle ||
+                            item.title ===
+                              sessionControlToolTitle('session_create')),
+                      ));
                   return (
                     <Fragment key={message.id}>
                       <MessageArticle
@@ -1006,6 +1024,11 @@ export function Conversation({
                           index < session.messages.length - EAGER_TAIL_MESSAGES
                         }
                         showActivity={showActivity}
+                        suppressBody={
+                          message.author === 'agent' &&
+                          ((delegated && !message.body.trim()) ||
+                            isDelegationReply(message.body, live && delegated))
+                        }
                         activity={
                           showActivity &&
                           activity(

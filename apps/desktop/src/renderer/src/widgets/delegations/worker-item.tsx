@@ -34,6 +34,7 @@ type WorkerItemProps = {
   ) => void;
   onOpen: () => void;
   worktreeAction?: ReactNode;
+  restartAction?: ReactNode;
 };
 
 const detailsInset = 'pr-2 pb-2 pl-7';
@@ -51,6 +52,7 @@ export function WorkerItem({
   onPlanDecision,
   onOpen,
   worktreeAction,
+  restartAction,
 }: WorkerItemProps) {
   const status = workerStatus(delegation, child);
   const pending = current && delegation?.status === 'pending';
@@ -92,6 +94,7 @@ export function WorkerItem({
         actionsPlacement="visible"
         actions={
           <>
+            {restartAction}
             {worktreeAction}
             {child && (
               <IconButton size={24} label={`Open ${title}`} onClick={onOpen}>

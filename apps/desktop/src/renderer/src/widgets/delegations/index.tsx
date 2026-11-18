@@ -1,17 +1,18 @@
 import {
   listSubsessions,
+  isWorkerInterruptedByRestart,
   type DecideDelegationInput,
   type DecideWorkerPlanInput,
 } from '@nesvo/contracts';
 import { elapsedLabel } from '@/entities/activity';
 import type { Session } from '@/entities/session';
-import { cn } from '@/shared/lib/cn';
 import { entityKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
-import { infoPanelSurface } from '@/shared/ui/card-row-styles';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { WorkerItem } from './worker-item';
 import { WorkerWorktree } from './worker-worktree';
+import { ContinueAllWorkers, WorkerContinue } from './worker-restart';
+import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   session: Session;
@@ -19,6 +20,10 @@ type Props = {
   enabled: boolean;
   worktreeActions?: boolean;
   pending: Record<string, boolean>;
+  restartEnabled: boolean;
+  restartPending: boolean;
+  restartError: string;
+  onContinueWorkers: (workers: Session[]) => void;
   onDecision: (
     delegationId: string,
     decision: DecideDelegationInput['decision'],
@@ -39,6 +44,10 @@ export function Delegations({
   enabled,
   worktreeActions,
   pending,
+  restartEnabled,
+  restartPending,
+  restartError,
+  onContinueWorkers,
   onDecision,
   onPlanDecision,
   onSelect,
@@ -59,6 +68,16 @@ export function Delegations({
   };
   const childOf = (id: string | null | undefined) =>
     id ? children.find(child => child.id === id) : undefined;
+  const restarted = children.filter(isWorkerInterruptedByRestart);
+  const restartActions = {
+    enabled: restartEnabled,
+    pending: restartPending,
+    onContinue: onContinueWorkers,
+  };
+  const restartAction = (child: Session | undefined) =>
+    child && isWorkerInterruptedByRestart(child) ? (
+      <WorkerContinue worker={child} {...restartActions} />
+    ) : undefined;
   const worktreeAction = (child: Session | undefined) =>
     worktreeActions &&
     child?.worktree?.workerTargetBranch &&
@@ -69,15 +88,22 @@ export function Delegations({
       <WorkerWorktree parent={session} worker={child} enabled={enabled} />
     ) : undefined;
   return (
-    <section
-      aria-label="Workers"
-      data-workers=""
-      className={cn(infoPanelSurface, 'p-1')}
-    >
-      <SectionLabel as="h2" count={current.length + previousChildren.length}>
+    <section aria-label="Workers" data-workers="">
+      <SectionLabel
+        as="h2"
+        count={current.length + previousChildren.length}
+        action={
+          restarted.length > 0 && (
+            <ContinueAllWorkers workers={restarted} {...restartActions} />
+          )
+        }
+      >
         Workers
       </SectionLabel>
-      <ul role="list" className="space-y-px">
+      {restartError && (
+        <StatusMessage tone="error">{restartError}</StatusMessage>
+      )}
+      <ul role="list" className="divide-y divide-border/40">
         {current.map(delegation => {
           const child = childOf(delegation.childSessionId);
           const deciding =
@@ -96,6 +122,7 @@ export function Delegations({
               delegation={delegation}
               child={child}
               worktreeAction={worktreeAction(child)}
+              restartAction={restartAction(child)}
               current
               elapsed={elapsedOf(child)}
               canDecide={isCurrentRun && delegation.status === 'pending'}
@@ -118,6 +145,7 @@ export function Delegations({
             )}
             child={child}
             worktreeAction={worktreeAction(child)}
+            restartAction={restartAction(child)}
             current={false}
             elapsed={elapsedOf(child)}
             canDecide={false}

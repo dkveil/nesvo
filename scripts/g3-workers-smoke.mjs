@@ -53,7 +53,8 @@ try {
     );
   git('init', '--quiet', '--initial-branch=coordinator');
   await writeFile(join(project, 'readme.txt'), 'Fixture repository\n');
-  git('add', '--', 'readme.txt');
+  await writeFile(join(project, 'worker-a.txt'), 'Original content.\n');
+  git('add', '--', 'readme.txt', 'worker-a.txt');
   git('commit', '-qm', 'Initial commit');
 
   const env = {
@@ -172,16 +173,35 @@ try {
     });
     await writeFile(join(output, file), Buffer.from(image, 'base64'));
   };
+  assert.equal(
+    await page
+      .getByRole('log', { name: 'Messages' })
+      .getByText('Codex delegation results:', { exact: false })
+      .count(),
+    0,
+  );
   await capture('coordinator-two-writable-workers.png');
   await workers
     .getByRole('button', { name: 'Review branch', exact: true })
     .first()
     .click();
   const diff = page.getByRole('dialog', { name: 'Fixture worker A' });
-  await diff.getByText(/diff --git a\/worker-a.txt/).waitFor();
+  await diff.getByRole('navigation', { name: 'Changed files' }).waitFor();
+  await diff
+    .getByRole('button', { name: 'View changes in worker-a.txt' })
+    .waitFor();
+  await diff.getByText('1 file changed', { exact: true }).waitFor();
+  const lines = diff.locator('[data-worker-diff-lines]');
+  await lines.getByText('Isolated worker result.', { exact: false }).waitFor();
+  const wrap = diff.getByRole('button', { name: 'Wrap diff lines' });
+  const originalWrap = await wrap.getAttribute('aria-pressed');
+  await wrap.click();
+  assert.notEqual(await wrap.getAttribute('aria-pressed'), originalWrap);
   const merge = diff.getByRole('button', { name: 'Merge into coordinator' });
   assert.equal(await merge.isEnabled(), true);
   await capture('worker-diff-and-merge.png');
+  await lines.locator('[data-column-number="1"]').last().click();
+  await lines.locator('[data-selected-line]').first().waitFor();
   await merge.click();
   const confirm = diff.getByRole('button', { name: 'Confirm merge' });
   await confirm.waitFor();

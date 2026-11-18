@@ -36,6 +36,7 @@ type MessageArticleProps = {
   live: boolean;
   deferred: boolean;
   showActivity: boolean;
+  suppressBody: boolean;
   activity: ReactNode;
   showInterruption: boolean;
   selectionChange: string | undefined;
@@ -68,6 +69,7 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
     !next.showActivity &&
     previous.provider === next.provider &&
     previous.live === next.live &&
+    previous.suppressBody === next.suppressBody &&
     previous.deferred === next.deferred &&
     previous.showInterruption === next.showInterruption &&
     previous.selectionChange === next.selectionChange &&
@@ -83,6 +85,7 @@ export const MessageArticle = memo(function MessageArticle({
   live,
   deferred,
   showActivity,
+  suppressBody,
   activity,
   showInterruption,
   selectionChange,
@@ -173,7 +176,8 @@ export const MessageArticle = memo(function MessageArticle({
         {message.author === 'operator' && !!stripAttachments.length && (
           <MessageAttachments attachments={stripAttachments} />
         )}
-        {(message.body || !live) &&
+        {!suppressBody &&
+          (message.body || !live) &&
           (message.author === 'operator' ? (
             isLongPrompt(message.body) ? (
               <ClampedPrompt>
@@ -201,14 +205,18 @@ export const MessageArticle = memo(function MessageArticle({
         {message.author === 'operator' && !!message.codeComments?.length && (
           <CodeCommentCards comments={message.codeComments} />
         )}
-        {message.author === 'agent' && !live && message.body && (
-          <MessagePullRequests body={message.body} />
-        )}
-        {message.author === 'agent' && !live && message.body && (
-          <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
-            <CopyMessageButton body={message.body} />
-          </div>
-        )}
+        {!suppressBody &&
+          message.author === 'agent' &&
+          !live &&
+          message.body && <MessagePullRequests body={message.body} />}
+        {!suppressBody &&
+          message.author === 'agent' &&
+          !live &&
+          message.body && (
+            <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
+              <CopyMessageButton body={message.body} />
+            </div>
+          )}
         {message.interruption && showInterruption && (
           <StatusMessage tone="warning">
             {interruptionLabels[message.interruption.reason]}

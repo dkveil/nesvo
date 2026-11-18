@@ -127,6 +127,7 @@ type DiffFileViewProps = {
   patch: string;
   wrap: boolean;
   commentable: boolean;
+  selectable?: boolean;
   draft: DiffLineRange | null;
   notes?: readonly DiffNote[];
   onDraftRange: (range: DiffLineRange) => void;
@@ -140,6 +141,7 @@ export function DiffFileView({
   patch,
   wrap,
   commentable,
+  selectable = commentable,
   draft,
   notes = NO_NOTES,
   onDraftRange,
@@ -187,7 +189,7 @@ export function DiffFileView({
       tokenizeMaxLineLength: 1000,
       hunkSeparators: 'line-info',
       enableGutterUtility: commentable,
-      enableLineSelection: commentable,
+      enableLineSelection: selectable,
       onLineEnter: line => {
         lastHovered.current = {
           lineNumber: line.lineNumber,
@@ -196,7 +198,7 @@ export function DiffFileView({
       },
       onLineSelectionChange: range => setSelection(range),
       onLineSelectionEnd: range => {
-        setSelection(null);
+        setSelection(latest.current.commentable ? null : range);
         if (range && latest.current.commentable)
           latest.current.onDraftRange(
             diffLineRangeOf(latest.current.diff, range),
@@ -204,7 +206,7 @@ export function DiffFileView({
       },
       unsafeCSS: DIFF_CSS,
     }),
-    [wrap, commentable],
+    [wrap, commentable, selectable],
   );
   return (
     <DiffBoundary patch={patch} wrap={wrap}>

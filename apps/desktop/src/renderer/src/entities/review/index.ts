@@ -1,3 +1,4 @@
+import { isDelegationReply } from '@/entities/session/delegation-reply';
 import type { DesktopReview as Review } from '@nesvo/contracts';
 
 export type {
@@ -37,6 +38,8 @@ export function compactPreview(value: string, limit = 240) {
 }
 
 export function reviewPreview(review: Review) {
+  if (isDelegationReply(review.summary))
+    return 'Worker outcomes are listed in Workers.';
   const paragraphs = review.summary
     .replace(/```[\s\S]*?```/g, '')
     .split(/\n\s*\n/)

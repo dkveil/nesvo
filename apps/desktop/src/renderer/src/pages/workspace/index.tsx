@@ -28,6 +28,7 @@ import type {
   StartWorkflowTaskInput,
   WorkflowImportOffer,
 } from '@nesvo/contracts';
+import { isWorkerInterruptedByRestart } from '@nesvo/contracts';
 import {
   AGENT_REVIEW_BRANCH_PREFIX,
   isGroupableSession,
@@ -156,6 +157,7 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
+import { WorkerRestartMenu } from '@/widgets/delegations/worker-restart';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { ChildDecisions } from '@/widgets/child-decisions';
@@ -2089,6 +2091,37 @@ export function Workspace({
       });
     }
   };
+  const [restartingWorkers, setRestartingWorkers] = useState(false);
+  const [workerRestartErrors, setWorkerRestartErrors] = useState<
+    Record<string, string>
+  >({});
+  const continueWorkers = async (coordinator: Session, targets: Session[]) => {
+    setRestartingWorkers(true);
+    const failures: string[] = [];
+    try {
+      for (const worker of targets) {
+        if (!worker.runId) continue;
+        try {
+          store.merge([
+            await desktopApi(coordinator.hostId).continueWorker({
+              sessionId: coordinator.id,
+              workerId: worker.id,
+              interruptedRunId: worker.runId,
+              messageId: crypto.randomUUID(),
+            }),
+          ]);
+        } catch (failure) {
+          failures.push(`${worker.title} / ${errorDetail(failure)}`);
+        }
+      }
+    } finally {
+      setWorkerRestartErrors(previous => ({
+        ...previous,
+        [entityKey(coordinator)]: failures.join(' '),
+      }));
+      setRestartingWorkers(false);
+    }
+  };
   const continueCoordinator = async (session: Session) => {
     if (!session.coordinatorWait) return;
     store.merge([
@@ -3999,6 +4032,18 @@ ${text}`
                 {sessionStatusLabel(selected)}
               </span>
             )}
+          {!browsing && !creating && selected && (
+            <WorkerRestartMenu
+              workers={workers.filter(isWorkerInterruptedByRestart)}
+              enabled={
+                store.hostReady(selectedHostId) &&
+                !!selectedComputer?.capabilities.includes('worker-restart')
+              }
+              pending={restartingWorkers}
+              error={workerRestartErrors[entityKey(selected)] ?? ''}
+              onContinue={targets => void continueWorkers(selected, targets)}
+            />
+          )}
           {!browsing && !creating && selected?.coordinatorWait && (
             <CoordinatorWait
               key={selectedKey}
@@ -4853,6 +4898,19 @@ ${text}`
                       'coordinator-workers',
                     )}
                     pending={delegationPending}
+                    restartEnabled={
+                      operationEnabled &&
+                      !!selectedComputer?.capabilities.includes(
+                        'worker-restart',
+                      )
+                    }
+                    restartPending={restartingWorkers}
+                    restartError={
+                      workerRestartErrors[entityKey(selected)] ?? ''
+                    }
+                    onContinueWorkers={targets =>
+                      void continueWorkers(selected, targets)
+                    }
                     onDecision={(delegationId, decision) =>
                       selected.runId &&
                       void decideDelegation(
