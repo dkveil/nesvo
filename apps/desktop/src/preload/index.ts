@@ -29,6 +29,8 @@ import {
   orphanedSessionWorktreeRemovalSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
+  decideSessionParentSchema,
+  coordinatorPolicySchema,
   decideReviewSchema,
   hostHealthSchema,
   assignSessionWorkflowSchema,
@@ -1062,6 +1064,29 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:decide-worker-plan',
         decideWorkerPlanSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideSessionParent: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-session-parent',
+        decideSessionParentSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionControlPolicy: async hostId =>
+    coordinatorPolicySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-control-policy',
+        route(hostId),
+      ),
+    ),
+  saveSessionControlPolicy: async (policy, hostId) =>
+    coordinatorPolicySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-session-control-policy',
+        coordinatorPolicySchema.parse(policy),
         route(hostId),
       ),
     ),

@@ -54,6 +54,8 @@ import {
   removeOrphanedSessionWorktreeSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
+  decideSessionParentSchema,
+  coordinatorPolicySchema,
   decideReviewSchema,
   respondApprovalSchema,
   getSessionSchema,
@@ -890,6 +892,36 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'list-pull-requests',
         listPullRequestsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:decide-session-parent',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'decide-session-parent',
+        decideSessionParentSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle('nesvo:read-session-control-policy', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'read-session-control-policy',
+      undefined,
+      route(hostId),
+    );
+  });
+  handle(
+    'nesvo:save-session-control-policy',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'save-session-control-policy',
+        coordinatorPolicySchema.parse(input),
         route(hostId),
       );
     },

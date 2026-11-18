@@ -274,6 +274,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to set a default session folder.',
   'worktree-recipes':
     'Update this computer’s Nesvo host and reconnect to use worktree recipes.',
+  'session-control':
+    'Update this computer’s Nesvo host and reconnect to let sessions coordinate other sessions.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -323,6 +325,12 @@ function requiredCapability(
     method === 'set-default-session-folder'
   )
     return 'default-session-folder';
+  if (
+    method === 'read-session-control-policy' ||
+    method === 'save-session-control-policy' ||
+    method === 'decide-session-parent'
+  )
+    return 'session-control';
   if (
     method === 'read-session-changes' ||
     method === 'read-session-change-patch'
@@ -1116,6 +1124,9 @@ export class ComputerManager {
       'respond-approval': 'session',
       'decide-delegation': 'session',
       'decide-worker-plan': 'session',
+      'decide-session-parent': 'session',
+      'read-session-control-policy': 'session-control-policy',
+      'save-session-control-policy': 'session-control-policy',
       'decide-review': 'review',
       'discover-skills': 'skills',
       'list-workspace-directory': 'workspace-directory',
@@ -1213,6 +1224,8 @@ export class ComputerManager {
         return response.trial;
       case 'session-worktree-recipe':
         return response.run;
+      case 'session-control-policy':
+        return response.policy;
       case 'tracked-repository-suggestions':
         return response.suggestions;
       case 'tracked-pull-request-lists':
