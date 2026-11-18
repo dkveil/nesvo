@@ -962,6 +962,8 @@ try {
     'workflow-sharing',
     'workflow-child-sessions',
     'session-stages',
+    'claude-commands',
+    'session-browser',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
