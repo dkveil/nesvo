@@ -366,71 +366,205 @@ export type DecideInboxItemInput = z.input<typeof decideInboxItemSchema>;
 export const isPendingInboxItem = (item: Pick<InboxItem, 'status'>) =>
   item.status === 'pending';
 
-const escapePattern = (value: string) =>
-  value.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+type GlobToken =
+  | { kind: 'literal'; value: string }
+  | { kind: 'any-char' }
+  | { kind: 'any'; crossesSlash: boolean };
 
-const wildcardExpression = (pattern: string, segment: string) =>
-  new RegExp(
-    '^' +
-      pattern
-        .split(/(\*\*|\*|\?)/)
-        .map(part =>
-          part === '**'
-            ? '.*'
-            : part === '*'
-              ? segment
-              : part === '?'
-                ? '.'
-                : escapePattern(part),
-        )
-        .join('') +
-      '$',
-    's',
-  );
+const globTokens = (pattern: string, slashAware: boolean): GlobToken[] => {
+  const tokens: GlobToken[] = [];
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index]!;
+    if (character === '?') {
+      tokens.push({ kind: 'any-char' });
+      continue;
+    }
+    if (character !== '*') {
+      tokens.push({ kind: 'literal', value: character });
+      continue;
+    }
+    const double = pattern[index + 1] === '*';
+    if (double) index++;
+    const crossesSlash = !slashAware || double;
+    const previous = tokens.at(-1);
+    if (previous?.kind === 'any') {
+      previous.crossesSlash ||= crossesSlash;
+      continue;
+    }
+    tokens.push({ kind: 'any', crossesSlash });
+  }
+  return tokens;
+};
+
+const matchesGlobTokens = (tokens: GlobToken[], value: string) => {
+  let reachable = new Array<boolean>(tokens.length + 1).fill(false);
+  reachable[0] = true;
+  const close = (row: boolean[]) => {
+    for (let index = 0; index < tokens.length; index++)
+      if (row[index] && tokens[index]!.kind === 'any') row[index + 1] = true;
+    return row;
+  };
+  close(reachable);
+  for (const character of value) {
+    const next = new Array<boolean>(tokens.length + 1).fill(false);
+    for (let index = 0; index < tokens.length; index++) {
+      if (!reachable[index]) continue;
+      const token = tokens[index]!;
+      if (token.kind === 'literal' && token.value === character)
+        next[index + 1] = true;
+      else if (token.kind === 'any-char') next[index + 1] = true;
+      else if (
+        token.kind === 'any' &&
+        (token.crossesSlash || character !== '/')
+      )
+        next[index] = true;
+    }
+    reachable = close(next);
+    if (!reachable.some(Boolean)) return false;
+  }
+  return reachable[tokens.length] === true;
+};
+
+const matchesWildcard = (pattern: string, value: string, slashAware = false) =>
+  matchesGlobTokens(globTokens(pattern, slashAware), value);
 
 const collapse = (value: string) => value.trim().replace(/\s+/g, ' ');
 
-const stripAssignments = (command: string) =>
-  command.replace(
-    /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+)+/,
-    '',
-  );
+const COMMAND_WRAPPERS = new Set([
+  'env',
+  'command',
+  'builtin',
+  'exec',
+  'sudo',
+  'doas',
+  'nohup',
+  'time',
+  'nice',
+  'ionice',
+  'stdbuf',
+  'timeout',
+  'xargs',
+]);
+const SHELLS = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'dash',
+  'ksh',
+  'fish',
+  'pwsh',
+  'powershell',
+  'cmd',
+]);
+const OPAQUE_CONSTRUCTS =
+  /\$\(|`|<\(|>\(|\beval\b|\bsource\b|\\\r?\n|\$\{?[A-Za-z_]/;
 
-export const commandSegments = (command: string): string[] =>
+const unquote = (word: string) =>
+  word.replace(/^(['"])(.*)\1$/s, '$2').replace(/\\(.)/g, '$1');
+
+const shellWords = (segment: string) =>
+  (segment.match(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g) ?? []).map(unquote);
+
+const isAssignment = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+
+const executableName = (word: string) =>
+  (word.split(/[\\/]/).at(-1) ?? word).replace(/\.(?:exe|cmd|bat)$/i, '');
+
+const unwrapped = (words: string[], depth: number): string[][] => {
+  let rest = [...words];
+  while (rest.length) {
+    const first = rest[0]!;
+    if (isAssignment(first)) {
+      rest = rest.slice(1);
+      continue;
+    }
+    const name = executableName(first);
+    if (COMMAND_WRAPPERS.has(name)) {
+      rest = rest.slice(1);
+      while (
+        rest[0]?.startsWith('-') ||
+        (rest[0] && /^\d+[smhd]?$/.test(rest[0]))
+      )
+        rest = rest.slice(1);
+      continue;
+    }
+    if (SHELLS.has(name) && depth < 3) {
+      const flag = rest.findIndex(word =>
+        /^-\w*c$|^\/c$|^-Command$/i.test(word),
+      );
+      const script = flag >= 0 ? rest[flag + 1] : undefined;
+      if (script)
+        return commandSegments(script, depth + 1).map(segment =>
+          segment.split(' '),
+        );
+    }
+    return [[name, ...rest.slice(1)]];
+  }
+  return [];
+};
+
+export const commandSegments = (command: string, depth = 0): string[] =>
   command
-    .split(/&&|\|\||;|\||\r?\n/)
-    .map(part => stripAssignments(collapse(part)))
+    .split(/&&|\|\||;|\||&|\r?\n|\(|\)|\{|\}/)
+    .map(collapse)
+    .filter(Boolean)
+    .flatMap(segment => unwrapped(shellWords(segment), depth))
+    .map(words => words.join(' '))
     .filter(Boolean);
 
+const literalWords = (pattern: string) =>
+  collapse(pattern)
+    .split(' ')
+    .map(word => word.replace(/[*?]/g, ''))
+    .filter(Boolean);
+
+const containsWordsInOrder = (words: string[], command: string) => {
+  const tokens = shellWords(collapse(command)).map(executableName);
+  let position = 0;
+  for (const word of words) {
+    const found = tokens.findIndex(
+      (token, index) => index >= position && token.includes(word),
+    );
+    if (found < 0) return false;
+    position = found + 1;
+  }
+  return words.length > 0;
+};
+
 export const matchesCommandPattern = (pattern: string, command: string) => {
-  const expression = wildcardExpression(collapse(pattern), '.*');
-  const whole = collapse(command);
+  const normalized = collapse(pattern);
+  if (
+    commandSegments(command).some(segment =>
+      matchesWildcard(normalized, segment),
+    )
+  )
+    return true;
+  if (matchesWildcard(normalized, collapse(command))) return true;
   return (
-    expression.test(whole) ||
-    commandSegments(command).some(segment => expression.test(segment))
+    OPAQUE_CONSTRUCTS.test(command) &&
+    containsWordsInOrder(literalWords(pattern), command)
   );
 };
 
 export const matchesToolPattern = (pattern: string, tool: string) =>
-  wildcardExpression(pattern.trim(), '.*').test(tool);
+  matchesWildcard(pattern.trim(), tool);
 
 export const matchesPathGlob = (glob: string, path: string) => {
   const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
-  const expression = wildcardExpression(
-    glob.trim().replace(/\\/g, '/'),
-    '[^/]*',
-  );
+  const pattern = glob.trim().replace(/\\/g, '/');
   return (
-    expression.test(normalized) ||
-    (!glob.includes('/') &&
-      expression.test(normalized.split('/').at(-1) ?? normalized))
+    matchesWildcard(pattern, normalized, true) ||
+    (!pattern.includes('/') &&
+      matchesWildcard(
+        pattern,
+        normalized.split('/').at(-1) ?? normalized,
+        true,
+      ))
   );
 };
 
 export const matchesNameFilter = (filter: string, value: string) =>
-  wildcardExpression(filter.trim().toLowerCase(), '.*').test(
-    value.toLowerCase(),
-  );
+  matchesWildcard(filter.trim().toLowerCase(), value.toLowerCase());
 
 export const pullRequestCommandPatterns: Record<PullRequestRuleAction, string> =
   {
