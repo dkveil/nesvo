@@ -50,7 +50,7 @@ export function SkeletonList({
       role="status"
       aria-label={label}
       aria-busy="true"
-      className={cn('flex flex-col', className)}
+      className={cn('flex w-full flex-col', className)}
       {...props}
     >
       {Array.from({ length: rows }, (_, index) => (
