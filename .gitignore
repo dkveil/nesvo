@@ -10,6 +10,7 @@
 !/prettier.config.mjs
 !/.prettierignore
 !/README.md
+!/CHANGELOG.md
 !/AGENTS.md
 !/CONTRIBUTING.md
 !/LICENSE

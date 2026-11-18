@@ -4,6 +4,7 @@
 !eslint.config.mjs
 !prettier.config.mjs
 !README.md
+!CHANGELOG.md
 !AGENTS.md
 !CONTRIBUTING.md
 !THIRD_PARTY_NOTICES.md
