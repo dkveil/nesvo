@@ -140,3 +140,11 @@ export const waitingLabel = (workers: number, commands: number): string => {
   ];
   return parts.length ? `Waiting on ${parts.join(' and ')}` : '';
 };
+
+export const activityLabel = (workers: number, commands: number): string => {
+  if (workers > 0)
+    return commands > 0
+      ? `${countLabel(workers, 'worker')} running · ${countLabel(commands, 'command')}`
+      : `${countLabel(workers, 'worker')} running`;
+  return commands > 0 ? `${countLabel(commands, 'command')} running` : '';
+};

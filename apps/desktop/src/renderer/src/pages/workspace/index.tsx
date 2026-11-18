@@ -65,7 +65,7 @@ import {
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
-import { isRunActive, showsRunStatus } from '@/entities/workflow';
+import { showsRunStatus } from '@/entities/workflow';
 import type { EditorTarget } from '@/widgets/workflow-definitions';
 import type { AssistantContext } from '@/widgets/workflow-assistant';
 import type { AssistantChange } from '@nesvo/contracts';
@@ -2090,28 +2090,6 @@ export function Workspace() {
     } catch (failure) {
       return `Could not stop the workflow. ${errorDetail(failure)}`;
     }
-  };
-  const stopSubsessionGroup = async () => {
-    if (!selected || !subsessionActivity) return;
-    if (selected.status === 'running') {
-      await stop(selected);
-      return;
-    }
-    if (
-      selectedRun &&
-      selectedRun.sessionId === selected.id &&
-      isRunActive(selectedRun)
-    ) {
-      const message = await stopWorkflowRun(selectedRun.hostId, selectedRun.id);
-      if (message)
-        setErrors(previous => ({ ...previous, [selectedKey]: message }));
-      return;
-    }
-    await Promise.all(
-      subsessionActivity.entries
-        .filter(entry => entry.session.status === 'running')
-        .map(entry => stop(entry.session)),
-    );
   };
   const stopAutomation = async (session: Session, reportKey = '') => {
     const error =
@@ -4140,9 +4118,8 @@ ${text}`
                   subsessionActivity?.visible && (
                     <SubsessionBar
                       overview={subsessionActivity}
+                      parentDirectory={selected.directory}
                       connected={store.hostReady(selectedHostId)}
-                      stopping={selected.status === 'stopping'}
-                      onStopGroup={() => void stopSubsessionGroup()}
                       onStopChild={child => void stop(child)}
                       onOpen={select}
                     />
