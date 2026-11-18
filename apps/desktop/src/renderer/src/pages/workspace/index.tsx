@@ -199,6 +199,7 @@ import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-sett
 import { SessionControlSettings } from '@/widgets/session-control-settings';
 import { LessonsSettings } from '@/widgets/lessons-settings';
 import { LessonInbox } from '@/widgets/lesson-inbox';
+import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -5334,6 +5335,16 @@ ${text}`
                 <TrackedRepositoriesSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'inbox-rules' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <InboxRulesSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  defaultFolder={defaultFolders.folders[settingsHostId] ?? null}
                   api={desktopApi(settingsHostId)}
                 />
               </div>

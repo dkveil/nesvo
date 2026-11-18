@@ -4,6 +4,7 @@ import {
   Database,
   FolderGit2,
   GitFork,
+  Inbox,
   Info,
   Keyboard,
   Lightbulb,
@@ -29,6 +30,7 @@ export type SettingsPage =
   | 'code-review'
   | 'session-control'
   | 'lessons'
+  | 'inbox-rules'
   | 'computers'
   | 'phone'
   | 'repositories'
@@ -115,6 +117,15 @@ export const settingsPages: SettingsPageEntry[] = [
     group: '',
     keywords:
       'learning incidents insights rules review date proposals daily cost norm retire',
+  },
+  {
+    id: 'inbox-rules',
+    label: 'Inbox rules',
+    icon: Inbox,
+    group: '',
+    keywords:
+      'inbox rules hold notify ask before push merge approval gate route parent decisions presets',
+    wide: true,
   },
   {
     id: 'computers',
