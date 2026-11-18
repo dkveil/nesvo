@@ -1072,6 +1072,7 @@ try {
     'claude-autonomy',
     'coordinator-workers',
     'worker-restart',
+    'mcp-auth',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

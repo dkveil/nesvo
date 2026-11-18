@@ -55,6 +55,13 @@ import {
 } from './claude-approvals';
 import { claudeUsageResult } from './claude-usage';
 import {
+  claudeMcpStatus,
+  finishNativeMcpCommand,
+  mcpStatusMap,
+  type NativeMcpAction,
+} from './mcp-native';
+import type { ConfigTable } from '../mcp/scoped-config';
+import {
   claudeContextFill,
   claudeTurnUsage,
   type ContextFill,
@@ -812,6 +819,159 @@ async function inspect(
       ),
     };
   }
+}
+
+export async function inspectClaudeMcp(
+  cwd: string,
+  dataDirectory: string,
+  servers: ConfigTable,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+  reconnect?: string,
+) {
+  const executable = await executablePath();
+  if (!executable) throw new Error('Claude Code is unavailable.');
+  signal.throwIfAborted();
+  const config = await writeClaudeRunConfig(dataDirectory, servers, {
+    disableAllHooks: true,
+  });
+  try {
+    signal.throwIfAborted();
+    const running = ownProcess(
+      executable,
+      [
+        '--print',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--no-session-persistence',
+        '--permission-mode',
+        'plan',
+        '--permission-prompts',
+        'none',
+        '--tools',
+        '',
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        config.mcpPath,
+        '--settings',
+        config.settingsPath,
+      ],
+      cwd,
+      environment,
+    );
+    let pending:
+      | {
+          id: string;
+          resolve(value: unknown): void;
+          reject(error: Error): void;
+        }
+      | undefined;
+    let bytes = 0;
+    const fail = () => {
+      pending?.reject(new Error('Claude MCP inspection stopped.'));
+      void running.stop();
+    };
+    const detach = readFrames(
+      running.child.stdout,
+      maxLineBytes,
+      value => {
+        const frame = object(value);
+        if (frame?.type === 'control_request') {
+          fail();
+          return;
+        }
+        const response =
+          frame?.type === 'control_response' ? object(frame.response) : null;
+        const current = pending;
+        if (!response || !current || response.request_id !== current.id) return;
+        if (response.subtype === 'success') current.resolve(response.response);
+        else current.reject(new Error('Claude MCP operation is unavailable.'));
+      },
+      fail,
+    );
+    running.child.stdout.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > 4 * maxLineBytes) fail();
+    });
+    running.child.stderr.resume();
+    signal.addEventListener('abort', fail, { once: true });
+    const timeout = setTimeout(fail, 12_000);
+    const closed = running.closed.then(() => {
+      throw new Error('Claude Code closed before returning MCP status.');
+    });
+    const request = (subtype: string, fields: RecordValue = {}) =>
+      Promise.race([
+        new Promise<unknown>((resolve, reject) => {
+          signal.throwIfAborted();
+          const id = randomUUID();
+          pending = { id, resolve, reject };
+          running.child.stdin.write(
+            JSON.stringify({
+              type: 'control_request',
+              request_id: id,
+              request: { subtype, ...fields },
+            }) + '\n',
+          );
+        }),
+        closed,
+      ]);
+    try {
+      await request('initialize', { hooks: {}, sdkMcpServers: [] });
+      const readStatus = async () => {
+        const deadline = Date.now() + 3_000;
+        while (true) {
+          const status = object(await request('mcp_status'));
+          const mapped = mcpStatusMap(status?.mcpServers, claudeMcpStatus);
+          if (
+            Date.now() >= deadline ||
+            !Object.keys(servers).some(
+              name => !mapped.has(name) || mapped.get(name)?.waiting,
+            )
+          )
+            return mapped;
+          await wait(250);
+        }
+      };
+      const initial = await readStatus();
+      if (!reconnect || initial.get(reconnect)?.status === 'connected')
+        return initial;
+      await request('mcp_reconnect', { serverName: reconnect });
+      return await readStatus();
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', fail);
+      detach();
+      await running.stop();
+    }
+  } finally {
+    await config.dispose();
+  }
+}
+
+export async function runClaudeMcpAuth(
+  cwd: string,
+  action: NativeMcpAction,
+  name: string,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+) {
+  const executable = await executablePath();
+  if (!executable) return false;
+  signal.throwIfAborted();
+  return finishNativeMcpCommand(
+    ownProcess(
+      executable,
+      ['mcp', action === 'authorize' ? 'login' : 'logout', name],
+      cwd,
+      environment,
+    ),
+    signal,
+  );
 }
 
 export async function inspectClaude(

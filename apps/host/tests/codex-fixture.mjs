@@ -103,6 +103,16 @@ const effectiveConfig = (config = {}) => {
 
 if (args.length === 1 && args[0] === '--version') {
   console.log('codex-cli 0.156.0');
+} else if (process.env.NESVO_TEST_MCP_AUTH && args.includes('mcp')) {
+  const [command, name] = args.slice(args.indexOf('mcp') + 1);
+  assert.equal(name, 'fixture-oauth');
+  const marker = join(process.env.NESVO_TEST_MCP_AUTH, 'codex-authorized');
+  if (command === 'login') writeFileSync(marker, '');
+  else {
+    assert.equal(command, 'logout');
+    unlinkSync(marker);
+  }
+  console.log('fixture-private-oauth-output');
 } else {
   assert.equal(args[0], 'app-server');
   for (let index = 1; index < args.length; index += 2) {
@@ -585,6 +595,43 @@ if (args.length === 1 && args[0] === '--version') {
       });
     } else if (method === 'hooks/list') {
       emit({ id, error: { code: -32601, message: 'Not supported' } });
+    } else if (
+      method === 'mcpServerStatus/list' &&
+      process.env.NESVO_TEST_MCP_AUTH
+    ) {
+      assert.equal(params.detail, 'toolsAndAuthOnly');
+      assert.ok(args.includes('hooks'));
+      assert.ok(args.some(value => value.startsWith('projects=')));
+      const authorized = existsSync(
+        join(process.env.NESVO_TEST_MCP_AUTH, 'codex-authorized'),
+      );
+      const statuses = {
+        'fixture-ready': { serverInfo: { name: 'fixture' } },
+        'fixture-oauth': authorized
+          ? { runtimeStatus: 'connected', authStatus: 'oAuth' }
+          : {
+              runtimeStatus: 'authenticationRequired',
+              authStatus: 'notLoggedIn',
+            },
+        'fixture-failed': { toolsError: 'fixture-private-oauth-output' },
+        'fixture-unknown': { runtimeStatus: 'disabled' },
+      };
+      response(id, {
+        data: Object.keys(effectiveConfig().mcp_servers).map(name => ({
+          name,
+          ...statuses[name],
+        })),
+        nextCursor: null,
+      });
+    } else if (
+      method === 'config/mcpServer/reload' &&
+      process.env.NESVO_TEST_MCP_AUTH
+    ) {
+      writeFileSync(
+        join(process.env.NESVO_TEST_MCP_AUTH, 'codex-reloaded'),
+        '',
+      );
+      response(id, {});
     } else if (method === 'config/read') {
       if (
         typeof params.cwd === 'string' &&

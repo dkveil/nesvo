@@ -55,6 +55,8 @@ Workflow sharing adds one spawned-host case, one main-process parser test and a 
 
 The MCP trust case uses isolated provider profiles to verify scoped configuration, omitted secrets, trust persistence, stale decisions and definition drift. Claude Code fixture Plan calls use one-time operation approval and both providers keep hooks disabled in read-only modes. The Codex fixture covers native read-only MCP approval and isolation when the feature is unavailable. The desktop smoke exercises Trust, a changed definition and Not now in the composer.
 
+The MCP connection fixture covers native status mapping for both providers, isolated inspection without a model turn, omission of provider output, repository trust, terminal fallback, and refresh after native login, reconnect, and Codex logout. The fixture uses no real OAuth account.
+
 Claude operation approvals add one spawned-host case with the Claude fixture. In Accept edits the fixture asks through the stdio host channel: Allow once returns the unchanged input and the write happens; wrong run, request or fingerprint and a message with an allow are refused; an answered request cannot be reused; an MCP denial carries the operator's message; a withdrawn request leaves the session; an unanswered request is denied after a shortened timeout; Stop while pending terminates the process; a host restart while pending marks the run interrupted without replaying a decision; Plan refuses the same action without asking. Plan uses the channel for MCP tool approvals only. The real CLI path was checked separately with one trivial turn; fixture runs are not evidence of model behaviour.
 
 Current checks:

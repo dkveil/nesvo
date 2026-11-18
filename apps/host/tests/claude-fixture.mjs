@@ -212,6 +212,59 @@ if (args.length === 1 && args[0] === '--version') {
       )
       .join('\n'),
   );
+} else if (process.env.NESVO_TEST_MCP_AUTH && args[0] === 'mcp') {
+  assert.deepEqual(args.slice(1), ['login', 'fixture-oauth']);
+  writeFileSync(join(process.env.NESVO_TEST_MCP_AUTH, 'claude-authorized'), '');
+  console.log('fixture-private-oauth-output');
+} else if (
+  process.env.NESVO_TEST_MCP_AUTH &&
+  args.includes('--strict-mcp-config') &&
+  args[args.indexOf('--setting-sources') + 1] === '' &&
+  args[args.indexOf('--mcp-config') + 1] !== '{"mcpServers":{}}' &&
+  !args.includes('--session-id')
+) {
+  assert.ok(args.includes('--no-session-persistence'));
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+  assert.equal(args[args.indexOf('--tools') + 1], '');
+  assert.deepEqual(
+    JSON.parse(readFileSync(args[args.indexOf('--settings') + 1], 'utf8')),
+    { disableAllHooks: true },
+  );
+  const { mcpServers } = JSON.parse(
+    readFileSync(args[args.indexOf('--mcp-config') + 1], 'utf8'),
+  );
+  const root = process.env.NESVO_TEST_MCP_AUTH;
+  for await (const line of createInterface({ input: process.stdin })) {
+    const frame = JSON.parse(line);
+    assert.equal(frame.type, 'control_request');
+    let response = {};
+    const { subtype } = frame.request;
+    if (subtype === 'mcp_status') {
+      response = {
+        mcpServers: Object.keys(mcpServers).map(name => ({
+          name,
+          status:
+            {
+              'fixture-ready': 'connected',
+              'fixture-oauth': existsSync(join(root, 'claude-authorized'))
+                ? 'connected'
+                : 'needs-auth',
+              'fixture-failed': existsSync(join(root, 'claude-reconnected'))
+                ? 'connected'
+                : 'failed',
+            }[name] ?? 'unrecognized',
+          error: 'fixture-private-oauth-output',
+        })),
+      };
+    } else if (subtype === 'mcp_reconnect') {
+      assert.equal(frame.request.serverName, 'fixture-failed');
+      writeFileSync(join(root, 'claude-reconnected'), '');
+    } else assert.equal(subtype, 'initialize');
+    emit({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: frame.request_id, response },
+    });
+  }
 } else if (args.join(' ') === 'auth status --json') {
   emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
 } else if (

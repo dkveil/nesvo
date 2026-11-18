@@ -157,6 +157,7 @@ import {
   discoverSkillsSchema,
   listClaudeCommandsSchema,
   listMcpServersSchema,
+  mcpConnectionRequestSchema,
   trustRepositoryMcpSchema,
   setSessionMcpSchema,
   hostIdSchema,
@@ -1799,6 +1800,18 @@ void app.whenReady().then(async () => {
         'trust-repository-mcp',
         trustRepositoryMcpSchema.parse(input),
         route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:mcp-connections',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      const id = route(hostId);
+      return computers.execute(
+        'mcp-connections',
+        { ...mcpConnectionRequestSchema.parse(input), browser: id === 'local' },
+        id,
       );
     },
   );

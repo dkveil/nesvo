@@ -1,4 +1,4 @@
-import { McpPolicy } from './mcp/service';
+import { interactiveMcpSession, McpPolicy } from './mcp/service';
 import { sweepClaudeRunConfigs } from './mcp/claude-config-file';
 import {
   HOST_CONTRACT_REVISION,
@@ -24,6 +24,8 @@ import { CostStore } from './cost-store';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { ProviderProfiles, profileEnvironment } from './providers/profiles';
+import { mcpConnections } from './mcp/connections';
+
 import { SessionService, SessionError } from './sessions/service';
 import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
@@ -1046,6 +1048,8 @@ export const serveHost = ({
       let commandRequests = 0;
       const mcpDiscovery = new DiscoveryQueue(probes.controller.signal);
       let reviewingRules = false;
+      let mcpConnectionRequests = 0;
+      let mcpActionPending = false;
       let definitionRequests = 0;
       let definitionWrites = 0;
       const closeUsageAndConsumers = async () => {
@@ -1672,6 +1676,84 @@ export const serveHost = ({
             .catch(() => undefined)
             .finally(() => {
               conversationRequests--;
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (request.method === 'mcp-connections') {
+          const { input } = request;
+          const { target, action } = input;
+          const session =
+            'sessionId' in target ? store.get(target.sessionId) : undefined;
+          const provider =
+            session?.provider ??
+            ('provider' in target ? target.provider : undefined);
+          if (!provider || (session && !interactiveMcpSession(session))) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'invalid-request',
+                message:
+                  'MCP connections are available for operator sessions and provider profiles.',
+              }),
+            );
+            continue;
+          }
+          if (mcpConnectionRequests >= 2 || (action && mcpActionPending)) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message:
+                  'Another MCP request is in progress. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          mcpConnectionRequests++;
+          if (action) mcpActionPending = true;
+          const signal = probes.controller.signal;
+          const profileId =
+            session?.profileId ??
+            ('profileId' in target ? target.profileId : undefined);
+          const pending = profiles
+            .directory(provider, profileId, signal)
+            .then(profileDirectory =>
+              mcpConnections(
+                mcpPolicy,
+                {
+                  provider,
+                  directory: session?.directory ?? directory,
+                  dataDirectory: directory,
+                  profileDirectory,
+                  includeRepository: !!session,
+                },
+                input,
+                signal,
+              ),
+            )
+            .then(list =>
+              send({ type: 'mcp-connections', id: request.id, list }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'MCP connections could not be read on this computer. Try again.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              mcpConnectionRequests--;
+              if (action) mcpActionPending = false;
               probes.pending.delete(pending);
             });
           probes.pending.add(pending);

@@ -3,6 +3,7 @@ import {
   mcpFingerprintSchema,
   mcpLimits,
   mcpScopeSchema,
+  mcpServerKeySchema,
 } from './mcp-selection';
 import { providerSchema } from './sessions';
 
@@ -108,3 +109,54 @@ export type McpTransport = z.infer<typeof mcpTransportSchema>;
 export type McpServer = z.infer<typeof mcpServerSchema>;
 export type McpServerList = z.infer<typeof mcpServerListSchema>;
 export type ListMcpServersInput = z.infer<typeof listMcpServersSchema>;
+
+export const mcpConnectionTargetSchema = z.union([
+  z.strictObject({ sessionId: z.uuid() }),
+  z.strictObject({
+    provider: providerSchema,
+    profileId: z.uuid().nullable().optional(),
+  }),
+]);
+
+export const mcpConnectionActionSchema = z.enum([
+  'authorize',
+  'reconnect',
+  'logout',
+]);
+
+export const mcpConnectionRequestSchema = z.strictObject({
+  target: mcpConnectionTargetSchema,
+  action: z
+    .strictObject({
+      kind: mcpConnectionActionSchema,
+      serverKey: mcpServerKeySchema,
+    })
+    .optional(),
+  browser: z.boolean().default(false),
+});
+
+export const mcpConnectionStatusSchema = z.enum([
+  'connected',
+  'needs-authorization',
+  'failed',
+  'unavailable',
+]);
+
+export const mcpConnectionListSchema = z.strictObject({
+  provider: providerSchema,
+  servers: z
+    .array(
+      mcpServerSchema.extend({
+        status: mcpConnectionStatusSchema,
+        actions: z.array(mcpConnectionActionSchema).max(3),
+      }),
+    )
+    .max(mcpLimits.listed),
+  notice: z.string().max(512).optional(),
+});
+
+export type McpConnectionTarget = z.infer<typeof mcpConnectionTargetSchema>;
+export type McpConnectionAction = z.infer<typeof mcpConnectionActionSchema>;
+export type McpConnectionRequest = z.infer<typeof mcpConnectionRequestSchema>;
+export type McpConnectionStatus = z.infer<typeof mcpConnectionStatusSchema>;
+export type McpConnectionList = z.infer<typeof mcpConnectionListSchema>;

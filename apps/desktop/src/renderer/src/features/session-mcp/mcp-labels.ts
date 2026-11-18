@@ -1,3 +1,5 @@
+import type { McpConnectionList, McpConnectionStatus } from '@nesvo/contracts';
+import type { StatusDotTone } from '@/shared/ui/status-dot';
 import {
   mcpServerNameOf,
   type McpScope,
@@ -34,4 +36,25 @@ export function mcpChangeLabel(
   if (previous.hooks !== next.hooks)
     parts.push(next.hooks ? 'Hooks on' : 'Hooks off');
   return parts.length ? parts.join(' · ') : null;
+}
+
+export const connectionLabels: Record<McpConnectionStatus, string> = {
+  connected: 'Connected',
+  'needs-authorization': 'Needs authorization',
+  failed: 'Failed',
+  unavailable: 'Status unavailable',
+};
+
+export const connectionTones: Record<McpConnectionStatus, StatusDotTone> = {
+  connected: 'success',
+  'needs-authorization': 'warning',
+  failed: 'error',
+  unavailable: 'neutral',
+};
+
+export function connectionSummary(list: McpConnectionList | undefined) {
+  const statuses = new Set(list?.servers.map(server => server.status));
+  return (
+    ['needs-authorization', 'failed', 'connected', 'unavailable'] as const
+  ).find(status => statuses.has(status));
 }

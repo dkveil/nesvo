@@ -366,6 +366,45 @@ export class McpPolicy {
     );
   }
 
+  async connectionInventory(
+    provider: Provider,
+    directory: string,
+    signal: AbortSignal,
+    profileDirectory?: string,
+    includeRepository = false,
+  ) {
+    const { list, policy } = await this.inspect(
+      provider,
+      directory,
+      signal,
+      profileDirectory,
+    );
+    const trusted = includeRepository && list.repository?.status === 'trusted';
+    const candidates = list.servers.filter(
+      server => server.scope === 'user' || includeRepository,
+    );
+    const servers = candidates.filter(
+      server =>
+        !server.problem &&
+        /^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$/.test(server.name) &&
+        candidates.filter(candidate => candidate.name === server.name)
+          .length === 1 &&
+        (server.scope === 'user' || trusted),
+    );
+    return {
+      candidates,
+      servers,
+      definitions: Object.fromEntries(
+        servers.map(server => [
+          server.name,
+          (server.scope === 'user' ? policy.servers : policy.projectServers)[
+            server.name
+          ],
+        ]),
+      ),
+    };
+  }
+
   async list(
     provider: Provider,
     directory: string,

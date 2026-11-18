@@ -1821,6 +1821,7 @@ test(
         'claude-autonomy',
         'coordinator-workers',
         'worker-restart',
+        'mcp-auth',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -7424,6 +7425,7 @@ test(
       'claude-autonomy',
       'coordinator-workers',
       'worker-restart',
+      'mcp-auth',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -29389,11 +29391,12 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-4), [
+  assert.deepEqual(capabilities.slice(-5), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
     'worker-restart',
+    'mcp-auth',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {
@@ -30618,3 +30621,141 @@ test('interrupted workers continue explicitly on their recorded threads and work
     );
   }
 });
+
+test(
+  'MCP connections map native status and delegate explicit actions without exposing provider output',
+  { timeout: 45_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-mcp-connections-')),
+    );
+    const host = launch(directory, join(directory, 'provider.pid'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_TEST_MCP_AUTH: directory,
+      NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+    });
+    t.after(async () => {
+      try {
+        await host.stop();
+      } finally {
+        host.child.stdin.end();
+        if (host.child.exitCode === null && host.child.signalCode === null) {
+          host.child.kill();
+          await host.exited;
+        }
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+    const claudeHome = join(directory, 'claude-config');
+    const codexHome = join(directory, 'codex-config');
+    const project = join(directory, 'project');
+    await Promise.all(
+      [claudeHome, codexHome, project].map(path => mkdir(path)),
+    );
+    const names = [
+      'fixture-ready',
+      'fixture-oauth',
+      'fixture-failed',
+      'fixture-unknown',
+    ];
+    await writeFile(
+      join(claudeHome, '.claude.json'),
+      JSON.stringify({
+        mcpServers: Object.fromEntries(
+          names.map(name => [
+            name,
+            { type: 'http', url: 'https://example.invalid/' + name },
+          ]),
+        ),
+      }),
+    );
+    await writeFile(
+      join(codexHome, 'config.toml'),
+      names
+        .map(
+          name =>
+            '[mcp_servers.' +
+            name +
+            ']\nurl = "https://example.invalid/' +
+            name +
+            '"\n',
+        )
+        .join('\n'),
+    );
+    await mkdir(join(project, '.git'));
+    await writeFile(
+      join(project, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'untrusted-project': { command: 'must-not-start' },
+        },
+      }),
+    );
+    const created = await host.request('create-session', {
+      provider: 'Claude Code',
+      directory: project,
+      title: 'MCP connection test',
+      model: 'default',
+      mode: 'read-only',
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const inspect = async (target, action, browser) => {
+      const response = await host.request('mcp-connections', {
+        target,
+        action,
+        browser,
+      });
+      assert.equal(response.type, 'mcp-connections', JSON.stringify(response));
+      assert.ok(
+        !JSON.stringify(response).includes('fixture-private-oauth-output'),
+      );
+      return response.list;
+    };
+    const action = (kind, name = 'fixture-oauth') => ({
+      kind,
+      serverKey: 'user:' + name,
+    });
+    const status = (list, name) =>
+      list.servers.find(server => server.name === name)?.status;
+    const claude = { sessionId: created.session.id };
+    const codex = { provider: 'Codex' };
+    for (const target of [claude, codex]) {
+      const initial = await inspect(target);
+      assert.deepEqual(
+        names.map(name => status(initial, name)),
+        ['connected', 'needs-authorization', 'failed', 'unavailable'],
+      );
+    }
+    const scoped = await inspect(claude);
+    assert.equal(status(scoped, 'untrusted-project'), 'unavailable');
+    assert.deepEqual(
+      scoped.servers.find(server => server.name === 'untrusted-project')
+        .actions,
+      [],
+    );
+    const manual = await inspect(codex, action('authorize'), false);
+    assert.match(manual.notice, /codex mcp login fixture-oauth --no-browser/);
+    await assert.rejects(stat(join(directory, 'codex-authorized')), {
+      code: 'ENOENT',
+    });
+    for (const target of [claude, codex]) {
+      const authorized = await inspect(target, action('authorize'), true);
+      assert.equal(status(authorized, 'fixture-oauth'), 'connected');
+    }
+    const reconnected = await inspect(
+      claude,
+      action('reconnect', 'fixture-failed'),
+      true,
+    );
+    assert.equal(status(reconnected, 'fixture-failed'), 'connected');
+    const retry = await inspect(
+      codex,
+      action('reconnect', 'fixture-failed'),
+      true,
+    );
+    assert.equal(status(retry, 'fixture-failed'), 'failed');
+    await stat(join(directory, 'codex-reloaded'));
+    const signedOut = await inspect(codex, action('logout'), true);
+    assert.equal(status(signedOut, 'fixture-oauth'), 'needs-authorization');
+  },
+);

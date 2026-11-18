@@ -171,6 +171,8 @@ import {
   claudeCommandListSchema,
   listClaudeCommandsSchema,
   listMcpServersSchema,
+  mcpConnectionRequestSchema,
+  mcpConnectionListSchema,
   trustRepositoryMcpSchema,
   mcpServerListSchema,
   setSessionMcpSchema,
@@ -1020,6 +1022,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:trust-repository-mcp',
         trustRepositoryMcpSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  mcpConnections: async (input, hostId) =>
+    mcpConnectionListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:mcp-connections',
+        mcpConnectionRequestSchema.parse(input),
         route(hostId),
       ),
     ),

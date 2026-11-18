@@ -253,6 +253,10 @@ import {
 } from './scheduled-jobs';
 import {
   listMcpServersSchema,
+  mcpConnectionRequestSchema,
+  mcpConnectionListSchema,
+  type McpConnectionRequest,
+  type McpConnectionList,
   trustRepositoryMcpSchema,
   type TrustRepositoryMcpInput,
   mcpServerListSchema,
@@ -733,6 +737,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('list-mcp-servers'),
     input: listMcpServersSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('mcp-connections'),
+    input: mcpConnectionRequestSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1503,6 +1512,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     list: mcpServerListSchema,
   }),
   z.strictObject({
+    type: z.literal('mcp-connections'),
+    id: z.uuid(),
+    list: mcpConnectionListSchema,
+  }),
+  z.strictObject({
     type: z.literal('workspace-directory'),
     id: z.uuid(),
     directory: workspaceDirectorySchema,
@@ -2167,6 +2181,10 @@ export type DesktopApi = {
     input: ListMcpServersInput,
     hostId?: HostId,
   ) => Promise<McpServerList>;
+  mcpConnections: (
+    input: Omit<McpConnectionRequest, 'browser'>,
+    hostId?: HostId,
+  ) => Promise<McpConnectionList>;
   setSessionMcp: (
     input: SetSessionMcpInput,
     hostId?: HostId,

@@ -81,6 +81,7 @@ export const hostCapabilitySchema = z.enum([
   'claude-autonomy',
   'coordinator-workers',
   'worker-restart',
+  'mcp-auth',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

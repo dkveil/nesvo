@@ -39,6 +39,12 @@ import {
 import { interleave } from './interleave';
 import { readCodexUsage } from './codex-usage';
 import {
+  codexMcpStatus,
+  finishNativeMcpCommand,
+  mcpStatusMap,
+  type NativeMcpAction,
+} from './mcp-native';
+import {
   codexContextFill,
   codexTokenSnapshot,
   codexTurnUsage,
@@ -764,6 +770,85 @@ async function codexFullAccessSupported(
     signal?.removeEventListener('abort', cancel);
     await owned.stop();
   }
+}
+
+export async function inspectCodexMcp(
+  cwd: string,
+  names: ReadonlySet<string>,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+  reconnect?: string,
+  projectServers: RecordValue = {},
+) {
+  const executable = await executablePath();
+  if (!executable) throw new Error('Codex is unavailable.');
+  signal.throwIfAborted();
+  const peer = rpcPeer(
+    executable,
+    cwd,
+    message => rejectRequest(peer, message),
+    null,
+    environment,
+    Object.entries(projectServers).flatMap(([name, config]) => [
+      '-c',
+      'mcp_servers.' + name + '=' + tomlInline(config),
+    ]),
+    isolatedFeatures,
+  );
+  const cancel = () => void peer.close();
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    await initialize(peer);
+    if (reconnect) await peer.request('config/mcpServer/reload', {});
+    const statuses = new Map<string, ReturnType<typeof codexMcpStatus>>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 4; page++) {
+      signal.throwIfAborted();
+      const result = await peer.request('mcpServerStatus/list', {
+        cursor,
+        limit: 100,
+        detail: 'toolsAndAuthOnly',
+      });
+      for (const [name, status] of mcpStatusMap(result.data, codexMcpStatus))
+        if (names.has(name)) statuses.set(name, status);
+      if (typeof result.nextCursor !== 'string' || !result.nextCursor) break;
+      cursor = result.nextCursor;
+    }
+    return statuses;
+  } finally {
+    signal.removeEventListener('abort', cancel);
+    await peer.closeIdle();
+  }
+}
+
+export async function runCodexMcpAuth(
+  cwd: string,
+  action: NativeMcpAction,
+  name: string,
+  signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+  projectServer?: RecordValue,
+) {
+  const executable = await executablePath();
+  if (!executable) return false;
+  signal.throwIfAborted();
+  return finishNativeMcpCommand(
+    ownProcess(
+      executable,
+      [
+        ...codexProjectOverride(cwd),
+        ...(projectServer
+          ? ['-c', 'mcp_servers.' + name + '=' + tomlInline(projectServer)]
+          : []),
+        'mcp',
+        action === 'authorize' ? 'login' : 'logout',
+        name,
+      ],
+      cwd,
+      environment,
+    ),
+    signal,
+  );
 }
 
 export async function inspectCodex(

@@ -9,11 +9,21 @@ import { Separator } from '@/shared/ui/separator';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
-import { scopeLabels, transportLabels } from './mcp-labels';
+import {
+  McpConnectionFeedback,
+  McpConnectionRows,
+} from './mcp-connection-rows';
+import {
+  connectionLabels,
+  connectionSummary,
+  connectionTones,
+} from './mcp-labels';
+import type { McpConnections } from './use-mcp-connections';
 import type { McpConfiguration } from './use-mcp-configuration';
 
 type Props = {
   configuration: McpConfiguration;
+  connections: McpConnections;
   provider: Provider;
   readOnly: boolean;
   isolated: boolean;
@@ -24,6 +34,7 @@ type Props = {
 
 export function McpChip({
   configuration,
+  connections,
   provider,
   readOnly,
   isolated,
@@ -46,22 +57,40 @@ export function McpChip({
       : paused
         ? 'Repository MCP paused'
         : null;
-  const label = pausedLabel ? `${hint}. ${pausedLabel}` : hint;
+  const status = connectionSummary(connections.list);
+  const attentionTone =
+    status === 'needs-authorization' || status === 'failed'
+      ? connectionTones[status]
+      : pausedLabel
+        ? 'warning'
+        : null;
+  const detail = [pausedLabel, status && connectionLabels[status]]
+    .filter(Boolean)
+    .join('. ');
+  const refresh = () => {
+    void configuration.refresh();
+    void connections.refresh();
+  };
   return (
-    <Popover onOpenChange={open => open && void configuration.refresh()}>
-      <Hint label={pausedLabel ?? hint}>
+    <Popover
+      onOpenChange={open => {
+        if (open) refresh();
+      }}
+    >
+      <Hint label={detail || hint}>
         <PopoverTrigger asChild>
           <ComposerChip
             disabled={disabled || unsupported}
-            aria-label={label}
+            aria-label={hint}
+            aria-description={detail || undefined}
             data-session-mcp=""
             icon={<Plug aria-hidden="true" />}
             size="sm"
             className="relative w-6 justify-center px-0"
           >
-            {pausedLabel && (
+            {attentionTone && (
               <StatusDot
-                tone="warning"
+                tone={attentionTone}
                 className="absolute top-0.5 right-0.5"
               />
             )}
@@ -74,6 +103,7 @@ export function McpChip({
         collisionPadding={12}
         aria-label="MCP servers and hooks"
         size="md"
+        surface="solid"
         padding="none"
         scroll
         className="flex flex-col gap-2 p-2.5"
@@ -85,8 +115,8 @@ export function McpChip({
           <IconButton
             label="Refresh MCP configuration"
             size={24}
-            disabled={loading}
-            onClick={() => void configuration.refresh()}
+            disabled={loading || connections.loading || !!connections.pending}
+            onClick={refresh}
           >
             <RefreshCw />
           </IconButton>
@@ -97,6 +127,7 @@ export function McpChip({
             Reading MCP configuration…
           </StatusMessage>
         )}
+        <McpConnectionFeedback connections={connections} />
         {!supportsTrust && (
           <StatusMessage tone="warning">
             Update this host to review repository MCP servers and hooks.
@@ -134,25 +165,10 @@ export function McpChip({
         {list && (
           <>
             <div role="group" aria-label="Configured MCP servers">
-              {list.servers.length === 0 && (
-                <StatusMessage>No MCP servers found.</StatusMessage>
-              )}
-              {list.servers.map(server => (
-                <ListRow
-                  key={server.key}
-                  density="two-line"
-                  size="sm"
-                  title={server.name}
-                  description={
-                    scopeLabels[server.scope] +
-                    ' · ' +
-                    (server.transport
-                      ? transportLabels[server.transport]
-                      : 'Unknown transport') +
-                    (server.problem ? ' · ' + server.problem : '')
-                  }
-                />
-              ))}
+              <McpConnectionRows
+                servers={list.servers}
+                connections={connections}
+              />
               {list.issues.map(issue => (
                 <StatusMessage key={issue} tone="warning">
                   {issue}

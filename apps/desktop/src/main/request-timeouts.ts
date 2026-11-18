@@ -79,6 +79,13 @@ export const requestTimeoutMs = (
     return WORKTREE_REQUEST_TIMEOUT_MS;
   if (method === 'read-costs' || method === 'list-cost-budgets')
     return TRANSCRIPT_COST_REQUEST_TIMEOUT_MS;
+  if (method === 'mcp-connections')
+    return input &&
+      typeof input === 'object' &&
+      'action' in input &&
+      input.action
+      ? 300_000
+      : PROVIDER_REQUEST_TIMEOUT_MS;
   if (longRequests.has(method)) return LONG_REQUEST_TIMEOUT_MS;
   if (method === 'provider-usage') return USAGE_REQUEST_TIMEOUT_MS;
   if (providerRequests.has(method)) return PROVIDER_REQUEST_TIMEOUT_MS;

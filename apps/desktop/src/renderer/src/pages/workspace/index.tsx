@@ -256,6 +256,8 @@ import {
   withoutPlacement,
 } from '@/features/attach-files/placement';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
+import { useMcpConnections } from '@/features/session-mcp/use-mcp-connections';
+import { McpSettings } from '@/widgets/settings/mcp-settings';
 import { McpRepositoryNotice } from '@/features/session-mcp/mcp-repository-notice';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
@@ -1229,6 +1231,13 @@ export function Workspace({
       ? selected.runId + ':' + selected.status
       : null,
     connection === 'ready' && supportsMcp(selectedHostId),
+  );
+  const mcpConnections = useMcpConnections(
+    selectedHostId,
+    selected ? { sessionId: selected.id } : undefined,
+    connection === 'ready' &&
+      !isolatedMcp &&
+      !!selectedComputer?.capabilities.includes('mcp-auth'),
   );
   const parentSession = store.sessions.find(
     session =>
@@ -5156,6 +5165,7 @@ ${text}`
                 mcpChip={
                   <McpChip
                     configuration={mcpConfiguration}
+                    connections={mcpConnections}
                     provider={selected.provider}
                     readOnly={
                       (pendingModeOf(selected) ?? selected.mode) === 'read-only'
@@ -5646,6 +5656,15 @@ ${text}`
                     void store.refreshProvider(provider, settingsHostId)
                   }
                   api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'mcp' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <McpSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  profiles={profileCatalog.catalogs[settingsHostId]?.profiles}
                 />
               </div>
             ) : page === 'components' ? (

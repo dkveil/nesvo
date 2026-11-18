@@ -12,6 +12,7 @@ import {
   Monitor,
   Network,
   Palette,
+  Plug,
   ScanSearch,
   Settings2,
   Share2,
@@ -41,6 +42,7 @@ export type SettingsPage =
   | 'repositories'
   | 'sharing'
   | 'account'
+  | 'mcp'
   | 'data'
   | 'about'
   | 'components';
@@ -105,6 +107,14 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Bell,
     group: '',
     keywords: 'desktop alerts approvals finished runs test',
+  },
+  {
+    id: 'mcp',
+    label: 'MCP',
+    icon: Plug,
+    group: '',
+    keywords:
+      'servers tools provider profile authorize login OAuth reconnect sign out',
   },
   {
     id: 'code-review',

@@ -320,6 +320,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update the Nesvo host on this computer and reconnect to manage coordinator workers.',
   'worker-restart':
     'Update the Nesvo host on this computer to continue interrupted workers.',
+  'mcp-auth':
+    'Update this computer’s Nesvo host and reconnect to manage MCP authorization.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -504,6 +506,7 @@ function requiredCapability(
       input.attachments)
   )
     return 'message-attachments';
+  if (method === 'mcp-connections') return 'mcp-auth';
   if (method === 'trust-repository-mcp') return 'repository-mcp-trust';
   if (method === 'list-mcp-servers' || method === 'set-session-mcp')
     return 'mcp-servers';
@@ -1248,6 +1251,7 @@ export class ComputerManager {
       'compact-session': 'session',
       'set-session-mcp': 'session',
       'list-mcp-servers': 'mcp-servers',
+      'mcp-connections': 'mcp-connections',
       'trust-repository-mcp': 'mcp-servers',
       'queue-message': 'session',
       'cancel-queued': 'session',
@@ -1339,6 +1343,7 @@ export class ComputerManager {
       case 'skills':
         return response.catalog;
       case 'mcp-servers':
+      case 'mcp-connections':
         return response.list;
       case 'transcript-retention':
         return response.retention;
