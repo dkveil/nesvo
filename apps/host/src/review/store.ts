@@ -89,11 +89,22 @@ export class ReviewStore {
     };
   }
 
-  inherited(
-    sessionId: string,
-    delegations: Session['delegations'] = [],
-  ): Review[] {
-    const dependencies = this.latest(sessionId)?.dependencies ?? [];
+  inherited(session: Session): Review[] {
+    const boundary = session.providerThreadStarts.at(-1);
+    const currentRuns =
+      boundary === undefined
+        ? null
+        : new Set(
+            session.messages.slice(boundary).map(message => message.runId),
+          );
+    const latest = this.latest(session.id);
+    const dependencies =
+      latest && (!currentRuns || currentRuns.has(latest.runId))
+        ? latest.dependencies
+        : [];
+    const delegations = currentRuns
+      ? session.delegations.filter(proposal => currentRuns.has(proposal.runId))
+      : session.delegations;
     const previousGroup = delegations.at(-1)?.runId;
     const groupChildren = delegations
       .filter(
@@ -126,7 +137,7 @@ export class ReviewStore {
         });
     }
     if (dependencies.length === 0 && session.role === 'orchestrator') {
-      for (const current of this.inherited(session.id, session.delegations))
+      for (const current of this.inherited(session))
         dependencies.push({
           sessionId: current.sessionId,
           reviewId: current.id,

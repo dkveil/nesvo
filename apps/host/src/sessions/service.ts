@@ -1941,9 +1941,7 @@ export class SessionService {
     }: LaunchTurn,
   ): void {
     const inherited =
-      session.role === 'orchestrator'
-        ? this.reviews.inherited(session.id, session.delegations)
-        : [];
+      session.role === 'orchestrator' ? this.reviews.inherited(session) : [];
     const context = inherited.map(review => ({
       sessionId: review.sessionId,
       resultId: review.id,

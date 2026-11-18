@@ -229,7 +229,7 @@ Fork creates a separate session on the same computer with the source folder, mod
 
 Codex forks the saved thread with `thread/fork` before saving the Nesvo session. The adapter applies the source sandbox and verifies the returned policy and distinct thread ID. Claude Code advertises `--fork-session` in its CLI help. Nesvo saves the fork intent and uses `--resume <source-id> --fork-session --session-id <new-id>` on the first operator message. If the recorded source thread advanced in Nesvo before that message, the host refuses to fork from a different point. Later messages resume the new thread by its own ID. Unsupported native forks fail visibly. The fork uses the source folder.
 
-Restart requires confirmation for the current session revision. It clears the provider thread ID, keeps the recorded model, mode, folder and conversation, and holds queued messages. A saved history divider marks the boundary. The next operator message starts a fresh provider thread. Both commands refuse to change threads during active work. Reopening the host restores recorded thread state without starting provider work.
+Restart requires confirmation for the current session revision. It clears the provider thread ID, keeps the recorded model, mode, folder and conversation, and holds queued messages. A saved history divider marks the boundary. The next operator message starts a fresh provider thread. Automatic worker result context and dependencies are scoped to the current thread. Both commands refuse to change threads during active work. Reopening the host restores recorded thread state without starting provider work.
 
 ## Model changes
 
