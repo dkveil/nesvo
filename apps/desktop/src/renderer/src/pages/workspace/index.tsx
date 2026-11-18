@@ -2358,6 +2358,8 @@ export function Workspace() {
   const runBlockedReason = (job: ScheduledJob) => {
     const offline = hostOffline(job.hostId);
     if (offline) return offline;
+    if (job.redCi)
+      return 'Starts when a tracked pull request has failing checks.';
     const running = runningSessions.find(
       session =>
         session.hostId === job.hostId && session.scheduledJobId === job.id,

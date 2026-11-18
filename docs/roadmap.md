@@ -102,7 +102,7 @@ M1 through M3 are implemented with small checkpoints through c20ca03, with the n
 
 ## R5: Automations and workflows
 
-Automations (scheduled jobs) and Workflows (step graphs) are owned by the host that stores them and run unattended on Local or a Linux daemon, read-only, with provider limits checked before each start. Missed occurrences are recorded as one skipped run and never replayed; reconnecting a client reads the stored run and pending result. The R5-G stage adds fixture-based desktop and daemon scenarios and their screenshots; see docs/testing.md. Real Codex on Windows, a scheduled run on the VPS daemon and a real Claude attempt are still pending separate evidence, listed in docs/platforms.md, and the stage needs Damian's review.
+Automations (scheduled jobs) and Workflows (step graphs) are owned by the host that stores them and run unattended on Local or a Linux daemon, with provider limits checked before each start. Prompt automations default to read-only and can opt into edits in a managed worktree. Missed occurrences are recorded as one skipped run and never replayed, and reconnecting a client reads the stored run and pending result. The R5-G stage adds fixture-based desktop and daemon scenarios and their screenshots. See docs/testing.md. Real Codex on Windows, a scheduled run on the VPS daemon and a real Claude attempt are still pending separate evidence, listed in docs/platforms.md, and the stage needs Damian's review.
 
 ## D76: Running apps
 

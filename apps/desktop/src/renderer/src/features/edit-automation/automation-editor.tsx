@@ -9,6 +9,7 @@ import {
 } from '@/shared/ui/dialog';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { SectionLabel } from '@/shared/ui/section-label';
+import { RitualTemplates } from './ritual-templates';
 import {
   automationEditorDescription,
   automationEditorTitle,
@@ -83,6 +84,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             <div className="grid gap-x-10 gap-y-6 px-6 py-5 md:grid-cols-2">
               <div className="min-w-0 space-y-6">
                 <EditorGroup title="Task">
+                  <RitualTemplates editor={editor} />
                   <AutomationNameField editor={editor} />
                   <AutomationTaskFields editor={editor} />
                 </EditorGroup>

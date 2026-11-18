@@ -42,6 +42,9 @@ export type AutomationValues = {
   askFirst: boolean;
   reviewMode: boolean;
   reviewProfileId: string;
+  writable: boolean;
+  browser: boolean;
+  redCi: boolean;
 };
 
 export type AutomationField =
@@ -54,7 +57,9 @@ export type AutomationField =
   | 'timeoutMinutes'
   | 'checkCommand'
   | 'dailyRunCap'
-  | 'review';
+  | 'review'
+  | 'workspace'
+  | 'browser';
 
 export type AutomationErrors = Partial<Record<AutomationField, string>>;
 
@@ -104,6 +109,9 @@ export const newAutomationValues = (
   askFirst: true,
   reviewMode: false,
   reviewProfileId: '',
+  writable: false,
+  browser: false,
+  redCi: false,
 });
 
 export const automationValues = (job: ScheduledJob): AutomationValues => ({
@@ -131,11 +139,16 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
   checkEnabled: !!job.changeTrigger,
   checkCommand: job.changeTrigger ? JSON.stringify(job.changeTrigger.argv) : '',
   dailyRunCap: String(
-    job.changeTrigger?.dailyRunCap ?? scheduledJobLimits.defaultDailyRunCap,
+    job.redCi?.dailyRunCap ??
+      job.changeTrigger?.dailyRunCap ??
+      scheduledJobLimits.defaultDailyRunCap,
   ),
   askFirst: job.changeTrigger?.askFirst ?? true,
   reviewMode: !!job.pullRequestReview,
   reviewProfileId: job.pullRequestReview?.profileId ?? '',
+  writable: job.mode !== 'read-only',
+  browser: !!job.browser,
+  redCi: !!job.redCi,
 });
 
 export const duplicateValues = (job: ScheduledJob): AutomationValues => ({
@@ -194,6 +207,22 @@ export const validateAutomation = (
   else if (PROMPT_CONTROL_CHARACTERS.test(prompt))
     errors.prompt = 'Remove control characters from the prompt.';
   if (!values.model) errors.model = 'Choose a model.';
+  if (
+    values.writable &&
+    !values.redCi &&
+    values.active &&
+    !values.directory.trim()
+  )
+    errors.workspace = 'Choose a repository checkout for the worktree.';
+  if (
+    values.browser &&
+    values.active &&
+    (!values.workflow?.name ||
+      !values.workflow.specPath ||
+      !values.directory.trim())
+  )
+    errors.browser =
+      'Choose a folder and supply the global workflow name and the task spec path.';
   if (values.scheduleKind === 'interval') {
     const minutes = wholeNumber(values.minutes);
     if (!Number.isInteger(minutes)) errors.minutes = 'Enter whole minutes.';
@@ -222,6 +251,8 @@ export const validateAutomation = (
     )
       errors.checkCommand =
         'Enter a JSON array with an executable and up to 31 arguments.';
+  }
+  if (values.checkEnabled || values.redCi) {
     const cap = wholeNumber(values.dailyRunCap);
     if (
       !Number.isInteger(cap) ||
@@ -242,16 +273,28 @@ export const toSaveInput = (
   const definition = {
     name: values.name.trim(),
     prompt: values.reviewMode ? '' : values.prompt.trim(),
-    directory: values.directory.trim(),
+    directory: values.redCi ? '' : values.directory.trim(),
     provider: jobProviders[values.provider],
     model: values.model,
     effort: values.provider === 'Codex' && effort ? effort : null,
-    mode: 'read-only' as const,
+    mode:
+      values.writable && !values.workflow && !values.reviewMode
+        ? values.provider === 'Codex'
+          ? 'supervised'
+          : 'accept-edits'
+        : 'read-only',
     schedule,
     timeZone: values.timeZone,
     active: values.active,
     timeoutMinutes: wholeNumber(values.timeoutMinutes),
-    workflow: values.workflow,
+    workflow:
+      values.workflow?.name && values.workflow.specPath
+        ? values.workflow
+        : null,
+    ...(values.browser ? { browser: true } : {}),
+    ...(values.redCi
+      ? { redCi: { dailyRunCap: wholeNumber(values.dailyRunCap) } }
+      : {}),
     ...(values.reviewMode && values.reviewProfileId
       ? { pullRequestReview: { profileId: values.reviewProfileId } }
       : {}),
@@ -267,6 +310,6 @@ export const toSaveInput = (
   };
   const parsed = scheduledJobDefinitionSchema.safeParse(definition);
   if (!parsed.success)
-    return `Check ${parsed.error.issues[0]?.path.join('.') || 'the settings'}.`;
+    return parsed.error.issues[0]?.message ?? 'Check the automation settings.';
   return { id: values.id, ...parsed.data };
 };

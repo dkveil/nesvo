@@ -967,6 +967,7 @@ try {
     'session-browser',
     'session-resume',
     'merged-worktree-cleanup',
+    'automation-rituals',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -4492,6 +4493,67 @@ try {
     .first()
     .click();
   const automationEditor = restartedPage.locator('[data-automation-editor]');
+  const selectRitual = async name => {
+    await automationEditor
+      .getByRole('combobox', { name: 'Starter template' })
+      .click();
+    await restartedPage.getByRole('option', { name, exact: true }).click();
+    await automationEditor.getByText('Templates start paused.').waitFor();
+    assert.equal(
+      await automationEditor
+        .getByRole('switch', { name: 'Active', exact: true })
+        .getAttribute('aria-checked'),
+      'false',
+    );
+  };
+  const ritualShot = async name => {
+    const folder = process.env.NESVO_RITUALS_SCREENSHOT_DIR;
+    if (!folder) return;
+    await restartedPage
+      .locator('[data-slot="select-content"]')
+      .waitFor({ state: 'detached' });
+    await restartedPage.evaluate(
+      () =>
+        new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+      const image =
+        await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+          undefined,
+          { stayHidden: true, stayAwake: true },
+        );
+      return image.toPNG().toString('base64');
+    });
+    await writeFile(
+      join(folder, `rituals-${name}.png`),
+      Buffer.from(encoded, 'base64'),
+    );
+  };
+  await selectRitual('Daily error triage');
+  assert.equal(
+    await automationEditor
+      .getByRole('switch', { name: 'Use browser' })
+      .getAttribute('aria-checked'),
+    'true',
+  );
+  await ritualShot('browser-template');
+  await selectRitual('Dependency update maintenance');
+  assert.equal(
+    await automationEditor
+      .getByRole('switch', { name: 'Edit files in a worktree' })
+      .getAttribute('aria-checked'),
+    'true',
+  );
+  await ritualShot('writable-template');
+  await automationEditor
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('button', { name: 'New automation' })
+    .first()
+    .click();
   await automationEditor.getByLabel('Name').fill('Smoke automation');
   await automationEditor.getByLabel('Prompt').fill('/fixture-skill');
   await automationEditor

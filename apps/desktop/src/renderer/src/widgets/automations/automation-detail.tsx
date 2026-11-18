@@ -20,6 +20,7 @@ import {
   type ScheduledJobRun,
 } from '@/entities/scheduled-job';
 import type { Review } from '@/entities/review';
+import { modeLabel } from '@/entities/session';
 import { StatusIcon } from '@/entities/status';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
@@ -122,6 +123,7 @@ export function AutomationDetail({
   const activeRun = runs.find(isActiveRun);
   const check = job.lastCheck;
   const checkStatus = check && checkStatuses[check.status];
+  const dailyRunCap = job.redCi?.dailyRunCap ?? job.changeTrigger?.dailyRunCap;
   const connected = computer?.status === 'connected';
   const reviewOf = (run: ScheduledJobRun) =>
     run.reviewId
@@ -149,14 +151,19 @@ export function AutomationDetail({
                 <ModelChip job={job} />
                 <Hint
                   label={
-                    job.provider === 'claude'
-                      ? 'Claude Code can use Read, Glob and Grep only.'
-                      : 'Codex runs in its read-only sandbox.'
+                    job.mode !== 'read-only'
+                      ? 'Uses a separate worktree and the selected provider’s permissions.'
+                      : job.provider === 'claude'
+                        ? 'Claude Code can use Read, Glob and Grep only.'
+                        : 'Codex runs in its read-only sandbox.'
                   }
                 >
                   <Badge appearance="outline">
                     <Lock aria-hidden="true" />
-                    Read-only
+                    {modeLabel(
+                      job.provider === 'claude' ? 'Claude Code' : 'Codex',
+                      job.mode,
+                    )}
                   </Badge>
                 </Hint>
               </p>
@@ -225,17 +232,21 @@ export function AutomationDetail({
             </div>
           </div>
           <p className="text-xs text-muted-foreground">{nextRuns(job, now)}</p>
-          {job.changeTrigger && (
+          {dailyRunCap !== undefined && (
             <KeyValueList
               entries={[
                 {
                   key: 'last-check',
-                  label: 'Last check',
+                  label: job.redCi ? 'Pull request checks' : 'Last check',
                   value:
                     check && checkStatus ? (
                       <span className="flex flex-wrap items-center gap-x-2">
                         <StatusIcon status={checkStatus.icon} />
-                        {checkStatus.label}
+                        {job.redCi && check.status !== 'failed'
+                          ? check.status === 'changed'
+                            ? 'Failing checks found'
+                            : 'No new failing heads'
+                          : checkStatus.label}
                         <time
                           dateTime={check.at}
                           className="text-muted-foreground"
@@ -255,7 +266,7 @@ export function AutomationDetail({
                 {
                   key: 'daily-cap',
                   label: 'Daily run cap',
-                  value: job.changeTrigger.dailyRunCap,
+                  value: dailyRunCap,
                 },
                 ...(job.pendingStart
                   ? [
@@ -341,17 +352,19 @@ export function AutomationDetail({
                       }
                       trailing={
                         <span className="flex items-center gap-1">
-                          {isActiveRun(run) && run.sessionId && (
-                            <Button
-                              type="button"
-                              size="xs"
-                              variant="outline"
-                              disabled={!connected}
-                              onClick={() => onStop(run)}
-                            >
-                              Stop
-                            </Button>
-                          )}
+                          {isActiveRun(run) &&
+                            run.sessionId &&
+                            (run.runId || run.workflowRunId) && (
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="outline"
+                                disabled={!connected}
+                                onClick={() => onStop(run)}
+                              >
+                                Stop
+                              </Button>
+                            )}
                           {run.sessionId && (
                             <Button
                               type="button"
@@ -369,6 +382,33 @@ export function AutomationDetail({
                         </span>
                       }
                     />
+                    {run.detail && (
+                      <StatusMessage tone="error" className="px-3">
+                        {run.detail}
+                      </StatusMessage>
+                    )}
+                    {run.report && (
+                      <div className="space-y-1 px-3 pb-2 text-xs text-muted-foreground">
+                        <p className="line-clamp-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          {run.report}
+                        </p>
+                        {run.changes && (
+                          <>
+                            <p>
+                              {run.changes.summaryChanged
+                                ? 'Changed since the previous run'
+                                : 'No change since the previous run'}
+                            </p>
+                            {run.changes.added.map(item => (
+                              <p key={item}>New: {item}</p>
+                            ))}
+                            {run.changes.resolved.map(item => (
+                              <p key={item}>Resolved: {item}</p>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </li>
                 );
               })}

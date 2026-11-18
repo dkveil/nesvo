@@ -306,7 +306,25 @@ The first successful check records a baseline. The host normalizes line endings 
 
 **Ask before starting** is on by default. The Inbox keeps one pending request per automation. Use **Start** or **Skip** on that row. Later changes still update the baseline while a request is pending. When asking is off, the existing host availability and idle rules apply. A started run follows the existing automation result flow to the Inbox.
 
-The cap defaults to three starts per UTC day and accepts values from 1 to 24. Run now is an explicit start and counts toward the same cap. Reaching the cap consumes the observed change, so a new change is required for another scheduled start. A pending request can be started on a later day with capacity. Editing or pausing the automation clears its pending request. Changing the folder or command resets the baseline.
+The cap defaults to three starts per day in the automation's time zone and accepts values from 1 to 24. Run now is an explicit start and counts toward the same cap. Reaching the cap consumes the observed command change, so a new change is required for another scheduled start. A pending request can be started on a later day with capacity. Editing or pausing the automation clears its pending request. Changing the folder or command resets the baseline.
+
+### Scheduled rituals
+
+New automations use the operator's OS time zone. Choose a different IANA zone such as `Europe/Warsaw` in the editor. Daily and weekly schedules follow local wall time through daylight saving changes. Intervals measure elapsed time. Scheduling runs inside the active host process.
+
+Prompt automations start read-only. Turn on **Edit files in a worktree** to run with Accept edits or Workspace edits, depending on the provider. Select a repository checkout. Each run creates a managed worktree and uses the repository's worktree recipe, including its existing setup approval when needed. Provider permission rules apply to the session. The host uses its existing allowance, budget and folder checks for each start.
+
+The latest completed run's report is included as context for the next prompt or workflow task. The automation's run history shows the bounded report and lists new and resolved bullet items when it can compare two reports. Use stable `[item-id]` prefixes when an item's description may change. Skipped, failed and interrupted runs leave the last completed report available.
+
+For browser access, define an agent step with `needs: [browser]` and its workflow in your global workflows folder. Select **Use browser** in the automation editor and supply that workflow name and the project's task spec path. The browser step uses the existing read-only tools and checks that the extension is connected on the automation's computer. The host refuses repository workflows and repository overrides of browser steps.
+
+### Watching failing pull request checks
+
+**My pull request checks fail** checks your open pull requests on the automation's schedule. It uses the host's existing GitHub CLI login and the tracked repositories with a checkout on that host. Unseen failing heads are eligible on the first poll. Each claim records the repository, pull request number and head SHA, so subsequent checks and restarts cannot start the same head again for that automation. The daily cap and the availability check leave unclaimed heads eligible on a later poll.
+
+The fix session is linked to the pull request and starts on a new worktree branch based on the exact head commit. Its prompt includes failing job names and short excerpts when logs are available. It uses the automation's selected provider and workspace-editing mode. The source checkout stays on its current branch.
+
+The automation editor offers paused starter templates for daily error triage, dependency update maintenance, a morning plan, a day summary and a weekly Git summary. Select the folder and any sources the task needs before enabling it.
 
 ## Sharing a workflow
 

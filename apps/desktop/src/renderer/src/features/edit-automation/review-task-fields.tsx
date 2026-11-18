@@ -40,6 +40,9 @@ export function ReviewTaskFields({
             checkEnabled: true,
             checkCommand: values.checkCommand || REVIEW_CHECK_COMMAND,
             askFirst: true,
+            writable: false,
+            browser: false,
+            redCi: false,
           }
         : { reviewMode: false, reviewProfileId: '' },
     );

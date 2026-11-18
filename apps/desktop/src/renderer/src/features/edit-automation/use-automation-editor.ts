@@ -52,6 +52,8 @@ const fieldOrder: AutomationField[] = [
   'name',
   'prompt',
   'review',
+  'workspace',
+  'browser',
   'model',
   'minutes',
   'time',
@@ -88,6 +90,8 @@ export function useAutomationEditor(
   const [locationOpen, setLocationOpen] = useState(false);
   const computer = computers.find(item => item.id === values.hostId);
   const connected = computer?.status === 'connected';
+  const supportsRituals =
+    !!computer?.capabilities.includes('automation-rituals');
   const supportsCheck = !!computer?.capabilities.includes(
     'scheduled-job-change-triggers',
   );
@@ -155,7 +159,10 @@ export function useAutomationEditor(
           ? `${computer.name} is offline. Connect it to save this automation.`
           : values.checkEnabled && !supportsCheck
             ? 'Update this computer’s Nesvo host to use automation change checks.'
-            : '';
+            : (values.writable || values.redCi || values.browser) &&
+                !supportsRituals
+              ? 'Update this computer’s Nesvo host to use worktrees, browser workflows or CI triggers.'
+              : '';
   const locationHints = [
     values.hostId === 'local' ? 'Runs only while Nesvo is open.' : '',
     values.workflow
@@ -240,6 +247,7 @@ export function useAutomationEditor(
     setLocationOpen,
     locationHints,
     supportsCheck,
+    supportsRituals,
     supportsReviews,
     reviewProfiles,
     trackedRepositories,
