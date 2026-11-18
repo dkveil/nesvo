@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  ArrowDown,
-  FolderOpen,
-  ListEnd,
-  Monitor,
-  Server,
-  Square,
-} from 'lucide-react';
+import { ArrowDown, ListEnd, Square } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { hasEarlierMessages, windowOffset } from '@nesvo/contracts';
 import type {
@@ -105,7 +98,6 @@ type Props = {
   draft: string;
   selectedSkill: SelectedSkill | null;
   connected: boolean;
-  computerName: string;
   skillApi: Pick<DesktopApi, 'discoverSkills'>;
   onSkillChange: (skill: SelectedSkill | null) => void;
   sending: boolean;
@@ -156,7 +148,6 @@ export function Conversation({
   draft,
   selectedSkill,
   connected,
-  computerName,
   skillApi,
   onSkillChange,
   sending,
@@ -391,7 +382,6 @@ export function Conversation({
     session.status === 'completed' && session.queue.length > 0
       ? session.error
       : '';
-  const HostIcon = session.hostId === 'local' ? Monitor : Server;
   const runStarts = new Map(
     session.messages
       .filter(message => message.author === 'operator')
@@ -778,27 +768,6 @@ export function Conversation({
               into several messages.
             </StatusMessage>
           )}
-          <div className="flex min-w-0 items-center gap-1 px-2">
-            <Hint label={computerName}>
-              <Chip
-                interactive={false}
-                icon={<HostIcon aria-hidden="true" />}
-                className="max-w-40"
-              >
-                <span>{computerName}</span>
-              </Chip>
-            </Hint>
-            <Hint label={session.directory}>
-              <Chip
-                interactive={false}
-                icon={<FolderOpen aria-hidden="true" />}
-                aria-label={`Working directory: ${session.directory}`}
-                className="shrink"
-              >
-                <span>{sessionProjectLabel(session)}</span>
-              </Chip>
-            </Hint>
-          </div>
           {!connected && (
             <StatusMessage className="px-3">
               Offline snapshot. Work may still be running. Reconnect to send

@@ -3973,7 +3973,6 @@ ${text}`
                 selectedSkill={selectedSkills[selectedKey] ?? null}
                 skillApi={desktopApi(selectedHostId)}
                 connected={store.hostReady(selectedHostId)}
-                computerName={selectedComputer?.name ?? selectedHostId}
                 onSkillChange={skill => changeSkill(selectedKey, skill)}
                 sending={sending}
                 finishedWorktree={finishedWorktree}
