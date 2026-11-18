@@ -87,6 +87,15 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     actOnPullRequest: input => api.actOnPullRequest(input, hostId),
     linkSessionPullRequest: input => api.linkSessionPullRequest(input, hostId),
     findSessionPullRequest: input => api.findSessionPullRequest(input, hostId),
+    listTrackedRepositories: () => api.listTrackedRepositories(hostId),
+    addTrackedRepository: input => api.addTrackedRepository(input, hostId),
+    removeTrackedRepository: input =>
+      api.removeTrackedRepository(input, hostId),
+    reorderTrackedRepositories: input =>
+      api.reorderTrackedRepositories(input, hostId),
+    suggestTrackedRepositories: () => api.suggestTrackedRepositories(hostId),
+    listTrackedPullRequests: input =>
+      api.listTrackedPullRequests(input, hostId),
     readCodeReviewSettings: () => api.readCodeReviewSettings(hostId),
     saveReviewerProfile: input => api.saveReviewerProfile(input, hostId),
     deleteReviewerProfile: input => api.deleteReviewerProfile(input, hostId),

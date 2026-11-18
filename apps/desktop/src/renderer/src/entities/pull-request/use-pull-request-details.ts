@@ -44,6 +44,18 @@ const subscribe = (key: string, listener: () => void) => {
   };
 };
 
+export function recentPullRequestRepositories(hostId: string): string[] {
+  const prefix = `${hostId}/`;
+  const repositories = new Map<string, string>();
+  for (const [key, entry] of [...cache].reverse()) {
+    if (!key.startsWith(prefix) || !entry.data) continue;
+    const repository = entry.data.repository;
+    if (!repositories.has(repository.toLowerCase()))
+      repositories.set(repository.toLowerCase(), repository);
+  }
+  return [...repositories.values()];
+}
+
 export function primePullRequestDetails(
   hostId: string,
   pullRequest: PullRequest,

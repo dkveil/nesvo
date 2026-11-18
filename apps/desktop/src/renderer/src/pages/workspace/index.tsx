@@ -154,6 +154,7 @@ import {
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
+import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -4679,6 +4680,15 @@ ${text}`
               />
             ) : page === 'phone' ? (
               <MobileAccess api={desktopApi()} />
+            ) : page === 'repositories' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <TrackedRepositoriesSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
             ) : page === 'components' ? (
               ComponentCatalog && (
                 <Suspense fallback={null}>

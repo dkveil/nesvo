@@ -12,6 +12,7 @@ export { ChecksIcon } from './checks-icon';
 export { RelativeTime } from './relative-time';
 export {
   primePullRequestDetails,
+  recentPullRequestRepositories,
   usePullRequestDetails,
   type PullRequestDetails,
 } from './use-pull-request-details';

@@ -2,6 +2,7 @@ import {
   Bell,
   Blocks,
   Database,
+  FolderGit2,
   Info,
   Keyboard,
   Monitor,
@@ -23,6 +24,7 @@ export type SettingsPage =
   | 'code-review'
   | 'computers'
   | 'phone'
+  | 'repositories'
   | 'account'
   | 'data'
   | 'about'
@@ -94,6 +96,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Smartphone,
     group: 'Connections',
     keywords: 'mobile pair device revoke',
+  },
+  {
+    id: 'repositories',
+    label: 'Tracked repositories',
+    icon: FolderGit2,
+    group: 'Connections',
+    keywords: 'github pull requests repository track owner name checkout',
   },
   {
     id: 'account',
