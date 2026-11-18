@@ -237,6 +237,7 @@ Edges stay inside one phase, so in this example all six steps declare `phase: pr
 | Field | Meaning |
 | -- | -- |
 | `name`, `description` | Identify the workflow. |
+| `decisions` | Optional: `inbox`, `parent` or `both`. Where decisions of child sessions started by this workflow appear, see [Routing decisions to the orchestrator](#routing-decisions-to-the-orchestrator). |
 | `steps` | Required: 1 to 32 unique step names. They are the nodes of the graph. |
 | `edges` | Optional: at most 64 entries, one string each. Describes the order and the branches. |
 | `layout` | Optional: step name to `[x, y]` whole numbers. Only the editor reads it; nothing that runs steps does. |
@@ -274,9 +275,43 @@ Errors make the workflow invalid: the catalog lists it only through its issues, 
 Warnings are saved and shown next to the step:
 
 - the `layout` names a step that is not in the workflow (the editor drops it on the next save);
-- an `external` step, or a body that mentions `git push`, `gh pr`, `curl` or `wget`, that some path reaches without a human step first;
+- an `external` step, or a body that mentions `git push`, `gh pr`, `curl` or `wget`, that some path reaches without a human step first and that no enabled Inbox rule holds (see [Inbox rules and human steps](#inbox-rules-and-human-steps));
 - the workflow has no gate at all, or a `fix` step has no retries;
 - two agent steps of one phase could start together, while a run drives one author session at a time.
+
+## Inbox rules and human steps
+
+A `human` step is an explicit point in one workflow: the run stops there, binds to the latest saved result and offers accept, reject or fix. An Inbox rule is cross-cutting: it applies to every session it matches, whatever started it, and can hold a command, a pull request action, an MCP tool call or a workflow step before it happens, or put an event in your Inbox. Use a human step when the workflow itself has a decision point; use a rule for a habit that should hold everywhere, such as reviewing the diff before any `git push`. Rule files and their fields are described in [architecture.md](architecture.md#inbox-rules) and edited in Settings › Inbox rules.
+
+A rule with `trigger: workflow-step` names a `step` (a name glob), a `phase` or both, and optionally a `workflow`:
+
+```markdown
+---
+name: hold-before-publish
+trigger: workflow-step
+phase: pre-push
+action: hold
+show: [diff]
+diff: branch
+---
+{{ session.title }} reached {{ step }} in {{ workflow }}.
+```
+
+With `action: hold` the step waits before it runs until you approve or decline it in the Inbox; a decline fails the step with your note, and a restart keeps the hold pending. The decision belongs to that attempt: a retry asks again. The validator warning about an external action without a human step is not shown when an enabled global or project rule holds that step (`hold` on `workflow-step` with a matching step, phase and workflow). A project rule counts for this warning while it is enabled, but it holds at run time only after you trust the repository.
+
+### Routing decisions to the orchestrator
+
+A workflow file may set `decisions` to `inbox`, `parent` or `both`. Children started by a `session` or `fan-out` step of that workflow carry the route, so their plans, questions, operation approvals and rule items appear as cards in the orchestrator's conversation instead of, or as well as, the Inbox. A rule's own `route` wins over the workflow; a session group default and the computer default in Settings › Inbox rules apply when neither says.
+
+```yaml
+---
+name: orchestrate-stages
+decisions: parent
+steps: [dispatch-stages]
+---
+```
+
+With the `dispatch-stages` step and the `worker-gates` children from the example above, a stage child that runs `git push` under a hold rule shows a card in the orchestrator session with its name, the command and the diff. Approve or Decline there: the child resumes with the outcome, its history records the decision as made by you in the parent session, and the orchestrator agent receives `decision-needed` and `decision-made` events so it can keep coordinating. The orchestrator agent cannot approve the hold itself.
 
 ## Phases and author turns
 

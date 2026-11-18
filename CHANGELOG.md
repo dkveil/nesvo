@@ -9,6 +9,8 @@
 - Tracked repositories per computer, listed together on the Pull requests page with a repository filter, and offered as checkouts for review automations.
 - Agent-assisted pull request reviews with reviewer profiles, layered conventions, editable draft findings and one-step publishing, started per pull request, in bulk or by an automation.
 - Claude Code operation approvals answered once from the inbox or the conversation.
+- Inbox rules: Markdown rule files that hold commands, pull request actions, MCP tool calls and workflow steps, or notify and ask on plans, reports, questions, finished sessions, checks, changed files and run cost, with suggestions in onboarding and an editor in Settings.
+- Decision routing: decisions of child sessions can appear as cards in the parent conversation, in the Inbox or both.
 - Session worktrees with `.worktreeinclude`, approved setup scripts, cleanup of orphaned checkouts, and forks into a new worktree.
 - Fork, restart, compact, delete with undo, export as Markdown, and open in the system terminal.
 - Resume failed, interrupted or stopped sessions in their provider conversation after confirming the continuation message, one at a time or in bulk.
