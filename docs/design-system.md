@@ -91,6 +91,8 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 
 `prefers-reduced-motion: reduce` disables transitions and animations globally.
 
+The sidebar collapses and expands over `duration-slow` with `ease-out` by transitioning one registered length, `--sidebar-extent`, on the shell: the panel width, the conversation column and the header's reserved wordmark space all follow it, while the sidebar contents keep their full width and are clipped, so text never rewraps. Resizing by drag, keyboard or window size stays instant. The rail's New session button grows in its place with the same timing. The wordmark is drawn once by the shell at `--shell-brand-start` from the rail and never moves; `--shell-brand-end` is the space the header keeps free for it (`--brand-wordmark-width` follows the 12 px wordmark).
+
 ## Interaction rules
 
 **Focus.** Every interactive primitive uses one utility: `focus-ring`, a 1.5 px outline inset by 1.5 px in `--ring`, shown on `:focus-visible` only. Containers that hold a native input use `focus-ring-within`. Small controls whose inset ring would hide the glyph (Switch, Checkbox) use `focus-ring-offset` (2 px outside). Filled primary and destructive buttons set `--focus-ring-color` to their foreground so the ring stays visible. No `ring-offset`, no `ring-[3px]`, no `focus:` without `-visible`.
