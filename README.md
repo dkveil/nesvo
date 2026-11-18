@@ -113,6 +113,16 @@ The catalog covers known project/user/managed sources and the isolated native Co
 
 Reloading the window leaves the host running. Quitting the app closes its local owned work and disconnects remote computers; a host restart reconciles incomplete records. Local view preferences contain only navigation identifiers and a diff path, not authoritative status or permission. Unsent composer and review-feedback drafts remain transient in this stage. Only one app/host may own a data directory.
 
+## Agent review walkthrough
+
+1. Open Settings › Code review on the computer that has the repository checkout. Add a reviewer profile with the provider, model, finding types, minimum severity, maximum findings, tone, language and summary choice. Add global, language or project conventions if you want them in every matching review.
+2. Open Pull requests from a session in the repository and choose a pull request. Use **Review with agent** in its header, pick a profile and confirm the checkout folder. To review several at once, use **Select pull requests to review** in the list, select them and start the reviews together.
+3. Each review appears as a read-only session in the sidebar. When it finishes, the **Agent review** tab shows the summary and the findings with file, lines, severity and type. Keep, discard or edit each finding. **Save as rule** turns a discarded or edited finding into a convention.
+4. Choose Comment, Request changes or Approve, add an optional comment and publish the kept findings as one GitHub review. If the pull request moved since the review, Nesvo asks before publishing against the reviewed commit.
+5. An automation can review new pull requests on a schedule. Choose **Review new pull requests** as its task, a profile and the checkout folder. Drafts reach the Inbox; nothing is published until you do it.
+
+The review uses the installed provider CLI and the GitHub CLI with their existing sign-ins. Nesvo stores no GitHub token.
+
 ## Working agreement
 
 Small conventional commits go directly to master during the prototype. Each stage ends with Damian's acceptance. See [roadmap](docs/roadmap.md), [contributing](CONTRIBUTING.md), [testing](docs/testing.md) and [platform evidence](docs/platforms.md).

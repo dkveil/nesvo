@@ -6,6 +6,7 @@
 - Plan-first workers, a review inbox with revision-bound decisions, saved diffs, and history restored on restart.
 - Local and SSH-connected hosts, session groups, history search, usage and cost reports, and budgets.
 - A workflow editor, scheduled automations, change-triggered automations, and pull request review from the desktop.
+- Agent-assisted pull request reviews with reviewer profiles, layered conventions, editable draft findings and one-step publishing, started per pull request, in bulk or by an automation.
 - Claude Code operation approvals answered once from the inbox or the conversation.
 - Session worktrees with `.worktreeinclude`, approved setup scripts, cleanup of orphaned checkouts, and forks into a new worktree.
 - Fork, restart, compact, delete with undo, export as Markdown, and open in the system terminal.
