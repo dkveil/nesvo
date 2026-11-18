@@ -316,6 +316,7 @@ export class SessionService {
   private readonly unsaved = new Map<string, Session>();
   private readonly limits = new Map<string, { resetsAt: string | null }>();
   private readonly structuredOutputs = new Map<string, unknown>();
+  private readonly pendingCreates = new Map<string, Promise<Session>>();
   private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private closing = false;
@@ -841,7 +842,22 @@ export class SessionService {
       );
   }
 
-  async createWithEffort(
+  createWithEffort(
+    input: CreateSessionInput,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const { requestId } = input;
+    if (!requestId) return this.createConfirmed(input, signal);
+    const pending = this.pendingCreates.get(requestId);
+    if (pending) return pending;
+    const created = this.createConfirmed(input, signal).finally(() =>
+      this.pendingCreates.delete(requestId),
+    );
+    this.pendingCreates.set(requestId, created);
+    return created;
+  }
+
+  private async createConfirmed(
     input: CreateSessionInput,
     signal: AbortSignal,
   ): Promise<Session> {
