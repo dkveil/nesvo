@@ -39,6 +39,7 @@ export type WorkspaceCommandActions = {
   newSession: () => void;
   inbox: () => void;
   workflows: () => void;
+  flows: () => void;
   automations: Action;
   pullRequests: Action;
   costs: Action;
@@ -110,6 +111,13 @@ export function workspaceCommands(
       icon: <Workflow />,
       keywords: 'steps graph',
       run: actions.workflows,
+    },
+    {
+      id: 'flows',
+      label: 'Open Flows',
+      icon: <Workflow />,
+      keywords: 'live workflows step sessions graph',
+      run: actions.flows,
     },
     {
       id: 'automations',

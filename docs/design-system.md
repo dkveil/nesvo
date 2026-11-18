@@ -235,6 +235,10 @@ The composer MCP chip opens an inventory Popover with ListRow for server names, 
 
 **ProjectChip** — `shared/ui/project-chip.tsx`. Hash-coloured project swatch for the header breadcrumb and automation chips; it carries no domain type, so it stays in shared. Session rows do not use it: the leading slot holds the status dot and the directory label identifies the project.
 
+### Live workflow graphs
+
+Flows uses the workflow editor's step cards and connections in read-only mode. Use info-panel surfaces for workflow summaries and the compact session rows under each step. Keep titles, counts and elapsed time at the 13 px UI scale. Use a shared StatusDot spinner for running, warning for an operator decision, error for failure and success for a completed child. A child row exposes its current step in a shared tooltip. Keep the session and pull request as separate focus targets.
+
 ## Migrating existing code
 
 Later iterations move feature widgets onto the library area by area. Use these replacements:

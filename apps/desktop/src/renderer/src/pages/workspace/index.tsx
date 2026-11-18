@@ -300,6 +300,8 @@ const WorkflowDefinitions = lazy(
   () => import('@/widgets/workflow-definitions'),
 );
 
+const WorkflowFlows = lazy(() => import('@/widgets/workflow-flows'));
+
 const WorkflowAssistantDock = lazy(
   () => import('@/widgets/workflow-assistant'),
 );
@@ -391,7 +393,10 @@ export function Workspace() {
     useState<PullRequestTarget | null>(null);
   const [pullRequestLayout, setPullRequestLayout] =
     useState<PullRequestPanelLayout>('surface');
-  const [workflowsView, setWorkflowsView] = useState(false);
+  const [workflowPage, setWorkflowPage] = useState<
+    'workflows' | 'flows' | null
+  >(null);
+  const workflowsView = workflowPage !== null;
   const [workflowsSource, setWorkflowsSource] = useState({
     hostId: 'local',
     directory: '',
@@ -523,7 +528,7 @@ export function Workspace() {
           setInbox(false);
           setCostsView(false);
           setAutomation('');
-          setWorkflowsView(true);
+          setWorkflowPage('workflows');
           setPullRequestsView(false);
           setNavigationOpen(false);
           setWorkflowsSource({ hostId, directory: change.directory });
@@ -575,7 +580,7 @@ export function Workspace() {
           setInbox(false);
           setCostsView(false);
           setAutomation('');
-          setWorkflowsView(true);
+          setWorkflowPage('workflows');
           setPullRequestsView(false);
           setNavigationOpen(false);
           setWorkflowsSource({ hostId, directory });
@@ -1405,7 +1410,7 @@ export function Workspace() {
     setMessageTarget(null);
     setInbox(false);
     setCostsView(false);
-    setWorkflowsView(false);
+    setWorkflowPage(null);
     setPullRequestsView(false);
     setAutomation('');
     setNavigationOpen(false);
@@ -1419,13 +1424,14 @@ export function Workspace() {
     setCreating(false);
     setInbox(true);
     setCostsView(false);
-    setWorkflowsView(false);
+    setWorkflowPage(null);
     setPullRequestsView(false);
     setAutomation('');
     setNavigationOpen(false);
   };
-  const openWorkflows = () => guardEditor(openWorkflowsNow);
-  const openWorkflowsNow = () => {
+  const openWorkflows = () => guardEditor(() => openWorkflowsNow());
+  const openFlows = () => guardEditor(() => openWorkflowsNow('flows'));
+  const openWorkflowsNow = (page: 'workflows' | 'flows' = 'workflows') => {
     navigationVersion.current += 1;
     setWorkflowsSource(
       creating || !selected
@@ -1439,7 +1445,7 @@ export function Workspace() {
     setCostsView(false);
     setWorkflowsEditor(null);
     setAutomation('');
-    setWorkflowsView(true);
+    setWorkflowPage(page);
     setPullRequestsView(false);
     setNavigationOpen(false);
   };
@@ -1452,7 +1458,7 @@ export function Workspace() {
     setInbox(false);
     setCostsView(false);
     setWorkflowsEditor(null);
-    setWorkflowsView(false);
+    setWorkflowPage(null);
     setAutomation('');
     setPullRequestsView(true);
     setPullRequestHandoff(handoff);
@@ -1487,7 +1493,7 @@ export function Workspace() {
     setInbox(false);
     setCostsView(false);
     setWorkflowsEditor(null);
-    setWorkflowsView(false);
+    setWorkflowPage(null);
     setPullRequestsView(false);
     setAutomation(target);
     setNavigationOpen(false);
@@ -1543,7 +1549,7 @@ export function Workspace() {
     setDiffTarget(null);
     setInbox(false);
     setCostsView(false);
-    setWorkflowsView(false);
+    setWorkflowPage(null);
     setPullRequestsView(false);
     setAutomation('');
     setCreating(true);
@@ -1556,7 +1562,7 @@ export function Workspace() {
       setCreating(false);
       setInbox(false);
       setWorkflowsEditor(null);
-      setWorkflowsView(false);
+      setWorkflowPage(null);
       setPullRequestsView(false);
       setAutomation('');
       setNavigationOpen(false);
@@ -3182,6 +3188,7 @@ ${text}`
       newSession: openCreate,
       inbox: openInbox,
       workflows: openWorkflows,
+      flows: openFlows,
       automations:
         automationComputers.length > 0 ? () => openAutomations() : undefined,
       pullRequests: pullRequestsAvailable ? openPullRequests : undefined,
@@ -3611,6 +3618,23 @@ ${text}`
                   </li>
                 </>
               )}
+              {workflowPage === 'flows' && (
+                <>
+                  <li>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="font-normal text-muted-foreground"
+                      onClick={() => setWorkflowPage('workflows')}
+                    >
+                      Workflows
+                    </Button>
+                  </li>
+                  <li aria-hidden="true" className="text-muted-foreground/60">
+                    /
+                  </li>
+                </>
+              )}
               <li
                 aria-current="page"
                 className="flex min-w-0 items-center gap-3"
@@ -3625,7 +3649,9 @@ ${text}`
                       : workflowsView
                         ? workflowsEditor
                           ? `Graph editor · ${workflowsEditor.workflowName ?? 'New workflow'}`
-                          : 'Workflows'
+                          : workflowPage === 'flows'
+                            ? 'Flows'
+                            : 'Workflows'
                         : pullRequestsView
                           ? 'Pull requests'
                           : inbox
@@ -4091,6 +4117,22 @@ ${text}`
                 )}
               />
             </Suspense>
+          ) : workflowPage === 'flows' ? (
+            <Suspense
+              fallback={
+                <StatusMessage tone="loading" className="p-6">
+                  Loading flows…
+                </StatusMessage>
+              }
+            >
+              <WorkflowFlows
+                computers={store.computers}
+                sessions={store.sessions}
+                runs={store.workflowRuns}
+                steps={store.workflowSteps}
+                onSession={session => select(entityKey(session))}
+              />
+            </Suspense>
           ) : workflowsView ? (
             <Suspense
               fallback={
@@ -4108,6 +4150,7 @@ ${text}`
                   refreshToken={definitionsRefresh}
                   highlighted={listAssistantAdded}
                   onSourceChange={setWorkflowsSource}
+                  onFlows={() => setWorkflowPage('flows')}
                   onEdit={target => {
                     setWorkflowsSource({
                       hostId: target.hostId,

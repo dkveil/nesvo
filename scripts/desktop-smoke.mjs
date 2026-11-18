@@ -3279,6 +3279,70 @@ try {
     workflowDetail.steps.map(step => [step.name, step.state]),
     [['smoke-check', 'passed']],
   );
+  await writeFile(
+    join(workflowRoot, 'steps', 'smoke-review.md'),
+    '---\nname: smoke-review\ntype: human\nphase: pre-done\n---\nReview the result.\n',
+  );
+  await writeFile(
+    join(workflowRoot, 'workflows', 'flows-smoke.md'),
+    '---\nname: flows-smoke\nsteps: [smoke-check, smoke-review]\n---\n',
+  );
+  await writeFile(
+    join(workflowProject, '.agents', 'tasks', 'flows-smoke.md'),
+    '---\nworkflow: flows-smoke\ntitle: Stage F1\n---\nPrepare the stage for review.\n',
+  );
+  await restartedPage
+    .getByRole('button', { name: 'Workflows', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('region', { name: 'Workflows', exact: true })
+    .getByRole('button', { name: 'Flows', exact: true })
+    .click();
+  const flows = restartedPage.getByRole('region', {
+    name: 'Flows',
+    exact: true,
+  });
+  await flows.getByText('No live workflows', { exact: true }).waitFor();
+  const liveFlow = await workflowCall('startTask', 'local', {
+    specPath: join('.agents', 'tasks', 'flows-smoke.md'),
+    workflowName: 'flows-smoke',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'read-only',
+    directory: workflowProject,
+    isolation: 'none',
+    gateProvider: 'Claude Code',
+    gateModel: 'sonnet',
+  });
+  const flowSession = flows
+    .locator('[data-flow-step="smoke-review"]')
+    .getByRole('button', { name: /Open Stage F1, Waiting for you/ });
+  await flowSession.waitFor({ timeout: 30_000 });
+  if (process.env.NESVO_FLOWS_SCREENSHOT) {
+    await restartedPage.evaluate(
+      () =>
+        new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+      const image =
+        await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+          undefined,
+          { stayHidden: true, stayAwake: true },
+        );
+      return image.toPNG().toString('base64');
+    });
+    await writeFile(
+      process.env.NESVO_FLOWS_SCREENSHOT,
+      Buffer.from(encoded, 'base64'),
+    );
+  }
+  await flowSession.click();
+  await restartedPage
+    .getByRole('heading', { name: 'Stage F1', exact: true })
+    .waitFor();
+  await workflowCall('stopRun', 'local', liveFlow.id);
   await restartedPage.evaluate(() => {
     window.smokeAssistantProposals = [];
     window.smokeAssistantChanges = [];

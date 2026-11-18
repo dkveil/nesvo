@@ -256,6 +256,14 @@ The run passes when the last phase passes. A `human` gate binds to the latest sa
 - **Stop and restart.** Stop ends every running step. When the computer restarts, a running `command` becomes interrupted and a running `action` becomes uncertain, because its effect may have happened: you choose **It already ran** or **Run it again**. Resume gives interrupted and failed steps a new attempt and lets Not reached steps be re-evaluated. A run never repeats work by itself.
 - **One task per project** runs at a time. Tasks in different projects or worktrees run together; a workflow turn waits only while another session or a folder operation holds the folder of its session.
 
+## Live flows
+
+Open **Flows** from Workflows or choose **Open Flows** in the command palette. Each graph uses the steps and connections pinned by the live runs on that computer and project. Only workflows with live sessions appear. Sessions disappear when they are archived or deleted. Runs that are between steps appear above their graph, and runs that require attention or can be resumed stay visible.
+
+A row opens its session. It shows the session title, elapsed time and the linked pull request when present. Use the title template on a list-driven step to include a stage ID, such as `Stage {{ item.id }}`. An active run can occupy several parallel steps. Workflow counts count each session once, and agent counts reflect provider turns in progress. Children of a `session` or `fan-out` step appear under the step that started them, including settled children while that step is still current. Hover over or focus a child row to see its workflow and current step. Live child workflows also have their own graphs.
+
+The view follows session and workflow events. A disconnected computer shows its last known state with an Offline label.
+
 ## The graph editor
 
 Open the Workflows view from the sidebar. **Edit** on a row opens that workflow on a canvas, and **New workflow** starts an empty one. The editor is a node-graph builder: steps are cards on an infinite dot-grid canvas, connections flow from left to right, and the file stays the source of truth.

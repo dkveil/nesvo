@@ -60,6 +60,7 @@ type Props = {
   directory: string;
   api: Pick<WorkflowsApi, 'listDefinitions'>;
   onEdit?: (target: EditorTarget) => void;
+  onFlows: () => void;
   onCreate?: (source: { hostId: string; directory: string }) => void;
   onShare?: (target: {
     hostId: string;
@@ -245,6 +246,7 @@ export default function WorkflowDefinitions({
   directory: initialDirectory,
   api,
   onEdit,
+  onFlows,
   onCreate,
   onShare,
   refreshToken = 0,
@@ -337,23 +339,29 @@ export default function WorkflowDefinitions({
                 ? 'No workflows'
                 : `${catalog.workflows.length} ${catalog.workflows.length === 1 ? 'workflow' : 'workflows'} · ${catalog.steps.length} ${catalog.steps.length === 1 ? 'step' : 'steps'}${catalog.issues.length ? ` · ${catalog.issues.length} ${catalog.issues.length === 1 ? 'issue' : 'issues'}` : ''}`}
           </span>
-          {onCreate && (
-            <DisabledHint
-              reason={
-                connected ? '' : 'Connect the computer to create a workflow.'
-              }
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!connected}
-                onClick={() => onCreate({ hostId, directory })}
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" onClick={onFlows}>
+              <Workflow />
+              Flows
+            </Button>
+            {onCreate && (
+              <DisabledHint
+                reason={
+                  connected ? '' : 'Connect the computer to create a workflow.'
+                }
               >
-                <Plus />
-                New workflow
-              </Button>
-            </DisabledHint>
-          )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={!connected}
+                  onClick={() => onCreate({ hostId, directory })}
+                >
+                  <Plus />
+                  New workflow
+                </Button>
+              </DisabledHint>
+            )}
+          </div>
         </div>
         <form
           className="flex flex-wrap items-end gap-2"
