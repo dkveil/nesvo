@@ -400,6 +400,15 @@ export async function isGitHubRepositoryRoot(
   signal: AbortSignal,
 ): Promise<boolean> {
   if (!(await isRepositoryRoot(directory, signal))) return false;
+  return (await readGitHubFetchRemotes(directory, signal)).some(
+    name => name.toLowerCase() === repository.toLowerCase(),
+  );
+}
+
+export async function readGitHubFetchRemotes(
+  directory: string,
+  signal: AbortSignal,
+): Promise<string[]> {
   const remotes = await runGit({
     args: ['remote', '-v'],
     cwd: directory,
@@ -407,13 +416,13 @@ export async function isGitHubRepositoryRoot(
     signal,
     untranslated: true,
   });
-  if (remotes.code !== 0 || remotes.outputTruncated) return false;
+  if (remotes.code !== 0 || remotes.outputTruncated) return [];
   const fetchRemote =
     /^\S+\t(?:(?:https?|ssh|git):\/\/(?:[^/\s@]+@)?github\.com(?::\d+)?\/|(?:[^/\s@]+@)?github\.com:)([a-z0-9-]+\/[a-z0-9._-]+) \(fetch\)$/i;
-  return remotes.stdout.split(/\r?\n/).some(line => {
-    const name = fetchRemote.exec(line)?.[1]?.replace(/\.git$/i, '');
-    return name?.toLowerCase() === repository.toLowerCase();
-  });
+  return remotes.stdout
+    .split(/\r?\n/)
+    .map(line => fetchRemote.exec(line)?.[1]?.replace(/\.git$/i, ''))
+    .filter((name): name is string => !!name);
 }
 
 export async function readHeadCommit(

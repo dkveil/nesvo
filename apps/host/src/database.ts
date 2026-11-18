@@ -7,6 +7,7 @@ import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
 import { installTranscriptIndex } from './sessions/transcript-index';
 import { installCodeReviewTables } from './code-review/store';
+import { installTrackedRepositoryTables } from './tracked-repositories';
 
 const DATABASE_VERSION = 20;
 const BACKUP_LIMIT = 3;
@@ -384,6 +385,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         'CREATE INDEX IF NOT EXISTS session_tombstones_root ON session_tombstones (root_id); CREATE INDEX IF NOT EXISTS session_tombstones_pending ON session_tombstones (purge_after) WHERE purged_at IS NULL',
       );
       installCodeReviewTables(database);
+      installTrackedRepositoryTables(database);
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);

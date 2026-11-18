@@ -87,6 +87,13 @@ import {
   historySearchPageSchema,
   gitBranchSchema,
   listPullRequestsSchema,
+  addTrackedRepositorySchema,
+  removeTrackedRepositorySchema,
+  reorderTrackedRepositoriesSchema,
+  listTrackedPullRequestsSchema,
+  trackedRepositoryListSchema,
+  trackedRepositorySuggestionListSchema,
+  trackedPullRequestListsSchema,
   readPullRequestSchema,
   actOnPullRequestSchema,
   linkSessionPullRequestSchema,
@@ -1026,6 +1033,52 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:list-pull-requests',
         listPullRequestsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listTrackedRepositories: async hostId =>
+    trackedRepositoryListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-tracked-repositories',
+        route(hostId),
+      ),
+    ),
+  addTrackedRepository: async (input, hostId) =>
+    trackedRepositoryListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:add-tracked-repository',
+        addTrackedRepositorySchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  removeTrackedRepository: async (input, hostId) =>
+    trackedRepositoryListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:remove-tracked-repository',
+        removeTrackedRepositorySchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  reorderTrackedRepositories: async (input, hostId) =>
+    trackedRepositoryListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:reorder-tracked-repositories',
+        reorderTrackedRepositoriesSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  suggestTrackedRepositories: async hostId =>
+    trackedRepositorySuggestionListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:suggest-tracked-repositories',
+        route(hostId),
+      ),
+    ),
+  listTrackedPullRequests: async (input, hostId) =>
+    trackedPullRequestListsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-tracked-pull-requests',
+        listTrackedPullRequestsSchema.parse(input),
         route(hostId),
       ),
     ),

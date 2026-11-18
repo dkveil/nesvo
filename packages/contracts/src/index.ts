@@ -351,6 +351,22 @@ import {
   type StartPullRequestReviewInput,
   type UpdateReviewFindingInput,
 } from './code-review';
+import {
+  addTrackedRepositorySchema,
+  listTrackedPullRequestsSchema,
+  removeTrackedRepositorySchema,
+  reorderTrackedRepositoriesSchema,
+  trackedPullRequestListsSchema,
+  trackedRepositoryListSchema,
+  trackedRepositorySuggestionListSchema,
+  type AddTrackedRepositoryInput,
+  type ListTrackedPullRequestsInput,
+  type RemoveTrackedRepositoryInput,
+  type ReorderTrackedRepositoriesInput,
+  type TrackedPullRequestList,
+  type TrackedRepository,
+  type TrackedRepositorySuggestion,
+} from './tracked-repositories';
 
 export * from './sessions';
 export * from './session-history';
@@ -359,6 +375,7 @@ export * from './session-groups';
 export * from './session-deletion';
 export * from './pull-requests';
 export * from './code-review';
+export * from './tracked-repositories';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -749,6 +766,34 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('find-session-pull-request'),
     input: findSessionPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-tracked-repositories'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('add-tracked-repository'),
+    input: addTrackedRepositorySchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('remove-tracked-repository'),
+    input: removeTrackedRepositorySchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('reorder-tracked-repositories'),
+    input: reorderTrackedRepositoriesSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('suggest-tracked-repositories'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-tracked-pull-requests'),
+    input: listTrackedPullRequestsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1207,6 +1252,21 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('pull-request-reference'),
     id: z.uuid(),
     reference: pullRequestReferenceSchema.nullable(),
+  }),
+  z.strictObject({
+    type: z.literal('tracked-repositories'),
+    id: z.uuid(),
+    repositories: trackedRepositoryListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tracked-repository-suggestions'),
+    id: z.uuid(),
+    suggestions: trackedRepositorySuggestionListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tracked-pull-request-lists'),
+    id: z.uuid(),
+    lists: trackedPullRequestListsSchema,
   }),
   z.strictObject({
     type: z.literal('code-review-settings'),
@@ -1707,6 +1767,26 @@ export type DesktopApi = {
     input: FindSessionPullRequestInput,
     hostId?: HostId,
   ) => Promise<PullRequestReference | null>;
+  listTrackedRepositories: (hostId?: HostId) => Promise<TrackedRepository[]>;
+  addTrackedRepository: (
+    input: AddTrackedRepositoryInput,
+    hostId?: HostId,
+  ) => Promise<TrackedRepository[]>;
+  removeTrackedRepository: (
+    input: RemoveTrackedRepositoryInput,
+    hostId?: HostId,
+  ) => Promise<TrackedRepository[]>;
+  reorderTrackedRepositories: (
+    input: ReorderTrackedRepositoriesInput,
+    hostId?: HostId,
+  ) => Promise<TrackedRepository[]>;
+  suggestTrackedRepositories: (
+    hostId?: HostId,
+  ) => Promise<TrackedRepositorySuggestion[]>;
+  listTrackedPullRequests: (
+    input: ListTrackedPullRequestsInput,
+    hostId?: HostId,
+  ) => Promise<TrackedPullRequestList[]>;
   readCodeReviewSettings: (hostId?: HostId) => Promise<CodeReviewSettings>;
   saveReviewerProfile: (
     input: SaveReviewerProfileInput,

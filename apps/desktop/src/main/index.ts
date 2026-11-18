@@ -93,6 +93,10 @@ import {
   providerProfileSelectionSchema,
   listConversationsSchema,
   listPullRequestsSchema,
+  addTrackedRepositorySchema,
+  removeTrackedRepositorySchema,
+  reorderTrackedRepositoriesSchema,
+  listTrackedPullRequestsSchema,
   readPullRequestSchema,
   saveReviewerProfileSchema,
   deleteReviewerProfileSchema,
@@ -809,6 +813,32 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  for (const method of [
+    'list-tracked-repositories',
+    'suggest-tracked-repositories',
+  ] as const)
+    handle(`nesvo:${method}`, (event, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(method, undefined, route(hostId));
+    });
+  const trackedRepositoryCommands = {
+    'add-tracked-repository': addTrackedRepositorySchema,
+    'remove-tracked-repository': removeTrackedRepositorySchema,
+    'reorder-tracked-repositories': reorderTrackedRepositoriesSchema,
+    'list-tracked-pull-requests': listTrackedPullRequestsSchema,
+  } as const;
+  for (const method of Object.keys(
+    trackedRepositoryCommands,
+  ) as (keyof typeof trackedRepositoryCommands)[]) {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        method,
+        trackedRepositoryCommands[method].parse(input),
+        route(hostId),
+      );
+    });
+  }
   handle(
     'nesvo:read-pull-request',
     async (event, input: unknown, hostId: unknown) => {

@@ -145,6 +145,15 @@ const pullRequestResponses = {
   'find-session-pull-request': 'pull-request-reference',
 } as const;
 
+const trackedRepositoryResponses = {
+  'list-tracked-repositories': 'tracked-repositories',
+  'add-tracked-repository': 'tracked-repositories',
+  'remove-tracked-repository': 'tracked-repositories',
+  'reorder-tracked-repositories': 'tracked-repositories',
+  'suggest-tracked-repositories': 'tracked-repository-suggestions',
+  'list-tracked-pull-requests': 'tracked-pull-request-lists',
+} as const;
+
 const codeReviewResponses = {
   'read-code-review-settings': 'code-review-settings',
   'save-reviewer-profile': 'code-review-settings',
@@ -244,6 +253,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use provider accounts.',
   'pull-request-reviews':
     'Update this computer’s Nesvo host and reconnect to review pull requests with an agent.',
+  'tracked-repositories':
+    'Update this computer’s Nesvo host and reconnect to track repositories.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -270,6 +281,8 @@ function requiredCapability(
   )
     return 'provider-profiles';
   if (Object.hasOwn(costResponses, method)) return 'costs';
+  if (Object.hasOwn(trackedRepositoryResponses, method))
+    return 'tracked-repositories';
   if (Object.hasOwn(codeReviewResponses, method)) return 'pull-request-reviews';
   if (
     method === 'act-on-pull-request' &&
@@ -1092,6 +1105,7 @@ export class ComputerManager {
       ...sessionGroupResponses,
       ...sessionDeletionResponses,
       ...pullRequestResponses,
+      ...trackedRepositoryResponses,
       ...codeReviewResponses,
       ...costResponses,
     }[method];
@@ -1145,6 +1159,12 @@ export class ComputerManager {
         return response.result;
       case 'pull-request-reference':
         return response.reference;
+      case 'tracked-repositories':
+        return response.repositories;
+      case 'tracked-repository-suggestions':
+        return response.suggestions;
+      case 'tracked-pull-request-lists':
+        return response.lists;
       case 'code-review-settings':
         return response.settings;
       case 'pull-request-review':

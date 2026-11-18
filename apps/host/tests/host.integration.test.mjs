@@ -15,7 +15,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -1145,6 +1145,7 @@ test(
         'session-changes',
         'code-comments',
         'repository-mcp-trust',
+        'tracked-repositories',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6156,6 +6157,7 @@ test(
       'session-changes',
       'code-comments',
       'repository-mcp-trust',
+      'tracked-repositories',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7048,7 +7050,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            19,
+            20,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7131,11 +7133,11 @@ test(
       }
     });
 
-    await t.test('a version 20 database is refused', async () => {
+    await t.test('a version 21 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 20');
+      newer.exec('PRAGMA user_version = 21');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7147,7 +7149,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          20,
+          21,
         );
       } finally {
         check.close();
@@ -9828,7 +9830,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        19,
+        20,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -9879,7 +9881,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        19,
+        20,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -18560,6 +18562,228 @@ test(
   },
 );
 
+function trackedRepositoryCliFixture() {
+  const { appendFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const args = process.argv.slice(2);
+  appendFileSync(
+    join(process.env.GH_CONFIG_DIR, 'gh-calls.jsonl'),
+    JSON.stringify({ args, cwd: process.cwd() }) + '\n',
+  );
+  const known = {
+    'octo/project': 'octo/project',
+    'octo/broken': 'octo/broken',
+  };
+  const json = data => console.log(JSON.stringify(data));
+  const fail = message => {
+    console.error(message);
+    process.exitCode = 1;
+  };
+  if (args[0] === 'repo' && args[1] === 'view') {
+    const canonical = known[String(args[2]).toLowerCase()];
+    if (canonical) json({ nameWithOwner: canonical });
+    else
+      fail(
+        'GraphQL: Could not resolve to a Repository with the name ' + args[2],
+      );
+  } else if (args[0] === 'pr' && args[1] === 'list') {
+    const repository = args[args.indexOf('--repo') + 1];
+    if (repository === 'octo/broken') fail('HTTP 502: Server Error');
+    else
+      json([
+        {
+          number: 7,
+          title: 'Tracked change',
+          url: 'https://github.com/octo/project/pull/7',
+          state: 'OPEN',
+          isDraft: false,
+          author: { login: 'octocat' },
+          headRefName: 'topic',
+          baseRefName: 'main',
+          additions: 1,
+          deletions: 0,
+          statusCheckRollup: [],
+          reviewDecision: '',
+          updatedAt: '2026-11-04T00:00:00Z',
+        },
+      ]);
+  } else fail('Unexpected gh call: ' + args.join(' '));
+}
+
+test(
+  'Tracked repositories are validated, ordered, suggested and listed with partial failures',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-tracked-'));
+    const checkout = join(directory, 'checkout');
+    const unrelated = join(directory, 'unrelated');
+    const fixture = join(directory, 'gh-fixture.cjs');
+    await mkdir(checkout);
+    await mkdir(unrelated);
+    await writeFile(
+      fixture,
+      `(${trackedRepositoryCliFixture.toString()})();\n`,
+    );
+    const git = promisify(execFile);
+    for (const [folder, remote] of [
+      [checkout, 'https://github.com/octo/project.git'],
+      [unrelated, 'git@github.com:someone/elsewhere.git'],
+    ]) {
+      await git('git', ['init', '--quiet'], { cwd: folder });
+      await git('git', ['remote', 'add', 'origin', remote], { cwd: folder });
+    }
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const open = () => {
+      const host = launch(directory, join(directory, 'pids.json'), {
+        NESVO_GH_EXECUTABLE: fixture,
+        GH_CONFIG_DIR: directory,
+      });
+      hosts.push(host);
+      return host;
+    };
+    let host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'tracked-repositories',
+      ),
+    );
+    assert.deepEqual(
+      (await host.request('list-tracked-repositories')).repositories,
+      [],
+    );
+    await host.request('create-session', {
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'read-only',
+      title: 'Elsewhere',
+      directory: unrelated,
+    });
+
+    const missing = await host.request('add-tracked-repository', {
+      repository: 'nobody/missing',
+    });
+    assert.equal(missing.code, 'not-found');
+    const wrongFolder = await host.request('add-tracked-repository', {
+      repository: 'octo/project',
+      directory: unrelated,
+    });
+    assert.equal(wrongFolder.code, 'invalid-request');
+    assert.match(wrongFolder.message, /not a checkout of octo\/project/);
+
+    const project = (
+      await host.request('add-tracked-repository', {
+        repository: 'https://github.com/OCTO/Project/pull/7',
+        directory: checkout,
+      })
+    ).repositories;
+    assert.equal(project.length, 1);
+    assert.equal(project[0].repository, 'octo/project');
+    assert.equal(
+      project[0].directory.toLowerCase(),
+      realpathSync(checkout).toLowerCase(),
+    );
+    const again = (
+      await host.request('add-tracked-repository', {
+        repository: 'octo/project',
+      })
+    ).repositories;
+    assert.deepEqual(again, project);
+    const both = (
+      await host.request('add-tracked-repository', {
+        repository: 'git@github.com:octo/broken.git',
+      })
+    ).repositories;
+    assert.deepEqual(
+      both.map(item => item.repository),
+      ['octo/project', 'octo/broken'],
+    );
+
+    const suggestions = (await host.request('suggest-tracked-repositories'))
+      .suggestions;
+    assert.deepEqual(
+      suggestions.map(item => [item.repository, item.source]),
+      [['someone/elsewhere', 'session-folder']],
+    );
+
+    const lists = (
+      await host.request('list-tracked-pull-requests', { scope: 'authored' })
+    ).lists;
+    assert.deepEqual(
+      lists.map(list => [list.repository, list.status]),
+      [
+        ['octo/project', 'ready'],
+        ['octo/broken', 'error'],
+      ],
+    );
+    assert.equal(lists[0].items[0].number, 7);
+    assert.equal(lists[0].items[0].repository, 'octo/project');
+    assert.equal(lists[1].code, 'unavailable');
+    assert.match(lists[1].message, /502/);
+    const listCalls = (
+      await readFile(join(directory, 'gh-calls.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line).args)
+      .filter(args => args[0] === 'pr');
+    assert.equal(listCalls.length, 2);
+    assert.ok(
+      listCalls.every(
+        args =>
+          args.includes('--author') &&
+          args[args.indexOf('--limit') + 1] === '30',
+      ),
+    );
+
+    const stale = await host.request('reorder-tracked-repositories', {
+      ids: [both[1].id],
+    });
+    assert.equal(stale.code, 'invalid-request');
+    const reordered = (
+      await host.request('reorder-tracked-repositories', {
+        ids: [both[1].id, both[0].id],
+      })
+    ).repositories;
+    assert.deepEqual(
+      reordered.map(item => item.repository),
+      ['octo/broken', 'octo/project'],
+    );
+
+    await host.stop();
+    host = open();
+    assert.deepEqual(
+      (await host.request('list-tracked-repositories')).repositories,
+      reordered,
+    );
+    const removed = (
+      await host.request('remove-tracked-repository', { id: both[1].id })
+    ).repositories;
+    assert.deepEqual(
+      removed.map(item => item.repository),
+      ['octo/project'],
+    );
+    assert.deepEqual(
+      (await host.request('remove-tracked-repository', { id: both[1].id }))
+        .repositories,
+      removed,
+    );
+    assert.deepEqual(
+      (await host.request('list-tracked-pull-requests', {})).lists.map(
+        list => list.status,
+      ),
+      ['ready'],
+    );
+  },
+);
+
 test('History search backfills and tracks the host session documents', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-history-search-'));
   const path = join(directory, 'nesvo.sqlite');
@@ -18727,7 +18951,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      19,
+      20,
     );
     database
       .prepare(

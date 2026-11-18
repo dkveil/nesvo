@@ -36,6 +36,7 @@ import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
 import { PullRequestAutoLink } from './pull-request-auto-link';
 import { PullRequests } from './pull-requests';
+import { TrackedRepositories } from './tracked-repositories';
 import { PullRequestError } from './process/github-cli';
 import { CodeReviewStore } from './code-review/store';
 import { CodeReviewError, CodeReviews } from './code-review/service';
@@ -94,6 +95,9 @@ import { SessionLauncher } from './scheduled-jobs/launcher';
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
   'link-session-pull-request',
+  'add-tracked-repository',
+  'remove-tracked-repository',
+  'reorder-tracked-repositories',
   'start-pull-request-review',
   'publish-pull-request-review',
   'create-session',
@@ -334,6 +338,12 @@ export const serveHost = ({
             .withPullRequestCheckout(id, run)
             .finally(() => wakeIdleRuns()),
       );
+      const trackedRepositories = new TrackedRepositories({
+        database,
+        pullRequests,
+        sessions: () => store.listSummaries(),
+        signal: probes.controller.signal,
+      });
       const codeReviews = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
@@ -1503,6 +1513,79 @@ export const serveHost = ({
                 message: known
                   ? error.message
                   : 'The code review operation failed.',
+              });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'list-tracked-repositories' ||
+          request.method === 'add-tracked-repository' ||
+          request.method === 'remove-tracked-repository' ||
+          request.method === 'reorder-tracked-repositories' ||
+          request.method === 'suggest-tracked-repositories' ||
+          request.method === 'list-tracked-pull-requests'
+        ) {
+          const { id } = request;
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'list-tracked-repositories':
+                return {
+                  type: 'tracked-repositories',
+                  id,
+                  repositories: trackedRepositories.list(),
+                };
+              case 'add-tracked-repository':
+                return {
+                  type: 'tracked-repositories',
+                  id,
+                  repositories: await trackedRepositories.add(request.input),
+                };
+              case 'remove-tracked-repository':
+                return {
+                  type: 'tracked-repositories',
+                  id,
+                  repositories: trackedRepositories.remove(request.input.id),
+                };
+              case 'reorder-tracked-repositories':
+                return {
+                  type: 'tracked-repositories',
+                  id,
+                  repositories: trackedRepositories.reorder(request.input.ids),
+                };
+              case 'suggest-tracked-repositories':
+                return {
+                  type: 'tracked-repository-suggestions',
+                  id,
+                  suggestions: await trackedRepositories.suggestions(),
+                };
+              case 'list-tracked-pull-requests':
+                return {
+                  type: 'tracked-pull-request-lists',
+                  id,
+                  lists: await trackedRepositories.pullRequestLists(
+                    request.input,
+                  ),
+                };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error => {
+              const known =
+                error instanceof PullRequestError ||
+                error instanceof FolderError;
+              return send({
+                type: 'error',
+                id,
+                code: known ? error.code : 'unavailable',
+                message: known
+                  ? error.message
+                  : 'The tracked repository operation failed.',
               });
             })
             .catch(() => undefined)

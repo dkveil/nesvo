@@ -735,6 +735,7 @@ try {
     'session-changes',
     'code-comments',
     'repository-mcp-trust',
+    'tracked-repositories',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

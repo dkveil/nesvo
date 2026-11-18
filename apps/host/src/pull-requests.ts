@@ -10,6 +10,7 @@ import {
   type PullRequestActionResult,
   type PullRequestFiles,
   type PullRequestList,
+  type PullRequestListScope,
   type PullRequestReference,
   type PullRequestThreads,
   type Session,
@@ -154,19 +155,58 @@ export class PullRequests {
     input: z.output<typeof listPullRequestsSchema>,
   ): Promise<PullRequestList> {
     const signal = AbortSignal.timeout(20_000);
-    const repository = validateRepository(
-      input.repository ??
-        (
-          await this.gh.json(
-            repositorySchema,
-            ['repo', 'view', '--json', 'nameWithOwner'],
-            { cwd: await resolveFolder(input.directory!, this.signal), signal },
-          )
-        ).nameWithOwner,
-    );
-    const search = [
-      input.scope === 'review-requested' ? 'review-requested:@me' : '',
+    const repository = input.repository
+      ? validateRepository(input.repository)
+      : await this.folderRepository(input.directory!, signal);
+    return this.listRepository(
+      repository,
+      input.scope,
       input.query,
+      limits.listItems,
+      signal,
+    );
+  }
+
+  async folderRepository(directory: string, signal: AbortSignal) {
+    return validateRepository(
+      (
+        await this.gh.json(
+          repositorySchema,
+          ['repo', 'view', '--json', 'nameWithOwner'],
+          { cwd: await resolveFolder(directory, this.signal), signal },
+        )
+      ).nameWithOwner,
+    );
+  }
+
+  async canonicalRepository(repository: string) {
+    return validateRepository(
+      (
+        await this.gh.json(
+          repositorySchema,
+          [
+            'repo',
+            'view',
+            validateRepository(repository),
+            '--json',
+            'nameWithOwner',
+          ],
+          { signal: AbortSignal.timeout(20_000) },
+        )
+      ).nameWithOwner,
+    );
+  }
+
+  async listRepository(
+    repository: string,
+    scope: PullRequestListScope,
+    query: string | undefined,
+    limit: number,
+    signal: AbortSignal = AbortSignal.timeout(20_000),
+  ): Promise<PullRequestList> {
+    const search = [
+      scope === 'review-requested' ? 'review-requested:@me' : '',
+      query,
     ]
       .filter(Boolean)
       .join(' ');
@@ -176,24 +216,22 @@ export class PullRequests {
         'pr',
         'list',
         '--repo',
-        repository,
+        validateRepository(repository),
         '--state',
         'open',
         '--limit',
-        String(limits.listItems),
+        String(limit),
         '--json',
         summaryFields,
-        ...(input.scope === 'authored' ? ['--author', '@me'] : []),
+        ...(scope === 'authored' ? ['--author', '@me'] : []),
         ...(search ? ['--search', search] : []),
       ],
       { signal },
     );
     return {
       repository,
-      items: rows
-        .slice(0, limits.listItems)
-        .map(row => summary(row, repository)),
-      truncated: rows.length >= limits.listItems,
+      items: rows.slice(0, limit).map(row => summary(row, repository)),
+      truncated: rows.length >= limit,
     };
   }
 
