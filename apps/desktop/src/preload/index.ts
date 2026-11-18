@@ -31,6 +31,18 @@ import {
   decideWorkerPlanSchema,
   decideSessionParentSchema,
   decideSessionPlanSchema,
+  decideInboxItemSchema,
+  deleteInboxRuleSchema,
+  inboxItemSchema,
+  inboxRuleCatalogSchema,
+  inboxRuleProposalSchema,
+  inboxRuleValidationSchema,
+  inboxSettingsSchema,
+  listInboxRulesSchema,
+  proposeInboxRuleSchema,
+  saveInboxRuleSchema,
+  setInboxRuleEnabledSchema,
+  validateInboxRuleSchema,
   answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideReviewSchema,
@@ -1285,6 +1297,78 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:list-pull-requests',
         listPullRequestsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listInboxRules: async (input, hostId) =>
+    inboxRuleCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-inbox-rules',
+        listInboxRulesSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  validateInboxRule: async (input, hostId) =>
+    inboxRuleValidationSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:validate-inbox-rule',
+        validateInboxRuleSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  saveInboxRule: async (input, hostId) =>
+    inboxRuleCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-inbox-rule',
+        saveInboxRuleSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteInboxRule: async (input, hostId) =>
+    inboxRuleCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-inbox-rule',
+        deleteInboxRuleSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setInboxRuleEnabled: async (input, hostId) =>
+    inboxRuleCatalogSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-inbox-rule-enabled',
+        setInboxRuleEnabledSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  proposeInboxRule: async (input, hostId) =>
+    inboxRuleProposalSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:propose-inbox-rule',
+        proposeInboxRuleSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listInboxItems: async hostId =>
+    inboxItemSchema
+      .array()
+      .parse(await ipcRenderer.invoke('nesvo:list-inbox-items', route(hostId))),
+  decideInboxItem: async (input, hostId) =>
+    inboxItemSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-inbox-item',
+        decideInboxItemSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readInboxSettings: async hostId =>
+    inboxSettingsSchema.parse(
+      await ipcRenderer.invoke('nesvo:read-inbox-settings', route(hostId)),
+    ),
+  saveInboxSettings: async (settings, hostId) =>
+    inboxSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-inbox-settings',
+        inboxSettingsSchema.parse(settings),
         route(hostId),
       ),
     ),

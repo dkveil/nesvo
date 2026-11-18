@@ -304,6 +304,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use automation worktrees, browser workflows or CI triggers.',
   lessons:
     'Update this computer’s Nesvo host and reconnect to learn lessons from its incidents.',
+  'inbox-rules':
+    'Update this computer’s Nesvo host and reconnect to use Inbox rules.',
+  'decision-routing':
+    'Update this computer’s Nesvo host and reconnect to route decisions to parent sessions.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -439,6 +443,19 @@ function requiredCapability(
     return 'session-groups';
   if (method === 'assign-session-workflow') return 'session-workflow';
   if (method === 'resume-session') return 'session-resume';
+  if (method === 'read-inbox-settings' || method === 'save-inbox-settings')
+    return 'decision-routing';
+  if (
+    method === 'list-inbox-rules' ||
+    method === 'validate-inbox-rule' ||
+    method === 'save-inbox-rule' ||
+    method === 'delete-inbox-rule' ||
+    method === 'set-inbox-rule-enabled' ||
+    method === 'propose-inbox-rule' ||
+    method === 'list-inbox-items' ||
+    method === 'decide-inbox-item'
+  )
+    return 'inbox-rules';
   if (
     method === 'read-merged-worktree-cleanup' ||
     method === 'finish-merged-worktree'
@@ -1243,6 +1260,16 @@ export class ComputerManager {
       'purge-transcripts': 'transcript-retention',
       'backup-database': 'database-backup',
       'list-running-apps': 'running-apps',
+      'list-inbox-rules': 'inbox-rules',
+      'validate-inbox-rule': 'inbox-rule-validation',
+      'save-inbox-rule': 'inbox-rules',
+      'delete-inbox-rule': 'inbox-rules',
+      'set-inbox-rule-enabled': 'inbox-rules',
+      'propose-inbox-rule': 'inbox-rule-proposal',
+      'list-inbox-items': 'inbox-items',
+      'decide-inbox-item': 'inbox-item',
+      'read-inbox-settings': 'inbox-settings',
+      'save-inbox-settings': 'inbox-settings',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1310,6 +1337,19 @@ export class ComputerManager {
         return response.repositories;
       case 'running-apps':
         return response.list;
+      case 'inbox-rules':
+        return response.catalog;
+      case 'inbox-rule-validation':
+        return response.validation;
+      case 'inbox-rule-proposal':
+        return response.proposal;
+      case 'inbox-items':
+        return response.items;
+      case 'inbox-item':
+        this.apply(entry, { type: 'inbox-item-changed', item: response.item });
+        return response.item;
+      case 'inbox-settings':
+        return response.settings;
       case 'default-session-folder':
         return response.directory;
       case 'worktree-recipes':
@@ -1611,6 +1651,10 @@ export class ComputerManager {
       return;
     }
     if (event.type === 'session-groups-changed') {
+      if (publish) this.publish({ ...event, hostId });
+      return;
+    }
+    if (event.type === 'inbox-item-changed') {
       if (publish) this.publish({ ...event, hostId });
       return;
     }

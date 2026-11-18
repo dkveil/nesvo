@@ -42,7 +42,9 @@ export const actorText = (actor: StageActor) =>
     ? 'the coordinator'
     : actor.via === 'mobile'
       ? 'you on the phone'
-      : 'you';
+      : actor.via === 'parent'
+        ? 'you in the parent session'
+        : 'you';
 
 export function useStageDecisions({
   api,

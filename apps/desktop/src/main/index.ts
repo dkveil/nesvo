@@ -58,6 +58,14 @@ import {
   decideWorkerPlanSchema,
   decideSessionParentSchema,
   decideSessionPlanSchema,
+  decideInboxItemSchema,
+  deleteInboxRuleSchema,
+  inboxSettingsSchema,
+  listInboxRulesSchema,
+  proposeInboxRuleSchema,
+  saveInboxRuleSchema,
+  setInboxRuleEnabledSchema,
+  validateInboxRuleSchema,
   answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideReviewSchema,
@@ -1012,7 +1020,13 @@ void app.whenReady().then(async () => {
       authorize(event);
       return computers.execute(
         'decide-session-plan',
-        { ...decideSessionPlanSchema.parse(input), via: 'desktop' },
+        {
+          ...decideSessionPlanSchema.parse(input),
+          via:
+            decideSessionPlanSchema.parse(input).via === 'parent'
+              ? 'parent'
+              : 'desktop',
+        },
         route(hostId),
       );
     },
@@ -1023,7 +1037,13 @@ void app.whenReady().then(async () => {
       authorize(event);
       return computers.execute(
         'answer-session-question',
-        { ...answerSessionQuestionSchema.parse(input), via: 'desktop' },
+        {
+          ...answerSessionQuestionSchema.parse(input),
+          via:
+            answerSessionQuestionSchema.parse(input).via === 'parent'
+              ? 'parent'
+              : 'desktop',
+        },
         route(hostId),
       );
     },
@@ -1068,6 +1088,37 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  const inboxRuleCalls = [
+    ['nesvo:list-inbox-rules', 'list-inbox-rules', listInboxRulesSchema],
+    [
+      'nesvo:validate-inbox-rule',
+      'validate-inbox-rule',
+      validateInboxRuleSchema,
+    ],
+    ['nesvo:save-inbox-rule', 'save-inbox-rule', saveInboxRuleSchema],
+    ['nesvo:delete-inbox-rule', 'delete-inbox-rule', deleteInboxRuleSchema],
+    [
+      'nesvo:set-inbox-rule-enabled',
+      'set-inbox-rule-enabled',
+      setInboxRuleEnabledSchema,
+    ],
+    ['nesvo:propose-inbox-rule', 'propose-inbox-rule', proposeInboxRuleSchema],
+    ['nesvo:decide-inbox-item', 'decide-inbox-item', decideInboxItemSchema],
+    ['nesvo:save-inbox-settings', 'save-inbox-settings', inboxSettingsSchema],
+  ] as const;
+  for (const [channel, method, schema] of inboxRuleCalls)
+    handle(channel, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(method, schema.parse(input), route(hostId));
+    });
+  handle('nesvo:list-inbox-items', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-inbox-items', undefined, route(hostId));
+  });
+  handle('nesvo:read-inbox-settings', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('read-inbox-settings', undefined, route(hostId));
+  });
   handle('nesvo:list-running-apps', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-running-apps', undefined, route(hostId));

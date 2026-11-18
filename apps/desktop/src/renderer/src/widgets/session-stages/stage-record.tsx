@@ -20,6 +20,19 @@ const decisionVerbs = {
   decline: 'Plan rejected by',
 } as const;
 
+type DecisionRecord = Extract<SessionStageRecord, { kind: 'decision' }>;
+
+const decisionLabel = (record: DecisionRecord) => {
+  const outcome = `${record.outcome ?? 'decided'}${record.by ? ` by ${actorText(record.by)}` : ''}`;
+  if (record.childTitle)
+    return record.status === 'needed'
+      ? `${record.childTitle} waits for your decision · ${record.title}`
+      : `${record.childTitle} · ${record.title} · ${outcome}`;
+  return record.status === 'needed'
+    ? `Waiting for the owner's decision · ${record.title}`
+    : `${record.title} · ${outcome}`;
+};
+
 export function StageRecord({ session, record, actions }: Props) {
   if (record.kind === 'plan') {
     const current =
@@ -88,6 +101,8 @@ export function StageRecord({ session, record, actions }: Props) {
         Progress · {record.text}
       </p>
     );
+  if (record.kind === 'decision')
+    return <Separator label={decisionLabel(record)} />;
   const { question } = record;
   return (
     <section
