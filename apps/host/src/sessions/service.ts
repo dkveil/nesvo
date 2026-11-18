@@ -63,6 +63,7 @@ import {
 import {
   confirmClaudeFork,
   inspectClaude,
+  reportedClaudeEfforts,
   reportedClaudeModes,
   startClaude,
   claudeSupportsHostPrompts,
@@ -247,6 +248,15 @@ function resolveTurnSelection(
     throw new SessionError(
       'invalid-request',
       'Unsupported Claude Code model. Choose default, opus, sonnet or haiku.',
+    );
+  if (
+    input.effort &&
+    session.provider === 'Claude Code' &&
+    reportedClaudeEfforts()?.includes(input.effort) === false
+  )
+    throw new SessionError(
+      'invalid-request',
+      `This Claude Code version does not offer the ${input.effort} effort. Update the CLI or choose another effort.`,
     );
   if (effort && session.provider === 'Codex' && model === 'default')
     throw new SessionError(

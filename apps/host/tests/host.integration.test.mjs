@@ -1155,8 +1155,7 @@ test(
       status.status.models.map(model => model.id),
       ['default', 'opus', 'sonnet', 'haiku'],
     );
-    assert.equal(status.status.effort.status, 'unsupported');
-    assert.match(status.status.effort.reason, /reasoning effort/);
+    assert.deepEqual(status.status.effort, { status: 'per-model' });
     assert.deepEqual(status.status.modes, [
       'read-only',
       'accept-edits',
@@ -6063,7 +6062,7 @@ test(
     );
     assert.equal(firstDone.actualModel, 'fixture-sonnet');
     for (const selection of [
-      { model: 'opus', effort: 'high' },
+      { model: 'opus', effort: 'turbo' },
       { model: 'fixture-codex' },
     ]) {
       const rejected = await host.request('send-message', {

@@ -323,9 +323,14 @@ function supportedModes(choices: string[]): ClaudeMode[] {
 }
 
 let lastReadyModes: ClaudeMode[] | null = null;
+let lastReadyEfforts: string[] | null = null;
 
 export function reportedClaudeModes(): SessionMode[] | null {
   return lastReadyModes ? [...lastReadyModes] : null;
+}
+
+export function reportedClaudeEfforts(): string[] | null {
+  return lastReadyEfforts ? [...lastReadyEfforts] : null;
 }
 
 function toolResultText(content: unknown): string {
@@ -661,6 +666,7 @@ async function inspect(
     }
     const ready = status('ready', null);
     lastReadyModes = ready.modes.filter(isClaudeMode);
+    lastReadyEfforts = ready.efforts.map(option => option.id);
     return {
       executable,
       status: ready,
