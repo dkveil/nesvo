@@ -31,10 +31,26 @@ export const sessionUsageTotalsSchema = z.strictObject({
 });
 export type SessionUsageTotals = z.infer<typeof sessionUsageTotalsSchema>;
 
+export const sessionFolderWaitSchema = z.strictObject({
+  directory: z.string().max(4096),
+  operation: z.enum([
+    'run',
+    'checkout',
+    'worktree-removal',
+    'worktree-setup',
+    'fork',
+    'review',
+  ]),
+  sessionId: z.uuid().nullable(),
+});
+export type SessionFolderWait = z.infer<typeof sessionFolderWaitSchema>;
+
 export const sessionWindowSchema = sessionSchema.extend({
   messageCount: countSchema,
   usageTotals: sessionUsageTotalsSchema,
+  waitingFor: sessionFolderWaitSchema.optional(),
 });
+
 export type SessionWindow = z.infer<typeof sessionWindowSchema>;
 
 export const sessionMetadataSchema = sessionWindowSchema.omit({
