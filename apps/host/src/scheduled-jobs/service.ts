@@ -70,7 +70,7 @@ export type SchedulerClock = {
   clearTimer: (timer: unknown) => void;
 };
 
-export type SessionAvailability = Pick<SessionService, 'isBusy' | 'isIdleFor'>;
+export type SessionAvailability = Pick<SessionService, 'isIdleFor'>;
 
 export const systemClock: SchedulerClock = {
   now: () => new Date(),
@@ -255,14 +255,10 @@ export class ScheduledJobService {
     }
     const job = this.store.get(input.id);
     if (!job) throw new ScheduledJobError('not-found', 'Automation not found.');
-    if (
-      this.closed ||
-      this.sessions.isBusy() ||
-      this.store.hasActiveRun(job.id)
-    )
+    if (this.closed || this.store.hasActiveRun(job.id))
       throw new ScheduledJobError(
         'busy',
-        'The host is busy. Try again when the current work has finished.',
+        'This automation is already running. Try again when it has finished.',
       );
     const at = this.clock.now().toISOString();
     this.requireAvailableStart(job, at);
@@ -302,10 +298,10 @@ export class ScheduledJobService {
     const at = this.clock.now().toISOString();
     const start = input.decision === 'start';
     if (start) {
-      if (this.sessions.isBusy() || this.store.hasActiveRun(job.id))
+      if (this.store.hasActiveRun(job.id))
         throw new ScheduledJobError(
           'busy',
-          'The host is busy. Try again when the current work has finished.',
+          'This automation is already running. Try again when it has finished.',
         );
       this.requireAvailableStart(job, at);
     }
@@ -537,10 +533,7 @@ export class ScheduledJobService {
   ): ScheduledRunOutcome {
     if (this.store.hasActiveRun(job.id))
       return { status: 'skipped', reason: 'overlap', missedCount: skipped };
-    if (
-      this.sessions.isBusy() ||
-      !this.sessions.isIdleFor(OPERATOR_IDLE_MS, now)
-    )
+    if (!this.sessions.isIdleFor(OPERATOR_IDLE_MS, now))
       return { status: 'skipped', reason: 'busy', missedCount: skipped };
     return { status: 'starting', reason: null, missedCount: skipped };
   }

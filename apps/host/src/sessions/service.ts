@@ -92,6 +92,14 @@ import {
   type ProviderProfiles,
 } from '../providers/profiles';
 import { SessionError } from './session-error';
+import {
+  FolderLocks,
+  folderWaitMessage,
+  type FolderAccess,
+  type FolderOperation,
+  type FolderRequest,
+  type FolderWait,
+} from './folder-locks';
 import { resolveSessionSkill } from '../skills/service';
 import {
   readSkillSnapshot,
@@ -291,6 +299,46 @@ export class BudgetRefusal extends SessionError {
   }
 }
 
+export class FolderBusyError extends SessionError {
+  constructor(readonly wait: FolderWait) {
+    super('busy', folderWaitMessage(wait));
+  }
+}
+
+const accessFor = (mode: Session['mode']): FolderAccess =>
+  isWritableSessionMode(mode) ? 'write' : 'read';
+
+type FolderOwner = Pick<Session, 'id' | 'parentId' | 'directory'>;
+
+const folderGroup = (session: FolderOwner) => session.parentId ?? session.id;
+
+const queuedAccess = (session: Pick<Session, 'queue' | 'mode'>): FolderAccess =>
+  accessFor(session.queue[0]?.mode ?? session.mode);
+
+const queuedSend = (
+  session: Session,
+  entry: Session['queue'][number],
+): SendMessageInput => ({
+  sessionId: session.id,
+  messageId: entry.id,
+  text: entry.text,
+  skillId: entry.skillId,
+  skillHash: entry.skillHash,
+  model: entry.model,
+  effort: entry.effort,
+  mode: entry.mode,
+  attachments: entry.attachments,
+  codeComments: entry.codeComments,
+});
+
+const canonicalDirectory = (directory: string) => {
+  try {
+    return realpathSync(directory);
+  } catch {
+    return directory;
+  }
+};
+
 type ActiveRun = {
   session: Session;
   handle: ReturnType<typeof startClaude> | ReturnType<typeof startCodex>;
@@ -300,6 +348,7 @@ type ActiveRun = {
   persistTimer?: ReturnType<typeof setTimeout>;
   persistenceError?: boolean;
   finalizing?: boolean;
+  release?: () => void;
 };
 
 export type RunFinished = {
@@ -446,13 +495,12 @@ export class SessionService {
   private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
   private readonly emittedRevisions = new Map<string, number>();
+  private readonly folders = new FolderLocks();
+  private readonly waiting = new Map<string, string>();
+  private readonly reviewDecisions = new Set<AbortController>();
   private closing = false;
-  private checkingOut = false;
-  private removingWorktree = false;
+  private removingWorktrees = 0;
   private creatingWorktrees = 0;
-  private runningWorktreeSetup: string | null = null;
-  private forking = false;
-  private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
   readonly attachments: AttachmentStore;
 
@@ -469,6 +517,118 @@ export class SessionService {
   ) {
     this.attachments = new AttachmentStore(directory);
     store.recover(recoverRelated);
+    this.folders.onRelease(() => this.wakeWaiting());
+  }
+
+  onFolderReleased(listener: () => void): () => void {
+    return this.folders.onRelease(listener);
+  }
+
+  folderBusyMessage(directory: string, access: FolderAccess): string | null {
+    if (this.closing) return 'The host is shutting down.';
+    const wait = this.folderWait({
+      directory: canonicalDirectory(directory),
+      access,
+      group: null,
+    });
+    return wait ? folderWaitMessage(wait) : null;
+  }
+
+  async whenFolderFree(
+    directory: string,
+    access: FolderAccess,
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.folders.whenFree(
+      { directory: canonicalDirectory(directory), access, group: null },
+      signal,
+    );
+  }
+
+  private folderWait(request: FolderRequest): FolderWait | null {
+    const blocker = this.folders.blocker(request);
+    return blocker
+      ? {
+          directory: blocker.directory,
+          operation: blocker.operation,
+          sessionId: blocker.sessionId,
+        }
+      : null;
+  }
+
+  private runRequest(
+    session: FolderOwner,
+    access: FolderAccess,
+  ): FolderRequest {
+    return {
+      directory: canonicalDirectory(session.directory),
+      access,
+      group: folderGroup(session),
+    };
+  }
+
+  private ensureFolderFree(session: Session, access: FolderAccess): void {
+    const wait = this.folderWait(this.runRequest(session, access));
+    if (wait) throw new FolderBusyError(wait);
+  }
+
+  private claimFolders(
+    directories: readonly string[],
+    operation: FolderOperation,
+    sessionId: string | null,
+    group: string = randomUUID(),
+  ): () => void {
+    const releases: (() => void)[] = [];
+    const releaseAll = () => {
+      for (const release of releases.splice(0)) release();
+    };
+    for (const directory of new Set(directories.map(canonicalDirectory))) {
+      const claimed = this.folders.tryAcquire({
+        directory,
+        access: 'write',
+        group,
+        operation,
+        sessionId,
+      });
+      if (typeof claimed !== 'function') {
+        releaseAll();
+        throw new FolderBusyError(claimed);
+      }
+      releases.push(claimed);
+    }
+    return releaseAll;
+  }
+
+  private claimRun(active: ActiveRun, access: FolderAccess): void {
+    const claimed = this.folders.tryAcquire({
+      ...this.runRequest(active.session, access),
+      operation: 'run',
+      sessionId: active.session.id,
+    });
+    if (typeof claimed !== 'function') throw new FolderBusyError(claimed);
+    active.release = claimed;
+  }
+
+  private ensureSessionIdle(session: Session, message: string): void {
+    if (this.closing)
+      throw new SessionError('busy', 'The host is shutting down.');
+    if (
+      this.active.has(session.id) ||
+      this.unsaved.has(session.id) ||
+      session.status === 'running' ||
+      session.status === 'stopping'
+    )
+      throw new SessionError('busy', message);
+  }
+
+  window(session: Session, limit?: number): SessionWindow {
+    return this.decorate(toSessionWindow(session, limit));
+  }
+
+  private decorate<T extends SessionWindow>(window: T): T {
+    if (!this.waiting.has(window.id)) return window;
+    const wait = this.folderWait(this.runRequest(window, queuedAccess(window)));
+    return wait ? { ...window, waitingFor: wait } : window;
   }
 
   private confirmAttachments(
@@ -577,7 +737,13 @@ export class SessionService {
         );
       return 'sent';
     }
-    if (!this.canStartWorkflowTurn()) return 'busy';
+    if (
+      this.closing ||
+      this.unsaved.size ||
+      this.active.has(session.id) ||
+      this.folderWait(this.runRequest(session, accessFor(session.mode)))
+    )
+      return 'busy';
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, turn.text);
@@ -643,21 +809,6 @@ export class SessionService {
       this.stop({ sessionId, runId: active.session.runId }, reason);
   }
 
-  canStartWorkflowTurn(): boolean {
-    return !this.isBusy() && !this.unsaved.size;
-  }
-
-  isBusy(): boolean {
-    return (
-      this.closing ||
-      this.checkingOut ||
-      this.removingWorktree ||
-      this.forking ||
-      this.active.size > 0 ||
-      !!this.reviewDecision
-    );
-  }
-
   recordOperatorActivity(at = new Date()): void {
     this.lastOperatorActivityAt = at.getTime();
   }
@@ -697,7 +848,8 @@ export class SessionService {
       ['pending'],
     );
     const controller = new AbortController();
-    this.reviewDecision = controller;
+    const release = this.claimReview(review);
+    this.reviewDecisions.add(controller);
     try {
       if (input.decision === 'accept')
         await this.verifyFiles(review, controller.signal);
@@ -722,6 +874,8 @@ export class SessionService {
           );
         const text = `Correction to version ${review.version}:\n${input.feedback}`;
         const prompt = `Revise your previous result using the operator feedback below. Keep the same permissions and assigned scope. Do not delegate additional work unless this session already has a delegation tool.\n\nOriginal task:\n${review.task}\n\nScope:\n${session.scope ?? session.directory}\n\nOperator feedback:\n${input.feedback}`;
+        release();
+        this.ensureFolderFree(session, accessFor(session.mode));
         this.prepareRun(session, input.decisionId, text);
         const changed = [
           ...this.reviews
@@ -739,7 +893,8 @@ export class SessionService {
       }
       return decided;
     } finally {
-      if (this.reviewDecision === controller) this.reviewDecision = undefined;
+      this.reviewDecisions.delete(controller);
+      release();
     }
   }
 
@@ -754,7 +909,8 @@ export class SessionService {
       input.decision === 'accept' ? ['pending', 'accepted'] : ['pending'],
     );
     const controller = new AbortController();
-    this.reviewDecision = controller;
+    const release = this.claimReview(review);
+    this.reviewDecisions.add(controller);
     try {
       if (input.decision === 'accept')
         await this.verifyFiles(review, controller.signal);
@@ -778,8 +934,23 @@ export class SessionService {
       if (decided) this.emitReviews([decided]);
       return decided ?? review;
     } finally {
-      if (this.reviewDecision === controller) this.reviewDecision = undefined;
+      this.reviewDecisions.delete(controller);
+      release();
     }
+  }
+
+  private claimReview(review: Review): () => void {
+    return this.claimFolders(
+      [
+        review.directory,
+        ...review.dependencies.flatMap(dependency => {
+          const artifact = this.reviews.get(dependency.reviewId);
+          return artifact ? [artifact.directory] : [];
+        }),
+      ],
+      'review',
+      review.sessionId,
+    );
   }
 
   private ensureNotHeldByWorkflow(review: Review): void {
@@ -788,10 +959,15 @@ export class SessionService {
   }
 
   private ensureReviewIdle(): void {
-    if (this.isBusy() || this.unsaved.size)
+    if (this.closing)
       throw new SessionError(
         'busy',
-        'Wait for the active group to finish and its result to be saved.',
+        'The host is closing. Your decision was not saved.',
+      );
+    if (this.unsaved.size)
+      throw new SessionError(
+        'busy',
+        'Wait for the last result to be saved before deciding.',
       );
   }
 
@@ -898,8 +1074,8 @@ export class SessionService {
     const sessions = this.store.listSummaries().map(summary => {
       const active = this.active.get(summary.id);
       return active && !active.finalizing
-        ? structuredClone(toSessionWindow(active.session))
-        : summary;
+        ? structuredClone(this.window(active.session))
+        : this.decorate(summary);
     });
     sessions.sort(
       (first, second) =>
@@ -908,7 +1084,7 @@ export class SessionService {
     );
     return [
       ...[...this.unsaved.values()].map(session =>
-        structuredClone(toSessionWindow(session)),
+        structuredClone(this.window(session)),
       ),
       ...sessions.filter(session => !this.unsaved.has(session.id)),
     ];
@@ -916,7 +1092,7 @@ export class SessionService {
 
   getSession(input: GetSessionInput): SessionWindow {
     return structuredClone(
-      toSessionWindow(
+      this.window(
         this.current(input.sessionId),
         input.limit ?? sessionHistoryLimits.page,
       ),
@@ -953,7 +1129,7 @@ export class SessionService {
   ): Session {
     if (this.closing)
       throw new SessionError('unavailable', 'The host is shutting down.');
-    if (this.removingWorktree)
+    if (this.folders.claimed(canonicalDirectory(directory), 'worktree-removal'))
       throw new SessionError(
         'busy',
         'Wait for the worktree operation to finish.',
@@ -977,11 +1153,6 @@ export class SessionService {
       this.confirmUnchangedProfile(existing, input.profileId ?? null);
       return existing;
     }
-    if (this.removingWorktree)
-      throw new SessionError(
-        'busy',
-        'Wait for the worktree operation to finish.',
-      );
     if (input.isolation && !options.worktree)
       throw new SessionError(
         'invalid-request',
@@ -1002,6 +1173,11 @@ export class SessionService {
       mkdirSync(directory, { recursive: true });
     }
     directory = this.resolveDirectory(directory);
+    if (this.folders.claimed(directory, 'worktree-removal'))
+      throw new SessionError(
+        'busy',
+        'Wait for the worktree operation to finish.',
+      );
     const session = this.store.create(
       input,
       directory,
@@ -1026,17 +1202,12 @@ export class SessionService {
         'The source permission mode is unsupported.',
       );
     let directory = this.resolveDirectory(source.directory);
-    if (input.worktree && this.runningWorktreeSetup === directory)
-      throw new SessionError(
-        'busy',
-        'Wait for the source setup script to finish.',
-      );
+    const release = this.claimFolders([directory], 'fork', source.id);
     const forkOf = {
       sessionId: source.id,
       title: source.title,
       messageId: source.messages.at(-1)?.id ?? null,
     };
-    this.forking = true;
     try {
       const profileDirectory = await this.options.profiles?.directory(
         source.provider,
@@ -1113,7 +1284,7 @@ export class SessionService {
           : 'The session could not be forked.',
       );
     } finally {
-      this.forking = false;
+      release();
     }
   }
 
@@ -1167,6 +1338,7 @@ export class SessionService {
       );
     this.ensureWorktreeOpen(session);
     this.resolveDirectory(session.directory);
+    this.ensureFolderFree(session, 'read');
     const budget = this.options.checkCostBudgets?.(session, new Date());
     if (budget?.refusal) throw new BudgetRefusal(budget.refusal);
     const previous = {
@@ -1261,6 +1433,7 @@ export class SessionService {
       finished: Promise.resolve(),
       evictedActivities: new Set(),
     };
+    this.claimRun(active, 'read');
     this.active.set(session.id, active);
     this.publish(session);
     active.finished = handle.done
@@ -1316,6 +1489,7 @@ export class SessionService {
       .finally(() => {
         if (this.active.get(session.id) === active)
           this.active.delete(session.id);
+        active.release?.();
       });
     return structuredClone(session);
   }
@@ -1333,11 +1507,10 @@ export class SessionService {
 
   private threadActionSession(sessionId: string): Session {
     const session = this.acceptingSession(sessionId);
-    if (this.isBusy() || this.unsaved.has(sessionId))
-      throw new SessionError(
-        'busy',
-        'Wait for the active workspace operation to finish.',
-      );
+    this.ensureSessionIdle(
+      session,
+      'Wait for this session to finish or use Stop.',
+    );
     if (
       session.role === 'worker' ||
       session.workflowRunId ||
@@ -1466,7 +1639,7 @@ export class SessionService {
         profileEnvironment(input.provider, profileDirectory),
       );
     if (!input.isolation) return this.create(input);
-    if (this.removingWorktree)
+    if (this.removingWorktrees)
       throw new SessionError(
         'busy',
         'Wait for the worktree operation to finish.',
@@ -1573,23 +1746,24 @@ export class SessionService {
     input: RunSessionWorktreeSetupInput,
     signal: AbortSignal,
   ) {
-    const { metadata, location } = this.sessionWorktree(input.sessionId);
+    const { session, metadata, location } = this.sessionWorktree(
+      input.sessionId,
+    );
     if (metadata.state !== 'active')
       throw new SessionError(
         'invalid-request',
         'Setup is available for active worktree sessions.',
       );
-    if (
-      this.isBusy() ||
-      this.unsaved.size ||
-      this.creatingWorktrees ||
-      this.runningWorktreeSetup
-    )
-      throw new SessionError(
-        'busy',
-        'Wait for active work on this computer to finish.',
-      );
-    this.runningWorktreeSetup = location.worktree;
+    this.ensureSessionIdle(
+      session,
+      'Wait for this session to finish before running setup.',
+    );
+    const release = this.claimFolders(
+      [location.worktree],
+      'worktree-setup',
+      session.id,
+      folderGroup(session),
+    );
     try {
       const gitDirectory = await confirmSessionWorktree({
         ...location,
@@ -1610,7 +1784,7 @@ export class SessionService {
         error instanceof Error ? error.message : 'Setup could not run.',
       );
     } finally {
-      this.runningWorktreeSetup = null;
+      release();
     }
   }
 
@@ -1629,10 +1803,10 @@ export class SessionService {
     input: RemoveOrphanedSessionWorktreeInput,
     signal: AbortSignal,
   ): Promise<OrphanedSessionWorktreeRemoval> {
-    if (this.isBusy() || this.unsaved.size || this.creatingWorktrees)
+    if (this.closing || this.creatingWorktrees)
       throw new SessionError(
         'busy',
-        'Wait for active work on this computer to finish.',
+        'Wait for the worktree being created to finish.',
       );
     const record = orphanedSessionCheckouts(
       this.directory,
@@ -1643,7 +1817,17 @@ export class SessionService {
         'not-found',
         'This worktree is no longer available for cleanup.',
       );
-    this.removingWorktree = true;
+    if (record.session && this.unsaved.has(record.session.id))
+      throw new SessionError(
+        'busy',
+        'Wait for the session to be saved before removing its worktree.',
+      );
+    const release = this.claimFolders(
+      [record.worktree],
+      'worktree-removal',
+      record.session?.id ?? null,
+    );
+    this.removingWorktrees++;
     try {
       await removeSessionWorktree({
         ...record,
@@ -1662,7 +1846,8 @@ export class SessionService {
         return 'dirty';
       throw error;
     } finally {
-      this.removingWorktree = false;
+      this.removingWorktrees--;
+      release();
     }
   }
 
@@ -1673,23 +1858,28 @@ export class SessionService {
     const { session, metadata, location } = this.sessionWorktree(
       input.sessionId,
     );
-    if (
-      this.isBusy() ||
-      this.unsaved.size ||
-      this.creatingWorktrees ||
-      this.runningWorktreeSetup === location.worktree
-    )
+    if (metadata.state === 'removed') return session;
+    if (this.creatingWorktrees)
       throw new SessionError(
         'busy',
-        'Wait for active work on this computer to finish before finishing a worktree.',
+        'Wait for the worktree being created to finish before finishing this one.',
       );
-    if (metadata.state === 'removed') return session;
+    this.ensureSessionIdle(
+      session,
+      'Stop this session before finishing its worktree.',
+    );
+    const release = this.claimFolders(
+      [location.worktree],
+      'worktree-removal',
+      session.id,
+    );
     if (input.action.kind !== 'remove') {
+      release();
       if (metadata.state === 'active')
         this.markWorktreeFinished(session, 'kept');
       return session;
     }
-    this.removingWorktree = true;
+    this.removingWorktrees++;
     try {
       await removeSessionWorktree({
         ...location,
@@ -1700,7 +1890,8 @@ export class SessionService {
       this.markWorktreeFinished(current, 'removed');
       return current;
     } finally {
-      this.removingWorktree = false;
+      this.removingWorktrees--;
+      release();
     }
   }
 
@@ -1837,17 +2028,17 @@ export class SessionService {
       return structuredClone(session);
     }
     this.ensureWorktreeOpen(session);
-    if (this.isBusy())
-      throw new SessionError(
-        'busy',
-        'Wait for the active group to finish or use Stop.',
-      );
+    this.ensureSessionIdle(
+      session,
+      'Wait for this session to finish or use Stop.',
+    );
     if (input.skillHash && !input.skillId)
       throw new SessionError(
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
     const selection = resolveTurnSelection(session, input);
+    this.ensureFolderFree(session, accessFor(selection.mode));
     this.confirmAttachments(input.attachments);
     this.confirmForkPoint(session);
     this.resolveDirectory(session.directory);
@@ -2048,16 +2239,17 @@ export class SessionService {
         'busy',
         'Stop the session before checking out a pull request.',
       );
-    if (this.isBusy())
-      throw new SessionError(
-        'busy',
-        'Wait for the active workspace operation to finish before checking out a pull request.',
-      );
-    this.checkingOut = true;
+    if (this.closing)
+      throw new SessionError('busy', 'The host is shutting down.');
+    const release = this.claimFolders(
+      [session.directory],
+      'checkout',
+      session.id,
+    );
     try {
       await run(session);
     } finally {
-      this.checkingOut = false;
+      release();
     }
   }
 
@@ -2118,14 +2310,22 @@ export class SessionService {
         'invalid-request',
         'A skill snapshot requires a selected skill.',
       );
-    resolveTurnSelection(session, input);
+    const selection = resolveTurnSelection(session, input);
     this.confirmAttachments(input.attachments);
     if (
       session.queue.some(item => item.id === input.messageId) ||
       session.messages.some(message => message.id === input.messageId)
     )
       return structuredClone(session);
-    if (!this.isBusy()) return this.send(input);
+    const running =
+      this.active.has(session.id) ||
+      session.status === 'running' ||
+      session.status === 'stopping';
+    const blocked =
+      running ||
+      this.closing ||
+      !!this.folderWait(this.runRequest(session, accessFor(selection.mode)));
+    if (!blocked) return this.send(input);
     if (session.queue.length >= sessionQueueLimit)
       throw new SessionError(
         'invalid-request',
@@ -2144,10 +2344,13 @@ export class SessionService {
       createdAt: new Date().toISOString(),
       held: false,
     });
+    const waited = this.waiting.has(session.id);
+    if (!running) this.waiting.set(session.id, '');
     try {
       this.publish(session);
     } catch (error) {
       session.queue.pop();
+      if (!waited) this.waiting.delete(session.id);
       throw error;
     }
     return structuredClone(session);
@@ -2162,6 +2365,8 @@ export class SessionService {
       return structuredClone(session);
     }
     session.queue = queue.filter(item => item.id !== input.messageId);
+    if (!session.queue.some(item => !item.held))
+      this.waiting.delete(session.id);
     try {
       this.publish(session);
     } catch (error) {
@@ -2179,23 +2384,38 @@ export class SessionService {
         'not-found',
         'This queued message is no longer waiting. Refresh the session.',
       );
-    if (this.isBusy())
-      throw new SessionError(
-        'busy',
-        'Wait for the active run to finish or use Stop.',
-      );
-    return this.send({
-      sessionId: session.id,
-      messageId: entry.id,
-      text: entry.text,
-      skillId: entry.skillId,
-      skillHash: entry.skillHash,
-      model: entry.model,
-      effort: entry.effort,
-      mode: entry.mode,
-      attachments: entry.attachments,
-      codeComments: entry.codeComments,
-    });
+    this.ensureSessionIdle(
+      session,
+      'Wait for the active run to finish or use Stop.',
+    );
+    if (
+      this.folderWait(
+        this.runRequest(session, accessFor(entry.mode ?? session.mode)),
+      )
+    )
+      return this.waitWithEntry(session, entry);
+    return this.send(queuedSend(session, entry));
+  }
+
+  private waitWithEntry(
+    session: Session,
+    entry: Session['queue'][number],
+  ): Session {
+    const queue = session.queue;
+    session.queue = [
+      { ...entry, held: false },
+      ...queue.filter(item => item.id !== entry.id),
+    ];
+    const waited = this.waiting.has(session.id);
+    this.waiting.set(session.id, '');
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.queue = queue;
+      if (!waited) this.waiting.delete(session.id);
+      throw error;
+    }
+    return structuredClone(session);
   }
 
   private acceptingSession(sessionId: string): Session {
@@ -2218,22 +2438,66 @@ export class SessionService {
 
   private startNextQueued(session: Session): void {
     const next = session.queue[0];
-    if (session.status !== 'completed' || !next || next.held || this.isBusy())
-      return;
+    if (session.status === 'completed' && next && !next.held)
+      this.waiting.set(session.id, '');
+    this.wakeWaiting();
+  }
+
+  private wakeWaiting(): void {
+    if (this.closing || !this.waiting.size) return;
+    const candidates = [...this.waiting.keys()]
+      .flatMap(id => {
+        const session =
+          this.active.get(id)?.session ??
+          this.unsaved.get(id) ??
+          this.store.get(id);
+        const next = session?.queue[0];
+        if (
+          !session ||
+          !next ||
+          next.held ||
+          this.active.has(id) ||
+          this.unsaved.has(id) ||
+          session.status === 'running' ||
+          session.status === 'stopping' ||
+          session.externalAttachment
+        ) {
+          this.waiting.delete(id);
+          return [];
+        }
+        return [{ session, next }];
+      })
+      .sort((left, right) =>
+        left.next.createdAt.localeCompare(right.next.createdAt),
+      );
+    for (const { session, next } of candidates) {
+      const wait = this.folderWait(
+        this.runRequest(session, accessFor(next.mode ?? session.mode)),
+      );
+      if (wait) {
+        const key = `${wait.operation}:${wait.directory}:${wait.sessionId ?? ''}`;
+        if (this.waiting.get(session.id) === key) continue;
+        this.waiting.set(session.id, key);
+        this.announceWaiting(session);
+        continue;
+      }
+      this.waiting.delete(session.id);
+      this.startQueuedEntry(session, next);
+    }
+  }
+
+  private startQueuedEntry(
+    session: Session,
+    next: Session['queue'][number],
+  ): void {
     try {
-      this.send({
-        sessionId: session.id,
-        messageId: next.id,
-        text: next.text,
-        skillId: next.skillId,
-        skillHash: next.skillHash,
-        model: next.model,
-        effort: next.effort,
-        mode: next.mode,
-        attachments: next.attachments,
-        codeComments: next.codeComments,
-      });
+      this.send(queuedSend(session, next));
     } catch (error) {
+      if (error instanceof FolderBusyError) {
+        this.waiting.set(session.id, '');
+        this.announceWaiting(session);
+        return;
+      }
       if (error instanceof BudgetRefusal) holdQueue(session);
       session.error =
         error instanceof SessionError
@@ -2245,6 +2509,15 @@ export class SessionService {
         return;
       }
     }
+  }
+
+  private announceWaiting(session: Session): void {
+    try {
+      this.store.saveMany([session], undefined, { touch: false });
+    } catch {
+      return;
+    }
+    this.emitSession(session);
   }
 
   decideDelegation(input: DecideDelegationInput): Session {
@@ -2283,6 +2556,12 @@ export class SessionService {
       parent,
       parent.delegations.filter(item => item.runId === input.runId),
     );
+    const wait = this.folderWait({
+      directory,
+      access: accessFor(proposal.mode),
+      group: parent.id,
+    });
+    if (wait) throw new FolderBusyError(wait);
     const child = this.store.worker(parent, proposal, directory);
     const prompt = proposal.planFirst
       ? workerPlanPrompt(proposal)
@@ -2358,6 +2637,7 @@ export class SessionService {
         'invalid-request',
         'This worker already revised its plan five times. Accept or decline it.',
       );
+    this.ensureFolderFree(child, accessFor(child.mode));
     const correcting = input.decision === 'correct';
     const prompt = correcting
       ? workerPlanPrompt(proposal, input.correction)
@@ -2483,7 +2763,7 @@ export class SessionService {
 
   async close(): Promise<void> {
     this.closing = true;
-    this.reviewDecision?.abort();
+    for (const decision of this.reviewDecisions) decision.abort();
     const runs = [...this.active.values()];
     for (const active of runs) {
       if (active.finalizing) continue;
@@ -2944,6 +3224,7 @@ export class SessionService {
       finished: Promise.resolve(),
       evictedActivities: new Set(),
     };
+    this.claimRun(active, accessFor(session.mode));
     this.active.set(session.id, active);
     active.finished = handle.done
       .then(async result => {
@@ -3059,6 +3340,8 @@ export class SessionService {
         if (active.timer) clearTimeout(active.timer);
         if (this.active.get(session.id) === active)
           this.active.delete(session.id);
+        active.release?.();
+
         this.finishWorker(session);
         this.notifyFinished(session);
         if (!this.unsaved.has(session.id)) this.startNextQueued(session);
@@ -3533,7 +3816,7 @@ export class SessionService {
     this.emit(
       {
         type: 'session-changed',
-        session: structuredClone(toSessionWindow(session)),
+        session: structuredClone(this.window(session)),
       },
       session,
     );

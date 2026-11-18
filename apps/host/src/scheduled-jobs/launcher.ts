@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   createSessionSchema,
+  isWritableSessionMode,
   type CreateSessionInput,
   type ScheduledJob,
   type WorkflowRun,
@@ -10,6 +11,7 @@ import {
 } from '@nesvo/contracts';
 import {
   BudgetRefusal,
+  FolderBusyError,
   SessionError,
   confirmCodexEffort,
   type RunOutcome,
@@ -45,7 +47,7 @@ const SESSION_PROVIDERS = {
 
 type LauncherSessions = Pick<
   SessionService,
-  'create' | 'send' | 'stop' | 'finished' | 'isBusy' | 'isIdleFor'
+  'create' | 'send' | 'stop' | 'finished' | 'whenFolderFree' | 'isIdleFor'
 >;
 
 export type ScheduledReviews = {
@@ -230,7 +232,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
     if (input.effort) await this.confirmEffort(input, signal);
     signal.throwIfAborted();
     this.ensureAvailable(run, operatorStarted);
-    const { sessionId, runId } = this.start(input, scheduledJob, run);
+    if (directory) await this.waitForFolder(scheduledJob, directory);
+    const { sessionId, runId } = await this.start(input, scheduledJob, run);
     if (runId) this.watch(scheduledJob, sessionId, runId, progress);
     try {
       progress.started({ sessionId, runId });
@@ -254,15 +257,45 @@ export class SessionLauncher implements ScheduledJobLauncher {
 
   private ensureAvailable(run: ScheduledJobRun, operatorStarted?: boolean): void {
     if (
-      this.sessions.isBusy() ||
-      (run.trigger === 'schedule' &&
-        !operatorStarted &&
-        !this.sessions.isIdleFor(OPERATOR_IDLE_MS))
+      run.trigger === 'schedule' &&
+      !operatorStarted &&
+      !this.sessions.isIdleFor(OPERATOR_IDLE_MS)
     )
       throw new SessionError(
         'busy',
-        'The host became busy before the automation started.',
+        'The operator was active when the automation was due.',
       );
+  }
+
+  private async waitForFolder(
+    scheduledJob: ScheduledJob,
+    directory: string,
+  ): Promise<void> {
+    const waiting = new AbortController();
+    const abort = () => waiting.abort();
+    const deadline = this.clock.setTimer(
+      abort,
+      scheduledJob.timeoutMinutes * MINUTE_MS,
+    );
+    this.deadlines.add(deadline);
+    this.controller.signal.addEventListener('abort', abort, { once: true });
+    try {
+      await this.sessions.whenFolderFree(
+        directory,
+        isWritableSessionMode(scheduledJob.mode) ? 'write' : 'read',
+        waiting.signal,
+      );
+    } catch {
+      this.controller.signal.throwIfAborted();
+      throw new SessionError(
+        'busy',
+        'The automation folder stayed in use until the run timed out, so nothing started.',
+      );
+    } finally {
+      this.clock.clearTimer(deadline);
+      this.deadlines.delete(deadline);
+      this.controller.signal.removeEventListener('abort', abort);
+    }
   }
 
   private async launchWorkflow(
@@ -379,11 +412,11 @@ export class SessionLauncher implements ScheduledJobLauncher {
     }
   }
 
-  private start(
+  private async start(
     input: CreateSessionInput,
     scheduledJob: ScheduledJob,
     run: ScheduledJobRun,
-  ): { sessionId: string; runId: string | null } {
+  ): Promise<{ sessionId: string; runId: string | null }> {
     let sessionId: string | undefined;
     try {
       const session = this.sessions.create(input, {
@@ -394,12 +427,19 @@ export class SessionLauncher implements ScheduledJobLauncher {
         },
       });
       sessionId = session.id;
-      const started = this.sessions.send({
-        sessionId,
-        messageId: firstMessageId(run.id),
-        text: scheduledJob.prompt,
-      });
-      return { sessionId, runId: started.runId! };
+      for (;;) {
+        try {
+          const started = this.sessions.send({
+            sessionId,
+            messageId: firstMessageId(run.id),
+            text: scheduledJob.prompt,
+          });
+          return { sessionId, runId: started.runId! };
+        } catch (error) {
+          if (!(error instanceof FolderBusyError)) throw error;
+          await this.waitForFolder(scheduledJob, session.directory);
+        }
+      }
     } catch (error) {
       if (error instanceof BudgetRefusal && sessionId)
         return { sessionId, runId: null };

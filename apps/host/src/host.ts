@@ -208,12 +208,15 @@ type HostReply =
   | Exclude<HostResponse, { type: 'session' }>
   | { type: 'session'; id: string; session: Session | SessionWindow };
 
-const toHostMessage = (message: HostReply | DesktopEvent): HostMessage => {
+const toHostMessage = (
+  message: HostReply | DesktopEvent,
+  windowOf: (session: Session) => SessionWindow,
+): HostMessage => {
   if (message.type !== 'session') return message;
   const { session } = message;
   return {
     ...message,
-    session: 'messageCount' in session ? session : toSessionWindow(session),
+    session: 'messageCount' in session ? session : windowOf(session),
   };
 };
 
@@ -224,8 +227,9 @@ export const serveHost = ({
 }: HostTransport) =>
   Effect.scoped(
     Effect.gen(function* () {
+      let windowOf = (session: Session) => toSessionWindow(session);
       const send = (message: HostReply | DesktopEvent) =>
-        deliver(toHostMessage(message));
+        deliver(toHostMessage(message, windowOf));
       yield* ownDataDirectory(directory);
       yield* Effect.try(() => sweepClaudeRunConfigs(directory));
       const database = yield* openDatabase(directory);
@@ -260,16 +264,13 @@ export const serveHost = ({
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
       };
-      let wakeIdleRuns = () => {};
       let observeAssistant: (session: Session) => void = () => {};
       const emitSessionEvent = (
         message: DesktopEvent,
         session: Session | null,
       ) => {
         emit(message);
-        if (!session) return;
-        wakeIdleRuns();
-        observeAssistant(session);
+        if (session) observeAssistant(session);
       };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
@@ -326,6 +327,7 @@ export const serveHost = ({
             await Promise.all(state.pending);
           }),
       );
+      windowOf = session => sessions.window(session);
       const housekeeping = new SessionHousekeeping(sessions, groupStore, emit);
       const deletions = yield* Effect.acquireRelease(
         Effect.sync(() => {
@@ -343,10 +345,7 @@ export const serveHost = ({
       const pullRequests = new PullRequests(
         probes.controller.signal,
         id => store.get(id),
-        (id, run) =>
-          sessions
-            .withPullRequestCheckout(id, run)
-            .finally(() => wakeIdleRuns()),
+        (id, run) => sessions.withPullRequestCheckout(id, run),
       );
       const trackedRepositories = new TrackedRepositories({
         database,
@@ -426,14 +425,12 @@ export const serveHost = ({
             }),
           });
           const events = bindRunEvents(sessions, runner);
-          wakeIdleRuns = events.idle;
           void runner.recover();
           return { runner, events };
         }),
         ({ runner, events }) =>
           Effect.promise(async () => {
             events.release();
-            wakeIdleRuns = () => {};
             await runner.close();
           }),
       ).pipe(Effect.map(({ runner }) => runner));

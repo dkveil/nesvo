@@ -44,7 +44,7 @@ export type AssistantSendInput = Extract<
 type AssistantSessions = Pick<
   SessionService,
   | 'create'
-  | 'canStartWorkflowTurn'
+  | 'folderBusyMessage'
   | 'onRunFinished'
   | 'sendWorkflowTurn'
   | 'turnState'
@@ -204,8 +204,8 @@ export class WorkflowAssistant {
   private async begin(
     input: AssistantSendInput,
   ): Promise<WorkflowAssistantTurn> {
-    this.ensureIdle();
     const directory = this.resolveDirectory(input.context.directory);
+    this.ensureIdle(directory);
     const { document, selection } = input.context;
     const existing = input.sessionId
       ? this.continued(input.sessionId, directory)
@@ -240,7 +240,7 @@ export class WorkflowAssistant {
         this.ports.signal,
       );
     const catalog = await this.loadCatalog(directory);
-    this.ensureIdle();
+    this.ensureIdle(directory);
     const session =
       existing ??
       this.ports.sessions.create(sessionInput!, {
@@ -425,14 +425,15 @@ export class WorkflowAssistant {
     }
   }
 
-  private ensureIdle(): void {
-    if (!this.ports.sessions.canStartWorkflowTurn()) throw this.busy();
+  private ensureIdle(directory: string): void {
+    const message = this.ports.sessions.folderBusyMessage(directory, 'read');
+    if (message) throw new WorkflowAssistantError('busy', message);
   }
 
   private busy(): WorkflowAssistantError {
     return new WorkflowAssistantError(
       'busy',
-      'Another session is working on this computer.',
+      'Another session is using this folder. Try again when it has finished.',
     );
   }
 

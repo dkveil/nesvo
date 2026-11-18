@@ -38,9 +38,7 @@ import { buildSubmission, parseAgentFindings } from './findings';
 import { reviewPrompt } from './prompt';
 import type { CodeReviewStore } from './store';
 
-const IDLE_POLL_MS = 1_000;
-const IDLE_WAIT_MS = 10 * 60_000;
-const RETRY_MS = 3_000;
+const FOLDER_WAIT_MS = 10 * 60_000;
 const TITLE_LENGTH = 100;
 
 type ReviewSessions = Pick<
@@ -50,7 +48,7 @@ type ReviewSessions = Pick<
   | 'withPullRequestCheckout'
   | 'send'
   | 'finished'
-  | 'isBusy'
+  | 'whenFolderFree'
   | 'onRunFinished'
 >;
 
@@ -117,7 +115,6 @@ type StartReview = z.output<typeof startPullRequestReviewSchema> & {
 export class CodeReviews {
   private readonly controller = new AbortController();
   private running: Promise<void> | null = null;
-  private retry: ReturnType<typeof setTimeout> | null = null;
   private readonly releaseRunListener: () => void;
   private closed = false;
   private readonly descriptions = new Map<string, string>();
@@ -446,7 +443,6 @@ export class CodeReviews {
   async close(): Promise<void> {
     this.closed = true;
     this.controller.abort();
-    if (this.retry) clearTimeout(this.retry);
     this.releaseRunListener();
     await this.running?.catch(() => undefined);
   }
@@ -478,22 +474,10 @@ export class CodeReviews {
     if (this.closed || this.running) return;
     const next = this.store.draftsWithStatus(['queued'])[0];
     if (!next) return;
-    if (this.sessions.isBusy()) {
-      this.schedule();
-      return;
-    }
     this.running = this.run(next).finally(() => {
       this.running = null;
       this.pump();
     });
-  }
-
-  private schedule(): void {
-    if (this.retry || this.closed) return;
-    this.retry = setTimeout(() => {
-      this.retry = null;
-      this.pump();
-    }, RETRY_MS);
   }
 
   private async run(queued: ReviewDraft): Promise<void> {
@@ -526,10 +510,10 @@ export class CodeReviews {
         sessionId: session.id,
         pullRequest: draft.reference,
       });
-      await this.whenIdle();
+      await this.whenFolderFree(session.directory, 'write');
       const files = await this.checkout(draft, session.id, signal);
       draft = this.replace(draft, { headSha: files.headSha });
-      await this.whenIdle();
+      await this.whenFolderFree(session.directory, 'read');
       const started = this.sessions.send(
         {
           sessionId: session.id,
@@ -612,17 +596,26 @@ export class CodeReviews {
     });
   }
 
-  private async whenIdle(): Promise<void> {
-    const deadline = Date.now() + IDLE_WAIT_MS;
-    while (this.sessions.isBusy()) {
+  private async whenFolderFree(
+    directory: string,
+    access: 'read' | 'write',
+  ): Promise<void> {
+    const timeout = AbortSignal.timeout(FOLDER_WAIT_MS);
+    try {
+      await this.sessions.whenFolderFree(
+        directory,
+        access,
+        AbortSignal.any([this.controller.signal, timeout]),
+      );
+    } catch (error) {
       if (this.closed)
         throw new CodeReviewError('unavailable', 'The host is shutting down.');
-      if (Date.now() > deadline)
+      if (timeout.aborted)
         throw new SessionError(
           'busy',
-          'The host stayed busy, so the review could not start. Start it again.',
+          'The review folder stayed in use, so the review could not start. Start it again.',
         );
-      await new Promise(resolve => setTimeout(resolve, IDLE_POLL_MS));
+      throw error;
     }
   }
 

@@ -62,7 +62,10 @@ type AuthorSessions = Pick<
   'turnState' | 'turnReply' | 'sendWorkflowTurn' | 'continueWithFeedback' | 'stopActive'
 >;
 
-type TaskSessions = Pick<SessionService, 'create' | 'isBusy' | 'onRunFinished'>;
+type TaskSessions = Pick<
+  SessionService,
+  'create' | 'onFolderReleased' | 'onRunFinished'
+>;
 
 type TaskStore = Pick<
   RunnerStore,
@@ -195,20 +198,25 @@ export const createSessionAuthor = ({
 };
 
 export const bindRunEvents = (
-  sessions: Pick<TaskSessions, 'isBusy' | 'onRunFinished'>,
+  sessions: Pick<TaskSessions, 'onFolderReleased' | 'onRunFinished'>,
   runner: TaskRunner,
 ): { idle: () => void; release: () => void } => {
   const idle = () => {
-    if (sessions.isBusy()) return;
     for (const runId of runner.waitingForIdle())
       void runner.advanceRun(runId).catch(() => undefined);
   };
-  const release = sessions.onRunFinished((finished: RunFinished) => {
+  const releaseFolders = sessions.onFolderReleased(idle);
+  const releaseRuns = sessions.onRunFinished((finished: RunFinished) => {
     if (finished.workflowRunId)
       void runner.advanceRun(finished.workflowRunId).catch(() => undefined);
-    idle();
   });
-  return { idle, release };
+  return {
+    idle,
+    release: () => {
+      releaseFolders();
+      releaseRuns();
+    },
+  };
 };
 
 const bounded = (value: string, limit: number) =>
@@ -459,11 +467,6 @@ export class WorkflowTasks {
       throw new WorkflowRunError(
         'busy',
         'A workflow run is already active for this project. Stop it or wait until it ends.',
-      );
-    if (this.ports.sessions.isBusy())
-      throw new WorkflowRunError(
-        'busy',
-        'Wait for the active session to finish or use Stop.',
       );
   }
 

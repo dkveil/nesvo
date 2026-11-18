@@ -41,7 +41,7 @@ export const MANUAL_GATE_PROVIDER = 'Claude Code';
 export const MANUAL_GATE_MODEL = 'default';
 export const AUTHOR_BUSY_MS = 60_000;
 export const AUTHOR_BUSY_ATTENTION =
-  'The computer was busy with another session';
+  'The session folder stayed in use by another session';
 export const AUTHOR_UNAVAILABLE_ATTENTION =
   'The task session is not available on this host.';
 

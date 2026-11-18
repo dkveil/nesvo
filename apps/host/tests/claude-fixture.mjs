@@ -1216,6 +1216,13 @@ if (args.length === 1 && args[0] === '--version') {
       is_error: true,
       result: 'Fixture account limit reached.',
     });
+  } else if (command.startsWith('fixture:write-hold ')) {
+    const name = command.slice('fixture:write-hold '.length);
+    writeFileSync(join(process.cwd(), `${name}.txt`), `${name}\n`);
+    start(`Fixture wrote ${name}.`);
+    const release = join(process.env.NESVO_FIXTURE_RELEASE_DIR, name);
+    while (!existsSync(release)) await setTimeout(50);
+    finish(`Fixture wrote ${name}.`);
   } else if (command === 'fixture:result-fail') {
     start('Fixture unsuccessful result.');
     startRead();

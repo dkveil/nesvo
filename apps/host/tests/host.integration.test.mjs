@@ -1943,15 +1943,21 @@ test(
       (await host.request('send-message', { ...input, text: 'changed' })).code,
       'invalid-request',
     );
-    assert.equal(
-      (
-        await host.request('send-message', {
-          sessionId: external.id,
-          messageId: randomUUID(),
-          text: 'fixture:stream',
-        })
-      ).code,
-      'busy',
+    const sharedFolder = (
+      await host.request('create-session', {
+        ...create(session.directory),
+        mode: 'accept-edits',
+      })
+    ).session;
+    const waiting = await host.request('send-message', {
+      sessionId: sharedFolder.id,
+      messageId: randomUUID(),
+      text: 'fixture:stream',
+    });
+    assert.equal(waiting.code, 'busy', JSON.stringify(waiting));
+    assert.match(
+      waiting.message,
+      /^Waiting for .+, which another session is using\.$/,
     );
     const partial = await host.event(
       value =>
@@ -3816,10 +3822,17 @@ test(
           agent(value)?.body.includes(`${label}:2`),
       );
     assert.equal((await checked.request('health')).health.status, 'ready');
+    const sharedRoot = await checked.request('create-session', {
+      ...create(root.directory),
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+    });
+    assert.equal(sharedRoot.type, 'session', JSON.stringify(sharedRoot));
     assert.equal(
       (
         await checked.request('send-message', {
-          sessionId: supervised.id,
+          sessionId: sharedRoot.session.id,
           messageId: randomUUID(),
           text: 'fixture:stream',
         })
@@ -5323,7 +5336,7 @@ test(
       database.exec('PRAGMA foreign_keys = ON');
       service = new modules.ScheduledJobService(
         new modules.ScheduledJobStore(database),
-        { isBusy: () => false, isIdleFor: () => true },
+        { isIdleFor: () => true },
         {
           launch: async (input, progress) => {
             launches.push(input);
@@ -5723,26 +5736,20 @@ test(
       messageId: randomUUID(),
       text: 'fixture:hold',
     });
-    assert.equal(sessions.isBusy(), true);
+    assert.equal(sessions.isRunning(held.id), true);
     clock.set('2026-12-27T08:59:00.000Z');
     clock.fire();
     await settle();
-    assert.equal(lastRun(daily.id).reason, 'busy');
-    const manualRuns = () =>
-      database
-        .prepare(
-          "SELECT count(*) AS total FROM scheduled_job_runs WHERE trigger_kind = 'manual'",
-        )
-        .get().total;
-    assert.throws(
-      () => scheduler.runNow({ id: daily.id, requestId: randomUUID() }),
-      error =>
-        error instanceof modules.ScheduledJobError && error.code === 'busy',
+    assert.equal(lastRun(daily.id).status, 'starting');
+    completeStartingRuns();
+    assert.equal(
+      scheduler.runNow({ id: daily.id, requestId: randomUUID() }).status,
+      'starting',
     );
-    assert.equal(manualRuns(), 0);
+    completeStartingRuns();
     sessions.stop({ sessionId: held.id, runId: holding.runId });
     await waitUntil(
-      () => !sessions.isBusy(),
+      () => !sessions.isRunning(held.id),
       'The held fixture run did not stop',
     );
 
@@ -5779,20 +5786,13 @@ test(
       decision: 'accept',
       feedback: '',
     });
-    assert.equal(sessions.isBusy(), true);
     clock.fire();
     await settle();
-    assert.equal(lastRun(daily.id).reason, 'busy');
+    assert.equal(lastRun(daily.id).status, 'starting');
+    completeStartingRuns();
     assert.equal((await deciding).status, 'accepted');
-    assert.equal(sessions.isBusy(), false);
-
-    const closing = sessions.close();
-    assert.equal(sessions.isBusy(), true);
-    clock.fire();
-    await settle();
-    assert.equal(lastRun(daily.id).reason, 'busy');
-    await closing;
-    assert.equal(launcher.calls.length, 4);
+    await sessions.close();
+    assert.equal(launcher.calls.length, 7);
 
     let created = jobs.count();
     while (created < modules.MAX_SCHEDULED_JOBS_PER_HOST) {
@@ -5826,7 +5826,7 @@ test(
     }
     jobs.prune(daily.id);
     assert.equal(runs(daily.id).length, modules.SCHEDULED_JOB_RUN_RETENTION);
-    assert.equal(lastRun(daily.id).reason, 'busy');
+    assert.equal(lastRun(daily.id).status, 'completed');
 
     await scheduler.close();
     assert.equal(clock.pending().length, 0);
@@ -6029,6 +6029,190 @@ test(
 );
 
 test(
+  'folder locks run worktree sessions together, serialize a shared folder, share it between readers and start queued work when it frees',
+  { timeout: 120_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-folder-locks-')),
+    );
+    const project = join(root, 'project');
+    const releases = join(root, 'releases');
+    const data = join(root, 'data');
+    await mkdir(project);
+    await mkdir(releases);
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        { cwd: project },
+      );
+    await git('init', '-q', '--initial-branch=main');
+    await git('config', 'core.autocrlf', 'false');
+    await writeFile(join(project, 'base.txt'), 'base\n');
+    await git('add', '.');
+    await git('commit', '-qm', 'Initial commit');
+    const host = launch(data, join(root, 'pids.json'), {
+      NESVO_FIXTURE_RELEASE_DIR: releases,
+    });
+    t.after(async () => {
+      for (const name of ['alpha', 'beta', 'first', 'second'])
+        await writeFile(join(releases, name), '').catch(() => undefined);
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const sessionFrom = response => {
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const create = async (title, mode, isolated) =>
+      sessionFrom(
+        await host.request('create-session', {
+          title,
+          provider: 'Claude Code',
+          model: 'sonnet',
+          mode,
+          directory: project,
+          ...(isolated ? { isolation: { kind: 'worktree' } } : {}),
+        }),
+      );
+    const message = (session, text) => ({
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text,
+    });
+    const writing = (session, name) =>
+      host.event(
+        value =>
+          value.id === session.id &&
+          value.status === 'running' &&
+          agent(value)?.body === `Fixture wrote ${name}.`,
+      );
+    const result = async (session, name) => {
+      await writeFile(join(releases, name), '');
+      const review = await host.review(
+        value => value.sessionId === session.id && value.status === 'pending',
+      );
+      assert.equal(review.diff.status, 'complete', review.diff.detail);
+      return review.diff.files
+        .map(file => file.path)
+        .filter(path => !path.startsWith('.nesvo-fixture-'));
+    };
+
+    const alpha = await create('Alpha', 'accept-edits', true);
+    const beta = await create('Beta', 'accept-edits', true);
+    assert.notEqual(alpha.directory, beta.directory);
+    sessionFrom(
+      await host.request(
+        'send-message',
+        message(alpha, 'fixture:write-hold alpha'),
+      ),
+    );
+    await writing(alpha, 'alpha');
+    const concurrent = sessionFrom(
+      await host.request(
+        'send-message',
+        message(beta, 'fixture:write-hold beta'),
+      ),
+    );
+    assert.equal(concurrent.status, 'running');
+    await writing(beta, 'beta');
+    assert.deepEqual(await result(beta, 'beta'), ['beta.txt']);
+    assert.deepEqual(await result(alpha, 'alpha'), ['alpha.txt']);
+
+    const first = await create('First', 'accept-edits', false);
+    const second = await create('Second', 'accept-edits', false);
+    const reader = await create('Reader', 'read-only', false);
+    sessionFrom(
+      await host.request(
+        'send-message',
+        message(first, 'fixture:write-hold first'),
+      ),
+    );
+    await writing(first, 'first');
+    const refused = await host.request(
+      'send-message',
+      message(second, 'fixture:continue'),
+    );
+    assert.equal(refused.code, 'busy', JSON.stringify(refused));
+    assert.equal(
+      refused.message,
+      'Waiting for project, which another session is using.',
+    );
+    assert.equal(
+      (await host.request('send-message', message(reader, 'fixture:continue')))
+        .code,
+      'busy',
+    );
+    const queued = sessionFrom(
+      await host.request(
+        'queue-message',
+        message(second, 'fixture:write-hold second'),
+      ),
+    );
+    assert.equal(queued.status, 'ready');
+    assert.equal(queued.queue[0].held, false);
+    assert.deepEqual(queued.waitingFor, {
+      directory: project,
+      operation: 'run',
+      sessionId: first.id,
+    });
+    assert.deepEqual(await result(first, 'first'), ['first.txt']);
+    const autoStarted = await writing(second, 'second');
+    assert.deepEqual(autoStarted.queue, []);
+    assert.equal(autoStarted.waitingFor, undefined);
+    assert.deepEqual(await result(second, 'second'), ['second.txt']);
+
+    const otherReader = await create('Other reader', 'read-only', false);
+    const reading = [];
+    for (const session of [reader, otherReader]) {
+      const started = sessionFrom(
+        await host.request('send-message', message(session, 'fixture:hold')),
+      );
+      assert.equal(started.status, 'running');
+      await host.event(
+        value =>
+          value.id === session.id &&
+          value.runId === started.runId &&
+          agent(value)?.body === 'Fixture is waiting.',
+      );
+      reading.push(started);
+    }
+    assert.equal(
+      (await host.request('send-message', message(first, 'fixture:continue')))
+        .code,
+      'busy',
+    );
+    for (const started of reading) {
+      await host.request('stop-run', {
+        sessionId: started.id,
+        runId: started.runId,
+      });
+      await host.event(
+        value => value.id === started.id && value.status === 'stopped',
+      );
+    }
+    const resumed = sessionFrom(
+      await host.request('send-message', message(first, 'fixture:continue')),
+    );
+    assert.equal(resumed.status, 'running');
+    await host.event(
+      value => value.id === first.id && value.status === 'completed',
+    );
+    await host.stop();
+  },
+);
+
+test(
   'host applies a model change to the next turn, keeps the provider thread and records it on the message',
   { timeout: 60_000 },
   async t => {
@@ -6220,19 +6404,12 @@ test(
         text: 'fixture:hold',
       })
     ).session;
-    const busy = await host.request('run-scheduled-job-now', {
+    const requestId = randomUUID();
+    const manual = await host.request('run-scheduled-job-now', {
       id,
-      requestId: randomUUID(),
+      requestId,
     });
-    assert.equal(busy.code, 'busy', JSON.stringify(busy));
-    assert.deepEqual(
-      (
-        await host.request('list-scheduled-job-runs', {
-          scheduledJobId: id,
-        })
-      ).page,
-      { runs: [], nextCursor: null },
-    );
+    assert.equal(manual.type, 'scheduled-job-run', JSON.stringify(manual));
     await host.request('stop-run', {
       sessionId: session.id,
       runId: held.runId,
@@ -6240,21 +6417,6 @@ test(
     await host.event(
       value => value.id === session.id && value.status === 'stopped',
     );
-    const requestId = randomUUID();
-    const manual = await bounded(
-      (async () => {
-        while (true) {
-          const response = await host.request('run-scheduled-job-now', {
-            id,
-            requestId,
-          });
-          if (response.code !== 'busy') return response;
-          await delay(20);
-        }
-      })(),
-      'The host stayed busy after Stop',
-    );
-    assert.equal(manual.type, 'scheduled-job-run', JSON.stringify(manual));
     assert.deepEqual(
       [manual.run.trigger, manual.run.status, manual.run.scheduledFor],
       ['manual', 'starting', null],
@@ -10314,6 +10476,159 @@ const loadScheduledJobLauncher = async directory => {
 };
 
 test(
+  'a pull request checkout locks only its folder and an automation waits for its folder instead of skipping',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-folder-waits-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const previousEnvironment = { ...process.env };
+    let database;
+    let sessions;
+    let scheduler;
+    t.after(async () => {
+      await scheduler?.close();
+      await sessions?.close();
+      database?.close();
+      for (const key of Object.keys(process.env))
+        if (!(key in previousEnvironment)) delete process.env[key];
+      Object.assign(process.env, previousEnvironment);
+      await rm(directory, { recursive: true, force: true });
+    });
+    const modules = await loadScheduledJobLauncher(directory);
+    const migrated = launch(directory, pidFile);
+    assert.equal((await migrated.request('health')).type, 'health');
+    await migrated.stop();
+    Object.assign(process.env, fixtureEnvironment(directory, pidFile));
+    database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
+    const jobs = new modules.ScheduledJobStore(database);
+    sessions = new modules.SessionService(
+      new modules.SessionStore(database),
+      directory,
+      () => undefined,
+      new modules.ReviewStore(database),
+      () => jobs.interruptActiveRuns(new Date().toISOString()),
+    );
+    const left = join(directory, 'left');
+    const right = join(directory, 'right');
+    await mkdir(left);
+    await mkdir(right);
+    const create = (title, folder) =>
+      sessions.create({
+        title,
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'accept-edits',
+        directory: folder,
+      });
+    const message = (session, text) => ({
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text,
+    });
+    const current = session => sessions.getSession({ sessionId: session.id });
+    const runRow = id => ({
+      ...database
+        .prepare(
+          'SELECT status, reason, session_id AS sessionId FROM scheduled_job_runs WHERE id = ?',
+        )
+        .get(id),
+    });
+
+    const checkedOut = create('Checked out', left);
+    const elsewhere = create('Elsewhere', right);
+    let finishCheckout;
+    const checkout = sessions.withPullRequestCheckout(
+      checkedOut.id,
+      () =>
+        new Promise(resolve => {
+          finishCheckout = resolve;
+        }),
+    );
+    assert.throws(
+      () => sessions.send(message(checkedOut, 'fixture:continue')),
+      error =>
+        error.code === 'busy' &&
+        error.message ===
+          'Waiting for left, which a pull request checkout is changing.',
+    );
+    await assert.rejects(
+      sessions.withPullRequestCheckout(checkedOut.id, async () => undefined),
+      error => error.code === 'busy',
+    );
+    assert.equal(sessions.folderBusyMessage(right, 'write'), null);
+    const parallel = sessions.send(message(elsewhere, 'fixture:continue'));
+    assert.equal(parallel.status, 'running');
+    await waitUntil(
+      () => current(elsewhere).status === 'completed',
+      'The session in the other folder did not finish during the checkout',
+    );
+    const queued = message(checkedOut, 'fixture:continue');
+    assert.equal(sessions.queue(queued).queue.length, 1);
+    assert.deepEqual(current(checkedOut).waitingFor, {
+      directory: left,
+      operation: 'checkout',
+      sessionId: checkedOut.id,
+    });
+
+    scheduler = new modules.ScheduledJobService(
+      jobs,
+      sessions,
+      new modules.SessionLauncher(
+        sessions,
+        new modules.ProviderUsageService(new AbortController().signal),
+      ),
+      () => undefined,
+    );
+    scheduler.start();
+    const job = scheduler.save({
+      id: randomUUID(),
+      expectedRevision: null,
+      name: 'Left digest',
+      prompt: 'fixture:continue',
+      directory: left,
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      schedule: { kind: 'daily', time: '09:00' },
+      timeZone: 'UTC',
+      active: false,
+      timeoutMinutes: 30,
+    });
+    const automation = scheduler.runNow({
+      id: job.id,
+      requestId: randomUUID(),
+    });
+    await delay(500);
+    assert.deepEqual(runRow(automation.id), {
+      status: 'starting',
+      reason: null,
+      sessionId: null,
+    });
+
+    finishCheckout();
+    await checkout;
+    await waitUntil(
+      () =>
+        current(checkedOut).messages.some(item => item.id === queued.messageId),
+      'The queued message did not start when the checkout ended',
+    );
+    assert.equal(current(checkedOut).waitingFor, undefined);
+    await waitUntil(
+      () => runRow(automation.id).status === 'completed',
+      'The automation did not run after its folder freed',
+    );
+    const ran = runRow(automation.id);
+    assert.equal(ran.reason, null);
+    assert.equal(current({ id: ran.sessionId }).directory, left);
+    assert.equal(current(checkedOut).status, 'completed');
+  },
+);
+
+test(
   'scheduled job runs become ordinary sessions with their result in the inbox',
   { timeout: 180_000 },
   async t => {
@@ -11484,7 +11799,7 @@ test(
     );
 
     await t.test(
-      'a turn due while another session runs waits for the idle event and is sent once',
+      'a turn due while another session writes in its folder waits for the folder and is sent once',
       async () => {
         const run = await started('waiting');
         await waitFor(
@@ -11492,14 +11807,12 @@ test(
           current => stepNamed(current, 'gate')?.state === 'running',
           'Gate did not start',
         );
-        const otherDirectory = join(directory, 'other');
-        await mkdir(otherDirectory);
         const created = await host.request('create-session', {
           title: 'Other work',
           provider: 'Codex',
           model: 'fixture-codex',
-          mode: 'read-only',
-          directory: otherDirectory,
+          mode: 'supervised',
+          directory: repository,
         });
         assert.equal(created.type, 'session', JSON.stringify(created));
         const other = await host.request('send-message', {
@@ -11666,7 +11979,7 @@ test(
         const spawned = [];
         const listeners = new Set();
         const sessions = {
-          isBusy: () => busy,
+          onFolderReleased: () => () => undefined,
           onRunFinished: listener => {
             listeners.add(listener);
             return () => listeners.delete(listener);
@@ -11854,7 +12167,7 @@ test(
         );
         assert.equal(
           AUTHOR_BUSY_ATTENTION,
-          'The computer was busy with another session',
+          'The session folder stayed in use by another session',
         );
         assert.deepEqual(sent, [workflowTurnId(waiting.id, 'implement')]);
         assert.deepEqual(runner.waitingForIdle(), []);
@@ -14788,7 +15101,7 @@ test(
         const listeners = new Set();
         const spawned = [];
         const sessions = {
-          isBusy: () => false,
+          onFolderReleased: () => () => undefined,
           onRunFinished: listener => {
             listeners.add(listener);
             return () => listeners.delete(listener);
@@ -15264,7 +15577,7 @@ test(
     );
 
     await t.test(
-      'a second run now while a scheduled workflow is active is busy and Stop ends the job run',
+      'a run now for a project with an active workflow is skipped, a second run of the job is busy and Stop ends the job run',
       async () => {
         const holding = await save(
           definition('Holding task', {
@@ -15278,11 +15591,21 @@ test(
           run => run.status === 'running' && run.workflowRunId,
           'The scheduled workflow did not start',
         );
-        const busy = await host.request('run-scheduled-job-now', {
+        const sameProject = await host.request('run-scheduled-job-now', {
           id: checked.id,
           requestId: randomUUID(),
         });
-        assert.equal(busy.code, 'busy', JSON.stringify(busy));
+        assert.equal(
+          sameProject.type,
+          'scheduled-job-run',
+          JSON.stringify(sameProject),
+        );
+        const skipped = await jobRun(
+          checked,
+          run => run.id === sameProject.run.id && run.status !== 'starting',
+          'The run for the busy project did not settle',
+        );
+        assert.deepEqual([skipped.status, skipped.reason], ['skipped', 'busy']);
         const again = await host.request('run-scheduled-job-now', {
           id: holding.id,
           requestId: randomUUID(),
@@ -15309,9 +15632,8 @@ test(
           listed.list.scheduledJobs.find(job => job.id === checked.id).workflow,
           checked.workflow,
         );
-        const [run] = await runs(checked);
+        const run = (await runs(checked)).find(item => item.workflowRunId);
         assert.equal(run.status, 'completed');
-        assert.ok(run.workflowRunId);
       },
     );
   },
@@ -15939,13 +16261,14 @@ test(
     );
 
     await t.test(
-      'the assistant refuses while another session works and for foreign sessions',
+      'the assistant refuses while another session writes in its folder and for foreign sessions',
       async () => {
         const other = (
           await host.request('create-session', {
             title: 'Other work',
             provider: 'Claude Code',
             model: 'sonnet',
+            mode: 'accept-edits',
             directory: project,
           })
         ).session;
@@ -15968,7 +16291,7 @@ test(
           type: 'error',
           id: busy.id,
           code: 'busy',
-          message: 'Another session is working on this computer.',
+          message: 'Waiting for project, which another session is using.',
         });
         await host.request('stop-run', {
           sessionId: other.id,
