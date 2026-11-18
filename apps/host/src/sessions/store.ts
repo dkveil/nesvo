@@ -88,8 +88,8 @@ const originLinks = (
 const SESSION_COLUMNS =
   'id, document, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId';
 
-const NOT_QUARANTINED =
-  'NOT EXISTS (SELECT 1 FROM session_quarantine WHERE session_id = sessions.id)';
+const LISTED_SESSION =
+  'NOT EXISTS (SELECT 1 FROM session_quarantine WHERE session_id = sessions.id) AND NOT EXISTS (SELECT 1 FROM session_tombstones WHERE session_id = sessions.id)';
 
 const decodeSession = (row: Record<string, SQLOutputValue>) => {
   let document: unknown;
@@ -171,7 +171,7 @@ export class SessionStore {
   list(): Session[] {
     const rows = this.database
       .prepare(
-        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${NOT_QUARANTINED} ORDER BY updated_at DESC, id`,
+        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${LISTED_SESSION} ORDER BY updated_at DESC, id`,
       )
       .all();
     const sessions: Session[] = [];
@@ -198,7 +198,7 @@ export class SessionStore {
     ).join(', ');
     const rows = this.database
       .prepare(
-        `SELECT id, json_remove(document, '$.messages') AS document, json_array_length(document, '$.messages') AS messageCount, ${tail}, (SELECT json_group_array(json_array(value ->> '$.author', value -> '$.usage')) FROM json_each(document, '$.messages')) AS usage, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId FROM sessions WHERE ${NOT_QUARANTINED} AND ${MESSAGES_TYPE} = 'array' ORDER BY updated_at DESC, id`,
+        `SELECT id, json_remove(document, '$.messages') AS document, json_array_length(document, '$.messages') AS messageCount, ${tail}, (SELECT json_group_array(json_array(value ->> '$.author', value -> '$.usage')) FROM json_each(document, '$.messages')) AS usage, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId FROM sessions WHERE ${LISTED_SESSION} AND ${MESSAGES_TYPE} = 'array' ORDER BY updated_at DESC, id`,
       )
       .all();
     const summaries: SessionWindow[] = [];
@@ -215,7 +215,7 @@ export class SessionStore {
     const ids = new Set(summaries.map(summary => summary.id));
     const malformed = this.database
       .prepare(
-        `SELECT id FROM sessions WHERE ${NOT_QUARANTINED} AND ${MESSAGES_TYPE} IS NOT 'array'`,
+        `SELECT id FROM sessions WHERE ${LISTED_SESSION} AND ${MESSAGES_TYPE} IS NOT 'array'`,
       )
       .all()
       .map(row => String(row.id))
@@ -244,7 +244,7 @@ export class SessionStore {
   get(id: string): Session | undefined {
     const row = this.database
       .prepare(
-        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ? AND ${NOT_QUARANTINED}`,
+        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ? AND ${LISTED_SESSION}`,
       )
       .get(id);
     if (!row) return;

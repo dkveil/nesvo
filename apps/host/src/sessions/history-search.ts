@@ -120,7 +120,8 @@ export class HistorySearch {
         FROM history_fts
         JOIN history_entries AS entries ON entries.id = history_fts.rowid
         JOIN sessions ON sessions.id = entries.session_id
-        WHERE history_fts MATCH ?
+        LEFT JOIN session_tombstones AS deleted ON deleted.session_id = entries.session_id
+        WHERE history_fts MATCH ? AND deleted.session_id IS NULL
         ORDER BY history_fts.rank, entries.created_at DESC, entries.id DESC
         LIMIT ? OFFSET ?
       `,
@@ -141,7 +142,9 @@ export class HistorySearch {
           `
         WITH recent AS MATERIALIZED (
           SELECT *, history_fold(body) AS folded
-          FROM history_entries ORDER BY created_at DESC, id DESC LIMIT ${FALLBACK_ROWS}
+          FROM history_entries
+          WHERE NOT EXISTS (SELECT 1 FROM session_tombstones WHERE session_id = history_entries.session_id)
+          ORDER BY created_at DESC, id DESC LIMIT ${FALLBACK_ROWS}
         ), matches AS (
           SELECT * FROM recent
           WHERE ${filters}

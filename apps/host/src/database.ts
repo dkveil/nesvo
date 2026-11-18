@@ -362,6 +362,12 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE INDEX IF NOT EXISTS session_groups_parent ON session_groups (parent_id, sort_order)',
       );
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS session_tombstones (session_id TEXT PRIMARY KEY REFERENCES sessions(id), root_id TEXT NOT NULL, deleted_at TEXT NOT NULL, purge_after TEXT NOT NULL, purged_at TEXT)',
+      );
+      database.exec(
+        'CREATE INDEX IF NOT EXISTS session_tombstones_root ON session_tombstones (root_id); CREATE INDEX IF NOT EXISTS session_tombstones_pending ON session_tombstones (purge_after) WHERE purged_at IS NULL',
+      );
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);

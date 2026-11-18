@@ -43,6 +43,7 @@ export const hostCapabilitySchema = z.enum([
   'message-attachments',
   'terminal-handoff',
   'transcript-search',
+  'session-delete',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -196,6 +197,11 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('host-disconnected'),
     hostId: hostIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sessions-removed'),
+    hostId: hostIdSchema,
+    sessionIds: z.array(z.uuid()).min(1).max(500),
   }),
   z.strictObject({
     type: z.literal('scheduled-job-changed'),

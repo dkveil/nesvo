@@ -154,6 +154,15 @@ import {
   type StageAttachmentInput,
 } from './attachments';
 import {
+  SESSION_DELETE_BATCH_LIMIT,
+  deleteSessionSchema,
+  restoreSessionSchema,
+  sessionDeletionSchema,
+  type DeleteSessionInput,
+  type DesktopSessionDeletion,
+  type RestoreSessionInput,
+} from './session-deletion';
+import {
   reviewSchema,
   decideReviewSchema,
   type DecideReviewInput,
@@ -290,6 +299,7 @@ export * from './sessions';
 export * from './session-history';
 export * from './attachments';
 export * from './session-groups';
+export * from './session-deletion';
 export * from './pull-requests';
 export * from './reasoning-effort';
 export * from './activities';
@@ -321,6 +331,10 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('review-changed'), review: reviewSchema }),
   z.strictObject({ type: z.literal('host-disconnected') }),
+  z.strictObject({
+    type: z.literal('sessions-removed'),
+    sessionIds: z.array(z.uuid()).min(1).max(SESSION_DELETE_BATCH_LIMIT),
+  }),
   z.strictObject({
     type: z.literal('session-groups-changed'),
     list: sessionGroupListSchema,
@@ -576,6 +590,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('search-transcripts'),
     input: transcriptSearchInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-session'),
+    input: deleteSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('restore-session'),
+    input: restoreSessionSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -960,6 +984,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-groups'),
     id: z.uuid(),
     list: sessionGroupListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-deletion'),
+    id: z.uuid(),
+    deletion: sessionDeletionSchema,
   }),
   z.strictObject({
     type: z.literal('database-backup'),
@@ -1394,6 +1423,14 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   setSessionArchived: (
     input: SetSessionArchivedInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  deleteSession: (
+    input: DeleteSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSessionDeletion>;
+  restoreSession: (
+    input: RestoreSessionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   listPullRequests: (

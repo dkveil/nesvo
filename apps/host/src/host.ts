@@ -29,6 +29,7 @@ import { ConversationImport } from './sessions/conversation-import';
 import { HistorySearch } from './sessions/history-search';
 import { TranscriptIndex } from './sessions/transcript-index';
 import { SessionGroupStore } from './sessions/group-store';
+import { SessionDeletions } from './sessions/deletion';
 import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
 import { PullRequests } from './pull-requests';
@@ -103,6 +104,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'set-session-pinned',
   'set-session-terminal',
   'set-session-archived',
+  'delete-session',
+  'restore-session',
   'set-session-mcp',
   'cancel-queued',
   'start-queued',
@@ -293,6 +296,19 @@ export const serveHost = ({
           }),
       );
       const housekeeping = new SessionHousekeeping(sessions, groupStore, emit);
+      const deletions = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const service = new SessionDeletions(
+            database,
+            sessions,
+            reviewStore,
+            emit,
+          );
+          service.start();
+          return service;
+        }),
+        service => Effect.sync(() => service.close()),
+      );
       const pullRequests = new PullRequests(
         probes.controller.signal,
         id => store.get(id),
@@ -1642,6 +1658,18 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: housekeeping.setArchived(request.input),
+              };
+            if (request.method === 'delete-session')
+              return {
+                type: 'session-deletion',
+                id: request.id,
+                deletion: deletions.delete(request.input),
+              };
+            if (request.method === 'restore-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: deletions.restore(request.input),
               };
             if (request.method === 'send-message')
               return {

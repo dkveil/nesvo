@@ -171,7 +171,7 @@ export class CostStore {
         SELECT session_id, ${sumColumns}
         ${source} GROUP BY session_id ORDER BY cost DESC, turns DESC, session_id LIMIT 10
       )
-      SELECT ranked.*, sessions.document ->> '$.title' AS title
+      SELECT ranked.*, CASE WHEN EXISTS (SELECT 1 FROM session_tombstones WHERE session_id = ranked.session_id) THEN 'Deleted session' ELSE coalesce(sessions.document ->> '$.title', '') END AS title
       FROM ranked JOIN sessions ON sessions.id = ranked.session_id
       ORDER BY cost DESC, turns DESC, session_id
     `).map(row => ({

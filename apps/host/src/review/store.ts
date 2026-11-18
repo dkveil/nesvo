@@ -12,7 +12,9 @@ export class ReviewStore {
 
   list(): Review[] {
     return this.database
-      .prepare('SELECT document FROM reviews ORDER BY updated_at DESC, id')
+      .prepare(
+        'SELECT document FROM reviews WHERE NOT EXISTS (SELECT 1 FROM session_tombstones WHERE session_id = reviews.session_id) ORDER BY updated_at DESC, id',
+      )
       .all()
       .map(row => reviewSchema.parse(JSON.parse(String(row.document))));
   }

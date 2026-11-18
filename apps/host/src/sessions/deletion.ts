@@ -1,0 +1,259 @@
+import type { DatabaseSync } from 'node:sqlite';
+import {
+  SESSION_DELETE_GRACE_MS,
+  isGroupableSession,
+  type DeleteSessionInput,
+  type DesktopEvent,
+  type RestoreSessionInput,
+  type Review,
+  type Session,
+  type SessionDeletion,
+} from '@nesvo/contracts';
+import { SessionError, type SessionService } from './service';
+
+const MAX_TIMER_MS = 2 ** 31 - 1;
+const WAITING_DELEGATIONS = new Set(['pending', 'planning', 'plan-ready']);
+
+type DeletionReviews = { list: () => Review[] };
+
+type TombstoneRow = {
+  sessionId: string;
+  rootId: string;
+  deletedAt: string;
+  purgeAfter: string;
+  purgedAt: string | null;
+};
+
+export function sessionDeleteGraceMs(env: NodeJS.ProcessEnv = process.env) {
+  const override = Number(env.NESVO_TEST_SESSION_DELETE_GRACE_MS);
+  return env.NESVO_TEST_MODE === '1' &&
+    Number.isInteger(override) &&
+    override > 0
+    ? override
+    : SESSION_DELETE_GRACE_MS;
+}
+
+const waitsForOperator = (session: Session) =>
+  session.pendingApprovals.length > 0 ||
+  session.delegations.some(item => WAITING_DELEGATIONS.has(item.status));
+
+export class SessionDeletions {
+  private timer?: ReturnType<typeof setTimeout>;
+  private closed = false;
+
+  constructor(
+    private readonly database: DatabaseSync,
+    private readonly sessions: SessionService,
+    private readonly reviews: DeletionReviews,
+    private readonly emit: (event: DesktopEvent) => void,
+    private readonly graceMs = sessionDeleteGraceMs(),
+    private readonly now = () => new Date(),
+  ) {}
+
+  start(): void {
+    this.purgeExpired();
+  }
+
+  close(): void {
+    this.closed = true;
+    clearTimeout(this.timer);
+  }
+
+  delete(input: DeleteSessionInput): SessionDeletion {
+    const pending = this.pendingDeletion(input.sessionId);
+    if (pending) return pending;
+    const all = this.sessions.list();
+    const session = all.find(item => item.id === input.sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    if (!isGroupableSession(session))
+      throw new SessionError(
+        'invalid-request',
+        'Subsessions and automation runs are deleted with their parent.',
+      );
+    if (session.workflowRunId)
+      throw new SessionError(
+        'invalid-request',
+        'Sessions that belong to a workflow run stay with the run.',
+      );
+    const targets = [session, ...this.descendants(session, all)];
+    if (targets.some(item => this.sessions.isRunning(item.id)))
+      throw new SessionError(
+        'busy',
+        'Stop the session and its subsessions before deleting it.',
+      );
+    if (targets.some(waitsForOperator))
+      throw new SessionError(
+        'busy',
+        'Answer the pending approvals and worker decisions before deleting the session.',
+      );
+    const deletedAt = this.now();
+    const purgeAfter = new Date(deletedAt.getTime() + this.graceMs);
+    this.transaction(() => {
+      const insert = this.database.prepare(
+        'INSERT INTO session_tombstones (session_id, root_id, deleted_at, purge_after) VALUES (?, ?, ?, ?)',
+      );
+      for (const target of targets)
+        insert.run(
+          target.id,
+          session.id,
+          deletedAt.toISOString(),
+          purgeAfter.toISOString(),
+        );
+    });
+    const sessionIds = targets.map(item => item.id);
+    this.emit({ type: 'sessions-removed', sessionIds });
+    this.arm();
+    return {
+      sessionId: session.id,
+      sessionIds,
+      title: session.title,
+      deletedAt: deletedAt.toISOString(),
+      purgeAfter: purgeAfter.toISOString(),
+    };
+  }
+
+  restore(input: RestoreSessionInput): Session {
+    const rows = this.tombstones(input.sessionId);
+    const root = rows.find(row => row.sessionId === input.sessionId);
+    if (!root)
+      throw new SessionError(
+        'not-found',
+        'This session is not waiting to be deleted.',
+      );
+    if (root.purgedAt || Date.parse(root.purgeAfter) <= this.now().getTime()) {
+      this.purgeExpired();
+      throw new SessionError(
+        'not-found',
+        'The undo period ended and the session was deleted permanently.',
+      );
+    }
+    const sessionIds = rows.map(row => row.sessionId);
+    this.transaction(() => {
+      this.database
+        .prepare('DELETE FROM session_tombstones WHERE root_id = ?')
+        .run(input.sessionId);
+    });
+    const restored = this.sessions.amend(sessionIds, () => {});
+    const restoredIds = new Set(sessionIds);
+    for (const review of this.reviews.list())
+      if (restoredIds.has(review.sessionId))
+        this.emit({ type: 'review-changed', review });
+    this.arm();
+    return restored.find(item => item.id === input.sessionId)!;
+  }
+
+  purgeExpired(): void {
+    if (this.closed) return;
+    const expired = this.database
+      .prepare(
+        'SELECT session_id AS sessionId FROM session_tombstones WHERE purged_at IS NULL AND purge_after <= ?',
+      )
+      .all(this.now().toISOString())
+      .map(row => String(row.sessionId));
+    if (expired.length) this.purge(expired);
+    this.arm();
+  }
+
+  private purge(sessionIds: string[]): void {
+    const purgedAt = this.now().toISOString();
+    this.transaction(() => {
+      const statements = [
+        'DELETE FROM history_entries WHERE session_id = ?',
+        'DELETE FROM reviews WHERE session_id = ?',
+        "UPDATE sessions SET document = 'null', create_request_id = NULL WHERE id = ?",
+      ].map(sql => this.database.prepare(sql));
+      const mark = this.database.prepare(
+        'UPDATE session_tombstones SET purged_at = ? WHERE session_id = ?',
+      );
+      for (const sessionId of sessionIds) {
+        for (const statement of statements) statement.run(sessionId);
+        mark.run(purgedAt, sessionId);
+      }
+    });
+  }
+
+  private arm(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.closed) return;
+    const next = this.database
+      .prepare(
+        'SELECT min(purge_after) AS next FROM session_tombstones WHERE purged_at IS NULL',
+      )
+      .get()?.next;
+    if (typeof next !== 'string') return;
+    const delay = Math.min(
+      MAX_TIMER_MS,
+      Math.max(0, Date.parse(next) - this.now().getTime()),
+    );
+    this.timer = setTimeout(() => {
+      try {
+        this.purgeExpired();
+      } catch (error) {
+        console.error(
+          `Deleted sessions could not be purged. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }, delay);
+    this.timer.unref?.();
+  }
+
+  private pendingDeletion(sessionId: string): SessionDeletion | undefined {
+    const rows = this.tombstones(sessionId);
+    const root = rows.find(row => row.sessionId === sessionId);
+    if (!root || root.purgedAt) return;
+    return {
+      sessionId,
+      sessionIds: rows.map(row => row.sessionId),
+      title: String(
+        this.database
+          .prepare(
+            "SELECT document ->> '$.title' AS title FROM sessions WHERE id = ?",
+          )
+          .get(sessionId)?.title ?? '',
+      ),
+      deletedAt: root.deletedAt,
+      purgeAfter: root.purgeAfter,
+    };
+  }
+
+  private tombstones(rootId: string): TombstoneRow[] {
+    return this.database
+      .prepare(
+        'SELECT session_id AS sessionId, root_id AS rootId, deleted_at AS deletedAt, purge_after AS purgeAfter, purged_at AS purgedAt FROM session_tombstones WHERE root_id = ? ORDER BY session_id = root_id DESC, session_id',
+      )
+      .all(rootId)
+      .map(row => ({
+        sessionId: String(row.sessionId),
+        rootId: String(row.rootId),
+        deletedAt: String(row.deletedAt),
+        purgeAfter: String(row.purgeAfter),
+        purgedAt: row.purgedAt === null ? null : String(row.purgedAt),
+      }));
+  }
+
+  private descendants(root: Session, all: Session[]): Session[] {
+    const found: Session[] = [];
+    const queue = [root.id];
+    while (queue.length) {
+      const parentId = queue.shift();
+      for (const item of all)
+        if (item.parentId === parentId && !found.includes(item)) {
+          found.push(item);
+          queue.push(item.id);
+        }
+    }
+    return found;
+  }
+
+  private transaction(run: () => void): void {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      run();
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}

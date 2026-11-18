@@ -163,6 +163,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         workflowEvents.push(message);
       } else if (message.type === 'session-groups-changed') {
         groupEvents.push(message.list);
+      } else if (message.type === 'sessions-removed') {
+        assert.ok(!message.id);
       } else {
         const response = pending.get(message.id);
         assert.ok(response, `Uncorrelated response: ${line}`);
@@ -18948,6 +18950,190 @@ test(
     const check = new DatabaseSync(path);
     try {
       assert.equal(check.prepare('PRAGMA user_version').get().user_version, 17);
+    } finally {
+      check.close();
+    }
+  },
+);
+
+test(
+  'deleted sessions wait in a tombstone, restore within the undo period and purge after it',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-delete-')),
+    );
+    const pidFile = join(directory, 'fixture-pids.json');
+    const project = join(directory, 'project');
+    await mkdir(project, { recursive: true });
+    const graceMs = 4000;
+    const hosts = [];
+    t.after(async () => {
+      for (const opened of hosts) {
+        if (
+          opened.child.exitCode === null &&
+          opened.child.signalCode === null
+        ) {
+          try {
+            await opened.stop();
+          } catch {
+            opened.child.kill();
+          }
+        }
+        await bounded(opened.exited, 'Test host did not exit');
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    if (process.platform !== 'win32') await chmod(fixturePath, 0o755);
+    const open = () => {
+      const opened = launch(directory, pidFile, {
+        NESVO_TEST_MODE: '1',
+        NESVO_TEST_SESSION_DELETE_GRACE_MS: String(graceMs),
+      });
+      hosts.push(opened);
+      return opened;
+    };
+    let host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'session-delete',
+      ),
+    );
+    const createSession = async title => {
+      const response = await host.request('create-session', {
+        title,
+        model: 'sonnet',
+        directory: project,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const listed = async () =>
+      (await host.request('list-sessions')).sessions.map(session => session.id);
+    const found = async query => {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const response = await host.request('search-history', { query });
+        assert.equal(response.type, 'history-search', host.error());
+        const ids = response.search.results.map(result => result.sessionId);
+        if (ids.length) return ids;
+        await delay(25);
+      }
+      return [];
+    };
+    const removedEvents = () =>
+      host.timeline.filter(message => message.type === 'sessions-removed');
+
+    const kept = await createSession('Zebrafinch notes');
+    const busy = await createSession('Busy session');
+    const started = (
+      await host.request('send-message', {
+        sessionId: busy.id,
+        messageId: randomUUID(),
+        text: 'fixture:hold',
+      })
+    ).session;
+    await host.event(
+      value =>
+        value.runId === started.runId &&
+        agent(value).body === 'Fixture is waiting.',
+    );
+    const refused = await host.request('delete-session', {
+      sessionId: busy.id,
+    });
+    assert.equal(refused.code, 'busy', JSON.stringify(refused));
+    assert.ok((await listed()).includes(busy.id));
+    await host.request('stop-run', {
+      sessionId: busy.id,
+      runId: started.runId,
+    });
+    await host.event(
+      value => value.runId === started.runId && value.status === 'stopped',
+    );
+
+    assert.deepEqual(await found('zebrafinch'), [kept.id]);
+    const deleted = await host.request('delete-session', {
+      sessionId: kept.id,
+    });
+    assert.equal(deleted.type, 'session-deletion', JSON.stringify(deleted));
+    assert.deepEqual(deleted.deletion.sessionIds, [kept.id]);
+    assert.equal(deleted.deletion.title, 'Zebrafinch notes');
+    assert.equal(
+      Date.parse(deleted.deletion.purgeAfter) -
+        Date.parse(deleted.deletion.deletedAt),
+      graceMs,
+    );
+    for (let attempt = 0; attempt < 40 && !removedEvents().length; attempt++)
+      await delay(25);
+    assert.deepEqual(
+      removedEvents().map(event => event.sessionIds),
+      [[kept.id]],
+    );
+    assert.equal((await listed()).includes(kept.id), false);
+    assert.deepEqual(
+      (await host.request('search-history', { query: 'zebrafinch' })).search
+        .results,
+      [],
+    );
+    const repeated = await host.request('delete-session', {
+      sessionId: kept.id,
+    });
+    assert.equal(repeated.type, 'session-deletion');
+    assert.equal(repeated.deletion.purgeAfter, deleted.deletion.purgeAfter);
+
+    const restored = await host.request('restore-session', {
+      sessionId: kept.id,
+    });
+    assert.equal(restored.type, 'session', JSON.stringify(restored));
+    assert.equal(restored.session.title, 'Zebrafinch notes');
+    assert.ok(restored.session.revision > kept.revision);
+    assert.ok((await listed()).includes(kept.id));
+    assert.deepEqual(await found('zebrafinch'), [kept.id]);
+    assert.equal(
+      (await host.request('restore-session', { sessionId: kept.id })).code,
+      'not-found',
+    );
+
+    const again = await host.request('delete-session', {
+      sessionId: kept.id,
+    });
+    assert.equal(again.type, 'session-deletion');
+    await host.stop();
+    await delay(graceMs + 500);
+
+    host = open();
+    assert.equal((await listed()).includes(kept.id), false);
+    assert.ok((await listed()).includes(busy.id));
+    const late = await host.request('restore-session', { sessionId: kept.id });
+    assert.equal(late.code, 'not-found', JSON.stringify(late));
+    assert.deepEqual(
+      (await host.request('search-history', { query: 'zebrafinch' })).search
+        .results,
+      [],
+    );
+    await host.stop();
+
+    const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 17);
+      const tombstone = check
+        .prepare(
+          'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
+        )
+        .get(kept.id);
+      assert.ok(tombstone?.purged_at);
+      assert.equal(
+        check.prepare('SELECT document FROM sessions WHERE id = ?').get(kept.id)
+          .document,
+        'null',
+      );
+      assert.equal(
+        check
+          .prepare(
+            'SELECT count(*) AS count FROM history_entries WHERE session_id = ?',
+          )
+          .get(kept.id).count,
+        0,
+      );
     } finally {
       check.close();
     }
