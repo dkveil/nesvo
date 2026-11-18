@@ -1146,6 +1146,7 @@ test(
         'code-comments',
         'repository-mcp-trust',
         'tracked-repositories',
+        'running-apps',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6156,6 +6157,7 @@ test(
       'code-comments',
       'repository-mcp-trust',
       'tracked-repositories',
+      'running-apps',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -21459,6 +21461,67 @@ test('image, PDF and file attachments reach both providers, reject invalid uploa
   assert.ok(existsSync(blob(stagedPdf.upload.attachment, 'pdf')));
   assert.ok(existsSync(blob(stagedPng.upload.attachment, 'png')));
   assert.ok(existsSync(claudeNotesPath));
+});
+
+test('running apps attribute a listening port to the session that started it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-running-apps-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const listenFile = join(directory, 'listen.json');
+  const cwd = await realpath(directory);
+  let host;
+  let server;
+  try {
+    host = launch(directory, pidFile, {
+      NESVO_FIXTURE_LISTEN_FILE: listenFile,
+    });
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('running-apps'));
+    const before = await host.request('list-running-apps');
+    assert.equal(before.type, 'running-apps', JSON.stringify(before));
+    assert.deepEqual(before.list.apps, []);
+    const created = (
+      await host.request('create-session', {
+        title: 'Running apps',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+      })
+    ).session;
+    const sent = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'Start the preview server. fixture:listen',
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const completed = await host.event(
+      item =>
+        item.id === created.id &&
+        item.runId === sent.session.runId &&
+        item.status !== 'running',
+    );
+    assert.equal(completed.status, 'completed', completed.error);
+    server = JSON.parse(await readFile(listenFile, 'utf8'));
+    assert.equal(server.sessionId, created.id);
+    let app;
+    for (let attempt = 0; attempt < 40 && !app; attempt++) {
+      const listed = await host.request('list-running-apps');
+      assert.equal(listed.type, 'running-apps', JSON.stringify(listed));
+      app = listed.list.apps.find(item => item.port === server.port);
+      if (!app) await delay(500);
+    }
+    assert.ok(app, 'The fixture server port is listed');
+    assert.deepEqual(
+      { pid: app.pid, sessionId: app.sessionId, match: app.match },
+      { pid: server.pid, sessionId: created.id, match: 'process' },
+    );
+  } finally {
+    if (server)
+      try {
+        process.kill(server.pid);
+      } catch {}
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('a session opened in a terminal refuses Nesvo turns until it returns', async () => {

@@ -94,6 +94,9 @@ import {
   ScheduledJobService,
 } from './scheduled-jobs/service';
 import { SessionLauncher } from './scheduled-jobs/launcher';
+import { PROVIDER_SESSION_VARIABLE } from './process/provider-processes';
+import { RunningApps } from './running-apps/service';
+import { RunningAppsError } from './running-apps/scan';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -289,7 +292,10 @@ export const serveHost = ({
                   const run = session.workflowRunId
                     ? workflowRunStore.getRun(session.workflowRunId)
                     : undefined;
-                  return run ? runEnvironment(run) : undefined;
+                  return {
+                    ...(run ? runEnvironment(run) : {}),
+                    [PROVIDER_SESSION_VARIABLE]: session.id,
+                  };
                 },
                 isKnownGroup: groupId => !!groupStore.get(groupId),
                 isHeldByWorkflow: review => {
@@ -373,6 +379,7 @@ export const serveHost = ({
         release => Effect.sync(() => release()),
       );
       const usage = new ProviderUsageService();
+      const runningApps = new RunningApps();
       const evidence = new EvidenceStore(directory, id =>
         workflowRunStore.getStep(id),
       );
@@ -710,6 +717,36 @@ export const serveHost = ({
             .catch(() => undefined);
           probes.pending.add(inspection);
           void inspection.finally(() => probes.pending.delete(inspection));
+          continue;
+        }
+        if (request.method === 'list-running-apps') {
+          const reading = runningApps
+            .read(
+              () =>
+                sessions.list().map(session => ({
+                  id: session.id,
+                  directory: session.directory,
+                })),
+              probes.controller.signal,
+            )
+            .then(list => send({ type: 'running-apps', id: request.id, list }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof RunningAppsError
+                    ? error.code
+                    : 'unavailable',
+                message:
+                  error instanceof RunningAppsError
+                    ? error.message
+                    : 'Running apps could not be read on this computer.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(reading);
+          void reading.finally(() => probes.pending.delete(reading));
           continue;
         }
         if (

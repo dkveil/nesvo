@@ -45,6 +45,7 @@ import {
   claudeTurnUsage,
   type ContextFill,
 } from './turn-usage';
+import { recordProviderProcess } from '../process/provider-processes';
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -374,6 +375,7 @@ function ownProcess(
     detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  recordProviderProcess(child.pid, environment);
   let processError: Error | null = null;
   let cleanup: Promise<void> | null = null;
   let hasClosed = false;

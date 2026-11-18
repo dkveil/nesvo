@@ -485,6 +485,19 @@ if (args.length === 1 && args[0] === '--version') {
       prompt.lastIndexOf('\nUser request:\n') + '\nUser request:\n'.length,
     );
   }
+  const listenFile = process.env.NESVO_FIXTURE_LISTEN_FILE;
+  if (listenFile && prompt.includes('fixture:listen')) {
+    spawn(
+      process.execPath,
+      [
+        '-e',
+        "const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => require('node:fs').writeFileSync(process.env.NESVO_FIXTURE_LISTEN_FILE, JSON.stringify({ pid: process.pid, port: server.address().port, sessionId: process.env.NESVO_SESSION_ID ?? null })));",
+      ],
+      { detached: true, stdio: 'ignore', windowsHide: true },
+    ).unref();
+    for (let attempt = 0; attempt < 100 && !existsSync(listenFile); attempt++)
+      await setTimeout(50);
+  }
   const verdictMode =
     prompt.startsWith(VERDICT_ROLE) || prompt.startsWith(REPAIR_NOTE);
   const operatorRequest =

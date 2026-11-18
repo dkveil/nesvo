@@ -367,6 +367,7 @@ import {
   type TrackedRepository,
   type TrackedRepositorySuggestion,
 } from './tracked-repositories';
+import { runningAppListSchema, type RunningAppList } from './running-apps';
 
 export * from './sessions';
 export * from './session-history';
@@ -377,6 +378,7 @@ export * from './session-subsessions';
 export * from './pull-requests';
 export * from './code-review';
 export * from './tracked-repositories';
+export * from './running-apps';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -771,6 +773,10 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({
     id: z.uuid(),
     method: z.literal('list-tracked-repositories'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-running-apps'),
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1258,6 +1264,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('tracked-repositories'),
     id: z.uuid(),
     repositories: trackedRepositoryListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('running-apps'),
+    id: z.uuid(),
+    list: runningAppListSchema,
   }),
   z.strictObject({
     type: z.literal('tracked-repository-suggestions'),
@@ -1769,6 +1780,7 @@ export type DesktopApi = {
     hostId?: HostId,
   ) => Promise<PullRequestReference | null>;
   listTrackedRepositories: (hostId?: HostId) => Promise<TrackedRepository[]>;
+  listRunningApps: (hostId?: HostId) => Promise<RunningAppList>;
   addTrackedRepository: (
     input: AddTrackedRepositoryInput,
     hostId?: HostId,

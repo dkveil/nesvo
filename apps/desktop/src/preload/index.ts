@@ -92,6 +92,7 @@ import {
   reorderTrackedRepositoriesSchema,
   listTrackedPullRequestsSchema,
   trackedRepositoryListSchema,
+  runningAppListSchema,
   trackedRepositorySuggestionListSchema,
   trackedPullRequestListsSchema,
   readPullRequestSchema,
@@ -1035,6 +1036,10 @@ const api: DesktopApi = {
         listPullRequestsSchema.parse(input),
         route(hostId),
       ),
+    ),
+  listRunningApps: async hostId =>
+    runningAppListSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-running-apps', route(hostId)),
     ),
   listTrackedRepositories: async hostId =>
     trackedRepositoryListSchema.parse(

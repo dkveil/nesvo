@@ -54,6 +54,7 @@ export const hostCapabilitySchema = z.enum([
   'code-comments',
   'repository-mcp-trust',
   'tracked-repositories',
+  'running-apps',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

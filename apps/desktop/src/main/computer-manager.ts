@@ -255,6 +255,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to review pull requests with an agent.',
   'tracked-repositories':
     'Update this computer’s Nesvo host and reconnect to track repositories.',
+  'running-apps':
+    'Update this computer’s Nesvo host and reconnect to see running apps.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -297,6 +299,7 @@ function requiredCapability(
     return 'pull-request-reviews';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
+  if (method === 'list-running-apps') return 'running-apps';
   if (
     method === 'read-session-changes' ||
     method === 'read-session-change-patch'
@@ -1102,6 +1105,7 @@ export class ComputerManager {
       'list-conversations': 'conversation-import-catalog',
       'adopt-conversation': 'session',
       'backup-database': 'database-backup',
+      'list-running-apps': 'running-apps',
       ...sessionGroupResponses,
       ...sessionDeletionResponses,
       ...pullRequestResponses,
@@ -1161,6 +1165,8 @@ export class ComputerManager {
         return response.reference;
       case 'tracked-repositories':
         return response.repositories;
+      case 'running-apps':
+        return response.list;
       case 'tracked-repository-suggestions':
         return response.suggestions;
       case 'tracked-pull-request-lists':

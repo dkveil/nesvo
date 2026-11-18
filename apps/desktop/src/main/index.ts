@@ -813,6 +813,10 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:list-running-apps', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-running-apps', undefined, route(hostId));
+  });
   for (const method of [
     'list-tracked-repositories',
     'suggest-tracked-repositories',
