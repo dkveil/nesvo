@@ -8,7 +8,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { Switch } from '@/shared/ui/switch';
-import { Textarea } from '@/shared/ui/textarea';
+import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
 import { errorMessages, messagesId } from './field-messages';
 import { ReviewTaskFields } from './review-task-fields';
 import { ScheduleFields } from './schedule-fields';
@@ -60,6 +60,7 @@ export function AutomationTaskFields({ editor }: SectionProps) {
     supportsRituals,
     reviewProfiles,
     trackedRepositories,
+    computer,
   } = editor;
   return (
     <>
@@ -158,11 +159,21 @@ export function AutomationTaskFields({ editor }: SectionProps) {
           label="Prompt"
           messages={errorMessages(visible('prompt'))}
         >
-          <Textarea
+          <PromptTextarea
             size="md"
             id="automation-prompt"
             data-field="prompt"
             value={values.prompt}
+            skill={values.promptSkill}
+            scope={{
+              hostId: values.hostId,
+              provider: values.provider,
+              input: {
+                provider: values.provider,
+                directory: values.directory.trim(),
+              },
+            }}
+            available={computer?.status === 'connected'}
             maxLength={9000}
             placeholder="Summarize what changed since yesterday."
             aria-invalid={!!visible('prompt')}
@@ -171,7 +182,7 @@ export function AutomationTaskFields({ editor }: SectionProps) {
               visible('prompt'),
             )}
             disabled={pending}
-            onChange={event => change({ prompt: event.target.value })}
+            onChange={(prompt, promptSkill) => change({ prompt, promptSkill })}
             onBlur={() => touch('prompt')}
             className="min-h-24"
           />

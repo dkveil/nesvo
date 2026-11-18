@@ -3,6 +3,8 @@ import {
   workflowDefinitionLimits,
   stepTypeSchema,
   probeKindSchema,
+  providerSchema,
+  isChildWorkflowStep,
   type StepPhase,
 } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
@@ -33,7 +35,9 @@ import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { Hint } from '@/shared/ui/tooltip';
 import type { StepInspectorProps } from './index';
 import { NeedsField } from './needs-field';
-import { SkillField } from './skill-field';
+import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
+import { pendingSkillQuery } from '@/features/select-skill/skill-command';
+import type { Provider } from '@/entities/session';
 import { ChildFields } from './child-fields';
 import {
   allowsRetries,
@@ -96,7 +100,8 @@ export function StepInspectorForm({
   mode,
   renamable = false,
   usedBy,
-  skills,
+  hostId,
+  directory,
   issues,
   onChange,
   onSave,
@@ -111,7 +116,33 @@ export function StepInspectorForm({
     setOrigin({ baseline, phase: step.phase });
     setPendingPhase(null);
   }
+  const [catalogProvider, setCatalogProvider] = useState<Provider | null>(null);
+  const prompts = step.type === 'agent' || isChildWorkflowStep(step.type);
+  const provider =
+    step.session?.provider ??
+    catalogProvider ??
+    (step.prompt_skill?.delivery === 'instructions' ||
+    step.needs.includes('browser')
+      ? 'Claude Code'
+      : 'Codex');
+  const childFolder = step.session?.directory;
+  const promptFolder =
+    !childFolder || childFolder === '.'
+      ? directory
+      : /^(?:[A-Za-z]:[\\/]|[\\/])/.test(childFolder)
+        ? childFolder
+        : directory
+          ? `${directory}/${childFolder}`
+          : '';
+  const skillQueryOpen = prompts && pendingSkillQuery(step.body);
   const client = stepNotes(step);
+  if (skillQueryOpen)
+    client.body = [
+      {
+        severity: 'error',
+        message: 'Choose a skill from the list or remove the slash query.',
+      },
+    ];
   const notes = mergeNotes(client, issues, stepFields);
   const notesOf = (field: string): FieldNote[] => notes[field] ?? [];
   const blocked = Object.keys(client).length > 0;
@@ -132,6 +163,19 @@ export function StepInspectorForm({
     }
   };
   const formNotes = notesOf('form');
+  const bodyNotes = [...notesOf('body'), ...notesOf('prompt_skill')];
+  const bodyProps = {
+    size: 'sm' as const,
+    id: fieldId('body'),
+    value: step.body,
+    rows: 6,
+    spellCheck: step.type === 'agent' || human,
+    maxLength: workflowDefinitionLimits.body,
+    placeholder: bodyPlaceholders[step.type],
+    'aria-invalid': hasError(bodyNotes) || undefined,
+    'aria-describedby': describedBy(fieldId('body'), bodyNotes),
+    className: 'max-h-72 min-h-24 font-mono text-xs leading-5',
+  };
   return (
     <form
       aria-label={`Step ${step.name || 'draft'}`}
@@ -253,18 +297,16 @@ export function StepInspectorForm({
             </p>
           )}
         </Field>
-        {step.type === 'agent' && (
+        {step.type === 'agent' && step.skill && (
           <Field
             id={fieldId('skill')}
-            label="Skill"
+            label="Saved skill name"
             messages={notesOf('skill')}
           >
-            <SkillField
+            <Input
               id={fieldId('skill')}
               value={step.skill}
-              skills={skills}
-              notes={notesOf('skill')}
-              onChange={skill => update({ skill })}
+              onChange={event => update({ skill: event.target.value || null })}
             />
           </Field>
         )}
@@ -389,10 +431,31 @@ export function StepInspectorForm({
             </Field>
           </>
         )}
+        {step.type === 'agent' && (
+          <Field id={fieldId('skill-provider')} label="Skill provider">
+            <Select
+              value={provider}
+              onValueChange={value =>
+                setCatalogProvider(providerSchema.parse(value))
+              }
+            >
+              <SelectTrigger id={fieldId('skill-provider')} size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {providerSchema.options.map(option => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
         <Field
           id={fieldId('body')}
           label={bodyLabels[step.type]}
-          messages={notesOf('body')}
+          messages={bodyNotes}
           aside={
             <span className="text-2xs text-muted-foreground tabular-nums">
               {step.body.length.toLocaleString()}/
@@ -400,19 +463,29 @@ export function StepInspectorForm({
             </span>
           }
         >
-          <Textarea
-            size="sm"
-            id={fieldId('body')}
-            value={step.body}
-            rows={6}
-            spellCheck={step.type === 'agent' || human}
-            maxLength={workflowDefinitionLimits.body}
-            placeholder={bodyPlaceholders[step.type]}
-            aria-invalid={hasError(notesOf('body')) || undefined}
-            aria-describedby={describedBy(fieldId('body'), notesOf('body'))}
-            onChange={event => update({ body: event.target.value })}
-            className="max-h-72 min-h-24 font-mono text-xs leading-5"
-          />
+          {prompts ? (
+            <PromptTextarea
+              {...bodyProps}
+              skill={step.prompt_skill}
+              scope={{
+                hostId,
+                provider,
+                input: { provider, directory: promptFolder },
+              }}
+              onChange={(body, prompt_skill) =>
+                update({
+                  body,
+                  prompt_skill,
+                  ...(prompt_skill ? { skill: null } : {}),
+                })
+              }
+            />
+          ) : (
+            <Textarea
+              {...bodyProps}
+              onChange={event => update({ body: event.target.value })}
+            />
+          )}
         </Field>
         <div className="grid grid-cols-2 gap-2">
           <Field

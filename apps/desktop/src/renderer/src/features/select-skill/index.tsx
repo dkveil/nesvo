@@ -55,6 +55,7 @@ export type TypedSubmission =
 type Controls = {
   anchor: (node: ReactNode) => ReactNode;
   notice: ReactNode;
+  selectionIssue: string;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onInput: () => void;
   hasTypedCommand: boolean;
@@ -75,6 +76,8 @@ type Props = {
     Partial<Pick<DesktopApi, 'listClaudeCommands'>>;
   draft: string;
   enabled?: boolean;
+  selection?: SkillReference;
+  requireSnapshot?: boolean;
   nativeCommands?: boolean;
   onCommand?: (name: string) => void;
   onSelect: (skill: SelectedSkill) => void;
@@ -103,10 +106,10 @@ const requestCatalog = (
   api: Pick<DesktopApi, 'discoverSkills'>,
   scope: SkillScope,
 ) =>
-  api.discoverSkills(scope.input).then(result => {
+  api.discoverSkills(scope.input, scope.hostId).then(result => {
     if (!belongsTo(result, scope))
       throw new Error(
-        'The skill catalog does not match this thread. Refresh to try again.',
+        'The skill catalog does not match this selection. Refresh to try again.',
       );
     return result;
   });
@@ -116,6 +119,8 @@ export function SelectSkill({
   api,
   draft,
   enabled = true,
+  selection,
+  requireSnapshot = false,
   nativeCommands = false,
   onCommand,
   onSelect,
@@ -170,8 +175,31 @@ export function SelectSkill({
         query,
       )
     : [];
+  const reasonFor = (skill: SkillEntry) =>
+    unavailableReason(skill, catalog) ||
+    (requireSnapshot && !skill.contentHash ? 'Snapshot unavailable' : '');
   const isSelectable = (entry: MenuEntry) =>
-    entry.kind === 'command' || !unavailableReason(entry.skill, catalog);
+    entry.kind === 'command' || !reasonFor(entry.skill);
+  const selectedEntry = catalog?.skills.find(
+    skill => skill.id === selection?.id,
+  );
+  const selectionIssue = !selection
+    ? ''
+    : !enabled
+      ? 'Connect to the computer to check this skill.'
+      : (error ??
+        (catalog
+          ? !selectedEntry
+            ? 'This skill is unavailable for the selected computer and folder.'
+            : reasonFor(selectedEntry) ||
+              (selectedEntry.invocation !== selection.delivery
+                ? 'This skill is unavailable with the selected provider. Select it again.'
+                : selectedEntry.contentHash !== selection.contentHash ||
+                    selectedEntry.path !== selection.path ||
+                    selectedEntry.source !== selection.source
+                  ? 'This skill or its source changed. Select it again.'
+                  : '')
+          : 'Checking selected skill?'));
   const selectable = entries.filter(isSelectable);
   const active =
     selectable.find(entry => entry.id === activeId) ?? selectable[0];
@@ -203,8 +231,9 @@ export function SelectSkill({
       live = false;
     };
   }, [listCommands, open, commandsEnabled, sessionId, scopeKey, refresh]);
+  const needsCatalog = open || (enabled && !!selection);
   useEffect(() => {
-    if (!open) return;
+    if (!needsCatalog) return;
     let live = true;
     requestCatalog(api, JSON.parse(scopeKey) as SkillScope).then(
       result => {
@@ -217,14 +246,14 @@ export function SelectSkill({
     return () => {
       live = false;
     };
-  }, [api, open, scopeKey, refresh]);
+  }, [api, needsCatalog, scopeKey, refresh]);
   const close = () => {
     setManualOpen(false);
     setDismissedDraft(draft);
     setManualQuery(null);
   };
   const chooseSkill = (skill: SkillEntry) => {
-    if (unavailableReason(skill, catalog) || !skill.path) return;
+    if (reasonFor(skill) || !skill.path) return;
     close();
     setTypedError('');
     onSelect(toSelected(skill));
@@ -346,6 +375,7 @@ export function SelectSkill({
             {typedError}
           </StatusMessage>
         ) : null,
+        selectionIssue,
         onKeyDown,
         onInput: () => {
           setDismissedDraft(null);
@@ -450,7 +480,7 @@ export function SelectSkill({
                   disabled: false,
                 };
               const { skill } = entry;
-              const reason = unavailableReason(skill, catalog);
+              const reason = reasonFor(skill);
               return {
                 value: skill.id,
                 label: `/${skillCommand(skill)}`,

@@ -6,7 +6,6 @@ import type {
   EdgeCondition,
   SaveScheduledJobInput,
   ScheduledJob,
-  SkillEntry,
   StepType,
   TaskSpecSummary,
 } from '@nesvo/contracts';
@@ -23,11 +22,6 @@ export type InspectorIssue = DefinitionIssue & { field?: string };
 
 export type EdgeWhen = EdgeCondition;
 
-export type SkillSummary = Pick<
-  SkillEntry,
-  'id' | 'name' | 'description' | 'source'
->;
-
 export type WorkflowFields = {
   name: string;
   description: string;
@@ -41,7 +35,8 @@ export type StepInspectorProps = {
   mode: InspectorMode;
   renamable?: boolean;
   usedBy: string[];
-  skills: SkillSummary[];
+  hostId: string;
+  directory: string;
   issues: InspectorIssue[];
   onChange: (step: StepDraft) => void;
   onSave: () => void;

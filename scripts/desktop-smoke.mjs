@@ -3738,6 +3738,22 @@ try {
   );
   assert.equal(await editor.locator('[data-editor-edge-label]').count(), 1);
   await addGraphStep('smoke-plan');
+  const agentPrompt = inspector.getByRole('textbox', {
+    name: 'Instructions',
+    exact: true,
+  });
+  assert.equal(
+    await agentPrompt.evaluate(element => getComputedStyle(element).resize),
+    'none',
+  );
+  await agentPrompt.fill('Plan the change.\n/fixture-claude');
+  await restartedPage
+    .getByRole('option', { name: 'Fixture Claude instructions', exact: true })
+    .click();
+  assert.equal(await agentPrompt.inputValue(), 'Plan the change.');
+  await inspector
+    .getByLabel('Selected skill: Fixture Claude instructions')
+    .waitFor();
   await addGraphStep('smoke-publish', 'smoke-approve');
   await editor
     .locator('[data-editor-edge="smoke-approve -> smoke-publish"]')
@@ -3798,6 +3814,10 @@ try {
     .locator('[data-editor-notice]')
     .filter({ hasText: 'Saved smoke-graph.' })
     .waitFor();
+  assert.match(
+    await readFile(join(workflowRoot, 'steps', 'smoke-plan.md'), 'utf8'),
+    /prompt_skill:.*Fixture Claude instructions/,
+  );
   await writeFile(
     join(workflowRoot, 'workflows', 'smoke-graph.md'),
     (
@@ -4030,6 +4050,18 @@ try {
     .filter({ hasText: 'I would add a lint step before the approval.' });
   await replyTurn.waitFor({ timeout: 30_000 });
   await bothShots('reply');
+  await assistantInput.fill('/');
+  const assistantSkills = restartedPage.getByRole('listbox', {
+    name: 'Skills',
+    exact: true,
+  });
+  await assistantSkills
+    .getByRole('option', { name: 'Fixture Claude instructions', exact: true })
+    .click();
+  await assistantDock
+    .getByLabel('Selected skill: Fixture Claude instructions')
+    .waitFor();
+  await assistantDock.getByRole('button', { name: 'Remove skill' }).click();
   const lintPath = join(workflowRoot, 'steps', 'lint-check.md');
   const flowPath = join(workflowRoot, 'workflows', 'assistant-flow.md');
   await assert.rejects(readFile(lintPath, 'utf8'));
@@ -4555,19 +4587,28 @@ try {
     .first()
     .click();
   await automationEditor.getByLabel('Name').fill('Smoke automation');
-  await automationEditor.getByLabel('Prompt').fill('/fixture-skill');
-  await automationEditor
-    .getByText(
-      'Automation prompts are plain text. Skills (/name) are not supported yet.',
-    )
-    .waitFor();
+  const automationPrompt = automationEditor.getByLabel('Prompt');
+  assert.equal(
+    await automationPrompt.evaluate(
+      element => getComputedStyle(element).resize,
+    ),
+    'none',
+  );
+  await automationPrompt.fill('/');
+  const automationSkill = restartedPage.getByRole('option', {
+    name: 'Fixture Codex instructions',
+    exact: true,
+  });
+  await automationSkill.waitFor();
   assert.equal(
     await automationEditor.getByRole('button', { name: 'Save' }).isDisabled(),
     true,
   );
+  await automationSkill.click();
   await automationEditor
-    .getByLabel('Prompt')
-    .fill('Summarize the fixture folder.');
+    .getByLabel('Selected skill: Fixture Codex instructions')
+    .waitFor();
+  await automationPrompt.fill('Summarize the fixture folder.');
   await automationEditor.getByRole('radio', { name: 'Daily' }).click();
   const automationClock = new Date();
   const automationTime = `${String((automationClock.getHours() + 21) % 24).padStart(2, '0')}:00`;

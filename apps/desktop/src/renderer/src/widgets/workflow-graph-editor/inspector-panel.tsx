@@ -38,7 +38,6 @@ import {
   StepInspector,
   type AutomationInput,
   type InspectorIssue,
-  type SkillSummary,
 } from './inspector';
 import type { EditorState } from './use-editor-state';
 
@@ -46,7 +45,6 @@ type Props = {
   state: EditorState;
   hostId: string;
   directory: string;
-  skills: SkillSummary[];
   automations: ScheduledJob[];
   specs: TaskSpecSummary[];
   computers: Computer[];
@@ -74,7 +72,6 @@ export function InspectorPanel({
   state,
   hostId,
   directory,
-  skills,
   automations,
   specs,
   computers,
@@ -138,7 +135,8 @@ export function InspectorPanel({
             step={state.pendingDraft}
             mode="create"
             usedBy={[]}
-            skills={skills}
+            hostId={hostId}
+            directory={directory}
             issues={state.draftProblems}
             onChange={state.updateDraft}
             onSave={state.commitDraft}
@@ -183,7 +181,8 @@ export function InspectorPanel({
             mode="edit"
             renamable={isDraftStep(node.step)}
             usedBy={usedBy(state.catalog, node.id, document.name)}
-            skills={skills}
+            hostId={hostId}
+            directory={directory}
             issues={toInspectorIssues(state.nodeIssues.get(node.id) ?? [])}
             onChange={draft => state.updateStep(node.id, draft)}
             onSave={() => {

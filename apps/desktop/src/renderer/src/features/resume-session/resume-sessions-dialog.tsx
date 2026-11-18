@@ -3,6 +3,7 @@ import {
   RESUME_CONTINUATION_LEAD,
   resumeContinuationText,
   type Computer,
+  type PromptSkill,
 } from '@nesvo/contracts';
 import { sessionProjectLabel, type Session } from '@/entities/session';
 import { entityKey } from '@/shared/lib/host-key';
@@ -21,7 +22,8 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { Field } from '@/shared/ui/field';
 import { Label } from '@/shared/ui/label';
 import { StatusMessage } from '@/shared/ui/status-message';
-import { Textarea } from '@/shared/ui/textarea';
+import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
+import { pendingSkillQuery } from '@/features/select-skill/skill-command';
 import type { ResumeCandidate } from './resume-candidates';
 
 type Props = {
@@ -33,6 +35,7 @@ type Props = {
     session: Session,
     messageId: string,
     text: string,
+    skill?: PromptSkill,
   ) => Promise<string | null>;
 };
 
@@ -111,6 +114,7 @@ export function ResumeSessionsDialog({
 }: Props) {
   const id = useId();
   const [lead, setLead] = useState(RESUME_CONTINUATION_LEAD);
+  const [skill, setSkill] = useState<PromptSkill>();
   const [includeDetail, setIncludeDetail] = useState(true);
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -120,6 +124,21 @@ export function ResumeSessionsDialog({
     !candidate.restartOnly &&
     candidate.selectedByDefault !== toggled.has(entityKey(candidate.session));
   const selected = candidates.filter(isChecked);
+  const target = selected[0]?.session;
+  const commonScope =
+    !!target &&
+    selected.every(
+      ({ session }) =>
+        session.hostId === target.hostId &&
+        session.provider === target.provider &&
+        session.directory === target.directory &&
+        session.profileId === target.profileId,
+    );
+  const canResume =
+    !!lead.trim() &&
+    selected.length > 0 &&
+    !pendingSkillQuery(lead) &&
+    (!skill || commonScope);
   const textOf = (session: Session) =>
     includeDetail ? resumeContinuationText(session, lead) : lead.trim();
   const computerName = (hostId: string) =>
@@ -128,6 +147,7 @@ export function ResumeSessionsDialog({
       : '';
   const reset = () => {
     setLead(RESUME_CONTINUATION_LEAD);
+    setSkill(undefined);
     setIncludeDetail(true);
     setToggled(new Set());
     setErrors({});
@@ -155,7 +175,7 @@ export function ResumeSessionsDialog({
     return created;
   };
   const resumeSelected = async () => {
-    if (!lead.trim() || selected.length === 0) return;
+    if (!canResume) return;
     setPending(true);
     const failures: Record<string, string> = {};
     for (const { session } of selected) {
@@ -163,6 +183,7 @@ export function ResumeSessionsDialog({
         session,
         messageIdOf(session),
         textOf(session),
+        skill,
       );
       if (error) failures[entityKey(session)] = error;
     }
@@ -184,14 +205,33 @@ export function ResumeSessionsDialog({
             you resume. Sessions without a resumable conversation need Restart.
           </DialogDescription>
         </DialogHeader>
-        <Field id={id} label="Continuation message">
-          <Textarea
+        <Field
+          id={id}
+          label="Continuation message"
+          hint={
+            !commonScope
+              ? 'Select sessions on the same computer, provider, account and folder to use a skill.'
+              : undefined
+          }
+        >
+          <PromptTextarea
             id={id}
             value={lead}
             maxLength={LEAD_LIMIT}
             rows={2}
             disabled={pending}
-            onChange={event => setLead(event.target.value)}
+            skill={skill}
+            available={commonScope}
+            unavailableMessage="The selected sessions do not share a skill catalog."
+            scope={{
+              hostId: target?.hostId ?? '',
+              provider: target?.provider ?? 'Codex',
+              input: { sessionId: target?.id ?? '' },
+            }}
+            onChange={(value, nextSkill) => {
+              setLead(value);
+              setSkill(nextSkill);
+            }}
           />
         </Field>
         <Label className="text-xs font-normal">
@@ -241,7 +281,7 @@ export function ResumeSessionsDialog({
           <DialogCancel onClick={() => close(false)} disabled={pending} />
           <Button
             size="lg"
-            disabled={pending || !lead.trim() || selected.length === 0}
+            disabled={pending || !canResume}
             aria-busy={pending || undefined}
             onClick={() => void resumeSelected()}
           >

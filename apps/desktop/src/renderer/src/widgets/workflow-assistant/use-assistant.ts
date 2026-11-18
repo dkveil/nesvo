@@ -1,3 +1,4 @@
+import type { PromptSkill } from '@nesvo/contracts';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   AssistantChange,
@@ -189,7 +190,7 @@ export function useAssistant({
   const running =
     !!session &&
     (session.status === 'running' || session.status === 'stopping');
-  const send = async (text: string) => {
+  const send = async (text: string, promptSkill?: PromptSkill) => {
     const message = text.trim();
     if (!message || pending !== null) return false;
     setPending(message);
@@ -201,6 +202,7 @@ export function useAssistant({
         model: pick.model,
         effort: pick.effort || null,
         text: message,
+        ...(promptSkill ? { promptSkill } : {}),
         context: {
           view: assistantSendView[context.view],
           directory,

@@ -36,6 +36,7 @@ export function CompactInstructionsDialog({
     >
       <Field id={id} label="Instructions">
         <Textarea
+          resize="none"
           id={id}
           value={instructions}
           maxLength={compactInstructionsMaxLength}

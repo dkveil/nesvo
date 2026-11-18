@@ -1,3 +1,6 @@
+import type { PromptSkill } from '@nesvo/contracts';
+import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
+import { pendingSkillQuery } from '@/features/select-skill/skill-command';
 import {
   useEffect,
   useMemo,
@@ -37,12 +40,7 @@ import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import {
-  Composer,
-  ComposerInput,
-  ComposerSend,
-  ComposerToolbar,
-} from '@/shared/ui/composer';
+import { Composer, ComposerSend, ComposerToolbar } from '@/shared/ui/composer';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
@@ -192,6 +190,7 @@ export default function WorkflowAssistantDock({
     Record<string, AssistantPick | null>
   >({});
   const [draft, setDraft] = useState('');
+  const [skill, setSkill] = useState<PromptSkill>();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState('');
   const [decisions, setDecisions] = useState<Record<string, ProposalDecision>>(
@@ -294,10 +293,11 @@ export default function WorkflowAssistantDock({
     if (blockedReason || assistant.pending !== null || assistant.running)
       return;
     const text = draft;
-    if (!text.trim()) return;
+    if (!text.trim() || pendingSkillQuery(text)) return;
     setDraft('');
-    const sent = await assistant.send(text);
-    if (!sent) setDraft(current => current || text);
+    const sent = await assistant.send(text, skill);
+    if (sent) setSkill(undefined);
+    else setDraft(current => current || text);
   };
   const stop = async () => {
     if (!assistant.session) return;
@@ -683,8 +683,11 @@ export default function WorkflowAssistantDock({
           <label htmlFor="workflow-assistant-input" className="sr-only">
             Message the assistant
           </label>
-          <ComposerInput
-            ref={input}
+          <PromptTextarea
+            inputRef={input}
+            variant="ghost"
+            rows={1}
+            data-slot="composer-input"
             id="workflow-assistant-input"
             value={draft}
             maxLength={textLimit}
@@ -694,9 +697,19 @@ export default function WorkflowAssistantDock({
                 : 'Ask for a step or a workflow change'
             }
             disabled={!!blockedReason && !draft}
-            onChange={event => setDraft(event.target.value)}
+            skill={skill}
+            scope={{
+              hostId,
+              provider: pick.provider,
+              input: { provider: pick.provider, directory: directory.trim() },
+            }}
+            available={connected && !!directory.trim()}
+            onChange={(value, nextSkill) => {
+              setDraft(value);
+              setSkill(nextSkill);
+            }}
             onKeyDown={onComposerKeyDown}
-            className="max-h-40"
+            className="max-h-40 min-h-10 px-0.5"
           />
           <ComposerToolbar
             start={
@@ -747,7 +760,8 @@ export default function WorkflowAssistantDock({
                   disabled={
                     !!blockedReason ||
                     assistant.pending !== null ||
-                    !draft.trim()
+                    !draft.trim() ||
+                    pendingSkillQuery(draft)
                   }
                 />
               )

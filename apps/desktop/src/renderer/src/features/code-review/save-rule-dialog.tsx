@@ -139,6 +139,7 @@ export function SaveRuleDialog({
           )}
           <Field id="save-rule-text" label="Convention">
             <Textarea
+              resize="none"
               id="save-rule-text"
               value={text}
               rows={4}

@@ -6,6 +6,7 @@ import {
   scheduledJobDefinitionSchema,
   scheduledJobChangeTriggerSchema,
   scheduledJobLimits,
+  type PromptSkill,
   type SaveScheduledJobInput,
   type ScheduledJobSchedule,
 } from '@nesvo/contracts';
@@ -17,12 +18,14 @@ import {
   type ScheduledJob,
 } from '@/entities/scheduled-job';
 import type { Provider } from '@/entities/session';
+import { pendingSkillQuery } from '@/features/select-skill/skill-command';
 
 export type AutomationValues = {
   id: string;
   hostId: string;
   name: string;
   prompt: string;
+  promptSkill?: PromptSkill;
   directory: string;
   provider: Provider;
   model: string;
@@ -67,7 +70,7 @@ export const REVIEW_CHECK_COMMAND =
   '["gh", "pr", "list", "--state", "open", "--json", "number,headRefOid"]';
 
 export const SKILL_PROMPT_MESSAGE =
-  'Automation prompts are plain text. Skills (/name) are not supported yet.';
+  'Choose a skill from the list or remove the slash query.';
 
 const DEFAULT_TIME = '09:00';
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
@@ -119,6 +122,7 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
   hostId: job.hostId,
   name: job.name,
   prompt: job.prompt,
+  promptSkill: job.promptSkill,
   directory: job.directory,
   provider: sessionProviders[job.provider],
   model: job.model,
@@ -201,7 +205,7 @@ export const validateAutomation = (
       errors.review = 'Choose a checkout of the repository to review.';
   } else if (!prompt) {
     if (!values.workflow) errors.prompt = 'Enter a prompt.';
-  } else if (prompt.startsWith('/')) errors.prompt = SKILL_PROMPT_MESSAGE;
+  } else if (pendingSkillQuery(prompt)) errors.prompt = SKILL_PROMPT_MESSAGE;
   else if (prompt.length > scheduledJobLimits.prompt)
     errors.prompt = `Use at most ${scheduledJobLimits.prompt} characters.`;
   else if (PROMPT_CONTROL_CHARACTERS.test(prompt))
@@ -273,6 +277,11 @@ export const toSaveInput = (
   const definition = {
     name: values.name.trim(),
     prompt: values.reviewMode ? '' : values.prompt.trim(),
+    ...(!values.reviewMode &&
+    (!values.workflow || values.browser) &&
+    values.promptSkill
+      ? { promptSkill: values.promptSkill }
+      : {}),
     directory: values.redCi ? '' : values.directory.trim(),
     provider: jobProviders[values.provider],
     model: values.model,

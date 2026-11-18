@@ -222,6 +222,7 @@ export const stepDefinitionOf = (
   type: step.type,
   phase: step.phase,
   skill: step.skill,
+  prompt_skill: step.prompt_skill,
   timeout: step.timeout,
   retries: step.retries,
   retry_backoff: step.retry_backoff,
@@ -543,6 +544,8 @@ export const stepFileText = (step: StepDefinition): string => {
     `phase: ${step.phase}`,
   ];
   if (step.skill) lines.push(`skill: ${yamlName(step.skill)}`);
+  if (step.prompt_skill)
+    lines.push(`prompt_skill: ${JSON.stringify(step.prompt_skill)}`);
   lines.push(`timeout: ${step.timeout}`);
   if (step.retries) lines.push(`retries: ${step.retries}`);
   if (step.retry_backoff) lines.push(`retry_backoff: ${step.retry_backoff}`);

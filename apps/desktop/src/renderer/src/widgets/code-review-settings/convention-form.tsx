@@ -111,6 +111,7 @@ export function ConventionForm({
       )}
       <Field id="review-convention-text" label="Convention">
         <Textarea
+          resize="none"
           id="review-convention-text"
           rows={3}
           value={text}

@@ -11,6 +11,12 @@ export const sourceLabels: Record<SkillEntry['source'], string> = {
 
 const typedCommandPattern = /^\/([\w.:-]+)(?:\s+([\s\S]*))?$/;
 
+const slashLine = /(?:^|\n)(\/[\w.:-]*)$/;
+
+export const promptSlashQuery = (value: string) =>
+  slashLine.exec(value)?.[1] ?? '';
+export const pendingSkillQuery = (value: string) => slashLine.test(value);
+
 export const slashQueryOf = (draft: string) => /^\/(\S*)$/.exec(draft)?.[1];
 
 export const skillCommand = (skill: Pick<SkillEntry, 'name'>) =>

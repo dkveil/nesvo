@@ -80,7 +80,6 @@ import {
   NewWorkflowSheet,
   type NewWorkflowDraft,
 } from '@/features/new-workflow/new-workflow-sheet';
-import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
 import {
   applyNewSessionDefaults,
@@ -245,6 +244,7 @@ import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuratio
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
 import { conversationActions } from '@/features/conversation-context/conversation-actions';
+import type { PromptSkill } from '@nesvo/contracts';
 import { ResumeSessionDialog } from '@/features/resume-session/resume-session-dialog';
 import { ResumeSessionsDialog } from '@/features/resume-session/resume-sessions-dialog';
 import { resumeCandidates } from '@/features/resume-session/resume-candidates';
@@ -717,27 +717,6 @@ export function Workspace() {
   const [leaveEditor, setLeaveEditor] = useState<(() => void) | null>(null);
   const browsing =
     inbox || costsView || workflowsView || pullRequestsView || !!automation;
-  const editorHostId = workflowsEditor?.hostId ?? '';
-  const discoverEditorSkills = useCallback(
-    async (directory: string): Promise<SkillSummary[]> => {
-      const found = new Map<string, SkillSummary>();
-      for (const provider of ['Claude Code', 'Codex'] as const) {
-        const catalog = await window.nesvo
-          .discoverSkills({ provider, directory }, editorHostId)
-          .catch(() => null);
-        for (const skill of catalog?.skills ?? [])
-          if (!found.has(skill.name))
-            found.set(skill.name, {
-              id: skill.id,
-              name: skill.name,
-              description: skill.description,
-              source: skill.source,
-            });
-      }
-      return [...found.values()];
-    },
-    [editorHostId],
-  );
   const editorRun = workflowsEditor?.workflowName
     ? store.workflowRuns
         .filter(
@@ -2636,6 +2615,7 @@ ${text}`
     target: Session,
     messageId: string,
     text: string,
+    promptSkill?: PromptSkill,
   ) => {
     setThreadActionPending(true);
     setResumeError('');
@@ -2645,6 +2625,7 @@ ${text}`
         messageId,
         revision: target.revision,
         text,
+        ...(promptSkill ? { promptSkill } : {}),
       });
       store.merge([session]);
       const key = entityKey(session);
@@ -2663,6 +2644,7 @@ ${text}`
     target: Session,
     messageId: string,
     text: string,
+    promptSkill?: PromptSkill,
   ) => {
     try {
       const session = await desktopApi(target.hostId).resumeSession({
@@ -2670,6 +2652,7 @@ ${text}`
         messageId,
         revision: target.revision,
         text,
+        ...(promptSkill ? { promptSkill } : {}),
       });
       store.merge([session]);
       return null;
@@ -3446,7 +3429,7 @@ ${text}`
           key={`${entityKey(resumeTarget.session)}/${resumeTarget.messageId}`}
           session={resumeTarget.session}
           error={resumeError}
-          onResume={text =>
+          onResume={(text, skill) =>
             resumeSession(
               store.sessions.find(
                 session =>
@@ -3454,6 +3437,7 @@ ${text}`
               ) ?? resumeTarget.session,
               resumeTarget.messageId,
               text,
+              skill,
             )
           }
           onRestart={() => {
@@ -4205,7 +4189,6 @@ ${text}`
                 statuses={store.providerStates(workflowsEditor.hostId)}
                 onClose={() => setWorkflowsEditor(null)}
                 onDirtyChange={setEditorDirty}
-                onDiscoverSkills={discoverEditorSkills}
                 onRefreshProvider={provider =>
                   void store.refreshProvider(provider, workflowsEditor.hostId)
                 }

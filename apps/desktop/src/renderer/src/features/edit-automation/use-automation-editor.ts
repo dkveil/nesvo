@@ -17,7 +17,6 @@ import {
 } from '@/features/new-thread/reasoning-effort';
 import {
   automationValues,
-  SKILL_PROMPT_MESSAGE,
   toSaveInput,
   validateAutomation,
   type AutomationField,
@@ -145,11 +144,7 @@ export function useAutomationEditor(
       : { ...values, model, effort };
   const errors = validateAutomation(resolved);
   const visible = (field: AutomationField) =>
-    attempted ||
-    touched.includes(field) ||
-    (field === 'prompt' && errors.prompt === SKILL_PROMPT_MESSAGE)
-      ? errors[field]
-      : undefined;
+    attempted || touched.includes(field) ? errors[field] : undefined;
   const blockedReason =
     editing && !job
       ? 'This automation was deleted on its computer.'

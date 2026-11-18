@@ -28,7 +28,6 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import type { InboxTarget } from '@/widgets/workflow-step-result';
 import { EditorCanvas } from './canvas';
 import { ConflictDialog } from './conflict-dialog';
-import type { SkillSummary } from './inspector';
 import { InspectorPanel } from './inspector-panel';
 import { IssuesStrip } from './issues-strip';
 import { NodePicker, type AddRequest } from './node-picker';
@@ -52,7 +51,6 @@ type Props = {
   statuses: ProviderStates;
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-  onDiscoverSkills?: (directory: string) => Promise<SkillSummary[]>;
   onRefreshProvider?: (provider: Provider) => void;
   onRun?: (input: StartWorkflowTaskInput) => Promise<void>;
   onShare?: (workflowName: string) => void;
@@ -96,7 +94,6 @@ export default function WorkflowGraphEditor({
   statuses,
   onClose,
   onDirtyChange,
-  onDiscoverSkills,
   onRefreshProvider = () => {},
   onRun,
   onShare,
@@ -119,7 +116,6 @@ export default function WorkflowGraphEditor({
   const [overlayOn, setOverlayOn] = useState(true);
   const [closing, setClosing] = useState(false);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [jobsVersion, setJobsVersion] = useState(0);
   const [addRequest, setAddRequest] = useState<AddRequest | null>(null);
   const [reviewed, setReviewed] = useState<string[]>([]);
@@ -152,19 +148,6 @@ export default function WorkflowGraphEditor({
       active = false;
     };
   }, [scheduledJobsApi, hostId, jobsVersion]);
-  useEffect(() => {
-    if (!onDiscoverSkills) return;
-    let active = true;
-    onDiscoverSkills(directory).then(
-      list => {
-        if (active) setSkills(list);
-      },
-      () => {},
-    );
-    return () => {
-      active = false;
-    };
-  }, [onDiscoverSkills, directory]);
   const automations = useMemo(
     () => jobs.filter(job => job.workflow?.name === state.document.name),
     [jobs, state.document.name],
@@ -349,7 +332,6 @@ export default function WorkflowGraphEditor({
             state={editorState}
             hostId={hostId}
             directory={directory}
-            skills={skills}
             automations={automations}
             specs={state.catalog.specs}
             computers={computers}

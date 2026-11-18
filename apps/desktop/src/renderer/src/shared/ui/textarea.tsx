@@ -4,12 +4,14 @@ import { cn } from '@/shared/lib/cn';
 type TextareaProps = ComponentProps<'textarea'> & {
   size?: 'sm' | 'md' | 'lg';
   variant?: 'default' | 'ghost';
+  resize?: 'none' | 'vertical' | 'both';
 };
 
 function Textarea({
   className,
   size = 'sm',
   variant = 'default',
+  resize = variant === 'ghost' ? 'none' : undefined,
   ...props
 }: TextareaProps) {
   return (
@@ -26,9 +28,12 @@ function Textarea({
           size === 'lg' && 'px-3 py-2 text-sm',
         ],
         variant === 'ghost' && [
-          'resize-none rounded-none border-0 bg-transparent p-0 shadow-none',
+          'rounded-none border-0 bg-transparent p-0 shadow-none',
           size === 'lg' ? 'text-sm' : 'text-ui',
         ],
+        resize === 'none' && 'resize-none',
+        resize === 'vertical' && 'resize-y',
+        resize === 'both' && 'resize',
         className,
       )}
       {...props}

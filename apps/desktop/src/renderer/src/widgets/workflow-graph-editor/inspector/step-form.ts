@@ -7,13 +7,14 @@ import {
 } from '@nesvo/contracts';
 import type { StepDraft } from '@/entities/workflow-graph';
 export { stepTypeLabels as typeLabels } from '@/entities/workflow-graph';
-import { schemaNotes } from './field-notes';
+import { schemaNotes, type NotesByField } from './field-notes';
 
 export const stepFields = [
   'name',
   'type',
   'phase',
   'skill',
+  'prompt_skill',
   'body',
   'timeout',
   'retries',
@@ -99,6 +100,10 @@ export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   pr: type === 'wait-ci' ? step.pr : undefined,
   poll_interval: type === 'wait-ci' ? step.poll_interval : undefined,
   skill: type === 'agent' ? step.skill : null,
+  prompt_skill:
+    type === 'agent' || isChildWorkflowStep(type)
+      ? step.prompt_skill
+      : undefined,
   retries: allowsRetries(type) ? step.retries : 0,
   retry_backoff: allowsRetries(type) ? step.retry_backoff : undefined,
   idempotent: allowsRetries(type) ? step.idempotent : undefined,
@@ -139,13 +144,14 @@ export const readInlineItems = (text: string) => {
   }
 };
 
-export const stepNotes = (step: StepDraft) => ({
+export const stepNotes = (step: StepDraft): NotesByField => ({
   ...schemaNotes(
     stepDefinitionSchema.safeParse({
       name: step.name,
       type: step.type,
       phase: step.phase,
       skill: step.skill,
+      prompt_skill: step.prompt_skill,
       timeout: step.timeout,
       retries: step.retries,
       retry_backoff: step.retry_backoff,

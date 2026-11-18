@@ -10,6 +10,8 @@ Automation ritual fixtures exercise a writable turn in a real temporary Git work
 
 ## Required checks
 
+The saved prompt skill case persists a Codex project skill across a host restart and checks native delivery in a real managed worktree. A changed and a disabled source both fail the automation before a provider turn begins. The desktop scenario uses `/` in the automation editor, workflow step inspector and workflow assistant.
+
 Child workflow coverage uses an isolated host and provider fixtures. It checks nested reports and worktree placement, a Markdown-table fan-out, RAM and plan gates, soft and hard slot limits, parent Stop, and restart reconciliation with the same child session and message IDs. Resource overrides are read only when `NESVO_TEST_MODE=1`.
 
 Workflow primitives extend the spawned-host runner case. It observes bounded retries and backoff, checks the external-action guard and final failure handling, restarts a pinned check wait against a CLI fixture, exercises loop convergence and exhaustion, and scans staged, unstaged and untracked changes in a temporary repository. The probe case also checks masked findings and assessments in the run and the linked verification session.

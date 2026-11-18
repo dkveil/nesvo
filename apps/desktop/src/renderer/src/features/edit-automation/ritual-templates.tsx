@@ -75,6 +75,7 @@ export function RitualTemplates({ editor }: { editor: AutomationEditorState }) {
             writable: false,
             scheduleKind: 'weekdays',
             ...template,
+            promptSkill: undefined,
             active: false,
           });
         }}
