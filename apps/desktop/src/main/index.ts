@@ -74,6 +74,8 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  readSessionChangesSchema,
+  readSessionChangePatchSchema,
   readAttachmentSchema,
   openAttachmentSchema,
   attachmentLocationSchema,
@@ -1044,6 +1046,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'read-workspace-file',
         readWorkspaceFileSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:read-session-changes',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-session-changes',
+        readSessionChangesSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:read-session-change-patch',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-session-change-patch',
+        readSessionChangePatchSchema.parse(input),
         route(hostId),
       );
     },

@@ -41,6 +41,10 @@ import { CodeReviewError, CodeReviews } from './code-review/service';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { FolderError, resolveFolder } from './workspace/folder';
 import { GitBranchError, readGitBranch } from './workspace/git-branch';
+import {
+  SessionChangeError,
+  SessionChangeReader,
+} from './workspace/session-changes';
 import { WorkspaceIsolationError } from './workspace/isolation';
 import {
   discoverDirectorySkills,
@@ -238,6 +242,7 @@ export const serveHost = ({
       const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
+      const sessionChanges = new SessionChangeReader(id => store.get(id));
       let outgoing = Promise.resolve();
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
@@ -1571,7 +1576,9 @@ export const serveHost = ({
           request.method === 'list-workspace-directory' ||
           request.method === 'search-workspace-files' ||
           request.method === 'read-workspace-file' ||
-          request.method === 'read-git-branch'
+          request.method === 'read-git-branch' ||
+          request.method === 'read-session-changes' ||
+          request.method === 'read-session-change-patch'
         ) {
           if (workspaceRequests >= 8) {
             yield* Effect.tryPromise(() =>
@@ -1609,6 +1616,24 @@ export const serveHost = ({
                     )
                   : { kind: 'none' },
               };
+            if (request.method === 'read-session-changes')
+              return {
+                type: 'session-changes',
+                id: request.id,
+                changes: await sessionChanges.read(
+                  request.input,
+                  probes.controller.signal,
+                ),
+              };
+            if (request.method === 'read-session-change-patch')
+              return {
+                type: 'session-change-patch',
+                id: request.id,
+                patch: await sessionChanges.patch(
+                  request.input,
+                  probes.controller.signal,
+                ),
+              };
             if (request.method === 'search-workspace-files')
               return {
                 type: 'workspace-search',
@@ -1637,6 +1662,7 @@ export const serveHost = ({
                   error instanceof WorkspaceError ||
                   error instanceof SessionError ||
                   error instanceof GitBranchError ||
+                  error instanceof SessionChangeError ||
                   error instanceof FolderError
                     ? error.code
                     : 'unavailable',
@@ -1644,6 +1670,7 @@ export const serveHost = ({
                   error instanceof WorkspaceError ||
                   error instanceof SessionError ||
                   error instanceof GitBranchError ||
+                  error instanceof SessionChangeError ||
                   error instanceof FolderError
                     ? error.message
                     : 'The workspace could not be read. Refresh and try again.',

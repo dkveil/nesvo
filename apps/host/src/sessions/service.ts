@@ -51,6 +51,7 @@ import {
   type McpServerList,
   type AttachmentLocation,
   type LocateAttachmentInput,
+  type CodeComment,
   type MessageAttachment,
   type TurnUsage,
 } from '@nesvo/contracts';
@@ -73,6 +74,7 @@ import {
 import { shiftPlacement } from '../providers/interleave';
 import { SessionStore, type SessionOrigin } from './store';
 import { AttachmentError, AttachmentStore } from './attachments';
+import { sameCodeComments, withCodeComments } from './code-comments';
 import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
 import {
@@ -1751,7 +1753,8 @@ export class SessionService {
         existing.body !== input.text ||
         existing.skillId !== input.skillId ||
         existing.skillHash !== input.skillHash ||
-        !sameAttachments(existing.attachments, input.attachments)
+        !sameAttachments(existing.attachments, input.attachments) ||
+        !sameCodeComments(existing.codeComments, input.codeComments)
       )
         throw new SessionError(
           'invalid-request',
@@ -1775,7 +1778,12 @@ export class SessionService {
     this.confirmForkPoint(session);
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
-    const prompt = this.recoveryPrompt(session, input.text);
+    const delivered = withCodeComments(
+      input.text,
+      input.codeComments,
+      input.attachments,
+    );
+    const prompt = this.recoveryPrompt(session, delivered.text);
     const previousSelection = {
       model: session.model,
       effort: session.effort,
@@ -1792,6 +1800,7 @@ export class SessionService {
       input.skillHash,
       null,
       input.attachments,
+      input.codeComments,
     );
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
@@ -1801,7 +1810,7 @@ export class SessionService {
     this.launch(session, prompt, {
       skillId: input.skillId,
       skillHash: input.skillHash,
-      ...(input.attachments ? { attachments: input.attachments } : {}),
+      ...(delivered.attachments ? { attachments: delivered.attachments } : {}),
       ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
       ...(turn.instructionsOnly ? { instructionsOnly: true } : {}),
       previousSelection,
@@ -2057,6 +2066,7 @@ export class SessionService {
       ...(input.effort === undefined ? {} : { effort: input.effort }),
       ...(input.mode ? { mode: input.mode } : {}),
       ...(input.attachments ? { attachments: input.attachments } : {}),
+      ...(input.codeComments ? { codeComments: input.codeComments } : {}),
       createdAt: new Date().toISOString(),
       held: false,
     });
@@ -2110,6 +2120,7 @@ export class SessionService {
       effort: entry.effort,
       mode: entry.mode,
       attachments: entry.attachments,
+      codeComments: entry.codeComments,
     });
   }
 
@@ -2146,6 +2157,7 @@ export class SessionService {
         effort: next.effort,
         mode: next.mode,
         attachments: next.attachments,
+        codeComments: next.codeComments,
       });
     } catch (error) {
       if (error instanceof BudgetRefusal) holdQueue(session);
@@ -2463,6 +2475,7 @@ export class SessionService {
     skillHash?: string,
     origin: 'workflow' | null = null,
     attachments?: readonly MessageAttachment[],
+    codeComments?: readonly CodeComment[],
   ): void {
     this.ensureWorktreeOpen(session);
     const now = new Date();
@@ -2507,6 +2520,7 @@ export class SessionService {
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
         ...(attachments?.length ? { attachments: [...attachments] } : {}),
+        ...(codeComments?.length ? { codeComments: [...codeComments] } : {}),
       },
       {
         id: randomUUID(),

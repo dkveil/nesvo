@@ -409,6 +409,12 @@ if (args.length === 1 && args[0] === '--version') {
     }
   }
   assert.ok(prompt.trim(), 'Prompt must arrive through stdin');
+  if (process.env.NESVO_FIXTURE_PROMPT_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_PROMPT_LOG,
+      JSON.stringify({ prompt }) + '\n',
+      { flag: 'a' },
+    );
   if (
     prompt.startsWith(
       'The user explicitly selected the following file as shared instructions',

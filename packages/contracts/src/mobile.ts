@@ -117,6 +117,7 @@ export const mobileCommandSchema = z.discriminatedUnion('method', [
       effort: true,
       mode: true,
       attachments: true,
+      codeComments: true,
     }),
   }),
   z.strictObject({

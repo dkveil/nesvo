@@ -226,6 +226,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to place images inside the message text.',
   'file-attachments':
     'Update this computer’s Nesvo host and reconnect to attach files other than images.',
+  'session-changes':
+    'Update this computer’s Nesvo host and reconnect to review the session changes.',
+  'code-comments':
+    'Update this computer’s Nesvo host and reconnect to send code comments to the agent.',
   'terminal-handoff':
     'Update this computer’s Nesvo host and reconnect to open its sessions in a terminal.',
   'transcript-search':
@@ -278,6 +282,19 @@ function requiredCapability(
     return 'pull-request-reviews';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
+  if (
+    method === 'read-session-changes' ||
+    method === 'read-session-change-patch'
+  )
+    return 'session-changes';
+  if (
+    (method === 'send-message' || method === 'queue-message') &&
+    typeof input === 'object' &&
+    input !== null &&
+    'codeComments' in input &&
+    input.codeComments
+  )
+    return 'code-comments';
   if (
     method === 'read-session-worktree-setup' ||
     method === 'run-session-worktree-setup' ||
@@ -1060,6 +1077,8 @@ export class ComputerManager {
       'read-attachment': 'attachment-content',
       'locate-attachment': 'attachment-location',
       'read-git-branch': 'git-branch',
+      'read-session-changes': 'session-changes',
+      'read-session-change-patch': 'session-change-patch',
       'search-history': 'history-search',
       'search-transcripts': 'transcript-search',
       'set-session-terminal': 'session',
@@ -1143,6 +1162,10 @@ export class ComputerManager {
         };
       case 'git-branch':
         return response.branch;
+      case 'session-changes':
+        return response.changes;
+      case 'session-change-patch':
+        return response.patch;
       case 'conversation-import-catalog':
         return response.catalog;
       case 'session-worktree-status':

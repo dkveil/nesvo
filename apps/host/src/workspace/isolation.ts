@@ -113,7 +113,7 @@ export type ListTaskWorktreesParams = {
   signal: AbortSignal;
 };
 
-type GitCall = {
+export type GitCall = {
   args: string[];
   cwd: string;
   timeoutMs: number;
@@ -199,7 +199,7 @@ function gitExecutable(): { command: string; prefix: string[] } {
   return fail('git-unavailable', 'Git was not found on PATH.');
 }
 
-async function runGit({
+export async function runGit({
   args,
   cwd,
   timeoutMs,

@@ -205,6 +205,16 @@ import {
   type GitBranch,
 } from './workspace';
 import {
+  readSessionChangePatchSchema,
+  readSessionChangesSchema,
+  sessionChangePatchSchema,
+  sessionChangesSchema,
+  type ReadSessionChangePatchInput,
+  type ReadSessionChangesInput,
+  type SessionChangePatch,
+  type SessionChanges,
+} from './session-changes';
+import {
   decideScheduledJobStartSchema,
   deleteScheduledJobSchema,
   listScheduledJobRunsSchema,
@@ -351,6 +361,8 @@ export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
 export * from './workspace';
+export * from './session-changes';
+export * from './code-comments';
 export * from './history-search';
 export * from './conversation-import';
 export * from './terminal-handoff';
@@ -554,6 +566,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('read-git-branch'),
     input: readGitBranchSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-changes'),
+    input: readSessionChangesSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-change-patch'),
+    input: readSessionChangePatchSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1059,6 +1081,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     branch: gitBranchSchema,
   }),
   z.strictObject({
+    type: z.literal('session-changes'),
+    id: z.uuid(),
+    changes: sessionChangesSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-change-patch'),
+    id: z.uuid(),
+    patch: sessionChangePatchSchema,
+  }),
+  z.strictObject({
     type: z.literal('session-worktree-status'),
     id: z.uuid(),
     worktree: sessionWorktreeStatusSchema,
@@ -1539,6 +1571,14 @@ export type DesktopApi = {
     input: ReadWorkspaceFileInput,
     hostId?: HostId,
   ) => Promise<WorkspaceFile>;
+  readSessionChanges: (
+    input: ReadSessionChangesInput,
+    hostId?: HostId,
+  ) => Promise<SessionChanges>;
+  readSessionChangePatch: (
+    input: ReadSessionChangePatchInput,
+    hostId?: HostId,
+  ) => Promise<SessionChangePatch>;
   stageAttachment: (
     input: StageAttachmentInput,
     hostId?: HostId,

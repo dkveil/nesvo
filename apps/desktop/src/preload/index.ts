@@ -48,6 +48,10 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  readSessionChangesSchema,
+  readSessionChangePatchSchema,
+  sessionChangesSchema,
+  sessionChangePatchSchema,
   attachmentContentSchema,
   attachmentUploadSchema,
   readAttachmentSchema,
@@ -1143,6 +1147,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-workspace-file',
         readWorkspaceFileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionChanges: async (input, hostId) =>
+    sessionChangesSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-changes',
+        readSessionChangesSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionChangePatch: async (input, hostId) =>
+    sessionChangePatchSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-change-patch',
+        readSessionChangePatchSchema.parse(input),
         route(hostId),
       ),
     ),

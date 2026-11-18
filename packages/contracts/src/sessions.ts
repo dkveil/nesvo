@@ -16,6 +16,7 @@ import {
   imageInputSupportSchema,
   messageAttachmentsSchema,
 } from './attachments';
+import { messageCodeCommentsSchema } from './code-comments';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -243,6 +244,7 @@ export const sendMessageSchema = z.strictObject({
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
   attachments: messageAttachmentsSchema.optional(),
+  codeComments: messageCodeCommentsSchema.optional(),
 });
 export const assignSessionWorkflowSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -280,6 +282,7 @@ export const queuedMessageSchema = z.strictObject({
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
   attachments: messageAttachmentsSchema.optional(),
+  codeComments: messageCodeCommentsSchema.optional(),
   createdAt: z.iso.datetime(),
   held: z.boolean().default(false),
 });
@@ -364,6 +367,7 @@ export const sessionMessageSchema = z.strictObject({
   mode: sessionModeSchema.nullable().default(null),
   mcp: messageMcpSchema.nullable().default(null),
   attachments: messageAttachmentsSchema.optional(),
+  codeComments: messageCodeCommentsSchema.optional(),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),

@@ -1142,6 +1142,8 @@ test(
         'inline-attachments',
         'pull-request-reviews',
         'file-attachments',
+        'session-changes',
+        'code-comments',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6150,6 +6152,8 @@ test(
       'inline-attachments',
       'pull-request-reviews',
       'file-attachments',
+      'session-changes',
+      'code-comments',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -21486,3 +21490,281 @@ test(
     assert.equal((await posted()).length, 1);
   },
 );
+test('session changes report uncommitted and branch diffs read-only and bounded', async t => {
+  const gitEnvironment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+  );
+  const git = async (cwd, ...args) =>
+    (
+      await promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.invalid',
+          '-c',
+          'core.autocrlf=false',
+          ...args,
+        ],
+        { cwd, env: gitEnvironment },
+      )
+    ).stdout.trim();
+  try {
+    await git(tmpdir(), '--version');
+  } catch {
+    t.skip('git is not on PATH');
+    return;
+  }
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-session-changes-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const plain = join(directory, 'plain');
+  await mkdir(project);
+  await mkdir(plain);
+  await git(project, 'init', '-b', 'main');
+  await writeFile(join(project, 'a.txt'), 'one\ntwo\nthree\n');
+  await writeFile(join(project, 'b.txt'), 'base\n');
+  await writeFile(join(project, 'big.txt'), 'start\n');
+  await git(project, 'add', '.');
+  await git(project, 'commit', '-m', 'base');
+  await git(project, 'checkout', '-b', 'feature');
+  await writeFile(join(project, 'b.txt'), 'base\nbranch line\n');
+  await git(project, 'commit', '-am', 'branch change');
+  await writeFile(join(project, 'a.txt'), 'one\ntwo changed\nthree\nfour\n');
+  await writeFile(join(project, 'new.txt'), 'fresh\nlines\n');
+  await writeFile(
+    join(project, 'big.txt'),
+    Array.from(
+      { length: 20_000 },
+      (_, index) => `line ${index} ${'x'.repeat(40)}\n`,
+    ).join(''),
+  );
+  const index = join(project, '.git', 'index');
+  const statusBefore = await git(project, 'status', '--porcelain');
+  const indexBefore = await stat(index);
+
+  const host = launch(directory, pidFile);
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  assert.ok(
+    (await host.request('health')).health.capabilities.includes(
+      'session-changes',
+    ),
+  );
+  const create = async folder => {
+    const created = await host.request('create-session', {
+      title: 'Changes',
+      provider: 'Claude Code',
+      model: 'sonnet',
+      directory: folder,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    return created.session.id;
+  };
+  const sessionId = await create(project);
+  const read = await host.request('read-session-changes', { sessionId });
+  assert.equal(read.type, 'session-changes', JSON.stringify(read));
+  const summary = set =>
+    Object.fromEntries(
+      set.files.map(file => [
+        file.path,
+        [file.status, file.additions, file.deletions],
+      ]),
+    );
+  const { uncommitted, branch } = read.changes;
+  assert.equal(uncommitted.status, 'available');
+  assert.equal(uncommitted.base, 'HEAD');
+  assert.deepEqual(summary(uncommitted), {
+    'a.txt': ['modified', 2, 1],
+    'big.txt': ['modified', 20_000, 1],
+    'new.txt': ['untracked', 2, 0],
+  });
+  assert.equal(uncommitted.additions, 20_004);
+  assert.equal(uncommitted.deletions, 2);
+  assert.equal(branch.status, 'available');
+  assert.equal(branch.base, 'main');
+  assert.deepEqual(summary(branch), {
+    'a.txt': ['modified', 2, 1],
+    'b.txt': ['modified', 1, 0],
+    'big.txt': ['modified', 20_000, 1],
+    'new.txt': ['untracked', 2, 0],
+  });
+
+  const patch = async input => {
+    const reply = await host.request('read-session-change-patch', {
+      sessionId,
+      ...input,
+    });
+    assert.equal(reply.type, 'session-change-patch', JSON.stringify(reply));
+    return reply.patch;
+  };
+  const changed = await patch({ scope: 'uncommitted', path: 'a.txt' });
+  assert.equal(changed.status, 'text');
+  assert.match(changed.patch, /^-two$/m);
+  assert.match(changed.patch, /^\+two changed$/m);
+  assert.equal(changed.truncated, false);
+  assert.equal(
+    (await patch({ scope: 'uncommitted', path: 'b.txt' })).status,
+    'unchanged',
+  );
+  assert.match(
+    (await patch({ scope: 'branch', path: 'b.txt' })).patch,
+    /^\+branch line$/m,
+  );
+  const untracked = await patch({ scope: 'uncommitted', path: 'new.txt' });
+  assert.match(untracked.patch, /^@@ -0,0 \+1,2 @@\n\+fresh\n\+lines$/m);
+  const large = await patch({ scope: 'uncommitted', path: 'big.txt' });
+  assert.equal(large.truncated, true);
+  assert.ok(large.patch.length <= 512 * 1024);
+  for (const path of ['../outside.txt', '/etc/passwd', 'C:/Windows', '-p'])
+    assert.deepEqual(
+      await host.send(
+        JSON.stringify({
+          id: randomUUID(),
+          method: 'read-session-change-patch',
+          input: { sessionId, scope: 'uncommitted', path },
+        }),
+      ),
+      { type: 'error', id: null, code: 'invalid-request' },
+      path,
+    );
+
+  assert.equal((await stat(index)).mtimeMs, indexBefore.mtimeMs);
+  assert.equal(await git(project, 'status', '--porcelain'), statusBefore);
+
+  const plainRead = await host.request('read-session-changes', {
+    sessionId: await create(plain),
+  });
+  assert.equal(plainRead.changes.uncommitted.status, 'unavailable');
+  assert.match(plainRead.changes.uncommitted.detail, /not a Git repository/);
+  assert.equal(
+    (
+      await host.request('read-session-changes', {
+        sessionId: randomUUID(),
+      })
+    ).code,
+    'not-found',
+  );
+});
+
+test('code comments reach Claude Code as structured context at their positions', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-code-comments-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const prompts = join(directory, 'prompts.jsonl');
+  await mkdir(project);
+  const host = launch(directory, pidFile, {
+    NESVO_FIXTURE_PROMPT_LOG: prompts,
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  assert.ok(
+    (await host.request('health')).health.capabilities.includes(
+      'code-comments',
+    ),
+  );
+  const created = await host.request('create-session', {
+    title: 'Comments',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    directory: project,
+  });
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  const codeComments = [
+    {
+      id: randomUUID(),
+      path: 'src/app.ts',
+      side: 'new',
+      startLine: 10,
+      endLine: 12,
+      body: 'Rename this helper.',
+      snippet: ' const a = 1;\n+const helper = () => a;\n+export { helper };',
+      offset: 5,
+    },
+    {
+      id: randomUUID(),
+      path: 'src/old.ts',
+      side: 'old',
+      startLine: 3,
+      endLine: 3,
+      body: 'Why was this removed?',
+      snippet: '-legacy();',
+    },
+  ];
+  const input = {
+    sessionId: created.session.id,
+    messageId: randomUUID(),
+    text: 'Fix: then reply.',
+    codeComments,
+  };
+  const sent = await host.request('send-message', input);
+  assert.equal(sent.type, 'session', JSON.stringify(sent));
+  const finished = await host.event(
+    session =>
+      session.id === sent.session.id &&
+      session.runId === sent.session.runId &&
+      !['running', 'stopping'].includes(session.status),
+  );
+  assert.equal(finished.status, 'completed', finished.error);
+  const [{ prompt }] = (await readFile(prompts, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  const fence = '`'.repeat(3);
+  assert.equal(
+    prompt,
+    [
+      'Fix: ',
+      '<code-comment path="src/app.ts" side="new" lines="10-12">',
+      'Rename this helper.',
+      `${fence}diff`,
+      ' const a = 1;',
+      '+const helper = () => a;',
+      '+export { helper };',
+      fence,
+      '</code-comment>',
+      'then reply.',
+      '<code-comment path="src/old.ts" side="old" lines="3">',
+      'Why was this removed?',
+      `${fence}diff`,
+      '-legacy();',
+      fence,
+      '</code-comment>',
+      '',
+    ].join('\n'),
+  );
+  const operator = finished.messages.find(
+    message => message.id === input.messageId,
+  );
+  assert.equal(operator.body, input.text);
+  assert.deepEqual(operator.codeComments, codeComments);
+  const conflicting = await host.request('send-message', {
+    ...input,
+    codeComments: [codeComments[0]],
+  });
+  assert.equal(conflicting.type, 'error');
+  assert.match(conflicting.message, /already in use/);
+  assert.deepEqual(
+    await host.send(
+      JSON.stringify({
+        id: randomUUID(),
+        method: 'send-message',
+        input: {
+          ...input,
+          messageId: randomUUID(),
+          codeComments: [{ ...codeComments[1], startLine: 9 }],
+        },
+      }),
+    ),
+    { type: 'error', id: null, code: 'invalid-request' },
+  );
+});
