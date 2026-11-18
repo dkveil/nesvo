@@ -20,6 +20,7 @@ import {
   type ScheduledJobRun,
 } from '@/entities/scheduled-job';
 import type { Review } from '@/entities/review';
+import { StatusIcon } from '@/entities/status';
 import { hostKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
@@ -32,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { IconButton } from '@/shared/ui/icon-button';
+import { KeyValueList } from '@/shared/ui/key-value-list';
 import { Label } from '@/shared/ui/label';
 import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -55,6 +57,7 @@ type Props = {
   runBlockedReason: string;
   editBlockedReason: string;
   onRunNow: () => void;
+  onInbox: () => void;
   onSetActive: (active: boolean) => void;
   onEdit: () => void;
   onDuplicate: () => void;
@@ -72,6 +75,12 @@ const reviewStates: Record<Review['status'], string> = {
   rejected: 'Rejected',
   superseded: 'Corrected',
 };
+
+const checkStatuses = {
+  changed: { label: 'Changed', icon: 'success' },
+  unchanged: { label: 'Unchanged', icon: 'idle' },
+  failed: { label: 'Failed', icon: 'error' },
+} as const;
 
 const nextRuns = (job: ScheduledJob, now: number) => {
   if (!job.active) return 'Paused. Turn it on to schedule the next run.';
@@ -97,6 +106,7 @@ export function AutomationDetail({
   runBlockedReason,
   editBlockedReason,
   onRunNow,
+  onInbox,
   onSetActive,
   onEdit,
   onDuplicate,
@@ -109,6 +119,8 @@ export function AutomationDetail({
   const now = useNow(30_000);
   const [confirming, setConfirming] = useState(false);
   const activeRun = runs.find(isActiveRun);
+  const check = job.lastCheck;
+  const checkStatus = check && checkStatuses[check.status];
   const connected = computer?.status === 'connected';
   const reviewOf = (run: ScheduledJobRun) =>
     run.reviewId
@@ -210,6 +222,58 @@ export function AutomationDetail({
             </div>
           </div>
           <p className="text-xs text-muted-foreground">{nextRuns(job, now)}</p>
+          {job.changeTrigger && (
+            <KeyValueList
+              entries={[
+                {
+                  key: 'last-check',
+                  label: 'Last check',
+                  value:
+                    check && checkStatus ? (
+                      <span className="flex flex-wrap items-center gap-x-2">
+                        <StatusIcon status={checkStatus.icon} />
+                        {checkStatus.label}
+                        <time
+                          dateTime={check.at}
+                          className="text-muted-foreground"
+                        >
+                          {formatRunTime(check.at)}
+                        </time>
+                        {check.detail && (
+                          <span className="text-muted-foreground">
+                            {check.detail}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      'Waiting for the first check'
+                    ),
+                },
+                {
+                  key: 'daily-cap',
+                  label: 'Daily run cap',
+                  value: job.changeTrigger.dailyRunCap,
+                },
+                ...(job.pendingStart
+                  ? [
+                      {
+                        key: 'pending-start',
+                        label: 'Start request',
+                        value: (
+                          <Button
+                            variant="link"
+                            size="inline"
+                            onClick={onInbox}
+                          >
+                            Open Inbox
+                          </Button>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          )}
           <p className="line-clamp-3 rounded-surface border bg-card px-3 py-2 text-ui whitespace-pre-wrap text-card-foreground [overflow-wrap:anywhere]">
             {job.workflow
               ? `Workflow ${job.workflow.name} · ${job.workflow.specPath}`

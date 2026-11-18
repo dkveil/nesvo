@@ -180,6 +180,16 @@ Changing the provider or model starts a new conversation. The assistant sends th
 
 A workflow file has no trigger. A task starts from the new-thread screen (the Workflow chip) or from an automation: a scheduled job with a workflow and a spec instead of a prompt. The job uses its provider and model in read-only mode, a worktree when the folder is a repository, and the other provider as the gate. The usual limits still apply before the start: the provider's limit gate, the busy refusal and the operator-idle rule. The job's run records the session and the workflow run and finishes when the workflow run settles; a missing or invalid workflow fails the job run with a catalog reason. The Start node of the editor lists these automations and adds new ones.
 
+### Watching command output
+
+In an automation's editor, turn on **Run only when this changes**, choose its folder and enter the executable and arguments as a JSON array. For example, `["git", "rev-parse", "HEAD"]` watches the checked-out commit. The host starts the executable directly in the selected folder with its own account. Use a command intended to read the state you want to watch.
+
+The first successful check records a baseline. The host normalizes line endings and trims trailing whitespace before hashing stdout. A later check triggers a run only if its hash differs from the previous successful check. Each command has 10 seconds and a 64 KiB limit per output stream. Timeouts, excess output and nonzero exit codes appear under **Last check** in the automation detail. The host persists the hash and status and discards the output. After downtime, the host checks once for the latest due occurrence.
+
+**Ask before starting** is on by default. The Inbox keeps one pending request per automation. Use **Start** or **Skip** on that row. Later changes still update the baseline while a request is pending. When asking is off, the existing host availability and idle rules apply. A started run follows the existing automation result flow to the Inbox.
+
+The cap defaults to three starts per UTC day and accepts values from 1 to 24. Run now is an explicit start and counts toward the same cap. Reaching the cap consumes the observed change, so a new change is required for another scheduled start. A pending request can be started on a later day with capacity. Editing or pausing the automation clears its pending request. Changing the folder or command resets the baseline.
+
 ## Command line
 
 The host bundle edits the same files as the editor, with no running host and no database:

@@ -4,6 +4,7 @@ import {
   SCHEDULED_JOB_MIN_INTERVAL_MINUTES,
   isValidTimeZone,
   scheduledJobDefinitionSchema,
+  scheduledJobChangeTriggerSchema,
   scheduledJobLimits,
   type SaveScheduledJobInput,
   type ScheduledJobSchedule,
@@ -35,6 +36,10 @@ export type AutomationValues = {
   timeoutMinutes: string;
   active: boolean;
   workflow: ScheduledJob['workflow'];
+  checkEnabled: boolean;
+  checkCommand: string;
+  dailyRunCap: string;
+  askFirst: boolean;
 };
 
 export type AutomationField =
@@ -44,7 +49,9 @@ export type AutomationField =
   | 'time'
   | 'minutes'
   | 'timeZone'
-  | 'timeoutMinutes';
+  | 'timeoutMinutes'
+  | 'checkCommand'
+  | 'dailyRunCap';
 
 export type AutomationErrors = Partial<Record<AutomationField, string>>;
 
@@ -85,6 +92,10 @@ export const newAutomationValues = (
   timeoutMinutes: String(scheduledJobLimits.defaultTimeoutMinutes),
   active: true,
   workflow: null,
+  checkEnabled: false,
+  checkCommand: '',
+  dailyRunCap: String(scheduledJobLimits.defaultDailyRunCap),
+  askFirst: true,
 });
 
 export const automationValues = (job: ScheduledJob): AutomationValues => ({
@@ -109,6 +120,12 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
   timeoutMinutes: String(job.timeoutMinutes),
   active: job.active,
   workflow: job.workflow,
+  checkEnabled: !!job.changeTrigger,
+  checkCommand: job.changeTrigger ? JSON.stringify(job.changeTrigger.argv) : '',
+  dailyRunCap: String(
+    job.changeTrigger?.dailyRunCap ?? scheduledJobLimits.defaultDailyRunCap,
+  ),
+  askFirst: job.changeTrigger?.askFirst ?? true,
 });
 
 export const duplicateValues = (job: ScheduledJob): AutomationValues => ({
@@ -120,6 +137,14 @@ export const duplicateValues = (job: ScheduledJob): AutomationValues => ({
 
 const wholeNumber = (value: string) =>
   /^\d+$/.test(value.trim()) ? Number(value.trim()) : Number.NaN;
+
+const checkArguments = (value: string): unknown => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
 
 export const scheduleOf = (
   values: AutomationValues,
@@ -173,6 +198,24 @@ export const validateAutomation = (
     timeout > scheduledJobLimits.maxTimeoutMinutes
   )
     errors.timeoutMinutes = `Use ${scheduledJobLimits.minTimeoutMinutes} to ${scheduledJobLimits.maxTimeoutMinutes} minutes.`;
+  if (values.checkEnabled) {
+    if (!values.directory.trim())
+      errors.checkCommand = 'Choose a folder for the check command.';
+    else if (
+      !scheduledJobChangeTriggerSchema.shape.argv.safeParse(
+        checkArguments(values.checkCommand),
+      ).success
+    )
+      errors.checkCommand =
+        'Enter a JSON array with an executable and up to 31 arguments.';
+    const cap = wholeNumber(values.dailyRunCap);
+    if (
+      !Number.isInteger(cap) ||
+      cap < 1 ||
+      cap > scheduledJobLimits.maxDailyRunCap
+    )
+      errors.dailyRunCap = `Use 1 to ${scheduledJobLimits.maxDailyRunCap} runs.`;
+  }
   return errors;
 };
 
@@ -195,9 +238,18 @@ export const toSaveInput = (
     active: values.active,
     timeoutMinutes: wholeNumber(values.timeoutMinutes),
     workflow: values.workflow,
+    ...(values.checkEnabled
+      ? {
+          changeTrigger: {
+            argv: checkArguments(values.checkCommand),
+            dailyRunCap: wholeNumber(values.dailyRunCap),
+            askFirst: values.askFirst,
+          },
+        }
+      : {}),
   };
   const parsed = scheduledJobDefinitionSchema.safeParse(definition);
   if (!parsed.success)
     return `Check ${parsed.error.issues[0]?.path.join('.') || 'the settings'}.`;
-  return { id: values.id, ...definition };
+  return { id: values.id, ...parsed.data };
 };

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 import type { Computer, SaveScheduledJobInput } from '@nesvo/contracts';
 import type { ScheduledJob } from '@/entities/scheduled-job';
+import { cn } from '@/shared/lib/cn';
 import {
   errorDetail,
   type Provider,
@@ -69,6 +70,8 @@ const fieldOrder: AutomationField[] = [
   'minutes',
   'time',
   'timeZone',
+  'checkCommand',
+  'dailyRunCap',
   'timeoutMinutes',
 ];
 
@@ -101,6 +104,9 @@ export function AutomationEditor({
   const form = useRef<HTMLFormElement>(null);
   const computer = computers.find(item => item.id === values.hostId);
   const connected = computer?.status === 'connected';
+  const supportsCheck = !!computer?.capabilities.includes(
+    'scheduled-job-change-triggers',
+  );
   const providerStates = statuses(values.hostId);
   const providerState = providerStates[values.provider];
   const models = providerState.status?.models ?? [];
@@ -137,7 +143,9 @@ export function AutomationEditor({
         ? 'Choose a computer that supports automations.'
         : !connected
           ? `${computer.name} is offline. Connect it to save this automation.`
-          : '';
+          : values.checkEnabled && !supportsCheck
+            ? 'Update this computer’s Nesvo host to use automation change checks.'
+            : '';
   const locationHints = [
     values.hostId === 'local' ? 'Runs only while Nesvo is open.' : '',
     values.workflow
@@ -371,6 +379,92 @@ export function AutomationEditor({
                 onChange={change}
                 onBlur={touch}
               />
+              <section className="space-y-3" aria-label="Change trigger">
+                <Field
+                  id="automation-check"
+                  label="Run only when this changes"
+                  layout="inline"
+                >
+                  <Switch
+                    id="automation-check"
+                    checked={values.checkEnabled}
+                    disabled={
+                      pending || (!supportsCheck && !values.checkEnabled)
+                    }
+                    onCheckedChange={checkEnabled => change({ checkEnabled })}
+                  />
+                </Field>
+                {values.checkEnabled && (
+                  <>
+                    <Field
+                      id="automation-check-command"
+                      label="Check command"
+                      hint='Enter the executable and arguments as a JSON array, such as ["git", "rev-parse", "HEAD"]. Runs in the selected folder with the host account.'
+                      messages={errorMessages(visible('checkCommand'))}
+                    >
+                      <Textarea
+                        id="automation-check-command"
+                        data-field="checkCommand"
+                        value={values.checkCommand}
+                        spellCheck={false}
+                        aria-invalid={!!visible('checkCommand')}
+                        aria-describedby={cn(
+                          'automation-check-command-hint',
+                          messagesId(
+                            'automation-check-command',
+                            visible('checkCommand'),
+                          ),
+                        )}
+                        disabled={pending}
+                        onChange={event =>
+                          change({ checkCommand: event.target.value })
+                        }
+                        onBlur={() => touch('checkCommand')}
+                        className="font-mono"
+                      />
+                    </Field>
+                    <Field
+                      id="automation-daily-cap"
+                      label="Daily run cap"
+                      hint="Resets at midnight UTC."
+                      messages={errorMessages(visible('dailyRunCap'))}
+                    >
+                      <Input
+                        id="automation-daily-cap"
+                        data-field="dailyRunCap"
+                        inputMode="numeric"
+                        value={values.dailyRunCap}
+                        aria-invalid={!!visible('dailyRunCap')}
+                        aria-describedby={cn(
+                          'automation-daily-cap-hint',
+                          messagesId(
+                            'automation-daily-cap',
+                            visible('dailyRunCap'),
+                          ),
+                        )}
+                        disabled={pending}
+                        onChange={event =>
+                          change({ dailyRunCap: event.target.value })
+                        }
+                        onBlur={() => touch('dailyRunCap')}
+                        className="w-24"
+                      />
+                    </Field>
+                    <Field
+                      id="automation-ask-first"
+                      label="Ask before starting"
+                      layout="inline"
+                    >
+                      <Switch
+                        id="automation-ask-first"
+                        checked={values.askFirst}
+                        disabled={pending}
+                        onCheckedChange={askFirst => change({ askFirst })}
+                      />
+                    </Field>
+                  </>
+                )}
+              </section>
               <Field
                 id="automation-timeout"
                 label="Time limit (minutes)"

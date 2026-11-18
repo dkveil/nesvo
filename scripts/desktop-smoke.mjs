@@ -3591,12 +3591,12 @@ try {
       database.close();
     }
   };
-  const seedNextRunAt = nextRunAt => {
+  const seedNextRunAt = (nextRunAt, id = smokeAutomation.id) => {
     const database = new DatabaseSync(smokeDatabase);
     try {
       database
         .prepare('UPDATE scheduled_jobs SET next_run_at = ? WHERE id = ?')
-        .run(nextRunAt, smokeAutomation.id);
+        .run(nextRunAt, id);
     } finally {
       database.close();
     }
@@ -3770,6 +3770,87 @@ try {
   console.log(
     JSON.stringify({
       localHostRestart: { crashedHostPid, restartedHostPid: hostPid },
+    }),
+  );
+  const checkFolder = join(directory, 'change-check');
+  await mkdir(checkFolder);
+  const checkSource = join(checkFolder, 'source.txt');
+  await writeFile(checkSource, 'baseline');
+  await writeFile(
+    join(checkFolder, 'check.cjs'),
+    "process.stdout.write(require('node:fs').readFileSync('source.txt'));",
+  );
+  await writeFile(usageControl, '{}');
+  await limitedPage
+    .getByRole('button', { name: 'Automations', exact: true })
+    .click();
+  await limitedPage
+    .getByRole('button', { name: 'New automation' })
+    .first()
+    .click();
+  const changeEditor = limitedPage.locator('[data-slot="sheet-content"]');
+  await changeEditor.getByLabel('Name').fill('Smoke change trigger');
+  await changeEditor.getByLabel('Prompt').fill('Summarize the fixture folder.');
+  await changeEditor
+    .getByRole('button', { name: 'Location', exact: true })
+    .click();
+  const checkLocation = limitedPage.getByRole('textbox', {
+    name: 'Working directory',
+  });
+  await checkLocation.fill(checkFolder);
+  await checkLocation.press('Enter');
+  await changeEditor
+    .getByRole('switch', { name: 'Run only when this changes' })
+    .click();
+  assert.equal(
+    await changeEditor
+      .getByRole('switch', { name: 'Ask before starting' })
+      .isChecked(),
+    true,
+  );
+  await changeEditor
+    .getByLabel('Check command')
+    .fill(JSON.stringify([process.execPath, 'check.cjs']));
+  await changeEditor.getByLabel('Daily run cap').fill('1');
+  await changeEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await changeEditor.waitFor({ state: 'hidden' });
+  const changedJobId = await limitedPage.evaluate(
+    async () =>
+      (await window.nesvo.scheduledJobs.list('local')).find(
+        job => job.name === 'Smoke change trigger',
+      )?.id,
+  );
+  assert.ok(changedJobId);
+  await restartApplication();
+  seedNextRunAt(new Date(Date.now() - 10000).toISOString(), changedJobId);
+  const baselinePage = await relaunchApplication();
+  await baselinePage.getByText('Baseline saved.', { exact: true }).waitFor();
+  await restartApplication();
+  await writeFile(checkSource, 'changed');
+  seedNextRunAt(new Date(Date.now() - 10000).toISOString(), changedJobId);
+  const changePage = await relaunchApplication();
+  await changePage.getByRole('button', { name: /^Inbox/ }).click();
+  const startRequest = changePage.getByRole('article', {
+    name: 'Automation start: Smoke change trigger',
+  });
+  await startRequest.waitFor();
+  const beforeStart = await changePage.evaluate(
+    id => window.nesvo.scheduledJobs.listRuns('local', id, null),
+    changedJobId,
+  );
+  assert.deepEqual(beforeStart.runs, []);
+  await automationShot(changePage, 'change-start');
+  await startRequest
+    .getByRole('button', { name: 'Start', exact: true })
+    .click();
+  await startRequest.waitFor({ state: 'hidden' });
+  await changePage
+    .getByRole('article')
+    .filter({ hasText: 'Automation · Smoke change trigger' })
+    .waitFor();
+  console.log(
+    JSON.stringify({
+      automationChangeTrigger: 'approved and delivered to Inbox',
     }),
   );
   assert.deepEqual(errors, []);

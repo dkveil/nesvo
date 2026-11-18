@@ -1862,6 +1862,32 @@ export function Workspace() {
       setAutomationState(key, false, `Could not start the run. ${detail}`);
     }
   };
+  const decideAutomationStart = async (
+    job: ScheduledJob,
+    decision: 'start' | 'skip',
+  ) => {
+    const key = entityKey(job);
+    if (!job.pendingStart || automationPending[key] || hostOffline(job.hostId))
+      return;
+    setAutomationState(key, true);
+    try {
+      automations.mergeJobs([
+        await window.nesvo.scheduledJobs.decideStart(job.hostId, {
+          id: job.id,
+          pendingId: job.pendingStart.id,
+          decision,
+        }),
+      ]);
+      setAutomationState(key, false);
+    } catch (failure) {
+      setAutomationState(
+        key,
+        false,
+        `Could not ${decision} the automation. ${errorDetail(failure)}`,
+      );
+      void automations.reload(job.hostId);
+    }
+  };
   const setAutomationActive = async (job: ScheduledJob, active: boolean) => {
     const key = entityKey(job);
     if (automationPending[key]) return;
@@ -2681,6 +2707,13 @@ ${text}`
             <ReviewInbox
               {...reviewDecisionProps}
               reviews={store.reviews}
+              automations={automations.jobs}
+              automationPending={automationPending}
+              automationErrors={automationErrors}
+              onAutomation={job => openAutomations(entityKey(job))}
+              onAutomationDecision={(job, decision) =>
+                void decideAutomationStart(job, decision)
+              }
               sessions={store.sessions}
               loading={store.reviewsLoading}
               error={store.reviewsError}
@@ -2739,6 +2772,7 @@ ${text}`
               runBlockedReason={runBlockedReason(automationJob)}
               editBlockedReason={hostOffline(automationJob.hostId)}
               onRunNow={() => void runAutomationNow(automationJob)}
+              onInbox={openInbox}
               onSetActive={active =>
                 void setAutomationActive(automationJob, active)
               }

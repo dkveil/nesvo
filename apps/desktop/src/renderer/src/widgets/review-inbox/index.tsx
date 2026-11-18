@@ -19,6 +19,7 @@ import {
 } from '@/entities/session';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
+import { formatRunTime, type ScheduledJob } from '@/entities/scheduled-job';
 import {
   ReviewDecision,
   type ReviewDecisionProps,
@@ -53,6 +54,11 @@ type Props = ReviewDecisionProps & {
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
   onRefresh: () => void;
+  automations: ScheduledJob[];
+  automationPending: Record<string, boolean>;
+  automationErrors: Record<string, string>;
+  onAutomation: (job: ScheduledJob) => void;
+  onAutomationDecision: (job: ScheduledJob, decision: 'start' | 'skip') => void;
   originLabel?: (review: Review) => string;
   notice?: ReactNode;
 };
@@ -61,6 +67,7 @@ type Filter = 'pending' | 'history' | 'all';
 
 type ActionRow =
   | { type: 'review'; review: Review; at: string; id: string }
+  | { type: 'automation'; job: ScheduledJob; at: string; id: string }
   | {
       type: 'approval';
       session: Session;
@@ -90,6 +97,7 @@ function FullText({ text, children }: { text: string; children: ReactNode }) {
 }
 
 type ActionItemProps = Omit<ComponentProps<'article'>, 'title'> & {
+  openLabel?: string;
   title: string;
   onOpen: () => void;
   location: string;
@@ -104,6 +112,7 @@ function ActionItem({
   summary,
   meta,
   children,
+  openLabel = `Open session: ${title}`,
   ...props
 }: ActionItemProps) {
   return (
@@ -114,7 +123,7 @@ function ActionItem({
             variant="link"
             size="inline"
             className="max-w-full justify-start text-ui text-foreground"
-            aria-label={`Open session: ${title}`}
+            aria-label={openLabel}
             onClick={onOpen}
           >
             <span className="truncate">{title}</span>
@@ -263,6 +272,11 @@ export function ReviewInbox({
   onDelegation,
   onSession,
   onRefresh,
+  automations,
+  automationPending,
+  automationErrors,
+  onAutomation,
+  onAutomationDecision,
   originLabel,
   notice,
   ...decisionProps
@@ -306,6 +320,15 @@ export function ReviewInbox({
             id: `${entityKey(session)}/${session.runId}/${delegation.id}`,
           });
     }
+  if (filter !== 'history')
+    for (const job of automations)
+      if (job.pendingStart)
+        rows.push({
+          type: 'automation',
+          job,
+          at: job.pendingStart.at,
+          id: `${entityKey(job)}/${job.pendingStart.id}`,
+        });
   rows.sort(
     (left, right) =>
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
@@ -374,7 +397,9 @@ export function ReviewInbox({
           )}
         {filter !== 'history' &&
           !operationEnabled &&
-          rows.some(row => row.type !== 'review') && (
+          rows.some(
+            row => row.type === 'approval' || row.type === 'delegation',
+          ) && (
             <StatusMessage className="mb-3 px-2">
               Reconnect to respond to pending requests.
             </StatusMessage>
@@ -456,6 +481,45 @@ export function ReviewInbox({
                         </StatusMessage>
                       )
                     )}
+                  </ActionItem>
+                );
+              }
+              if (row.type === 'automation') {
+                const { job, at } = row;
+                const key = entityKey(job);
+                const deciding = !!automationPending[key];
+                return (
+                  <ActionItem
+                    key={`automation/${row.id}`}
+                    aria-label={`Automation start: ${job.name}`}
+                    data-host-id={job.hostId}
+                    title={job.name}
+                    openLabel={`Open automation: ${job.name}`}
+                    onOpen={() => onAutomation(job)}
+                    location={location(job.hostId)}
+                    summary={<p className="text-ui">Check output changed</p>}
+                    meta={
+                      <>
+                        <span>Automation start</span>
+                        <time dateTime={at}>{formatRunTime(at)}</time>
+                      </>
+                    }
+                  >
+                    <Decisions
+                      accept="Start"
+                      decline="Skip"
+                      enabled={isOperationEnabled(job) && !deciding}
+                      onDecide={decision =>
+                        onAutomationDecision(
+                          job,
+                          decision === 'accept' ? 'start' : 'skip',
+                        )
+                      }
+                    />
+                    <OperationStatus
+                      deciding={deciding}
+                      error={automationErrors[key]}
+                    />
                   </ActionItem>
                 );
               }
