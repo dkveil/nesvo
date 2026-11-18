@@ -1376,6 +1376,7 @@ test(
         'default-session-folder',
         'worktree-recipes',
         'session-control',
+        'workflow-sharing',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6575,6 +6576,7 @@ test(
       'default-session-folder',
       'worktree-recipes',
       'session-control',
+      'workflow-sharing',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -24850,6 +24852,233 @@ test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on
     assert.deepEqual(
       logged.map(entry => entry.tools.includes('session_create')),
       [false, true, false],
+
+test('workflow sharing reads the files, blocks secrets and imports a bundle with validation and conflicts', async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-workflow-sharing-')),
+  );
+  const source = join(directory, 'source');
+  const target = join(directory, 'target');
+  const home = join(directory, 'workflows-home');
+  const write = async (path, content) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content);
+  };
+  const root = project => join(project, '.agents', 'workflows');
+  const lint =
+    '---\nname: lint\ntype: command\nphase: pre-done\n---\nbun run lint\n';
+  const approve =
+    '---\nname: approve\ntype: human\nphase: pre-done\n---\nIs the change ready?\n';
+  const release =
+    '---\nname: release\ndescription: Lint, then a decision.\nsteps: [lint, approve]\nedges:\n  - lint -> approve\n---\nShared fixture.\n';
+  let host;
+  try {
+    await mkdir(join(source, '.git'), { recursive: true });
+    await mkdir(join(target, '.git'), { recursive: true });
+    await write(join(root(source), 'steps', 'lint.md'), lint);
+    await write(join(root(source), 'steps', 'approve.md'), approve);
+    await write(join(root(source), 'workflows', 'release.md'), release);
+    host = launch(directory, join(directory, 'pids.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: home,
+    });
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('workflow-sharing'));
+
+    const prepared = await host.request('prepare-workflow-share', {
+      directory: source,
+      name: 'release',
+    });
+    assert.equal(
+      prepared.type,
+      'workflow-share-draft',
+      JSON.stringify(prepared),
+    );
+    assert.deepEqual(prepared.draft.workflow, {
+      fileName: 'release.md',
+      content: release,
+    });
+    assert.deepEqual(
+      prepared.draft.steps.map(step => [
+        step.fileName,
+        step.type,
+        step.content,
+      ]),
+      [
+        ['lint.md', 'command', lint],
+        ['approve.md', 'human', approve],
+      ],
+    );
+    assert.equal(prepared.draft.description, 'Lint, then a decision.');
+    assert.equal(prepared.draft.findingCount, 0);
+
+    const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2';
+    await write(
+      join(root(source), 'steps', 'lint.md'),
+      lint.replace('bun run lint', `GITHUB_TOKEN=${token} bun run lint`),
+    );
+    const leaking = await host.request('prepare-workflow-share', {
+      directory: source,
+      name: 'release',
+    });
+    assert.ok(leaking.draft.findingCount >= 1);
+    assert.equal(leaking.draft.findings[0].fileName, 'lint.md');
+    assert.equal(leaking.draft.findings[0].line, 6);
+    assert.ok(!JSON.stringify(leaking.draft.findings).includes(token));
+    assert.match(leaking.draft.findings[0].excerpt, /\[(?:masked|redacted)\]/);
+    await write(join(root(source), 'steps', 'lint.md'), lint);
+
+    const missing = await host.request('prepare-workflow-share', {
+      directory: source,
+      name: 'absent',
+    });
+    assert.equal(missing.type, 'error');
+    assert.match(missing.message, /missing or has errors/);
+
+    const bundle = {
+      version: 1,
+      name: 'release',
+      description: 'Lint, then a decision.',
+      workflow: { fileName: 'release.md', content: release },
+      steps: [
+        { fileName: 'lint.md', content: lint },
+        { fileName: 'approve.md', content: approve },
+      ],
+      createdWith: { app: 'nesvo', version: '0.1.0' },
+    };
+    const importBundle = input =>
+      host.request('import-workflow-bundle', {
+        target: { scope: 'project', directory: target },
+        bundle,
+        workflowName: 'release',
+        ...input,
+      });
+    const states = result =>
+      result.files.map(file => [file.kind, file.name, file.state]);
+
+    const plan = await importBundle({ write: false });
+    assert.equal(plan.type, 'workflow-import', JSON.stringify(plan));
+    assert.equal(plan.result.status, 'ready');
+    assert.deepEqual(states(plan.result), [
+      ['step', 'lint', 'new'],
+      ['step', 'approve', 'new'],
+      ['workflow', 'release', 'new'],
+    ]);
+    await assert.rejects(stat(root(target)));
+
+    const saved = await importBundle({ write: true });
+    assert.equal(saved.result.status, 'saved', JSON.stringify(saved.result));
+    assert.equal(
+      await readFile(join(root(target), 'workflows', 'release.md'), 'utf8'),
+      release,
+    );
+    assert.equal(
+      await readFile(join(root(target), 'steps', 'lint.md'), 'utf8'),
+      lint,
+    );
+    const listed = await host.request('list-workflow-definitions', {
+      directory: target,
+    });
+    assert.deepEqual(
+      listed.catalog.workflows.map(item => item.name),
+      ['release'],
+    );
+
+    const again = await importBundle({ write: false });
+    assert.equal(again.result.status, 'ready');
+    assert.deepEqual(states(again.result), [
+      ['step', 'lint', 'same'],
+      ['step', 'approve', 'same'],
+      ['workflow', 'release', 'same'],
+    ]);
+
+    const changedLint = lint.replace(
+      'bun run lint',
+      'bun run lint --max-warnings 0',
+    );
+    const changedRelease = release.replace('Shared fixture.', 'Changed copy.');
+    const changed = {
+      ...bundle,
+      workflow: { fileName: 'release.md', content: changedRelease },
+      steps: [{ fileName: 'lint.md', content: changedLint }, bundle.steps[1]],
+    };
+    const conflicting = await importBundle({ bundle: changed, write: true });
+    assert.equal(conflicting.result.status, 'blocked');
+    assert.deepEqual(states(conflicting.result), [
+      ['step', 'lint', 'different'],
+      ['step', 'approve', 'same'],
+      ['workflow', 'release', 'different'],
+    ]);
+    assert.equal(conflicting.result.suggestedName, 'release-2');
+    assert.equal(conflicting.result.files[0].currentContent, lint);
+    assert.equal(
+      await readFile(join(root(target), 'steps', 'lint.md'), 'utf8'),
+      lint,
+    );
+
+    const lintHash = conflicting.result.files[0].currentHash;
+    const stale = await importBundle({
+      bundle: changed,
+      workflowName: 'release-2',
+      overwrite: [{ kind: 'step', name: 'lint', expectedHash: 'f'.repeat(64) }],
+      write: true,
+    });
+    assert.equal(stale.result.status, 'blocked');
+
+    const renamed = await importBundle({
+      bundle: changed,
+      workflowName: 'release-2',
+      overwrite: [{ kind: 'step', name: 'lint', expectedHash: lintHash }],
+      write: true,
+    });
+    assert.equal(
+      renamed.result.status,
+      'saved',
+      JSON.stringify(renamed.result),
+    );
+    assert.equal(
+      await readFile(join(root(target), 'steps', 'lint.md'), 'utf8'),
+      changedLint,
+    );
+    assert.equal(
+      await readFile(join(root(target), 'workflows', 'release-2.md'), 'utf8'),
+      changedRelease.replace('name: release\n', 'name: release-2\n'),
+    );
+    assert.equal(
+      await readFile(join(root(target), 'workflows', 'release.md'), 'utf8'),
+      release,
+    );
+
+    const partial = release.replace('name: release', 'name: partial');
+    const incomplete = await importBundle({
+      bundle: {
+        ...bundle,
+        name: 'partial',
+        workflow: { fileName: 'partial.md', content: partial },
+        steps: [bundle.steps[0]],
+      },
+      workflowName: 'partial',
+      write: true,
+    });
+    assert.equal(incomplete.result.status, 'blocked');
+    assert.ok(
+      incomplete.result.issues.some(issue =>
+        issue.message.includes('lists step "approve" without its file'),
+      ),
+      JSON.stringify(incomplete.result.issues),
+    );
+    await assert.rejects(stat(join(root(target), 'workflows', 'partial.md')));
+
+    const global = await host.request('import-workflow-bundle', {
+      target: { scope: 'global' },
+      bundle,
+      workflowName: 'release',
+      write: true,
+    });
+    assert.equal(global.result.status, 'saved', JSON.stringify(global.result));
+    assert.equal(
+      await readFile(join(home, 'workflows', 'release.md'), 'utf8'),
+      release,
     );
   } finally {
     await host?.stop();

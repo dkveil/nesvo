@@ -939,6 +939,7 @@ try {
     'default-session-folder',
     'worktree-recipes',
     'session-control',
+    'workflow-sharing',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

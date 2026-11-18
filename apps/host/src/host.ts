@@ -88,6 +88,7 @@ import {
   runEnvironment,
 } from './workflows/tasks';
 import { deleteDefinition, saveDefinition } from './workflows/writer';
+import { importBundle, prepareShare } from './workflows/sharing';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
   ScheduledJobError,
@@ -159,6 +160,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'stop-workflow-run',
   'save-workflow-definition',
   'delete-workflow-definition',
+  'import-workflow-bundle',
   'remove-workflow-worktree',
   'workflow-assistant-send',
   'workflow-assistant-undo',
@@ -179,6 +181,8 @@ const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
   'read-workflow-evidence',
   'save-workflow-definition',
   'delete-workflow-definition',
+  'prepare-workflow-share',
+  'import-workflow-bundle',
   'workflow-assistant-send',
   'workflow-assistant-undo',
   'workflow-assistant-changes',
@@ -1583,6 +1587,100 @@ export const serveHost = ({
           void change.finally(() => {
             definitionWrites--;
             probes.pending.delete(change);
+          });
+          continue;
+        }
+        if (
+          request.method === 'prepare-workflow-share' ||
+          request.method === 'import-workflow-bundle'
+        ) {
+          const writes = request.method === 'import-workflow-bundle';
+          if (
+            writes
+              ? definitionWrites >= CONCURRENT_DEFINITION_WRITES
+              : definitionRequests >= 2
+          ) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: writes
+                  ? 'Workflow definitions are already being written. Try again shortly.'
+                  : 'Workflow definitions are already being read. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          let directory: string;
+          try {
+            directory = sessions.draftDirectory(
+              request.method === 'prepare-workflow-share'
+                ? request.input.directory
+                : request.input.target.scope === 'project'
+                  ? request.input.target.directory
+                  : '',
+            );
+          } catch (error) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError
+                    ? error.code
+                    : 'invalid-directory',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The folder cannot be accessed.',
+              }),
+            );
+            continue;
+          }
+          if (writes) definitionWrites++;
+          else definitionRequests++;
+          const signal = probes.controller.signal;
+          const work: Promise<HostReply> =
+            request.method === 'prepare-workflow-share'
+              ? prepareShare(directory, request.input.name, signal).then(
+                  draft => ({
+                    type: 'workflow-share-draft' as const,
+                    id: request.id,
+                    draft,
+                  }),
+                )
+              : importBundle(
+                  {
+                    ...request.input,
+                    scope: request.input.target.scope,
+                  },
+                  { directory, activeRuns },
+                  signal,
+                ).then(result => ({
+                  type: 'workflow-import' as const,
+                  id: request.id,
+                  result,
+                }));
+          const sharing = work
+            .then(message => send(message))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: definitionErrorCode(error),
+                message:
+                  error instanceof DefinitionError
+                    ? error.message
+                    : 'The workflow files could not be read. Verify the folder and try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(sharing);
+          void sharing.finally(() => {
+            if (writes) definitionWrites--;
+            else definitionRequests--;
+            probes.pending.delete(sharing);
           });
           continue;
         }
