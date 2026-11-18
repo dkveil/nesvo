@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { entityKey } from '@/shared/lib/host-key';
+import { readNotificationsEnabled } from '@/shared/lib/notification-preference';
 import type { Session } from '@/entities/session';
 
 type Snapshot = { status: Session['status']; pending: number };
@@ -31,6 +32,7 @@ function notify(
   };
   if (title === 'Approval needed')
     void window.nesvo.requestAttention().catch(() => undefined);
+  if (!readNotificationsEnabled()) return;
   if (Notification.permission === 'granted') show();
   else if (Notification.permission === 'default')
     void Notification.requestPermission().then(permission => {
