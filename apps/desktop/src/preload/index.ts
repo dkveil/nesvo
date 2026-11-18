@@ -54,6 +54,7 @@ import {
   transcriptSearchPageSchema,
   conversationImportCatalogSchema,
   adoptConversationSchema,
+  listConversationsSchema,
   historySearchPageSchema,
   gitBranchSchema,
   listPullRequestsSchema,
@@ -882,9 +883,13 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
-  listConversations: async hostId =>
+  listConversations: async (input, hostId) =>
     conversationImportCatalogSchema.parse(
-      await ipcRenderer.invoke('nesvo:list-conversations', route(hostId)),
+      await ipcRenderer.invoke(
+        'nesvo:list-conversations',
+        route(hostId),
+        input === undefined ? undefined : listConversationsSchema.parse(input),
+      ),
     ),
   adoptConversation: async (input, hostId) =>
     desktopSessionSchema.parse(

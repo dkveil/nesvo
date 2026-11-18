@@ -2,6 +2,7 @@
 import type {
   AdoptConversationInput,
   ConversationImportCatalog,
+  ListConversationsInput,
   Provider,
   Session,
 } from '@nesvo/contracts';
@@ -17,11 +18,38 @@ export class ConversationImport {
     private readonly signal: AbortSignal,
   ) {}
 
-  async list(): Promise<ConversationImportCatalog> {
+  async list(
+    input?: ListConversationsInput,
+  ): Promise<ConversationImportCatalog> {
     const providers: Provider[] = ['Claude Code', 'Codex'];
     const scans = await Promise.all(
       providers.map(provider => scanConversations(provider, this.signal)),
     );
+    const include = input?.include;
+    if (
+      include &&
+      !scans.some(scan =>
+        scan.transcripts.some(
+          ({ conversation }) =>
+            conversation.provider === include.provider &&
+            conversation.providerSessionId === include.providerSessionId,
+        ),
+      )
+    ) {
+      const target = await scanConversations(
+        include.provider,
+        this.signal,
+        include.providerSessionId,
+      );
+      scans.push({
+        ...target,
+        transcripts: target.transcripts.map(transcript => ({
+          ...transcript,
+          messages: [],
+        })),
+        skippedFiles: 0,
+      });
+    }
     const recorded = new Map(
       this.store
         .providerConversations()

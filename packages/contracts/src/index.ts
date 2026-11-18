@@ -2,8 +2,10 @@ import { z } from 'zod';
 import {
   adoptConversationSchema,
   conversationImportCatalogSchema,
+  listConversationsSchema,
   type AdoptConversationInput,
   type ConversationImportCatalog,
+  type ListConversationsInput,
 } from './conversation-import';
 import {
   setSessionTerminalSchema,
@@ -403,7 +405,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     method: z.literal('search-history'),
     input: historySearchInputSchema,
   }),
-  z.strictObject({ id: z.uuid(), method: z.literal('list-conversations') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-conversations'),
+    input: listConversationsSchema.optional(),
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('adopt-conversation'),
@@ -1266,7 +1272,10 @@ export type DesktopApi = {
     input: TranscriptSearchInput,
     hostId?: HostId,
   ) => Promise<TranscriptSearchPage>;
-  listConversations: (hostId?: HostId) => Promise<ConversationImportCatalog>;
+  listConversations: (
+    input?: ListConversationsInput,
+    hostId?: HostId,
+  ) => Promise<ConversationImportCatalog>;
   adoptConversation: (
     input: AdoptConversationInput,
     hostId?: HostId,

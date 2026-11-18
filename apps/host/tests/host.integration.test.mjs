@@ -20205,6 +20205,21 @@ test('CLI transcript search indexes unadopted transcripts within its bounds', as
     });
     assert.equal(adopted.type, 'session', JSON.stringify(adopted));
     assert.equal((await search('quasarfresh')).results.length, 0);
+    const listed = await host.request('list-conversations');
+    assert.ok(
+      !listed.catalog.conversations.some(
+        item => item.providerSessionId === oldId,
+      ),
+    );
+    const included = await host.request('list-conversations', {
+      include: { provider: 'Claude Code', providerSessionId: oldId },
+    });
+    assert.equal(
+      included.catalog.conversations.find(
+        item => item.providerSessionId === oldId,
+      )?.title,
+      'Ancient task with cometmarker',
+    );
     assert.deepEqual(
       (await search('quasar')).results.map(result => result.providerSessionId),
       [claudeId],

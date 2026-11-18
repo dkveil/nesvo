@@ -71,6 +71,7 @@ import {
   terminalResume,
   transcriptSearchInputSchema,
   adoptConversationSchema,
+  listConversationsSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
   actOnPullRequestSchema,
@@ -765,10 +766,17 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  handle('nesvo:list-conversations', async (event, hostId: unknown) => {
-    authorize(event);
-    return computers.execute('list-conversations', undefined, route(hostId));
-  });
+  handle(
+    'nesvo:list-conversations',
+    async (event, hostId: unknown, input: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-conversations',
+        input === undefined ? undefined : listConversationsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:adopt-conversation',
     async (event, input: unknown, hostId: unknown) => {

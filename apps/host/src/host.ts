@@ -729,7 +729,7 @@ export const serveHost = ({
               ? {
                   type: 'conversation-import-catalog',
                   id: request.id,
-                  catalog: await conversationImport.list(),
+                  catalog: await conversationImport.list(request.input),
                 }
               : {
                   type: 'session',

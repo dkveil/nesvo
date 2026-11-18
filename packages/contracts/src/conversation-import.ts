@@ -8,6 +8,10 @@ export const conversationIdentitySchema = z.strictObject({
   providerSessionId: z.uuid(),
 });
 
+export const listConversationsSchema = z.strictObject({
+  include: conversationIdentitySchema,
+});
+
 export const adoptConversationSchema = conversationIdentitySchema.extend({
   requestId: z.uuid(),
 });
@@ -32,4 +36,6 @@ export const conversationImportCatalogSchema = z.strictObject({
 export type ConversationImportCatalog = z.infer<
   typeof conversationImportCatalogSchema
 >;
+export type ConversationIdentity = z.infer<typeof conversationIdentitySchema>;
+export type ListConversationsInput = z.infer<typeof listConversationsSchema>;
 export type AdoptConversationInput = z.infer<typeof adoptConversationSchema>;
