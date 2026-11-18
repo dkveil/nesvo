@@ -286,6 +286,11 @@ import {
   assistantUndoResultSchema,
   assistantUndoSchema,
   listAssistantChangesSchema,
+  prepareWorkflowShareSchema,
+  importWorkflowBundleSchema,
+  workflowShareDraftSchema,
+  workflowImportResultSchema,
+  type WorkflowSharingApi,
   type AssistantChangeHistory,
   type AssistantUndoInput,
   type AssistantUndoResult,
@@ -1104,6 +1109,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('prepare-workflow-share'),
+    input: prepareWorkflowShareSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('import-workflow-bundle'),
+    input: importWorkflowBundleSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('remove-workflow-worktree'),
     input: removeWorkflowWorktreeSchema,
   }),
@@ -1504,6 +1519,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     detail: workflowRunDetailSchema,
   }),
   z.strictObject({
+    type: z.literal('workflow-share-draft'),
+    id: z.uuid(),
+    draft: workflowShareDraftSchema,
+  }),
+  z.strictObject({
+    type: z.literal('workflow-import'),
+    id: z.uuid(),
+    result: workflowImportResultSchema,
+  }),
+  z.strictObject({
     type: z.literal('workflow-evidence'),
     id: z.uuid(),
     evidence: workflowEvidenceSchema,
@@ -1662,6 +1687,7 @@ export type WorkflowsApi = {
 export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
   workflows: WorkflowsApi;
+  sharing: WorkflowSharingApi;
   colorScheme: () => Promise<ColorScheme>;
   showsOnboardingOnLaunch: () => boolean;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;

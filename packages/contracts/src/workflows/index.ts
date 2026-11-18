@@ -7,3 +7,4 @@ export * from './assistant';
 export * from './assistant-changes';
 export * from './graph';
 export * from './expressions';
+export * from './sharing';
