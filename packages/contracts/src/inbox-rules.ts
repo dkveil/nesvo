@@ -430,119 +430,93 @@ const matchesWildcard = (pattern: string, value: string, slashAware = false) =>
 
 const collapse = (value: string) => value.trim().replace(/\s+/g, ' ');
 
-const COMMAND_WRAPPERS = new Set([
-  'env',
-  'command',
-  'builtin',
-  'exec',
-  'sudo',
-  'doas',
-  'nohup',
-  'time',
-  'nice',
-  'ionice',
-  'stdbuf',
-  'timeout',
-  'xargs',
-]);
-const SHELLS = new Set([
-  'sh',
-  'bash',
-  'zsh',
-  'dash',
-  'ksh',
-  'fish',
-  'pwsh',
-  'powershell',
-  'cmd',
-]);
+const MAX_SCRIPT_DEPTH = 4;
+const SEGMENT_SEPARATORS = /&&|\|\||;|\||&|\r?\n|\(|\)|\{|\}/;
 const OPAQUE_CONSTRUCTS =
-  /\$\(|`|<\(|>\(|\beval\b|\bsource\b|\\\r?\n|\$\{?[A-Za-z_]/;
+  /\$\(|`|<\(|>\(|<<|\beval\b|\bsource\b|\\\r?\n|\$\{?[A-Za-z_]/;
 
-const unquote = (word: string) =>
-  word.replace(/^(['"])(.*)\1$/s, '$2').replace(/\\(.)/g, '$1');
+const stripQuotes = (word: string) =>
+  word.replace(
+    /"((?:[^"\\]|\\.)*)"|'([^']*)'|\\(.)/g,
+    (_, double: string | undefined, single: string | undefined, escaped) =>
+      single ?? escaped ?? (double ?? '').replace(/\\(.)/g, '$1'),
+  );
 
-const shellWords = (segment: string) =>
-  (segment.match(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g) ?? []).map(unquote);
-
-const isAssignment = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+const rawShellWords = (segment: string) =>
+  segment.match(/(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"|'[^']*')+/g) ?? [];
 
 const executableName = (word: string) =>
   (word.split(/[\\/]/).at(-1) ?? word).replace(/\.(?:exe|cmd|bat)$/i, '');
 
-const unwrapped = (words: string[], depth: number): string[][] => {
-  let rest = [...words];
-  while (rest.length) {
-    const first = rest[0]!;
-    if (isAssignment(first)) {
-      rest = rest.slice(1);
-      continue;
-    }
-    const name = executableName(first);
-    if (COMMAND_WRAPPERS.has(name)) {
-      rest = rest.slice(1);
-      while (
-        rest[0]?.startsWith('-') ||
-        (rest[0] && /^\d+[smhd]?$/.test(rest[0]))
-      )
-        rest = rest.slice(1);
-      continue;
-    }
-    if (SHELLS.has(name) && depth < 3) {
-      const flag = rest.findIndex(word =>
-        /^-\w*c$|^\/c$|^-Command$/i.test(word),
-      );
-      const script = flag >= 0 ? rest[flag + 1] : undefined;
-      if (script)
-        return commandSegments(script, depth + 1).map(segment =>
-          segment.split(' '),
-        );
-    }
-    return [[name, ...rest.slice(1)]];
-  }
-  return [];
-};
-
-export const commandSegments = (command: string, depth = 0): string[] =>
-  command
-    .split(/&&|\|\||;|\||&|\r?\n|\(|\)|\{|\}/)
-    .map(collapse)
-    .filter(Boolean)
-    .flatMap(segment => unwrapped(shellWords(segment), depth))
-    .map(words => words.join(' '))
-    .filter(Boolean);
-
-const literalWords = (pattern: string) =>
-  collapse(pattern)
-    .split(' ')
-    .map(word => word.replace(/[*?]/g, ''))
-    .filter(Boolean);
-
-const containsWordsInOrder = (words: string[], command: string) => {
-  const tokens = shellWords(collapse(command)).map(executableName);
+const containsWordsInOrder = (patterns: string[], tokens: string[]) => {
   let position = 0;
-  for (const word of words) {
+  for (const pattern of patterns) {
     const found = tokens.findIndex(
-      (token, index) => index >= position && token.includes(word),
+      (token, index) => index >= position && matchesWildcard(pattern, token),
     );
     if (found < 0) return false;
     position = found + 1;
   }
-  return words.length > 0;
+  return true;
 };
 
-export const matchesCommandPattern = (pattern: string, command: string) => {
-  const normalized = collapse(pattern);
+const segmentMatches = (
+  patterns: string[],
+  segment: string,
+  depth: number,
+): boolean => {
+  const raw = rawShellWords(segment);
+  const words = raw.map(stripQuotes);
+  const tokens = words.flatMap(word => [word, executableName(word)]);
+  if (containsWordsInOrder(patterns, tokens)) return true;
+  return raw.some(
+    (word, index) =>
+      word !== words[index] &&
+      /\s|[;&|]/.test(words[index]!) &&
+      commandMatches(patterns, words[index]!, depth + 1),
+  );
+};
+
+const commandMatches = (
+  patterns: string[],
+  command: string,
+  depth: number,
+): boolean => {
+  if (depth > MAX_SCRIPT_DEPTH) return true;
   if (
-    commandSegments(command).some(segment =>
-      matchesWildcard(normalized, segment),
-    )
+    command
+      .split(SEGMENT_SEPARATORS)
+      .some(segment => segmentMatches(patterns, segment, depth))
   )
     return true;
-  if (matchesWildcard(normalized, collapse(command))) return true;
   return (
     OPAQUE_CONSTRUCTS.test(command) &&
-    containsWordsInOrder(literalWords(pattern), command)
+    containsWordsInOrder(
+      patterns,
+      rawShellWords(command.split(SEGMENT_SEPARATORS).join(' ')).flatMap(
+        word => {
+          const plain = stripQuotes(word).replace(/[$()`{}<>]/g, ' ');
+          return plain
+            .split(/\s+/)
+            .filter(Boolean)
+            .flatMap(part => [part, executableName(part)]);
+        },
+      ),
+    )
+  );
+};
+
+const patternWords = (pattern: string) =>
+  collapse(pattern)
+    .split(' ')
+    .filter(word => word && word !== '*' && word !== '**');
+
+export const matchesCommandPattern = (pattern: string, command: string) => {
+  const words = patternWords(pattern);
+  if (!words.length) return true;
+  return (
+    commandMatches(words, command, 0) ||
+    matchesWildcard(collapse(pattern), collapse(command))
   );
 };
 
