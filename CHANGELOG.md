@@ -10,7 +10,7 @@
 - Claude Code operation approvals answered once from the inbox or the conversation.
 - Session worktrees with `.worktreeinclude`, approved setup scripts, cleanup of orphaned checkouts, and forks into a new worktree.
 - Fork, restart, compact, delete with undo, export as Markdown, and open in the system terminal.
-- Image attachments in the composer and a context window indicator from provider-reported usage.
+- Attachments of any file type in the composer (images and PDF files as native input where the provider supports it, other files as read-only references), and a context window indicator from provider-reported usage.
 - Provider accounts per session, import of existing CLI conversations, and search across CLI transcripts.
 - A command palette with session actions, keyboard navigation, status filters, and tray attention badges.
 - About, Defaults, Notifications and Data settings, rotating logs, automatic host restart and reconnect, and database backups before migrations.
