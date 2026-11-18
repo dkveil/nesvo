@@ -45,8 +45,9 @@ export async function readClaudeConfiguration(
   profileDirectory?: string,
 ) {
   const home = profileDirectory ?? claudeConfigDirectory();
+  const globalPath = join(home, '.claude.json');
   const [global, userSettings] = await Promise.all([
-    configTable(join(home, '.claude.json'), issues, signal, 32 * 1024 * 1024),
+    configTable(globalPath, issues, signal, 32 * 1024 * 1024),
     configTable(
       join(
         profileDirectory ??
@@ -70,39 +71,83 @@ export async function readClaudeConfiguration(
   if (issues.length)
     projectIssues.push('Claude Code local MCP settings could not be verified.');
 
+  const repositoryRoot = folders.at(-1);
   const layers = await Promise.all(
     [...folders].reverse().map(async folder => {
+      const mcpPath = join(folder, '.mcp.json');
+      const settingsPath = join(folder, '.claude', 'settings.json');
+      const localPath = join(folder, '.claude', 'settings.local.json');
       const [mcp, settings, localFile] = await Promise.all([
-        configTable(join(folder, '.mcp.json'), projectIssues, signal),
+        configTable(mcpPath, projectIssues, signal, undefined, repositoryRoot),
         configTable(
-          join(folder, '.claude', 'settings.json'),
+          settingsPath,
           projectIssues,
           signal,
+          undefined,
+          repositoryRoot,
         ),
         configTable(
-          join(folder, '.claude', 'settings.local.json'),
+          localPath,
           projectIssues,
           signal,
+          undefined,
+          repositoryRoot,
         ),
       ]);
-      const localConfig = Object.entries(localSettings).find(
-        ([path]) => directoryKey(path) === directoryKey(folder),
-      )?.[1];
+      const [localFolder, localConfig] =
+        Object.entries(localSettings).find(
+          ([path]) => directoryKey(path) === directoryKey(folder),
+        ) ?? [];
       const localServers =
         localConfig && typeof localConfig === 'object'
           ? section(localConfig as ConfigTable, 'mcpServers', projectIssues)
           : {};
+      const servers = section(mcp, 'mcpServers', projectIssues);
+      const hooks = section(settings, 'hooks', projectIssues);
+      const localHooks = section(localFile, 'hooks', projectIssues);
       return {
-        folder,
-        servers: section(mcp, 'mcpServers', projectIssues),
+        servers,
         localServers,
-        hooks: section(settings, 'hooks', projectIssues),
-        localHooks: section(localFile, 'hooks', projectIssues),
+        hooks,
+        localHooks,
         hooksDisabled:
           settings.disableAllHooks === true ||
           localFile.disableAllHooks === true,
+        localFolder,
+        sources: [
+          { path: mcpPath, sections: { mcpServers: servers } },
+          {
+            path: settingsPath,
+            sections: {
+              hooks,
+              ...(settings.disableAllHooks === true
+                ? { disableAllHooks: true }
+                : {}),
+            },
+          },
+          {
+            path: localPath,
+            sections: {
+              hooks: localHooks,
+              ...(localFile.disableAllHooks === true
+                ? { disableAllHooks: true }
+                : {}),
+            },
+          },
+        ],
       };
     }),
   );
-  return { userServers, userHooks, layers };
+  const localProjects = Object.fromEntries(
+    layers.flatMap(({ localFolder, localServers }) =>
+      localFolder && Object.keys(localServers).length
+        ? [[localFolder, { mcpServers: localServers }]]
+        : [],
+    ),
+  );
+  const sources = [
+    ...layers.flatMap(layer => layer.sources),
+    { path: globalPath, sections: { projects: localProjects } },
+  ];
+  return { userServers, userHooks, layers, sources };
 }

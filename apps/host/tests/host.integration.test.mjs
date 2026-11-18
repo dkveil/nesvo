@@ -1112,7 +1112,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
-      contractRevision: 3,
+      contractRevision: 4,
       instanceId,
       capabilities: [
         'scheduled-jobs',
@@ -19882,6 +19882,7 @@ test(
     const claudeConfig = join(directory, 'claude-config');
     const codexConfig = join(directory, 'codex-config');
     const secret = 'FIXTURE-MCP-SECRET-7f3a9c';
+    const opaqueArgument = 'fixture-opaque-N4X6y3z0pSr2T8Vf5Qb7';
     const hosts = [];
     t.after(async () => {
       for (const host of hosts) {
@@ -19916,16 +19917,24 @@ test(
       SessionStart: [{ hooks: [{ type: 'command', command }] }],
     });
     const projectHooks = hook(
-      '/opt/fixtures/project-hook --auth "short hook token" runtime="short env value"',
+      'HOOK_TOKEN=fixture-token runtime="short env value" /opt/fixtures/project-hook --auth "fixture-token"',
+    );
+    const nestedHook = Array.from({ length: 5 }).reduce(
+      command => 'sh -c "' + command.replace(/[\\"]/g, '\\$&') + '"',
+      'fixture-hook --token nested-literal',
     );
     projectHooks.SessionStart[0].hooks.push({
       type: 'http',
       url: 'https://fixture-user:fixture-pass@hooks.example.test/mcp/notify?query=hidden#fragment',
     });
+    projectHooks.SessionStart[0].hooks.push({
+      type: 'command',
+      command: nestedHook,
+    });
     const localHooks = hook('fixture-local-hook');
     await writeFile(
       join(project, '.claude', 'settings.json'),
-      JSON.stringify({ hooks: projectHooks }),
+      JSON.stringify({ hooks: projectHooks, unrelated: 'project-only-marker' }),
     );
     await writeFile(
       join(project, '.claude', 'settings.local.json'),
@@ -19983,12 +19992,17 @@ test(
             args: [
               '-y',
               'repo-mcp\n\u202e',
-              secret,
+              opaqueArgument,
               '--api-key',
-              'short key',
-              'auth=short auth',
+              'literal-key',
+              'auth=$(fixture-marker)',
+              '--token',
+              'value; fixture-marker',
             ],
-            env: { REPO_TOKEN: secret },
+            env: {
+              REPO_TOKEN: secret,
+              EXTRA_TOKEN: '${VALUE:-$(fixture-marker)}',
+            },
           },
         },
       }),
@@ -20058,14 +20072,8 @@ test(
       secret,
       'Bearer',
       'key=',
-      'short hook token',
-      'short env value',
-      'short key',
-      'short auth',
-      'fixture-user',
       'fixture-pass',
-      'query=hidden',
-      '#fragment',
+      'fixture-token',
       'tools',
     ])
       assert.equal(serialized.includes(leaked), false, leaked);
@@ -20143,14 +20151,29 @@ test(
       assert.equal(response.type, 'mcp-servers', JSON.stringify(response));
       return response.list;
     };
-    const trust = (session, fingerprint, client = host) =>
-      client.request('trust-repository-mcp', {
+    const trust = (session, fingerprint, rawReviewToken) =>
+      host.request('trust-repository-mcp', {
         sessionId: session.id,
         fingerprint,
+        rawReviewToken,
       });
+    const rawFor = async (session, repository) => {
+      const response = await host.request('list-mcp-servers', {
+        sessionId: session.id,
+        rawFor: repository.fingerprint,
+      });
+      assert.equal(response.type, 'mcp-servers', JSON.stringify(response));
+      assert.equal(
+        response.list.repository.fingerprint,
+        repository.fingerprint,
+      );
+      assert.equal(response.list.repository.status, 'needs-trust');
+      return response.list.repository.rawReview;
+    };
     const before = await listFor(claude);
     assert.equal(before.repository.status, 'needs-trust');
     assert.equal(before.repository.definitions.length, 4);
+    assert.equal(before.repository.rawReview, undefined);
     const detailFields = (repository, name) =>
       repository.definitions
         .find(item => item.name === name)
@@ -20159,15 +20182,26 @@ test(
       { label: 'Command', value: '/opt/fixtures/repository-mcp' },
       { label: 'Argument', value: '-y' },
       { label: 'Argument', value: 'repo-mcp\\u000a\\u202e' },
-      { label: 'Argument', value: '••••' },
+      { label: 'Argument', value: opaqueArgument },
       { label: 'Argument', value: '--api-key' },
       { label: 'Argument', value: '••••' },
-      { label: 'Argument', value: 'auth=••••' },
+      { label: 'Argument', value: 'auth=$(fixture-marker)' },
+      { label: 'Argument', value: '--token' },
+      { label: 'Argument', value: 'value; fixture-marker' },
       { label: 'Working directory', value: project },
-      { label: 'Environment variable', value: 'REPO_TOKEN' },
+      { label: 'Environment variable', value: 'REPO_TOKEN=••••' },
+      {
+        label: 'Environment variable',
+        value: 'EXTRA_TOKEN=${VALUE:-$(fixture-marker)}',
+      },
     ]);
     const reviewedHooks = before.repository.definitions.find(
       item => item.detail === 'Project hooks',
+    );
+    assert.equal(
+      before.repository.definitions.find(item => item.name === 'repo')
+        .launches[0].containsShellExpansion,
+      true,
     );
     assert.deepEqual(reviewedHooks.launches, [
       {
@@ -20175,22 +20209,62 @@ test(
         fields: [
           {
             label: 'Command',
-            value: '/opt/fixtures/project-hook --auth •••• runtime=••••',
+            value:
+              'HOOK_TOKEN=•••• runtime="short env value" /opt/fixtures/project-hook --auth "••••"',
           },
           { label: 'Working directory', value: project },
-          { label: 'Environment variable', value: 'runtime' },
         ],
       },
       {
         kind: 'http hook',
         fields: [
-          { label: 'URL', value: 'https://hooks.example.test/mcp/notify' },
+          {
+            label: 'URL',
+            value:
+              'https://fixture-user:••••@hooks.example.test/mcp/notify?query=hidden#fragment',
+          },
+        ],
+      },
+      {
+        kind: 'command hook',
+        requiresRawReview: true,
+        fields: [
+          { label: 'Command', value: nestedHook },
+          { label: 'Working directory', value: project },
         ],
       },
     ]);
+    const denied = await trust(claude, before.repository.fingerprint);
+    assert.equal(denied.code, 'invalid-request');
+    assert.match(denied.message, /Open the raw definitions/);
+    const claudeRaw = await rawFor(claude, before.repository);
+    const mcpSource = claudeRaw.files.find(file =>
+      file.path.endsWith('.mcp.json'),
+    );
+    const hookSource = claudeRaw.files.find(
+      file => file.path === join(project, '.claude', 'settings.json'),
+    );
     assert.equal(
-      (await trust(claude, before.repository.fingerprint)).list.repository
-        .status,
+      JSON.parse(mcpSource.text).mcpServers.repo.env.REPO_TOKEN,
+      '••••',
+    );
+    assert.equal(
+      JSON.parse(mcpSource.text).mcpServers.repo.env.EXTRA_TOKEN,
+      '${VALUE:-$(fixture-marker)}',
+    );
+    assert.ok(mcpSource.text.includes('\\u202e'));
+    assert.ok(!mcpSource.text.includes('\u202e'));
+    assert.equal(
+      JSON.parse(hookSource.text).hooks.SessionStart[0].hooks[2].command,
+      nestedHook,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(claudeRaw.files),
+      /literal-key|fixture-token|project-only-marker|"tracker"/,
+    );
+    assert.equal(
+      (await trust(claude, before.repository.fingerprint, claudeRaw.token)).list
+        .repository.status,
       'trusted',
     );
     assert.equal((await turn(claude, 'accept-edits')).status, 'completed');
@@ -20234,6 +20308,11 @@ test(
     );
     assert.equal(
       (await trust(claude, before.repository.fingerprint)).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await trust(claude, changed.repository.fingerprint, claudeRaw.token))
+        .code,
       'invalid-request',
     );
     const staleChange = await host.request('set-session-mcp', {
@@ -20351,9 +20430,16 @@ test(
     assert.deepEqual(codexApplied.hooks, {});
     const codexTrust = await listFor(codex);
     assert.equal(codexTrust.repository.status, 'needs-trust');
+    const codexRaw = await rawFor(codex, codexTrust.repository);
+    const codexSource = codexRaw.files.find(
+      file => file.path === join(project, '.codex', 'config.toml'),
+    );
+    assert.match(codexSource.text, /\[mcp_servers\.project\]/);
+    assert.match(codexSource.text, /••••/);
+    assert.ok(!codexSource.text.includes(secret));
     assert.equal(
-      (await trust(codex, codexTrust.repository.fingerprint)).list.repository
-        .status,
+      (await trust(codex, codexTrust.repository.fingerprint, codexRaw.token))
+        .list.repository.status,
       'trusted',
     );
     const codexWithTrust = await turn(codex, 'supervised');
@@ -20373,8 +20459,10 @@ test(
     assert.equal((await turn(codex, 'supervised')).status, 'completed');
     assert.deepEqual((await logged(codexLog)).at(-1), codexApplied);
     assert.equal((await listFor(codex)).repository.status, 'needs-trust');
+    const changedRaw = await rawFor(claude, changed.repository);
     assert.equal(
-      (await trust(claude, changed.repository.fingerprint)).type,
+      (await trust(claude, changed.repository.fingerprint, changedRaw.token))
+        .type,
       'mcp-servers',
     );
     const readOnly = await turn(codex, 'read-only');

@@ -7,6 +7,7 @@ import {
 import { providerSchema } from './sessions';
 
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse']);
+export const mcpReviewBytes = 512 * 1024;
 
 export const mcpServerSchema = z.strictObject({
   key: z.string().min(1).max(400),
@@ -20,6 +21,8 @@ export const mcpServerSchema = z.strictObject({
 
 const mcpRepositoryLaunchSchema = z.strictObject({
   kind: z.string().max(1024).optional(),
+  containsShellExpansion: z.literal(true).optional(),
+  requiresRawReview: z.literal(true).optional(),
   fields: z
     .array(
       z.strictObject({
@@ -28,6 +31,7 @@ const mcpRepositoryLaunchSchema = z.strictObject({
           'Argument',
           'Working directory',
           'Environment variable',
+          'Header',
           'URL',
           'Matcher',
         ]),
@@ -51,11 +55,26 @@ const mcpRepositorySchema = z.strictObject({
   fingerprint: mcpFingerprintSchema,
   definitions: z.array(mcpRepositoryDefinitionSchema).max(2 * mcpLimits.listed),
   changed: z.boolean(),
+  rawReview: z
+    .strictObject({
+      token: mcpFingerprintSchema,
+      files: z
+        .array(
+          z.strictObject({
+            path: z.string().min(1).max(mcpReviewBytes),
+            text: z.string().min(1).max(mcpReviewBytes),
+          }),
+        )
+        .min(1)
+        .max(3 * 64 + 1),
+    })
+    .optional(),
 });
 
 export const trustRepositoryMcpSchema = z.strictObject({
   sessionId: z.uuid(),
   fingerprint: mcpFingerprintSchema,
+  rawReviewToken: mcpFingerprintSchema.optional(),
 });
 
 export type McpRepositoryDefinition = z.infer<
@@ -74,7 +93,10 @@ export const mcpServerListSchema = z.strictObject({
 });
 
 export const listMcpServersSchema = z.union([
-  z.strictObject({ sessionId: z.uuid() }),
+  z.strictObject({
+    sessionId: z.uuid(),
+    rawFor: mcpFingerprintSchema.optional(),
+  }),
   z.strictObject({
     provider: providerSchema,
     profileId: z.uuid().nullable().optional(),

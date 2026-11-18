@@ -948,8 +948,13 @@ export const serveHost = ({
               probes.controller.signal,
               target.profileId,
               request.method === 'trust-repository-mcp'
-                ? request.input.fingerprint
-                : undefined,
+                ? request.input
+                : 'sessionId' in request.input && request.input.rawFor
+                  ? {
+                      sessionId: request.input.sessionId,
+                      rawFor: request.input.rawFor,
+                    }
+                  : undefined,
             )
             .then(list => send({ type: 'mcp-servers', id: request.id, list }))
             .catch(error =>

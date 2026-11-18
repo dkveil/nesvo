@@ -43,29 +43,47 @@ export async function readCodexConfiguration(
     config: section(user, 'hooks', issues),
     file: section(userHookFile, 'hooks', issues),
   };
+  const repositoryRoot = folders.at(-1);
   const layers = await Promise.all(
     [...folders].reverse().map(async folder => {
+      const configPath = join(folder, '.codex', 'config.toml');
+      const hooksPath = join(folder, '.codex', 'hooks.json');
       const [config, hookFile] = await Promise.all([
         configTable(
-          join(folder, '.codex', 'config.toml'),
+          configPath,
           projectIssues,
           signal,
+          undefined,
+          repositoryRoot,
         ),
         configTable(
-          join(folder, '.codex', 'hooks.json'),
+          hooksPath,
           projectIssues,
           signal,
+          undefined,
+          repositoryRoot,
         ),
       ]);
+      const servers = section(config, 'mcp_servers', projectIssues);
+      const hooks = section(config, 'hooks', projectIssues);
+      const localHooks = section(hookFile, 'hooks', projectIssues);
       return {
-        folder,
-        servers: section(config, 'mcp_servers', projectIssues),
+        servers,
         localServers: {},
-        hooks: section(config, 'hooks', projectIssues),
-        localHooks: section(hookFile, 'hooks', projectIssues),
+        hooks,
+        localHooks,
         hooksDisabled: false,
+        sources: [
+          { path: configPath, sections: { mcp_servers: servers, hooks } },
+          { path: hooksPath, sections: { hooks: localHooks } },
+        ],
       };
     }),
   );
-  return { userServers, userHooks, layers };
+  return {
+    userServers,
+    userHooks,
+    layers,
+    sources: layers.flatMap(layer => layer.sources),
+  };
 }

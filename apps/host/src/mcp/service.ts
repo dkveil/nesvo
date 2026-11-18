@@ -5,14 +5,17 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   MCP_SERVER_NAME_PATTERN,
   mcpLimits,
+  mcpReviewBytes,
   type McpRepositoryDefinition,
   type McpServerList,
   type Provider,
   type Session,
+  type TrustRepositoryMcpInput,
 } from '@nesvo/contracts';
 import { claudeServer, readClaudeConfiguration } from './claude-servers';
 import { codexServer, readCodexConfiguration } from './codex-servers';
 import { hookLaunches, reviewText, serverLaunch } from './repository-details';
+import { reviewRepositorySources } from './repository-source';
 import {
   directoryKey,
   mergeHooks,
@@ -28,6 +31,7 @@ type TurnPolicy = {
   projectDisablesHooks: boolean;
 };
 export type VerifyMcpTurn = () => Promise<TurnPolicy>;
+export type RawMcpReviewInput = { sessionId: string; rawFor: string };
 
 export const interactiveMcpSession = (session: Session) =>
   !session.parentId &&
@@ -134,7 +138,7 @@ export class McpPolicy {
     const claude = provider === 'Claude Code';
     const read = claude ? readClaudeConfiguration : readCodexConfiguration;
     const describe = claude ? claudeServer : codexServer;
-    const { userServers, userHooks, layers } = await read(
+    const { userServers, userHooks, layers, sources } = await read(
       folders,
       issues,
       projectIssues,
@@ -163,7 +167,7 @@ export class McpPolicy {
       try {
         if (launches) {
           reviewBytes += Buffer.byteLength(JSON.stringify(launches));
-          if (reviewBytes > 512 * 1024) {
+          if (reviewBytes > mcpReviewBytes) {
             projectIssues.push(
               'The repository MCP and hook details are too large to review.',
             );
@@ -311,6 +315,7 @@ export class McpPolicy {
       fingerprint,
       userFingerprint,
       policy,
+      sources,
     };
   }
 
@@ -319,15 +324,61 @@ export class McpPolicy {
     directory: string,
     signal?: AbortSignal,
     profileDirectory?: string,
+    raw?: RawMcpReviewInput,
   ) {
-    return (await this.inspect(provider, directory, signal, profileDirectory))
-      .list;
+    const snapshot = await this.inspect(
+      provider,
+      directory,
+      signal,
+      profileDirectory,
+    );
+    if (!raw) return snapshot.list;
+    const repository = snapshot.list.repository!;
+    if (
+      repository.fingerprint !== raw.rawFor ||
+      repository.status === 'unavailable'
+    )
+      throw new SessionError(
+        'invalid-request',
+        'Repository MCP servers or hooks changed. Review the current definitions.',
+      );
+    const files = reviewRepositorySources(snapshot.sources);
+    if (!files)
+      throw new SessionError(
+        'unavailable',
+        'The repository source definitions could not be displayed within the review size limit.',
+      );
+    repository.rawReview = {
+      files,
+      token: this.rawReviewToken(
+        provider,
+        snapshot.repository,
+        raw.sessionId,
+        raw.rawFor,
+      ),
+    };
+    return snapshot.list;
+  }
+
+  private rawReviewToken(
+    provider: Provider,
+    repository: string,
+    sessionId: string,
+    fingerprint: string,
+  ) {
+    return this.fingerprint([
+      'raw MCP review',
+      provider,
+      repository,
+      sessionId,
+      fingerprint,
+    ]);
   }
 
   async trust(
     provider: Provider,
     directory: string,
-    fingerprint: string,
+    { sessionId, fingerprint, rawReviewToken }: TrustRepositoryMcpInput,
     signal?: AbortSignal,
     profileDirectory?: string,
   ) {
@@ -345,6 +396,22 @@ export class McpPolicy {
       throw new SessionError(
         'invalid-request',
         'Repository MCP servers or hooks changed. Review the current definitions.',
+      );
+    if (
+      snapshot.definitions.some(definition =>
+        definition.launches?.some(launch => launch.requiresRawReview),
+      ) &&
+      rawReviewToken !==
+        this.rawReviewToken(
+          provider,
+          snapshot.repository,
+          sessionId,
+          fingerprint,
+        )
+    )
+      throw new SessionError(
+        'invalid-request',
+        'Open the raw definitions before trusting this repository.',
       );
     this.database
       .prepare(

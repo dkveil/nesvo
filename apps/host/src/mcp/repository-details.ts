@@ -2,11 +2,14 @@ import type { McpRepositoryLaunch } from '@nesvo/contracts';
 import type { ConfigTable } from './scoped-config';
 
 const mask = '••••';
-const secretKey = /key|token|secret|password|auth|credential/i;
-const keyValue = /^(-{1,2})?([\w.-]+)(\s*[:=]\s*)(.*)$/s;
-const shellWord =
-  /(?:[^\s'";&|<>\\]+|\\[\s\S]|'[^']*(?:'|$)|"(?:[^"\\]|\\[\s\S])*(?:"|$))+/gu;
-const remoteUrl = /[a-z][a-z\d+.-]*:\/\/[^\s"'<>]+/gi;
+const secretKey =
+  /(?:^|[_.-])(?:api[_-]?key|access[_-]?key|token|secret|password|auth|authorization|credential|key)$/i;
+const literal = /^[a-z\d_][a-z\d_.+~-]*={0,2}$/i;
+const expansion = /\$\(|`|[;|&<>\r\n]|\$\{(?![a-z_]\w*\})/i;
+const option = /^(-{1,2})([\w.-]+)(?:=(.*))?$/s;
+const assignment = /^([a-z_][\w.-]*)=(.*)$/is;
+const scriptOption = /^-[a-z]*c$/i;
+const quotedWord = /^(?:'([^']*)'|"((?:[^"\\]|\\["\\])*)")$/;
 
 const table = (value: unknown): ConfigTable =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -19,140 +22,231 @@ export const reviewText = (value: string) =>
     character => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'),
   );
 
-function safeUrl(value: string) {
-  try {
-    const url = new URL(value);
-    if (url.hostname) return url.protocol + '//' + url.host + url.pathname;
-  } catch {
-    return 'Unparseable URL';
-  }
-  return 'Unparseable URL';
+function secretValue(key: string, value: string) {
+  return secretKey.test(key) && literal.test(value) ? mask : value;
 }
 
-function highEntropy(value: string) {
-  const counts = new Map<string, number>();
-  for (const character of value)
-    counts.set(character, (counts.get(character) ?? 0) + 1);
-  let entropy = 0;
-  for (const count of counts.values()) {
-    const probability = count / value.length;
-    entropy -= probability * Math.log2(probability);
-  }
-  return entropy >= 3.8;
+function authorizationValue(key: string, value: string) {
+  if (key.toLowerCase() !== 'authorization') return secretValue(key, value);
+  const scheme = /^(Bearer |Basic )(.+)$/i.exec(value);
+  return scheme
+    ? scheme[1] + secretValue(key, scheme[2]!)
+    : secretValue(key, value);
 }
 
-const hideOpaqueStrings = (value: string) =>
-  value.replace(/[a-z\d_+-]{24,}/gi, part => (highEntropy(part) ? mask : part));
+function reviewUrl(value: string) {
+  if (!/^https?:\/\//i.test(value) || expansion.test(value)) return value;
+  return value
+    .replace(
+      /^([a-z][a-z\d+.-]*:\/\/[^:/?#@]+:)([^/?#@]+)(@)/i,
+      (_, prefix: string, password: string, suffix: string) =>
+        prefix + secretValue('password', password) + suffix,
+    )
+    .replace(
+      /(\?)([\w.-]+)=([^#]*)/,
+      (_, prefix: string, key: string, token: string) =>
+        prefix + key + '=' + secretValue(key, token),
+    );
+}
 
-function redactedArguments(
+function commandArguments(
   args: string[],
-  shellEnvironment?: Set<string>,
-  depth = 0,
-): string[] {
-  let maskNext = false;
-  let scriptNext = false;
-  let needsCommand = Boolean(shellEnvironment);
-  return args.map(argument => {
-    const quoted = /^(['"])([\s\S]*)\1$/.exec(argument);
-    const value = (quoted?.[2] ?? argument).trim();
-    const [, prefix = '', key = '', separator = '', payload = ''] =
-      keyValue.exec(value) ?? [];
-    const shellVariable =
-      shellEnvironment && !prefix && /^[a-z_]\w*=$/i.test(key + separator);
-    if (shellVariable) shellEnvironment?.add(key);
-    const sensitive = secretKey.test(key) || shellVariable;
-    const flag = /^--?[\w.-]+$/.test(value);
-    const isCommand = needsCommand && !sensitive && !flag;
-    if (isCommand) needsCommand = false;
-    const script = scriptNext;
-    scriptNext = /^(-c|-command|\/c)$/i.test(value);
-    const hide = maskNext;
-    maskNext =
-      Boolean(sensitive && !payload && !shellVariable) ||
-      (flag && secretKey.test(value));
-    if (hide) return mask;
-    const quote = quoted?.[1] ?? '';
-    if (sensitive && payload)
-      return quote + prefix + key + separator + mask + quote;
-    if (script)
-      return depth < 4
-        ? quote +
-            hookCommand(
-              quoted?.[2] ?? argument,
-              shellEnvironment ?? new Set(),
-              depth + 1,
-            ) +
-            quote
-        : mask;
-    const safe = argument.replace(remoteUrl, safeUrl);
-    return flag || isCommand ? safe : hideOpaqueStrings(safe);
-  });
+  depth: number,
+  shellWords = false,
+): string[] | undefined {
+  const rendered = [];
+  let credential: string | undefined;
+  let script = false;
+  let options = true;
+  let beforeCommand = shellWords;
+  const redact = (key: string, value: string) => {
+    const quote = shellWords && quotedWord.exec(value);
+    if (!quote) return secretValue(key, value);
+    const plain = quote[1] ?? quote[2]!;
+    const result = secretValue(key, plain);
+    return result === plain ? value : value[0] + result + value[0];
+  };
+  for (const argument of args) {
+    if (script) {
+      const quote = shellWords && quotedWord.exec(argument);
+      if (shellWords && !quote && /['"]/.test(argument)) return undefined;
+      const source = quote
+        ? (quote[1] ?? quote[2]!.replace(/\\(["\\])/g, '$1'))
+        : argument;
+      const command = shellCommand(source, depth + 1);
+      if (command === undefined) return undefined;
+      rendered.push(
+        quote
+          ? argument[0] +
+              (quote[1] !== undefined
+                ? command
+                : command.replace(/[\\"]/g, '\\$&')) +
+              argument[0]
+          : command,
+      );
+      script = false;
+      continue;
+    }
+    const variable = assignment.exec(argument);
+    const [, name = '', value = ''] = variable ?? [];
+    if (beforeCommand) {
+      if (variable && /^\w+$/.test(name)) {
+        rendered.push(name + '=' + redact(name, value));
+      } else {
+        beforeCommand = false;
+        rendered.push(argument);
+      }
+      continue;
+    }
+    if (options && /^(?:-command|-encodedcommand|\/c)$/i.test(argument))
+      return undefined;
+    if (options && scriptOption.test(argument)) {
+      script = true;
+      credential = undefined;
+      rendered.push(argument);
+      continue;
+    }
+    if (argument === '--') options = false;
+    const flag = options ? option.exec(argument) : null;
+    const [, prefix = '', key = '', payload] = flag ?? [];
+    const previous = credential;
+    credential =
+      flag && payload === undefined && secretKey.test(key) ? key : undefined;
+    rendered.push(
+      payload !== undefined
+        ? prefix + key + '=' + redact(key, payload)
+        : variable
+          ? name + '=' + redact(name, value)
+          : previous
+            ? redact(previous, argument)
+            : reviewUrl(argument),
+    );
+  }
+  return script || beforeCommand ? undefined : rendered;
 }
 
-function hookCommand(
-  command: string,
-  environment: Set<string>,
-  depth = 0,
-): string {
-  const words = [...command.matchAll(shellWord)];
-  const safe = redactedArguments(
-    words.map(word => word[0]),
-    environment,
-    depth,
-  );
+function shellCommand(command: string, depth = 0): string | undefined {
+  if (depth > 4 || expansion.test(command) || /[$^%*?()[\]{}#!~]/.test(command))
+    return undefined;
+  const words = [
+    ...command.matchAll(/(?:[^\s'"\\]+|'[^']*'|"(?:[^"\\]|\\["\\])*")+/g),
+  ];
   let end = 0;
-  const rendered = words.map((word, index) => {
-    const before = command.slice(end, word.index);
+  const gaps = words.map(word => {
+    const gap = command.slice(end, word.index);
     end = word.index + word[0].length;
-    return before + safe[index];
+    return gap;
   });
-  return rendered.join('') + command.slice(end);
+  const tail = command.slice(end);
+  if (
+    !/^[ \t]*$/.test(tail) ||
+    gaps.some((gap, index) => !(index ? /^[ \t]+$/ : /^[ \t]*$/).test(gap)) ||
+    words.some(([word]) => /[^\S \t]/u.test(word))
+  )
+    return undefined;
+  const rendered = commandArguments(
+    words.map(word => word[0]),
+    depth,
+    true,
+  );
+  return (
+    rendered &&
+    rendered.map((word, index) => gaps[index] + word).join('') + tail
+  );
 }
 
-function launchDetails(value: unknown, directory: string, shell: boolean) {
-  const config = table(value);
+function hasExpansion(value: unknown, depth = 0): boolean {
+  if (typeof value === 'string') return expansion.test(value);
+  if (!value || typeof value !== 'object' || depth >= 32) return false;
+  return Object.entries(value).some(
+    ([key, item]) => expansion.test(key) || hasExpansion(item, depth + 1),
+  );
+}
+
+export function reviewLaunch(config: ConfigTable, shell: boolean) {
+  const { command, args, url } = config;
+  const reviewed = { ...config };
+  let requiresRawReview = false;
+  if (shell && typeof command === 'string') {
+    const rendered = shellCommand(command);
+    reviewed.command = rendered ?? command;
+    requiresRawReview = rendered === undefined;
+  }
+  if (Array.isArray(args)) {
+    const rendered = args.every(arg => typeof arg === 'string')
+      ? commandArguments(args, 0)
+      : undefined;
+    reviewed.args = rendered ?? args;
+    requiresRawReview ||= rendered === undefined;
+  }
+  if (typeof url === 'string') reviewed.url = reviewUrl(url);
+  for (const key of ['env', 'headers', 'http_headers']) {
+    if (!(key in config)) continue;
+    reviewed[key] = Object.fromEntries(
+      Object.entries(table(config[key])).map(([name, value]) => [
+        name,
+        typeof value === 'string'
+          ? key === 'env'
+            ? secretValue(name, value)
+            : authorizationValue(name, value)
+          : value,
+      ]),
+    );
+  }
+  return {
+    reviewed,
+    requiresRawReview,
+    containsShellExpansion: hasExpansion(config),
+  };
+}
+
+function launchDetails(
+  value: unknown,
+  directory: string,
+  shell: boolean,
+): McpRepositoryLaunch {
+  const {
+    reviewed: config,
+    requiresRawReview,
+    containsShellExpansion,
+  } = reviewLaunch(table(value), shell);
   const fields: McpRepositoryLaunch['fields'] = [];
   const add = (label: (typeof fields)[number]['label'], value: string) =>
     fields.push({ label, value: reviewText(value) });
-  const environment = new Set([
-    ...Object.keys(table(config.env)),
-    ...Object.values(table(config.env_http_headers)).filter(
-      (value): value is string => typeof value === 'string',
-    ),
-    ...(Array.isArray(config.env_vars)
-      ? config.env_vars.filter(
-          (value): value is string => typeof value === 'string',
-        )
-      : []),
-    ...(typeof config.bearer_token_env_var === 'string'
-      ? [config.bearer_token_env_var]
-      : []),
-  ]);
-  if (typeof config.command === 'string')
-    add(
-      'Command',
-      shell ? hookCommand(config.command, environment) : config.command,
-    );
+  if (typeof config.command === 'string') add('Command', config.command);
   if (Array.isArray(config.args))
-    for (const arg of redactedArguments(
-      config.args.filter((value): value is string => typeof value === 'string'),
-    ))
-      add('Argument', arg);
+    for (const arg of config.args)
+      if (typeof arg === 'string') add('Argument', arg);
   if (typeof config.cwd === 'string' || typeof config.command === 'string')
     add(
       'Working directory',
       typeof config.cwd === 'string' ? config.cwd : directory,
     );
-  if (typeof config.url === 'string') add('URL', safeUrl(config.url));
-  for (const name of [...environment].sort()) add('Environment variable', name);
-  return fields;
+  if (typeof config.url === 'string') add('URL', config.url);
+  for (const [name, value] of Object.entries(table(config.env)))
+    if (typeof value === 'string')
+      add('Environment variable', name + '=' + value);
+  for (const key of ['headers', 'http_headers'])
+    for (const [name, value] of Object.entries(table(config[key])))
+      if (typeof value === 'string') add('Header', name + ': ' + value);
+  for (const name of [
+    ...Object.values(table(config.env_http_headers)),
+    ...(Array.isArray(config.env_vars) ? config.env_vars : []),
+    config.bearer_token_env_var,
+  ])
+    if (typeof name === 'string') add('Environment variable', name);
+  return {
+    fields,
+    ...(requiresRawReview ? { requiresRawReview } : {}),
+    ...(containsShellExpansion ? { containsShellExpansion } : {}),
+  };
 }
 
 export function serverLaunch(
   config: unknown,
   directory: string,
 ): McpRepositoryLaunch[] {
-  return [{ fields: launchDetails(config, directory, false) }];
+  return [launchDetails(config, directory, false)];
 }
 
 export function hookLaunches(
@@ -165,15 +259,20 @@ export function hookLaunches(
     if (!Array.isArray(group.hooks)) return [];
     return group.hooks.map(value => {
       const handler = table(value);
-      const fields = launchDetails(handler, directory, true);
-      if (typeof group.matcher === 'string')
-        fields.unshift({ label: 'Matcher', value: reviewText(group.matcher) });
+      const launch = launchDetails(handler, directory, true);
+      if (typeof group.matcher === 'string') {
+        launch.fields.unshift({
+          label: 'Matcher',
+          value: reviewText(group.matcher),
+        });
+        if (expansion.test(group.matcher)) launch.containsShellExpansion = true;
+      }
       return {
+        ...launch,
         kind:
           typeof handler.type === 'string'
             ? reviewText(handler.type) + ' hook'
             : 'Hook',
-        fields,
       };
     });
   });

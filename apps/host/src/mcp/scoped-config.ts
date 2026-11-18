@@ -1,4 +1,4 @@
-﻿import { basename, dirname, join } from 'node:path';
+﻿import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { realpath, stat } from 'node:fs/promises';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
@@ -30,8 +30,31 @@ export async function configTable(
   issues: string[],
   signal?: AbortSignal,
   maxBytes = 1024 * 1024,
+  repositoryRoot?: string,
 ): Promise<ConfigTable> {
-  const file = await readConfigFile(path, maxBytes, signal);
+  let source = path;
+  if (repositoryRoot) {
+    try {
+      source = await realpath(path);
+      const location = relative(repositoryRoot, source);
+      if (
+        location === '..' ||
+        location.startsWith('..' + sep) ||
+        isAbsolute(location)
+      )
+        throw new Error('The configuration resolves outside the repository.');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR')
+        issues.push(
+          'The ' +
+            basename(path) +
+            ' configuration could not be read inside the repository.',
+        );
+      return {};
+    }
+  }
+  const file = await readConfigFile(source, maxBytes, signal);
   if (file.status === 'missing') return {};
   if (file.status === 'read') {
     try {

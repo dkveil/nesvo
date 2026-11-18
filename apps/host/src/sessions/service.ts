@@ -49,6 +49,7 @@ import {
   type SkillReference,
   type SessionInterruption,
   type McpServerList,
+  type TrustRepositoryMcpInput,
   type AttachmentLocation,
   type LocateAttachmentInput,
   type CodeComment,
@@ -58,6 +59,7 @@ import {
 import {
   interactiveMcpSession,
   type McpPolicy,
+  type RawMcpReviewInput,
   type VerifyMcpTurn,
 } from '../mcp/service';
 import {
@@ -1747,7 +1749,7 @@ export class SessionService {
     directory: string,
     signal: AbortSignal,
     profileId?: string | null,
-    fingerprint?: string,
+    review?: TrustRepositoryMcpInput | RawMcpReviewInput,
   ): Promise<McpServerList> {
     const profileDirectory = await this.options.profiles?.directory(
       provider,
@@ -1755,11 +1757,13 @@ export class SessionService {
       signal,
     );
     const policy = this.options.mcp!;
-    const list = fingerprint
+    if (review && 'rawFor' in review)
+      return policy.list(provider, directory, signal, profileDirectory, review);
+    const list = review
       ? await policy.trust(
           provider,
           directory,
-          fingerprint,
+          review,
           signal,
           profileDirectory,
         )
