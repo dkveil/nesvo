@@ -647,6 +647,35 @@ try {
     .getByRole('status')
     .filter({ hasText: 'Connected to local host' })
     .waitFor();
+  await initialContext
+    .getByRole('button', { name: 'Session control', exact: true })
+    .click();
+  const controlSwitch = initialContext.getByRole('switch', {
+    name: 'Let sessions coordinate sessions',
+    exact: true,
+  });
+  await controlSwitch.waitFor();
+  assert.equal(await controlSwitch.getAttribute('aria-checked'), 'false');
+  await controlSwitch.click();
+  await page.waitForFunction(
+    async () => (await window.nesvo.readSessionControlPolicy('local')).enabled,
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.nesvo.readSessionControlPolicy('local')),
+    {
+      enabled: true,
+      providers: ['Claude Code', 'Codex'],
+      models: [],
+      childModes: ['read-only', 'accept-edits'],
+      worktrees: false,
+      acceptPlans: true,
+    },
+  );
+  await screenshot('-session-control-settings');
+  await controlSwitch.click();
+  await page.waitForFunction(
+    async () => !(await window.nesvo.readSessionControlPolicy('local')).enabled,
+  );
   await page.keyboard.press('Escape');
   await initialContext.waitFor({ state: 'hidden' });
   assert.equal(
