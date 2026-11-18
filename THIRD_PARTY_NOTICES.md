@@ -164,7 +164,9 @@ SOFTWARE.
 
 ## Inter typeface
 
-The desktop interface bundles the Inter variable font from @fontsource-variable/inter 5.3.0 under the SIL Open Font License 1.1:
+The desktop bundles Inter 5.3.0 and Geist 5.3.0 variable fonts from Fontsource under the SIL Open Font License 1.1.
+
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font).
 
 ```text
 Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)

@@ -21,16 +21,16 @@ The desktop uses Electron's embedded Node runtime. The Node version above is for
 
 ## Getting started
 
-The first launch on a desktop opens a short guide. Skip it at any time; it never blocks the workspace and does not open again on that desktop. Reopen it from the command palette (Getting started) or Settings › About.
+The first desktop launch opens the full-window guide. The workspace opens when you skip or finish it. Reopen the guide from the command palette (Getting started) or Settings › About.
 
-1. **Welcome** explains the three parts of Nesvo: sessions with Claude Code and Codex on your computers, the review Inbox, and workflows with automations.
-2. **Coding agents** shows whether Claude Code and Codex are installed and signed in on this computer, with install and sign-in commands only for what is missing.
-3. **Computers** confirms that Local is ready and lets you set the default session folder, for example your `development` folder. Add an SSH computer from the same step.
-4. **Your setup** lists the MCP servers each provider already has configured and how many skills it brings. Nesvo only reads this configuration.
-5. **Starter routines** are optional templates: a paused morning summary automation that asks before starting, a paused hourly review of new pull requests in a tracked repository, and a pre-push gates workflow (lint, a diff probe, a review loop and a wait for pull request checks) written to a project's `.agents/workflows` only after you confirm the folder. Nothing runs automatically.
-6. **Start your first session** opens the new session form in the default folder.
+1. **Welcome** introduces local and remote agents, the configurable Inbox, workflows and daily routines.
+2. **Coding agents** checks Claude Code and Codex on Local and shows any install or sign-in commands you need.
+3. **Computers** lets you pick the Local default session folder in the native directory dialog and add an SSH computer in the guide. Enter remote paths on the computer they belong to. Each host validates its own folder.
+4. **Your setup** shows the configured MCP servers and discovered skills. Choose **Summarize my rules** to send excerpts from your user and project instruction files to the selected agent for a read-only summary. Saving lessons, learning from corrections and per-rule metrics are planned.
+5. **Starter routines** offers an editable morning summary, pull request review and pre-push gates workflow. Automations are added paused. The workflow is saved to the confirmed project's `.agents/workflows` and runs only after you choose to use it.
+6. **Finish** summarizes the setup and lets you open the new session form or the workspace.
 
-The default session folder belongs to each computer and is checked on that computer: it must be an absolute path to a folder the host can read. Change it in Settings › Computers or Settings › Defaults. New sessions pre-fill their location with it, and you can still pick another folder or an isolated one. A group's default folder takes precedence when you start a session in that group.
+The new session form pre-fills the computer's default folder when set. You can choose another folder or an isolated one. Group defaults take precedence when you start a session in a group.
 
 ## Workspace
 

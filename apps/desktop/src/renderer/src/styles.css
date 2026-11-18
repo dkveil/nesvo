@@ -1,10 +1,11 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark *, [data-onboarding] *));
 @custom-variant hover (&:is(:hover, [data-preview-hover]));
 
 @theme inline {
+  --font-onboarding: 'Geist Variable', 'Inter Variable', system-ui, sans-serif;
   --font-sans:
     'Inter Variable', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --color-background: var(--background);
@@ -205,7 +206,8 @@
   --pr-closed: #c2343d;
 }
 
-:root.dark {
+:root.dark,
+:root[data-onboarding] {
   color-scheme: dark;
   --background: #000000;
   --foreground: #f5f5f5;
@@ -412,6 +414,10 @@
   to {
     translate: 250% 0;
   }
+}
+
+:root[data-onboarding] body {
+  font-family: var(--font-onboarding);
 }
 
 .drag-region {

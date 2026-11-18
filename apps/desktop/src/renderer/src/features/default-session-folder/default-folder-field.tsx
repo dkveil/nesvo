@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { FolderOpen } from 'lucide-react';
+import { StatusMessage } from '@/shared/ui/status-message';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Field } from '@/shared/ui/field';
@@ -11,6 +13,7 @@ type Props = {
   supported: boolean;
   label?: string;
   onSave: (directory: string | null) => Promise<string | null>;
+  chooseDirectory?: () => Promise<string | null>;
   className?: string;
 };
 
@@ -21,6 +24,7 @@ export function DefaultFolderField({
   supported,
   label = 'Default session folder',
   onSave,
+  chooseDirectory,
   className,
 }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -28,10 +32,15 @@ export function DefaultFolderField({
   const [error, setError] = useState('');
   const current = draft ?? value ?? '';
   const changed = current.trim() !== (value ?? '');
-  const save = async (directory: string | null) => {
+  const save = async (
+    selection: () => Promise<string | null>,
+    picking = false,
+  ) => {
     setPending(true);
     setError('');
     try {
+      const directory = await selection();
+      if (picking && directory === null) return;
       await onSave(directory);
       setDraft(null);
     } catch (failure) {
@@ -40,6 +49,42 @@ export function DefaultFolderField({
       setPending(false);
     }
   };
+  if (chooseDirectory)
+    return (
+      <div className={className}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-ui">{label}</p>
+            <p
+              className="truncate text-xs text-muted-foreground"
+              title={value ?? undefined}
+            >
+              {value ?? 'Use an isolated folder by default'}
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-1.5">
+            <Button
+              variant="outline"
+              disabled={!supported || pending}
+              onClick={() => void save(chooseDirectory, true)}
+            >
+              <FolderOpen />
+              {pending ? 'Checking…' : 'Choose folder'}
+            </Button>
+            {value && (
+              <Button
+                variant="ghost"
+                disabled={!supported || pending}
+                onClick={() => void save(async () => null)}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+        {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      </div>
+    );
   return (
     <Field
       id={id}
@@ -56,7 +101,7 @@ export function DefaultFolderField({
         className="flex items-center gap-2"
         onSubmit={event => {
           event.preventDefault();
-          if (changed) void save(current.trim() || null);
+          if (changed) void save(async () => current.trim() || null);
         }}
       >
         <Input
@@ -89,7 +134,7 @@ export function DefaultFolderField({
             size="sm"
             variant="ghost"
             disabled={!supported || pending}
-            onClick={() => void save(null)}
+            onClick={() => void save(async () => null)}
           >
             Clear
           </Button>

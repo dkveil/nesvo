@@ -12,7 +12,8 @@ export type ProviderSetupReport = {
   provider: Provider;
   servers: McpServerList | null;
   skills: SkillCatalog | null;
-  error: string;
+  serversError: string;
+  skillsError: string;
 };
 
 type Api = Pick<DesktopApi, 'listMcpServers' | 'discoverSkills'>;
@@ -22,7 +23,6 @@ export function useProviderSetup(
   hostId: string,
   directory: string,
   statuses: ProviderStates,
-  enabled: boolean,
 ): ProviderSetupReport[] | null {
   const ready = providers.filter(provider =>
     providerUsable(statuses[provider]),
@@ -34,7 +34,6 @@ export function useProviderSetup(
   } | null>(null);
   const key = [hostId, directory, readyKey].join('\n');
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const selected = readyKey ? (readyKey.split('|') as Provider[]) : [];
     void Promise.all(
@@ -43,14 +42,14 @@ export function useProviderSetup(
           api.listMcpServers({ provider, directory }, hostId),
           api.discoverSkills({ provider, directory }, hostId),
         ]);
-        const failure = [servers, skills].find(
-          result => result.status === 'rejected',
-        );
         return {
           provider,
           servers: servers.status === 'fulfilled' ? servers.value : null,
           skills: skills.status === 'fulfilled' ? skills.value : null,
-          error: failure ? errorDetail(failure.reason) : '',
+          serversError:
+            servers.status === 'rejected' ? errorDetail(servers.reason) : '',
+          skillsError:
+            skills.status === 'rejected' ? errorDetail(skills.reason) : '',
         };
       }),
     ).then(value => {
@@ -59,6 +58,6 @@ export function useProviderSetup(
     return () => {
       cancelled = true;
     };
-  }, [api, hostId, directory, readyKey, enabled, key]);
+  }, [api, hostId, directory, readyKey, key]);
   return reports?.key === key ? reports.value : null;
 }

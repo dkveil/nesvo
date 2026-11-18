@@ -33,6 +33,7 @@ type Props = {
     | 'removeComputer'
   >;
   onBusyChange?: (busy: boolean) => void;
+  chooseLocalDirectory?: () => Promise<string | null>;
 };
 
 const syncFormat = new Intl.DateTimeFormat('en', {
@@ -79,6 +80,7 @@ export function ManageComputers({
   defaultFolders,
   api,
   onBusyChange,
+  chooseLocalDirectory,
 }: Props) {
   const [error, setError] = useState('');
   const { workLaptopPolicy } = api;
@@ -181,9 +183,9 @@ export function ManageComputers({
   );
   return (
     <div className="space-y-8">
-      <div className="space-y-2">
+      <div className="space-y-2" hidden={!!chooseLocalDirectory && adding}>
         <SettingsSection
-          title="Computers"
+          title={chooseLocalDirectory ? 'Available computers' : 'Computers'}
           action={
             restricted === false &&
             !adding && (
@@ -194,7 +196,7 @@ export function ManageComputers({
                 onClick={() => setAdding(true)}
               >
                 <Plus />
-                Add computer
+                {chooseLocalDirectory ? 'Add a computer' : 'Add computer'}
               </Button>
             )
           }
@@ -288,6 +290,9 @@ export function ManageComputers({
                   onSave={directory =>
                     defaultFolders.save(computer.id, directory)
                   }
+                  chooseDirectory={
+                    computer.kind === 'local' ? chooseLocalDirectory : undefined
+                  }
                   className="ml-7"
                 />
               )}
@@ -317,9 +322,11 @@ export function ManageComputers({
             </section>
           ))}
         </SettingsSection>
-        <p className="px-3 text-xs text-muted-foreground">
-          Sessions, files and provider accounts stay on their computer.
-        </p>
+        {!adding && (
+          <p className="px-3 text-xs text-muted-foreground">
+            Sessions, files and provider accounts stay on their computer.
+          </p>
+        )}
       </div>
       <ConfirmDialog
         surface="panel"
@@ -337,30 +344,25 @@ export function ManageComputers({
       />
       {adding && (
         <SettingsSection title="Add SSH computer">
-          <form className="space-y-4 p-3" onSubmit={submit}>
-            <div className="grid gap-4 sm:grid-cols-2">
+          <form className="space-y-3 p-3" onSubmit={submit}>
+            <div className="grid gap-3 sm:grid-cols-2">
               {field('name', 'Computer name', 'My VPS', true)}
               {field('hostname', 'SSH hostname', 'server.example.com', true)}
               {field('username', 'SSH user', 'Use SSH configuration')}
               {field('port', 'Port', '22', true)}
+              {field(
+                'entryPath',
+                'Host entry path',
+                '/home/user/nesvo/apps/host/dist/main.js',
+                true,
+              )}
+              {field(
+                'runtimeDirectory',
+                'Runtime directory',
+                '/home/user/.nesvo-runtime',
+                true,
+              )}
             </div>
-            {field(
-              'entryPath',
-              'Host entry path',
-              '/home/user/nesvo/apps/host/dist/main.js',
-              true,
-            )}
-            {field(
-              'runtimeDirectory',
-              'Runtime directory',
-              '/home/user/.nesvo-runtime',
-              true,
-            )}
-            {field(
-              'nodePath',
-              'Node executable',
-              'Optional, for example /usr/bin/node',
-            )}
             {field(
               'defaultFolder',
               'Default session folder',
@@ -369,8 +371,13 @@ export function ManageComputers({
             <Disclosure
               title="Advanced SSH options"
               className="-mx-2"
-              contentClassName="space-y-4 px-2 pt-3 text-foreground"
+              contentClassName="grid gap-3 px-2 pt-2 text-foreground sm:grid-cols-3"
             >
+              {field(
+                'nodePath',
+                'Node executable',
+                'Optional, for example /usr/bin/node',
+              )}
               {field('identityFile', 'Identity file', 'Use SSH configuration')}
               {field(
                 'knownHostsFile',

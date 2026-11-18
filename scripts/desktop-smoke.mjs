@@ -332,7 +332,7 @@ try {
     '---\nname: fixture-user-skill\ndescription: User inventory fixture.\nuser-invocable: false\ndisable-model-invocation: true\n---\nMetadata only.\n';
   await mkdir(join(userSkillPath, '..'), { recursive: true });
   await writeFile(userSkillPath, userSkillText);
-  application = await launchApplication();
+  application = await launchApplication({ NESVO_TEST_SHOW_ONBOARDING: '1' });
   const defaultPolicy = await (
     await application.firstWindow()
   ).evaluate(() => window.nesvo.workLaptopPolicy());
@@ -346,6 +346,55 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  const guide = page.getByRole('main', {
+    name: 'Getting started',
+    exact: true,
+  });
+  await guide
+    .getByRole('heading', { name: 'vibe with full control', exact: true })
+    .waitFor();
+  assert.equal(
+    await page.getByRole('button', { name: 'Settings', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('nesvo.onboarding.v1')),
+    null,
+  );
+  await guide.getByRole('button', { name: 'Get started', exact: true }).click();
+  await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+  const defaultFolder = join(directory, 'onboarding-project');
+  await mkdir(defaultFolder);
+  await application.evaluate(({ dialog }, folder) => {
+    const original = dialog.showOpenDialog;
+    dialog.showOpenDialog = async (...args) => {
+      dialog.showOpenDialog = original;
+      if (!args.at(-1).properties.includes('openDirectory'))
+        throw new Error('Expected a native directory picker.');
+      return { canceled: false, filePaths: [folder] };
+    };
+  }, defaultFolder);
+  await guide
+    .getByRole('button', { name: 'Choose folder', exact: true })
+    .click();
+  await guide.getByText(defaultFolder, { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => window.nesvo.readDefaultSessionFolder('local')),
+    defaultFolder,
+  );
+  await guide.getByRole('button', { name: 'Clear', exact: true }).click();
+  await guide
+    .getByText('Use an isolated folder by default', { exact: true })
+    .waitFor();
+  await guide
+    .getByRole('button', { name: 'Add a computer', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Add and connect', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => window.nesvo.colorScheme()), 'system');
   assert.equal(
     await page.evaluate(() => window.nesvo.setColorScheme('dark')),
@@ -2018,10 +2067,7 @@ try {
   );
   await page.keyboard.press('Escape');
   await cleanup.waitFor({ state: 'hidden' });
-  assert.equal(
-    await page.getByRole('dialog', { name: 'Welcome to Nesvo' }).count(),
-    0,
-  );
+  assert.equal(await guide.count(), 0);
   await page.keyboard.press('Control+Shift+P');
   const palette = page.getByRole('combobox', {
     name: 'Command palette',
@@ -2030,19 +2076,31 @@ try {
   await palette.waitFor();
   await palette.fill('Getting started');
   await palette.press('Enter');
-  const onboarding = page.getByRole('dialog', {
-    name: 'Welcome to Nesvo',
+  await guide
+    .getByRole('heading', { name: 'vibe with full control', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Get started', exact: true }).click();
+  await guide
+    .getByRole('heading', { name: 'Coding agents', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const aboutSettings = page.getByRole('dialog', {
+    name: 'Settings',
     exact: true,
   });
-  await onboarding.waitFor();
-  await onboarding.getByRole('button', { name: 'Get started' }).click();
-  await page
-    .getByRole('dialog', { name: 'Coding agents', exact: true })
-    .getByRole('button', { name: 'Skip', exact: true })
+  await aboutSettings
+    .getByRole('button', { name: 'About', exact: true })
     .click();
-  await page
-    .getByRole('dialog', { name: 'Coding agents', exact: true })
-    .waitFor({ state: 'hidden' });
+  await aboutSettings
+    .getByRole('button', { name: 'Open guide', exact: true })
+    .click();
+  await guide
+    .getByRole('heading', { name: 'vibe with full control', exact: true })
+    .waitFor();
+  await guide.getByRole('button', { name: 'Skip', exact: true }).click();
+  await guide.waitFor({ state: 'detached' });
   assert.equal(
     await page.evaluate(() => localStorage.getItem('nesvo.onboarding.v1')),
     'completed',

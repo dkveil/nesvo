@@ -1,59 +1,26 @@
-import { useState } from 'react';
-import type {
-  Computer,
-  DesktopApi,
-  DesktopScheduledJob,
-} from '@nesvo/contracts';
-import type { ProviderStates } from '@/entities/session';
-import type { DefaultSessionFolders } from '@/features/default-session-folder';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
+import type { Provider } from '@/entities/session';
+import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
 import { Progress } from '@/shared/ui/progress';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { ComputersStep } from './computers-step';
 import { FinishStep } from './finish-step';
 import { InboxStep } from './inbox-step';
 import { ProvidersStep } from './providers-step';
-import { RoutinesStep } from './routines-step';
+import { RoutinesStep, type RoutineOutcomes } from './routines-step';
 import { SetupStep } from './setup-step';
+import { useOnboardingComputers } from './use-onboarding-computers';
 import { WelcomeStep } from './welcome-step';
 
 type Props = {
-  computer: Computer | undefined;
-  statuses: ProviderStates;
-  defaultFolders: DefaultSessionFolders;
-  api: Pick<
-    DesktopApi,
-    | 'listMcpServers'
-    | 'discoverSkills'
-    | 'scheduledJobs'
-    | 'workflows'
-    | 'readCodeReviewSettings'
-    | 'listTrackedRepositories'
-    | 'saveInboxRule'
-    | 'listInboxRules'
-    | 'setInboxRuleEnabled'
-  >;
-  onCheckProviders: () => void;
-  onAddComputer: () => void;
-  onJobAdded: (job: DesktopScheduledJob) => void;
-  onStartSession: () => void;
+  onStartSession: (provider: Provider | null) => void;
   onClose: () => void;
 };
 
 const steps = [
-  {
-    id: 'welcome',
-    title: 'Welcome to Nesvo',
-    description: 'A workspace for coding agents on your own computers.',
-  },
+  { id: 'welcome' },
   {
     id: 'providers',
     title: 'Coding agents',
@@ -62,12 +29,13 @@ const steps = [
   {
     id: 'computers',
     title: 'Computers',
-    description: 'Where sessions run and where they start.',
+    description:
+      'Choose where local sessions start or connect a server over SSH.',
   },
   {
     id: 'setup',
     title: 'Your setup',
-    description: 'What your agents bring with them.',
+    description: 'See the tools and working rules your agents bring with them.',
   },
   {
     id: 'inbox',
@@ -77,99 +45,123 @@ const steps = [
   {
     id: 'routines',
     title: 'Starter routines',
-    description: 'Optional templates you can add and edit later.',
+    description: 'Add editable templates for work you repeat.',
   },
-  {
-    id: 'finish',
-    title: 'You are ready',
-    description: 'Start with a session in your default folder.',
-  },
+  { id: 'finish' },
 ] as const;
 
-export function Onboarding({
-  computer,
-  statuses,
-  defaultFolders,
-  api,
-  onCheckProviders,
-  onAddComputer,
-  onJobAdded,
-  onStartSession,
-  onClose,
-}: Props) {
+export function Onboarding({ onStartSession, onClose }: Props) {
+  const api = window.nesvo;
   const [index, setIndex] = useState(0);
+  const [outcomes, setOutcomes] = useState<RoutineOutcomes>({});
+  const { computers, local, error, statuses, checkProviders } =
+    useOnboardingComputers(api);
+  const defaultFolders = useDefaultSessionFolders(computers);
   const step = steps[index]!;
-  const last = index === steps.length - 1;
-  const hostId = computer?.id ?? 'local';
-  const folder = defaultFolders.folders[hostId] ?? null;
+  const last = step.id === 'finish';
+  const folder = defaultFolders.folders.local ?? null;
+  useEffect(() => {
+    document.getElementById('onboarding-step')?.focus();
+  }, [index]);
+
   return (
-    <Dialog
-      open
-      onOpenChange={open => {
-        if (!open) onClose();
-      }}
+    <main
+      aria-label="Getting started"
+      className="flex h-dvh flex-col bg-background font-onboarding text-foreground"
     >
-      <DialogContent
-        showCloseButton={false}
-        aria-describedby="onboarding-description"
-        data-onboarding-step={step.id}
-        className="w-[min(40rem,calc(100vw-2rem))] gap-5 sm:max-w-none"
-      >
-        <DialogHeader className="gap-2">
+      <div className="drag-region h-10 shrink-0" />
+      <header className="mx-auto w-full max-w-3xl shrink-0 space-y-2 px-10 pt-4">
+        <div className="flex items-center justify-between gap-4">
           <SectionLabel as="p" className="px-0">
-            Getting started · {index + 1} of {steps.length}
+            Getting started
           </SectionLabel>
-          <Progress
-            label="Getting started progress"
-            value={((index + 1) / steps.length) * 100}
-          />
-          <DialogTitle className="pt-1 text-lg">{step.title}</DialogTitle>
-          <DialogDescription id="onboarding-description">
-            {step.description}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[min(28rem,calc(100dvh-16rem))] min-h-40 overflow-y-auto">
+          <p className="text-xs text-muted-foreground tabular-nums">
+            Step {index + 1} of {steps.length}
+          </p>
+        </div>
+        <Progress
+          label="Getting started progress"
+          value={((index + 1) / steps.length) * 100}
+        />
+      </header>
+      <div className="flex min-h-0 flex-1 overflow-y-auto">
+        <section
+          id="onboarding-step"
+          aria-labelledby="onboarding-title"
+          tabIndex={-1}
+          data-onboarding-step={step.id}
+          className="mx-auto my-auto w-full max-w-3xl space-y-5 px-10 py-5 outline-none"
+        >
+          {'title' in step && (
+            <header className="space-y-1.5">
+              <h1
+                id="onboarding-title"
+                className="text-display-lg font-semibold tracking-tight"
+              >
+                {step.title}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                {step.description}
+              </p>
+            </header>
+          )}
           {step.id === 'welcome' && <WelcomeStep />}
           {step.id === 'providers' && (
             <ProvidersStep
               statuses={statuses}
-              computerName={computer?.name ?? 'this computer'}
-              onCheckAgain={onCheckProviders}
+              computerName={local?.name ?? 'this computer'}
+              onCheckAgain={checkProviders}
             />
           )}
           {step.id === 'computers' && (
             <ComputersStep
-              computer={computer}
+              computers={computers}
               defaultFolders={defaultFolders}
-              onAddComputer={onAddComputer}
+              api={api}
+              error={error}
             />
           )}
           {step.id === 'setup' && (
             <SetupStep
               api={api}
-              hostId={hostId}
+              hostId="local"
               directory={folder ?? ''}
               statuses={statuses}
+              onSetupAgents={() => setIndex(1)}
             />
           )}
-          {step.id === 'inbox' && <InboxStep api={api} computer={computer} />}
+          {step.id === 'inbox' && <InboxStep api={api} computer={local} />}
           {step.id === 'routines' && (
             <RoutinesStep
               api={api}
-              computer={computer}
+              computer={local}
               statuses={statuses}
               defaultFolder={folder}
-              onJobAdded={onJobAdded}
+              outcomes={outcomes}
+              setOutcomes={setOutcomes}
+              onChooseComputer={() => setIndex(2)}
+              onSetupAgents={() => setIndex(1)}
             />
           )}
-          {step.id === 'finish' && (
-            <FinishStep folder={folder} onStartSession={onStartSession} />
+          {last && (
+            <FinishStep
+              computers={computers}
+              statuses={statuses}
+              folder={folder}
+              routines={Object.values(outcomes).flatMap(item =>
+                item.status === 'added' ? [item.name] : [],
+              )}
+              onClose={onClose}
+              onStartSession={onStartSession}
+            />
           )}
-        </div>
-        <DialogFooter className="items-center sm:justify-between">
-          <Button variant="ghost" size="md" onClick={onClose}>
-            {last ? 'Close' : 'Skip'}
-          </Button>
+        </section>
+      </div>
+      <footer className="mx-auto w-full max-w-3xl shrink-0 px-10 pb-6">
+        <nav
+          aria-label="Guide navigation"
+          className="flex items-center justify-between gap-2 border-t pt-4"
+        >
           <div className="flex gap-2">
             {index > 0 && (
               <Button
@@ -177,17 +169,24 @@ export function Onboarding({
                 size="md"
                 onClick={() => setIndex(index - 1)}
               >
+                <ArrowLeft />
                 Back
               </Button>
             )}
-            {!last && (
+          </div>
+          {!last && (
+            <div className="flex gap-2">
+              <Button variant="ghost" size="md" onClick={onClose}>
+                Skip
+              </Button>
               <Button size="md" onClick={() => setIndex(index + 1)}>
                 {index === 0 ? 'Get started' : 'Continue'}
+                <ArrowRight />
               </Button>
-            )}
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            </div>
+          )}
+        </nav>
+      </footer>
+    </main>
   );
 }

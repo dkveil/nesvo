@@ -65,13 +65,13 @@ import {
   errorDetail,
   folderBlocker,
   providerModes,
-  providers,
   providerStatusLabel,
   sessionFilterKeys,
   sessionMarkdown,
   sessionMarkdownFileName,
   sessionRoleLabel,
   sessionStatusLabel,
+  type Provider,
 } from '@/entities/session';
 import { showsRunStatus } from '@/entities/workflow';
 import type { EditorTarget } from '@/widgets/workflow-definitions';
@@ -222,11 +222,6 @@ import {
   SharingSettings,
   type SettingsPage,
 } from '@/widgets/settings';
-import { Onboarding } from '@/widgets/onboarding';
-import {
-  readOnboardingCompleted,
-  saveOnboardingCompleted,
-} from '@/widgets/onboarding/onboarding-preference';
 import { AutomationDetail, AutomationList } from '@/widgets/automations';
 import type { ScheduledJob, ScheduledJobRun } from '@/entities/scheduled-job';
 import { cn } from '@/shared/lib/cn';
@@ -356,7 +351,13 @@ const assistantAddedNames = (
       change.target.type === 'definition' ? change.target.name : '',
     );
 
-export function Workspace() {
+export function Workspace({
+  onOpenOnboarding,
+  initialSessionProvider,
+}: {
+  onOpenOnboarding: () => void;
+  initialSessionProvider?: Provider | null;
+}) {
   const store = useSessions();
   const defaultFolders = useDefaultSessionFolders(store.computers);
   const [location] = useState(readWorkspaceLocation);
@@ -785,7 +786,9 @@ export function Workspace() {
   const navigationToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(
+    initialSessionProvider !== undefined,
+  );
   const [creationGroup, setCreationGroup] = useState<{
     hostId: string;
     groupId: string;
@@ -799,8 +802,8 @@ export function Workspace() {
   const [threadSetup, setThreadSetup] = useState<ThreadSetup>(() =>
     applyNewSessionDefaults({
       hostId: 'local',
-      provider: 'Claude Code',
-      model: 'default',
+      provider: initialSessionProvider ?? 'Claude Code',
+      model: initialSessionProvider === 'Codex' ? '' : 'default',
       effort: '',
       mode: 'read-only',
       directory: '',
@@ -816,15 +819,6 @@ export function Workspace() {
     setFilledFolderHost(threadSetup.hostId);
     setThreadSetup({ ...threadSetup, directory: threadFolder });
   }
-  const [onboardingOpen, setOnboardingOpen] = useState(
-    () =>
-      !readOnboardingCompleted() &&
-      window.nesvo?.showsOnboardingOnLaunch() !== false,
-  );
-  const closeOnboarding = () => {
-    saveOnboardingCompleted();
-    setOnboardingOpen(false);
-  };
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
@@ -3344,7 +3338,7 @@ ${text}`
       costs: window.nesvo ? openCosts : undefined,
       settings: () => setSettingsPage('general'),
       shortcuts: () => setSettingsPage('shortcuts'),
-      gettingStarted: () => setOnboardingOpen(true),
+      gettingStarted: () => guardEditor(onOpenOnboarding),
       toggleSidebar: isWide() ? () => toggleSidebar(!sidebarOpen) : undefined,
       files: sessionPanels ? openFiles : undefined,
       diff:
@@ -5312,7 +5306,7 @@ ${text}`
                 computers={store.computers}
                 onOpenGettingStarted={() => {
                   setSettingsPage(null);
-                  setOnboardingOpen(true);
+                  guardEditor(onOpenOnboarding);
                 }}
               />
             ) : page === 'computers' ? (
@@ -5401,29 +5395,6 @@ ${text}`
             )
           }
         </Settings>
-      )}
-      {onboardingOpen && (
-        <Onboarding
-          computer={store.computers.find(computer => computer.id === 'local')}
-          statuses={store.providerStates('local')}
-          defaultFolders={defaultFolders}
-          api={desktopApi('local')}
-          onCheckProviders={() => {
-            for (const provider of providers)
-              void store.refreshProvider(provider, 'local');
-          }}
-          onAddComputer={() => {
-            closeOnboarding();
-            setSettingsPage('computers');
-          }}
-          onJobAdded={job => automations.mergeJobs([job])}
-          onStartSession={() => {
-            closeOnboarding();
-            setThreadSetup(previous => ({ ...previous, hostId: 'local' }));
-            openCreate();
-          }}
-          onClose={closeOnboarding}
-        />
       )}
       <ConfirmDialog
         open={leaveEditor !== null}

@@ -5,6 +5,9 @@ import {
   providerUsable,
   type ProviderStates,
 } from '@/entities/session';
+import { Button } from '@/shared/ui/button';
+import { Disclosure } from '@/shared/ui/disclosure';
+import { WorkingRules } from './working-rules';
 import { Badge } from '@/shared/ui/badge';
 import { StatusMessage } from '@/shared/ui/status-message';
 import {
@@ -13,13 +16,17 @@ import {
 } from './use-provider-setup';
 
 type Props = {
-  api: Pick<DesktopApi, 'listMcpServers' | 'discoverSkills'>;
+  api: Pick<
+    DesktopApi,
+    'listMcpServers' | 'discoverSkills' | 'reviewWorkingRules'
+  >;
   hostId: string;
   directory: string;
   statuses: ProviderStates;
+  onSetupAgents: () => void;
 };
 
-const SHOWN_SERVERS = 6;
+const SHOWN_SERVERS = 4;
 
 function ProviderReport({ report }: { report: ProviderSetupReport }) {
   const servers = report.servers?.servers ?? [];
@@ -29,7 +36,7 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
     <li
       aria-label={report.provider}
       data-onboarding-setup={report.provider}
-      className="space-y-2 px-3 py-2.5"
+      className="min-w-0 space-y-2 rounded-surface border bg-card px-4 py-3"
     >
       <div className="flex items-center gap-2">
         <ProviderGlyph
@@ -42,7 +49,7 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
         <span className="text-xs text-muted-foreground tabular-nums">
           {report.skills
             ? `${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}${report.skills.truncated ? '+' : ''}`
-            : 'Skills unavailable'}
+            : 'Skills could not be read'}
         </span>
       </div>
       {report.servers && (
@@ -56,8 +63,14 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
             <ul className="flex flex-wrap gap-1" aria-label="MCP servers">
               {servers.slice(0, SHOWN_SERVERS).map(server => (
                 <li key={server.key}>
-                  <Badge tone="neutral" appearance="outline">
-                    {server.name}
+                  <Badge
+                    tone="neutral"
+                    appearance="outline"
+                    className="max-w-full"
+                  >
+                    <span className="max-w-32 truncate" title={server.name}>
+                      {server.name}
+                    </span>
                     <span className="text-muted-foreground">
                       {' '}
                       · {server.scope}
@@ -86,29 +99,72 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
           )}
         </div>
       )}
-      {report.error && (
-        <StatusMessage tone="warning">{report.error}</StatusMessage>
+      {report.serversError && (
+        <StatusMessage tone="warning">
+          MCP · {report.serversError}
+        </StatusMessage>
+      )}
+      {skills.length > 0 && (
+        <p
+          className="truncate text-xs text-muted-foreground"
+          title={skills
+            .map(skill => skill.name)
+            .slice(0, 8)
+            .join(', ')}
+        >
+          {skills
+            .slice(0, 4)
+            .map(skill => skill.name)
+            .join(', ')}
+          {skills.length > 4 && ` · +${skills.length - 4} more`}
+        </p>
+      )}
+      {report.skillsError && (
+        <StatusMessage tone="warning">
+          Skills · {report.skillsError}
+        </StatusMessage>
+      )}
+      {!!report.skills?.issues.length && (
+        <Disclosure
+          title={
+            skills.length
+              ? 'Skill discovery details'
+              : 'Why the catalog is incomplete'
+          }
+          className="-mx-1"
+          contentClassName="max-h-24 overflow-y-auto break-words"
+        >
+          {report.skills.issues[0]?.message}
+        </Disclosure>
       )}
     </li>
   );
 }
 
-export function SetupStep({ api, hostId, directory, statuses }: Props) {
-  const reports = useProviderSetup(api, hostId, directory, statuses, true);
+export function SetupStep({
+  api,
+  hostId,
+  directory,
+  statuses,
+  onSetupAgents,
+}: Props) {
+  const reports = useProviderSetup(api, hostId, directory, statuses);
   const ready = providers.filter(provider =>
     providerUsable(statuses[provider]),
   );
-  if (!ready.length)
-    return (
-      <StatusMessage tone="info" variant="notice">
-        Set up Claude Code or Codex first to see its MCP servers, hooks and
-        skills.
-      </StatusMessage>
-    );
   return (
     <div className="space-y-3">
-      {reports ? (
-        <ul className="divide-y rounded-surface border bg-card">
+      {!ready.length ? (
+        <div className="flex items-center justify-between gap-3 rounded-surface border bg-card p-3">
+          <p className="text-xs text-muted-foreground">
+            Connect Claude Code or Codex to discover MCP servers and skills.
+          </p>
+          <Button variant="outline" onClick={onSetupAgents}>
+            Set up agents
+          </Button>
+        </div>
+      ) : reports ? (
+        <ul className="grid gap-3 sm:grid-cols-2">
           {reports.map(report => (
             <ProviderReport key={report.provider} report={report} />
           ))}
@@ -116,11 +172,12 @@ export function SetupStep({ api, hostId, directory, statuses }: Props) {
       ) : (
         <StatusMessage tone="loading">Reading your setup…</StatusMessage>
       )}
-      <p className="text-xs leading-5 text-muted-foreground">
-        Read from your provider configuration
-        {directory ? ` for ${directory}` : ''}. Nesvo never changes it; user
-        hooks run only in edit modes.
-      </p>
+      <WorkingRules
+        api={api}
+        directory={directory}
+        statuses={statuses}
+        onSetupAgents={onSetupAgents}
+      />
     </div>
   );
 }
