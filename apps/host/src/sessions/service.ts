@@ -509,6 +509,7 @@ export type RunOutcome = {
   limit: { resetsAt: string | null } | null;
   usage: TurnUsage | null;
   structured: unknown;
+  text?: string;
 };
 
 const MAX_REMEMBERED_LIMITS = 100;
@@ -1674,6 +1675,7 @@ export class SessionService {
         message.state === 'failed' ? (this.limits.get(runId) ?? null) : null,
       usage: message.usage,
       structured,
+      text: message.body,
     };
   }
 
@@ -1778,7 +1780,7 @@ export class SessionService {
     signal: AbortSignal,
     options: Pick<
       Parameters<typeof createSessionWorktree>[0],
-      'branch' | 'fork' | 'carryChanges' | 'sourceWorktree'
+      'branch' | 'baseCommit' | 'fork' | 'carryChanges' | 'sourceWorktree'
     >,
   ) {
     const id = randomUUID();
@@ -1804,6 +1806,42 @@ export class SessionService {
       includes,
     };
     return { directory: worktree, worktree: { id, metadata } };
+  }
+
+  async createAutomationSession(
+    input: CreateSessionInput,
+    origin: Extract<SessionOrigin, { kind: 'scheduled-job' }>,
+    signal: AbortSignal,
+    baseCommit?: string,
+  ): Promise<Session> {
+    if (!isWritableSessionMode(input.mode))
+      return this.create(input, { origin });
+    if (!input.directory)
+      throw new SessionError(
+        'invalid-directory',
+        'Choose a repository checkout for the automation worktree.',
+      );
+    if (this.removingWorktrees || this.closing)
+      throw new SessionError(
+        'busy',
+        'The host is busy with another worktree operation.',
+      );
+    this.creatingWorktrees++;
+    try {
+      const isolated = await this.prepareSessionWorktree(
+        input.directory,
+        input.title,
+        signal,
+        { baseCommit },
+      );
+      return this.create(input, {
+        origin,
+        isolatedDirectory: isolated.directory,
+        worktree: isolated.worktree,
+      });
+    } finally {
+      this.creatingWorktrees--;
+    }
   }
 
   private sessionWorktree(sessionId: string) {

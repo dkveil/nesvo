@@ -161,7 +161,12 @@ function ghError(
   if (apiAction === 'review' && status === '422')
     return new PullRequestError(
       'invalid-request',
-      `GitHub refused the review: ${detail?.replace(/^gh: /, '').replace(/(?:^|\s*\()HTTP 422\)?$/, '').slice(0, 300) || 'A comment may point outside the diff.'}`,
+      `GitHub refused the review: ${
+        detail
+          ?.replace(/^gh: /, '')
+          .replace(/(?:^|\s*\()HTTP 422\)?$/, '')
+          .slice(0, 300) || 'A comment may point outside the diff.'
+      }`,
     );
   if (apiAction === 'line-comment' && status === '422')
     return new PullRequestError(
@@ -181,6 +186,7 @@ type GhOptions = {
   mutation?: boolean;
   apiAction?: 'merge' | 'line-comment' | 'review';
   maxOutputBytes?: number;
+  allowTruncatedOutput?: boolean;
   noCurrentPullRequest?: boolean;
   signal?: AbortSignal;
 };
@@ -278,7 +284,11 @@ export class GitHubCli {
           return null;
         throw ghError(result.code, result.stderr, options.apiAction);
       }
-      if (result.outputTruncated && (!options.mutation || args[0] === 'api'))
+      if (
+        result.outputTruncated &&
+        !options.allowTruncatedOutput &&
+        (!options.mutation || args[0] === 'api')
+      )
         throw new PullRequestError(
           'unavailable',
           'The GitHub CLI response exceeded its size limit.',

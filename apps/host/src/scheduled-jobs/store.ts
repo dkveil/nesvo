@@ -31,6 +31,9 @@ const toJob = (row: Row): ScheduledJob =>
     model: row.model,
     effort: text(row.effort ?? null),
     mode: row.mode,
+    ...(row.ritual_options
+      ? (JSON.parse(String(row.ritual_options)) as object)
+      : {}),
     schedule: JSON.parse(String(row.schedule)),
     timeZone: row.time_zone,
     active: row.active === 1,
@@ -61,6 +64,9 @@ const toRun = (row: Row): StoredRun => ({
     resetAt: text(row.reset_at ?? null),
     startedAt: text(row.started_at ?? null),
     finishedAt: text(row.finished_at ?? null),
+    ...(row.ritual_result
+      ? (JSON.parse(String(row.ritual_result)) as object)
+      : {}),
   }),
   requestId: text(row.request_id ?? null),
   recordedAt: String(row.recorded_at),
@@ -81,7 +87,7 @@ const jobValues = (job: ScheduledJob) => [
   job.provider,
   job.model,
   job.effort,
-  job.mode,
+  'read-only',
   JSON.stringify(job.schedule),
   job.timeZone,
   job.active ? 1 : 0,
@@ -93,6 +99,7 @@ const jobValues = (job: ScheduledJob) => [
   job.pendingStart ? JSON.stringify(job.pendingStart) : null,
   job.nextRunAt,
   job.updatedAt,
+  JSON.stringify({ mode: job.mode, browser: job.browser, redCi: job.redCi }),
 ];
 
 const CURSOR_PATTERN =
@@ -157,7 +164,7 @@ export class ScheduledJobStore {
   insert(job: ScheduledJob): void {
     this.database
       .prepare(
-        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, change_trigger, pull_request_review, last_check, pending_start, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, change_trigger, pull_request_review, last_check, pending_start, next_run_at, updated_at, ritual_options, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(...jobValues(job), job.id, job.createdAt);
   }
@@ -167,7 +174,7 @@ export class ScheduledJobStore {
       Number(
         this.database
           .prepare(
-            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, change_trigger = ?, pull_request_review = ?, last_check = ?, pending_start = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
+            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, change_trigger = ?, pull_request_review = ?, last_check = ?, pending_start = ?, next_run_at = ?, updated_at = ?, ritual_options = ? WHERE id = ? AND revision = ?',
           )
           .run(...jobValues(job), job.id, expectedRevision).changes,
       ) === 1
@@ -194,6 +201,29 @@ export class ScheduledJobStore {
       )
       .get(id, day);
     return Number(row?.starts ?? 0);
+  }
+
+  hasCiHead(id: string, key: string): boolean {
+    return !!this.database
+      .prepare(
+        'SELECT 1 FROM scheduled_job_ci_heads WHERE scheduled_job_id = ? AND head_key = ?',
+      )
+      .get(id, key);
+  }
+
+  recordCiHead(id: string, key: string): void {
+    this.database
+      .prepare('INSERT INTO scheduled_job_ci_heads VALUES (?, ?)')
+      .run(id, key);
+  }
+
+  previousReport(id: string): string | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT json_extract(ritual_result, '$.report') AS report FROM scheduled_job_runs WHERE scheduled_job_id = ? AND status = 'completed' AND json_type(ritual_result, '$.report') = 'text' ORDER BY recorded_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(id);
+    return typeof row?.report === 'string' ? row.report : undefined;
   }
 
   countStart(id: string, day: string): void {
@@ -246,7 +276,7 @@ export class ScheduledJobStore {
   updateRun(run: StoredRun): void {
     this.database
       .prepare(
-        'UPDATE scheduled_job_runs SET status = ?, reason = ?, session_id = ?, session_run_id = ?, workflow_run_id = ?, review_id = ?, reset_at = ?, started_at = ?, finished_at = ? WHERE id = ?',
+        'UPDATE scheduled_job_runs SET status = ?, reason = ?, session_id = ?, session_run_id = ?, workflow_run_id = ?, review_id = ?, reset_at = ?, started_at = ?, finished_at = ?, ritual_result = ? WHERE id = ?',
       )
       .run(
         run.status,
@@ -258,6 +288,11 @@ export class ScheduledJobStore {
         run.resetAt,
         run.startedAt,
         run.finishedAt,
+        JSON.stringify({
+          detail: run.detail,
+          report: run.report,
+          changes: run.changes,
+        }),
         run.id,
       );
   }

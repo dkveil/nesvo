@@ -66,7 +66,11 @@ export const scheduledJobScheduleSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const scheduledJobProviderSchema = z.enum(['claude', 'codex']);
-export const scheduledJobModeSchema = z.literal('read-only');
+export const scheduledJobModeSchema = z.enum([
+  'read-only',
+  'accept-edits',
+  'supervised',
+]);
 export const scheduledJobTimeZoneSchema = z
   .string()
   .trim()
@@ -113,6 +117,17 @@ export const scheduledJobPullRequestReviewSchema = z.strictObject({
   profileId: z.uuid(),
 });
 
+const scheduledJobRedCiSchema = z.strictObject({
+  dailyRunCap: scheduledJobChangeTriggerSchema.shape.dailyRunCap,
+});
+
+export const scheduledJobReportSchema = z.string().max(4000);
+const scheduledJobChangesSchema = z.strictObject({
+  added: z.array(z.string().max(200)).max(20),
+  resolved: z.array(z.string().max(200)).max(20),
+  summaryChanged: z.boolean(),
+});
+
 const scheduledJobCheckSchema = z.strictObject({
   at: z.iso.datetime(),
   status: z.enum(['changed', 'unchanged', 'failed']),
@@ -142,9 +157,11 @@ const scheduledJobDefinitionShape = {
   provider: scheduledJobProviderSchema,
   model: z.string().trim().min(1).max(scheduledJobLimits.model),
   effort: z.string().trim().min(1).max(scheduledJobLimits.effort).nullable(),
-  mode: scheduledJobModeSchema,
+  mode: scheduledJobModeSchema.default('read-only'),
   schedule: scheduledJobScheduleSchema,
-  timeZone: scheduledJobTimeZoneSchema,
+  timeZone: scheduledJobTimeZoneSchema.default(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  ),
   active: z.boolean(),
   timeoutMinutes: z
     .number()
@@ -155,6 +172,47 @@ const scheduledJobDefinitionShape = {
   workflow: scheduledJobWorkflowSchema.nullable().default(null),
   changeTrigger: scheduledJobChangeTriggerSchema.optional(),
   pullRequestReview: scheduledJobPullRequestReviewSchema.optional(),
+  browser: z.literal(true).optional(),
+  redCi: scheduledJobRedCiSchema.optional(),
+};
+
+const enforceRitualRules = (
+  value: z.infer<z.ZodObject<typeof scheduledJobDefinitionShape>>,
+  context: z.RefinementCtx,
+) => {
+  const issue = (field: string, message: string) =>
+    context.addIssue({ code: 'custom', path: [field], message });
+  if (value.mode !== 'read-only') {
+    if (
+      value.mode !==
+      (value.provider === 'claude' ? 'accept-edits' : 'supervised')
+    )
+      issue('mode', 'Choose an access mode for the selected provider.');
+    if (value.workflow || value.pullRequestReview)
+      issue('mode', 'Writable automations run a session prompt.');
+    if (!value.directory && !value.redCi && value.active)
+      issue('directory', 'Choose a repository checkout for the worktree.');
+  }
+  if (
+    value.browser &&
+    (value.pullRequestReview || (value.active && !value.workflow))
+  )
+    issue(
+      'browser',
+      'Browser access requires a workflow from your global workflows folder.',
+    );
+  if (
+    value.redCi &&
+    (value.mode === 'read-only' ||
+      value.changeTrigger ||
+      value.workflow ||
+      value.pullRequestReview ||
+      value.browser)
+  )
+    issue(
+      'redCi',
+      'Red CI requires a writable session prompt without another trigger.',
+    );
 };
 
 type ProviderRuleSubject = {
@@ -232,7 +290,8 @@ export const scheduledJobDefinitionSchema = z
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
   .superRefine(enforceTriggerFolder)
-  .superRefine(enforceReviewFolder);
+  .superRefine(enforceReviewFolder)
+  .superRefine(enforceRitualRules);
 
 export const scheduledJobSchema = z
   .strictObject({
@@ -248,7 +307,8 @@ export const scheduledJobSchema = z
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
   .superRefine(enforceTriggerFolder)
-  .superRefine(enforceReviewFolder);
+  .superRefine(enforceReviewFolder)
+  .superRefine(enforceRitualRules);
 
 export const scheduledJobRunStatusSchema = z.enum([
   'starting',
@@ -287,6 +347,9 @@ export const scheduledJobRunSchema = z
     resetAt: z.iso.datetime().nullable(),
     startedAt: z.iso.datetime().nullable(),
     finishedAt: z.iso.datetime().nullable(),
+    detail: z.string().max(400).optional(),
+    report: scheduledJobReportSchema.optional(),
+    changes: scheduledJobChangesSchema.optional(),
   })
   .superRefine((value, context) => {
     if ((value.trigger === 'manual') !== (value.scheduledFor === null))
@@ -308,7 +371,8 @@ export const saveScheduledJobSchema = z
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
   .superRefine(enforceTriggerFolder)
-  .superRefine(enforceReviewFolder);
+  .superRefine(enforceReviewFolder)
+  .superRefine(enforceRitualRules);
 
 export const setScheduledJobActiveSchema = z.strictObject({
   id: idSchema,

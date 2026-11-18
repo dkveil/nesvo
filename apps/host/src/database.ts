@@ -12,7 +12,7 @@ import { installTrackedRepositoryTables } from './tracked-repositories';
 import { installWorktreeRecipeTables } from './worktree-recipes/store';
 import { installSessionControlTables } from './session-control/store';
 
-const DATABASE_VERSION = 24;
+const DATABASE_VERSION = 25;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -345,7 +345,12 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         database.exec(
           'ALTER TABLE scheduled_jobs ADD COLUMN workflow TEXT CHECK (workflow IS NULL OR json_valid(workflow))',
         );
-      for (const column of ['change_trigger', 'last_check', 'pending_start'])
+      for (const column of [
+        'change_trigger',
+        'last_check',
+        'pending_start',
+        'ritual_options',
+      ])
         if (!scheduledJobColumns.has(column))
           database.exec(
             `ALTER TABLE scheduled_jobs ADD COLUMN ${column} TEXT CHECK (${column} IS NULL OR json_valid(${column}))`,
@@ -364,6 +369,13 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           .prepare('PRAGMA table_info(scheduled_job_runs)')
           .all()
           .map(column => column.name),
+      );
+      if (!scheduledJobRunColumns.has('ritual_result'))
+        database.exec(
+          'ALTER TABLE scheduled_job_runs ADD COLUMN ritual_result TEXT CHECK (ritual_result IS NULL OR json_valid(ritual_result))',
+        );
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS scheduled_job_ci_heads (scheduled_job_id TEXT NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE, head_key TEXT NOT NULL, PRIMARY KEY (scheduled_job_id, head_key))',
       );
       if (!scheduledJobRunColumns.has('workflow_run_id'))
         database.exec(

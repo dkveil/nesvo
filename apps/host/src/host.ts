@@ -97,6 +97,8 @@ import {
   ScheduledJobService,
 } from './scheduled-jobs/service';
 import { SessionLauncher } from './scheduled-jobs/launcher';
+import { RedCiPoll } from './scheduled-jobs/red-ci';
+import { GitHubCli } from './process/github-cli';
 import { PROVIDER_SESSION_VARIABLE } from './process/provider-processes';
 import { RunningApps } from './running-apps/service';
 import { WorktreeRecipes } from './worktree-recipes/service';
@@ -620,9 +622,39 @@ export const serveHost = ({
               undefined,
               undefined,
               {
-                start: (input, signal) => tasks.start(input, signal),
+                start: (input, signal, automation) =>
+                  tasks.start(input, signal, automation),
                 getRun: id => workflowRunStore.getRun(id),
                 stop: id => workflows.stop(id),
+                report: id => {
+                  const latestResults = new Map(
+                    workflowRunStore
+                      .stepsForRun(id)
+                      .flatMap(step =>
+                        step.result
+                          ? [[step.name, step.result.summary] as const]
+                          : [],
+                      ),
+                  );
+                  const sessionId = workflowRunStore.getRun(id)?.sessionId;
+                  const authorReport =
+                    sessionId &&
+                    store
+                      .get(sessionId)
+                      ?.messages.findLast(
+                        message =>
+                          message.author === 'agent' &&
+                          message.state === 'completed',
+                      )?.body;
+                  return [
+                    ...[...latestResults].map(
+                      ([name, summary]) => `${name}\n${summary}`,
+                    ),
+                    authorReport,
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n');
+                },
               },
               undefined,
               {
@@ -631,6 +663,10 @@ export const serveHost = ({
               },
             ),
             emit,
+            undefined,
+            new RedCiPoll(new GitHubCli(probes.controller.signal), () =>
+              trackedRepositories.list(),
+            ),
           );
           service.start();
           return service;

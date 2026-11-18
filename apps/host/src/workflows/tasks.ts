@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { basename, extname, isAbsolute, join } from 'node:path';
 import { adoptLegacyFolder } from './legacy-folders';
+import { automationContext } from '../scheduled-jobs/reports';
 import {
   BudgetRefusal,
   SessionError,
@@ -56,6 +57,12 @@ export const IMPLEMENT_INSTRUCTION = 'Implement the task as planned.';
 
 const PLAN_TEXT_LIMIT = 60_000;
 const SNAPSHOT_FILE = /^([0-9a-f-]{36})\.md$/;
+
+type WorkflowAutomationContext = {
+  previousReport?: string;
+  browser?: boolean;
+  prompt?: string;
+};
 
 type AuthorSessions = Pick<
   SessionService,
@@ -273,6 +280,7 @@ export class WorkflowTasks {
   async start(
     input: StartWorkflowTaskInput,
     signal: AbortSignal,
+    automation?: WorkflowAutomationContext,
   ): Promise<WorkflowRun> {
     if (this.starting)
       throw new WorkflowRunError(
@@ -281,7 +289,7 @@ export class WorkflowTasks {
       );
     this.starting = true;
     try {
-      return await this.begin(input, signal);
+      return await this.begin(input, signal, automation);
     } finally {
       this.starting = false;
     }
@@ -294,6 +302,7 @@ export class WorkflowTasks {
   private async begin(
     input: StartWorkflowTaskInput,
     signal: AbortSignal,
+    automation?: WorkflowAutomationContext,
   ): Promise<WorkflowRun> {
     const directory = this.resolveDirectory(input.directory);
     const specPath = isAbsolute(input.specPath)
@@ -310,6 +319,14 @@ export class WorkflowTasks {
         input.workflowName,
         await loadCatalog(directory, signal),
       );
+      if (automation?.browser) {
+        const steps = workflow.steps.filter(step => step.needs.includes('browser'));
+        if (workflow.source.scope !== 'global' || !steps.length || steps.some(step => step.source.scope !== 'global'))
+          throw new WorkflowRunError(
+            'invalid-request',
+            'Browser access requires a global workflow with browser steps from your own workflows folder.',
+          );
+      }
     } catch (error) {
       if (error instanceof WorkflowRunError) throw error;
       throw definitionFailure(error);
@@ -347,6 +364,9 @@ export class WorkflowTasks {
         title,
         projectRoot,
         loaded,
+        body: automation
+          ? automationContext([loaded.spec.body, automation.prompt].filter(Boolean).join('\n\n'), automation.previousReport)
+          : loaded.spec.body,
         workflow,
         isolation,
       });
@@ -375,6 +395,7 @@ export class WorkflowTasks {
       title,
       projectRoot,
       loaded,
+      body,
       workflow,
       isolation,
     }: {
@@ -382,6 +403,7 @@ export class WorkflowTasks {
       title: string;
       projectRoot: string;
       loaded: LoadedSpec;
+      body: string;
       workflow: ResolvedWorkflow;
       isolation: WorkflowIsolation | null;
     },
@@ -390,7 +412,7 @@ export class WorkflowTasks {
     const runDirectory = isolation
       ? this.resolveDirectory(isolation.worktree)
       : projectRoot;
-    this.ports.snapshots.write(runId, loaded.spec.body);
+    this.ports.snapshots.write(runId, body);
     const now = new Date().toISOString();
     const run: WorkflowRun = {
       id: runId,

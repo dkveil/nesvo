@@ -1384,6 +1384,7 @@ test(
         'session-browser',
         'session-resume',
         'merged-worktree-cleanup',
+        'automation-rituals',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2390,7 +2391,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      24,
+      25,
     );
     migrated.close();
     const reopened = open();
@@ -4774,7 +4775,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 25');
+    database.exec('PRAGMA user_version = 26');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4791,7 +4792,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -5472,6 +5473,9 @@ const loadScheduledJobHost = async directory => {
   const entries = [
     'scheduled-jobs/service.ts',
     'scheduled-jobs/store.ts',
+    'scheduled-jobs/launcher.ts',
+    'scheduled-jobs/red-ci.ts',
+    'process/github-cli.ts',
     'sessions/service.ts',
     'sessions/store.ts',
     'review/store.ts',
@@ -5528,6 +5532,249 @@ const waitUntil = async (check, description) => {
     await delay(20);
   }
 };
+
+test(
+  'automation rituals use worktrees, remember their report and claim failing heads once',
+  { timeout: 120_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-rituals-')),
+    );
+    const data = join(root, 'data');
+    const project = join(root, 'project');
+    const pidFile = join(root, 'pids.json');
+    const fixture = join(root, 'gh-fixture.cjs');
+    const fixtureState = join(root, 'pr.json');
+    const previousEnvironment = { ...process.env };
+    let service;
+    let sessions;
+    let database;
+    t.after(async () => {
+      await service?.close();
+      await sessions?.close();
+      database?.close();
+      for (const key of Object.keys(process.env))
+        if (!(key in previousEnvironment)) delete process.env[key];
+      Object.assign(process.env, previousEnvironment);
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    await mkdir(project);
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=fixture@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        { cwd: project },
+      );
+    await git('init', '-qb', 'main');
+    await git('commit', '--allow-empty', '-qm', 'Base');
+    await git('checkout', '-qb', 'fix-fixture');
+    await git('commit', '--allow-empty', '-qm', 'First head');
+    const first = (await git('rev-parse', 'HEAD')).stdout.trim();
+    await git('commit', '--allow-empty', '-qm', 'Second head');
+    const second = (await git('rev-parse', 'HEAD')).stdout.trim();
+    await git('checkout', '-q', 'main');
+    await git(
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/fixture/rituals.git',
+    );
+    await writeFile(
+      fixture,
+      `
+      const assert = require('node:assert/strict');
+      const fs = require('node:fs');
+      const args = process.argv.slice(2);
+      if (args[0] === 'pr') {
+        assert.deepEqual(args.slice(0, 10), ['pr', 'list', '--repo', 'fixture/rituals', '--state', 'open', '--author', '@me', '--limit', '30']);
+        process.stdout.write(fs.readFileSync(${JSON.stringify(fixtureState)}, 'utf8'));
+      } else {
+        assert.deepEqual(args, ['run', 'view', '123', '--job', '456', '--repo', 'fixture/rituals', '--log-failed']);
+        process.stdout.write('Fixture failed on a syntax check');
+      }
+    `,
+    );
+    const setHead = (sha, conclusion) =>
+      writeFile(
+        fixtureState,
+        JSON.stringify([
+          {
+            url: 'https://github.com/fixture/rituals/pull/5',
+            headRefName: 'fix-fixture',
+            headRefOid: sha,
+            statusCheckRollup: [
+              {
+                __typename: 'CheckRun',
+                name: 'Compile',
+                status: 'COMPLETED',
+                conclusion,
+                detailsUrl:
+                  'https://github.com/fixture/rituals/actions/runs/123/job/456',
+              },
+            ],
+          },
+        ]),
+      );
+    const modules = await loadScheduledJobHost(root);
+    const migrated = launch(data, pidFile);
+    try {
+      assert.equal((await migrated.request('health')).type, 'health');
+    } finally {
+      await migrated.stop();
+    }
+    Object.assign(process.env, fixtureEnvironment(root, pidFile), {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: join(root, 'workflows-home'),
+      NESVO_GH_EXECUTABLE: fixture,
+    });
+    database = new DatabaseSync(join(data, 'nesvo.sqlite'));
+    database.exec('PRAGMA foreign_keys = ON');
+    const clock = createFakeClock('2026-11-18T20:00:00.000Z', () => {});
+    const jobs = new modules.ScheduledJobStore(database);
+    const store = new modules.SessionStore(database);
+    sessions = new modules.SessionService(
+      store,
+      data,
+      () => {},
+      new modules.ReviewStore(database),
+    );
+    const gh = new modules.GitHubCli(new AbortController().signal);
+    const poll = new modules.RedCiPoll(gh, () => [
+      { repository: 'fixture/rituals', directory: project },
+    ]);
+    const openScheduler = () =>
+      new modules.ScheduledJobService(
+        jobs,
+        sessions,
+        new modules.SessionLauncher(
+          sessions,
+          { read: async () => ({ status: 'unavailable' }) },
+          clock,
+        ),
+        () => {},
+        clock,
+        poll,
+      );
+    service = openScheduler();
+    const id = randomUUID();
+    const definition = {
+      id,
+      expectedRevision: null,
+      name: 'Ritual',
+      prompt: 'fixture:ritual',
+      directory: project,
+      provider: 'codex',
+      model: 'default',
+      effort: null,
+      mode: 'supervised',
+      schedule: { kind: 'daily', time: '08:30' },
+      timeZone: 'Europe/Warsaw',
+      timeoutMinutes: 5,
+      workflow: null,
+      active: true,
+    };
+    const job = service.save(definition);
+    assert.equal(job.nextRunAt, '2026-11-19T07:30:00.000Z');
+    const runNow = async () => {
+      const run = service.runNow({ id, requestId: randomUUID() });
+      await waitUntil(
+        () => jobs.run(run.id)?.finishedAt,
+        'The fixture writable turn did not finish',
+      );
+      const finished = jobs.run(run.id);
+      assert.equal(finished.status, 'completed', JSON.stringify(finished));
+      return finished;
+    };
+    const firstRun = await runNow();
+    const writable = store.get(firstRun.sessionId);
+    assert.equal(writable.mode, 'supervised');
+    assert.ok(writable.worktree);
+    assert.equal(
+      await readFile(join(writable.directory, 'ritual.txt'), 'utf8'),
+      'Worktree edit\n',
+    );
+    assert.equal(existsSync(join(project, 'ritual.txt')), false);
+    assert.ok(firstRun.reviewId);
+    assert.equal(
+      firstRun.report,
+      '- issue-a: Open report\n- [stable] Original description',
+    );
+    clock.set('2026-11-18T20:01:00Z');
+    const nextRun = await runNow();
+    assert.match(
+      store.get(nextRun.sessionId).messages[0].body,
+      /Previous completed automation report/,
+    );
+    assert.deepEqual(nextRun.changes, {
+      added: ['issue-b: New report'],
+      resolved: ['issue-a: Open report'],
+      summaryChanged: true,
+    });
+
+    const ciId = randomUUID();
+    service.save({
+      ...definition,
+      id: ciId,
+      directory: '',
+      name: 'Red CI',
+      schedule: {
+        kind: 'interval',
+        minutes: 30,
+        anchorAt: '2026-11-18T21:00:00.000Z',
+      },
+      redCi: { dailyRunCap: 1 },
+    });
+    const tick = async (at, status) => {
+      clock.set(at);
+      service.tick();
+      await waitUntil(
+        () => jobs.get(ciId).lastCheck?.at === clock.now().toISOString(),
+        'CI poll did not finish',
+      );
+      assert.equal(jobs.get(ciId).lastCheck.status, status);
+    };
+    const ciRuns = () => service.listRuns({ scheduledJobId: ciId }).runs;
+    await setHead(first, 'SUCCESS');
+    await tick('2026-11-18T21:00:00Z', 'unchanged');
+    assert.equal(ciRuns().length, 0);
+    await setHead(first, 'FAILURE');
+    await tick('2026-11-18T21:30:00Z', 'changed');
+    await waitUntil(
+      () => ciRuns()[0]?.finishedAt,
+      'The failed head did not finish',
+    );
+    assert.equal(ciRuns()[0].status, 'completed');
+    const linked = store.get(ciRuns()[0].sessionId);
+    assert.equal(linked.worktree.base, first);
+    assert.equal(linked.pullRequest.number, 5);
+    assert.match(
+      linked.messages[0].body,
+      /Compile.*Fixture failed on a syntax check/,
+    );
+    await service.close();
+    service = openScheduler();
+    await tick('2026-11-18T22:00:00Z', 'unchanged');
+    assert.equal(ciRuns().length, 1);
+    await setHead(second, 'FAILURE');
+    await tick('2026-11-18T22:30:00Z', 'changed');
+    assert.equal(jobs.get(ciId).lastCheck.detail, 'Daily run cap reached.');
+    assert.equal(ciRuns().length, 1);
+    await tick('2026-11-18T23:00:00Z', 'changed');
+    await waitUntil(
+      () => ciRuns().length === 2 && ciRuns()[0]?.finishedAt,
+      'The cap did not reset at midnight in Warsaw',
+    );
+    assert.equal(store.get(ciRuns()[0].sessionId).worktree.base, second);
+  },
+);
 
 test(
   'change-triggered automations persist checks, caps and operator decisions',
@@ -6590,6 +6837,7 @@ test(
       'session-browser',
       'session-resume',
       'merged-worktree-cleanup',
+      'automation-rituals',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7466,7 +7714,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            24,
+            25,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7549,11 +7797,11 @@ test(
       }
     });
 
-    await t.test('a version 25 database is refused', async () => {
+    await t.test('a version 26 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 25');
+      newer.exec('PRAGMA user_version = 26');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7565,7 +7813,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          25,
+          26,
         );
       } finally {
         check.close();
@@ -10606,7 +10854,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        24,
+        25,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -10657,7 +10905,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        24,
+        25,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20213,7 +20461,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      24,
+      25,
     );
     database
       .prepare(
@@ -20576,7 +20824,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 24);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -20591,7 +20839,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        24,
+        25,
       );
       assert.deepEqual(
         migrated
@@ -20771,7 +21019,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 24);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -24775,6 +25023,51 @@ test(
     assert.equal(mixed.state, 'blocked');
     assert.match(mixed.result.summary, /own workflows folder/);
 
+    const automate = async name => {
+      const id = randomUUID();
+      const saved = await host.request('save-scheduled-job', {
+        id,
+        expectedRevision: null,
+        name: `Browser ${name}`,
+        prompt: 'List current issues.',
+        provider: 'codex',
+        model: 'default',
+        effort: null,
+        directory: project,
+        schedule: { kind: 'daily', time: '08:30' },
+        active: false,
+        browser: true,
+        workflow: { name, specPath: join('.agents', 'tasks', `${name}.md`) },
+      });
+      assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+      const started = await host.request('run-scheduled-job-now', {
+        id,
+        requestId: randomUUID(),
+      });
+      assert.equal(started.type, 'scheduled-job-run', JSON.stringify(started));
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const result = await host.request('list-scheduled-job-runs', {
+          scheduledJobId: id,
+        });
+        const settled = result.page.runs[0];
+        if (settled.finishedAt) return settled;
+        assert.ok(Date.now() < deadline, JSON.stringify(result));
+        await delay(50);
+      }
+    };
+    const refused = await automate('repository');
+    assert.equal(refused.status, 'failed');
+    assert.equal(refused.sessionId, null);
+    assert.match(refused.detail, /requires a global workflow/);
+    const allowedAutomation = await automate('browse');
+    assert.equal(
+      allowedAutomation.status,
+      'completed',
+      JSON.stringify(allowedAutomation),
+    );
+    assert.ok(allowedAutomation.report);
+
     await host.stop();
     host = launch(join(directory, 'data'), pidFile, {
       NESVO_TEST_BROWSER_DATA_DIRS: join(directory, 'no-browser'),
@@ -24784,7 +25077,7 @@ test(
     assert.match(blocked.result.summary, /browser extension is not installed/);
     assert.equal(
       (await readFile(pidFile + '.verdicts', 'utf8')).trim().split('\n').length,
-      verdicts.length,
+      verdicts.length + 1,
     );
   },
 );

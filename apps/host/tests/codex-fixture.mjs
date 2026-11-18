@@ -1131,6 +1131,15 @@ if (args.length === 1 && args[0] === '--version') {
           '---\nname: x\ntype: command\nphase: pre-done\n---\necho x\n',
         );
         complete('Codex fixture changed a workflow definition.');
+      } else if (command === 'fixture:ritual') {
+        assert.equal(thread.supervised, true);
+        writeFileSync(join(thread.cwd, 'ritual.txt'), 'Worktree edit\n');
+        if (requestPrompt.includes('Previous completed automation report')) {
+          assert.match(requestPrompt, /- issue-a: Open report/);
+          complete('- issue-b: New report\n- [stable] Updated description');
+        } else {
+          complete('- issue-a: Open report\n- [stable] Original description');
+        }
       } else if (requestPrompt.includes('fixture:review-write')) {
         assert.equal(thread.supervised, true);
         writeFileSync(join(thread.cwd, 'tracked.txt'), 'initial agent text\n');

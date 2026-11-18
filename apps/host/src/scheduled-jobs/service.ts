@@ -5,6 +5,7 @@ import {
   ScheduleError,
   collapseMissed,
   nextOccurrence,
+  scheduledJobSchema,
   type DecideScheduledJobStartInput,
   type DeleteScheduledJobInput,
   type DesktopEvent,
@@ -19,6 +20,8 @@ import {
 } from '@nesvo/contracts';
 import { SessionError, type SessionService } from '../sessions/service';
 import { checkForChange } from './check';
+import type { RedCiHead, RedCiPoll } from './red-ci';
+import { automationReport } from './reports';
 import { publicRun, type ScheduledJobStore, type StoredRun } from './store';
 
 export const MAX_SCHEDULED_JOBS_PER_HOST = 20;
@@ -42,6 +45,8 @@ export type ScheduledJobLaunch = {
   scheduledJob: ScheduledJob;
   run: ScheduledJobRun;
   operatorStarted?: boolean;
+  previousReport?: string;
+  ciHead?: RedCiHead;
 };
 
 export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'> &
@@ -50,7 +55,8 @@ export type ScheduledJobRunLink = Pick<ScheduledJobRun, 'sessionId' | 'runId'> &
 export type ScheduledJobRunOutcome = Pick<
   ScheduledJobRun,
   'status' | 'reason' | 'reviewId' | 'resetAt'
->;
+> &
+  Pick<ScheduledJobRun, 'report' | 'detail'>;
 
 export type ScheduledJobRunProgress = {
   started: (link: ScheduledJobRunLink) => void;
@@ -121,6 +127,7 @@ export class ScheduledJobService {
     private readonly launcher: ScheduledJobLauncher,
     private readonly emit: (event: DesktopEvent) => void,
     private readonly clock: SchedulerClock = systemClock,
+    private readonly redCi: Pick<RedCiPoll, 'next'> | null = null,
   ) {}
 
   start(): void {
@@ -162,6 +169,7 @@ export class ScheduledJobService {
       !isDeepStrictEqual(current.schedule, definition.schedule);
     const resetCheck =
       current?.directory !== definition.directory ||
+      !!current?.redCi !== !!definition.redCi ||
       !isDeepStrictEqual(
         current.changeTrigger?.argv,
         definition.changeTrigger?.argv,
@@ -203,6 +211,12 @@ export class ScheduledJobService {
       updatedAt: now.toISOString(),
     };
     delete job.pendingStart;
+    const parsed = scheduledJobSchema.safeParse(job);
+    if (!parsed.success)
+      throw new ScheduledJobError(
+        'invalid-request',
+        parsed.error.issues[0]!.message,
+      );
     this.write(job, input.expectedRevision);
     return job;
   }
@@ -256,6 +270,11 @@ export class ScheduledJobService {
     }
     const job = this.store.get(input.id);
     if (!job) throw new ScheduledJobError('not-found', 'Automation not found.');
+    if (job.redCi)
+      throw new ScheduledJobError(
+        'invalid-request',
+        'This automation starts when a tracked pull request has failing checks.',
+      );
     if (this.closed || this.store.hasActiveRun(job.id))
       throw new ScheduledJobError(
         'busy',
@@ -281,7 +300,7 @@ export class ScheduledJobService {
       requestId: input.requestId,
       recordedAt: at,
     };
-    this.store.transact(() => this.recordRun(run));
+    this.store.transact(() => this.recordRun(job, run));
     this.emitRun(run);
     this.launch(job, run);
     return publicRun(run);
@@ -321,7 +340,7 @@ export class ScheduledJobService {
     delete updated.pendingStart;
     this.store.transact(() => {
       if (!this.store.replace(updated, job.revision)) throw staleRevision();
-      if (!this.recordRun(run))
+      if (!this.recordRun(job, run))
         throw new ScheduledJobError(
           'invalid-request',
           'This start request was already decided.',
@@ -361,10 +380,11 @@ export class ScheduledJobService {
     const advanced = this.reviseJob(job, at, {
       nextRunAt: missed.nextRunAt.toISOString(),
     });
-    if (job.changeTrigger) {
+    if (job.changeTrigger || job.redCi) {
       if (!this.store.replace(advanced, job.revision)) return;
       this.emitJob(advanced);
-      this.check(advanced, scheduledFor, missed.skipped);
+      if (job.redCi) this.pollCi(advanced, scheduledFor, missed.skipped);
+      else this.check(advanced, scheduledFor, missed.skipped);
       return;
     }
     const run = this.scheduledRun(
@@ -375,7 +395,7 @@ export class ScheduledJobService {
     );
     const claimed = this.store.transact(() => {
       if (!this.store.replace(advanced, job.revision)) return undefined;
-      return this.recordRun(run);
+      return this.recordRun(job, run);
     });
     if (claimed === undefined) return;
     this.emitJob(advanced);
@@ -405,6 +425,86 @@ export class ScheduledJobService {
         this.arm();
       });
     this.launches.add(checking);
+  }
+
+  private pollCi(
+    job: ScheduledJob,
+    scheduledFor: string,
+    missedCount: number,
+  ): void {
+    const controller = new AbortController();
+    this.checks.set(job.id, controller);
+    const signal = controller.signal;
+    const checking = Promise.resolve()
+      .then(async () => {
+        if (!this.redCi)
+          throw new Error('Pull request checks are unavailable on this host.');
+        const head = await this.redCi.next(
+          key => this.store.hasCiHead(job.id, key),
+          AbortSignal.any([signal, AbortSignal.timeout(90_000)]),
+        );
+        if (!signal.aborted)
+          this.finishCiPoll(job, scheduledFor, missedCount, head);
+      })
+      .catch(() => {
+        const current = this.store.get(job.id);
+        if (signal.aborted || current?.revision !== job.revision) return;
+        const at = this.clock.now().toISOString();
+        const updated = this.reviseJob(current, at, {
+          lastCheck: {
+            at,
+            status: 'failed',
+            detail: 'Could not read pull request checks.',
+          },
+        });
+        if (this.store.replace(updated, current.revision))
+          this.emitJob(updated);
+      })
+      .finally(() => {
+        this.checks.delete(job.id);
+        this.launches.delete(checking);
+        this.arm();
+      });
+    this.launches.add(checking);
+  }
+
+  private finishCiPoll(
+    job: ScheduledJob,
+    scheduledFor: string,
+    missedCount: number,
+    head?: RedCiHead,
+  ) {
+    const now = this.clock.now();
+    const at = now.toISOString();
+    const outcome = this.availableOutcome(job, now, missedCount);
+    const capped = this.capReached(job, at);
+    const run =
+      head && !capped && outcome.status === 'starting'
+        ? this.scheduledRun(job, scheduledFor, at, outcome)
+        : undefined;
+    const updated = this.reviseJob(job, at, {
+      lastCheck: {
+        at,
+        status: head ? 'changed' : 'unchanged',
+        detail: capped
+          ? 'Daily run cap reached.'
+          : head && !run
+            ? 'A failing head is waiting for host availability.'
+            : undefined,
+      },
+    });
+    const accepted = this.store.transact(() => {
+      if (!this.store.replace(updated, job.revision)) return false;
+      if (run && head && !this.recordRun(job, run)) return false;
+      if (run && head) this.store.recordCiHead(job.id, head.key);
+      return true;
+    });
+    if (!accepted) return;
+    this.emitJob(updated);
+    if (run && head) {
+      this.emitRun(run);
+      this.launch(updated, run, false, head);
+    }
   }
 
   private finishCheck(
@@ -446,7 +546,7 @@ export class ScheduledJobService {
     const recorded = this.store.transact(() => {
       if (!this.store.replace(updated, job.revision)) return false;
       if (hash !== null) this.store.saveCheckHash(job.id, hash);
-      return run ? this.recordRun(run) : true;
+      return run ? this.recordRun(job, run) : true;
     });
     if (!recorded) return;
     this.emitJob(updated);
@@ -466,27 +566,42 @@ export class ScheduledJobService {
     return { ...job, ...patch, revision: job.revision + 1, updatedAt: at };
   }
 
-  private recordRun(run: StoredRun): boolean {
+  private recordRun(job: ScheduledJob, run: StoredRun): boolean {
     if (!this.store.insertRun(run)) return false;
     if (run.status === 'starting')
-      this.store.countStart(run.scheduledJobId, run.recordedAt.slice(0, 10));
+      this.store.countStart(
+        run.scheduledJobId,
+        this.localDay(job, run.recordedAt),
+      );
     this.store.prune(run.scheduledJobId);
     return true;
   }
 
   private capReached(job: ScheduledJob, at: string): boolean {
+    const cap = job.redCi?.dailyRunCap ?? job.changeTrigger?.dailyRunCap;
     return (
-      !!job.changeTrigger &&
-      this.store.startsOn(job.id, at.slice(0, 10)) >=
-        job.changeTrigger.dailyRunCap
+      cap !== undefined &&
+      this.store.startsOn(job.id, this.localDay(job, at)) >= cap
     );
+  }
+
+  private localDay(job: ScheduledJob, at: string): string {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: job.timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(at));
+    return ['year', 'month', 'day']
+      .map(type => parts.find(part => part.type === type)!.value)
+      .join('-');
   }
 
   private requireAvailableStart(job: ScheduledJob, at: string): void {
     if (this.capReached(job, at))
       throw new ScheduledJobError(
         'invalid-request',
-        'This automation has reached its daily run cap. The cap resets at midnight UTC.',
+        'This automation has reached its daily run cap. The cap resets at midnight in its time zone.',
       );
   }
 
@@ -553,11 +668,18 @@ export class ScheduledJobService {
     scheduledJob: ScheduledJob,
     run: StoredRun,
     operatorStarted = false,
+    ciHead?: RedCiHead,
   ): void {
     const launching = Promise.resolve()
       .then(() =>
         this.launcher.launch(
-          { scheduledJob, run: publicRun(run), operatorStarted },
+          {
+            scheduledJob,
+            run: publicRun(run),
+            operatorStarted,
+            ciHead,
+            previousReport: this.store.previousReport(scheduledJob.id),
+          },
           {
             started: link => this.markStarted(run.id, link),
             finished: outcome => this.markFinished(run.id, outcome),
@@ -572,7 +694,11 @@ export class ScheduledJobService {
 
   private abandon(runId: string, error: unknown): void {
     const run = this.store.run(runId);
-    if (run?.status !== 'starting') return;
+    if (
+      run?.status !== 'starting' &&
+      !(run?.status === 'running' && !run.runId)
+    )
+      return;
     const abandonedOutcome = this.abandonedOutcome(error);
     const unstarted =
       abandonedOutcome.status === 'skipped' ||
@@ -580,6 +706,9 @@ export class ScheduledJobService {
     const abandoned: StoredRun = {
       ...run,
       ...abandonedOutcome,
+      ...(error instanceof ScheduledJobLaunchError
+        ? { detail: error.message.slice(0, 400) }
+        : {}),
       startedAt: unstarted ? null : run.startedAt,
       finishedAt: this.clock.now().toISOString(),
     };
@@ -603,7 +732,11 @@ export class ScheduledJobService {
 
   private markStarted(runId: string, link: ScheduledJobRunLink): void {
     const run = this.store.run(runId);
-    if (run?.status !== 'starting') return;
+    if (
+      run?.status !== 'starting' &&
+      !(run?.status === 'running' && !run.runId)
+    )
+      return;
     const running: StoredRun = { ...run, ...link, status: 'running' };
     this.store.updateRun(running);
     this.emitRun(running);
@@ -612,9 +745,16 @@ export class ScheduledJobService {
   private markFinished(runId: string, outcome: ScheduledJobRunOutcome): void {
     const run = this.store.run(runId);
     if (run?.status !== 'running' && run?.status !== 'starting') return;
+    const { report, ...result } = outcome;
     const finished: StoredRun = {
       ...run,
-      ...outcome,
+      ...result,
+      ...(outcome.status === 'completed' && report
+        ? automationReport(
+            report,
+            this.store.previousReport(run.scheduledJobId),
+          )
+        : {}),
       finishedAt: this.clock.now().toISOString(),
     };
     this.store.updateRun(finished);

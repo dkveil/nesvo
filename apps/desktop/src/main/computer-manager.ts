@@ -293,6 +293,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to resume sessions in their provider conversation.',
   'merged-worktree-cleanup':
     'Update this computer’s Nesvo host and reconnect to finish worktrees after their pull request is merged.',
+  'automation-rituals':
+    'Update this computer’s Nesvo host and reconnect to use automation worktrees, browser workflows or CI triggers.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -1002,6 +1004,15 @@ export class ComputerManager {
     input: unknown,
     hostId: string,
   ) {
+    const needsRituals =
+      method === 'save-scheduled-job' &&
+      typeof input === 'object' &&
+      input !== null &&
+      (('redCi' in input && input.redCi) ||
+        ('browser' in input && input.browser) ||
+        ('mode' in input &&
+          input.mode !== undefined &&
+          input.mode !== 'read-only'));
     const needsReviews =
       method === 'save-scheduled-job' &&
       typeof input === 'object' &&
@@ -1019,11 +1030,13 @@ export class ComputerManager {
       method,
       input,
       hostId,
-      needsReviews
-        ? 'pull-request-reviews'
-        : needsChangeTriggers
-          ? 'scheduled-job-change-triggers'
-          : 'scheduled-jobs',
+      needsRituals
+        ? 'automation-rituals'
+        : needsReviews
+          ? 'pull-request-reviews'
+          : needsChangeTriggers
+            ? 'scheduled-job-change-triggers'
+            : 'scheduled-jobs',
     );
     const expected = {
       'list-scheduled-jobs': 'scheduled-jobs',

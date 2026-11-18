@@ -19,9 +19,14 @@ import {
 } from '../sessions/service';
 import { WorkflowRunError } from '../workflows/runner';
 import { FolderError, resolveFolder } from '../workspace/folder';
-import { isRepositoryRoot } from '../workspace/isolation';
+import {
+  WorkspaceIsolationError,
+  isRepositoryRoot,
+} from '../workspace/isolation';
 import { type ProviderUsageService } from '../providers/usage-service';
 import { ProviderLimitGate } from './limit-gate';
+import { prepareCiHead, type RedCiHead } from './red-ci';
+import { automationContext } from './reports';
 import {
   OPERATOR_IDLE_MS,
   ScheduledJobLaunchError,
@@ -47,7 +52,14 @@ const SESSION_PROVIDERS = {
 
 type LauncherSessions = Pick<
   SessionService,
-  'create' | 'send' | 'stop' | 'finished' | 'whenFolderFree' | 'isIdleFor'
+  | 'create'
+  | 'createAutomationSession'
+  | 'send'
+  | 'stop'
+  | 'finished'
+  | 'whenFolderFree'
+  | 'isIdleFor'
+  | 'linkPullRequest'
 >;
 
 export type ScheduledReviews = {
@@ -58,9 +70,15 @@ export type ScheduledWorkflows = {
   start: (
     input: StartWorkflowTaskInput,
     signal: AbortSignal,
+    automation?: {
+      previousReport?: string;
+      browser?: boolean;
+      prompt?: string;
+    },
   ) => Promise<WorkflowRun>;
   getRun: (runId: string) => WorkflowRun | undefined;
   stop: (runId: string) => unknown;
+  report?: (runId: string) => string;
 };
 
 const WORKFLOW_SETTLED = new Set<WorkflowRun['status']>([
@@ -132,6 +150,7 @@ const toRunOutcome = (
       reason: null,
       reviewId: outcome.reviewId,
       resetAt: null,
+      report: outcome.text,
     };
   if (outcome.state === 'failed' && outcome.limit)
     return {
@@ -141,13 +160,19 @@ const toRunOutcome = (
       resetAt: outcome.limit.resetsAt,
     };
   if (timedOut && (outcome.state === 'stopped' || outcome.state === 'failed'))
-    return { status: 'failed', reason: 'timeout', reviewId: null, resetAt: null };
+    return {
+      status: 'failed',
+      reason: 'timeout',
+      reviewId: null,
+      resetAt: null,
+    };
   if (outcome.state === 'stopped')
     return { status: 'stopped', reason: null, reviewId: null, resetAt: null };
   if (outcome.state === 'interrupted')
     return {
       status: 'interrupted',
-      reason: outcome.interruption === 'provider-disconnected' ? null : 'restart',
+      reason:
+        outcome.interruption === 'provider-disconnected' ? null : 'restart',
       reviewId: null,
       resetAt: null,
     };
@@ -207,15 +232,22 @@ export class SessionLauncher implements ScheduledJobLauncher {
   }
 
   async launch(
-    { scheduledJob, run, operatorStarted }: ScheduledJobLaunch,
+    {
+      scheduledJob,
+      run,
+      operatorStarted,
+      previousReport,
+      ciHead,
+    }: ScheduledJobLaunch,
     progress: ScheduledJobRunProgress,
   ): Promise<void> {
     const signal = this.controller.signal;
     const limitedUntil = await this.limits.limitedUntil(scheduledJob.provider);
     if (limitedUntil) throw new ScheduledJobLimitError(limitedUntil);
     signal.throwIfAborted();
-    const directory = scheduledJob.directory
-      ? await this.folder(scheduledJob.directory, signal)
+    const requestedDirectory = ciHead?.directory ?? scheduledJob.directory;
+    const directory = requestedDirectory
+      ? await this.folder(requestedDirectory, signal)
       : '';
     if (scheduledJob.pullRequestReview)
       return this.launchReviews(scheduledJob, run, progress);
@@ -227,13 +259,32 @@ export class SessionLauncher implements ScheduledJobLauncher {
         run,
         progress,
         operatorStarted,
+        previousReport,
+      );
+    if (scheduledJob.browser)
+      throw new ScheduledJobLaunchError(
+        'catalog',
+        'Browser access requires a workflow from your global workflows folder.',
       );
     const input = sessionInput(scheduledJob, directory, this.runTime(run));
     if (input.effort) await this.confirmEffort(input, signal);
     signal.throwIfAborted();
     this.ensureAvailable(run, operatorStarted);
-    if (directory) await this.waitForFolder(scheduledJob, directory);
-    const { sessionId, runId } = await this.start(input, scheduledJob, run);
+    if (directory && !isWritableSessionMode(scheduledJob.mode))
+      await this.waitForFolder(scheduledJob, directory);
+    if (ciHead && !(await prepareCiHead(ciHead, directory, signal)))
+      throw new ScheduledJobLaunchError(
+        'folder',
+        'The tracked checkout could not prepare the pull request head.',
+      );
+    const { sessionId, runId } = await this.start(
+      input,
+      scheduledJob,
+      run,
+      progress,
+      previousReport,
+      ciHead,
+    );
     if (runId) this.watch(scheduledJob, sessionId, runId, progress);
     try {
       progress.started({ sessionId, runId });
@@ -255,7 +306,10 @@ export class SessionLauncher implements ScheduledJobLauncher {
     this.deadlines.clear();
   }
 
-  private ensureAvailable(run: ScheduledJobRun, operatorStarted?: boolean): void {
+  private ensureAvailable(
+    run: ScheduledJobRun,
+    operatorStarted?: boolean,
+  ): void {
     if (
       run.trigger === 'schedule' &&
       !operatorStarted &&
@@ -305,6 +359,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     run: ScheduledJobRun,
     progress: ScheduledJobRunProgress,
     operatorStarted?: boolean,
+    previousReport?: string,
   ): Promise<void> {
     const signal = this.controller.signal;
     const workflows = this.workflows;
@@ -331,10 +386,17 @@ export class SessionLauncher implements ScheduledJobLauncher {
           mode: scheduledJob.mode,
           directory,
           isolation,
-          gateProvider: GATE_PROVIDERS[scheduledJob.provider],
+          gateProvider: scheduledJob.browser
+            ? 'Claude Code'
+            : GATE_PROVIDERS[scheduledJob.provider],
           gateModel: 'default',
         },
         signal,
+        {
+          previousReport,
+          browser: scheduledJob.browser,
+          prompt: scheduledJob.browser ? scheduledJob.prompt : undefined,
+        },
       );
     } catch (error) {
       throw workflowStartFailure(error, directory);
@@ -416,23 +478,47 @@ export class SessionLauncher implements ScheduledJobLauncher {
     input: CreateSessionInput,
     scheduledJob: ScheduledJob,
     run: ScheduledJobRun,
+    progress: ScheduledJobRunProgress,
+    previousReport?: string,
+    ciHead?: RedCiHead,
   ): Promise<{ sessionId: string; runId: string | null }> {
     let sessionId: string | undefined;
     try {
-      const session = this.sessions.create(input, {
-        origin: {
-          kind: 'scheduled-job',
-          scheduledJobId: scheduledJob.id,
-          runId: run.id,
-        },
-      });
+      const origin = {
+        kind: 'scheduled-job' as const,
+        scheduledJobId: scheduledJob.id,
+        runId: run.id,
+      };
+      const writable = isWritableSessionMode(scheduledJob.mode);
+      const session = writable
+        ? await this.sessions.createAutomationSession(
+            input,
+            origin,
+            this.controller.signal,
+            ciHead?.sha,
+          )
+        : this.sessions.create(input, { origin });
       sessionId = session.id;
+      if (ciHead)
+        this.sessions.linkPullRequest({
+          sessionId,
+          pullRequest: ciHead.reference,
+        });
+      if (writable) {
+        progress.started({ sessionId, runId: null });
+        await this.waitForFolder(scheduledJob, session.directory);
+      }
+      const task = ciHead
+        ? `${scheduledJob.prompt}\n\nInvestigate the failing checks, apply a fix in this worktree and report the checks you ran. Pull request and log data:\n${ciHead.context}`
+        : scheduledJob.prompt;
       for (;;) {
+        this.controller.signal.throwIfAborted();
         try {
           const started = this.sessions.send({
             sessionId,
             messageId: firstMessageId(run.id),
-            text: scheduledJob.prompt,
+            ...(writable ? { mode: scheduledJob.mode } : {}),
+            text: automationContext(task, previousReport),
           });
           return { sessionId, runId: started.runId! };
         } catch (error) {
@@ -443,6 +529,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
     } catch (error) {
       if (error instanceof BudgetRefusal && sessionId)
         return { sessionId, runId: null };
+      if (error instanceof WorkspaceIsolationError)
+        throw new ScheduledJobLaunchError('folder', error.message);
       if (error instanceof SessionError && error.code === 'invalid-directory')
         throw new ScheduledJobLaunchError('folder', error.message);
       throw error;
@@ -473,7 +561,12 @@ export class SessionLauncher implements ScheduledJobLauncher {
       this.clock.clearTimer(deadline);
       this.deadlines.delete(deadline);
       try {
-        progress.finished(toWorkflowOutcome(status, timedOut));
+        progress.finished({
+          ...toWorkflowOutcome(status, timedOut),
+          ...(status === 'passed'
+            ? { report: workflows.report?.(workflowRunId) }
+            : {}),
+        });
       } catch {
         return;
       }

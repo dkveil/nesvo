@@ -28,7 +28,7 @@ const url = z
   .nullish()
   .or(z.literal(''))
   .transform(value => value || null);
-const checkSchema = z.discriminatedUnion('__typename', [
+export const checkSchema = z.discriminatedUnion('__typename', [
   z.object({
     __typename: z.literal('CheckRun'),
     name: z.string(),

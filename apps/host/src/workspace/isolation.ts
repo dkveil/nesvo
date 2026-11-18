@@ -556,6 +556,7 @@ const MAX_PATCH_BYTES = 8 * 1024 * 1024;
 
 type SessionOptions = {
   branch?: string;
+  baseCommit?: string;
   carryChanges?: boolean;
   fork?: boolean;
   sourceWorktree?: Pick<
@@ -737,6 +738,7 @@ async function createWorktree(
     runId,
     signal,
     branch: requestedBranch,
+    baseCommit,
     fork,
     carryChanges,
     sourceWorktree,
@@ -796,7 +798,9 @@ async function createWorktree(
       'data-inside-project',
       'The data directory is inside the project. Task worktrees would be nested in it.',
     );
-  const base = await headCommit(repository, signal);
+  if (baseCommit && !COMMIT_PATTERN.test(baseCommit))
+    fail('no-base-commit', 'The requested base commit is invalid.');
+  const base = baseCommit ?? (await headCommit(repository, signal));
   const shortId = runId.slice(0, 8).toLowerCase();
   const branch = requestedBranch ?? `nesvo/${slug}-${shortId}`;
   if (requestedBranch) {
