@@ -1,8 +1,5 @@
-export {
-  InboxRuleDecisions,
-  InboxRuleSummary,
-  inboxRuleMeta,
-} from './inbox-rule-item';
+export { InboxRuleDecisions, InboxRuleSummary } from './inbox-rule-item';
+export { inboxRuleMeta } from './inbox-rule-labels';
 export {
   inboxItemKey,
   useInboxItems,
