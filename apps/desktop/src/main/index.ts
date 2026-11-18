@@ -89,6 +89,15 @@ import {
   listConversationsSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
+  saveReviewerProfileSchema,
+  deleteReviewerProfileSchema,
+  saveReviewConventionSchema,
+  deleteReviewConventionSchema,
+  startPullRequestReviewSchema,
+  listPullRequestReviewsSchema,
+  updateReviewFindingSchema,
+  discardPullRequestReviewSchema,
+  publishPullRequestReviewSchema,
   actOnPullRequestSchema,
   linkSessionPullRequestSchema,
   findSessionPullRequestSchema,
@@ -849,6 +858,37 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:read-code-review-settings', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'read-code-review-settings',
+      undefined,
+      route(hostId),
+    );
+  });
+  const codeReviewCommands = {
+    'save-reviewer-profile': saveReviewerProfileSchema,
+    'delete-reviewer-profile': deleteReviewerProfileSchema,
+    'save-review-convention': saveReviewConventionSchema,
+    'delete-review-convention': deleteReviewConventionSchema,
+    'start-pull-request-review': startPullRequestReviewSchema,
+    'list-pull-request-reviews': listPullRequestReviewsSchema,
+    'update-review-finding': updateReviewFindingSchema,
+    'discard-pull-request-review': discardPullRequestReviewSchema,
+    'publish-pull-request-review': publishPullRequestReviewSchema,
+  } as const;
+  for (const method of Object.keys(
+    codeReviewCommands,
+  ) as (keyof typeof codeReviewCommands)[]) {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        method,
+        codeReviewCommands[method].parse(input),
+        route(hostId),
+      );
+    });
+  }
   handle(
     'nesvo:find-session-pull-request',
     async (event, input: unknown, hostId: unknown) => {

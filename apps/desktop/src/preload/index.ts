@@ -62,6 +62,18 @@ import {
   conversationImportCatalogSchema,
   adoptConversationSchema,
   providerProfileListSchema,
+  codeReviewSettingsSchema,
+  saveReviewerProfileSchema,
+  deleteReviewerProfileSchema,
+  saveReviewConventionSchema,
+  deleteReviewConventionSchema,
+  startPullRequestReviewSchema,
+  listPullRequestReviewsSchema,
+  updateReviewFindingSchema,
+  discardPullRequestReviewSchema,
+  publishPullRequestReviewSchema,
+  desktopReviewDraftSchema,
+  desktopReviewPublishResultSchema,
   createProviderProfileSchema,
   renameProviderProfileSchema,
   removeProviderProfileSchema,
@@ -488,6 +500,87 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:revoke-mobile',
         mobileDeviceSchema.shape.id.parse(deviceId),
+      ),
+    ),
+  readCodeReviewSettings: async hostId =>
+    codeReviewSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-code-review-settings',
+        route(hostId),
+      ),
+    ),
+  saveReviewerProfile: async (input, hostId) =>
+    codeReviewSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-reviewer-profile',
+        saveReviewerProfileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteReviewerProfile: async (input, hostId) =>
+    codeReviewSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-reviewer-profile',
+        deleteReviewerProfileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  saveReviewConvention: async (input, hostId) =>
+    codeReviewSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-review-convention',
+        saveReviewConventionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  deleteReviewConvention: async (input, hostId) =>
+    codeReviewSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:delete-review-convention',
+        deleteReviewConventionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  startPullRequestReview: async (input, hostId) =>
+    desktopReviewDraftSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:start-pull-request-review',
+        startPullRequestReviewSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listPullRequestReviews: async (input, hostId) =>
+    desktopReviewDraftSchema
+      .array()
+      .parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-pull-request-reviews',
+          listPullRequestReviewsSchema.parse(input),
+          route(hostId),
+        ),
+      ),
+  updateReviewFinding: async (input, hostId) =>
+    desktopReviewDraftSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:update-review-finding',
+        updateReviewFindingSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  discardPullRequestReview: async (input, hostId) =>
+    desktopReviewDraftSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:discard-pull-request-review',
+        discardPullRequestReviewSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  publishPullRequestReview: async (input, hostId) =>
+    desktopReviewPublishResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:publish-pull-request-review',
+        publishPullRequestReviewSchema.parse(input),
+        route(hostId),
       ),
     ),
   listProviderProfiles: async hostId =>

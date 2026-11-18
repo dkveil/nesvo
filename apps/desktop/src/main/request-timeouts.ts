@@ -15,6 +15,7 @@ const longRequests = new Set<HostRequest['method']>([
   'start-workflow-task',
   'workflow-assistant-send',
   'act-on-pull-request',
+  'publish-pull-request-review',
   'backup-database',
   'run-session-worktree-setup',
   'search-transcripts',
@@ -34,6 +35,7 @@ const providerRequests = new Set<HostRequest['method']>([
   'read-pull-request-files',
   'read-pull-request-threads',
   'find-session-pull-request',
+  'start-pull-request-review',
   'read-session-worktree',
   'read-session-worktree-setup',
 ]);

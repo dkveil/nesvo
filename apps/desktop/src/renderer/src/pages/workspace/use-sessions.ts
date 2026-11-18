@@ -84,6 +84,18 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     actOnPullRequest: input => api.actOnPullRequest(input, hostId),
     linkSessionPullRequest: input => api.linkSessionPullRequest(input, hostId),
     findSessionPullRequest: input => api.findSessionPullRequest(input, hostId),
+    readCodeReviewSettings: () => api.readCodeReviewSettings(hostId),
+    saveReviewerProfile: input => api.saveReviewerProfile(input, hostId),
+    deleteReviewerProfile: input => api.deleteReviewerProfile(input, hostId),
+    saveReviewConvention: input => api.saveReviewConvention(input, hostId),
+    deleteReviewConvention: input => api.deleteReviewConvention(input, hostId),
+    startPullRequestReview: input => api.startPullRequestReview(input, hostId),
+    listPullRequestReviews: input => api.listPullRequestReviews(input, hostId),
+    updateReviewFinding: input => api.updateReviewFinding(input, hostId),
+    discardPullRequestReview: input =>
+      api.discardPullRequestReview(input, hostId),
+    publishPullRequestReview: input =>
+      api.publishPullRequestReview(input, hostId),
     listSessionGroups: () => api.listSessionGroups(hostId),
     createSessionGroup: input => api.createSessionGroup(input, hostId),
     updateSessionGroup: input => api.updateSessionGroup(input, hostId),

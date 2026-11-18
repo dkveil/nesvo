@@ -144,6 +144,19 @@ const pullRequestResponses = {
   'find-session-pull-request': 'pull-request-reference',
 } as const;
 
+const codeReviewResponses = {
+  'read-code-review-settings': 'code-review-settings',
+  'save-reviewer-profile': 'code-review-settings',
+  'delete-reviewer-profile': 'code-review-settings',
+  'save-review-convention': 'code-review-settings',
+  'delete-review-convention': 'code-review-settings',
+  'start-pull-request-review': 'pull-request-review',
+  'list-pull-request-reviews': 'pull-request-reviews',
+  'update-review-finding': 'pull-request-review',
+  'discard-pull-request-review': 'pull-request-review',
+  'publish-pull-request-review': 'pull-request-review-publish',
+} as const;
+
 const sessionGroupResponses = {
   'list-session-groups': 'session-groups',
   'create-session-group': 'session-groups',
@@ -220,6 +233,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot compact conversations. Update the host, then reconnect.',
   'provider-profiles':
     'Update this computer’s Nesvo host and reconnect to use provider accounts.',
+  'pull-request-reviews':
+    'Update this computer’s Nesvo host and reconnect to review pull requests with an agent.',
 };
 
 function requiredCapability(
@@ -232,6 +247,18 @@ function requiredCapability(
   )
     return 'provider-profiles';
   if (Object.hasOwn(costResponses, method)) return 'costs';
+  if (Object.hasOwn(codeReviewResponses, method)) return 'pull-request-reviews';
+  if (
+    method === 'act-on-pull-request' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'action' in input &&
+    typeof input.action === 'object' &&
+    input.action !== null &&
+    'action' in input.action &&
+    input.action.action === 'submit-review'
+  )
+    return 'pull-request-reviews';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (
@@ -833,6 +860,12 @@ export class ComputerManager {
     input: unknown,
     hostId: string,
   ) {
+    const needsReviews =
+      method === 'save-scheduled-job' &&
+      typeof input === 'object' &&
+      input !== null &&
+      'pullRequestReview' in input &&
+      !!input.pullRequestReview;
     const needsChangeTriggers =
       method === 'decide-scheduled-job-start' ||
       (method === 'save-scheduled-job' &&
@@ -844,7 +877,11 @@ export class ComputerManager {
       method,
       input,
       hostId,
-      needsChangeTriggers ? 'scheduled-job-change-triggers' : 'scheduled-jobs',
+      needsReviews
+        ? 'pull-request-reviews'
+        : needsChangeTriggers
+          ? 'scheduled-job-change-triggers'
+          : 'scheduled-jobs',
     );
     const expected = {
       'list-scheduled-jobs': 'scheduled-jobs',
@@ -1008,6 +1045,7 @@ export class ComputerManager {
       ...sessionGroupResponses,
       ...sessionDeletionResponses,
       ...pullRequestResponses,
+      ...codeReviewResponses,
       ...costResponses,
     }[method];
     if (response.type !== expected)
@@ -1058,6 +1096,25 @@ export class ComputerManager {
         return response.result;
       case 'pull-request-reference':
         return response.reference;
+      case 'code-review-settings':
+        return response.settings;
+      case 'pull-request-review':
+        this.apply(entry, {
+          type: 'pull-request-review-changed',
+          draft: response.draft,
+        });
+        return { ...response.draft, hostId };
+      case 'pull-request-reviews':
+        return response.drafts.map(draft => ({ ...draft, hostId }));
+      case 'pull-request-review-publish':
+        this.apply(entry, {
+          type: 'pull-request-review-changed',
+          draft: response.result.draft,
+        });
+        return {
+          ...response.result,
+          draft: { ...response.result.draft, hostId },
+        };
       case 'git-branch':
         return response.branch;
       case 'conversation-import-catalog':
@@ -1305,6 +1362,14 @@ export class ComputerManager {
     }
     if (event.type === 'session-groups-changed') {
       if (publish) this.publish({ ...event, hostId });
+      return;
+    }
+    if (event.type === 'pull-request-review-changed') {
+      if (publish)
+        this.publish({
+          type: 'pull-request-review-changed',
+          draft: { ...event.draft, hostId },
+        });
       return;
     }
     if (event.type === 'sessions-removed') {
