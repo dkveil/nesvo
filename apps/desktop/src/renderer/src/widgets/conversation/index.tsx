@@ -125,6 +125,7 @@ type Props = {
   onResend: () => void;
   canQueue: boolean;
   finishedWorktree?: boolean;
+  handoff?: ReactNode;
   onQueuedCancel: (messageId: string) => void;
   onQueuedStart: (messageId: string) => void;
   onQueuedEdit: (messageId: string, text: string) => void;
@@ -170,6 +171,7 @@ export function Conversation({
   onResend,
   canQueue,
   finishedWorktree,
+  handoff,
   onQueuedCancel,
   onQueuedStart,
   onQueuedEdit,
@@ -1188,7 +1190,7 @@ export function Conversation({
               This worktree session is finished.
             </StatusMessage>
           ) : (
-            composer
+            (handoff ?? composer)
           )}
         </div>
       </section>

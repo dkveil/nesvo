@@ -13,6 +13,7 @@ import {
   PanelLeft,
   Settings,
   SquarePen,
+  SquareTerminal,
   Undo2,
   Workflow,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ export type WorkspaceCommandActions = {
   diff: Action;
   skills: Action;
   searchHistory: () => void;
+  openInTerminal: Action;
   nextNeedsMe: () => void;
   needsMeCount: number;
   lastSession: Action;
@@ -153,6 +155,13 @@ export function workspaceCommands(
       shortcut: shortcutKeys('searchHistory'),
       keywords: 'messages find full text',
       run: actions.searchHistory,
+    },
+    {
+      id: 'open-in-terminal',
+      label: 'Open current session in terminal',
+      icon: <SquareTerminal />,
+      keywords: 'resume cli shell console external',
+      run: actions.openInTerminal,
     },
     {
       id: 'toggle-sidebar',

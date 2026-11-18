@@ -38,6 +38,7 @@ import {
   Plus,
   RotateCcw,
   SquareDashed,
+  SquareTerminal,
   WifiOff,
 } from 'lucide-react';
 import {
@@ -76,7 +77,11 @@ import { CommandPalette, type PaletteMode } from '@/features/command-palette';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
-import { hasEarlierMessages } from '@nesvo/contracts';
+import { hasEarlierMessages, terminalResume } from '@nesvo/contracts';
+import {
+  TerminalCommandDialog,
+  TerminalHandoffNotice,
+} from '@/features/session-terminal';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
@@ -247,6 +252,15 @@ export function Workspace() {
   } | null>(null);
   const [sessionFilter, setSessionFilter] = useState(readSessionFilter);
   const lastSelection = useRef({ current: '', previous: '' });
+  const [terminalPending, setTerminalPending] = useState('');
+  const [terminalNames, setTerminalNames] = useState<Record<string, string>>(
+    {},
+  );
+  const [terminalCommand, setTerminalCommand] = useState<{
+    session: Session;
+    command: string;
+  } | null>(null);
+  const [terminalCommandError, setTerminalCommandError] = useState('');
   const [historySearch, setHistorySearch] = useState<{
     query: string;
     returnFocus: HTMLElement | null;
@@ -2186,6 +2200,111 @@ ${text}`
       },
     ];
   };
+  const terminalResumeOf = (session: Session) =>
+    terminalResume(
+      session.provider,
+      session.providerSessionId,
+      session.directory,
+    );
+  const canOpenInTerminal = (session: Session) =>
+    !!window.nesvo &&
+    session.role !== 'worker' &&
+    !session.workflowStepId &&
+    !session.externalAttachment &&
+    !terminalPending &&
+    store.hostReady(session.hostId) &&
+    session.status !== 'running' &&
+    session.status !== 'stopping' &&
+    !!terminalResumeOf(session) &&
+    !!store.computers
+      .find(computer => computer.id === session.hostId)
+      ?.capabilities.includes('terminal-handoff');
+  const showSessionError = (session: Session, message: string) =>
+    setErrors(previous => ({ ...previous, [entityKey(session)]: message }));
+  const openInTerminal = async (session: Session) => {
+    const resume = terminalResumeOf(session);
+    if (!resume) return;
+    if (session.hostId !== 'local') {
+      setTerminalCommandError('');
+      setTerminalCommand({ session, command: resume.commandLine });
+      return;
+    }
+    const key = entityKey(session);
+    setTerminalPending(key);
+    showSessionError(session, '');
+    try {
+      const opened = await window.nesvo.openSessionInTerminal(
+        { sessionId: session.id },
+        session.hostId,
+      );
+      store.merge([opened.session]);
+      setTerminalNames(previous => ({ ...previous, [key]: opened.terminal }));
+    } catch (error) {
+      showSessionError(
+        session,
+        `The terminal could not be opened. ${errorDetail(error)}`,
+      );
+    } finally {
+      setTerminalPending('');
+    }
+  };
+  const handOffToTerminal = async () => {
+    if (!terminalCommand) return true;
+    const { session, command } = terminalCommand;
+    setTerminalCommandError('');
+    try {
+      await navigator.clipboard.writeText(command);
+      store.merge([
+        await desktopApi(session.hostId).setSessionTerminal({
+          sessionId: session.id,
+          attached: true,
+        }),
+      ]);
+      return true;
+    } catch (error) {
+      setTerminalCommandError(errorDetail(error));
+      return false;
+    }
+  };
+  const returnFromTerminal = async (session: Session) => {
+    const key = entityKey(session);
+    setTerminalPending(key);
+    showSessionError(session, '');
+    try {
+      store.merge([
+        await desktopApi(session.hostId).setSessionTerminal({
+          sessionId: session.id,
+          attached: false,
+        }),
+      ]);
+    } catch (error) {
+      showSessionError(
+        session,
+        `The session could not return to Nesvo. ${errorDetail(error)}`,
+      );
+    } finally {
+      setTerminalPending('');
+    }
+  };
+  const terminalAction = (session: Session): RowAction[] =>
+    !window.nesvo ||
+    session.role === 'worker' ||
+    session.workflowStepId ||
+    !store.computers
+      .find(computer => computer.id === session.hostId)
+      ?.capabilities.includes('terminal-handoff')
+      ? []
+      : [
+          {
+            label:
+              session.hostId === 'local'
+                ? 'Open in terminal'
+                : 'Open in terminal…',
+            icon: <SquareTerminal />,
+            disabled: !canOpenInTerminal(session),
+            onSelect: () => void openInTerminal(session),
+          },
+        ];
   const creationGroupName = creationGroup
     ? store
         .groups(creationGroup.hostId)
@@ -2211,7 +2330,11 @@ ${text}`
   });
   const headerThreadActions =
     !browsing && !creating && selected
-      ? [...threadActions(selected), exportAction(selected)]
+      ? [
+          ...threadActions(selected),
+          ...terminalAction(selected),
+          exportAction(selected),
+        ]
       : [];
   const finishWorktreeAvailable =
     !browsing && !creating && !!selected?.worktree && !!window.nesvo;
@@ -2408,6 +2531,10 @@ ${text}`
           : undefined,
       skills: sessionPanels ? openSkills : undefined,
       searchHistory: () => openHistorySearch(),
+      openInTerminal:
+        !browsing && !creating && selected && canOpenInTerminal(selected)
+          ? () => void openInTerminal(selected)
+          : undefined,
       nextNeedsMe,
       needsMeCount: filterKeys['needs-me'].size,
       lastSession,
@@ -2493,6 +2620,20 @@ ${text}`
           <StatusMessage tone="error">{restartError}</StatusMessage>
         )}
       </ConfirmDialog>
+      <TerminalCommandDialog
+        open={!!terminalCommand}
+        onOpenChange={open => {
+          if (!open) setTerminalCommand(null);
+        }}
+        computerName={
+          store.computers.find(
+            computer => computer.id === terminalCommand?.session.hostId,
+          )?.name ?? 'that computer'
+        }
+        command={terminalCommand?.command ?? ''}
+        error={terminalCommandError}
+        onConfirm={handOffToTerminal}
+      />
       {historySearch && (
         <HistorySearchDialog
           computers={store.computers}
@@ -3353,6 +3494,18 @@ ${text}`
                 onSkillChange={skill => changeSkill(selectedKey, skill)}
                 sending={sending}
                 finishedWorktree={finishedWorktree}
+                handoff={
+                  selected.externalAttachment ? (
+                    <TerminalHandoffNotice
+                      provider={selected.provider}
+                      attachedAt={selected.externalAttachment.attachedAt}
+                      terminal={terminalNames[selectedKey] ?? null}
+                      pending={terminalPending === selectedKey}
+                      disabled={!store.hostReady(selectedHostId)}
+                      onReturn={() => void returnFromTerminal(selected)}
+                    />
+                  ) : undefined
+                }
                 canSend={
                   !sending &&
                   !finishedWorktree &&
