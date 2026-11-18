@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
 import {
   aboutInfoSchema,
   databaseBackupSchema,
@@ -184,6 +184,13 @@ const launchColorScheme = appliedColorSchemeSchema.safeParse(
     ?.split('=')[1],
 );
 const onboardingOnLaunch = !process.argv.includes('--nesvo-onboarding=skip');
+const ipcRenderer = {
+  invoke,
+  send: electronIpcRenderer.send.bind(electronIpcRenderer),
+  on: electronIpcRenderer.on.bind(electronIpcRenderer),
+  removeListener: electronIpcRenderer.removeListener.bind(electronIpcRenderer),
+};
+
 const reportError = (report: RendererErrorReport) =>
   ipcRenderer.send('nesvo:report-error', report);
 let droppedEvents = 0;
@@ -1286,3 +1293,10 @@ const api: DesktopApi = {
   },
 };
 contextBridge.exposeInMainWorld('nesvo', api);
+
+async function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+  const result = (await electronIpcRenderer.invoke(channel, ...args)) as
+    { ok: true; value: unknown } | { ok: false; message: string };
+  if (!result.ok) throw new Error(result.message);
+  return result.value;
+}

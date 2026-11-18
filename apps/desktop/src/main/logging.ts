@@ -6,6 +6,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { redactLogMessage } from '@nesvo/host';
 
 const MAX_LOG_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_LOG_FILES = 5;
@@ -69,55 +70,33 @@ export const initializeLogging = (directory: string, mirror: boolean) => {
 
 export const logsDirectory = () => logDirectory;
 
-const describeDetail = (detail: unknown): string => {
-  if (detail instanceof Error)
-    return detail.stack ?? `${detail.name}: ${detail.message}`;
-  if (typeof detail === 'string') return detail;
-  try {
-    return JSON.stringify(detail);
-  } catch {
-    return String(detail);
-  }
+export const stopLogging = () => {
+  logs.clear();
+  mirrorToConsole = false;
 };
 
-const formatEntry = (level: LogLevel, message: string, detail?: unknown) => {
-  const body =
-    detail === undefined ? message : `${message} ${describeDetail(detail)}`;
-  return `${new Date().toISOString()} ${level.toUpperCase()} ${body.slice(
-    0,
-    MAX_LOG_ENTRY_CHARACTERS,
-  )}\n`;
-};
+const formatEntry = (level: LogLevel, message: string) =>
+  `${new Date().toISOString()} ${level.toUpperCase()} ${redactLogMessage(message).slice(0, MAX_LOG_ENTRY_CHARACTERS)}\n`;
 
-const writeMain = (level: LogLevel, message: string, detail?: unknown) => {
-  const entry = formatEntry(level, message, detail);
+const writeMain = (level: LogLevel, message: string) => {
+  const entry = formatEntry(level, message);
   logs.get('main')?.write(entry);
-  if (mirrorToConsole || !logs.has('main'))
+  if (mirrorToConsole)
     (level === 'info' ? process.stdout : process.stderr).write(entry);
 };
 
 export const log = {
-  info: (message: string, detail?: unknown) =>
-    writeMain('info', message, detail),
-  warn: (message: string, detail?: unknown) =>
-    writeMain('warn', message, detail),
-  error: (message: string, detail?: unknown) =>
-    writeMain('error', message, detail),
+  info: (message: string) => writeMain('info', message),
+  warn: (message: string) => writeMain('warn', message),
+  error: (message: string) => writeMain('error', message),
 };
 
 export const writeHostOutput = (stream: 'stdout' | 'stderr', data: Buffer) => {
-  const text = data.toString('utf8');
-  const entry = text
-    .split(/\r?\n/)
-    .filter(line => line.length > 0)
-    .map(line =>
-      formatEntry(
-        stream === 'stderr' ? 'warn' : 'info',
-        line.slice(0, MAX_LOG_ENTRY_CHARACTERS),
-      ),
-    )
-    .join('');
-  if (!entry) return;
+  if (!data.length) return;
+  const entry = formatEntry(
+    stream === 'stderr' ? 'warn' : 'info',
+    `Local host produced ${stream} diagnostics.`,
+  );
   logs.get('host')?.write(entry);
-  if (mirrorToConsole || !logs.has('host')) process.stderr.write(entry);
+  if (mirrorToConsole) process.stderr.write(entry);
 };

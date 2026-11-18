@@ -1,3 +1,4 @@
+import { hostDiagnostic } from './log-redaction';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -10,6 +11,8 @@ import { installCodeReviewTables } from './code-review/store';
 import { installTrackedRepositoryTables } from './tracked-repositories';
 
 const DATABASE_VERSION = 21;
+class NewerDatabaseError extends Error {}
+class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
@@ -84,31 +87,31 @@ const checkDatabase = (database: DatabaseSync, path: string) => {
       );
     if (problems.length) throw new Error(String(problems[0]));
   } catch (error) {
-    throw new Error(
+    throw new DatabaseIntegrityError(
       `SQLite integrity check failed for ${path}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 };
 
+export const lockDataDirectory = (directory: string) => {
+  mkdirSync(directory, { recursive: true });
+  const ownership = new DatabaseSync(join(directory, 'ownership.sqlite'));
+  try {
+    ownership.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
+    return ownership;
+  } catch (error) {
+    ownership.close();
+    if ((error as { errcode?: number }).errcode === 5) {
+      hostDiagnostic('Another Nesvo host already owns this data directory.');
+      throw new Error('Another Nesvo host already owns this data directory.');
+    }
+    throw error;
+  }
+};
+
 export const ownDataDirectory = (directory: string) =>
   Effect.acquireRelease(
-    Effect.try(() => {
-      mkdirSync(directory, { recursive: true });
-      const ownership = new DatabaseSync(join(directory, 'ownership.sqlite'));
-      try {
-        ownership.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
-        return ownership;
-      } catch (error) {
-        ownership.close();
-        if ((error as { errcode?: number }).errcode === 5) {
-          console.error('Another Nesvo host already owns this data directory.');
-          throw new Error(
-            'Another Nesvo host already owns this data directory.',
-          );
-        }
-        throw error;
-      }
-    }),
+    Effect.try(() => lockDataDirectory(directory)),
     ownership => Effect.sync(() => ownership.close()),
   );
 
@@ -228,7 +231,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       throw new Error(`Could not read the database version for ${path}.`);
     if (version > DATABASE_VERSION) {
       const backups = migrationBackups(path);
-      throw new Error(
+      throw new NewerDatabaseError(
         `Database ${path} uses schema version ${version}. A newer Nesvo is needed.${backups.length ? ` Backups: ${backups.map(file => basename(file)).join(', ')}.` : ''}`,
       );
     }
@@ -410,7 +413,13 @@ export const openDatabase = (directory: string) =>
       try {
         return openDatabaseSync(directory);
       } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
+        hostDiagnostic(
+          error instanceof NewerDatabaseError
+            ? 'A newer Nesvo is needed.'
+            : error instanceof DatabaseIntegrityError
+              ? 'SQLite integrity check failed.'
+              : 'The database could not be opened.',
+        );
         throw error;
       }
     }),

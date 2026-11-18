@@ -1,5 +1,7 @@
 import { on } from 'node:events';
-import { runHost } from '@nesvo/host';
+import { installTestCommandAudit, runHost } from '@nesvo/host';
+
+installTestCommandAudit();
 
 const port = process.parentPort;
 const directory = process.env.NESVO_DATA_DIR;

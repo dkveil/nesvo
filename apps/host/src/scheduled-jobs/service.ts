@@ -1,3 +1,4 @@
+import { hostDiagnostic } from '../log-redaction';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -397,7 +398,7 @@ export class ScheduledJobService {
         if (current?.active && current.changeTrigger)
           this.finishCheck(current, scheduledFor, missedCount, result);
       })
-      .catch(() => console.error('An automation check could not be recorded.'))
+      .catch(() => hostDiagnostic('An automation check could not be recorded.'))
       .finally(() => {
         this.checks.delete(job.id);
         this.launches.delete(checking);
@@ -699,7 +700,7 @@ export class ScheduledJobService {
       this.tick();
     } catch {
       if (this.closed) return;
-      console.error('Automations could not be checked. Retrying shortly.');
+      hostDiagnostic('Automations could not be checked. Retrying shortly.');
       this.disarm();
       this.timer = this.clock.setTimer(() => {
         this.timer = undefined;

@@ -76,10 +76,7 @@ export function connectSshHost(
       const parsed = hostConnectionSchema.safeParse(value);
       if (!parsed.success || parsed.data.type !== 'connected') {
         if (!parsed.success)
-          log.warn(
-            'An SSH host returned an invalid handshake.',
-            parsed.error.issues.slice(0, 5),
-          );
+          log.warn('An SSH host returned an invalid handshake.');
         const refusal =
           parsed.success && parsed.data.type === 'connection-error'
             ? parsed.data.code
@@ -112,10 +109,7 @@ export function connectSshHost(
     }
     const parsed = hostMessageSchema.safeParse(value);
     if (!parsed.success) {
-      log.warn(
-        'An SSH host returned an invalid message.',
-        parsed.error.issues.slice(0, 5),
-      );
+      log.warn('An SSH host returned an invalid message.');
       failure(new Error('The host returned an invalid response.'));
       return;
     }

@@ -1,3 +1,4 @@
+import { hostDiagnostic } from './log-redaction';
 import { createInterface } from 'node:readline';
 import { Effect } from 'effect';
 import { serveHost } from './host';
@@ -6,6 +7,10 @@ import { connectDaemon } from './daemon-bridge';
 import { resolve } from 'node:path';
 import { renderServiceUnit } from './service-unit';
 import { runWorkflowsCli } from './workflows/cli';
+
+import { installTestCommandAudit } from './process/test-command-audit';
+
+installTestCommandAudit();
 
 async function main() {
   const command = process.argv[2];
@@ -95,16 +100,14 @@ async function main() {
         }),
     }),
   ).catch(() => {
-    console.error('Nesvo host failed to start or stopped unexpectedly');
+    hostDiagnostic('Nesvo host failed to start or stopped unexpectedly');
     process.exitCode = 1;
     lines.close();
     process.stdin.pause();
   });
 }
 
-await main().catch(error => {
-  console.error(
-    error instanceof Error ? error.message : 'The host could not start.',
-  );
+await main().catch(() => {
+  hostDiagnostic('The host could not start.');
   process.exitCode = 1;
 });

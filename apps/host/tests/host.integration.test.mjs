@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmod,
@@ -24,7 +24,79 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { automaticPersistence } from '../src/process/test-command-audit.ts';
 import { createProfileDirectory } from './provider-profile-directory.mjs';
+
+test('Nesvo sources do not register persistence or automate other apps', async () => {
+  for (const root of ['apps/desktop/src', 'apps/host/src']) {
+    for (const file of await readdir(root, {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (
+        !file.isFile() ||
+        !/\.tsx?$/.test(file.name) ||
+        file.name === 'test-command-audit.ts'
+      )
+        continue;
+      const path = join(file.parentPath, file.name);
+      assert.doesNotMatch(
+        await readFile(path, 'utf8'),
+        automaticPersistence,
+        path,
+      );
+    }
+  }
+  for (const command of [
+    'osascript -e',
+    'systemctl --user enable nesvo',
+    'reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+    'schtasks /create',
+    '~/Library/LaunchAgents',
+    'Register-ScheduledTask',
+  ])
+    assert.match(command, automaticPersistence);
+});
+
+test('host diagnostics redact secret patterns and secret environment values', () => {
+  const secretValues = [
+    'ghp_synthetictoken123456',
+    'headerfixturevalue',
+    'fixturePemKey',
+    'fixtureAssignedValue',
+    'external-credential-fixture',
+  ];
+  const input = [
+    'Diagnostics exercised',
+    secretValues[0],
+    'Authorization: Bearer ' + secretValues[1],
+    '-----BEGIN PRIVATE KEY-----\n' +
+      secretValues[2] +
+      '\n-----END PRIVATE KEY-----',
+    'SERVICE_PASSWORD=' + secretValues[3],
+    secretValues[4],
+  ].join('\n');
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      "import { hostDiagnostic } from './apps/host/src/log-redaction.ts'; hostDiagnostic(process.env.NESVO_FIXTURE_LOG_INPUT);",
+    ],
+    {
+      env: {
+        ...process.env,
+        NESVO_FIXTURE_LOG_INPUT: input,
+        NESVO_FIXTURE_TOKEN: secretValues[4],
+      },
+      encoding: 'utf8',
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /Diagnostics exercised/);
+  for (const value of secretValues) assert.ok(!result.stderr.includes(value));
+});
 
 const fixturePath = fileURLToPath(
   new URL('./claude-fixture.mjs', import.meta.url),
@@ -4557,7 +4629,8 @@ test(
     try {
       assert.equal(check.prepare('PRAGMA user_version').get().user_version, 22);
       assert.match(host.error(), /A newer Nesvo is needed/);
-      assert.ok(host.error().includes(backup));
+      assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
+      assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
     } finally {
       check.close();
     }
@@ -4605,7 +4678,7 @@ test('host backs up the pre-migration database and keeps the three newest copies
   }
 });
 
-test('host names the database when the integrity check fails', async t => {
+test('host reports integrity failure without logging the database path', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-corrupt-'));
   const path = join(directory, 'nesvo.sqlite');
   await writeFile(path, Buffer.alloc(4096, 0xff));
@@ -4617,7 +4690,7 @@ test('host names the database when the integrity check fails', async t => {
   });
   assert.equal((await bounded(host.exited, 'Host startup timed out')).code, 1);
   assert.match(host.error(), /SQLite integrity check failed/);
-  assert.ok(host.error().includes(path));
+  assert.ok(!host.error().includes(path));
 });
 
 test('host quarantines incompatible session documents and recovers healthy sessions', async t => {

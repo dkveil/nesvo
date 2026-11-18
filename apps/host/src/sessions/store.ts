@@ -1,3 +1,4 @@
+import { hostDiagnostic } from '../log-redaction';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import { z } from 'zod';
@@ -295,7 +296,7 @@ export class SessionStore {
       this.database.exec('ROLLBACK');
       throw error;
     }
-    console.error(`Invalid session documents quarantined: ${rows.length}.`);
+    hostDiagnostic(`Invalid session documents quarantined: ${rows.length}.`);
   }
 
   create(

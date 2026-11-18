@@ -2315,5 +2315,9 @@ export const serveHost = ({
     }),
   );
 
+export { redactLogMessage } from './log-redaction';
+export { installTestCommandAudit } from './process/test-command-audit';
+export { lockDataDirectory } from './database';
+
 export const runHost = (transport: HostTransport) =>
   Effect.runPromise(serveHost(transport));

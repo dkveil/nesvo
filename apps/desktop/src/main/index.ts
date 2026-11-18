@@ -1,3 +1,4 @@
+import { installTestCommandAudit } from '@nesvo/host';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import {
@@ -208,6 +209,7 @@ const RENDERER_CRASH_WINDOW_MS = 60_000;
 const MAX_RENDERER_RELOADS_PER_WINDOW = 3;
 const ERROR_REPORT_WINDOW_MS = 60_000;
 const MAX_ERROR_REPORTS_PER_WINDOW = 30;
+installTestCommandAudit();
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 const terminalLaunchLog = app.isPackaged
   ? undefined
@@ -217,16 +219,15 @@ if (process.env.NESVO_DATA_DIR) {
   app.setAppLogsPath(join(process.env.NESVO_DATA_DIR, 'logs'));
 }
 initializeLogging(app.getPath('logs'), !app.isPackaged);
-process.on('uncaughtException', error =>
-  log.error('Uncaught exception in the main process.', error),
+process.on('uncaughtException', () =>
+  log.error('Uncaught exception in the main process.'),
 );
-process.on('unhandledRejection', reason =>
-  log.error('Unhandled promise rejection in the main process.', reason),
+process.on('unhandledRejection', () =>
+  log.error('Unhandled promise rejection in the main process.'),
 );
 app.on('child-process-gone', (_event, details) =>
   log.error(
     `A ${details.type} process stopped: ${details.reason} (exit code ${details.exitCode}).`,
-    details.name ?? details.serviceName ?? '',
   ),
 );
 
@@ -245,15 +246,12 @@ const applyApplicationMenu = () => {
 
 const describeIpcFailure = (channel: string, error: unknown) => {
   if (error instanceof Error && error.name === 'ZodError') {
-    log.warn(`${channel} received invalid data.`, error.message);
+    log.warn(`${channel} received invalid data.`);
     return new Error(
       'Nesvo received invalid data for this action. Reload the window and try again.',
     );
   }
-  log.warn(
-    `${channel} failed.`,
-    error instanceof Error ? error.message : String(error),
-  );
+  log.warn(`${channel} failed.`);
   return error instanceof Error ? error : new Error('The action failed.');
 };
 
@@ -263,9 +261,9 @@ const handle = (
 ) =>
   ipcMain.handle(channel, async (event, ...args: unknown[]) => {
     try {
-      return await listener(event, ...args);
+      return { ok: true, value: await listener(event, ...args) };
     } catch (error) {
-      throw describeIpcFailure(channel, error);
+      return { ok: false, message: describeIpcFailure(channel, error).message };
     }
   });
 
@@ -401,8 +399,8 @@ void app.whenReady().then(async () => {
     next.webContents.on('responsive', () =>
       log.info('The window is responding again.'),
     );
-    next.webContents.on('preload-error', (_event, path, error) =>
-      log.error(`The preload script failed: ${path}.`, error),
+    next.webContents.on('preload-error', () =>
+      log.error('The preload script failed.'),
     );
     next.on('focus', () => next.flashFrame(false));
     next.on('close', event => {
@@ -578,11 +576,7 @@ void app.whenReady().then(async () => {
       log.warn('The window sent an invalid error report.');
       return;
     }
-    const { kind, message, stack, componentStack } = report.data;
-    log.error(
-      `Window ${kind}: ${message}`,
-      [stack, componentStack].filter(Boolean).join('\n'),
-    );
+    log.error(`Window reported a ${report.data.kind} error.`);
   });
   handle('nesvo:mobile-status', event => {
     authorize(event);
@@ -1503,7 +1497,7 @@ void app.whenReady().then(async () => {
   if (!smokeTest) indicators.start();
   void computers
     .initialize()
-    .catch(error => log.error('Computers could not be initialized.', error));
+    .catch(() => log.error('Computers could not be initialized.'));
   powerMonitor.on('resume', () => computers.resume());
   app.on('second-instance', () => {
     if (!window) createWindow();

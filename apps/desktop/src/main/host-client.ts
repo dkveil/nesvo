@@ -80,7 +80,6 @@ export function startHost(directory: string) {
       droppedMessages += 1;
       log.warn(
         `Dropped an invalid local host message (${droppedMessages} so far).`,
-        parsed.error.issues.slice(0, 5),
       );
       return;
     }

@@ -1,3 +1,4 @@
+import { hostDiagnostic } from '../log-redaction';
 import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,9 +13,9 @@ export const adoptLegacyFolder = (
   try {
     renameSync(previous, target);
     return target;
-  } catch (error) {
-    console.warn(
-      `Could not rename ${previous} to ${target}; the legacy folder stays in use. ${String(error)}`,
+  } catch {
+    hostDiagnostic(
+      'Could not rename a legacy workflow folder. The folder stays in use.',
     );
     return previous;
   }

@@ -492,12 +492,11 @@ export class ComputerManager {
     const generation = entry.generation;
     try {
       await connection?.request('health');
-    } catch (error) {
+    } catch {
       if (!this.current(entry, generation) || entry.connection !== connection)
         return;
       log.warn(
-        `${entry.computer.name} did not answer after the system resumed.`,
-        error,
+        `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} did not answer after the system resumed.`,
       );
       await connection?.close().catch(() => undefined);
     }
@@ -525,8 +524,8 @@ export class ComputerManager {
             capabilities: [],
           }),
         );
-    } catch (error) {
-      log.error('Saved computers could not be read.', error);
+    } catch {
+      log.error('Saved computers could not be read.');
       this.configurationError =
         'Saved computers could not be read. Restore computers.json before changing the list.';
     }
@@ -554,8 +553,8 @@ export class ComputerManager {
         );
         entry.computer.lastSyncedAt = cache.lastSyncedAt;
       }
-    } catch (error) {
-      log.error('Offline history could not be read.', error);
+    } catch {
+      log.error('Offline history could not be read.');
       for (const entry of this.entries.values())
         if (entry.computer.kind === 'ssh')
           entry.computer.error =
@@ -595,7 +594,9 @@ export class ComputerManager {
       await this.connectEntry(entry);
     } catch (error) {
       if (isPermanentConnectionError(error)) {
-        log.warn(`${entry.computer.name} needs attention.`, error);
+        log.warn(
+          `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} needs attention.`,
+        );
         return;
       }
       this.scheduleRecovery(entry);
@@ -627,14 +628,14 @@ export class ComputerManager {
         ? 'The local host stopped and could not be restarted. Select Retry, or open the logs from Settings.'
         : 'Nesvo could not reconnect to this computer and stopped retrying. Select Connect to try again.';
       log.error(
-        `Gave up reconnecting ${entry.computer.name} after ${delays.length} attempts.`,
+        `Gave up reconnecting ${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} after ${delays.length} attempts.`,
       );
       this.publishComputers();
       return;
     }
     entry.recoveryAttempts += 1;
     log.warn(
-      `Reconnecting ${entry.computer.name} in ${delay} ms (attempt ${entry.recoveryAttempts} of ${delays.length}).`,
+      `Reconnecting ${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} in ${delay} ms (attempt ${entry.recoveryAttempts} of ${delays.length}).`,
     );
     entry.recoveryTimer = setTimeout(() => {
       entry.recoveryTimer = undefined;
@@ -817,7 +818,9 @@ export class ComputerManager {
       error instanceof IncompatibleHostError ? 'incompatible' : 'error';
     entry.computer.error = this.describe(error);
     entry.buffered = undefined;
-    log.warn(`${entry.computer.name} connection failed.`, error);
+    log.warn(
+      `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} connection failed.`,
+    );
     this.publishComputers();
   }
 
@@ -1310,7 +1313,9 @@ export class ComputerManager {
             ? 'The local host stopped. Nesvo is restarting it.'
             : 'Connection lost. Work on this computer may still be running. Nesvo is reconnecting.';
         entry.buffered = undefined;
-        log.warn(`${entry.computer.name} disconnected.`);
+        log.warn(
+          `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} disconnected.`,
+        );
         this.publish({ type: 'host-disconnected', hostId: entry.computer.id });
         this.publishComputers();
         if (dropped) this.scheduleRecovery(entry);
@@ -1325,7 +1330,9 @@ export class ComputerManager {
       entry.computer.error =
         'Too many changes arrived while synchronizing. Nesvo is reconnecting.';
       entry.buffered = undefined;
-      log.warn(`${entry.computer.name} exceeded the synchronization buffer.`);
+      log.warn(
+        `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} exceeded the synchronization buffer.`,
+      );
       void entry.connection?.close().catch(() => undefined);
       this.publishComputers();
     });
@@ -1379,7 +1386,9 @@ export class ComputerManager {
     entry.connectedAt = Date.now();
     clearTimeout(entry.recoveryTimer);
     entry.recoveryTimer = undefined;
-    log.info(`${entry.computer.name} is connected.`);
+    log.info(
+      `${entry.computer.kind === 'local' ? 'Local' : 'Remote computer'} is connected.`,
+    );
     this.publishComputers();
     this.scheduleCache();
   }

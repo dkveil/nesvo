@@ -1,3 +1,4 @@
+import { hostDiagnostic } from '../log-redaction';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
@@ -91,8 +92,8 @@ export class HistorySearch {
     this.timer = setTimeout(() => {
       try {
         if (backfillHistoryBatch(this.database)) this.start();
-      } catch (error) {
-        console.error('Could not backfill session history:', error);
+      } catch {
+        hostDiagnostic('Could not backfill session history.');
       }
     }, 0).unref();
   }

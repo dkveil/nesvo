@@ -1,3 +1,4 @@
+import { hostDiagnostic } from '../log-redaction';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   SESSION_DELETE_GRACE_MS,
@@ -196,9 +197,9 @@ export class SessionDeletions {
       for (const sessionId of sessionIds)
         await this.sessions.attachments.removeSession(sessionId);
       await this.sessions.attachments.removeContent(contentIds);
-    } catch (error) {
-      console.error(
-        `Attachment files of deleted sessions could not be removed. ${error instanceof Error ? error.message : String(error)}`,
+    } catch {
+      hostDiagnostic(
+        'Attachment files of deleted sessions could not be removed.',
       );
     }
   }
@@ -220,10 +221,8 @@ export class SessionDeletions {
     this.timer = setTimeout(() => {
       try {
         this.purgeExpired();
-      } catch (error) {
-        console.error(
-          `Deleted sessions could not be purged. ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        hostDiagnostic('Deleted sessions could not be purged.');
       }
     }, delay);
     this.timer.unref?.();

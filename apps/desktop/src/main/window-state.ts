@@ -101,7 +101,7 @@ export const saveWindowState = (directory: string, window: BrowserWindow) => {
   try {
     writeFileSync(temporary, JSON.stringify(state.data));
     renameSync(temporary, target);
-  } catch (error) {
-    log.warn('The window position could not be saved.', error);
+  } catch {
+    log.warn('The window position could not be saved.');
   }
 };
