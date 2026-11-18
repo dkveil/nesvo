@@ -1,7 +1,7 @@
 import { shell } from 'electron';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
-  opensAsProgram,
+  opensInViewer,
   type AttachmentLocation,
   type OpenAttachmentInput,
 } from '@nesvo/contracts';
@@ -22,9 +22,9 @@ export const openAttachmentFile = async (
     shell.showItemInFolder(location.path);
     return;
   }
-  if (opensAsProgram(location.path))
+  if (!opensInViewer(location.path))
     throw new Error(
-      `${location.name} could run as a program, so Nesvo does not open it. Use Show in folder instead.`,
+      `Nesvo opens only documents, images and media. Use Show in folder for ${location.name}.`,
     );
   const failure = await shell.openPath(location.path);
   if (failure)
