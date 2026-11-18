@@ -17,11 +17,7 @@ import {
 import { type ComputerManager } from './computer-manager';
 import { log } from './logging';
 import { createShare, deleteShare, fetchShare } from './share-client';
-import {
-  normalizeShareOrigin,
-  parseImportLink,
-  PUBLIC_SHARE_ORIGIN,
-} from './share-link';
+import { normalizeShareOrigin, parseImportLink } from './share-link';
 import {
   publicLink,
   readSharing,
@@ -211,7 +207,7 @@ export const createWorkflowSharing = ({
   const deliverLink = async (raw: string) => {
     const parsed = parseImportLink(raw, [
       settings().origin,
-      PUBLIC_SHARE_ORIGIN,
+      DEFAULT_SHARE_ORIGIN,
     ]);
     if (!parsed.ok) {
       log.warn('A Nesvo link was refused.');

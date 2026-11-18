@@ -1,9 +1,12 @@
+import {
+  parseWorkflowShareDeepLink,
+  WORKFLOW_SHARE_DEEP_LINK_PREFIX,
+} from '@nesvo/contracts/workflow-share';
+
 export const SHARE_PROTOCOL = 'nesvo';
-export const PUBLIC_SHARE_ORIGIN = 'https://nesvo.dev';
 
 const MAX_LINK_LENGTH = 2048;
 const IMPORT_ACTION = 'import-workflow';
-const SHARE_ID = /^[A-Za-z0-9_-]{6,64}$/;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 export type ImportLink =
@@ -56,10 +59,12 @@ export const parseImportLink = (
     keys.filter(key => key === 'origin').length !== 1
   )
     return refused('The link must name exactly one share and one origin.');
-  const shareId = url.searchParams.get('share') ?? '';
-  if (!SHARE_ID.test(shareId))
-    return refused('The share ID in the link is not valid.');
-  const origin = normalizeShareOrigin(url.searchParams.get('origin') ?? '');
+  const shared = parseWorkflowShareDeepLink(
+    `${WORKFLOW_SHARE_DEEP_LINK_PREFIX}${url.search}`,
+  );
+  if (!shared) return refused('The share in the link is not valid.');
+  const shareId = shared.id;
+  const origin = normalizeShareOrigin(shared.origin);
   const allowed = new Set(
     allowedOrigins
       .map(normalizeShareOrigin)
