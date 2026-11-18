@@ -26,6 +26,9 @@ import {
   type TypedSubmission,
 } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
+import type { ProviderProfile } from '@nesvo/contracts';
+import { ProfileSelect } from '@/features/provider-profiles/profile-select';
+import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { ImportConversation } from '@/features/import-conversation';
 import { ProviderSetup } from '@/features/provider-setup';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
@@ -52,11 +55,15 @@ import {
 import { WorkflowPicker } from './workflow-picker';
 import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
-import { readNewSessionDefaults } from './new-session-defaults';
+import {
+  defaultProfileKey,
+  readNewSessionDefaults,
+} from './new-session-defaults';
 
 export type ThreadSetup = {
   hostId: string;
   provider: Provider;
+  profileId?: string | null;
   model: string;
   effort: string;
   mode: CreateSessionInput['mode'];
@@ -68,12 +75,18 @@ type Props = {
   onSetupChange: (setup: ThreadSetup) => void;
   computers: Computer[];
   statuses: ProviderStates;
+  profiles: ProviderProfile[];
   onRefreshProvider: (provider: Provider) => void;
   onManageComputers: () => void;
   busyReason: string;
   hostApi: Pick<
     DesktopApi,
-    'discoverSkills' | 'workflows' | 'listConversations' | 'adoptConversation'
+    | 'discoverSkills'
+    | 'workflows'
+    | 'listConversations'
+    | 'adoptConversation'
+    | 'codexStatus'
+    | 'claudeStatus'
   >;
   onAdopted: (session: DesktopSession) => void;
   gitRepository: boolean;
@@ -94,8 +107,9 @@ export function NewThread({
   setup,
   onSetupChange,
   computers,
-  statuses,
-  onRefreshProvider,
+  statuses: defaultStatuses,
+  profiles,
+  onRefreshProvider: refreshDefaultProvider,
   onManageComputers,
   busyReason,
   gitRepository,
@@ -145,6 +159,29 @@ export function NewThread({
     kind: 'worktree',
     branch: worktreeBranch.trim() || undefined,
   });
+  const validProfile =
+    !setup.profileId ||
+    profiles.some(
+      profile =>
+        profile.id === setup.profileId && profile.provider === setup.provider,
+    );
+  const profileProbe = useProfileStatus(
+    hostApi,
+    setup.hostId,
+    setup.provider,
+    setup.profileId,
+    connected && validProfile,
+  );
+  const statuses = setup.profileId
+    ? { ...defaultStatuses, [setup.provider]: profileProbe.state }
+    : defaultStatuses;
+  const onRefreshProvider = (provider: Provider) => {
+    if (provider === setup.provider && setup.profileId) profileProbe.refresh();
+    else refreshDefaultProvider(provider);
+  };
+  const accountFor = (hostId: string, provider: Provider) =>
+    readNewSessionDefaults().profileIds[defaultProfileKey(hostId, provider)] ??
+    null;
   const providerState = statuses[setup.provider];
   const providerReady =
     providerState.status?.status === 'ready' &&
@@ -160,7 +197,11 @@ export function NewThread({
   if (connected && noProviderUsable && setupHostId !== setup.hostId)
     setSetupHostId(setup.hostId);
   if (someProviderUsable && setupHostId === setup.hostId) setSetupHostId('');
-  const showSetup = connected && setupHostId === setup.hostId;
+  const showSetup =
+    connected &&
+    setupHostId === setup.hostId &&
+    !profiles.length &&
+    !setup.profileId;
   const models = providerState.status?.models ?? [];
   const model = models.some(option => option.id === setup.model)
     ? setup.model
@@ -169,9 +210,12 @@ export function NewThread({
     modelEfforts(providerState, model),
     setup.effort,
   );
-  const mcpTarget = [setup.hostId, setup.provider, setup.directory.trim()].join(
-    '|',
-  );
+  const mcpTarget = [
+    setup.hostId,
+    setup.provider,
+    setup.profileId,
+    setup.directory.trim(),
+  ].join('|');
   const mcp = mcpChoice.target === mcpTarget ? mcpChoice.selection : NO_MCP;
   const supportsMcp = !!computer?.capabilities.includes('mcp-servers');
   const project = setup.directory.trim()
@@ -181,11 +225,15 @@ export function NewThread({
     ? `${computer?.name ?? 'This computer'} is offline. Connect it in Computers to start a thread.`
     : busyReason
       ? busyReason
-      : !providerReady
-        ? `${setup.provider} is not ready on ${computer?.name ?? 'this computer'}.`
-        : !model
-          ? 'No model is available for this provider yet.'
-          : '';
+      : !validProfile
+        ? 'The selected account is unavailable on this computer. Choose another account.'
+        : piped && setup.profileId
+          ? 'Choose Default account to start a workflow task.'
+          : !providerReady
+            ? `${setup.provider} is not ready on ${computer?.name ?? 'this computer'}.`
+            : !model
+              ? 'No model is available for this provider yet.'
+              : '';
   const canSend =
     !pending &&
     !blockedReason &&
@@ -279,6 +327,7 @@ export function NewThread({
         {
           title: deriveThreadTitle(message),
           provider: setup.provider,
+          ...(setup.profileId ? { profileId: setup.profileId } : {}),
           model,
           ...(effort ? { effort } : {}),
           mode: setup.mode,
@@ -334,6 +383,7 @@ export function NewThread({
             provider: setup.provider,
             input: {
               provider: setup.provider,
+              ...(setup.profileId ? { profileId: setup.profileId } : {}),
               directory: setup.directory.trim(),
             },
           }}
@@ -433,6 +483,10 @@ export function NewThread({
                             onSetupChange({
                               ...setup,
                               provider,
+                              profileId:
+                                provider === setup.provider
+                                  ? setup.profileId
+                                  : accountFor(setup.hostId, provider),
                               model: nextModel,
                               effort: nextEffort,
                               mode: providerModes(
@@ -468,11 +522,41 @@ export function NewThread({
                       setWorktreeChoice(null);
                       setWorktreeBranch('');
                     }
-                    onSetupChange({ ...setup, hostId });
+                    onSetupChange({
+                      ...setup,
+                      hostId,
+                      profileId:
+                        hostId === setup.hostId
+                          ? setup.profileId
+                          : accountFor(hostId, setup.provider),
+                    });
                   }}
                   onManageComputers={onManageComputers}
                   onImportConversation={() => setImportOpen(true)}
                 />
+                {(profiles.some(
+                  profile => profile.provider === setup.provider,
+                ) ||
+                  setup.profileId) && (
+                  <ProfileSelect
+                    profiles={profiles}
+                    provider={setup.provider}
+                    value={setup.profileId}
+                    disabled={pending || !connected}
+                    className="max-w-40"
+                    onChange={profileId => {
+                      setSkill(null);
+                      setError('');
+                      onSetupChange({
+                        ...setup,
+                        profileId,
+                        model: 'default',
+                        effort: '',
+                        mode: 'read-only',
+                      });
+                    }}
+                  />
+                )}
                 <LocationPicker
                   directory={setup.directory}
                   computerName={computer?.name ?? 'this computer'}
@@ -508,6 +592,7 @@ export function NewThread({
                   provider={setup.provider}
                   target={{
                     provider: setup.provider,
+                    ...(setup.profileId ? { profileId: setup.profileId } : {}),
                     directory: setup.directory.trim(),
                   }}
                   selection={mcp}
@@ -608,6 +693,8 @@ export function NewThread({
           open={importOpen}
           onOpenChange={setImportOpen}
           computer={computer}
+          profiles={profiles}
+          initialProfileId={setup.profileId}
           api={hostApi}
           onAdopted={onAdopted}
         />

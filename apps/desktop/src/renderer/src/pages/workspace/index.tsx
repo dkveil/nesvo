@@ -71,7 +71,11 @@ import {
 } from '@/features/new-workflow/new-workflow-sheet';
 import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
-import { applyNewSessionDefaults } from '@/features/new-thread/new-session-defaults';
+import {
+  applyNewSessionDefaults,
+  defaultProfileKey,
+  readNewSessionDefaults,
+} from '@/features/new-thread/new-session-defaults';
 import { resolveGate } from '@/features/new-thread/workflow-choice';
 import {
   AutomationEditor,
@@ -141,7 +145,18 @@ import {
   UsageSection,
   WorkersSection,
 } from '@/widgets/session-card';
-import { ProviderAccounts, ProviderUsage } from '@/widgets/provider-rail';
+import { ProviderUsage } from '@/widgets/provider-rail';
+import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
+import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
+import { Chip } from '@/shared/ui/chip';
+import { Hint } from '@/shared/ui/tooltip';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
 import {
   AboutSettings,
   AppearanceSettings,
@@ -177,6 +192,7 @@ import { PullRequestsView } from '@/widgets/pull-requests';
 import { readSeen, writeSeen } from './seen-store';
 import { useAttention } from './use-attention';
 import { useBackgroundAttention } from './use-background-attention';
+import { useProviderProfiles } from './use-provider-profiles';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -709,6 +725,7 @@ export function Workspace() {
       directory: '',
     }),
   );
+  const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
@@ -886,12 +903,50 @@ export function Workspace() {
   );
   useAttention(store.sessions, key => selectNow(key));
   const selectedHostId = selected?.hostId ?? 'local';
+  const profileCatalog = useProviderProfiles(store.computers);
+  const profilesFor = (hostId: string) =>
+    profileCatalog.catalogs[hostId]?.profiles ?? [];
+  const accountLabel = (session: Session) => {
+    const profiles = profilesFor(session.hostId).filter(
+      profile => profile.provider === session.provider,
+    );
+    if (!profiles.length) return undefined;
+    return session.profileId
+      ? profiles.find(profile => profile.id === session.profileId)?.label
+      : 'Default account';
+  };
+  const selectedAccount = selected ? accountLabel(selected) : undefined;
+  const settingsComputer =
+    store.computers.find(computer => computer.id === accountSettingsHostId) ??
+    store.computers.find(
+      computer =>
+        computer.id === (creating ? threadSetup.hostId : selectedHostId),
+    );
+  const settingsHostId = settingsComputer?.id ?? 'local';
+  const settingsComputerSelect = store.computers.length > 1 && (
+    <Select value={settingsHostId} onValueChange={setAccountSettingsHostId}>
+      <SelectTrigger aria-label="Account computer" className="w-52">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {store.computers.map(computer => (
+          <SelectItem key={computer.id} value={computer.id}>
+            {computer.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
   const selectedComputer = store.computers.find(
     computer => computer.id === selectedHostId,
   );
   const usageTerminal =
     store.sessions
-      .filter(session => session.hostId === selectedHostId)
+      .filter(
+        session =>
+          session.hostId === selectedHostId &&
+          (session.profileId ?? null) === (selected?.profileId ?? null),
+      )
       .flatMap(session =>
         session.messages
           .filter(message => message.author === 'agent' && message.completedAt)
@@ -904,6 +959,9 @@ export function Workspace() {
     store.hostReady(selectedHostId),
     window.nesvo ? desktopApi(selectedHostId) : undefined,
     usageTerminal,
+    selected?.profileId
+      ? { id: selected.profileId, provider: selected.provider }
+      : undefined,
   );
   const usageProps = {
     hostId: selectedHostId,
@@ -926,8 +984,22 @@ export function Workspace() {
     session =>
       session.parentId === selected?.id && session.hostId === selected?.hostId,
   );
+  const selectedProfileStatus = useProfileStatus(
+    window.nesvo ? desktopApi(selectedHostId) : undefined,
+    selectedHostId,
+    selected?.provider ?? 'Claude Code',
+    selected?.profileId,
+    store.hostReady(selectedHostId),
+  );
+  const hostProviderStates = store.providerStates(selectedHostId);
+  const sessionStatuses = selected?.profileId
+    ? {
+        ...hostProviderStates,
+        [selected.provider]: selectedProfileStatus.state,
+      }
+    : hostProviderStates;
   const selectedProviderState = selected
-    ? store.providerStates(selectedHostId)[selected.provider]
+    ? sessionStatuses[selected.provider]
     : undefined;
   const activeRun = store.sessions.find(
     session =>
@@ -1193,15 +1265,25 @@ export function Workspace() {
     });
   const openCreateInGroup = (hostId: string, group: SessionGroup) =>
     guardEditor(() => {
-      const { directory, provider, model, mode } = group.defaults;
+      const { directory, provider, model, mode, profileId } = group.defaults;
       setThreadSetup(current => {
-        const previous = applyNewSessionDefaults(current);
+        const defaults = readNewSessionDefaults();
+        const previous = applyNewSessionDefaults(
+          { ...current, hostId },
+          defaults,
+        );
         const switched = !!provider && provider !== previous.provider;
         return {
           ...previous,
           hostId,
           directory: directory ?? previous.directory,
           provider: provider ?? previous.provider,
+          profileId:
+            profileId === undefined
+              ? (defaults.profileIds[
+                  defaultProfileKey(hostId, provider ?? previous.provider)
+                ] ?? null)
+              : profileId,
           model: model ?? (switched ? '' : previous.model),
           effort: switched || model ? '' : previous.effort,
           mode: mode ?? (switched ? 'read-only' : previous.mode),
@@ -2593,6 +2675,8 @@ ${text}`
   };
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const sidebarProps = {
+    profilesFor,
+    accountLabel,
     threadActions,
     deleteAction,
     housekeeping,
@@ -2984,6 +3068,7 @@ ${text}`
           computer={store.computers.find(
             computer => computer.id === transcriptImport.hostId,
           )}
+          profiles={profilesFor(transcriptImport.hostId)}
           api={desktopApi(transcriptImport.hostId)}
           initialSelection={transcriptImport.conversation}
           onAdopted={session => {
@@ -3222,6 +3307,13 @@ ${text}`
               </li>
             </ol>
           </nav>
+          {!browsing && !creating && selectedAccount && (
+            <Hint label={`Account: ${selectedAccount}`}>
+              <Chip size="sm" interactive={false} className="max-w-28">
+                <span className="truncate">{selectedAccount}</span>
+              </Chip>
+            </Hint>
+          )}
           {!browsing && !creating && selected && (
             <span className="max-w-32 truncate text-2xs text-muted-foreground">
               {selectedHostId !== 'local'
@@ -3422,6 +3514,7 @@ ${text}`
               onSetupChange={setThreadSetup}
               computers={store.computers}
               statuses={store.providerStates(threadSetup.hostId)}
+              profiles={profilesFor(threadSetup.hostId)}
               onRefreshProvider={provider =>
                 void store.refreshProvider(provider, threadSetup.hostId)
               }
@@ -3904,10 +3997,12 @@ ${text}`
                   void editQueued(selected, messageId, text)
                 }
                 onResend={() => void resend()}
-                statuses={store.providerStates(selectedHostId)}
-                onRefreshProvider={provider =>
-                  void store.refreshProvider(provider, selectedHostId)
-                }
+                statuses={sessionStatuses}
+                onRefreshProvider={provider => {
+                  if (selected.profileId && selected.provider === provider)
+                    selectedProfileStatus.refresh();
+                  else void store.refreshProvider(provider, selectedHostId);
+                }}
                 pendingSelection={modelSelections[selectedKey] ?? null}
                 onSelectModel={selection =>
                   setModelSelections(previous => ({
@@ -4239,10 +4334,17 @@ ${text}`
             ) : page === 'shortcuts' ? (
               <KeyboardShortcutsSettings />
             ) : page === 'defaults' ? (
-              <DefaultsSettings
-                providerStates={store.providerStates(selectedHostId)}
-                computerName={selectedComputer?.name ?? 'Local'}
-              />
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <DefaultsSettings
+                  providerStates={store.providerStates(settingsHostId)}
+                  computerName={settingsComputer?.name ?? 'Local'}
+                  hostId={settingsHostId}
+                  profiles={profilesFor(settingsHostId)}
+                  connected={store.hostReady(settingsHostId)}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
             ) : page === 'notifications' ? (
               <NotificationsSettings />
             ) : page === 'data' ? (
@@ -4264,10 +4366,19 @@ ${text}`
                 </Suspense>
               )
             ) : (
-              <ProviderAccounts
-                {...usageProps}
-                className="rounded-surface border bg-card px-4 pt-3 pb-4"
-              />
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <ProviderProfileSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  profiles={profileCatalog.catalogs[settingsHostId]?.profiles}
+                  catalogError={profileCatalog.catalogs[settingsHostId]?.error}
+                  api={desktopApi(settingsHostId)}
+                  onChange={profiles =>
+                    profileCatalog.update(settingsHostId, profiles)
+                  }
+                />
+              </div>
             )
           }
         </Settings>

@@ -2,11 +2,13 @@ import { useState } from 'react';
 import {
   providerSessionModes,
   sessionGroupDefaultsSchema,
+  type ProviderProfile,
   type SessionGroup,
   type SessionGroupDefaults,
   type SessionWorkflow,
 } from '@nesvo/contracts';
 import { modeLabel, providers, type Provider } from '@/entities/session';
+import { ProfileSelect } from '@/features/provider-profiles/profile-select';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -30,6 +32,7 @@ import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
   group: SessionGroup | null;
+  profiles: ProviderProfile[];
   onOpenChange: (open: boolean) => void;
   onSave: (defaults: SessionGroupDefaults) => Promise<boolean>;
 };
@@ -39,6 +42,7 @@ const ANY = 'any';
 type Draft = {
   directory: string;
   provider: Provider | typeof ANY;
+  profileId?: string | null;
   model: string;
   mode: string;
   workflowName: string;
@@ -48,6 +52,7 @@ type Draft = {
 const toDraft = (defaults: SessionGroupDefaults): Draft => ({
   directory: defaults.directory ?? '',
   provider: defaults.provider ?? ANY,
+  profileId: defaults.profileId,
   model: defaults.model ?? '',
   mode: defaults.mode ?? ANY,
   workflowName: defaults.workflow?.name ?? '',
@@ -58,7 +63,7 @@ const toDefaults = (draft: Draft) => {
   const provider = draft.provider === ANY ? undefined : draft.provider;
   return sessionGroupDefaultsSchema.safeParse({
     ...(draft.directory.trim() ? { directory: draft.directory.trim() } : {}),
-    ...(provider ? { provider } : {}),
+    ...(provider ? { provider, profileId: draft.profileId } : {}),
     ...(provider && draft.model.trim() ? { model: draft.model.trim() } : {}),
     ...(provider && draft.mode !== ANY ? { mode: draft.mode } : {}),
     ...(draft.workflowName.trim()
@@ -72,7 +77,12 @@ const toDefaults = (draft: Draft) => {
   });
 };
 
-export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
+export function GroupDefaultsDialog({
+  group,
+  profiles,
+  onOpenChange,
+  onSave,
+}: Props) {
   const [draft, setDraft] = useState<Draft>(() =>
     toDraft(group?.defaults ?? {}),
   );
@@ -115,6 +125,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
                 onValueChange={value =>
                   change({
                     provider: value as Draft['provider'],
+                    profileId: undefined,
                     mode: ANY,
                     model: '',
                   })
@@ -162,6 +173,17 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
               </Select>
             </Field>
           </div>
+          <Field id="group-default-profile" label="Provider account">
+            <ProfileSelect
+              id="group-default-profile"
+              className="w-full"
+              profiles={profiles}
+              provider={draft.provider === ANY ? null : draft.provider}
+              value={draft.profileId}
+              inherit="Use desktop default"
+              onChange={profileId => change({ profileId })}
+            />
+          </Field>
           <Field id="group-default-model" label="Model">
             <Input
               size="lg"

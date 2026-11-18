@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DesktopApi, ProviderUsage } from '@nesvo/contracts';
+import type {
+  DesktopApi,
+  ProviderProfile,
+  ProviderUsage,
+} from '@nesvo/contracts';
 import { providers, type Provider } from '@/entities/session';
 
 export type UsageState = {
@@ -18,7 +22,11 @@ export function useProviderUsage(
   connected: boolean,
   api: Pick<DesktopApi, 'providerUsage'> | undefined,
   terminal: string,
+  profile?: Pick<ProviderProfile, 'id' | 'provider'>,
 ) {
+  const profileId = profile?.id;
+  const profileProvider = profile?.provider;
+  const scope = profileId ? `${hostId}/${profileId}` : hostId;
   const [byHost, setByHost] = useState<
     Record<string, Partial<Record<Provider, UsageState>>>
   >({});
@@ -29,32 +37,35 @@ export function useProviderUsage(
   const refresh = useCallback(async () => {
     if (!connected || !api) return;
     const current = generation.current.value;
-    lastRequest.current[hostId] = Date.now();
+    lastRequest.current[scope] = Date.now();
     await Promise.allSettled(
       providers.map(async provider => {
-        const key = `${hostId}/${provider}`;
+        const key = `${scope}/${provider}`;
         if (pending.current.get(key) === current) return;
         pending.current.set(key, current);
         setByHost(previous => ({
           ...previous,
-          [hostId]: {
-            ...previous[hostId],
+          [scope]: {
+            ...previous[scope],
             [provider]: {
-              ...previous[hostId]?.[provider],
+              ...previous[scope]?.[provider],
               loading: true,
               error: false,
             },
           },
         }));
         try {
-          const data = await api.providerUsage({ provider });
+          const data = await api.providerUsage({
+            provider,
+            ...(provider === profileProvider && profileId ? { profileId } : {}),
+          });
           if (generation.current.value !== current) return;
           if (data.provider !== provider)
             throw new Error('Mismatched provider.');
           setByHost(previous => ({
             ...previous,
-            [hostId]: {
-              ...previous[hostId],
+            [scope]: {
+              ...previous[scope],
               [provider]: { data, loading: false, error: false },
             },
           }));
@@ -62,10 +73,10 @@ export function useProviderUsage(
           if (generation.current.value === current)
             setByHost(previous => ({
               ...previous,
-              [hostId]: {
-                ...previous[hostId],
+              [scope]: {
+                ...previous[scope],
                 [provider]: {
-                  ...previous[hostId]?.[provider],
+                  ...previous[scope]?.[provider],
                   loading: false,
                   error: true,
                 },
@@ -76,7 +87,7 @@ export function useProviderUsage(
         }
       }),
     );
-  }, [api, connected, hostId]);
+  }, [api, connected, profileId, profileProvider, scope]);
   useEffect(() => {
     const clock = generation.current;
     const current = ++clock.value;
@@ -91,7 +102,7 @@ export function useProviderUsage(
     const resume = () => {
       if (
         document.visibilityState === 'visible' &&
-        Date.now() - (lastRequest.current[hostId] ?? 0) >= 120000
+        Date.now() - (lastRequest.current[scope] ?? 0) >= 120000
       )
         void refresh();
     };
@@ -104,7 +115,7 @@ export function useProviderUsage(
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', resume);
     };
-  }, [hostId, refresh]);
+  }, [scope, refresh]);
   useEffect(() => {
     const previous = previousTerminal.current;
     previousTerminal.current = { hostId, terminal };
@@ -115,5 +126,5 @@ export function useProviderUsage(
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [terminal, hostId, connected, refresh]);
-  return { states: { ...empty, ...byHost[hostId] }, refresh };
+  return { states: { ...empty, ...byHost[scope] }, refresh };
 }

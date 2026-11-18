@@ -7,6 +7,7 @@ import type {
   DesktopApi,
   DesktopSession,
   Provider,
+  ProviderProfile,
 } from '@nesvo/contracts';
 import { errorDetail, ProviderGlyph } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
@@ -30,12 +31,21 @@ import { SearchField } from '@/shared/ui/search-field';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
 import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   computer: Computer | undefined;
+  profiles: ProviderProfile[];
+  initialProfileId?: string | null;
   api: Pick<DesktopApi, 'listConversations' | 'adoptConversation'>;
   onAdopted: (session: DesktopSession) => void;
   initialSelection?: ConversationIdentity;
@@ -63,6 +73,8 @@ export function ImportConversation({
   open,
   onOpenChange,
   computer,
+  profiles,
+  initialProfileId,
   api,
   onAdopted,
   initialSelection,
@@ -84,6 +96,8 @@ export function ImportConversation({
       {open && (
         <ConversationPicker
           computer={computer}
+          profiles={profiles}
+          initialProfileId={initialProfileId}
           api={api}
           pending={pending}
           setPending={setPending}
@@ -102,6 +116,8 @@ export function ImportConversation({
 
 function ConversationPicker({
   computer,
+  profiles,
+  initialProfileId,
   api,
   pending,
   setPending,
@@ -109,7 +125,15 @@ function ConversationPicker({
   initialSelection,
   onCancel,
   onAdopted,
-}: Pick<Props, 'computer' | 'api' | 'onAdopted' | 'initialSelection'> & {
+}: Pick<
+  Props,
+  | 'computer'
+  | 'api'
+  | 'onAdopted'
+  | 'profiles'
+  | 'initialProfileId'
+  | 'initialSelection'
+> & {
   onCancel: () => void;
   pending: boolean;
   setPending: (pending: boolean) => void;
@@ -117,11 +141,20 @@ function ConversationPicker({
 }) {
   const [query, setQuery] = useState('');
   const [provider, setProvider] = useState<Provider | 'all'>('all');
+  const initialAccount = initialProfileId ?? 'default';
   const initialKey = initialSelection ? conversationKey(initialSelection) : '';
   const [selectedKey, setSelectedKey] = useState(initialKey);
-  const [catalog, setCatalog] = useState<ConversationImportCatalog | null>(
-    null,
-  );
+  const [profileId, setProfileId] = useState(initialAccount);
+  const profileProvider = profiles.find(
+    profile => profile.id === profileId,
+  )?.provider;
+  const include = profileId === initialAccount ? initialSelection : undefined;
+  const accountMissing = profileId !== 'default' && !profileProvider;
+  const [loaded, setCatalog] = useState<{
+    profileId: string;
+    catalog: ConversationImportCatalog;
+  }>();
+  const catalog = loaded?.profileId === profileId ? loaded.catalog : null;
   const [listError, setListError] = useState('');
   const [adoptError, setAdoptError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -131,17 +164,21 @@ function ConversationPicker({
   const now = useNow(60_000);
 
   useEffect(() => {
-    if (!available) return;
+    if (!available || accountMissing) return;
     let current = true;
     void api
       .listConversations(
-        initialSelection ? { include: initialSelection } : undefined,
+        profileProvider
+          ? { provider: profileProvider, profileId, include }
+          : include
+            ? { include }
+            : undefined,
       )
       .then(
         result => {
           if (!current) return;
           setListError('');
-          setCatalog(result);
+          setCatalog({ profileId, catalog: result });
         },
         error => {
           if (current) setListError(errorDetail(error));
@@ -150,7 +187,15 @@ function ConversationPicker({
     return () => {
       current = false;
     };
-  }, [api, attempt, available, initialSelection]);
+  }, [
+    accountMissing,
+    api,
+    attempt,
+    available,
+    include,
+    profileId,
+    profileProvider,
+  ]);
 
   const term = query.trim().toLowerCase();
   const matches = (catalog?.conversations ?? [])
@@ -163,8 +208,8 @@ function ConversationPicker({
     )
     .toSorted(
       (left, right) =>
-        Number(conversationKey(right) === initialKey) -
-        Number(conversationKey(left) === initialKey),
+        Number(conversationKey(right) === (include ? initialKey : '')) -
+        Number(conversationKey(left) === (include ? initialKey : '')),
     );
   const selected = matches.find(
     conversation => conversationKey(conversation) === selectedKey,
@@ -172,7 +217,7 @@ function ConversationPicker({
 
   const adopt = async () => {
     if (!available || !selected || selected.adopted || pending) return;
-    const requestId = requestIdFor(conversationKey(selected));
+    const requestId = requestIdFor(`${profileId}:${conversationKey(selected)}`);
     setAdoptError('');
     setPending(true);
     try {
@@ -181,6 +226,7 @@ function ConversationPicker({
           provider: selected.provider,
           providerSessionId: selected.providerSessionId,
           requestId,
+          ...(profileProvider ? { profileId } : {}),
         }),
       );
     } catch (error) {
@@ -210,6 +256,37 @@ function ConversationPicker({
         </StatusMessage>
       ) : (
         <>
+          {(profiles.length > 0 || accountMissing) && (
+            <Select
+              value={profileId}
+              disabled={pending}
+              onValueChange={id => {
+                setProfileId(id);
+                setProvider('all');
+                setSelectedKey('');
+                setListError('');
+                setAdoptError('');
+              }}
+            >
+              <SelectTrigger
+                aria-label="Conversation account"
+                className="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default accounts</SelectItem>
+                {profiles.map(profile => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.label} · {profile.provider}
+                  </SelectItem>
+                ))}
+                {accountMissing && (
+                  <SelectItem value={profileId}>Account unavailable</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <SearchField
               aria-label="Search conversations"
@@ -221,19 +298,25 @@ function ConversationPicker({
               disabled={pending}
               containerClassName="min-w-40 flex-1"
             />
-            <SegmentedControl<Provider | 'all'>
-              label="Filter by provider"
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'Claude Code', label: 'Claude Code' },
-                { value: 'Codex', label: 'Codex' },
-              ]}
-              value={provider}
-              onChange={setProvider}
-              disabled={pending}
-            />
+            {!profileProvider && (
+              <SegmentedControl<Provider | 'all'>
+                label="Filter by provider"
+                options={[
+                  { value: 'all', label: 'All' },
+                  { value: 'Claude Code', label: 'Claude Code' },
+                  { value: 'Codex', label: 'Codex' },
+                ]}
+                value={provider}
+                onChange={setProvider}
+                disabled={pending}
+              />
+            )}
           </div>
-          {listError ? (
+          {accountMissing ? (
+            <StatusMessage tone="warning">
+              Choose an available account to list conversations.
+            </StatusMessage>
+          ) : listError ? (
             <div className="flex items-center justify-between gap-2">
               <StatusMessage tone="error">{listError}</StatusMessage>
               <Button

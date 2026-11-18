@@ -1,4 +1,8 @@
-import { providerSchema, sessionModeSchema } from '@nesvo/contracts';
+import {
+  providerProfileSelectionSchema,
+  providerSchema,
+  sessionModeSchema,
+} from '@nesvo/contracts';
 import type { Provider } from '@/entities/session';
 import type { ThreadSetup } from './index';
 
@@ -8,6 +12,7 @@ const MAX_DIRECTORY_LENGTH = 4096;
 
 export type NewSessionDefaults = {
   provider: Provider | null;
+  profileIds: Record<string, string | null>;
   model: string | null;
   mode: ThreadSetup['mode'] | null;
   directory: string;
@@ -16,11 +21,16 @@ export type NewSessionDefaults = {
 
 export const emptyNewSessionDefaults: NewSessionDefaults = {
   provider: null,
+  profileIds: {},
   model: null,
   mode: null,
   directory: '',
   worktree: false,
 };
+
+export function defaultProfileKey(hostId: string, provider: Provider) {
+  return JSON.stringify([hostId, provider]);
+}
 
 function parseDefaults(value: unknown): NewSessionDefaults {
   if (typeof value !== 'object' || value === null)
@@ -28,8 +38,17 @@ function parseDefaults(value: unknown): NewSessionDefaults {
   const stored = value as Record<string, unknown>;
   const provider = providerSchema.safeParse(stored.provider);
   const mode = sessionModeSchema.safeParse(stored.mode);
+  const profileIds: NewSessionDefaults['profileIds'] = {};
+  if (stored.profileIds && typeof stored.profileIds === 'object') {
+    for (const [host, profileId] of Object.entries(stored.profileIds)) {
+      const parsed = providerProfileSelectionSchema.safeParse({ profileId });
+      if (parsed.success && parsed.data.profileId !== undefined)
+        profileIds[host] = parsed.data.profileId;
+    }
+  }
   return {
     provider: provider.success ? provider.data : null,
+    profileIds,
     model:
       typeof stored.model === 'string' &&
       stored.model.length > 0 &&
@@ -72,6 +91,8 @@ export function applyNewSessionDefaults(
   return {
     ...setup,
     provider,
+    profileId:
+      defaults.profileIds[defaultProfileKey(setup.hostId, provider)] ?? null,
     model:
       defaults.provider && defaults.model
         ? defaults.model

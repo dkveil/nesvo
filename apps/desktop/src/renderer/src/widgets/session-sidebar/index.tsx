@@ -58,6 +58,7 @@ import { SkeletonList } from '@/shared/ui/skeleton';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
+import type { ProviderProfile } from '@nesvo/contracts';
 import { Hint } from '@/shared/ui/tooltip';
 import { toDropIndicator } from './drop-indicator';
 import { GroupedSessions } from './grouped-sessions';
@@ -70,6 +71,8 @@ export type { SidebarHousekeeping } from './housekeeping';
 
 type Props = {
   sessions: Session[];
+  profilesFor?: (hostId: string) => ProviderProfile[];
+  accountLabel?: (session: Session) => string | undefined;
   workflowRuns: WorkflowRun[];
   computers: Computer[];
   hostName: string;
@@ -170,6 +173,8 @@ function MetaSeparator() {
 
 export function SessionSidebar({
   sessions,
+  profilesFor,
+  accountLabel,
   workflowRuns,
   computers,
   hostName,
@@ -358,18 +363,21 @@ export function SessionSidebar({
         now={now}
       />
     );
+    const profile = accountLabel?.(session);
     const title = renamingField ?? (
-      <span className="flex min-w-0 items-center gap-1.5">
-        {session.pinned && !child && organized(session.hostId) && (
-          <Pin
-            className="size-2.5 shrink-0 text-sidebar-icon"
-            aria-label="Pinned"
-          />
-        )}
-        <span className={cn('min-w-0 truncate', unread && 'font-semibold')}>
-          {session.title}
+      <Hint label={profile && `Account: ${profile}`}>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {session.pinned && !child && organized(session.hostId) && (
+            <Pin
+              className="size-2.5 shrink-0 text-sidebar-icon"
+              aria-label="Pinned"
+            />
+          )}
+          <span className={cn('min-w-0 truncate', unread && 'font-semibold')}>
+            {session.title}
+          </span>
         </span>
-      </span>
+      </Hint>
     );
     const details = (
       <span className="flex min-w-0 items-center gap-1">
@@ -480,7 +488,7 @@ export function SessionSidebar({
               'data-session-id': session.id,
             },
             'aria-current': selected ? 'page' : undefined,
-            'aria-label': `${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}`,
+            'aria-label': `${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}`,
           }}
           {...decoration?.item}
         />
@@ -812,6 +820,7 @@ export function SessionSidebar({
                       return organized(computer.id) && housekeeping ? (
                         <GroupedSessions
                           hostId={computer.id}
+                          profiles={profilesFor?.(computer.id) ?? []}
                           roots={roots}
                           allRoots={allRoots.filter(
                             root => root.hostId === computer.id,

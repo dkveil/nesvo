@@ -16,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from 'playwright';
+import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -609,6 +610,44 @@ try {
     .getByRole('button', { name: 'Refresh limits', exact: true })
     .click();
   assert.deepEqual(await readUsageTrace(), initialUsageProbes);
+  const profileDirectory = await createProfileDirectory(
+    join(directory, 'claude-work'),
+  );
+  const accountLabel = initialUsage.panel.getByLabel('Label', { exact: true });
+  await accountLabel.fill('Work account');
+  await initialUsage.panel
+    .getByLabel('Configuration directory', { exact: true })
+    .fill(profileDirectory);
+  await initialUsage.panel
+    .getByRole('button', { name: 'Add account', exact: true })
+    .click();
+  await initialUsage.panel
+    .getByText('Work account · Signed in', { exact: true })
+    .waitFor();
+  await initialUsage.panel
+    .locator('[data-provider-usage="Claude Code"][data-usage-status="ready"]')
+    .waitFor();
+  await accountLabel.fill('Work account renamed');
+  await initialUsage.panel
+    .getByRole('button', { name: 'Save label', exact: true })
+    .click();
+  await initialUsage.panel
+    .getByText('Work account renamed · Signed in', { exact: true })
+    .waitFor();
+  await initialUsage.panel
+    .getByRole('button', { name: 'Remove account', exact: true })
+    .click();
+  const removeAccount = page.getByRole('alertdialog', {
+    name: 'Remove Work account renamed?',
+  });
+  await removeAccount
+    .getByRole('button', { name: 'Remove account', exact: true })
+    .click();
+  await removeAccount.waitFor({ state: 'hidden' });
+  assert.deepEqual(
+    await page.evaluate(() => window.nesvo.listProviderProfiles()),
+    [],
+  );
   await page.keyboard.press('Escape');
   await initialUsage.panel.waitFor({ state: 'hidden' });
   await page.waitForFunction(

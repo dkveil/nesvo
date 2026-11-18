@@ -22,6 +22,7 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { toDropIndicator } from './drop-indicator';
+import type { ProviderProfile } from '@nesvo/contracts';
 import { GroupDefaultsDialog } from './group-defaults-dialog';
 import type {
   DragItem,
@@ -48,6 +49,7 @@ type MoveTarget =
 
 type Props = {
   hostId: string;
+  profiles: ProviderProfile[];
   roots: Session[];
   allRoots: Session[];
   housekeeping: SidebarHousekeeping;
@@ -66,6 +68,7 @@ type Props = {
 
 export function GroupedSessions({
   hostId,
+  profiles,
   roots,
   allRoots,
   housekeeping,
@@ -619,6 +622,7 @@ export function GroupedSessions({
       <GroupDefaultsDialog
         key={defaultsGroup?.id ?? 'defaults-closed'}
         group={defaultsGroup}
+        profiles={profiles}
         onOpenChange={open => {
           if (!open) setDefaultsGroup(null);
         }}

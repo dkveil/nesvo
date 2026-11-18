@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import type { DesktopApi, ProviderProfile } from '@nesvo/contracts';
+import { ProfileSelect } from '@/features/provider-profiles/profile-select';
+import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import {
   modeLabel,
   providerModes,
@@ -7,6 +10,7 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import {
+  defaultProfileKey,
   readNewSessionDefaults,
   saveNewSessionDefaults,
   type NewSessionDefaults,
@@ -25,6 +29,10 @@ import { Switch } from '@/shared/ui/switch';
 type Props = {
   providerStates: ProviderStates;
   computerName: string;
+  hostId: string;
+  profiles: ProviderProfile[];
+  connected: boolean;
+  api: DesktopApi;
 };
 
 type Option = { value: string; label: string };
@@ -73,7 +81,14 @@ function withStored(options: Option[], stored: string | null) {
   return [...options, { value: stored, label: `${stored} (not reported)` }];
 }
 
-export function DefaultsSettings({ providerStates, computerName }: Props) {
+export function DefaultsSettings({
+  providerStates,
+  computerName,
+  hostId,
+  profiles,
+  connected,
+  api,
+}: Props) {
   const [defaults, setDefaults] = useState(readNewSessionDefaults);
   const update = (patch: Partial<NewSessionDefaults>) => {
     setDefaults(previous => {
@@ -83,7 +98,20 @@ export function DefaultsSettings({ providerStates, computerName }: Props) {
     });
   };
   const provider = defaults.provider;
-  const status = provider ? providerStates[provider].status : null;
+  const profileKey = provider ? defaultProfileKey(hostId, provider) : '';
+  const profileId = profileKey ? defaults.profileIds[profileKey] : undefined;
+  const profile = useProfileStatus(
+    api,
+    hostId,
+    provider ?? 'Claude Code',
+    profileId,
+    connected,
+  );
+  const status = provider
+    ? profileId
+      ? profile.state.status
+      : providerStates[provider].status
+    : null;
   const models = withStored(
     (status?.models ?? []).map(model => ({
       value: model.id,
@@ -122,6 +150,26 @@ export function DefaultsSettings({ providerStates, computerName }: Props) {
                 provider: next as Provider | null,
                 model: null,
                 mode: null,
+              })
+            }
+          />
+        </SettingsRow>
+        <SettingsRow
+          title={<label htmlFor="defaults-profile">Provider account</label>}
+          description={`Applies to new sessions on ${computerName}.`}
+        >
+          <ProfileSelect
+            id="defaults-profile"
+            profiles={profiles}
+            provider={provider}
+            value={profileId}
+            className="w-52"
+            onChange={id =>
+              update({
+                profileIds: {
+                  ...defaults.profileIds,
+                  [profileKey]: id ?? null,
+                },
               })
             }
           />
