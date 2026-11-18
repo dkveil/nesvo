@@ -74,6 +74,7 @@ import {
   desktopScheduledJobSchema,
   desktopScheduledJobRunSchema,
   desktopScheduledJobRunPageSchema,
+  decideScheduledJobStartSchema,
   deleteScheduledJobSchema,
   listScheduledJobRunsSchema,
   runScheduledJobNowSchema,
@@ -172,6 +173,14 @@ const scheduledJobs: DesktopApi['scheduledJobs'] = {
       await ipcRenderer.invoke(
         'nesvo:run-scheduled-job-now',
         runScheduledJobNowSchema.parse({ id, requestId }),
+        hostIdSchema.parse(hostId),
+      ),
+    ),
+  decideStart: async (hostId, input) =>
+    desktopScheduledJobSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-scheduled-job-start',
+        decideScheduledJobStartSchema.parse(input),
         hostIdSchema.parse(hostId),
       ),
     ),

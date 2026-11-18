@@ -6,7 +6,7 @@ import { Effect } from 'effect';
 import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
 
-const DATABASE_VERSION = 15;
+const DATABASE_VERSION = 16;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
@@ -298,6 +298,16 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
         database.exec(
           'ALTER TABLE scheduled_jobs ADD COLUMN workflow TEXT CHECK (workflow IS NULL OR json_valid(workflow))',
         );
+      for (const column of ['change_trigger', 'last_check', 'pending_start'])
+        if (!scheduledJobColumns.has(column))
+          database.exec(
+            `ALTER TABLE scheduled_jobs ADD COLUMN ${column} TEXT CHECK (${column} IS NULL OR json_valid(${column}))`,
+          );
+      if (!scheduledJobColumns.has('check_hash'))
+        database.exec('ALTER TABLE scheduled_jobs ADD COLUMN check_hash TEXT');
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS scheduled_job_run_days (scheduled_job_id TEXT NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE, day TEXT NOT NULL, starts INTEGER NOT NULL, PRIMARY KEY (scheduled_job_id, day))',
+      );
       const scheduledJobRunColumns = new Set(
         database
           .prepare('PRAGMA table_info(scheduled_job_runs)')

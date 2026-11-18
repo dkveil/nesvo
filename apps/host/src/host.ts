@@ -1550,6 +1550,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 id: request.id,
                 run: scheduledJobs.runNow(request.input),
               };
+            if (request.method === 'decide-scheduled-job-start')
+              return {
+                type: 'scheduled-job',
+                id: request.id,
+                scheduledJob: scheduledJobs.decideStart(request.input),
+              };
             if (request.method === 'get-workflow-run') {
               const run = workflowRunStore.getRun(request.input.runId);
               if (!run)

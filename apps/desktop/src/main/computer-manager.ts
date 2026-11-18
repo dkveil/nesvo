@@ -142,6 +142,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Costs are unavailable on this computer. Update its Nesvo host, then reconnect.',
   'scheduled-jobs':
     'This computer runs an older Nesvo host without automations. Update it, then reconnect.',
+  'scheduled-job-change-triggers':
+    'Update this computer’s Nesvo host and reconnect to use automation change checks.',
   'reasoning-effort':
     'This computer runs an older Nesvo host without reasoning effort support. Update the host or start without an effort.',
   workflows:
@@ -704,11 +706,18 @@ export class ComputerManager {
     input: unknown,
     hostId: string,
   ) {
+    const needsChangeTriggers =
+      method === 'decide-scheduled-job-start' ||
+      (method === 'save-scheduled-job' &&
+        typeof input === 'object' &&
+        input !== null &&
+        'changeTrigger' in input &&
+        !!input.changeTrigger);
     const { entry, response } = await this.dispatch(
       method,
       input,
       hostId,
-      'scheduled-jobs',
+      needsChangeTriggers ? 'scheduled-job-change-triggers' : 'scheduled-jobs',
     );
     const expected = {
       'list-scheduled-jobs': 'scheduled-jobs',
@@ -717,6 +726,7 @@ export class ComputerManager {
       'delete-scheduled-job': 'scheduled-job-deleted',
       'list-scheduled-job-runs': 'scheduled-job-runs',
       'run-scheduled-job-now': 'scheduled-job-run',
+      'decide-scheduled-job-start': 'scheduled-job',
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');

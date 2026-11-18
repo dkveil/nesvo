@@ -34,6 +34,7 @@ export const hostCapabilitySchema = z.enum([
   'costs',
   'mcp-servers',
   'conversation-import',
+  'scheduled-job-change-triggers',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

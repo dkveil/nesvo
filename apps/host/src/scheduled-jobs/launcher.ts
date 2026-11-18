@@ -200,7 +200,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
   }
 
   async launch(
-    { scheduledJob, run }: ScheduledJobLaunch,
+    { scheduledJob, run, operatorStarted }: ScheduledJobLaunch,
     progress: ScheduledJobRunProgress,
   ): Promise<void> {
     const signal = this.controller.signal;
@@ -217,11 +217,12 @@ export class SessionLauncher implements ScheduledJobLauncher {
         directory,
         run,
         progress,
+        operatorStarted,
       );
     const input = sessionInput(scheduledJob, directory, this.runTime(run));
     if (input.effort) await this.confirmEffort(input, signal);
     signal.throwIfAborted();
-    this.ensureAvailable(run);
+    this.ensureAvailable(run, operatorStarted);
     const { sessionId, runId } = this.start(input, scheduledJob, run);
     if (runId) this.watch(scheduledJob, sessionId, runId, progress);
     try {
@@ -244,10 +245,11 @@ export class SessionLauncher implements ScheduledJobLauncher {
     this.deadlines.clear();
   }
 
-  private ensureAvailable(run: ScheduledJobRun): void {
+  private ensureAvailable(run: ScheduledJobRun, operatorStarted?: boolean): void {
     if (
       this.sessions.isBusy() ||
       (run.trigger === 'schedule' &&
+        !operatorStarted &&
         !this.sessions.isIdleFor(OPERATOR_IDLE_MS))
     )
       throw new SessionError(
@@ -262,6 +264,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     directory: string,
     run: ScheduledJobRun,
     progress: ScheduledJobRunProgress,
+    operatorStarted?: boolean,
   ): Promise<void> {
     const signal = this.controller.signal;
     const workflows = this.workflows;
@@ -275,7 +278,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
         ? 'worktree'
         : 'none';
     signal.throwIfAborted();
-    this.ensureAvailable(run);
+    this.ensureAvailable(run, operatorStarted);
     let started: WorkflowRun;
     try {
       started = await workflows.start(

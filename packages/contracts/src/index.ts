@@ -121,6 +121,7 @@ import {
   type GitBranch,
 } from './workspace';
 import {
+  decideScheduledJobStartSchema,
   deleteScheduledJobSchema,
   listScheduledJobRunsSchema,
   listScheduledJobsSchema,
@@ -132,6 +133,7 @@ import {
   scheduledJobSchema,
   setScheduledJobActiveSchema,
   type SaveScheduledJobInput,
+  type DecideScheduledJobStartInput,
 } from './scheduled-jobs';
 import {
   listMcpServersSchema,
@@ -545,6 +547,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('decide-scheduled-job-start'),
+    input: decideScheduledJobStartSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('list-workflow-definitions'),
     input: listWorkflowDefinitionsSchema,
   }),
@@ -913,6 +920,10 @@ export const hostMessageSchema = z.union([
 export type HostMessage = z.infer<typeof hostMessageSchema>;
 export type ScheduledJobsApi = {
   list: (hostId: HostId) => Promise<DesktopScheduledJob[]>;
+  decideStart: (
+    hostId: HostId,
+    input: DecideScheduledJobStartInput,
+  ) => Promise<DesktopScheduledJob>;
   save: (
     hostId: HostId,
     input: Omit<SaveScheduledJobInput, 'expectedRevision'>,

@@ -678,6 +678,7 @@ test(
         'costs',
         'mcp-servers',
         'conversation-import',
+        'scheduled-job-change-triggers',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -1661,7 +1662,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      15,
+      16,
     );
     migrated.close();
     const reopened = open();
@@ -4794,6 +4795,185 @@ const waitUntil = async (check, description) => {
 };
 
 test(
+  'change-triggered automations persist checks, caps and operator decisions',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-change-trigger-')),
+    );
+    const databasePath = join(directory, 'nesvo.sqlite');
+    const fixture = join(directory, 'check.cjs');
+    const source = join(directory, 'source.txt');
+    const checkLog = join(directory, 'check.log');
+    const clock = createFakeClock('2026-11-16T08:00:00.000Z', () => {});
+    const launches = [];
+    let database;
+    let service;
+    t.after(async () => {
+      await service?.close();
+      database?.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const modules = await loadScheduledJobHost(directory);
+    const migrated = launch(directory, join(directory, 'pids.json'));
+    try {
+      assert.equal((await migrated.request('health')).type, 'health');
+    } finally {
+      await migrated.stop();
+    }
+    await writeFile(
+      fixture,
+      [
+        "const fs = require('node:fs');",
+        "fs.appendFileSync('check.log', 'check\\n');",
+        "const output = fs.readFileSync('source.txt', 'utf8');",
+        "if (output === 'fail') {",
+        "  process.stderr.write('private error output');",
+        '  process.exit(7);',
+        '}',
+        'process.stdout.write(output);',
+      ].join('\n'),
+    );
+    const reopen = () => {
+      database = new DatabaseSync(databasePath);
+      database.exec('PRAGMA foreign_keys = ON');
+      service = new modules.ScheduledJobService(
+        new modules.ScheduledJobStore(database),
+        { isBusy: () => false, isIdleFor: () => true },
+        {
+          launch: async (input, progress) => {
+            launches.push(input);
+            progress.finished({
+              status: 'completed',
+              reason: null,
+              reviewId: null,
+              resetAt: null,
+            });
+          },
+        },
+        () => {},
+        clock,
+      );
+    };
+    reopen();
+    const id = randomUUID();
+    const job = service.save({
+      id,
+      expectedRevision: null,
+      name: 'Watch output',
+      prompt: 'Summarize the change.',
+      directory,
+      provider: 'claude',
+      model: 'sonnet',
+      effort: null,
+      mode: 'read-only',
+      active: true,
+      timeZone: 'UTC',
+      timeoutMinutes: 30,
+      workflow: null,
+      schedule: {
+        kind: 'interval',
+        minutes: 30,
+        anchorAt: clock.now().toISOString(),
+      },
+      changeTrigger: {
+        argv: [process.execPath, fixture],
+        dailyRunCap: 1,
+        askFirst: true,
+      },
+    });
+    const current = () => service.list().find(item => item.id === job.id);
+    const runs = () => service.listRuns({ scheduledJobId: id }).runs;
+    const check = async (output, at, action = () => service.tick()) => {
+      await writeFile(source, output);
+      const previous = current().lastCheck?.at;
+      clock.set(at);
+      action();
+      await waitUntil(
+        () => current().lastCheck?.at !== previous,
+        'The scheduled check did not finish',
+      );
+      return current().lastCheck;
+    };
+    assert.equal(
+      (await check('baseline\n', '2026-11-16T08:30:00.000Z')).status,
+      'unchanged',
+    );
+    assert.equal(
+      (await check('baseline \r\n', '2026-11-16T09:00:00.000Z')).status,
+      'unchanged',
+    );
+    assert.deepEqual(runs(), []);
+    assert.equal(
+      (await check('private changed output\n', '2026-11-16T09:30:00.000Z'))
+        .status,
+      'changed',
+    );
+    const pending = current().pendingStart;
+    assert.ok(pending);
+    assert.deepEqual(runs(), []);
+    assert.equal(launches.length, 0);
+    const failed = await check('fail', '2026-11-16T10:00:00.000Z');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.detail, /code 7/);
+    assert.doesNotMatch(
+      JSON.stringify(current()),
+      /private changed output|private error output|check_hash/,
+    );
+    assert.deepEqual(runs(), []);
+
+    const before = await readFile(checkLog, 'utf8');
+    await service.close();
+    database.close();
+    reopen();
+    assert.deepEqual(current().pendingStart, pending);
+    assert.deepEqual(current().lastCheck, failed);
+    const resumed = await check(
+      'private changed output\r\n',
+      '2026-11-16T21:05:00.000Z',
+      () => service.start(),
+    );
+    assert.equal(resumed.status, 'unchanged');
+    service.tick();
+    assert.equal(await readFile(checkLog, 'utf8'), `${before}check\n`);
+    assert.ok(Date.parse(current().nextRunAt) > clock.now().getTime());
+    assert.equal(launches.length, 0);
+
+    const start = { id, pendingId: pending.id, decision: 'start' };
+    assert.equal(service.decideStart(start).pendingStart, undefined);
+    assert.throws(() => service.decideStart(start), /no longer pending/);
+    await waitUntil(
+      () => runs()[0]?.status === 'completed',
+      'The approved run did not finish',
+    );
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0].operatorStarted, true);
+    await service.close();
+    database.close();
+    reopen();
+
+    const capped = await check('another change', '2026-11-16T21:30:00.000Z');
+    assert.equal(capped.status, 'changed');
+    assert.match(capped.detail, /Daily run cap/);
+    assert.equal(current().pendingStart, undefined);
+    assert.equal(runs().length, 1);
+    assert.throws(
+      () => service.runNow({ id, requestId: randomUUID() }),
+      /daily run cap/,
+    );
+    await check('new day', '2026-11-17T08:00:00.000Z');
+    assert.ok(current().pendingStart);
+    service.decideStart({
+      id,
+      pendingId: current().pendingStart.id,
+      decision: 'skip',
+    });
+    assert.equal(runs()[0]?.status, 'skipped');
+    assert.equal(launches.length, 1);
+  },
+);
+
+test(
   'scheduled jobs follow a fake clock without replay, catch-up or busy starts',
   { timeout: 120_000 },
   async t => {
@@ -5475,6 +5655,7 @@ test(
       'costs',
       'mcp-servers',
       'conversation-import',
+      'scheduled-job-change-triggers',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -6367,7 +6548,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            15,
+            16,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -6450,11 +6631,11 @@ test(
       }
     });
 
-    await t.test('a version 16 database is refused', async () => {
+    await t.test('a version 17 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 16');
+      newer.exec('PRAGMA user_version = 17');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -6466,7 +6647,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          16,
+          17,
         );
       } finally {
         check.close();
@@ -9147,7 +9328,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        15,
+        16,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -9198,7 +9379,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        15,
+        16,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(

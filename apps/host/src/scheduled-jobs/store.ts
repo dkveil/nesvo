@@ -17,6 +17,8 @@ export type StoredRun = ScheduledJobRun & {
 type Row = Record<string, SQLOutputValue>;
 
 const text = (value: SQLOutputValue) => (value === null ? null : String(value));
+const optionalJson = (key: string, value: SQLOutputValue | undefined) =>
+  value == null ? {} : { [key]: JSON.parse(String(value)) as unknown };
 
 const toJob = (row: Row): ScheduledJob =>
   scheduledJobSchema.parse({
@@ -34,6 +36,9 @@ const toJob = (row: Row): ScheduledJob =>
     active: row.active === 1,
     timeoutMinutes: row.timeout_minutes,
     workflow: row.workflow === null ? null : JSON.parse(String(row.workflow)),
+    ...optionalJson('changeTrigger', row.change_trigger),
+    ...optionalJson('lastCheck', row.last_check),
+    ...optionalJson('pendingStart', row.pending_start),
     nextRunAt: text(row.next_run_at ?? null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -81,6 +86,9 @@ const jobValues = (job: ScheduledJob) => [
   job.active ? 1 : 0,
   job.timeoutMinutes,
   job.workflow ? JSON.stringify(job.workflow) : null,
+  job.changeTrigger ? JSON.stringify(job.changeTrigger) : null,
+  job.lastCheck ? JSON.stringify(job.lastCheck) : null,
+  job.pendingStart ? JSON.stringify(job.pendingStart) : null,
   job.nextRunAt,
   job.updatedAt,
 ];
@@ -119,8 +127,9 @@ export class ScheduledJobStore {
 
   count(): number {
     return Number(
-      this.database.prepare('SELECT count(*) AS total FROM scheduled_jobs').get()
-        ?.total ?? 0,
+      this.database
+        .prepare('SELECT count(*) AS total FROM scheduled_jobs')
+        .get()?.total ?? 0,
     );
   }
 
@@ -133,19 +142,20 @@ export class ScheduledJobStore {
       .map(toJob);
   }
 
-  earliestNextRunAt(): string | null {
+  earliestNextRunAt(checking: ReadonlySet<string>): string | null {
     const row = this.database
       .prepare(
-        'SELECT min(next_run_at) AS next FROM scheduled_jobs WHERE active = 1',
+        'SELECT id, next_run_at FROM scheduled_jobs WHERE active = 1 AND next_run_at IS NOT NULL ORDER BY next_run_at',
       )
-      .get();
-    return text(row?.next ?? null);
+      .all()
+      .find(row => !checking.has(String(row.id)));
+    return text(row?.next_run_at ?? null);
   }
 
   insert(job: ScheduledJob): void {
     this.database
       .prepare(
-        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, change_trigger, last_check, pending_start, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(...jobValues(job), job.id, job.createdAt);
   }
@@ -155,11 +165,41 @@ export class ScheduledJobStore {
       Number(
         this.database
           .prepare(
-            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
+            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, change_trigger = ?, last_check = ?, pending_start = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
           )
           .run(...jobValues(job), job.id, expectedRevision).changes,
       ) === 1
     );
+  }
+
+  checkHash(id: string): string | null {
+    const row = this.database
+      .prepare('SELECT check_hash FROM scheduled_jobs WHERE id = ?')
+      .get(id);
+    return text(row?.check_hash ?? null);
+  }
+
+  saveCheckHash(id: string, hash: string | null): void {
+    this.database
+      .prepare('UPDATE scheduled_jobs SET check_hash = ? WHERE id = ?')
+      .run(hash, id);
+  }
+
+  startsOn(id: string, day: string): number {
+    const row = this.database
+      .prepare(
+        'SELECT starts FROM scheduled_job_run_days WHERE scheduled_job_id = ? AND day = ?',
+      )
+      .get(id, day);
+    return Number(row?.starts ?? 0);
+  }
+
+  countStart(id: string, day: string): void {
+    this.database
+      .prepare(
+        'INSERT INTO scheduled_job_run_days (scheduled_job_id, day, starts) VALUES (?, ?, 1) ON CONFLICT (scheduled_job_id, day) DO UPDATE SET starts = starts + 1',
+      )
+      .run(id, day);
   }
 
   delete(id: string, expectedRevision: number): boolean {

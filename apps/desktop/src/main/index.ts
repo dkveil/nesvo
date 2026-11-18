@@ -73,6 +73,7 @@ import {
   costBudgetSchema,
   deleteCostBudgetSchema,
   mobileDeviceSchema,
+  decideScheduledJobStartSchema,
   deleteScheduledJobSchema,
   listScheduledJobRunsSchema,
   listScheduledJobsSchema,
@@ -835,6 +836,17 @@ void app.whenReady().then(async () => {
       return computers.executeScheduledJob(
         'list-scheduled-job-runs',
         listScheduledJobRunsSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+    },
+  );
+  ipcMain.handle(
+    'nesvo:decide-scheduled-job-start',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.executeScheduledJob(
+        'decide-scheduled-job-start',
+        decideScheduledJobStartSchema.parse(input),
         hostIdSchema.parse(hostId),
       );
     },

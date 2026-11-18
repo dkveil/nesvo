@@ -136,6 +136,7 @@ const automationDefinition = (job: ScheduledJob) => ({
   active: job.active,
   timeoutMinutes: job.timeoutMinutes,
   workflow: job.workflow,
+  changeTrigger: job.changeTrigger,
 });
 
 type DefinitionTarget = Extract<AssistantChangeTarget, { type: 'definition' }>;
@@ -453,6 +454,7 @@ export class AssistantChanges {
       expectedRevision: current.revision,
       ...operation.automation,
       directory: current.directory,
+      changeTrigger: current.changeTrigger,
     });
   }
 

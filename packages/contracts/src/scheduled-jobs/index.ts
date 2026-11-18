@@ -38,6 +38,10 @@ export const scheduledJobLimits = {
   minTimeoutMinutes: 5,
   maxTimeoutMinutes: 120,
   defaultTimeoutMinutes: 30,
+  defaultDailyRunCap: 3,
+  maxDailyRunCap: 24,
+  checkTimeoutMs: 10_000,
+  checkOutputBytes: 64 * 1024,
 } as const;
 
 const timeSchema = z.string().regex(SCHEDULE_TIME_PATTERN);
@@ -76,6 +80,48 @@ export const scheduledJobWorkflowSchema = z.strictObject({
   specPath: z.string().min(1).max(scheduledJobLimits.directory),
 });
 
+export const scheduledJobChangeTriggerSchema = z.strictObject({
+  argv: z
+    .tuple([
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(4096)
+        .regex(/^[^\u0000-\u001f\u007f]+$/),
+    ])
+    .rest(
+      z
+        .string()
+        .max(4096)
+        .regex(/^[^\u0000]*$/),
+    )
+    .refine(
+      argv => argv.length <= 32 && argv.join('\u0000').length <= 8192,
+      'Use up to 32 arguments and 8,192 characters in total.',
+    ),
+  dailyRunCap: z
+    .number()
+    .int()
+    .min(1)
+    .max(scheduledJobLimits.maxDailyRunCap)
+    .default(scheduledJobLimits.defaultDailyRunCap),
+  askFirst: z.boolean().default(true),
+});
+
+const scheduledJobCheckSchema = z.strictObject({
+  at: z.iso.datetime(),
+  status: z.enum(['changed', 'unchanged', 'failed']),
+  detail: z.string().max(160).optional(),
+});
+
+const scheduledJobPendingStartSchema = z.strictObject({
+  id: z.uuid(),
+  at: z.iso.datetime(),
+  scheduledFor: z.iso.datetime(),
+  missedCount: z.number().int().min(0),
+});
+
 const scheduledJobDefinitionShape = {
   name: z
     .string()
@@ -103,6 +149,7 @@ const scheduledJobDefinitionShape = {
     .max(scheduledJobLimits.maxTimeoutMinutes)
     .default(scheduledJobLimits.defaultTimeoutMinutes),
   workflow: scheduledJobWorkflowSchema.nullable().default(null),
+  changeTrigger: scheduledJobChangeTriggerSchema.optional(),
 };
 
 type ProviderRuleSubject = {
@@ -142,25 +189,41 @@ const enforcePromptRule = (
     });
 };
 
+const enforceTriggerFolder = (
+  value: { changeTrigger?: unknown; directory: string },
+  context: z.RefinementCtx,
+) => {
+  if (value.changeTrigger && !value.directory)
+    context.addIssue({
+      code: 'custom',
+      path: ['directory'],
+      message: 'Choose a folder for the check command.',
+    });
+};
+
 const idSchema = z.uuid();
 const revisionSchema = z.number().int().positive();
 
 export const scheduledJobDefinitionSchema = z
   .strictObject(scheduledJobDefinitionShape)
   .superRefine(enforceProviderRules)
-  .superRefine(enforcePromptRule);
+  .superRefine(enforcePromptRule)
+  .superRefine(enforceTriggerFolder);
 
 export const scheduledJobSchema = z
   .strictObject({
     id: idSchema,
     revision: revisionSchema,
     ...scheduledJobDefinitionShape,
+    lastCheck: scheduledJobCheckSchema.optional(),
+    pendingStart: scheduledJobPendingStartSchema.optional(),
     nextRunAt: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
   .superRefine(enforceProviderRules)
-  .superRefine(enforcePromptRule);
+  .superRefine(enforcePromptRule)
+  .superRefine(enforceTriggerFolder);
 
 export const scheduledJobRunStatusSchema = z.enum([
   'starting',
@@ -218,7 +281,8 @@ export const saveScheduledJobSchema = z
     ...scheduledJobDefinitionShape,
   })
   .superRefine(enforceProviderRules)
-  .superRefine(enforcePromptRule);
+  .superRefine(enforcePromptRule)
+  .superRefine(enforceTriggerFolder);
 
 export const setScheduledJobActiveSchema = z.strictObject({
   id: idSchema,
@@ -234,6 +298,12 @@ export const deleteScheduledJobSchema = z.strictObject({
 export const runScheduledJobNowSchema = z.strictObject({
   id: idSchema,
   requestId: idSchema,
+});
+
+export const decideScheduledJobStartSchema = z.strictObject({
+  id: idSchema,
+  pendingId: idSchema,
+  decision: z.enum(['start', 'skip']),
 });
 
 export const listScheduledJobRunsSchema = z.strictObject({
@@ -278,6 +348,9 @@ export type SetScheduledJobActiveInput = z.infer<
 >;
 export type DeleteScheduledJobInput = z.infer<typeof deleteScheduledJobSchema>;
 export type RunScheduledJobNowInput = z.infer<typeof runScheduledJobNowSchema>;
+export type DecideScheduledJobStartInput = z.infer<
+  typeof decideScheduledJobStartSchema
+>;
 export type ListScheduledJobRunsInput = z.input<
   typeof listScheduledJobRunsSchema
 >;
