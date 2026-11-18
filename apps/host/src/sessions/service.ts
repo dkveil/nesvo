@@ -757,6 +757,8 @@ export class SessionService {
       worktree?: { id: string; metadata: NonNullable<Session['worktree']> };
     } = {},
   ): Session {
+    const existing = this.sessionForCreateRequest(input.requestId);
+    if (existing) return existing;
     if (input.isolation && !options.worktree)
       throw new SessionError(
         'invalid-request',
@@ -774,7 +776,10 @@ export class SessionService {
       );
     let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
-      directory = join(this.directory, 'workspaces', randomUUID());
+      const name = input.requestId
+        ? `request-${input.requestId}`
+        : randomUUID();
+      directory = join(this.directory, 'workspaces', name);
       mkdirSync(directory, { recursive: true });
     }
     directory = this.resolveDirectory(directory);
@@ -840,6 +845,8 @@ export class SessionService {
     input: CreateSessionInput,
     signal: AbortSignal,
   ): Promise<Session> {
+    const existing = this.sessionForCreateRequest(input.requestId);
+    if (existing) return existing;
     if (input.effort)
       await confirmCodexEffort(input.model, input.effort, signal);
     const mcp = input.mcp
@@ -971,6 +978,24 @@ export class SessionService {
         'invalid-request',
         'This worktree session is finished.',
       );
+  }
+
+  private sessionForCreateRequest(
+    requestId: string | undefined,
+  ): Session | undefined {
+    if (!requestId) return;
+    const id = this.store.createdSessionId(requestId);
+    if (!id) return;
+    const session =
+      this.active.get(id)?.session ??
+      this.unsaved.get(id) ??
+      this.store.get(id);
+    if (!session)
+      throw new SessionError(
+        'not-found',
+        'The session for this creation request was quarantined.',
+      );
+    return structuredClone(session);
   }
 
   async setMcp(

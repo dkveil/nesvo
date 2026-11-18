@@ -145,6 +145,7 @@ export const finishSessionWorktreeSchema = readSessionWorktreeSchema.extend({
 });
 export const createSessionSchema = z
   .strictObject({
+    requestId: z.uuid().toLowerCase().optional(),
     title: z.string().trim().min(1).max(100),
     provider: providerSchema.default('Claude Code'),
     model: modelSchema,

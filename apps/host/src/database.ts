@@ -252,6 +252,11 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           .all()
           .map(column => column.name),
       );
+      if (!sessionColumns.has('create_request_id'))
+        database.exec('ALTER TABLE sessions ADD COLUMN create_request_id TEXT');
+      database.exec(
+        'CREATE UNIQUE INDEX IF NOT EXISTS sessions_create_request ON sessions (create_request_id) WHERE create_request_id IS NOT NULL',
+      );
       if (!sessionColumns.has('scheduled_job_id'))
         database.exec(
           'ALTER TABLE sessions ADD COLUMN scheduled_job_id TEXT REFERENCES scheduled_jobs(id) ON DELETE SET NULL',

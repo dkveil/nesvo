@@ -4264,6 +4264,49 @@ test('streamed text reaches clients before SQLite and flushes on completion and 
   assert.equal(agent(stopped).body, 'Fixture is waiting.');
 });
 
+test('create-session retries reuse the session and workspace across host restarts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-create-retry-'));
+  const pidFile = join(directory, 'unused-pids.json');
+  let host = launch(directory, pidFile);
+  t.after(async () => {
+    if (host.child.exitCode === null) host.child.kill();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const input = {
+    requestId: randomUUID(),
+    title: 'Retryable session',
+    directory: '',
+    model: 'sonnet',
+    mcp: { servers: [], hooks: false },
+  };
+  const [created, duplicate] = await Promise.all([
+    host.request('create-session', input),
+    host.request('create-session', input),
+  ]);
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  assert.deepEqual(duplicate.session, created.session);
+  assert.equal(
+    host.observed.filter(session => session.id === created.session.id).length,
+    1,
+  );
+  assert.ok(!Object.hasOwn(created.session, 'requestId'));
+  await host.stop();
+  host = launch(directory, pidFile);
+  const retried = await host.request('create-session', input);
+  assert.deepEqual(retried.session, created.session);
+  assert.deepEqual(await readdir(join(directory, 'workspaces')), [
+    `request-${input.requestId}`,
+  ]);
+  const fresh = await host.request('create-session', {
+    ...input,
+    requestId: randomUUID(),
+  });
+  assert.equal(fresh.type, 'session', JSON.stringify(fresh));
+  assert.notEqual(fresh.session.id, created.session.id);
+  await host.stop();
+});
+
 const loadScheduledJobContracts = async directory => {
   const outfile = join(directory, 'contracts.mjs');
   await promisify(execFile)('bun', [

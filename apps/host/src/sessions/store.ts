@@ -178,6 +178,13 @@ export class SessionStore {
     );
   }
 
+  createdSessionId(requestId: string): string | undefined {
+    const id = this.database
+      .prepare('SELECT id FROM sessions WHERE create_request_id = ?')
+      .get(requestId)?.id;
+    return typeof id === 'string' ? id : undefined;
+  }
+
   private quarantine(rows: QuarantinedSession[]): void {
     if (!rows.length) return;
     const at = new Date().toISOString();
@@ -212,11 +219,11 @@ export class SessionStore {
     mcp: SessionMcp = { servers: [], hooks: false },
     worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
+    const { requestId, ...settings } = input;
     const now = new Date().toISOString();
-    const sessionInput = { ...input };
-    delete sessionInput.isolation;
+    delete settings.isolation;
     const session: Session = {
-      ...sessionInput,
+      ...settings,
       mcp,
       effort: input.effort ?? null,
       id:
@@ -258,7 +265,16 @@ export class SessionStore {
       archivedAt: null,
       ...originLinks(origin, input),
     };
-    this.save(session);
+    this.saveMany(
+      [session],
+      requestId
+        ? () => {
+            this.database
+              .prepare('UPDATE sessions SET create_request_id = ? WHERE id = ?')
+              .run(requestId, session.id);
+          }
+        : undefined,
+    );
     return session;
   }
 

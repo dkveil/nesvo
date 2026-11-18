@@ -618,6 +618,10 @@ export function Workspace() {
     groupId: string;
   } | null>(null);
   const threadRequest = useRef(false);
+  const pendingCreation = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
   const navigationVersion = useRef(0);
   const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
     hostId: 'local',
@@ -1331,9 +1335,25 @@ export function Workspace() {
         ? store.groups(hostId).find(item => item.id === creationGroup.groupId)
         : undefined;
     try {
-      const session = await desktopApi(hostId).createSession(
-        group ? { ...input, groupId: group.id } : input,
-      );
+      const fingerprint = JSON.stringify([
+        origin,
+        hostId,
+        input,
+        text,
+        skill?.id,
+        skill?.contentHash,
+      ]);
+      if (pendingCreation.current?.fingerprint !== fingerprint)
+        pendingCreation.current = {
+          fingerprint,
+          requestId: crypto.randomUUID(),
+        };
+      const session = await desktopApi(hostId).createSession({
+        ...input,
+        ...(group ? { groupId: group.id } : {}),
+        requestId: pendingCreation.current.requestId,
+      });
+      pendingCreation.current = null;
       store.merge([session]);
       setCreationGroup(null);
       const workflow = group?.defaults.workflow;
