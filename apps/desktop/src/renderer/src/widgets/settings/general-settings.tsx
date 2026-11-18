@@ -62,7 +62,6 @@ export function GeneralSettings({
                 connection={connection}
                 name={name}
                 local={hostId === 'local'}
-                onRefresh={onRefreshConnection}
               />
               {computer?.error && (
                 <StatusMessage tone="error">{computer.error}</StatusMessage>
@@ -76,7 +75,15 @@ export function GeneralSettings({
               )}
             </div>
           }
-        />
+        >
+          <IconButton
+            label="Refresh connection"
+            disabled={connection === 'connecting'}
+            onClick={onRefreshConnection}
+          >
+            <RefreshCw />
+          </IconButton>
+        </SettingsRow>
       </SettingsSection>
       <SettingsSection title="Providers">
         {providers.map(provider => {
