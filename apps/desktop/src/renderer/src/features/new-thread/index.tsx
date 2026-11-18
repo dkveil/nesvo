@@ -52,6 +52,7 @@ import {
 import { WorkflowPicker } from './workflow-picker';
 import { modelEfforts, resolveEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
+import { readNewSessionDefaults } from './new-session-defaults';
 
 export type ThreadSetup = {
   hostId: string;
@@ -111,7 +112,9 @@ export function NewThread({
   const [workflow, setWorkflow] = useState<WorkflowChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
   const [startNotice, setStartNotice] = useState('');
-  const [useWorktree, setUseWorktree] = useState(false);
+  const [useWorktree, setUseWorktree] = useState(
+    () => readNewSessionDefaults().worktree,
+  );
   const [worktreeBranch, setWorktreeBranch] = useState('');
   const [mcpChoice, setMcpChoice] = useState({
     target: '',

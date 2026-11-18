@@ -55,6 +55,7 @@ import {
 } from '@/features/new-workflow/new-workflow-sheet';
 import type { SkillSummary } from '@/widgets/workflow-graph-editor/inspector';
 import { NewThread, type ThreadSetup } from '@/features/new-thread';
+import { applyNewSessionDefaults } from '@/features/new-thread/new-session-defaults';
 import { resolveGate } from '@/features/new-thread/workflow-choice';
 import {
   AutomationEditor,
@@ -652,14 +653,16 @@ export function Workspace() {
     requestId: string;
   } | null>(null);
   const navigationVersion = useRef(0);
-  const [threadSetup, setThreadSetup] = useState<ThreadSetup>({
-    hostId: 'local',
-    provider: 'Claude Code',
-    model: 'default',
-    effort: '',
-    mode: 'read-only',
-    directory: '',
-  });
+  const [threadSetup, setThreadSetup] = useState<ThreadSetup>(() =>
+    applyNewSessionDefaults({
+      hostId: 'local',
+      provider: 'Claude Code',
+      model: 'default',
+      effort: '',
+      mode: 'read-only',
+      directory: '',
+    }),
+  );
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
   useEffect(() => writeDrafts(drafts), [drafts]);
@@ -1104,12 +1107,14 @@ export function Workspace() {
   const openCreate = () =>
     guardEditor(() => {
       setCreationGroup(null);
+      setThreadSetup(previous => applyNewSessionDefaults(previous));
       openCreateNow();
     });
   const openCreateInGroup = (hostId: string, group: SessionGroup) =>
     guardEditor(() => {
       const { directory, provider, model, mode } = group.defaults;
-      setThreadSetup(previous => {
+      setThreadSetup(current => {
+        const previous = applyNewSessionDefaults(current);
         const switched = !!provider && provider !== previous.provider;
         return {
           ...previous,
