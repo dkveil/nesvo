@@ -178,7 +178,15 @@ export class WorktreeRecipes {
     return {
       repository: match.recipe?.repository ?? match.candidates[0]!,
       directory: match.directory,
-      recipe: match.recipe ?? null,
+      recipe: match.recipe
+        ? {
+            ...match.recipe,
+            approved: this.params.store.isApproved(
+              match.recipe.sha256,
+              match.gitDirectory,
+            ),
+          }
+        : null,
       repositoryScript,
       repositoryIncludes: this.hasIncludes(match.directory),
     };
@@ -226,7 +234,10 @@ export class WorktreeRecipes {
       done: null,
     };
     this.live.set(session.id, live);
-    if (recipe.approved && (!repositoryScript || repositoryScript.approved))
+    if (
+      this.params.store.isApproved(recipe.sha256, checkout.gitDirectory) &&
+      (!repositoryScript || repositoryScript.approved)
+    )
       this.start(live);
     else this.persist(live);
   }
@@ -276,8 +287,14 @@ export class WorktreeRecipes {
       this.persist(live);
       return this.read(input.sessionId);
     }
+    const checkout = this.checkout(session.id);
+    if (!checkout)
+      throw new SessionError(
+        'not-found',
+        'The session worktree record is missing.',
+      );
     if (live.release === noop) live.release = this.params.claim(session.id);
-    this.params.store.approve(run.recipe.sha256);
+    this.params.store.approve(run.recipe.sha256, checkout.gitDirectory);
     live.controller = new AbortController();
     this.start(live);
     return this.read(input.sessionId);
@@ -305,7 +322,10 @@ export class WorktreeRecipes {
       const command = run.recipe.cleanup.command.trim();
       if (
         command &&
-        this.params.store.isApproved(run.recipe.sha256) &&
+        this.params.store.isApproved(
+          run.recipe.sha256,
+          this.checkout(sessionId)?.gitDirectory,
+        ) &&
         existsSync(run.directory)
       ) {
         const step = emptyStep('cleanup');

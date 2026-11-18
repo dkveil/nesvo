@@ -17,7 +17,7 @@ export const installWorktreeRecipeTables = (database: DatabaseSync) => {
     'CREATE TABLE IF NOT EXISTS worktree_recipes (id TEXT PRIMARY KEY, repository TEXT NOT NULL UNIQUE, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL)',
   );
   database.exec(
-    'CREATE TABLE IF NOT EXISTS worktree_recipe_approvals (sha256 TEXT PRIMARY KEY, approved_at TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS worktree_recipe_approvals (sha256 TEXT NOT NULL, git_directory TEXT NOT NULL, approved_at TEXT NOT NULL, PRIMARY KEY (sha256, git_directory))',
   );
   database.exec(
     'CREATE TABLE IF NOT EXISTS worktree_recipe_runs (session_id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK (json_valid(document)), released INTEGER NOT NULL CHECK (released IN (0, 1)), updated_at TEXT NOT NULL)',
@@ -109,18 +109,24 @@ export class WorktreeRecipeStore {
     this.database.prepare('DELETE FROM worktree_recipes WHERE id = ?').run(id);
   }
 
-  isApproved(sha256: string): boolean {
-    return !!this.database
-      .prepare('SELECT 1 FROM worktree_recipe_approvals WHERE sha256 = ?')
-      .get(sha256);
+  isApproved(sha256: string, gitDirectory?: string): boolean {
+    return !!(gitDirectory
+      ? this.database
+          .prepare(
+            'SELECT 1 FROM worktree_recipe_approvals WHERE sha256 = ? AND git_directory = ?',
+          )
+          .get(sha256, gitDirectory)
+      : this.database
+          .prepare('SELECT 1 FROM worktree_recipe_approvals WHERE sha256 = ?')
+          .get(sha256));
   }
 
-  approve(sha256: string): void {
+  approve(sha256: string, gitDirectory: string): void {
     this.database
       .prepare(
-        'INSERT INTO worktree_recipe_approvals (sha256, approved_at) VALUES (?, ?) ON CONFLICT (sha256) DO NOTHING',
+        'INSERT INTO worktree_recipe_approvals (sha256, git_directory, approved_at) VALUES (?, ?, ?) ON CONFLICT (sha256, git_directory) DO NOTHING',
       )
-      .run(sha256, new Date().toISOString());
+      .run(sha256, gitDirectory, new Date().toISOString());
   }
 
   run(sessionId: string): WorktreeRecipeRun | undefined {

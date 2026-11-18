@@ -24173,6 +24173,26 @@ test(
       RECIPE_FIXTURE_MODE: 'test',
     });
 
+    const clone = join(root, 'clone');
+    await git(root, 'clone', '-q', project, clone);
+    await git(
+      clone,
+      'remote',
+      'set-url',
+      'origin',
+      'git@github.com:Example/Recipe-Demo.git',
+    );
+    const cloneMatch = await request('match-worktree-recipe', {
+      directory: clone,
+    });
+    assert.equal(cloneMatch.match.recipe.id, recipe.id);
+    assert.equal(cloneMatch.match.recipe.approved, false);
+    assert.equal(
+      (await request('match-worktree-recipe', { directory: project })).match
+        .recipe.approved,
+      true,
+    );
+
     const [second, third] = await Promise.all([
       create('Second recipe session'),
       create('Third recipe session'),
