@@ -1,4 +1,5 @@
 import type { DesktopSession as Session } from '@nesvo/contracts';
+import { formatDateTime } from '@/shared/lib/format-date';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 
 type LifecycleSession = Pick<
@@ -12,15 +13,7 @@ export type SessionLifecycle = {
   archived: string | null;
 };
 
-const dateTimeFormat = new Intl.DateTimeFormat('en', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
-
-export function formatDateTime(isoDate: string) {
-  const time = Date.parse(isoDate);
-  return Number.isFinite(time) ? dateTimeFormat.format(time) : '';
-}
+export { formatDateTime };
 
 export function formatAgo(isoDate: string, now: number) {
   const relative = formatRelativeTime(isoDate, now);

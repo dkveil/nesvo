@@ -5,6 +5,7 @@ import {
   type RuleEntryRole,
   type RuleEntryScope,
 } from '@nesvo/contracts';
+import { formatDate } from '@/shared/lib/format-date';
 
 export const lessonRoleLabels: Record<RuleEntryRole, string> = {
   standalone: 'Interactive sessions',
@@ -75,15 +76,7 @@ export const lessonScopeText = (lesson: Lesson) => {
   return parts.length ? `${place} · ${parts.join(' · ')}` : place;
 };
 
-const dateFormat = new Intl.DateTimeFormat('en', {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  timeZone: 'UTC',
-});
-
-export const lessonDate = (date: string) =>
-  dateFormat.format(new Date(`${date.slice(0, 10)}T00:00:00Z`));
+export const lessonDate = (date: string) => formatDate(date.slice(0, 10));
 
 export const lessonStatusText = (lesson: Lesson, today: string) => {
   if (lessonIsDue(lesson, today)) return 'Review due';

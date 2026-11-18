@@ -7,6 +7,7 @@ import type {
 import { gateRuleEditSchema } from '@nesvo/contracts';
 import { ArrowUpRight } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
+import { formatDateTime } from '@/shared/lib/format-date';
 import { hostKey } from '@/shared/lib/host-key';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -106,6 +107,9 @@ export function GateRuleRow({
               {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}
             </Badge>
             <span>{row.scope === 'project' ? 'Project' : 'Global'}</span>
+            <time dateTime={row.createdAt}>
+              {formatDateTime(row.createdAt)}
+            </time>
           </div>
           {row.current && (
             <p className="text-xs text-muted-foreground line-through [overflow-wrap:anywhere]">

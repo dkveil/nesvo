@@ -23,12 +23,7 @@ export const fileKindLabels: Record<
   binary: 'Binary',
 };
 
-export function reviewDate(value: string) {
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
-}
+export { formatDateTime as reviewDate } from '@/shared/lib/format-date';
 
 export function compactPreview(value: string, limit = 240) {
   const normalized = value

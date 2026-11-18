@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { RuleEntryMetrics } from '@nesvo/contracts';
+import { formatDate } from '@/shared/lib/format-date';
 import { Badge } from '@/shared/ui/badge';
 
 type Props = {
@@ -10,7 +11,6 @@ type Props = {
 };
 
 const UNUSED_MS = 60 * 86_400_000;
-const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
 export function RuleUsage({ metrics, kind, since, now }: Props) {
   const [mountedAt] = useState(() => Date.now());
@@ -24,7 +24,13 @@ export function RuleUsage({ metrics, kind, since, now }: Props) {
       <span>Cited {metrics?.cited ?? 0}</span>
       <span>
         Last cited{' '}
-        {metrics?.lastCited ? date.format(new Date(metrics.lastCited)) : '—'}
+        {metrics?.lastCited ? (
+          <time dateTime={metrics.lastCited}>
+            {formatDate(metrics.lastCited)}
+          </time>
+        ) : (
+          '—'
+        )}
       </span>
       {repeatedlyCited && (
         <Badge tone="warning" size="xs">
