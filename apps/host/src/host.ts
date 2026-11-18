@@ -299,7 +299,7 @@ export const serveHost = ({
             .withPullRequestCheckout(id, run)
             .finally(() => wakeIdleRuns()),
       );
-      const usage = new ProviderUsageService(probes.controller.signal);
+      const usage = new ProviderUsageService();
       const evidence = new EvidenceStore(directory, id =>
         workflowRunStore.getStep(id),
       );
@@ -460,6 +460,15 @@ export const serveHost = ({
       let mcpRequests = 0;
       let definitionRequests = 0;
       let definitionWrites = 0;
+      const closeUsageAndConsumers = async () => {
+        const usageClosed = usage.close();
+        try {
+          await Promise.all([scheduledJobs.close(), workflows.close()]);
+        } finally {
+          await usageClosed;
+        }
+      };
+      yield* Effect.addFinalizer(() => Effect.promise(closeUsageAndConsumers));
       const iterator = yield* Effect.acquireRelease(
         Effect.sync(() => incoming[Symbol.asyncIterator]()),
         iterator =>
@@ -497,8 +506,7 @@ export const serveHost = ({
           continue;
         }
         if (request.method === 'shutdown') {
-          yield* Effect.promise(() => scheduledJobs.close());
-          yield* Effect.promise(() => workflows.close());
+          yield* Effect.promise(closeUsageAndConsumers);
           yield* Effect.promise(() => sessions.close());
           probes.controller.abort();
           yield* Effect.promise(() => Promise.all(probes.pending));

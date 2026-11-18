@@ -180,6 +180,7 @@ if (args.length === 1 && args[0] === '--version') {
             readFileSync(process.env.NESVO_FIXTURE_USAGE_CONTROL, 'utf8'),
           )
         : {};
+      if (control.holdUsage) await setTimeout(20_000);
       await setTimeout(150);
       response =
         control['Claude Code'] === 'unavailable'

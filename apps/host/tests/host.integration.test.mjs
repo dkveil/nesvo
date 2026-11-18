@@ -338,6 +338,62 @@ async function processesGone(pids, tracked) {
 
 const agent = session => session.messages.at(-1);
 
+test('host shutdown cancels the usage probe awaited by a scheduled job', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-usage-shutdown-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  await writeFile(
+    join(directory, 'usage-control.json'),
+    JSON.stringify({ holdUsage: true }),
+  );
+  const host = launch(directory, pidFile);
+  t.after(async () => {
+    host.child.stdin.end();
+    try {
+      await bounded(host.exited, 'Host failed to exit', 20_000);
+    } finally {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        host.child.kill();
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  const id = randomUUID();
+  const saved = await host.request('save-scheduled-job', {
+    id,
+    expectedRevision: null,
+    name: 'Usage shutdown check',
+    prompt: 'Run the check.',
+    directory,
+    provider: 'claude',
+    model: 'sonnet',
+    effort: null,
+    mode: 'read-only',
+    schedule: { kind: 'daily', time: '09:00' },
+    timeZone: 'UTC',
+    active: false,
+  });
+  assert.equal(saved.type, 'scheduled-job', JSON.stringify(saved));
+  const started = await host.request('run-scheduled-job-now', {
+    id,
+    requestId: randomUUID(),
+  });
+  assert.equal(started.type, 'scheduled-job-run', JSON.stringify(started));
+
+  let pid;
+  const deadline = Date.now() + 5000;
+  while (!(pid = await recordedPid(pidFile + '.usage'))) {
+    assert.ok(Date.now() < deadline, 'The usage probe never started');
+    await delay(25);
+  }
+  assert.ok(alive(pid));
+  assert.equal((await host.request('shutdown')).type, 'shutdown');
+  assert.equal(alive(pid), false, 'Shutdown must await the usage probe exit');
+  assert.deepEqual(await host.exited, { code: 0, signal: null });
+});
+
 test('streaming sends bounded message upserts and long histories page newest first by cursor', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-history-paging-')),

@@ -7,6 +7,7 @@ import { inspectClaudeUsage } from './claude';
 import { inspectCodexUsage } from './codex';
 
 export class ProviderUsageService {
+  private readonly controller = new AbortController();
   private readonly cached = new Map<
     ProviderUsageInput['provider'],
     { value: ProviderUsage; expiresAt: number; failures: number }
@@ -16,11 +17,15 @@ export class ProviderUsageService {
     Promise<ProviderUsage>
   >();
 
-  constructor(private readonly signal: AbortSignal) {}
+  async close(): Promise<void> {
+    this.controller.abort();
+    this.cached.clear();
+    await Promise.allSettled(this.pending.values());
+  }
 
   read({ provider }: ProviderUsageInput): Promise<ProviderUsage> {
-    if (this.signal.aborted)
-      return Promise.reject(new Error('Host is closing.'));
+    const { signal } = this.controller;
+    if (signal.aborted) return Promise.reject(new Error('Host is closing.'));
     const active = this.pending.get(provider);
     if (active) return active;
     const previous = this.cached.get(provider);
@@ -28,8 +33,8 @@ export class ProviderUsageService {
       return Promise.resolve(previous.value);
     const operation = (
       provider === 'Codex'
-        ? inspectCodexUsage(this.signal)
-        : inspectClaudeUsage(this.signal)
+        ? inspectCodexUsage(signal)
+        : inspectClaudeUsage(signal)
     )
       .then(value => providerUsageSchema.parse(value))
       .catch((): ProviderUsage => ({
@@ -43,6 +48,7 @@ export class ProviderUsageService {
         detail: 'Account limits could not be read. Refresh to try again.',
       }))
       .then(value => {
+        signal.throwIfAborted();
         const failures =
           value.status === 'ready'
             ? 0
