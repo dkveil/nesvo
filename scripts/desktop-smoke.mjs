@@ -821,7 +821,13 @@ try {
   await modelSearch.press('ArrowDown');
   await modelSearch.press('Enter');
   await modelPicker.waitFor({ state: 'hidden' });
-  assert.equal(await modelChip.getAttribute('title'), 'Claude Code · Sonnet');
+  await modelChip.hover();
+  const modelHint = page.getByRole('tooltip');
+  await modelHint.waitFor();
+  assert.equal((await modelHint.textContent())?.trim(), 'Claude Code · Sonnet');
+  await page.mouse.move(0, 0);
+  await modelChip.press('Escape');
+  await modelHint.waitFor({ state: 'hidden' });
   await screenshot('-new-session');
   await startThread({ title: 'Prototype analysis' });
   await page
