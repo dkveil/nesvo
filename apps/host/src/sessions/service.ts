@@ -392,6 +392,7 @@ export type SessionServiceOptions = {
   ) => Readonly<Record<string, string>> | undefined;
   isHeldByWorkflow?: (review: Review) => boolean;
   isKnownGroup?: (groupId: string) => boolean;
+  defaultDirectory?: (groupId?: string) => string | null;
 };
 
 export const GATE_PENDING_MESSAGE =
@@ -1164,7 +1165,7 @@ export class SessionService {
         'The session group no longer exists. Refresh the sidebar and try again.',
       );
     this.options.profiles?.require(input.provider, input.profileId);
-    let directory = options.isolatedDirectory ?? input.directory;
+    let directory = options.isolatedDirectory ?? this.requestedDirectory(input);
     if (!directory) {
       const name = input.requestId
         ? `request-${input.requestId}`
@@ -1646,7 +1647,10 @@ export class SessionService {
       );
     this.creatingWorktrees++;
     try {
-      const project = await resolveFolder(input.directory, signal);
+      const project = await resolveFolder(
+        this.requestedDirectory(input),
+        signal,
+      );
       const isolated = await this.prepareSessionWorktree(
         project,
         input.title,
@@ -3847,6 +3851,12 @@ export class SessionService {
     const active = this.active.get(session.id);
     if (active) this.clearStreamTimer(active);
     this.emitSession(session);
+  }
+
+  private requestedDirectory(input: CreateSessionInput): string {
+    return (
+      input.directory ?? this.options.defaultDirectory?.(input.groupId) ?? ''
+    );
   }
 
   private resolveDirectory(directory: string): string {

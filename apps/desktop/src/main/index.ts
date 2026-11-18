@@ -95,6 +95,7 @@ import {
   listPullRequestsSchema,
   addTrackedRepositorySchema,
   removeTrackedRepositorySchema,
+  setDefaultSessionFolderSchema,
   reorderTrackedRepositoriesSchema,
   listTrackedPullRequestsSchema,
   readPullRequestSchema,
@@ -817,6 +818,25 @@ void app.whenReady().then(async () => {
     authorize(event);
     return computers.execute('list-running-apps', undefined, route(hostId));
   });
+  handle('nesvo:read-default-session-folder', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'read-default-session-folder',
+      undefined,
+      route(hostId),
+    );
+  });
+  handle(
+    'nesvo:set-default-session-folder',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'set-default-session-folder',
+        setDefaultSessionFolderSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   for (const method of [
     'list-tracked-repositories',
     'suggest-tracked-repositories',

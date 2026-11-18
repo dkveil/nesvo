@@ -368,6 +368,11 @@ import {
   type TrackedRepositorySuggestion,
 } from './tracked-repositories';
 import { runningAppListSchema, type RunningAppList } from './running-apps';
+import {
+  defaultSessionFolderSchema,
+  setDefaultSessionFolderSchema,
+  type DefaultSessionFolder,
+} from './default-session-folder';
 
 export * from './sessions';
 export * from './session-history';
@@ -379,6 +384,7 @@ export * from './pull-requests';
 export * from './code-review';
 export * from './tracked-repositories';
 export * from './running-apps';
+export * from './default-session-folder';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -780,6 +786,15 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('read-default-session-folder'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-default-session-folder'),
+    input: setDefaultSessionFolderSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('add-tracked-repository'),
     input: addTrackedRepositorySchema,
   }),
@@ -1019,7 +1034,7 @@ export const hostHealthSchema = z.strictObject({
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
   contractRevision: z.number().int().min(1).max(1_000_000).optional(),
-  capabilities: z.array(hostCapabilitySchema).max(32).optional(),
+  capabilities: z.array(hostCapabilitySchema).max(64).optional(),
 });
 
 export const hostConnectSchema = z.strictObject({
@@ -1269,6 +1284,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('running-apps'),
     id: z.uuid(),
     list: runningAppListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('default-session-folder'),
+    id: z.uuid(),
+    directory: defaultSessionFolderSchema,
   }),
   z.strictObject({
     type: z.literal('tracked-repository-suggestions'),
@@ -1781,6 +1801,11 @@ export type DesktopApi = {
   ) => Promise<PullRequestReference | null>;
   listTrackedRepositories: (hostId?: HostId) => Promise<TrackedRepository[]>;
   listRunningApps: (hostId?: HostId) => Promise<RunningAppList>;
+  readDefaultSessionFolder: (hostId?: HostId) => Promise<DefaultSessionFolder>;
+  setDefaultSessionFolder: (
+    directory: string | null,
+    hostId?: HostId,
+  ) => Promise<DefaultSessionFolder>;
   addTrackedRepository: (
     input: AddTrackedRepositoryInput,
     hostId?: HostId,

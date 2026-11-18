@@ -97,6 +97,7 @@ import { SessionLauncher } from './scheduled-jobs/launcher';
 import { PROVIDER_SESSION_VARIABLE } from './process/provider-processes';
 import { RunningApps } from './running-apps/service';
 import { RunningAppsError } from './running-apps/scan';
+import { DefaultSessionFolder } from './workspace/default-folder';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -254,6 +255,7 @@ export const serveHost = ({
       const profiles = new ProviderProfiles(database);
       const store = new SessionStore(database);
       const groupStore = new SessionGroupStore(database);
+      const defaultFolder = new DefaultSessionFolder(database);
       const costs = new CostStore(database);
       const scheduledJobStore = new ScheduledJobStore(database);
       const workflowRunStore = new WorkflowRunStore(database);
@@ -299,6 +301,9 @@ export const serveHost = ({
                   };
                 },
                 isKnownGroup: groupId => !!groupStore.get(groupId),
+                defaultDirectory: groupId =>
+                  (groupId && groupStore.get(groupId)?.defaults.directory) ||
+                  defaultFolder.get(),
                 isHeldByWorkflow: review => {
                   const runId = store.get(review.sessionId)?.workflowRunId;
                   return (
@@ -744,6 +749,33 @@ export const serveHost = ({
             .catch(() => undefined);
           probes.pending.add(reading);
           void reading.finally(() => probes.pending.delete(reading));
+          continue;
+        }
+        if (request.method === 'set-default-session-folder') {
+          const saving = defaultFolder
+            .set(request.input.directory, probes.controller.signal)
+            .then(directory =>
+              send({
+                type: 'default-session-folder',
+                id: request.id,
+                directory,
+              }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The default folder could not be saved on this computer.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(saving);
+          void saving.finally(() => probes.pending.delete(saving));
           continue;
         }
         if (
@@ -1977,6 +2009,12 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessions.compact(request.input),
+              };
+            if (request.method === 'read-default-session-folder')
+              return {
+                type: 'default-session-folder',
+                id: request.id,
+                directory: defaultFolder.get(),
               };
             if (request.method === 'backup-database')
               return {

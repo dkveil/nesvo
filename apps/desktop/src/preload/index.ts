@@ -93,6 +93,8 @@ import {
   listTrackedPullRequestsSchema,
   trackedRepositoryListSchema,
   runningAppListSchema,
+  defaultSessionFolderSchema,
+  setDefaultSessionFolderSchema,
   trackedRepositorySuggestionListSchema,
   trackedPullRequestListsSchema,
   readPullRequestSchema,
@@ -1040,6 +1042,21 @@ const api: DesktopApi = {
   listRunningApps: async hostId =>
     runningAppListSchema.parse(
       await ipcRenderer.invoke('nesvo:list-running-apps', route(hostId)),
+    ),
+  readDefaultSessionFolder: async hostId =>
+    defaultSessionFolderSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-default-session-folder',
+        route(hostId),
+      ),
+    ),
+  setDefaultSessionFolder: async (directory, hostId) =>
+    defaultSessionFolderSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-default-session-folder',
+        setDefaultSessionFolderSchema.parse({ directory }),
+        route(hostId),
+      ),
     ),
   listTrackedRepositories: async hostId =>
     trackedRepositoryListSchema.parse(

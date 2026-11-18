@@ -1147,6 +1147,7 @@ test(
         'repository-mcp-trust',
         'tracked-repositories',
         'running-apps',
+        'default-session-folder',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6342,6 +6343,7 @@ test(
       'repository-mcp-trust',
       'tracked-repositories',
       'running-apps',
+      'default-session-folder',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -21842,6 +21844,73 @@ test('running apps attribute a listening port to the session that started it', a
       try {
         process.kill(server.pid);
       } catch {}
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the default session folder is validated, cleared and used for sessions without a folder', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-default-folder-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const project = join(directory, 'development');
+  await mkdir(project);
+  const resolvedProject = await realpath(project);
+  let host;
+  try {
+    host = launch(directory, pidFile);
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('default-session-folder'));
+    const initial = await host.request('read-default-session-folder');
+    assert.equal(initial.type, 'default-session-folder');
+    assert.equal(initial.directory, null);
+    const relative = await host.request('set-default-session-folder', {
+      directory: 'development',
+    });
+    assert.equal(relative.code, 'invalid-directory', JSON.stringify(relative));
+    const missing = await host.request('set-default-session-folder', {
+      directory: join(directory, 'missing'),
+    });
+    assert.equal(missing.code, 'invalid-directory', JSON.stringify(missing));
+    assert.equal(
+      (await host.request('read-default-session-folder')).directory,
+      null,
+    );
+    const saved = await host.request('set-default-session-folder', {
+      directory: project,
+    });
+    assert.equal(saved.type, 'default-session-folder', JSON.stringify(saved));
+    assert.equal(saved.directory, resolvedProject);
+    assert.equal(
+      (await host.request('read-default-session-folder')).directory,
+      resolvedProject,
+    );
+    const session = {
+      title: 'Default folder',
+      provider: 'Claude Code',
+      model: 'default',
+    };
+    const defaulted = await host.request('create-session', session);
+    assert.equal(defaulted.type, 'session', JSON.stringify(defaulted));
+    assert.equal(defaulted.session.directory, resolvedProject);
+    const isolated = await host.request('create-session', {
+      ...session,
+      directory: '',
+    });
+    assert.equal(isolated.type, 'session', JSON.stringify(isolated));
+    assert.notEqual(isolated.session.directory, resolvedProject);
+    assert.ok(
+      isolated.session.directory.startsWith(
+        join(await realpath(directory), 'workspaces'),
+      ),
+    );
+    const cleared = await host.request('set-default-session-folder', {
+      directory: null,
+    });
+    assert.equal(cleared.directory, null);
+    const afterClear = await host.request('create-session', session);
+    assert.equal(afterClear.type, 'session', JSON.stringify(afterClear));
+    assert.notEqual(afterClear.session.directory, resolvedProject);
+  } finally {
     await host?.stop();
     await rm(directory, { recursive: true, force: true });
   }

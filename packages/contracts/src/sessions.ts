@@ -206,7 +206,7 @@ export const createSessionSchema = z
     model: modelSchema,
     mode: sessionModeSchema.default('read-only'),
     role: z.enum(['orchestrator', 'standalone']).optional(),
-    directory: z.string().trim().max(4096),
+    directory: z.string().trim().max(4096).optional(),
     effort: reasoningEffortSchema.optional(),
     isolation: sessionIsolationSchema.optional(),
     groupId: z.uuid().optional(),

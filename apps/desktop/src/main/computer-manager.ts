@@ -257,6 +257,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to track repositories.',
   'running-apps':
     'Update this computer’s Nesvo host and reconnect to see running apps.',
+  'default-session-folder':
+    'Update this computer’s Nesvo host and reconnect to set a default session folder.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -300,6 +302,11 @@ function requiredCapability(
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'list-running-apps') return 'running-apps';
+  if (
+    method === 'read-default-session-folder' ||
+    method === 'set-default-session-folder'
+  )
+    return 'default-session-folder';
   if (
     method === 'read-session-changes' ||
     method === 'read-session-change-patch'
@@ -1106,6 +1113,8 @@ export class ComputerManager {
       'adopt-conversation': 'session',
       'backup-database': 'database-backup',
       'list-running-apps': 'running-apps',
+      'read-default-session-folder': 'default-session-folder',
+      'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
       ...sessionDeletionResponses,
       ...pullRequestResponses,
@@ -1167,6 +1176,8 @@ export class ComputerManager {
         return response.repositories;
       case 'running-apps':
         return response.list;
+      case 'default-session-folder':
+        return response.directory;
       case 'tracked-repository-suggestions':
         return response.suggestions;
       case 'tracked-pull-request-lists':

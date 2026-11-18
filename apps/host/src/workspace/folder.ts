@@ -21,10 +21,14 @@ function resolveFolderInChild(): void {
   const fs = process.getBuiltinModule('node:fs');
   const path = process.getBuiltinModule('node:path');
   const requested = process.argv[1] ?? '';
+  const readable = process.argv[2] === 'readable';
   let folder: string | null = null;
   try {
-    if (path.isAbsolute(requested) && fs.statSync(requested).isDirectory())
-      folder = fs.realpathSync(requested);
+    if (path.isAbsolute(requested) && fs.statSync(requested).isDirectory()) {
+      const resolved = fs.realpathSync(requested);
+      if (readable) fs.opendirSync(resolved).closeSync();
+      folder = resolved;
+    }
   } catch {
     folder = null;
   }
@@ -56,12 +60,19 @@ function reportedFolder(result: OwnedProcessResult): string | null | undefined {
 export async function resolveFolder(
   directory: string,
   signal?: AbortSignal,
+  { readable = false }: { readable?: boolean } = {},
 ): Promise<string> {
   let result: OwnedProcessResult;
   try {
     result = await runOwnedProcess({
       command: process.execPath,
-      args: ['-e', `(${resolveFolderInChild.toString()})()`, '--', directory],
+      args: [
+        '-e',
+        `(${resolveFolderInChild.toString()})()`,
+        '--',
+        directory,
+        ...(readable ? ['readable'] : []),
+      ],
       cwd: tmpdir(),
       env: checkerEnvironment(),
       timeoutMs: FOLDER_CHECK_TIMEOUT_MS,
