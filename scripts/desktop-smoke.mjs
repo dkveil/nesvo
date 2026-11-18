@@ -3422,7 +3422,10 @@ try {
       exact: true,
     })
     .click();
-  await restartedPage.locator(`#review-${correctedReview.id}[open]`).waitFor();
+  await restartedPage
+    .getByRole('dialog', { name: 'Saved results', exact: true })
+    .locator(`#review-${correctedReview.id} > details[open]`)
+    .waitFor();
   await restartedPage
     .getByRole('navigation', { name: 'Sessions', exact: true })
     .getByRole('button', { name: /^Prototype orchestration/ })
