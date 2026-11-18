@@ -1237,6 +1237,7 @@ if (args.length === 1 && args[0] === '--version') {
   } else if (
     command === 'fixture:ask-write' ||
     command === 'fixture:ask-mcp' ||
+    command === 'fixture:ask-browser-click' ||
     command === 'fixture:ask-edit-all' ||
     command === 'fixture:ask-cancel'
   ) {
@@ -1247,17 +1248,19 @@ if (args.length === 1 && args[0] === '--version') {
     const [toolName, input] =
       command === 'fixture:ask-mcp'
         ? ['mcp__fixture__lookup', { query: 'status' }]
-        : command === 'fixture:ask-edit-all'
-          ? [
-              'Edit',
-              {
-                file_path: target,
-                old_string: 'a',
-                new_string: 'b',
-                replace_all: true,
-              },
-            ]
-          : ['Write', { file_path: target, content: 'approved' }];
+        : command === 'fixture:ask-browser-click'
+          ? [`${BROWSER_TOOL_PREFIX}computer`, { action: 'left_click' }]
+          : command === 'fixture:ask-edit-all'
+            ? [
+                'Edit',
+                {
+                  file_path: target,
+                  old_string: 'a',
+                  new_string: 'b',
+                  replace_all: true,
+                },
+              ]
+            : ['Write', { file_path: target, content: 'approved' }];
     const toolUse = `fixture-ask-${turn}`;
     start('Fixture asks. ');
     stream({

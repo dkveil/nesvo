@@ -24461,6 +24461,34 @@ test('Browser access is a session property that Claude Code checks before starti
   const without = await turn(plain.session.id);
   assert.equal(without.status, 'completed', without.error);
   assert.equal((await launches()).at(-1).includes('--chrome'), false);
+
+  const planned = await host.request('create-session', {
+    title: 'Claude browser plan',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'accept-edits',
+    directory: project,
+    planFirst: true,
+    browser: true,
+  });
+  assert.equal(planned.type, 'session', JSON.stringify(planned));
+  assert.equal(planned.session.mode, 'read-only');
+  const planTurn = await turn(planned.session.id, 'fixture:ask-browser-click');
+  assert.equal(planTurn.status, 'completed', planTurn.error);
+  assert.equal(planTurn.pendingApprovals.length, 0);
+  assert.equal(planTurn.plan.status, 'plan-ready');
+  assert.match(planTurn.plan.text, /only allows read-only browser tools/);
+  args = (await launches()).at(-1);
+  assert.ok(args.includes('--chrome'));
+  assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
+  assert.equal(
+    args[args.indexOf('--tools') + 1],
+    'Read,Glob,Grep,ExitPlanMode',
+  );
+  const planAllowed = args[args.indexOf('--allowedTools') + 1].split(',');
+  assert.deepEqual(planAllowed.slice(0, 3), ['Read', 'Glob', 'Grep']);
+  assert.ok(planAllowed.includes('mcp__claude-in-chrome__read_page'));
+  assert.equal(planAllowed.includes('mcp__claude-in-chrome__computer'), false);
   const counted = (await launches()).length;
 
   const expectRefusal = async (extra, pattern) => {
