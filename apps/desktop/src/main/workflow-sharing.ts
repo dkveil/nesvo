@@ -205,16 +205,16 @@ export const createWorkflowSharing = ({
   };
 
   const deliverLink = async (raw: string) => {
-    const parsed = parseImportLink(raw, [
-      settings().origin,
-      DEFAULT_SHARE_ORIGIN,
-    ]);
-    if (!parsed.ok) {
-      log.warn('A Nesvo link was refused.');
-      offer({ status: 'refused', message: parsed.message });
-      return;
-    }
     try {
+      const parsed = parseImportLink(raw, [
+        settings().origin,
+        DEFAULT_SHARE_ORIGIN,
+      ]);
+      if (!parsed.ok) {
+        log.warn('A Nesvo link was refused.');
+        offer({ status: 'refused', message: parsed.message });
+        return;
+      }
       const { bundle, expiresAt } = await fetchShare(
         parsed.origin,
         parsed.shareId,

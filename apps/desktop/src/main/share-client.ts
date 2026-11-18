@@ -5,6 +5,7 @@ import {
   workflowShareCreatedSchema,
   workflowShareErrorSchema,
   workflowShareLimits,
+  workflowSharingLimits,
   workflowShareSecretLabels,
   type WorkflowShareBundle,
   type WorkflowShareCreated,
@@ -188,7 +189,11 @@ export const createShare = async (
   const parsed = workflowShareCreatedSchema.safeParse(
     await readJson(response, MAX_CREATED_RESPONSE_BYTES),
   );
-  if (!parsed.success)
+  if (
+    !parsed.success ||
+    parsed.data.url.length > workflowSharingLimits.url ||
+    !URL.canParse(parsed.data.url)
+  )
     throw new ShareRequestError('The share site sent an unexpected answer.');
   if (new URL(parsed.data.url).origin !== origin)
     throw new ShareRequestError(

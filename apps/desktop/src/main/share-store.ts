@@ -9,29 +9,66 @@ import {
 } from '@nesvo/contracts';
 
 const SHARING_FILE = 'sharing.json';
+const UNREADABLE_SUFFIX = '.unreadable';
 const PRIVATE_FILE_MODE = 0o600;
 
 const storedLinkSchema = sharedWorkflowLinkSchema.extend({
   revokeToken: workflowShareCreatedSchema.shape.revokeToken,
 });
 
-const storedSharingSchema = z.object({
-  origin: z.string().max(workflowSharingLimits.url).nullable().default(null),
-  links: z.array(storedLinkSchema).max(workflowSharingLimits.links).default([]),
+const storedOriginSchema = z.string().max(workflowSharingLimits.url).nullable();
+
+const storedFileSchema = z.object({
+  origin: z.unknown().optional(),
+  links: z.array(z.unknown()).optional(),
 });
 
 export type StoredShareLink = z.infer<typeof storedLinkSchema>;
-type StoredSharing = z.infer<typeof storedSharingSchema>;
+type StoredSharing = {
+  origin: string | null;
+  links: StoredShareLink[];
+};
+
+const isMissing = (error: unknown) =>
+  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+const validLinks = (links: readonly unknown[]): StoredShareLink[] =>
+  links.flatMap(link => {
+    const parsed = storedLinkSchema.safeParse(link);
+    return parsed.success ? [parsed.data] : [];
+  });
+
+const setAside = (target: string) => {
+  try {
+    renameSync(target, `${target}${UNREADABLE_SUFFIX}`);
+  } catch {
+    throw new Error(
+      'The shared links file cannot be read or moved aside. Check the Nesvo data folder.',
+    );
+  }
+};
 
 export const readSharing = (directory: string): StoredSharing => {
+  const target = join(directory, SHARING_FILE);
+  let text: string;
   try {
-    const parsed = storedSharingSchema.safeParse(
-      JSON.parse(readFileSync(join(directory, SHARING_FILE), 'utf8')),
-    );
-    return parsed.success ? parsed.data : { origin: null, links: [] };
+    text = readFileSync(target, 'utf8');
+  } catch (error) {
+    if (isMissing(error)) return { origin: null, links: [] };
+    throw new Error('The shared links file cannot be read.');
+  }
+  let file: z.infer<typeof storedFileSchema>;
+  try {
+    file = storedFileSchema.parse(JSON.parse(text));
   } catch {
+    setAside(target);
     return { origin: null, links: [] };
   }
+  const origin = storedOriginSchema.safeParse(file.origin ?? null);
+  return {
+    origin: origin.success ? origin.data : null,
+    links: validLinks(file.links ?? []).slice(-workflowSharingLimits.links),
+  };
 };
 
 export const saveSharing = (directory: string, sharing: StoredSharing) => {
@@ -40,8 +77,8 @@ export const saveSharing = (directory: string, sharing: StoredSharing) => {
   writeFileSync(
     temporary,
     JSON.stringify({
-      origin: sharing.origin,
-      links: sharing.links.slice(-workflowSharingLimits.links),
+      origin: storedOriginSchema.parse(sharing.origin),
+      links: validLinks(sharing.links).slice(-workflowSharingLimits.links),
     }),
     { mode: PRIVATE_FILE_MODE },
   );
