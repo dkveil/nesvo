@@ -672,6 +672,7 @@ try {
     'conversation-import',
     'scheduled-job-change-triggers',
     'database-backup',
+    'claude-approvals',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
