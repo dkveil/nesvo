@@ -103,6 +103,9 @@ function attribute(
     sessionIds,
   );
   if (byProcess) return { sessionId: byProcess, match: 'process' };
+  const inherited = input.processes.get(pid)?.sessionVariable;
+  if (inherited && sessionIds.has(inherited))
+    return { sessionId: inherited, match: 'process' };
   const byFolder = attributeByFolder(
     input.processes.get(pid)?.directory ?? null,
     input.sessions,

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { runOwnedProcess } from '../process/owned-process';
+import { PROVIDER_SESSION_VARIABLE } from '../process/provider-processes';
 
 const SCAN_TIMEOUT_MS = 10_000;
 const MAX_SCAN_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -15,6 +16,7 @@ export type ProcessEntry = {
   name: string;
   startedAt: number | null;
   directory: string | null;
+  sessionVariable?: string | null;
 };
 
 export type ScanResult = {
@@ -183,6 +185,18 @@ function readLinuxBootTime(): number | null {
   }
 }
 
+function readLinuxSessionVariable(pid: number): string | null {
+  try {
+    const prefix = `${PROVIDER_SESSION_VARIABLE}=`;
+    const value = readFileSync(`/proc/${pid}/environ`, 'utf8')
+      .split('\0')
+      .find(item => item.startsWith(prefix));
+    return value ? value.slice(prefix.length) : null;
+  } catch {
+    return null;
+  }
+}
+
 function readLinuxProcess(
   pid: number,
   bootTime: number | null,
@@ -200,6 +214,7 @@ function readLinuxProcess(
     } catch {
       directory = null;
     }
+    const sessionVariable = readLinuxSessionVariable(pid);
     return {
       pid,
       parent: Number.isInteger(parent) ? parent : 0,
@@ -209,6 +224,7 @@ function readLinuxProcess(
           ? (bootTime + ticks / LINUX_CLOCK_TICKS_PER_SECOND) * 1000
           : null,
       directory,
+      sessionVariable,
     };
   } catch {
     return null;
