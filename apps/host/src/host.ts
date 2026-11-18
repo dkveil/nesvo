@@ -1646,7 +1646,8 @@ export const serveHost = ({
         }
         if (
           request.method === 'stage-attachment' ||
-          request.method === 'read-attachment'
+          request.method === 'read-attachment' ||
+          request.method === 'locate-attachment'
         ) {
           const operation = async (): Promise<HostReply> =>
             request.method === 'stage-attachment'
@@ -1655,11 +1656,17 @@ export const serveHost = ({
                   id: request.id,
                   upload: await sessions.attachments.stage(request.input),
                 }
-              : {
-                  type: 'attachment-content',
-                  id: request.id,
-                  content: await sessions.attachments.read(request.input.id),
-                };
+              : request.method === 'read-attachment'
+                ? {
+                    type: 'attachment-content',
+                    id: request.id,
+                    content: await sessions.attachments.read(request.input.id),
+                  }
+                : {
+                    type: 'attachment-location',
+                    id: request.id,
+                    location: await sessions.locateAttachment(request.input),
+                  };
           const pending = operation()
             .then(send)
             .catch(error =>
@@ -1667,11 +1674,16 @@ export const serveHost = ({
                 type: 'error',
                 id: request.id,
                 code:
-                  error instanceof AttachmentError ? error.code : 'unavailable',
+                  error instanceof AttachmentError ||
+                  error instanceof SessionError
+                    ? error.code
+                    : 'unavailable',
                 message:
                   error instanceof AttachmentError
                     ? error.message
-                    : 'The image could not be stored or read on this computer.',
+                    : error instanceof SessionError
+                      ? error.message
+                      : 'The attachment could not be stored or read on this computer.',
               }),
             )
             .catch(() => undefined)

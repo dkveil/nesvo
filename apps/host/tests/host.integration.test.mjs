@@ -15,6 +15,7 @@ import {
   utimes,
   writeFile,
 } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -1140,6 +1141,7 @@ test(
         'provider-profiles',
         'inline-attachments',
         'pull-request-reviews',
+        'file-attachments',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6147,6 +6149,7 @@ test(
       'provider-profiles',
       'inline-attachments',
       'pull-request-reviews',
+      'file-attachments',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -19906,7 +19909,7 @@ test('Claude Code asks the operator once through the host prompt channel', async
   );
 });
 
-test('image attachments reach both providers, reject invalid uploads and survive host restart', async t => {
+test('image, PDF and file attachments reach both providers, reject invalid uploads and survive host restart', async t => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-attachments-')),
   );
@@ -19919,6 +19922,8 @@ test('image attachments reach both providers, reject invalid uploads and survive
     launch(directory, pidFile, {
       NESVO_FIXTURE_IMAGE_LOG: claudeImages,
       NESVO_CODEX_FIXTURE_IMAGE_LOG: codexImages,
+      NESVO_TEST_MODE: '1',
+      NESVO_TEST_SESSION_DELETE_GRACE_MS: '200',
     });
   let host = open();
   t.after(async () => {
@@ -19975,10 +19980,30 @@ test('image attachments reach both providers, reject invalid uploads and survive
   const stagedJpeg = await stage(jpeg, 'renamed.png');
   assert.equal(stagedJpeg.upload.attachment.mediaType, 'image/jpeg');
 
-  const text = await stage(Buffer.from('not an image'), 'notes.png');
-  assert.equal(text.type, 'error');
-  assert.equal(text.code, 'invalid-request');
-  assert.match(text.message, /PNG, JPEG, WebP or GIF/);
+  const notes = Buffer.from('Release notes\n');
+  const stagedNotes = await stage(notes, 'notes.png');
+  assert.equal(stagedNotes.type, 'attachment-upload');
+  assert.deepEqual(stagedNotes.upload.attachment, {
+    id: sha256(notes),
+    mediaType: 'application/octet-stream',
+    size: notes.length,
+    name: 'notes.png',
+  });
+  const pdf = Buffer.concat([
+    Buffer.from('%PDF-1.7\n'),
+    Buffer.alloc(600 * 1024, 3),
+  ]);
+  const stagedPdf = await stage(pdf, 'brief.pdf');
+  assert.equal(stagedPdf.upload.attachment.mediaType, 'application/pdf');
+  const codexNotes = Buffer.from('Only the Codex session holds this.\n');
+  const stagedCodexNotes = await stage(codexNotes, 'codex notes.txt');
+  assert.equal(
+    stagedCodexNotes.upload.attachment.mediaType,
+    'application/octet-stream',
+  );
+  const empty = await stage(Buffer.alloc(0), 'empty.txt');
+  assert.equal(empty.type, 'error');
+  assert.match(empty.message, /empty/);
   const oversized = await stage(
     Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]),
     'large.png',
@@ -20038,6 +20063,17 @@ test('image attachments reach both providers, reject invalid uploads and survive
     );
     assert.equal(finished.status, 'completed', finished.error);
   };
+  const fileText = 'Read  then check .';
+  const filed = {
+    'Claude Code': [
+      { ...stagedPdf.upload.attachment, offset: 5 },
+      { ...stagedNotes.upload.attachment, offset: 17 },
+    ],
+    Codex: [
+      { ...stagedPdf.upload.attachment, offset: 5 },
+      { ...stagedCodexNotes.upload.attachment, offset: 17 },
+    ],
+  };
   for (const provider of ['Claude Code', 'Codex']) {
     await sendAndFinish(
       provider,
@@ -20045,7 +20081,26 @@ test('image attachments reach both providers, reject invalid uploads and survive
       attachments[provider],
     );
     await sendAndFinish(provider, placedText, placed[provider]);
+    await sendAndFinish(provider, fileText, filed[provider]);
   }
+  const sessionFolder = provider =>
+    join(directory, 'attachments', 'sessions', sessions[provider].id);
+  const sessionFile = (provider, attachment) =>
+    join(sessionFolder(provider), attachment.id.slice(0, 16), attachment.name);
+  const claudeNotesPath = sessionFile(
+    'Claude Code',
+    stagedNotes.upload.attachment,
+  );
+  const codexPdfPath = sessionFile('Codex', stagedPdf.upload.attachment);
+  const codexNotesPath = sessionFile(
+    'Codex',
+    stagedCodexNotes.upload.attachment,
+  );
+  const fileSummary = (name, bytes) => ({
+    name,
+    size: bytes.length,
+    sha256: sha256(bytes),
+  });
 
   const claudeLog = (await readFile(claudeImages, 'utf8'))
     .trim()
@@ -20061,7 +20116,7 @@ test('image attachments reach both providers, reject invalid uploads and survive
     size: jpeg.length,
     sha256: sha256(jpeg),
   };
-  assert.deepEqual(claudeLog, [
+  assert.deepEqual(claudeLog.slice(0, 2), [
     {
       provider: 'Claude Code',
       text: 'Describe the attached screenshot',
@@ -20081,11 +20136,47 @@ test('image attachments reach both providers, reject invalid uploads and survive
       images: [jpegImage, pngImage],
     },
   ]);
+  const { disallowed, ...fileTurn } = claudeLog[2];
+  assert.deepEqual(fileTurn, {
+    provider: 'Claude Code',
+    text: `Read  then check [Attached file: notes.png at ${claudeNotesPath}].`,
+    sequence: [
+      'text:Read ',
+      'document:0',
+      `text: then check [Attached file: notes.png at ${claudeNotesPath}].`,
+    ],
+    images: [
+      { mediaType: 'application/pdf', size: pdf.length, sha256: sha256(pdf) },
+    ],
+    files: [fileSummary('notes.png', notes)],
+  });
+  assert.match(disallowed, /^Edit\(\/\/.+\/\*\*\)$/);
+  assert.ok(disallowed.includes(`${sessions['Claude Code'].id}/**`));
   const codexLog = (await readFile(codexImages, 'utf8'))
     .trim()
     .split('\n')
     .map(line => JSON.parse(line));
-  assert.equal(codexLog.length, 2);
+  assert.equal(codexLog.length, 3);
+  assert.equal(
+    codexLog[2].text,
+    `Read [Attached file: brief.pdf at ${codexPdfPath}] then check [Attached file: codex notes.txt at ${codexNotesPath}].`,
+  );
+  assert.deepEqual(codexLog[2].images, []);
+  assert.deepEqual(codexLog[2].files, [
+    fileSummary('brief.pdf', pdf),
+    fileSummary('codex notes.txt', codexNotes),
+  ]);
+  const located = await host.request('locate-attachment', {
+    sessionId: sessions.Codex.id,
+    id: stagedCodexNotes.upload.attachment.id,
+  });
+  assert.equal(located.type, 'attachment-location', JSON.stringify(located));
+  assert.equal(located.location.path, codexNotesPath);
+  const foreign = await host.request('locate-attachment', {
+    sessionId: sessions.Codex.id,
+    id: stagedJpeg.upload.attachment.id,
+  });
+  assert.equal(foreign.code, 'not-found');
   assert.equal(codexLog[0].text, 'Describe the attached screenshot');
   assert.deepEqual(codexLog[0].sequence, [
     'text:Describe the attached screenshot',
@@ -20116,6 +20207,8 @@ test('image attachments reach both providers, reject invalid uploads and survive
     assert.deepEqual(operators[0].attachments, attachments[provider]);
     assert.equal(operators[1].body, placedText);
     assert.deepEqual(operators[1].attachments, placed[provider]);
+    assert.equal(operators[2].body, fileText);
+    assert.deepEqual(operators[2].attachments, filed[provider]);
   }
   const content = await host.request('read-attachment', {
     id: stagedJpeg.upload.attachment.id,
@@ -20134,6 +20227,8 @@ test('image attachments reach both providers, reject invalid uploads and survive
   host = launch(directory, pidFile, {
     NESVO_FIXTURE_IMAGE_LOG: claudeImages,
     NESVO_FIXTURE_TEXT_INPUT: '1',
+    NESVO_TEST_MODE: '1',
+    NESVO_TEST_SESSION_DELETE_GRACE_MS: '200',
   });
   const textOnly = await host.request('claude-status');
   assert.equal(textOnly.status.images.status, 'unsupported');
@@ -20154,8 +20249,27 @@ test('image attachments reach both providers, reject invalid uploads and survive
   assert.match(failed.error, /cannot receive images/);
   assert.equal(
     (await readFile(claudeImages, 'utf8')).trim().split('\n').length,
-    2,
+    3,
   );
+
+  const deletion = await host.request('delete-session', {
+    sessionId: sessions.Codex.id,
+  });
+  assert.equal(deletion.type, 'session-deletion', JSON.stringify(deletion));
+  const blob = (attachment, extension) =>
+    join(directory, 'attachments', `${attachment.id}.${extension}`);
+  for (let attempt = 0; attempt < 80; attempt++) {
+    if (!existsSync(sessionFolder('Codex'))) break;
+    await delay(50);
+  }
+  assert.equal(existsSync(sessionFolder('Codex')), false);
+  assert.equal(
+    existsSync(blob(stagedCodexNotes.upload.attachment, 'bin')),
+    false,
+  );
+  assert.ok(existsSync(blob(stagedPdf.upload.attachment, 'pdf')));
+  assert.ok(existsSync(blob(stagedPng.upload.attachment, 'png')));
+  assert.ok(existsSync(claudeNotesPath));
 });
 
 test('a session opened in a terminal refuses Nesvo turns until it returns', async () => {

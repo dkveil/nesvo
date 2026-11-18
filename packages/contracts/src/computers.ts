@@ -49,6 +49,7 @@ export const hostCapabilitySchema = z.enum([
   'provider-profiles',
   'inline-attachments',
   'pull-request-reviews',
+  'file-attachments',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

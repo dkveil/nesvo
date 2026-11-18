@@ -770,7 +770,21 @@ if (args.length === 1 && args[0] === '--version') {
       );
       assert.ok(texts.length > 0);
       const turnText = texts.map(item => item.text).join('');
-      if (images.length && process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG)
+      const attachedFiles = [
+        ...turnText.matchAll(/\[Attached file: (.+?) at (.+?)\]/g),
+      ].map(([, name, path]) => {
+        assert.ok(isAbsolute(path), 'Attached file paths must be absolute');
+        const bytes = readFileSync(path);
+        return {
+          name,
+          size: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        };
+      });
+      if (
+        (images.length || attachedFiles.length) &&
+        process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG
+      )
         writeFileSync(
           process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG,
           JSON.stringify({
@@ -792,6 +806,7 @@ if (args.length === 1 && args[0] === '--version') {
                 sha256: createHash('sha256').update(bytes).digest('hex'),
               };
             }),
+            ...(attachedFiles.length ? { files: attachedFiles } : {}),
           }) + '\n',
           { flag: 'a' },
         );

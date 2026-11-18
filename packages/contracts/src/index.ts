@@ -164,7 +164,10 @@ import {
   attachmentUploadSchema,
   readAttachmentSchema,
   stageAttachmentSchema,
+  locateAttachmentSchema,
+  attachmentLocationSchema,
   type AttachmentContent,
+  type OpenAttachmentInput,
   type AttachmentUpload,
   type ReadAttachmentInput,
   type StageAttachmentInput,
@@ -541,6 +544,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('read-attachment'),
     input: readAttachmentSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('locate-attachment'),
+    input: locateAttachmentSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1024,6 +1032,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('attachment-content'),
     id: z.uuid(),
     content: attachmentContentSchema,
+  }),
+  z.strictObject({
+    type: z.literal('attachment-location'),
+    id: z.uuid(),
+    location: attachmentLocationSchema,
   }),
   z.strictObject({
     type: z.literal('history-search'),
@@ -1534,6 +1547,10 @@ export type DesktopApi = {
     input: ReadAttachmentInput,
     hostId?: HostId,
   ) => Promise<AttachmentContent>;
+  openAttachment: (
+    input: OpenAttachmentInput,
+    hostId?: HostId,
+  ) => Promise<void>;
   decideReview: (
     input: DecideReviewInput,
     hostId?: HostId,

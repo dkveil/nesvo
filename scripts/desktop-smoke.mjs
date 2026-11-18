@@ -726,6 +726,7 @@ try {
     'provider-profiles',
     'inline-attachments',
     'pull-request-reviews',
+    'file-attachments',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

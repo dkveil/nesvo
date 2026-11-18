@@ -39,6 +39,8 @@ const flags = [
   '--json-schema',
   '--setting-sources',
   '--append-system-prompt',
+  '--add-dir',
+  '--disallowedTools',
 ];
 const PERMISSION_HELP = [
   '--permission-mode <mode>  Permission mode to use for the session',
@@ -67,6 +69,25 @@ const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
 const REPAIR_NOTE = 'The verdict did not match the required shape';
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const flagValue = flag =>
+  args.includes(flag) ? args[args.indexOf(flag) + 1] : null;
+const attachedFiles = prompt =>
+  [...prompt.matchAll(/\[Attached file: (.+?) at (.+?)\]/g)].map(
+    ([, name, path]) => {
+      const readDirectory = flagValue('--add-dir');
+      assert.ok(readDirectory, 'Attached files need a readable directory');
+      assert.ok(
+        path.startsWith(readDirectory),
+        'Attached files live in the readable directory',
+      );
+      const bytes = readFileSync(path);
+      return {
+        name,
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+    },
+  );
 const readUserContent = content => {
   if (typeof content === 'string') return content;
   const texts = content.filter(block => block.type === 'text');
@@ -74,9 +95,16 @@ const readUserContent = content => {
   assert.ok(texts.length > 0, 'Every user message carries text');
   if (content.length === 1 && content[0].text.startsWith('/compact'))
     return content[0].text;
-  assert.ok(images.length > 0, 'Content blocks are used only for images');
+  assert.ok(
+    images.length > 0,
+    'Content blocks are used only for images and PDF files',
+  );
   for (const image of images) {
-    assert.equal(image.type, 'image');
+    assert.ok(['image', 'document'].includes(image.type), image.type);
+    assert.equal(
+      image.type === 'document',
+      image.source.media_type === 'application/pdf',
+    );
     assert.equal(image.source.type, 'base64');
   }
   for (const text of texts)
@@ -91,7 +119,7 @@ const readUserContent = content => {
         sequence: content.map(block =>
           block.type === 'text'
             ? `text:${block.text}`
-            : `image:${images.indexOf(block)}`,
+            : `${block.type}:${images.indexOf(block)}`,
         ),
         images: images.map(image => {
           const bytes = Buffer.from(image.source.data, 'base64');
@@ -101,6 +129,12 @@ const readUserContent = content => {
             sha256: createHash('sha256').update(bytes).digest('hex'),
           };
         }),
+        ...(prompt.includes('[Attached file: ')
+          ? {
+              files: attachedFiles(prompt),
+              disallowed: flagValue('--disallowedTools'),
+            }
+          : {}),
       }) + '\n',
       { flag: 'a' },
     );
@@ -369,7 +403,7 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(frame.message.role, 'user');
       assert.ok(
         Array.isArray(frame.message.content),
-        'Streaming input without host prompts is used only for images',
+        'Streaming input without host prompts is used only for media',
       );
       prompt = readUserContent(frame.message.content);
     }

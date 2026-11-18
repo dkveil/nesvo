@@ -9,7 +9,7 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
   type Approval,
-  type AttachmentMediaType,
+  type ImageMediaType,
   type ClaudeStatus,
   type ProviderUsage,
   type SessionMode,
@@ -58,7 +58,7 @@ export type ClaudeResult = {
 };
 
 export type ClaudeImage = {
-  mediaType: AttachmentMediaType;
+  mediaType: ImageMediaType | 'application/pdf';
   data: string;
   offset?: number;
 };
@@ -191,7 +191,8 @@ function claudeUserContent(
     part.type === 'text'
       ? { type: 'text', text: part.text }
       : {
-          type: 'image',
+          type:
+            part.item.mediaType === 'application/pdf' ? 'document' : 'image',
           source: {
             type: 'base64',
             media_type: part.item.mediaType,
@@ -199,6 +200,15 @@ function claudeUserContent(
           },
         },
   );
+}
+
+export function claudePathRule(path: string): string {
+  const posix = path.replace(/\\/g, '/');
+  const drive = /^([A-Za-z]):\//.exec(posix);
+  const absolute = drive
+    ? `/${drive[1]!.toLowerCase()}/${posix.slice(3)}`
+    : posix;
+  return `/${absolute.replace(/\/+$/, '')}/**`;
 }
 
 function claudeTurnInput(
@@ -457,6 +467,7 @@ async function inspect(
   supportsFork?: boolean;
   supportsHostPrompts?: boolean;
   supportsStreamInput?: boolean;
+  supportsAddDirectory?: boolean;
 }> {
   let version: string | null = null;
   let permissionModes: string[] = [];
@@ -579,6 +590,9 @@ async function inspect(
       permissionModes,
       supportsFork: /(?:^|\s)--fork-session(?:\s|$)/.test(help.stdout),
       supportsStreamInput: imageInput,
+      supportsAddDirectory:
+        /(?:^|\s)--add-dir(?:\s|$)/.test(help.stdout) &&
+        help.stdout.includes('--disallowedTools'),
       supportsHostPrompts:
         help.stdout.includes('--permission-prompt-tool') &&
         permissionChoices(help.stdout, '--permission-prompts').includes('host'),
@@ -832,6 +846,7 @@ export function startClaude(options: {
   assistantPrompt?: string;
   mode: SessionMode;
   images?: readonly ClaudeImage[];
+  readDirectories?: readonly string[];
   approvals?: boolean;
   compact?: { instructions: string | null };
   onEvent: (event: ClaudeEvent) => void;
@@ -887,7 +902,13 @@ export function startClaude(options: {
         return {
           status: 'failed',
           error:
-            'This Claude Code version cannot receive images. Update the CLI or send the message without images.',
+            'This Claude Code version cannot receive images or PDF files. Update the CLI or send the message without them.',
+        };
+      if (options.readDirectories?.length && !inspection.supportsAddDirectory)
+        return {
+          status: 'failed',
+          error:
+            'This Claude Code version cannot read attached files. Update the CLI or send the message without files.',
         };
       if (
         options.compact &&
@@ -951,6 +972,15 @@ export function startClaude(options: {
           ? ['--resume', options.forkFrom, '--fork-session']
           : []),
       ];
+      if (options.readDirectories?.length)
+        args.push(
+          '--add-dir',
+          ...options.readDirectories,
+          '--disallowedTools',
+          options.readDirectories
+            .map(directory => `Edit(${claudePathRule(directory)})`)
+            .join(','),
+        );
       if (options.model !== 'default') args.push('--model', options.model);
       if (options.ephemeral) args.push('--no-session-persistence');
       if (options.instructionsOnly) args.push('--setting-sources', '');

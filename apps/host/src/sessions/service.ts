@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
+  attachmentKind,
   claudeModelSchema,
   delegationPlanSchema,
   isProviderSessionMode,
@@ -47,6 +48,8 @@ import {
   type SkillReference,
   type SessionInterruption,
   type McpServerList,
+  type AttachmentLocation,
+  type LocateAttachmentInput,
   type MessageAttachment,
   type TurnUsage,
 } from '@nesvo/contracts';
@@ -306,10 +309,28 @@ const GATE_REVIEW_STATUS = {
   'request-changes': 'changes-requested',
 } as const satisfies Record<GateReviewDecision['decision'], Review['status']>;
 
-type TurnImages = { paths: CodexImage[]; inline: ClaudeImage[] };
+type TurnAttachments = {
+  prompt: string;
+  paths: CodexImage[];
+  inline: ClaudeImage[];
+  readDirectories: string[];
+};
 
-const placement = (attachment: MessageAttachment) =>
-  attachment.offset == null ? {} : { offset: attachment.offset };
+const deliveredAsFile = (
+  provider: Session['provider'],
+  attachment: MessageAttachment,
+) => {
+  const kind = attachmentKind(attachment.mediaType);
+  return kind === 'file' || (kind === 'pdf' && provider === 'Codex');
+};
+
+const isClaudeMedia = (
+  mediaType: MessageAttachment['mediaType'],
+): mediaType is ClaudeImage['mediaType'] =>
+  attachmentKind(mediaType) !== 'file';
+
+const fileReference = (location: AttachmentLocation) =>
+  `[Attached file: ${location.name} at ${location.path}]`;
 
 const attachmentKey = (attachment: MessageAttachment) =>
   `${attachment.id}@${attachment.offset ?? ''}`;
@@ -404,6 +425,28 @@ export class SessionService {
     } catch (error) {
       if (error instanceof AttachmentError)
         throw new SessionError('invalid-request', error.message);
+      throw error;
+    }
+  }
+
+  async locateAttachment(
+    input: LocateAttachmentInput,
+  ): Promise<AttachmentLocation> {
+    const session = this.current(input.sessionId);
+    const attachment = [...session.messages, ...session.queue]
+      .flatMap(item => item.attachments ?? [])
+      .find(item => item.id === input.id);
+    if (!attachment)
+      throw new SessionError(
+        'not-found',
+        'This attachment does not belong to the session.',
+      );
+    try {
+      this.attachments.confirm([attachment]);
+      return await this.attachments.sessionFile(session.id, attachment);
+    } catch (error) {
+      if (error instanceof AttachmentError)
+        throw new SessionError(error.code, error.message);
       throw error;
     }
   }
@@ -2587,16 +2630,20 @@ export class SessionService {
           );
         if (controller.signal.aborted)
           return { status: 'stopped', error: null };
-        let images: TurnImages;
+        let images: TurnAttachments;
         try {
-          images = await this.turnImages(session.provider, attachments);
+          images = await this.turnAttachments(
+            session,
+            options.prompt,
+            attachments,
+          );
         } catch (error) {
           return {
             status: 'failed',
             error:
               error instanceof AttachmentError
                 ? `${error.message} No provider turn was started.`
-                : 'An attached image could not be read. No provider turn was started.',
+                : 'An attached file could not be read. No provider turn was started.',
           };
         }
         if (controller.signal.aborted)
@@ -2605,6 +2652,7 @@ export class SessionService {
           session.provider === 'Codex'
             ? startCodex({
                 ...options,
+                prompt: images.prompt,
                 environment: turnEnvironment,
                 sessionId: session.providerSessionId,
                 mode:
@@ -2663,13 +2711,11 @@ export class SessionService {
             : startClaude({
                 ...options,
                 environment: turnEnvironment,
-                ...(selected?.snapshot
-                  ? {
-                      prompt: sharedSkillPrompt(
-                        selected.snapshot,
-                        options.prompt,
-                      ),
-                    }
+                prompt: selected?.snapshot
+                  ? sharedSkillPrompt(selected.snapshot, images.prompt)
+                  : images.prompt,
+                ...(images.readDirectories.length
+                  ? { readDirectories: images.readDirectories }
                   : {}),
                 ...(ephemeral ? { ephemeral } : {}),
                 ...(images.inline.length
@@ -2822,30 +2868,59 @@ export class SessionService {
       });
   }
 
-  private async turnImages(
-    provider: Session['provider'],
+  private async turnAttachments(
+    session: Session,
+    prompt: string,
     attachments: readonly MessageAttachment[],
-  ): Promise<TurnImages> {
-    if (!attachments.length) return { paths: [], inline: [] };
-    this.attachments.confirm(attachments);
-    if (provider === 'Codex')
-      return {
-        paths: attachments.map(attachment => ({
-          path: this.attachments.path(attachment),
-          ...placement(attachment),
-        })),
-        inline: [],
-      };
-    return {
+  ): Promise<TurnAttachments> {
+    const result: TurnAttachments = {
+      prompt,
       paths: [],
-      inline: await Promise.all(
-        attachments.map(async attachment => ({
+      inline: [],
+      readDirectories: [],
+    };
+    if (!attachments.length) return result;
+    this.attachments.confirm(attachments);
+    const placed = attachments
+      .map((attachment, index) => ({
+        attachment,
+        index,
+        at: Math.min(
+          Math.max(attachment.offset ?? prompt.length, 0),
+          prompt.length,
+        ),
+      }))
+      .sort((left, right) => left.at - right.at || left.index - right.index);
+    let text = '';
+    let cursor = 0;
+    for (const { attachment, at } of placed) {
+      text += prompt.slice(cursor, at);
+      cursor = at;
+      if (deliveredAsFile(session.provider, attachment)) {
+        const location = await this.attachments.sessionFile(
+          session.id,
+          attachment,
+        );
+        const before = text && !/\s$/.test(text) ? ' ' : '';
+        const after = /^[\p{L}\p{N}]/u.test(prompt.slice(at)) ? ' ' : '';
+        text += `${before}${fileReference(location)}${after}`;
+        result.readDirectories = [
+          this.attachments.sessionDirectory(session.id),
+        ];
+      } else if (session.provider === 'Codex')
+        result.paths.push({
+          path: this.attachments.path(attachment),
+          offset: text.length,
+        });
+      else if (isClaudeMedia(attachment.mediaType))
+        result.inline.push({
           mediaType: attachment.mediaType,
           data: (await this.attachments.load(attachment)).toString('base64'),
-          ...placement(attachment),
-        })),
-      ),
-    };
+          offset: text.length,
+        });
+    }
+    result.prompt = text + prompt.slice(cursor);
+    return result;
   }
 
   private notifyFinished(session: Session): void {

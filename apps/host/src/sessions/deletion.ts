@@ -155,6 +155,11 @@ export class SessionDeletions {
   }
 
   private purge(sessionIds: string[]): void {
+    const released = new Set(
+      sessionIds.flatMap(sessionId =>
+        this.attachmentIds('WHERE sessions.id = ?', sessionId),
+      ),
+    );
     const purgedAt = this.now().toISOString();
     this.transaction(() => {
       const statements = [
@@ -170,6 +175,32 @@ export class SessionDeletions {
         mark.run(purgedAt, sessionId);
       }
     });
+    for (const id of this.attachmentIds('')) released.delete(id);
+    void this.releaseFiles(sessionIds, released);
+  }
+
+  private attachmentIds(filter: string, ...values: string[]): string[] {
+    const references = (list: string) =>
+      `SELECT attachment.value ->> '$.id' AS id FROM sessions, json_each(sessions.document, '$.${list}') AS item, json_each(item.value, '$.attachments') AS attachment ${filter}`;
+    return this.database
+      .prepare(`${references('messages')} UNION ${references('queue')}`)
+      .all(...values, ...values)
+      .map(row => String(row.id));
+  }
+
+  private async releaseFiles(
+    sessionIds: readonly string[],
+    contentIds: ReadonlySet<string>,
+  ): Promise<void> {
+    try {
+      for (const sessionId of sessionIds)
+        await this.sessions.attachments.removeSession(sessionId);
+      await this.sessions.attachments.removeContent(contentIds);
+    } catch (error) {
+      console.error(
+        `Attachment files of deleted sessions could not be removed. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private arm(): void {
