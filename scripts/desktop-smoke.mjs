@@ -95,6 +95,11 @@ const waitDead = async pid => {
 };
 try {
   await writeFile(usageControl, '{}');
+  await mkdir(claudeConfigDirectory, { recursive: true });
+  await writeFile(
+    join(claudeConfigDirectory, '.claude.json'),
+    JSON.stringify({ mcpServers: { fixture: { command: 'fixture-mcp' } } }),
+  );
   const skillDocument = (name, marker, fields = '') =>
     `---\nname: ${name}\ndescription: Shared fixture instructions.\n${fields}---\n${marker}\n`;
   const writeSkill = async (path, body) => {
@@ -876,6 +881,7 @@ try {
   await page.mouse.move(0, 0);
   await modelChip.press('Escape');
   await modelHint.waitFor({ state: 'hidden' });
+  assert.equal(await newThread.locator('[data-session-mcp]').count(), 0);
   await screenshot('-new-session');
   await startThread({ title: 'Prototype analysis' });
   await page
@@ -891,6 +897,22 @@ try {
   const firstStarted = await waitState(first.id, 'completed');
   assert.equal(firstStarted.messages.length, 2);
   assert.equal(firstStarted.role, 'standalone');
+  const mcpChip = conversation.getByRole('button', {
+    name: 'MCP servers and hooks',
+    exact: true,
+  });
+  const mcpPopover = page.getByRole('dialog', {
+    name: 'MCP servers and hooks',
+    exact: true,
+  });
+  await mcpChip.click();
+  await mcpPopover.getByText('fixture', { exact: true }).waitFor();
+  await mcpPopover.getByText('User · stdio', { exact: true }).waitFor();
+  await mcpPopover.getByText('Inactive', { exact: true }).waitFor();
+  assert.equal(await mcpPopover.getByRole('switch').count(), 0);
+  await page.keyboard.press('Escape');
+  await mcpPopover.waitFor({ state: 'hidden' });
+  await waitForFocus(mcpChip);
   const projectSkillPath = join(
     first.directory,
     '.claude',
@@ -1219,6 +1241,12 @@ try {
     assert.equal(modeSwitched.messages.at(-2).mode, 'accept-edits');
     await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
+    await mcpChip.click();
+    await mcpPopover
+      .getByText('Follow provider settings', { exact: true })
+      .waitFor();
+    await page.keyboard.press('Escape');
+    await mcpPopover.waitFor({ state: 'hidden' });
     await messageEditor.press('Shift+Tab');
     await modeSwitch.filter({ hasText: 'next turn' }).waitFor();
     for (let step = 1; step < claudeModes.length; step += 1)

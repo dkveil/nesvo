@@ -202,6 +202,8 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow is a title, a `text-xs` description and trailing controls; put status lines in the description as StatusMessage.
 
+The composer MCP chip opens a read-only Popover. Use ListRow for a server name with its scope and transport. Use StatusMessage for configuration errors and read-only availability, and show the hook policy in a separate row. The new-session form omits the MCP field.
+
 ### Domain glyphs
 
 **StatusIcon** and the tone map — `entities/status`. `status` `success | error | warning | info | pending | running | idle`; `statusTones` maps each to a `Tone`, `toneText` maps a tone to its text class. Session statuses use `statusTones` from `entities/session`; workflow tones re-export the same map. ChecksIcon is built on StatusIcon.
@@ -235,7 +237,7 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | `<details>` with a styled `<summary>`                                         | `<Disclosure>` or `<NativeDisclosure>`                             |
 | `<kbd className="…">`                                                          | `<Kbd>` / `<KeyCombo>`                                             |
 | Native `<input type="checkbox">`                                              | `<Checkbox>`                                                       |
-| Custom option-list popovers (model, folder, branch, workflow, MCP pickers)    | `<Combobox trigger={<Chip …/>}>` or `<Listbox>`                    |
+| Custom option-list popovers (model, folder, branch, workflow pickers)    | `<Combobox trigger={<Chip …/>}>` or `<Listbox>`                    |
 | `PopoverContent className="w-[min(20rem,calc(100vw-1rem))] max-h-…"`          | `<PopoverContent size="md" scroll>`                                |
 | `DialogTitle className="text-base"`, `DialogDescription className="text-xs"`  | Drop the override                                                  |
 | `SheetHeader className="border-b px-5 py-4"`, `SheetTitle className="text-sm"` | Drop the override                                                 |

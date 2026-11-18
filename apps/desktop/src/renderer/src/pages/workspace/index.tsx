@@ -17,7 +17,6 @@ import type {
   DesktopReview as Review,
   DesktopSession as Session,
   ForkSessionInput,
-  McpSelection,
   MessageAttachment,
   RespondApprovalInput,
   SessionMode,
@@ -473,23 +472,6 @@ export function Workspace() {
       setErrors(previous => ({
         ...previous,
         [key]: `Could not assign the workflow. ${errorDetail(failure)}`,
-      }));
-    }
-  };
-  const changeMcp = async (session: Session, selection: McpSelection) => {
-    const key = entityKey(session);
-    setErrors(previous => ({ ...previous, [key]: '' }));
-    try {
-      store.merge([
-        await desktopApi(session.hostId).setSessionMcp(
-          { sessionId: session.id, ...selection },
-          session.hostId,
-        ),
-      ]);
-    } catch (failure) {
-      setErrors(previous => ({
-        ...previous,
-        [key]: `Could not change MCP servers or hooks. ${errorDetail(failure)}`,
       }));
     }
   };
@@ -2679,11 +2661,7 @@ ${text}`
           ),
         ),
     });
-    if (
-      supportsMcp(session.hostId) &&
-      session.role !== 'worker' &&
-      !session.workflowRunId
-    )
+    if (supportsMcp(session.hostId))
       commands.push({
         id: 'mcp',
         label: 'MCP servers…',
@@ -4137,26 +4115,27 @@ ${text}`
                 }
                 mcpChip={
                   <McpChip
+                    key={entityKey(selected)}
                     hostId={selected.hostId}
+                    sessionId={selected.id}
                     provider={selected.provider}
-                    target={{ sessionId: selected.id }}
-                    selection={{
-                      servers: selected.mcp.servers.map(server => server.key),
-                      hooks: selected.mcp.hooks,
-                    }}
                     readOnly={
-                      (pendingModeOf(selected) ?? selected.mode) === 'read-only'
+                      (pendingModeOf(selected) ?? selected.mode) ===
+                        'read-only' ||
+                      store.sessions.some(
+                        parent =>
+                          parent.hostId === selected.hostId &&
+                          parent.id === selected.parentId &&
+                          parent.delegations.some(
+                            worker =>
+                              worker.childSessionId === selected.id &&
+                              (worker.status === 'planning' ||
+                                worker.status === 'plan-ready'),
+                          ),
+                      )
                     }
                     disabled={connection !== 'ready'}
                     unsupported={!supportsMcp(selectedHostId)}
-                    lockedReason={
-                      selected.role === 'worker'
-                        ? 'Set by the parent decision'
-                        : selected.workflowRunId
-                          ? 'Set when the workflow task started'
-                          : ''
-                    }
-                    onChange={selection => void changeMcp(selected, selection)}
                   />
                 }
               />
