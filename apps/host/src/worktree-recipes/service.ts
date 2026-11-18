@@ -638,7 +638,7 @@ export class WorktreeRecipes {
     endStep(copy, {
       status: 'completed',
       output: run.recipe.copy.patterns.length
-        ? `Copied ${run.copied.copied} files (${formatBytes(run.copied.bytes)}), skipped ${run.copied.skipped}${run.copied.incomplete ? '; the file list was cut short' : ''}.`
+        ? `Copied ${run.copied.copied} ${run.copied.copied === 1 ? 'file' : 'files'} (${formatBytes(run.copied.bytes)}), skipped ${run.copied.skipped}${run.copied.incomplete ? '; the file list was cut short' : ''}.`
         : 'No files to copy.',
     });
     this.persist(live);
