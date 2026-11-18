@@ -1543,16 +1543,17 @@ export function Workspace() {
     const session = store.sessions.find(
       item => item.id === input.sessionId && item.hostId === hostId,
     );
+    const approval = session?.pendingApprovals.find(
+      item => item.id === input.requestId,
+    );
     if (
       !session ||
+      !approval ||
       session.runId !== input.runId ||
       session.status !== 'running' ||
       !store.hostReady(hostId) ||
       store.loading ||
-      store.error ||
-      !session.pendingApprovals.some(
-        approval => approval.id === input.requestId,
-      )
+      store.error
     )
       return;
     const { sessionId, runId, requestId } = input;
@@ -1562,7 +1563,14 @@ export function Workspace() {
     setApprovalPending(previous => ({ ...previous, [key]: true }));
     setErrors(previous => ({ ...previous, [hostKey(sessionId, hostId)]: '' }));
     try {
-      store.merge([await desktopApi(hostId).respondApproval(input)]);
+      store.merge([
+        await desktopApi(hostId).respondApproval({
+          ...input,
+          ...(approval.fingerprint
+            ? { fingerprint: approval.fingerprint }
+            : {}),
+        }),
+      ]);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
@@ -3292,7 +3300,7 @@ ${text}`
                 }
                 approvalsEnabled={operationEnabled}
                 approvalPending={approvalPending}
-                onApproval={(requestId, decision) =>
+                onApproval={(requestId, decision, message) =>
                   selected.runId &&
                   void respondApproval(
                     {
@@ -3300,6 +3308,7 @@ ${text}`
                       runId: selected.runId,
                       requestId,
                       decision,
+                      ...(message ? { message } : {}),
                     },
                     selectedHostId,
                   )

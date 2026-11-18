@@ -32,6 +32,15 @@ const modelLabels: Record<string, string> = {
   haiku: 'Haiku',
 };
 
+export const approvalKindLabels: Record<
+  Session['pendingApprovals'][number]['kind'],
+  string
+> = {
+  command: 'Command approval',
+  'file-change': 'File approval',
+  tool: 'Tool approval',
+};
+
 export const statusTones: Partial<Record<Session['status'], Tone>> = {
   running: 'info',
   stopping: 'info',

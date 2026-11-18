@@ -1181,6 +1181,25 @@ try {
       await messageEditor.press('Shift+Tab');
     await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
+    const claudeApproval = page.getByRole('region', {
+      name: 'Operation approval',
+      exact: true,
+    });
+    await send('fixture:ask-mcp');
+    await claudeApproval.getByText('Tool approval', { exact: true }).waitFor();
+    await claudeApproval
+      .getByText('Use MCP tool fixture / lookup', { exact: true })
+      .waitFor();
+    await claudeApproval
+      .getByRole('textbox', { name: 'Message with the denial', exact: true })
+      .fill('Use the cached status.');
+    await claudeApproval
+      .getByRole('button', { name: 'Deny', exact: true })
+      .click();
+    await message(
+      'Fixture action denied: The operator denied this action. Their message: Use the cached status.',
+    ).waitFor();
+    await waitState(modeTarget.id, 'completed');
     await openNewThread();
   }
   assert.equal(

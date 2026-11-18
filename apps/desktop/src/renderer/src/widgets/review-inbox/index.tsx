@@ -12,6 +12,7 @@ import {
   type Review,
 } from '@/entities/review';
 import {
+  approvalKindLabels,
   directoryLabel,
   modeLabel,
   modelLabel,
@@ -558,10 +559,8 @@ export function ReviewInbox({
                     meta={
                       <>
                         <span className="shrink-0">
-                          {approval.kind === 'command'
-                            ? 'Command approval'
-                            : 'File approval'}{' '}
-                          · {session.provider}
+                          {approvalKindLabels[approval.kind]} ·{' '}
+                          {session.provider}
                         </span>
                         <span>·</span>
                         <Directory

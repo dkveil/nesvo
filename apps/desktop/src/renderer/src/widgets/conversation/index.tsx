@@ -16,6 +16,7 @@ import type {
   SessionMode,
 } from '@nesvo/contracts';
 import {
+  approvalKindLabels,
   effortLabel,
   ModeIcon,
   modeLabel,
@@ -36,6 +37,7 @@ import {
   ComposerToolbar,
 } from '@/shared/ui/composer';
 import { IconButton } from '@/shared/ui/icon-button';
+import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -96,6 +98,7 @@ type Props = {
   onApproval: (
     requestId: string,
     decision: RespondApprovalInput['decision'],
+    message?: string,
   ) => void;
   error: string;
   onDraft: (value: string) => void;
@@ -182,6 +185,9 @@ export function Conversation({
   const pasteTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pasteTimer.current), []);
   const [modeNotice, setModeNotice] = useState('');
+  const [denialMessages, setDenialMessages] = useState<Record<string, string>>(
+    {},
+  );
   const modeNoticeTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
   const visibleSession = useRef('');
@@ -978,9 +984,7 @@ export function Conversation({
                 className="space-y-3 rounded-surface border bg-card p-4"
               >
                 <p className="text-2xs text-muted-foreground">
-                  {approval.kind === 'command'
-                    ? 'Command approval'
-                    : 'File approval'}
+                  {approvalKindLabels[approval.kind]}
                 </p>
                 <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
                   {approval.title}
@@ -994,6 +998,21 @@ export function Conversation({
                 <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   Working directory: {approval.directory ?? session.directory}
                 </p>
+                {approval.fingerprint && (
+                  <Input
+                    aria-label="Message with the denial"
+                    placeholder="Message for Claude if you deny (optional)"
+                    maxLength={2000}
+                    disabled={!enabled}
+                    value={denialMessages[approval.id] ?? ''}
+                    onChange={event =>
+                      setDenialMessages(previous => ({
+                        ...previous,
+                        [approval.id]: event.target.value,
+                      }))
+                    }
+                  />
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -1006,7 +1025,13 @@ export function Conversation({
                     type="button"
                     variant="outline"
                     disabled={!enabled}
-                    onClick={() => onApproval(approval.id, 'decline')}
+                    onClick={() =>
+                      onApproval(
+                        approval.id,
+                        'decline',
+                        denialMessages[approval.id]?.trim() || undefined,
+                      )
+                    }
                   >
                     Deny
                   </Button>
