@@ -146,6 +146,30 @@ function Selections() {
             ]}
           />
         </SpecimenRow>
+        <SpecimenRow label="icons · counts · tooltips">
+          <SegmentedControl
+            label="Status filter"
+            value={repeat}
+            onChange={setRepeat}
+            options={[
+              { value: 'interval', label: 'All' },
+              {
+                value: 'daily',
+                label: '3',
+                icon: <List />,
+                tooltip: 'Sample filter',
+                ariaLabel: 'Sample filter (3)',
+              },
+              {
+                value: 'weekly',
+                label: '',
+                icon: <Rows3 />,
+                tooltip: 'Empty filter',
+                ariaLabel: 'Empty filter (0)',
+              },
+            ]}
+          />
+        </SpecimenRow>
         <SpecimenRow label="md · counts">
           <SegmentedControl
             label="Repeat"

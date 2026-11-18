@@ -1,5 +1,6 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import { Fragment, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '@/shared/lib/cn';
+import { Hint } from '@/shared/ui/tooltip';
 
 type SegmentedOption<T extends string> = {
   value: T;
@@ -8,6 +9,7 @@ type SegmentedOption<T extends string> = {
   count?: number;
   disabled?: boolean;
   title?: string;
+  tooltip?: string;
   ariaLabel?: string;
 };
 
@@ -112,41 +114,46 @@ export function SegmentedControl<T extends string>(
       {options.map(option => {
         const on = isOn(option.value);
         return (
-          <button
-            key={option.value}
-            type="button"
-            role={radio ? 'radio' : undefined}
-            data-value={option.value}
-            data-selected={on ? '' : undefined}
-            aria-checked={radio ? on : undefined}
-            aria-pressed={radio ? undefined : on}
-            aria-label={
-              option.ariaLabel ?? (iconOnly ? option.label : undefined)
-            }
-            tabIndex={radio && option.value !== tabStop ? -1 : 0}
-            title={option.title}
-            disabled={disabled || option.disabled}
-            onClick={() => choose(option.value)}
-            className={cn(
-              'focus-ring inline-flex min-w-0 items-center justify-center gap-1.5 rounded-control whitespace-nowrap text-muted-foreground transition-[color,background-color] duration-fast ease-out [&_svg]:shrink-0',
-              size === 'sm' &&
-                'h-6 px-2 text-2xs [&_svg:not([class*=size-])]:size-3',
-              size === 'md' &&
-                'h-7 px-2.5 text-xs [&_svg:not([class*=size-])]:size-3.5',
-              iconOnly && (size === 'sm' ? 'w-6 px-0' : 'w-7 px-0'),
-              fullWidth && 'flex-auto',
-              'enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
-              'data-selected:bg-segment-active data-selected:text-foreground data-selected:shadow-xs',
-            )}
-          >
-            {option.icon}
-            {!iconOnly && <span className="truncate">{option.label}</span>}
-            {option.count != null && !iconOnly && (
-              <span className="text-micro text-muted-foreground tabular-nums">
-                {option.count}
-              </span>
-            )}
-          </button>
+          <Fragment key={option.value}>
+            <Hint label={option.tooltip} side="bottom">
+              <button
+                type="button"
+                role={radio ? 'radio' : undefined}
+                data-value={option.value}
+                data-selected={on ? '' : undefined}
+                aria-checked={radio ? on : undefined}
+                aria-pressed={radio ? undefined : on}
+                aria-label={
+                  option.ariaLabel ?? (iconOnly ? option.label : undefined)
+                }
+                tabIndex={radio && option.value !== tabStop ? -1 : 0}
+                title={option.title}
+                disabled={disabled || option.disabled}
+                onClick={() => choose(option.value)}
+                className={cn(
+                  'focus-ring inline-flex min-w-0 items-center justify-center gap-1.5 rounded-control whitespace-nowrap text-muted-foreground transition-[color,background-color] duration-fast ease-out [&_svg]:shrink-0',
+                  size === 'sm' &&
+                    'h-6 px-2 text-2xs [&_svg:not([class*=size-])]:size-3',
+                  size === 'md' &&
+                    'h-7 px-2.5 text-xs [&_svg:not([class*=size-])]:size-3.5',
+                  iconOnly && (size === 'sm' ? 'w-6 px-0' : 'w-7 px-0'),
+                  fullWidth && 'flex-auto',
+                  'enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+                  'data-selected:bg-segment-active data-selected:text-foreground data-selected:shadow-xs',
+                )}
+              >
+                {option.icon}
+                {!iconOnly && option.label && (
+                  <span className="truncate">{option.label}</span>
+                )}
+                {option.count != null && !iconOnly && (
+                  <span className="text-micro text-muted-foreground tabular-nums">
+                    {option.count}
+                  </span>
+                )}
+              </button>
+            </Hint>
+          </Fragment>
         );
       })}
     </div>

@@ -614,9 +614,9 @@ export function SessionSidebar({
               const name = sessionFilterLabels[value];
               return {
                 value,
-                label: String(count),
+                label: count ? String(count) : '',
                 icon: filterIcons[value],
-                title: name,
+                tooltip: name,
                 ariaLabel: `${name} (${count})`,
               };
             })}
