@@ -2,12 +2,15 @@ import { useState, type ReactNode, type RefObject } from 'react';
 import {
   CalendarClock,
   ChevronDown,
+  CircleAlert,
   Cloud,
   CornerDownRight,
   FolderPlus,
   GitBranch,
   GitPullRequest,
+  Hand,
   Inbox,
+  LoaderCircle,
   Monitor,
   PanelLeft,
   Pin,
@@ -101,6 +104,12 @@ type Props = {
 };
 
 const TREE_INDENT_PX = 12;
+
+const filterIcons: Record<Exclude<SessionFilter, 'all'>, ReactNode> = {
+  'needs-me': <Hand aria-hidden="true" />,
+  running: <LoaderCircle aria-hidden="true" />,
+  failed: <CircleAlert aria-hidden="true" />,
+};
 
 function SessionStatus({
   session,
@@ -587,16 +596,16 @@ export function SessionSidebar({
             onChange={onFilterChange}
             className="mt-1 mb-0.5"
             options={sessionFilters.map(value => {
-              const count =
-                value === 'all' ? undefined : filterKeys[value].size;
+              if (value === 'all')
+                return { value, label: sessionFilterLabels[value] };
+              const count = filterKeys[value].size;
+              const name = sessionFilterLabels[value];
               return {
                 value,
-                label: sessionFilterLabels[value],
-                count: count || undefined,
-                ariaLabel:
-                  count == null
-                    ? sessionFilterLabels[value]
-                    : `${sessionFilterLabels[value]} (${count})`,
+                label: String(count),
+                icon: filterIcons[value],
+                title: name,
+                ariaLabel: `${name} (${count})`,
               };
             })}
           />
