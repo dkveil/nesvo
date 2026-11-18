@@ -183,11 +183,6 @@ function readLinuxBootTime(): number | null {
   }
 }
 
-export function linuxProcessStartedAt(pid: number): number | null {
-  if (process.platform !== 'linux') return null;
-  return readLinuxProcess(pid, readLinuxBootTime())?.startedAt ?? null;
-}
-
 function readLinuxProcess(
   pid: number,
   bootTime: number | null,

@@ -9,7 +9,6 @@ import type { ListeningSocket, ProcessEntry } from './scan';
 const MAX_ANCESTOR_DEPTH = 32;
 const PROVIDER_START_TOLERANCE_MS = 10_000;
 const CHILD_START_TOLERANCE_MS = 1_000;
-const SAME_CLOCK_TOLERANCE_MS = 1_000;
 
 export type SessionFolder = { id: string; directory: string };
 
@@ -28,20 +27,16 @@ function isOwnedBy(
   entry: ProcessEntry | undefined,
   child: ProcessEntry | undefined,
 ): boolean {
-  const ownerStart = owner.startedAt ?? owner.recordedAt;
-  const tolerance =
-    owner.startedAt === null
-      ? PROVIDER_START_TOLERANCE_MS
-      : SAME_CLOCK_TOLERANCE_MS;
   if (entry)
     return (
       entry.startedAt === null ||
-      Math.abs(entry.startedAt - ownerStart) <= tolerance
+      Math.abs(entry.startedAt - owner.recordedAt) <=
+        PROVIDER_START_TOLERANCE_MS
     );
   return (
     !child ||
     child.startedAt === null ||
-    child.startedAt >= ownerStart - CHILD_START_TOLERANCE_MS
+    child.startedAt >= owner.recordedAt - CHILD_START_TOLERANCE_MS
   );
 }
 
