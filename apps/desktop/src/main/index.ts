@@ -56,6 +56,7 @@ import {
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
+  compactSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
   moveSessionGroupSchema,
@@ -1198,8 +1199,13 @@ void app.whenReady().then(async () => {
   const sessionThreadInputs = {
     'fork-session': forkSessionSchema,
     'restart-session': restartSessionSchema,
+    'compact-session': compactSessionSchema,
   } as const;
-  for (const method of ['fork-session', 'restart-session'] as const) {
+  for (const method of [
+    'fork-session',
+    'restart-session',
+    'compact-session',
+  ] as const) {
     handle(
       `nesvo:${method}`,
       async (event, input: unknown, hostId: unknown) => {

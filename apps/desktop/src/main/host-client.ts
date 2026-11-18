@@ -19,6 +19,7 @@ import {
   type AssignSessionWorkflowInput,
   type ForkSessionInput,
   type RestartSessionInput,
+  type CompactSessionInput,
   type CreateSessionGroupInput,
   type MoveSessionInput,
   type SendMessageInput,
@@ -303,6 +304,12 @@ export function startHost(directory: string) {
     },
     restartSession: async (input: RestartSessionInput) => {
       const response = await request('restart-session', input);
+      if (response.type !== 'session')
+        throw new Error('Unexpected host response');
+      return response.session;
+    },
+    compactSession: async (input: CompactSessionInput) => {
+      const response = await request('compact-session', input);
       if (response.type !== 'session')
         throw new Error('Unexpected host response');
       return response.session;

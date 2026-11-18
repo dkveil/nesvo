@@ -214,6 +214,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to search its CLI transcripts.',
   'session-delete':
     'Update this computer’s Nesvo host and reconnect to delete sessions.',
+  'conversation-compaction':
+    'This computer runs an older Nesvo host that cannot compact conversations. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -267,6 +269,7 @@ function requiredCapability(
   if (method === 'fork-session' || method === 'restart-session')
     return 'session-fork';
   if (method === 'backup-database') return 'database-backup';
+  if (method === 'compact-session') return 'conversation-compaction';
   if (
     method === 'stage-attachment' ||
     method === 'read-attachment' ||
@@ -944,6 +947,7 @@ export class ComputerManager {
       'assign-session-workflow': 'session',
       'fork-session': 'session',
       'restart-session': 'session',
+      'compact-session': 'session',
       'set-session-mcp': 'session',
       'list-mcp-servers': 'mcp-servers',
       'queue-message': 'session',

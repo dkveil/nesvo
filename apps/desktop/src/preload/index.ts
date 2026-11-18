@@ -29,6 +29,7 @@ import {
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
+  compactSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
   moveSessionGroupSchema,
@@ -705,6 +706,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:restart-session',
         restartSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  compactSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:compact-session',
+        compactSessionSchema.parse(input),
         route(hostId),
       ),
     ),
