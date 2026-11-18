@@ -1,6 +1,7 @@
 import { type HostRequest } from '@nesvo/contracts';
 
 const WORKTREE_REQUEST_TIMEOUT_MS = 120_000;
+const WORKTREE_FORK_TIMEOUT_MS = 180_000;
 const LONG_REQUEST_TIMEOUT_MS = 60_000;
 const USAGE_REQUEST_TIMEOUT_MS = 40_000;
 const PROVIDER_REQUEST_TIMEOUT_MS = 30_000;
@@ -15,6 +16,7 @@ const longRequests = new Set<HostRequest['method']>([
   'workflow-assistant-send',
   'act-on-pull-request',
   'backup-database',
+  'run-session-worktree-setup',
 ]);
 
 const providerRequests = new Set<HostRequest['method']>([
@@ -31,6 +33,7 @@ const providerRequests = new Set<HostRequest['method']>([
   'read-pull-request-threads',
   'find-session-pull-request',
   'read-session-worktree',
+  'read-session-worktree-setup',
 ]);
 
 const createsWorktree = (method: HostRequest['method'], input: unknown) =>
@@ -44,7 +47,19 @@ export const requestTimeoutMs = (
   method: HostRequest['method'],
   input?: unknown,
 ) => {
-  if (method === 'finish-session-worktree' || createsWorktree(method, input))
+  if (
+    method === 'fork-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'worktree' in input &&
+    input.worktree
+  )
+    return WORKTREE_FORK_TIMEOUT_MS;
+  if (
+    method === 'finish-session-worktree' ||
+    method === 'remove-orphaned-session-worktree' ||
+    createsWorktree(method, input)
+  )
     return WORKTREE_REQUEST_TIMEOUT_MS;
   if (longRequests.has(method)) return LONG_REQUEST_TIMEOUT_MS;
   if (method === 'provider-usage') return USAGE_REQUEST_TIMEOUT_MS;

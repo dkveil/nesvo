@@ -10,7 +10,8 @@ export type OwnedProcessOptions = {
   timeoutMs: number;
   maxOutputBytes: number;
   signal?: AbortSignal;
-  stdin?: string;
+  stdin?: string | Buffer;
+  captureStdoutBytes?: boolean;
   onStdout?: (chunk: string) => void;
 };
 
@@ -18,6 +19,7 @@ export type OwnedProcessResult = {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
+  stdoutBytes?: Buffer;
   stderr: string;
   timedOut: boolean;
   outputTruncated: boolean;
@@ -155,10 +157,12 @@ export function runOwnedProcess(
         );
         return;
       }
+      const stdoutBytes = Buffer.concat(stdout.chunks);
       settle({
         code: exit.code,
         signal: exit.signal,
-        stdout: Buffer.concat(stdout.chunks).toString('utf8'),
+        stdout: options.captureStdoutBytes ? '' : stdoutBytes.toString('utf8'),
+        ...(options.captureStdoutBytes ? { stdoutBytes } : {}),
         stderr: Buffer.concat(stderr.chunks).toString('utf8'),
         timedOut,
         outputTruncated: stdout.truncated || stderr.truncated,

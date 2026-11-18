@@ -130,6 +130,13 @@ export const sessionWorktreeSchema = z.strictObject({
   branch: z.string().min(1).max(200).regex(SESSION_BRANCH_PATTERN),
   base: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
   state: z.enum(['active', 'kept', 'removed']),
+  includes: z
+    .strictObject({
+      copied: z.number().int().nonnegative().max(64),
+      skipped: z.number().int().nonnegative(),
+      incomplete: z.boolean(),
+    })
+    .optional(),
 });
 export const readSessionWorktreeSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -147,6 +154,43 @@ export const finishSessionWorktreeSchema = readSessionWorktreeSchema.extend({
     }),
   ]),
 });
+const setupHashSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const runSessionWorktreeSetupSchema = readSessionWorktreeSchema.extend({
+  sha256: setupHashSchema,
+  approve: z.boolean().default(false),
+});
+export const sessionWorktreeSetupResultSchema = z.strictObject({
+  sha256: setupHashSchema,
+  status: z.enum(['completed', 'failed', 'timed-out']),
+  exitCode: z.number().int().nullable(),
+  stdout: z.string().max(16 * 1024),
+  stderr: z.string().max(16 * 1024),
+  truncated: z.boolean(),
+});
+export const sessionWorktreeSetupSchema = z.strictObject({
+  script: z
+    .strictObject({ sha256: setupHashSchema, approved: z.boolean() })
+    .nullable(),
+  result: sessionWorktreeSetupResultSchema.nullable(),
+});
+export const orphanedSessionWorktreesSchema = z
+  .array(
+    z.strictObject({
+      id: z.uuid(),
+      directory: z.string().min(1).max(4096),
+      branch: z.string().min(1).max(200),
+      sessionTitle: z.string().min(1).max(100).nullable(),
+    }),
+  )
+  .max(100);
+export const removeOrphanedSessionWorktreeSchema = z.strictObject({
+  id: z.uuid(),
+  force: z.boolean().default(false),
+});
+export const orphanedSessionWorktreeRemovalSchema = z.enum([
+  'removed',
+  'dirty',
+]);
 export const createSessionSchema = z
   .strictObject({
     requestId: z.uuid().toLowerCase().optional(),
@@ -200,6 +244,9 @@ export const assignSessionWorkflowSchema = z.strictObject({
 });
 export const forkSessionSchema = z.strictObject({
   sessionId: z.uuid(),
+  worktree: z
+    .strictObject({ carryChanges: z.boolean().default(false) })
+    .optional(),
 });
 export const restartSessionSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -378,6 +425,22 @@ export type ReadSessionWorktreeInput = z.infer<
   typeof readSessionWorktreeSchema
 >;
 export type SessionWorktreeStatus = z.infer<typeof sessionWorktreeStatusSchema>;
+export type RunSessionWorktreeSetupInput = z.infer<
+  typeof runSessionWorktreeSetupSchema
+>;
+export type SessionWorktreeSetup = z.infer<typeof sessionWorktreeSetupSchema>;
+export type SessionWorktreeSetupResult = z.infer<
+  typeof sessionWorktreeSetupResultSchema
+>;
+export type OrphanedSessionWorktrees = z.infer<
+  typeof orphanedSessionWorktreesSchema
+>;
+export type RemoveOrphanedSessionWorktreeInput = z.infer<
+  typeof removeOrphanedSessionWorktreeSchema
+>;
+export type OrphanedSessionWorktreeRemoval = z.infer<
+  typeof orphanedSessionWorktreeRemovalSchema
+>;
 export type FinishSessionWorktreeInput = z.infer<
   typeof finishSessionWorktreeSchema
 >;

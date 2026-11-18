@@ -23,6 +23,10 @@ import {
   type CreateSessionInput,
   type FinishSessionWorktreeInput,
   type ReadSessionWorktreeInput,
+  type RunSessionWorktreeSetupInput,
+  type RemoveOrphanedSessionWorktreeInput,
+  type OrphanedSessionWorktreeRemoval,
+  type OrphanedSessionWorktrees,
   type ForkSessionInput,
   type RestartSessionInput,
   type DecideDelegationInput,
@@ -81,11 +85,20 @@ import {
 import { loadCatalog } from '../workflows/definitions';
 import { resolveFolder } from '../workspace/folder';
 import {
+  confirmSessionWorktree,
   createSessionWorktree,
+  orphanedSessionCheckouts,
   readSessionWorktreeStatus,
+  sessionCheckout,
+  repositoryGitDirectory,
   removeSessionWorktree,
   worktreeSlug,
+  WorkspaceIsolationError,
 } from '../workspace/isolation';
+import {
+  executeWorktreeSetup,
+  inspectWorktreeSetup,
+} from '../workspace/worktree-setup';
 
 export async function confirmCodexEffort(
   model: string,
@@ -341,6 +354,8 @@ export class SessionService {
   private mcpKey?: Buffer;
   private checkingOut = false;
   private removingWorktree = false;
+  private creatingWorktrees = 0;
+  private runningWorktreeSetup: string | null = null;
   private forking = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
@@ -804,6 +819,11 @@ export class SessionService {
   ): Session {
     if (this.closing)
       throw new SessionError('unavailable', 'The host is shutting down.');
+    if (this.removingWorktree)
+      throw new SessionError(
+        'busy',
+        'Wait for the worktree operation to finish.',
+      );
     const session = this.store.create(input, directory, origin);
     this.emitSession(session);
     return session;
@@ -820,6 +840,11 @@ export class SessionService {
   ): Session {
     const existing = this.sessionForCreateRequest(input.requestId);
     if (existing) return existing;
+    if (this.removingWorktree)
+      throw new SessionError(
+        'busy',
+        'Wait for the worktree operation to finish.',
+      );
     if (input.isolation && !options.worktree)
       throw new SessionError(
         'invalid-request',
@@ -867,7 +892,12 @@ export class SessionService {
         'invalid-request',
         'The source permission mode is unsupported.',
       );
-    const directory = this.resolveDirectory(source.directory);
+    let directory = this.resolveDirectory(source.directory);
+    if (input.worktree && this.runningWorktreeSetup === directory)
+      throw new SessionError(
+        'busy',
+        'Wait for the source setup script to finish.',
+      );
     const forkOf = {
       sessionId: source.id,
       title: source.title,
@@ -875,6 +905,25 @@ export class SessionService {
     };
     this.forking = true;
     try {
+      let worktree:
+        { id: string; metadata: NonNullable<Session['worktree']> } | undefined;
+      if (input.worktree) {
+        const isolated = await this.prepareSessionWorktree(
+          directory,
+          source.title,
+          signal,
+          {
+            fork: true,
+            carryChanges: input.worktree.carryChanges,
+            sourceWorktree: source.worktree && {
+              worktree: source.directory,
+              projectDirectory: source.worktree.projectDirectory,
+            },
+          },
+        );
+        directory = isolated.directory;
+        worktree = isolated.worktree;
+      }
       let native: { sessionId: string; model: string } | null = null;
       if (source.provider === 'Claude Code') {
         await confirmClaudeFork(source.mode, signal);
@@ -907,7 +956,13 @@ export class SessionService {
       }
       if (this.closing || signal.aborted)
         throw new Error('Session fork stopped.');
-      const session = this.store.fork(source, forkOf, native);
+      const session = this.store.fork(
+        source,
+        forkOf,
+        native,
+        directory,
+        worktree,
+      );
       this.emitSession(session);
       return session;
     } catch (error) {
@@ -1066,44 +1121,64 @@ export class SessionService {
         )
       : undefined;
     if (!input.isolation) return this.create(input, mcp ? { mcp } : {});
-    const project = await resolveFolder(input.directory, signal);
-    const id = randomUUID();
-    const { worktree, branch, base, projectDirectory } =
-      await createSessionWorktree({
-        projectDirectory: project,
-        dataDirectory: this.directory,
-        slug: worktreeSlug(input.title, 'session'),
-        runId: id,
-        branch: input.isolation.branch,
-        signal,
-      });
+    if (this.removingWorktree)
+      throw new SessionError(
+        'busy',
+        'Wait for the worktree operation to finish.',
+      );
+    this.creatingWorktrees++;
     try {
+      const project = await resolveFolder(input.directory, signal);
+      const isolated = await this.prepareSessionWorktree(
+        project,
+        input.title,
+        signal,
+        { branch: input.isolation.branch },
+      );
       if (this.closing)
         throw new SessionError('busy', 'The host is shutting down.');
       return this.create(input, {
         mcp,
-        isolatedDirectory: worktree,
-        worktree: {
-          id,
-          metadata: { projectDirectory, branch, base, state: 'active' },
-        },
+        isolatedDirectory: isolated.directory,
+        worktree: isolated.worktree,
       });
-    } catch (error) {
-      try {
-        await removeSessionWorktree({
-          projectDirectory,
-          dataDirectory: this.directory,
-          worktree,
-          signal,
-        });
-      } catch {
-        throw new SessionError(
-          'unavailable',
-          `The session could not be saved. The worktree at ${worktree} and branch ${branch} were retained.`,
-        );
-      }
-      throw error;
+    } finally {
+      this.creatingWorktrees--;
     }
+  }
+
+  private async prepareSessionWorktree(
+    projectDirectory: string,
+    title: string,
+    signal: AbortSignal,
+    options: Pick<
+      Parameters<typeof createSessionWorktree>[0],
+      'branch' | 'fork' | 'carryChanges' | 'sourceWorktree'
+    >,
+  ) {
+    const id = randomUUID();
+    const {
+      worktree,
+      branch,
+      base,
+      projectDirectory: project,
+      includes,
+    } = await createSessionWorktree({
+      ...options,
+      projectDirectory,
+      dataDirectory: this.directory,
+      slug: worktreeSlug(title, 'session'),
+      runId: id,
+      signal,
+    });
+    const metadata: NonNullable<Session['worktree']> = {
+      projectDirectory: project,
+      branch,
+      base,
+      state: 'active',
+      includes,
+    };
+    return { directory: worktree, worktree: { id, metadata } };
   }
 
   private sessionWorktree(sessionId: string) {
@@ -1122,6 +1197,7 @@ export class SessionService {
         projectDirectory: session.worktree.projectDirectory,
         dataDirectory: this.directory,
         worktree: session.directory,
+        gitDirectory: sessionCheckout(this.directory, sessionId)?.gitDirectory,
       },
     };
   }
@@ -1133,6 +1209,119 @@ export class SessionService {
       : readSessionWorktreeStatus({ ...location, signal });
   }
 
+  async readWorktreeSetup(
+    input: ReadSessionWorktreeInput,
+    signal: AbortSignal,
+  ) {
+    const { location } = this.sessionWorktree(input.sessionId);
+    const gitDirectory =
+      location.gitDirectory ??
+      (await repositoryGitDirectory(location.projectDirectory, signal));
+    return inspectWorktreeSetup(
+      this.directory,
+      input.sessionId,
+      location.projectDirectory,
+      gitDirectory,
+    );
+  }
+
+  async runWorktreeSetup(
+    input: RunSessionWorktreeSetupInput,
+    signal: AbortSignal,
+  ) {
+    const { metadata, location } = this.sessionWorktree(input.sessionId);
+    if (metadata.state !== 'active')
+      throw new SessionError(
+        'invalid-request',
+        'Setup is available for active worktree sessions.',
+      );
+    if (
+      this.isBusy() ||
+      this.unsaved.size ||
+      this.creatingWorktrees ||
+      this.runningWorktreeSetup
+    )
+      throw new SessionError(
+        'busy',
+        'Wait for active work on this computer to finish.',
+      );
+    this.runningWorktreeSetup = location.worktree;
+    try {
+      const gitDirectory = await confirmSessionWorktree({
+        ...location,
+        signal,
+      });
+      return await executeWorktreeSetup(
+        this.directory,
+        location.worktree,
+        location.projectDirectory,
+        gitDirectory,
+        input,
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceIsolationError) throw error;
+      throw new SessionError(
+        'invalid-request',
+        error instanceof Error ? error.message : 'Setup could not run.',
+      );
+    } finally {
+      this.runningWorktreeSetup = null;
+    }
+  }
+
+  listOrphanedWorktrees(): OrphanedSessionWorktrees {
+    return orphanedSessionCheckouts(this.directory, this.store.list())
+      .slice(0, 100)
+      .map(record => ({
+        id: record.id,
+        directory: record.worktree,
+        branch: record.branch,
+        sessionTitle: record.session?.title.slice(0, 100) ?? null,
+      }));
+  }
+
+  async removeOrphanedWorktree(
+    input: RemoveOrphanedSessionWorktreeInput,
+    signal: AbortSignal,
+  ): Promise<OrphanedSessionWorktreeRemoval> {
+    if (this.isBusy() || this.unsaved.size || this.creatingWorktrees)
+      throw new SessionError(
+        'busy',
+        'Wait for active work on this computer to finish.',
+      );
+    const record = orphanedSessionCheckouts(
+      this.directory,
+      this.store.list(),
+    ).find(worktree => worktree.id === input.id);
+    if (!record)
+      throw new SessionError(
+        'not-found',
+        'This worktree is no longer available for cleanup.',
+      );
+    this.removingWorktree = true;
+    try {
+      await removeSessionWorktree({
+        ...record,
+        dataDirectory: this.directory,
+        force: input.force,
+        signal,
+      });
+      if (record.session?.worktree?.state === 'kept')
+        this.markWorktreeFinished(record.session, 'removed');
+      return 'removed';
+    } catch (error) {
+      if (
+        error instanceof WorkspaceIsolationError &&
+        error.code === 'dirty-worktree'
+      )
+        return 'dirty';
+      throw error;
+    } finally {
+      this.removingWorktree = false;
+    }
+  }
+
   async finishWorktree(
     input: FinishSessionWorktreeInput,
     signal: AbortSignal,
@@ -1140,7 +1329,12 @@ export class SessionService {
     const { session, metadata, location } = this.sessionWorktree(
       input.sessionId,
     );
-    if (this.isBusy() || this.unsaved.size)
+    if (
+      this.isBusy() ||
+      this.unsaved.size ||
+      this.creatingWorktrees ||
+      this.runningWorktreeSetup === location.worktree
+    )
       throw new SessionError(
         'busy',
         'Wait for active work on this computer to finish before finishing a worktree.',

@@ -3,16 +3,24 @@ import {
   constants,
   lstatSync,
   mkdirSync,
+  readdirSync,
   realpathSync,
   statSync,
+  unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { WorkflowIsolation } from '@nesvo/contracts';
+import type { Session } from '@nesvo/contracts';
 import {
   OwnedProcessError,
   runOwnedProcess,
   type OwnedProcessResult,
 } from '../process/owned-process';
+import {
+  copyWorktreeIncludes,
+  readGitPointer,
+  readWorktreeFile,
+} from './worktree-files';
 
 const GIT_QUERY_TIMEOUT_MS = 10_000;
 const GIT_CHANGE_TIMEOUT_MS = 60_000;
@@ -59,6 +67,7 @@ export type WorkspaceIsolationErrorCode =
   | 'worktree-exists'
   | 'not-a-task-worktree'
   | 'dirty-worktree'
+  | 'patch-too-large'
   | 'git-unavailable'
   | 'git-failed'
   | 'timed-out'
@@ -110,6 +119,9 @@ type GitCall = {
   timeoutMs: number;
   signal: AbortSignal;
   untranslated?: boolean;
+  stdin?: Buffer;
+  maxOutputBytes?: number;
+  captureStdoutBytes?: boolean;
 };
 
 function fail(code: WorkspaceIsolationErrorCode, message: string): never {
@@ -193,6 +205,9 @@ async function runGit({
   timeoutMs,
   signal,
   untranslated = false,
+  stdin,
+  maxOutputBytes = MAX_GIT_OUTPUT_BYTES,
+  captureStdoutBytes,
 }: GitCall): Promise<OwnedProcessResult> {
   const executable = gitExecutable();
   const environment = gitEnvironment();
@@ -209,7 +224,9 @@ async function runGit({
       cwd,
       env: environment,
       timeoutMs,
-      maxOutputBytes: MAX_GIT_OUTPUT_BYTES,
+      maxOutputBytes,
+      stdin,
+      captureStdoutBytes,
       signal,
     });
   } catch (error) {
@@ -305,9 +322,10 @@ function worktreesRoot(
 }
 
 function parseWorktreeList(output: string): TaskWorktree[] {
+  const nul = output.includes('\0');
   return output
-    .split(/\r?\n\r?\n/)
-    .map(block => block.split(/\r?\n/).filter(Boolean))
+    .split(nul ? '\0\0' : /\r?\n\r?\n/)
+    .map(block => block.split(nul ? '\0' : /\r?\n/).filter(Boolean))
     .filter(lines => lines[0]?.startsWith('worktree '))
     .map(lines => {
       const value = (key: string) =>
@@ -330,14 +348,22 @@ function parseWorktreeList(output: string): TaskWorktree[] {
 async function registeredWorktrees(
   projectDirectory: string,
   signal: AbortSignal,
+  gitDirectory?: string,
 ): Promise<TaskWorktree[]> {
   const result = await runGit({
-    args: ['worktree', 'list', '--porcelain'],
+    args: [
+      ...(gitDirectory ? [`--git-dir=${gitDirectory}`] : []),
+      'worktree',
+      'list',
+      '--porcelain',
+      ...(gitDirectory ? ['-z'] : []),
+    ],
     cwd: projectDirectory,
     timeoutMs: GIT_QUERY_TIMEOUT_MS,
     signal,
   });
-  if (result.code !== 0) fail('git-failed', gitMessage(result));
+  if (result.code !== 0 || result.outputTruncated)
+    fail('git-failed', gitMessage(result));
   return parseWorktreeList(result.stdout);
 }
 
@@ -401,9 +427,180 @@ export function createTaskWorktree(input: CreateTaskWorktreeParams) {
 }
 
 const SESSION_ROOT = 'session-worktrees';
+const RECORDS_ROOT = 'session-worktree-records';
+const MAX_PATCH_BYTES = 8 * 1024 * 1024;
+
+type SessionOptions = {
+  branch?: string;
+  carryChanges?: boolean;
+  fork?: boolean;
+  sourceWorktree?: Pick<
+    SessionWorktreeLocation,
+    'projectDirectory' | 'worktree'
+  >;
+};
+
+type SessionCheckout = {
+  id: string;
+  worktree: string;
+  projectDirectory: string;
+  gitDirectory: string;
+  branch: string;
+};
+
+export async function repositoryGitDirectory(
+  directory: string,
+  signal: AbortSignal,
+) {
+  const result = await runGit({
+    args: ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+    cwd: directory,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  const gitDirectory = realDirectory(result.stdout.trim());
+  if (result.code !== 0 || result.outputTruncated || !gitDirectory)
+    fail('git-failed', 'The Git repository could not be identified.');
+  return gitDirectory;
+}
+
+export function sessionCheckout(
+  dataDirectory: string,
+  id: string,
+): SessionCheckout | undefined {
+  if (!RUN_ID_PATTERN.test(id)) return;
+  const records = worktreesRoot(dataDirectory, false, RECORDS_ROOT);
+  const root = worktreesRoot(dataDirectory, false, SESSION_ROOT);
+  if (!records || !root) return;
+  try {
+    const record: Partial<SessionCheckout> = JSON.parse(
+      readWorktreeFile(records, `${id}.json`, 64 * 1024).toString('utf8'),
+    );
+    if (
+      record.id === id &&
+      typeof record.worktree === 'string' &&
+      isInside(root, record.worktree) &&
+      resolve(record.worktree, '..') === root &&
+      relative(root, record.worktree).startsWith(`${id.slice(0, 8)}-`) &&
+      typeof record.gitDirectory === 'string' &&
+      isAbsolute(record.gitDirectory) &&
+      typeof record.projectDirectory === 'string' &&
+      isAbsolute(record.projectDirectory) &&
+      typeof record.branch === 'string'
+    )
+      return {
+        id,
+        worktree: record.worktree,
+        gitDirectory: record.gitDirectory,
+        projectDirectory: record.projectDirectory,
+        branch: record.branch,
+      };
+  } catch {
+    return;
+  }
+}
+
+function listSessionCheckouts(dataDirectory: string): SessionCheckout[] {
+  const root = worktreesRoot(dataDirectory, false, RECORDS_ROOT);
+  if (!root) return [];
+  return readdirSync(root).flatMap(file => {
+    if (!file.endsWith('.json')) return [];
+    const record = sessionCheckout(dataDirectory, file.slice(0, -5));
+    return record && realDirectory(record.worktree) === record.worktree
+      ? [record]
+      : [];
+  });
+}
+
+export function orphanedSessionCheckouts(
+  dataDirectory: string,
+  sessions: Session[],
+) {
+  const root = worktreesRoot(dataDirectory, false, SESSION_ROOT);
+  if (!root) return [];
+  const byId = new Map(sessions.map(session => [session.id, session]));
+  const live = sessions.filter(
+    session =>
+      ![session, byId.get(session.parentId ?? '')].some(
+        owner => owner?.worktree && owner.worktree.state !== 'active',
+      ),
+  );
+  const checkouts = new Map<
+    string,
+    Omit<SessionCheckout, 'gitDirectory'> & { gitDirectory?: string }
+  >(listSessionCheckouts(dataDirectory).map(record => [record.id, record]));
+  for (const { id, directory, worktree } of sessions) {
+    if (
+      worktree?.state !== 'kept' ||
+      checkouts.has(id) ||
+      resolve(directory, '..') !== root ||
+      realDirectory(directory) !== directory
+    )
+      continue;
+    checkouts.set(id, {
+      id,
+      worktree: directory,
+      branch: worktree.branch,
+      projectDirectory: worktree.projectDirectory,
+    });
+  }
+  return [...checkouts.values()]
+    .filter(
+      record =>
+        !live.some(session => isInside(record.worktree, session.directory)),
+    )
+    .map(record => ({ ...record, session: byId.get(record.id) }));
+}
+
+async function includeWorktreeFiles(
+  source: string,
+  target: string,
+  recordPath: string,
+  signal: AbortSignal,
+) {
+  let patterns: Buffer;
+  try {
+    patterns = readWorktreeFile(source, '.worktreeinclude', 64 * 1024);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? undefined
+      : { copied: 0, skipped: 0, incomplete: true };
+  }
+  writeFileSync(recordPath, patterns, { flag: 'wx', mode: 0o600 });
+  try {
+    const result = await runGit({
+      args: [
+        'ls-files',
+        '--others',
+        '--ignored',
+        '-z',
+        `--exclude-from=${recordPath}`,
+      ],
+      cwd: source,
+      timeoutMs: GIT_QUERY_TIMEOUT_MS,
+      maxOutputBytes: 256 * 1024,
+      signal,
+    });
+    if (result.code !== 0) return { copied: 0, skipped: 0, incomplete: true };
+    const paths = result.stdout.split('\0').slice(0, -1);
+    const validPaths = paths.filter(path => !path.includes('\uFFFD'));
+    const { copied } = copyWorktreeIncludes(source, target, validPaths);
+    return {
+      copied,
+      skipped: paths.length - copied,
+      incomplete: result.outputTruncated,
+    };
+  } catch (error) {
+    if (error instanceof WorkspaceIsolationError && error.code === 'timed-out')
+      return { copied: 0, skipped: 0, incomplete: true };
+    throw error;
+  } finally {
+    unlinkSync(recordPath);
+  }
+}
 
 export function createSessionWorktree(
-  input: CreateTaskWorktreeParams & { branch?: string },
+  input: CreateTaskWorktreeParams & SessionOptions,
 ) {
   return createWorktree(input, SESSION_ROOT);
 }
@@ -416,9 +613,12 @@ async function createWorktree(
     runId,
     signal,
     branch: requestedBranch,
-  }: CreateTaskWorktreeParams & { branch?: string },
+    fork,
+    carryChanges,
+    sourceWorktree,
+  }: CreateTaskWorktreeParams & SessionOptions,
   rootName: string,
-): Promise<WorkflowIsolation & { projectDirectory: string }> {
+) {
   if (signal.aborted) fail('cancelled', 'The Git operation was cancelled.');
   if (!TASK_SLUG_PATTERN.test(slug))
     fail('invalid-task', 'The task name must be a short lowercase slug.');
@@ -428,12 +628,40 @@ async function createWorktree(
   const roots = ['worktrees', SESSION_ROOT].map(name =>
     worktreesRoot(dataDirectory, false, name),
   );
-  if (roots.some(root => root && isInside(root, project)))
+  if (
+    roots.some(
+      (root, index) =>
+        root && isInside(root, project) && !(fork && index === 1),
+    )
+  )
     fail(
       'nested-worktree',
       'The project directory is a task worktree. Start the task from the original project.',
     );
-  const repository = await repositoryRoot(project, signal);
+  let repository: string;
+  let originalProject: string;
+  let gitDirectory: string | undefined;
+  if (roots[1] && isInside(roots[1], project)) {
+    const source =
+      listSessionCheckouts(dataDirectory).find(record =>
+        isInside(record.worktree, project),
+      ) ?? sourceWorktree;
+    const registration =
+      source &&
+      (await registeredSessionWorktree({ ...source, dataDirectory, signal }));
+    if (
+      !source ||
+      !registration ||
+      !isInside(registration.target.worktree, project)
+    )
+      fail('not-a-task-worktree', 'The source worktree could not be verified.');
+    repository = registration.target.worktree;
+    originalProject = source.projectDirectory;
+    gitDirectory = registration.gitDirectory;
+  } else {
+    repository = await repositoryRoot(project, signal);
+    originalProject = repository;
+  }
   if (rootName === 'worktrees' && repository !== project)
     fail(
       'not-repository-root',
@@ -468,6 +696,47 @@ async function createWorktree(
     fail('worktree-exists', 'A worktree for this task already exists.');
   if (await branchExists(repository, branch, signal))
     fail('branch-exists', `The branch ${branch} already exists.`);
+  let patch: Buffer | undefined;
+  if (carryChanges) {
+    const diff = await runGit({
+      args: [
+        'diff',
+        '--binary',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-color',
+        '--src-prefix=a/',
+        '--dst-prefix=b/',
+        base,
+        '--',
+      ],
+      cwd: repository,
+      timeoutMs: GIT_QUERY_TIMEOUT_MS,
+      maxOutputBytes: MAX_PATCH_BYTES,
+      captureStdoutBytes: true,
+      signal,
+    });
+    if (diff.code !== 0) fail('git-failed', gitMessage(diff));
+    if (diff.outputTruncated)
+      fail('patch-too-large', 'The source patch exceeds 8 MiB.');
+    patch = diff.stdoutBytes;
+  }
+  let records: string | undefined;
+  if (rootName === SESSION_ROOT) {
+    records = worktreesRoot(dataDirectory, true, RECORDS_ROOT)!;
+    gitDirectory ??= await repositoryGitDirectory(repository, signal);
+    const record: SessionCheckout = {
+      id: runId,
+      worktree,
+      projectDirectory: originalProject,
+      gitDirectory,
+      branch,
+    };
+    writeFileSync(join(records, `${runId}.json`), JSON.stringify(record), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+  }
   let result: OwnedProcessResult;
   try {
     result = await runGit({
@@ -488,63 +757,153 @@ async function createWorktree(
     throw error;
   }
   if (result.code !== 0) fail('git-failed', gitMessage(result));
+  if (records && realDirectory(worktree) !== worktree)
+    fail(
+      'not-a-task-worktree',
+      'The new worktree path changed during creation.',
+    );
+  if (patch?.length && gitDirectory) {
+    const admin = checkoutGitDirectory(worktree, gitDirectory);
+    const applied = await runGit({
+      args: [
+        `--git-dir=${admin}`,
+        `--work-tree=${worktree}`,
+        'apply',
+        '--whitespace=nowarn',
+        '-',
+      ],
+      cwd: worktree,
+      timeoutMs: GIT_QUERY_TIMEOUT_MS,
+      stdin: patch,
+      signal,
+    });
+    if (applied.code !== 0)
+      fail(
+        'git-failed',
+        'The source patch could not be applied. Find the retained checkout in Data settings.',
+      );
+  }
+  const includes = records
+    ? await includeWorktreeFiles(
+        repository,
+        worktree,
+        join(records, `${runId}.include`),
+        signal,
+      )
+    : undefined;
   return {
     worktree: realPathOf(worktree),
     branch,
     base,
-    projectDirectory: repository,
+    projectDirectory: originalProject,
+    includes,
   };
 }
 
-type SessionWorktreeLocation = ListTaskWorktreesParams & { worktree: string };
+type SessionWorktreeLocation = ListTaskWorktreesParams & {
+  worktree: string;
+  gitDirectory?: string;
+};
 
 async function registeredSessionWorktree({
   dataDirectory,
   projectDirectory,
   worktree,
   signal,
-}: SessionWorktreeLocation): Promise<TaskWorktree | undefined> {
+  gitDirectory: recordedGitDirectory,
+}: SessionWorktreeLocation) {
   const root = worktreesRoot(dataDirectory, false, SESSION_ROOT);
   if (
     !isAbsolute(worktree) ||
-    (root && (root === worktree || !isInside(root, worktree))) ||
+    (root && resolve(worktree, '..') !== root) ||
     realPathOf(worktree) !== worktree
   )
     fail(
       'not-a-task-worktree',
       'This path is outside the managed session worktrees.',
     );
-  const target = root
-    ? (await registeredWorktrees(projectPath(projectDirectory), signal)).find(
-        entry => entry.worktree === worktree,
-      )
-    : undefined;
+  if (!root || !pathExists(worktree)) return;
+  const gitDirectory =
+    recordedGitDirectory ??
+    (await repositoryGitDirectory(projectPath(projectDirectory), signal));
+  if (realDirectory(gitDirectory) !== gitDirectory)
+    fail('not-a-task-worktree', 'The original Git repository is unavailable.');
+  const cwd = projectPath(dataDirectory);
+  const target = (await registeredWorktrees(cwd, signal, gitDirectory)).find(
+    entry => entry.worktree === worktree,
+  );
   if (!target && pathExists(worktree))
     fail(
       'not-a-task-worktree',
       'This path is no longer a registered session worktree.',
     );
-  return target;
+  if (!target) return;
+  const admin = checkoutGitDirectory(worktree, gitDirectory);
+  return { target, gitDirectory, admin, cwd };
+}
+
+function checkoutGitDirectory(worktree: string, gitDirectory: string) {
+  try {
+    const pointer = readGitPointer(worktree);
+    if (!pointer.startsWith('gitdir: ')) throw new Error();
+    const admin = resolve(worktree, pointer.slice('gitdir: '.length));
+    if (
+      resolve(admin, '..') !== join(gitDirectory, 'worktrees') ||
+      realDirectory(admin) !== admin ||
+      realDirectory(
+        resolve(
+          admin,
+          readWorktreeFile(admin, 'commondir', 4096).toString('utf8').trimEnd(),
+        ),
+      ) !== gitDirectory ||
+      resolve(
+        admin,
+        readWorktreeFile(admin, 'gitdir', 4096).toString('utf8').trimEnd(),
+      ) !== join(worktree, '.git')
+    )
+      throw new Error();
+    return admin;
+  } catch {
+    return fail(
+      'not-a-task-worktree',
+      'The worktree Git pointer does not match its registered repository.',
+    );
+  }
 }
 
 export async function readSessionWorktreeStatus(
   input: SessionWorktreeLocation,
 ) {
-  const target = await registeredSessionWorktree(input);
+  const registration = await registeredSessionWorktree(input);
   return {
     dirty:
-      target && !target.prunable
-        ? await worktreeDirty(target.worktree, input.signal)
+      registration && !registration.target.prunable
+        ? await worktreeDirty(registration, input.signal)
         : false,
   };
 }
 
+export async function confirmSessionWorktree(input: SessionWorktreeLocation) {
+  const registration = await registeredSessionWorktree(input);
+  if (!registration)
+    fail('not-a-task-worktree', 'This worktree is no longer available.');
+  return registration.gitDirectory;
+}
+
 async function worktreeDirty(
-  worktree: string,
+  {
+    target,
+    admin,
+    cwd,
+  }: NonNullable<Awaited<ReturnType<typeof registeredSessionWorktree>>>,
   signal: AbortSignal,
 ): Promise<boolean> {
   const result = await runGit({
     args: [
+      `--git-dir=${admin}`,
+      `--work-tree=${target.worktree}`,
+      '-c',
+      'core.fsmonitor=false',
       '--no-optional-locks',
       'status',
       '--porcelain',
@@ -552,7 +911,7 @@ async function worktreeDirty(
       '--ignored=matching',
       '--ignore-submodules=none',
     ],
-    cwd: worktree,
+    cwd,
     timeoutMs: GIT_QUERY_TIMEOUT_MS,
     signal,
   });
@@ -560,19 +919,26 @@ async function worktreeDirty(
   return result.stdout.length > 0 || result.outputTruncated;
 }
 
-export async function removeSessionWorktree(input: RemoveTaskWorktreeParams) {
-  const target = await registeredSessionWorktree(input);
-  if (!target) return;
+export async function removeSessionWorktree(
+  input: SessionWorktreeLocation & { force?: boolean },
+) {
+  const registration = await registeredSessionWorktree(input);
+  if (!registration) return;
+  const { target, gitDirectory, cwd } = registration;
   if (
     !input.force &&
     !target.prunable &&
-    (await worktreeDirty(target.worktree, input.signal))
+    (await worktreeDirty(registration, input.signal))
   )
     fail(
       'dirty-worktree',
       'The worktree has uncommitted changes. Commit them or explicitly confirm removal.',
     );
-  await removeWorktree(input, target);
+  await removeWorktree(
+    { ...input, projectDirectory: cwd },
+    target,
+    gitDirectory,
+  );
 }
 
 export async function listTaskWorktrees({
@@ -616,9 +982,11 @@ export async function removeTaskWorktree({
 async function removeWorktree(
   { projectDirectory, force, signal }: RemoveTaskWorktreeParams,
   target: TaskWorktree,
+  gitDirectory?: string,
 ): Promise<TaskWorktree> {
   const result = await runGit({
     args: [
+      ...(gitDirectory ? [`--git-dir=${gitDirectory}`] : []),
       'worktree',
       'remove',
       ...(force ? ['--force'] : []),

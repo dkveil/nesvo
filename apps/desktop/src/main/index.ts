@@ -36,6 +36,8 @@ import {
   createSessionSchema,
   readSessionWorktreeSchema,
   finishSessionWorktreeSchema,
+  runSessionWorktreeSetupSchema,
+  removeOrphanedSessionWorktreeSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideReviewSchema,
@@ -957,6 +959,47 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'finish-session-worktree',
         finishSessionWorktreeSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:read-session-worktree-setup',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-session-worktree-setup',
+        readSessionWorktreeSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:run-session-worktree-setup',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'run-session-worktree-setup',
+        runSessionWorktreeSetupSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle('nesvo:list-orphaned-session-worktrees', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'list-orphaned-session-worktrees',
+      undefined,
+      route(hostId),
+    );
+  });
+  handle(
+    'nesvo:remove-orphaned-session-worktree',
+    (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'remove-orphaned-session-worktree',
+        removeOrphanedSessionWorktreeSchema.parse(input),
         route(hostId),
       );
     },

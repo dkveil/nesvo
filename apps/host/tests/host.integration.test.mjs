@@ -1056,6 +1056,7 @@ test(
         'workflows',
         'git-branch',
         'session-worktrees',
+        'session-worktree-tools',
         'permission-modes',
         'session-workflow',
         'session-fork',
@@ -6054,6 +6055,7 @@ test(
       'workflows',
       'git-branch',
       'session-worktrees',
+      'session-worktree-tools',
       'permission-modes',
       'session-workflow',
       'session-fork',
@@ -17382,6 +17384,291 @@ test(
     assert.equal(
       (await finish({ kind: 'pull-request' })).session.worktree.state,
       'removed',
+    );
+  },
+);
+
+test(
+  'Session worktree includes, setup approvals, isolated forks and cleanup',
+  { timeout: 120_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-worktree-tools-')),
+    );
+    const project = join(root, 'project');
+    const data = join(root, 'data');
+    await mkdir(join(project, '.nesvo'), { recursive: true });
+    await mkdir(join(project, 'local'));
+    const git = async (cwd, ...args) =>
+      (
+        await promisify(execFile)(
+          'git',
+          [
+            '-c',
+            'user.name=Nesvo Test',
+            '-c',
+            'user.email=test@example.invalid',
+            '-c',
+            'commit.gpgsign=false',
+            ...args,
+          ],
+          { cwd },
+        )
+      ).stdout.trim();
+    await git(project, 'init', '-q', '--initial-branch=main');
+    await git(project, 'config', 'core.autocrlf', 'false');
+    await writeFile(join(project, '.gitignore'), '.env\n');
+    await writeFile(
+      join(project, '.worktreeinclude'),
+      '.env*\n!.env.private\nlocal/**\nnote.txt\n.git\n',
+    );
+    await writeFile(join(project, 'note.txt'), 'base\n');
+    await writeFile(join(project, 'binary.dat'), Buffer.from([0, 3, 255]));
+    await git(project, 'add', '.');
+    await git(project, 'commit', '-qm', 'Initial commit');
+    const base = await git(project, 'rev-parse', 'HEAD');
+    const scriptPath = join(project, '.nesvo', 'worktree-setup');
+    const script = `require('node:fs').writeFileSync('setup.txt', 'ran'); console.log('setup output');`;
+    await writeFile(scriptPath, script);
+    await writeFile(join(project, '.env'), 'IGNORED=1\n');
+    await writeFile(join(project, '.env.local'), 'UNTRACKED=1\n');
+    await writeFile(join(project, '.env.private'), 'excluded');
+    await writeFile(
+      join(project, 'local', 'a-first'),
+      Buffer.alloc(5 * 1024 * 1024),
+    );
+    await writeFile(
+      join(project, 'local', 'b-second'),
+      Buffer.alloc(4 * 1024 * 1024),
+    );
+    await Promise.all(
+      Array.from({ length: 70 }, (_, index) =>
+        writeFile(join(project, 'local', `file-${index}`), 'small'),
+      ),
+    );
+    const outside = join(root, 'outside');
+    await mkdir(outside);
+    await writeFile(join(outside, 'outside.txt'), 'outside');
+    const symlinkCreated = await symlink(
+      outside,
+      join(project, '.env-link'),
+      'junction',
+    ).then(
+      () => true,
+      error => {
+        if (error.code === 'EPERM') return false;
+        throw error;
+      },
+    );
+
+    const open = () => launch(data, join(root, 'pids.json'));
+    let host = open();
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const request = (method, input) => host.request(method, input);
+    const sessionFrom = response => {
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const create = async title =>
+      sessionFrom(
+        await request('create-session', {
+          title,
+          provider: 'Codex',
+          model: 'fixture-codex',
+          mode: 'read-only',
+          directory: project,
+          isolation: { kind: 'worktree' },
+        }),
+      );
+    const source = await create('Source checkout');
+    assert.deepEqual(source.worktree.includes, {
+      copied: 64,
+      skipped: 10 + Number(symlinkCreated),
+      incomplete: false,
+    });
+    assert.equal(
+      await readFile(join(source.directory, '.env'), 'utf8'),
+      'IGNORED=1\n',
+    );
+    assert.equal(
+      await readFile(join(source.directory, '.env.local'), 'utf8'),
+      'UNTRACKED=1\n',
+    );
+    assert.equal((await stat(join(source.directory, '.git'))).isFile(), true);
+    assert.equal(
+      (await stat(join(source.directory, 'local', 'a-first'))).size,
+      5 * 1024 * 1024,
+    );
+    for (const path of [
+      '.env.private',
+      '.env-link',
+      'setup.txt',
+      'local/b-second',
+    ])
+      await assert.rejects(stat(join(source.directory, path)), {
+        code: 'ENOENT',
+      });
+
+    const inspect = async sessionId =>
+      (await request('read-session-worktree-setup', { sessionId })).setup;
+    const setup = (sessionId, sha256, approve = false) =>
+      request('run-session-worktree-setup', { sessionId, sha256, approve });
+    const originalHash = createHash('sha256').update(script).digest('hex');
+    assert.deepEqual((await inspect(source.id)).script, {
+      sha256: originalHash,
+      approved: false,
+    });
+    assert.equal(
+      (await setup(source.id, originalHash)).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (await setup(source.id, originalHash, true)).result.stdout.trim(),
+      'setup output',
+    );
+    assert.equal(
+      await readFile(join(source.directory, 'setup.txt'), 'utf8'),
+      'ran',
+    );
+
+    const toOrphan = await create('Interrupted launch');
+    assert.equal((await inspect(toOrphan.id)).script.approved, true);
+    await host.stop();
+    const database = new DatabaseSync(join(data, 'nesvo.sqlite'));
+    database.prepare('DELETE FROM sessions WHERE id = ?').run(toOrphan.id);
+    database.close();
+    host = open();
+    assert.equal((await inspect(source.id)).script.approved, true);
+    assert.equal((await inspect(source.id)).result.status, 'completed');
+    await writeFile(
+      scriptPath,
+      `const fs = require('node:fs');
+      fs.writeFileSync('setup-started.txt', 'running');
+      const timer = setInterval(() => {
+        if (!fs.existsSync('setup-continue.txt')) return;
+        clearInterval(timer);
+        console.log('x'.repeat(20_000));
+        console.error('setup failed');
+        process.exitCode = 7;
+      }, 25);`,
+    );
+    assert.equal(
+      (await setup(source.id, originalHash, true)).code,
+      'invalid-request',
+    );
+    const updated = (await inspect(source.id)).script;
+    assert.notEqual(updated.sha256, originalHash);
+    assert.equal(updated.approved, false);
+    assert.equal(
+      (await setup(source.id, updated.sha256)).code,
+      'invalid-request',
+    );
+    const pendingSetup = setup(source.id, updated.sha256, true);
+    const marker = join(source.directory, 'setup-started.txt');
+    for (let attempt = 0; attempt < 160; attempt++) {
+      if (await stat(marker).catch(() => null)) break;
+      await delay(25);
+    }
+    assert.equal(await readFile(marker, 'utf8'), 'running');
+    const started = sessionFrom(
+      await request('send-message', {
+        sessionId: source.id,
+        text: 'fixture:continue',
+        messageId: randomUUID(),
+      }),
+    );
+    await writeFile(join(source.directory, 'setup-continue.txt'), '');
+    const failure = (await pendingSetup).result;
+    assert.equal(failure.exitCode, 7);
+    assert.equal(failure.status, 'failed');
+    assert.equal(failure.truncated, true);
+    assert.equal(failure.stdout.length, 16 * 1024);
+    const completed = await host.event(
+      row =>
+        row.id === source.id &&
+        row.runId === started.runId &&
+        row.status === 'completed',
+    );
+    assert.ok(completed.providerSessionId);
+    await writeFile(join(source.directory, 'note.txt'), 'staged\n');
+    await git(source.directory, 'add', 'note.txt');
+    await writeFile(join(source.directory, 'note.txt'), 'working copy\n');
+    await writeFile(
+      join(source.directory, 'binary.dat'),
+      Buffer.from([0, 248, 237]),
+    );
+    const fork = sessionFrom(
+      await request('fork-session', {
+        sessionId: source.id,
+        worktree: { carryChanges: true },
+      }),
+    );
+    assert.notEqual(fork.providerSessionId, completed.providerSessionId);
+    assert.notEqual(fork.directory, source.directory);
+    assert.equal(fork.worktree.base, base);
+    assert.equal(fork.worktree.projectDirectory, project);
+    assert.equal(fork.forkOf.sessionId, source.id);
+    assert.equal(
+      await readFile(join(fork.directory, 'note.txt'), 'utf8'),
+      'working copy\n',
+    );
+    assert.deepEqual(
+      await readFile(join(fork.directory, 'binary.dat')),
+      Buffer.from([0, 248, 237]),
+    );
+    assert.equal(
+      await readFile(join(fork.directory, '.env.local'), 'utf8'),
+      'UNTRACKED=1\n',
+    );
+    await assert.rejects(stat(join(fork.directory, 'setup.txt')), {
+      code: 'ENOENT',
+    });
+    assert.equal(await readFile(join(project, 'note.txt'), 'utf8'), 'base\n');
+
+    const list = async () =>
+      (await request('list-orphaned-session-worktrees')).worktrees;
+    const remove = (id, force = false) =>
+      request('remove-orphaned-session-worktree', { id, force });
+    assert.deepEqual(
+      (await list()).map(item => item.id),
+      [toOrphan.id],
+    );
+    assert.equal((await remove(fork.id, true)).code, 'not-found');
+    sessionFrom(
+      await request('finish-session-worktree', {
+        sessionId: source.id,
+        action: { kind: 'keep' },
+      }),
+    );
+    assert.deepEqual(
+      new Set((await list()).map(item => item.id)),
+      new Set([source.id, toOrphan.id]),
+    );
+    for (const session of [source, toOrphan]) {
+      assert.equal((await remove(session.id)).removal, 'dirty');
+      assert.equal((await stat(session.directory)).isDirectory(), true);
+      assert.equal((await remove(session.id, true)).removal, 'removed');
+      await assert.rejects(stat(session.directory), { code: 'ENOENT' });
+      assert.equal(
+        await git(project, 'rev-parse', session.worktree.branch),
+        base,
+      );
+    }
+    assert.deepEqual(await list(), []);
+    assert.equal(
+      (await request('list-sessions')).sessions.find(
+        item => item.id === source.id,
+      ).worktree.state,
+      'removed',
+    );
+    assert.equal(
+      await readFile(join(fork.directory, 'note.txt'), 'utf8'),
+      'working copy\n',
     );
   },
 );

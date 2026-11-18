@@ -323,6 +323,8 @@ export class SessionStore {
     source: Session,
     forkOf: NonNullable<Session['forkOf']>,
     native: { sessionId: string; model: string } | null,
+    directory = source.directory,
+    worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
     const session = this.newSession(
       {
@@ -330,10 +332,13 @@ export class SessionStore {
         provider: source.provider,
         model: source.model,
         mode: source.mode,
-        directory: source.directory,
+        directory,
         effort: source.effort ?? undefined,
       },
-      source.directory,
+      directory,
+      undefined,
+      undefined,
+      worktree,
     );
     session.forkOf = forkOf;
     session.delegationEnabled = source.delegationEnabled;

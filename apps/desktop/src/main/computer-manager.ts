@@ -191,6 +191,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without conversation import. Update the host, then reconnect.',
   'session-worktrees':
     'This computer runs an older Nesvo host without session worktrees. Update the host, then reconnect.',
+  'session-worktree-tools':
+    'Update this computer’s Nesvo host and reconnect to use worktree tools.',
   'history-search':
     'Update this computer’s Nesvo host and reconnect to search its history.',
   'session-groups':
@@ -208,6 +210,18 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
+  if (
+    method === 'read-session-worktree-setup' ||
+    method === 'run-session-worktree-setup' ||
+    method === 'list-orphaned-session-worktrees' ||
+    method === 'remove-orphaned-session-worktree' ||
+    (method === 'fork-session' &&
+      typeof input === 'object' &&
+      input !== null &&
+      'worktree' in input &&
+      input.worktree)
+  )
+    return 'session-worktree-tools';
   if (
     method === 'read-session-worktree' ||
     method === 'finish-session-worktree'
@@ -896,6 +910,10 @@ export class ComputerManager {
       'create-session': 'session',
       'read-session-worktree': 'session-worktree-status',
       'finish-session-worktree': 'session',
+      'read-session-worktree-setup': 'session-worktree-setup',
+      'run-session-worktree-setup': 'session-worktree-setup-result',
+      'list-orphaned-session-worktrees': 'orphaned-session-worktrees',
+      'remove-orphaned-session-worktree': 'orphaned-session-worktree-removal',
       'send-message': 'session',
       'assign-session-workflow': 'session',
       'fork-session': 'session',
@@ -971,6 +989,14 @@ export class ComputerManager {
         return response.catalog;
       case 'session-worktree-status':
         return response.worktree;
+      case 'session-worktree-setup':
+        return response.setup;
+      case 'session-worktree-setup-result':
+        return response.result;
+      case 'orphaned-session-worktrees':
+        return response.worktrees;
+      case 'orphaned-session-worktree-removal':
+        return response.removal;
       case 'history-search':
         return response.search;
       case 'session-groups':

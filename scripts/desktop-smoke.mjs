@@ -661,6 +661,7 @@ try {
     'workflows',
     'git-branch',
     'session-worktrees',
+    'session-worktree-tools',
     'permission-modes',
     'session-workflow',
     'session-fork',

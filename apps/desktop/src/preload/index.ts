@@ -13,6 +13,12 @@ import {
   readSessionWorktreeSchema,
   sessionWorktreeStatusSchema,
   finishSessionWorktreeSchema,
+  runSessionWorktreeSetupSchema,
+  removeOrphanedSessionWorktreeSchema,
+  sessionWorktreeSetupSchema,
+  sessionWorktreeSetupResultSchema,
+  orphanedSessionWorktreesSchema,
+  orphanedSessionWorktreeRemovalSchema,
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideReviewSchema,
@@ -579,6 +585,37 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:finish-session-worktree',
         finishSessionWorktreeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionWorktreeSetup: async (input, hostId) =>
+    sessionWorktreeSetupSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-worktree-setup',
+        readSessionWorktreeSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  runSessionWorktreeSetup: async (input, hostId) =>
+    sessionWorktreeSetupResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:run-session-worktree-setup',
+        runSessionWorktreeSetupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listOrphanedSessionWorktrees: async hostId =>
+    orphanedSessionWorktreesSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-orphaned-session-worktrees',
+        route(hostId),
+      ),
+    ),
+  removeOrphanedSessionWorktree: async (input, hostId) =>
+    orphanedSessionWorktreeRemovalSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:remove-orphaned-session-worktree',
+        removeOrphanedSessionWorktreeSchema.parse(input),
         route(hostId),
       ),
     ),

@@ -85,6 +85,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
   'adopt-conversation',
   'finish-session-worktree',
+  'run-session-worktree-setup',
+  'remove-orphaned-session-worktree',
   'fork-session',
   'restart-session',
   'send-message',
@@ -567,7 +569,11 @@ export const serveHost = ({
               request.input.mcp ||
               request.input.isolation)) ||
           request.method === 'read-session-worktree' ||
-          request.method === 'finish-session-worktree'
+          request.method === 'finish-session-worktree' ||
+          request.method === 'read-session-worktree-setup' ||
+          request.method === 'run-session-worktree-setup' ||
+          request.method === 'list-orphaned-session-worktrees' ||
+          request.method === 'remove-orphaned-session-worktree'
         ) {
           const worktree =
             request.method !== 'create-session' || !!request.input.isolation;
@@ -585,6 +591,33 @@ export const serveHost = ({
           if (worktree) worktreeRequests++;
           const signal = probes.controller.signal;
           const operation = async (): Promise<HostReply> => {
+            if (request.method === 'read-session-worktree-setup')
+              return {
+                type: 'session-worktree-setup',
+                id: request.id,
+                setup: await sessions.readWorktreeSetup(request.input, signal),
+              };
+            if (request.method === 'run-session-worktree-setup')
+              return {
+                type: 'session-worktree-setup-result',
+                id: request.id,
+                result: await sessions.runWorktreeSetup(request.input, signal),
+              };
+            if (request.method === 'list-orphaned-session-worktrees')
+              return {
+                type: 'orphaned-session-worktrees',
+                id: request.id,
+                worktrees: sessions.listOrphanedWorktrees(),
+              };
+            if (request.method === 'remove-orphaned-session-worktree')
+              return {
+                type: 'orphaned-session-worktree-removal',
+                id: request.id,
+                removal: await sessions.removeOrphanedWorktree(
+                  request.input,
+                  signal,
+                ),
+              };
             if (request.method === 'read-session-worktree')
               return {
                 type: 'session-worktree-status',

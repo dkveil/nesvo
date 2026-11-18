@@ -72,6 +72,18 @@ import {
   readSessionWorktreeSchema,
   sessionWorktreeStatusSchema,
   finishSessionWorktreeSchema,
+  runSessionWorktreeSetupSchema,
+  removeOrphanedSessionWorktreeSchema,
+  sessionWorktreeSetupSchema,
+  sessionWorktreeSetupResultSchema,
+  orphanedSessionWorktreesSchema,
+  orphanedSessionWorktreeRemovalSchema,
+  type SessionWorktreeSetup,
+  type SessionWorktreeSetupResult,
+  type OrphanedSessionWorktrees,
+  type OrphanedSessionWorktreeRemoval,
+  type RunSessionWorktreeSetupInput,
+  type RemoveOrphanedSessionWorktreeInput,
   sendMessageSchema,
   assignSessionWorkflowSchema,
   forkSessionSchema,
@@ -427,6 +439,25 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('finish-session-worktree'),
     input: finishSessionWorktreeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-worktree-setup'),
+    input: readSessionWorktreeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('run-session-worktree-setup'),
+    input: runSessionWorktreeSetupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-orphaned-session-worktrees'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('remove-orphaned-session-worktree'),
+    input: removeOrphanedSessionWorktreeSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -797,6 +828,26 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-worktree-status'),
     id: z.uuid(),
     worktree: sessionWorktreeStatusSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-worktree-setup'),
+    id: z.uuid(),
+    setup: sessionWorktreeSetupSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-worktree-setup-result'),
+    id: z.uuid(),
+    result: sessionWorktreeSetupResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('orphaned-session-worktrees'),
+    id: z.uuid(),
+    worktrees: orphanedSessionWorktreesSchema,
+  }),
+  z.strictObject({
+    type: z.literal('orphaned-session-worktree-removal'),
+    id: z.uuid(),
+    removal: orphanedSessionWorktreeRemovalSchema,
   }),
   z.strictObject({
     type: z.literal('reviews'),
@@ -1172,6 +1223,21 @@ export type DesktopApi = {
     input: FinishSessionWorktreeInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  readSessionWorktreeSetup: (
+    input: ReadSessionWorktreeInput,
+    hostId?: HostId,
+  ) => Promise<SessionWorktreeSetup>;
+  runSessionWorktreeSetup: (
+    input: RunSessionWorktreeSetupInput,
+    hostId?: HostId,
+  ) => Promise<SessionWorktreeSetupResult>;
+  listOrphanedSessionWorktrees: (
+    hostId?: HostId,
+  ) => Promise<OrphanedSessionWorktrees>;
+  removeOrphanedSessionWorktree: (
+    input: RemoveOrphanedSessionWorktreeInput,
+    hostId?: HostId,
+  ) => Promise<OrphanedSessionWorktreeRemoval>;
   listWorkspaceDirectory: (
     input: ListWorkspaceDirectoryInput,
     hostId?: HostId,
