@@ -59,6 +59,7 @@
 !/scripts/
 /scripts/*
 !/scripts/desktop-smoke.mjs
+!/scripts/share-server-fixture.mjs
 !/scripts/desktop-package-smoke.mjs
 !/scripts/remote-smoke.mjs
 !/scripts/mobile-smoke.mjs

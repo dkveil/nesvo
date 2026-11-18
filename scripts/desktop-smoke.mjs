@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
+import { startShareServer } from './share-server-fixture.mjs';
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -59,6 +60,8 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NESVO_WORK_LAPTOP_MODE;
+const shareServer = await startShareServer();
+env.NESVO_SHARE_ORIGIN = shareServer.origin;
 let application;
 let hostPid;
 const fullSessions = target =>
@@ -4035,6 +4038,264 @@ try {
     .getByRole('button', { name: 'Workflows', exact: true })
     .click();
   await workflowsView.waitFor();
+  const shareShot = async name => {
+    const folder = process.env.NESVO_SHARE_SCREENSHOT_DIR;
+    if (!folder) return;
+    await restartedPage.evaluate(
+      () =>
+        new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const encoded = await application.evaluate(async ({ BrowserWindow }) => {
+      const image =
+        await BrowserWindow.getAllWindows()[0].webContents.capturePage(
+          undefined,
+          { stayHidden: true, stayAwake: true },
+        );
+      return image.toPNG().toString('base64');
+    });
+    await mkdir(folder, { recursive: true });
+    await writeFile(
+      join(folder, `share-${name}.png`),
+      Buffer.from(encoded, 'base64'),
+    );
+  };
+  const deliverLink = async link => {
+    const second = spawn(executablePath, [...launchArgs, link], {
+      env,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    const code = await new Promise((resolve, reject) => {
+      second.once('error', reject);
+      second.once('exit', resolve);
+    });
+    assert.equal(code, 0, 'The second instance hands the link over and quits');
+  };
+  await workflowsView
+    .getByLabel('Project folder', { exact: true })
+    .fill(workflowProject);
+  await workflowsView
+    .getByRole('button', { name: 'Read', exact: true })
+    .click();
+  const sharedStepPath = join(workflowRoot, 'steps', 'smoke-check.md');
+  const sharedStep = await readFile(sharedStepPath, 'utf8');
+  const sharedWorkflow = await readFile(
+    join(workflowRoot, 'workflows', 'smoke.md'),
+    'utf8',
+  );
+  const fixtureToken = 'ghp_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8';
+  await writeFile(
+    sharedStepPath,
+    sharedStep.replace('echo ok', `GITHUB_TOKEN=${fixtureToken} echo ok`),
+  );
+  await workflowsView
+    .getByRole('button', { name: 'Share smoke', exact: true })
+    .click();
+  const shareDialog = restartedPage.getByRole('dialog', {
+    name: 'Share smoke',
+    exact: true,
+  });
+  const secrets = shareDialog.getByRole('region', {
+    name: 'Possible secrets',
+    exact: true,
+  });
+  await secrets.waitFor();
+  assert.equal(
+    await shareDialog
+      .getByRole('button', { name: 'Upload and create link', exact: true })
+      .count(),
+    0,
+  );
+  assert.ok(!(await secrets.textContent()).includes(fixtureToken));
+  await secrets.getByText('smoke-check.md:6', { exact: true }).waitFor();
+  await shareShot('blocked');
+  await writeFile(sharedStepPath, sharedStep);
+  await shareDialog
+    .getByRole('button', { name: 'Scan again', exact: true })
+    .click();
+  const uploadButton = shareDialog.getByRole('button', {
+    name: 'Upload and create link',
+    exact: true,
+  });
+  await uploadButton.waitFor();
+  await shareDialog
+    .getByRole('region', { name: 'Files to upload', exact: true })
+    .getByText('steps/smoke-check.md · Command', { exact: true })
+    .waitFor();
+  assert.equal(shareServer.shares.size, 0);
+  await shareShot('review');
+  await uploadButton.click();
+  const linkField = shareDialog.getByLabel('Link', { exact: true });
+  await linkField.waitFor();
+  const sharedUrl = await linkField.inputValue();
+  assert.equal(shareServer.shares.size, 1);
+  const [[shareId, uploaded]] = [...shareServer.shares];
+  assert.equal(sharedUrl, `${shareServer.origin}/s/${shareId}`);
+  assert.deepEqual(
+    {
+      version: uploaded.bundle.version,
+      name: uploaded.bundle.name,
+      workflow: uploaded.bundle.workflow,
+      app: uploaded.bundle.createdWith.app,
+    },
+    {
+      version: 1,
+      name: 'smoke',
+      workflow: { fileName: 'smoke.md', content: sharedWorkflow },
+      app: 'nesvo',
+    },
+  );
+  assert.ok(
+    uploaded.bundle.steps.some(step => step.fileName === 'smoke-check.md'),
+  );
+  for (const step of uploaded.bundle.steps)
+    assert.equal(
+      step.content,
+      await readFile(join(workflowRoot, 'steps', step.fileName), 'utf8'),
+    );
+  await shareDialog.getByText(/^Expires /).waitFor();
+  await shareShot('link');
+  await shareDialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await shareDialog.waitFor({ state: 'hidden' });
+  const storedSharing = JSON.parse(
+    await readFile(join(directory, 'sharing.json'), 'utf8'),
+  );
+  assert.equal(storedSharing.links[0].revokeToken, uploaded.revokeToken);
+  const linkList = await restartedPage.evaluate(() =>
+    window.nesvo.sharing.links(),
+  );
+  assert.equal(linkList.length, 1);
+  assert.equal('revokeToken' in linkList[0], false);
+
+  await deliverLink(
+    `nesvo://import-workflow?share=${shareId}&origin=${encodeURIComponent('https://evil.example')}`,
+  );
+  const refusedDialog = restartedPage.getByRole('dialog', {
+    name: 'This link could not be opened',
+    exact: true,
+  });
+  await refusedDialog.getByText(/not your configured share site/).waitFor();
+  await shareShot('refused');
+  await refusedDialog
+    .getByRole('button', { name: 'Close', exact: true })
+    .first()
+    .click();
+  await refusedDialog.waitFor({ state: 'hidden' });
+
+  const shareTarget = join(directory, 'share-target');
+  await mkdir(join(shareTarget, '.git'), { recursive: true });
+  await application.evaluate(({ dialog }, folder) => {
+    dialog.showOpenDialog = async () => ({
+      canceled: false,
+      filePaths: [folder],
+    });
+  }, shareTarget);
+  await deliverLink(
+    `nesvo://import-workflow?share=${shareId}&origin=${encodeURIComponent(shareServer.origin)}`,
+  );
+  const importDialog = restartedPage.getByRole('dialog', {
+    name: 'Import smoke',
+    exact: true,
+  });
+  await importDialog.waitFor();
+  await importDialog.getByText('echo ok', { exact: false }).first().waitFor();
+  await importDialog.getByText(/run on your computer/).waitFor();
+  await importDialog.getByRole('combobox', { name: 'Save to' }).click();
+  await restartedPage
+    .getByRole('option', { name: 'Choose a folder…', exact: true })
+    .click();
+  await importDialog
+    .getByRole('combobox', { name: 'Save to' })
+    .filter({ hasText: 'share-target' })
+    .waitFor();
+  await importDialog.getByText('New', { exact: true }).first().waitFor();
+  await shareShot('import');
+  await importDialog
+    .getByRole('button', { name: 'Save workflow', exact: true })
+    .click();
+  await importDialog.waitFor({ state: 'hidden' });
+  await editor.waitFor();
+  assert.equal(
+    await editor.getByRole('textbox', { name: 'Workflow name' }).inputValue(),
+    'smoke',
+  );
+  const importedRoot = join(shareTarget, '.agents', 'workflows');
+  assert.equal(
+    await readFile(join(importedRoot, 'workflows', 'smoke.md'), 'utf8'),
+    sharedWorkflow,
+  );
+  assert.equal(
+    await readFile(join(importedRoot, 'steps', 'smoke-check.md'), 'utf8'),
+    sharedStep,
+  );
+  await editor.locator('[data-editor-node="smoke-check"]').waitFor();
+  await shareShot('imported-editor');
+  assert.equal(
+    (await fullSessions(restartedPage)).some(session =>
+      session.directory.startsWith(shareTarget),
+    ),
+    false,
+    'Importing starts nothing',
+  );
+  await editor
+    .getByRole('button', { name: 'Close graph editor', exact: true })
+    .click();
+
+  await restartedPage
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click();
+  const shareSettings = restartedPage.getByRole('dialog', {
+    name: 'Settings',
+    exact: true,
+  });
+  await shareSettings
+    .getByRole('button', { name: 'Sharing', exact: true })
+    .click();
+  const sharingPage = shareSettings.getByRole('region', {
+    name: 'Sharing',
+    exact: true,
+  });
+  await sharingPage.getByText(sharedUrl, { exact: true }).waitFor();
+  await shareShot('settings');
+  await sharingPage
+    .getByRole('button', { name: 'Revoke', exact: true })
+    .click();
+  await restartedPage
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Revoke link', exact: true })
+    .click();
+  await sharingPage.getByText('No shared links', { exact: true }).waitFor();
+  assert.equal(shareServer.shares.size, 0);
+  assert.deepEqual(
+    shareServer.requests
+      .filter(item => item.method === 'DELETE')
+      .map(item => [item.path, item.authorization]),
+    [[`/api/shares/${shareId}`, `Bearer ${uploaded.revokeToken}`]],
+  );
+  await restartedPage.keyboard.press('Escape');
+  await shareSettings.waitFor({ state: 'hidden' });
+  await restartedPage
+    .getByRole('button', { name: 'Workflows', exact: true })
+    .click();
+  await workflowsView.waitFor();
+  await workflowsView
+    .getByLabel('Project folder', { exact: true })
+    .fill(workflowProject);
+  await workflowsView
+    .getByRole('button', { name: 'Read', exact: true })
+    .click();
+  console.log(
+    JSON.stringify({
+      workflowSharing: {
+        shareId,
+        uploadedSteps: uploaded.bundle.steps.length,
+        imported: 'smoke',
+        revoked: true,
+      },
+    }),
+  );
   console.log(
     JSON.stringify({
       graphEditor: {
@@ -4540,6 +4801,7 @@ try {
   throw error;
 } finally {
   try {
+    await shareServer.close();
     await application?.close();
     if (hostPid) await waitDead(hostPid);
     await Promise.all([...providerPids].map(waitDead));
