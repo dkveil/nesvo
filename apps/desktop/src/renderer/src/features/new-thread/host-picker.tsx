@@ -1,4 +1,4 @@
-import { Cloud, Monitor, Plus } from 'lucide-react';
+import { Cloud, Import, Monitor, Plus } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import {
   DropdownMenu,
@@ -19,6 +19,7 @@ type Props = {
   disabled?: boolean;
   onChange: (hostId: string) => void;
   onManageComputers: () => void;
+  onImportConversation?: () => void;
 };
 
 const statusLabels: Record<Computer['status'], string> = {
@@ -36,11 +37,12 @@ export function HostPicker({
   disabled = false,
   onChange,
   onManageComputers,
+  onImportConversation,
 }: Props) {
   const computer = computers.find(item => item.id === hostId);
   const connected = computer?.status === 'connected';
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={!onImportConversation}>
       <DropdownMenuTrigger asChild>
         <ComposerChip
           disabled={disabled}
@@ -81,6 +83,12 @@ export function HostPicker({
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        {onImportConversation && (
+          <DropdownMenuItem onSelect={onImportConversation}>
+            <Import />
+            Import conversation…
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={onManageComputers}>
           <Plus />
           Add to another machine

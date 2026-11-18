@@ -114,6 +114,7 @@ export function NewThread({
   const [startNotice, setStartNotice] = useState('');
   const [worktreeDefault] = useState(() => readNewSessionDefaults().worktree);
   const [worktreeChoice, setWorktreeChoice] = useState<boolean | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState('');
   const [mcpChoice, setMcpChoice] = useState({
     target: '',
@@ -470,6 +471,7 @@ export function NewThread({
                     onSetupChange({ ...setup, hostId });
                   }}
                   onManageComputers={onManageComputers}
+                  onImportConversation={() => setImportOpen(true)}
                 />
                 <LocationPicker
                   directory={setup.directory}
@@ -601,15 +603,14 @@ export function NewThread({
             </form>
           )}
         </SelectSkill>
-        <div className="flex justify-center">
-          <ImportConversation
-            key={[setup.hostId, computer?.instanceId].join(':')}
-            computer={computer}
-            api={hostApi}
-            disabled={pending}
-            onAdopted={onAdopted}
-          />
-        </div>
+        <ImportConversation
+          key={[setup.hostId, computer?.instanceId].join(':')}
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          computer={computer}
+          api={hostApi}
+          onAdopted={onAdopted}
+        />
       </div>
     </section>
   );
