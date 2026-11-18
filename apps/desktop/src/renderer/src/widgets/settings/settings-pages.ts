@@ -15,6 +15,7 @@ import {
   ScanSearch,
   Settings2,
   Share2,
+  ShieldCheck,
   SlidersHorizontal,
   Smartphone,
   UserRound,
@@ -26,6 +27,7 @@ export type SettingsPage =
   | 'appearance'
   | 'shortcuts'
   | 'defaults'
+  | 'permissions'
   | 'worktree-recipes'
   | 'notifications'
   | 'code-review'
@@ -81,6 +83,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: SlidersHorizontal,
     group: '',
     keywords: 'new session provider model permission mode folder worktree',
+  },
+  {
+    id: 'permissions',
+    label: 'Permissions',
+    icon: ShieldCheck,
+    group: '',
+    keywords: 'allow rules Claude Codex full access session project',
   },
   {
     id: 'worktree-recipes',

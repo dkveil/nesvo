@@ -27,6 +27,7 @@ import {
   modelLabel,
   type Session,
 } from '@/entities/session';
+import { AlwaysAllowActions } from '@/features/session-mode/always-allow-actions';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { ScheduledJob } from '@/entities/scheduled-job';
@@ -1111,6 +1112,25 @@ export function ReviewInbox({
                           );
                       }}
                     />
+                    {approval.allowPattern && (
+                      <AlwaysAllowActions
+                        pattern={approval.allowPattern}
+                        enabled={enabled}
+                        onAllow={allowScope => {
+                          if (session.runId)
+                            onApproval(
+                              {
+                                sessionId: session.id,
+                                runId: session.runId,
+                                requestId: approval.id,
+                                decision: 'accept',
+                                allowScope,
+                              },
+                              session.hostId,
+                            );
+                        }}
+                      />
+                    )}
                     <OperationStatus
                       deciding={deciding}
                       error={operationError}

@@ -9,6 +9,8 @@ import {
 import { ComposerChip } from '@/features/new-thread/composer-chip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
@@ -35,7 +37,8 @@ export function ModeSwitch({
   const browsing = useRef(false);
   const chosen = pendingMode ?? mode;
   const pending = chosen !== mode;
-  const offered = modes.includes(mode) ? modes : [mode, ...modes];
+  const offered =
+    modes.includes(mode) || mode === 'full-access' ? modes : [mode, ...modes];
   const label = modeLabel(provider, chosen);
   const choose = (next: SessionMode) => {
     if (readOnlyReason || !modes.includes(next)) return;
@@ -55,7 +58,13 @@ export function ModeSwitch({
             icon={<ModeIcon mode={chosen} aria-hidden="true" />}
             className="min-w-0"
           >
-            <span>{label}</span>
+            {chosen === 'full-access' ? (
+              <Badge size="xs" tone="warning">
+                {label}
+              </Badge>
+            ) : (
+              <span>{label}</span>
+            )}
             {pending && (
               <span className="shrink-0 text-muted-foreground">
                 · next turn
@@ -69,7 +78,7 @@ export function ModeSwitch({
         align="start"
         collisionPadding={12}
         aria-label="Permission mode"
-        size="md"
+        size={modes.includes('full-access') ? 'lg' : 'md'}
         padding="none"
         className="space-y-2 p-2.5"
         onKeyDown={event => {
@@ -116,6 +125,21 @@ export function ModeSwitch({
               : 'Applies from the next turn. Shift+Tab cycles modes.'}
           </p>
         </div>
+        {mode === 'full-access' &&
+          modes.includes('full-access') &&
+          !pending &&
+          !readOnlyReason && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setOpen(false);
+                onChange('full-access');
+              }}
+            >
+              Confirm Full access again
+            </Button>
+          )}
       </PopoverContent>
     </Popover>
   );

@@ -164,6 +164,10 @@ import {
   type HostedInboxItem,
 } from '@/features/inbox-rules';
 import { StageRecord, useStageDecisions } from '@/widgets/session-stages';
+import { PermissionSettings } from '@/widgets/settings/permission-settings';
+import { FullAccessDialog } from '@/features/session-mode/full-access-dialog';
+import { PermissionRules } from '@/features/session-mode/permission-rules';
+import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
 import { SessionDetails } from '@/widgets/session-details';
 import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
 import {
@@ -915,10 +919,13 @@ export function Workspace({
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('permission-modes');
-  const pendingModeOf = (target: Session) =>
-    supportsModes(target.hostId)
-      ? (modeSelections[entityKey(target)] ?? null)
-      : null;
+  const pendingModeOf = (target: Session) => {
+    if (!supportsModes(target.hostId)) return null;
+    const mode = modeSelections[entityKey(target)] ?? null;
+    return mode === 'full-access' && !autonomy.data?.fullAccessEnabled
+      ? null
+      : mode;
+  };
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [restartTarget, setRestartTarget] = useState<Session | null>(null);
   const [resumeTarget, setResumeTarget] = useState<{
@@ -1105,6 +1112,18 @@ export function Workspace({
   );
   useAttention(store.sessions, key => selectNow(key));
   const selectedHostId = selected?.hostId ?? 'local';
+  const supportsAutonomy = (hostId: string) =>
+    store.hostReady(hostId) &&
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('claude-autonomy');
+  const autonomy = useClaudeAutonomy(
+    selectedHostId,
+    supportsAutonomy(selectedHostId),
+  );
+  const [fullAccessTarget, setFullAccessTarget] = useState<Session | null>(
+    null,
+  );
   const profileCatalog = useProviderProfiles(store.computers);
   const profilesFor = (hostId: string) =>
     profileCatalog.catalogs[hostId]?.profiles ?? [];
@@ -2042,6 +2061,8 @@ export function Workspace({
             : {}),
         }),
       ]);
+      if (input.allowScope && hostId === selectedHostId)
+        void autonomy.execute({ action: 'read' }).catch(() => undefined);
     } catch (failure) {
       setErrors(previous => ({
         ...previous,
@@ -4091,6 +4112,31 @@ ${text}`
                       />
                     )}
                   </SessionDetails>
+                  {selected.provider === 'Claude Code' && autonomy.data && (
+                    <div className="px-4 py-3">
+                      <PermissionRules
+                        key={selectedKey}
+                        rules={autonomy.data.rules.filter(rule => {
+                          if (rule.scope === 'session')
+                            return rule.sessionId === selected.id;
+                          const folder = selected.directory.replaceAll(
+                            '\\',
+                            '/',
+                          );
+                          const project = rule.directory
+                            .replaceAll('\\', '/')
+                            .replace(/\/$/, '');
+                          return (
+                            folder === project ||
+                            folder.startsWith(project + '/')
+                          );
+                        })}
+                        onRemove={async id => {
+                          await autonomy.execute({ action: 'remove-rule', id });
+                        }}
+                      />
+                    </div>
+                  )}
                 </ScrollArea>
               </SheetContent>
             </Sheet>
@@ -4812,7 +4858,7 @@ ${text}`
                 }
                 approvalsEnabled={operationEnabled}
                 approvalPending={approvalPending}
-                onApproval={(requestId, decision, message) =>
+                onApproval={(requestId, decision, message, allowScope) =>
                   selected.runId &&
                   void respondApproval(
                     {
@@ -4821,6 +4867,7 @@ ${text}`
                       requestId,
                       decision,
                       ...(message ? { message } : {}),
+                      ...(allowScope ? { allowScope } : {}),
                     },
                     selectedHostId,
                   )
@@ -4896,14 +4943,22 @@ ${text}`
                 modes={providerModes(
                   selected.provider,
                   selectedProviderState?.status,
+                  !!autonomy.data?.fullAccessEnabled &&
+                    !selected.parentId &&
+                    !selected.workflowRunId &&
+                    !selected.scheduledJobId &&
+                    selected.plan?.status !== 'planning' &&
+                    selected.plan?.status !== 'plan-ready',
                 )}
                 pendingMode={pendingModeOf(selected)}
-                onSelectMode={mode =>
-                  setModeSelections(previous => ({
-                    ...previous,
-                    [selectedKey]: mode,
-                  }))
-                }
+                onSelectMode={mode => {
+                  if (mode === 'full-access') setFullAccessTarget(selected);
+                  else
+                    setModeSelections(previous => ({
+                      ...previous,
+                      [selectedKey]: mode,
+                    }));
+                }}
                 canChangeMode={supportsModes(selectedHostId)}
                 attachments={{
                   items: composerAttachments.items(selectedKey),
@@ -5275,6 +5330,27 @@ ${text}`
           onClose={() => setEditor(null)}
         />
       )}
+      {fullAccessTarget && (
+        <FullAccessDialog
+          directory={fullAccessTarget.directory}
+          provider={fullAccessTarget.provider}
+          onClose={() => setFullAccessTarget(null)}
+          onConfirm={async () => {
+            await window.nesvo.claudeAutonomy(
+              {
+                action: 'confirm-full-access',
+                sessionId: fullAccessTarget.id,
+                directory: fullAccessTarget.directory,
+              },
+              fullAccessTarget.hostId,
+            );
+            setModeSelections(previous => ({
+              ...previous,
+              [entityKey(fullAccessTarget)]: 'full-access',
+            }));
+          }}
+        />
+      )}
       {settingsPage && (
         <Settings
           page={settingsPage}
@@ -5317,6 +5393,21 @@ ${text}`
                   onSaveDefaultFolder={directory =>
                     defaultFolders.save(settingsHostId, directory)
                   }
+                />
+              </div>
+            ) : page === 'permissions' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <PermissionSettings
+                  key={settingsHostId}
+                  hostId={settingsHostId}
+                  ready={supportsAutonomy(settingsHostId)}
+                  onChange={() => {
+                    if (selectedHostId === settingsHostId)
+                      void autonomy
+                        .execute({ action: 'read' })
+                        .catch(() => undefined);
+                  }}
                 />
               </div>
             ) : page === 'notifications' ? (

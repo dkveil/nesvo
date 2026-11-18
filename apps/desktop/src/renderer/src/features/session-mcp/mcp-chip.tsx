@@ -1,4 +1,4 @@
-﻿import { Plug, RefreshCw } from 'lucide-react';
+import { Plug, RefreshCw } from 'lucide-react';
 import { modeLabel, type Provider } from '@/entities/session';
 import { ComposerChip } from '@/features/new-thread/composer-chip';
 import { Button } from '@/shared/ui/button';
@@ -105,7 +105,9 @@ export function McpChip({
           <StatusMessage>
             {readOnlyIsolation
               ? `MCP is isolated in ${modeLabel(provider, 'read-only')} because a one-time tool approval channel is unavailable.`
-              : `Each MCP tool call in ${modeLabel(provider, 'read-only')} requires a one-time approval.`}
+              : provider === 'Claude Code'
+                ? 'Plan asks for MCP tool approval unless a saved allow rule matches.'
+                : 'Each MCP tool call in Read-only requires a one-time approval.'}
           </StatusMessage>
         ) : null}
         {paused && (

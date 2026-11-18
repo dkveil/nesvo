@@ -44,7 +44,7 @@ import {
 } from '@/entities/session';
 import type { WorkflowRun } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
-import { CountBadge } from '@/shared/ui/badge';
+import { Badge, CountBadge } from '@/shared/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -374,6 +374,11 @@ export function SessionSidebar({
           <span className={cn('min-w-0 truncate', unread && 'font-semibold')}>
             {session.title}
           </span>
+          {session.mode === 'full-access' && (
+            <Badge tone="warning" size="xs">
+              Full access
+            </Badge>
+          )}
         </span>
       </Hint>
     );

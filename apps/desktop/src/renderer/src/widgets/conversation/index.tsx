@@ -44,6 +44,7 @@ import {
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
+import { AlwaysAllowActions } from '@/features/session-mode/always-allow-actions';
 import { ModeSwitch } from '@/features/session-mode/mode-switch';
 import { cycleMode } from '@/features/session-mode/cycle-mode';
 import { mcpChangeLabel } from '@/features/session-mcp/mcp-labels';
@@ -133,6 +134,7 @@ type Props = {
     requestId: string,
     decision: RespondApprovalInput['decision'],
     message?: string,
+    allowScope?: RespondApprovalInput['allowScope'],
   ) => void;
   error: string;
   onDraft: (value: string) => void;
@@ -371,10 +373,13 @@ export function Conversation({
           ? 'Update the host to change modes'
           : '';
   const chooseMode = (next: SessionMode | null) => {
-    onSelectMode(next === session.mode ? null : next);
+    onSelectMode(next === session.mode && next !== 'full-access' ? null : next);
   };
   const cycleSessionMode = () => {
-    const next = cycleMode(modes, pendingMode ?? session.mode);
+    const next = cycleMode(
+      modes.filter(mode => mode !== 'full-access'),
+      pendingMode ?? session.mode,
+    );
     chooseMode(next);
     setModeNotice(
       `Permission mode: ${modeLabel(session.provider, next)}${next === session.mode ? '' : ' from the next turn'}`,
@@ -1216,6 +1221,15 @@ export function Conversation({
                     >
                       Allow once
                     </Button>
+                    {approval.allowPattern && (
+                      <AlwaysAllowActions
+                        pattern={approval.allowPattern}
+                        enabled={enabled}
+                        onAllow={scope =>
+                          onApproval(approval.id, 'accept', undefined, scope)
+                        }
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -1235,7 +1249,9 @@ export function Conversation({
                     {pending
                       ? 'Sending decision…'
                       : enabled
-                        ? 'Applies to this operation only.'
+                        ? approval.allowPattern
+                          ? approval.allowPattern.pattern
+                          : 'Applies to this operation only.'
                         : 'This request is inactive. Refresh the connection to check its status.'}
                   </StatusMessage>
                 </section>
