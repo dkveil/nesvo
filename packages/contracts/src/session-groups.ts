@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decisionRouteSchema } from './decision-route';
 import {
   isProviderSessionMode,
   providerSchema,
@@ -21,6 +22,7 @@ export const sessionGroupDefaultsSchema = z
     model: z.string().trim().min(1).max(200).optional(),
     mode: sessionModeSchema.optional(),
     workflow: sessionWorkflowSchema.optional(),
+    decisionRoute: decisionRouteSchema.optional(),
   })
   .superRefine((value, context) => {
     if (

@@ -431,6 +431,7 @@ const matchesWildcard = (pattern: string, value: string, slashAware = false) =>
 const collapse = (value: string) => value.trim().replace(/\s+/g, ' ');
 
 const MAX_SCRIPT_DEPTH = 4;
+const LINE_CONTINUATION = /\\\r?\n/g;
 const SEGMENT_SEPARATORS = /&&|\|\||;|\||&|\r?\n|\(|\)|\{|\}/;
 const OPAQUE_CONSTRUCTS =
   /\$\(|`|<\(|>\(|<<|\beval\b|\bsource\b|\\\r?\n|\$\{?[A-Za-z_]/;
@@ -467,7 +468,11 @@ const segmentMatches = (
 ): boolean => {
   const raw = rawShellWords(segment);
   const words = raw.map(stripQuotes);
-  const tokens = words.flatMap(word => [word, executableName(word)]);
+  const tokens = words.flatMap((word, index) => [
+    word,
+    executableName(word),
+    executableName(raw[index]!),
+  ]);
   if (containsWordsInOrder(patterns, tokens)) return true;
   return raw.some(
     (word, index) =>
@@ -491,18 +496,10 @@ const commandMatches = (
     return true;
   return (
     OPAQUE_CONSTRUCTS.test(command) &&
-    containsWordsInOrder(
-      patterns,
-      rawShellWords(command.split(SEGMENT_SEPARATORS).join(' ')).flatMap(
-        word => {
-          const plain = stripQuotes(word).replace(/[$()`{}<>]/g, ' ');
-          return plain
-            .split(/\s+/)
-            .filter(Boolean)
-            .flatMap(part => [part, executableName(part)]);
-        },
-      ),
-    )
+    patterns.some(pattern => {
+      const literal = pattern.replace(/[*?]/g, '');
+      return !literal || command.includes(literal);
+    })
   );
 };
 
@@ -514,9 +511,10 @@ const patternWords = (pattern: string) =>
 export const matchesCommandPattern = (pattern: string, command: string) => {
   const words = patternWords(pattern);
   if (!words.length) return true;
+  const joined = command.replace(LINE_CONTINUATION, '');
   return (
-    commandMatches(words, command, 0) ||
-    matchesWildcard(collapse(pattern), collapse(command))
+    commandMatches(words, joined, 0) ||
+    matchesWildcard(collapse(pattern), collapse(joined))
   );
 };
 
