@@ -786,6 +786,56 @@ try {
   assert.ok(group.messages.at(-1).body.includes(child.messages.at(-1).body));
   await node('send-message', { enabled: false });
   await screenshot('04-worker-decision.png');
+  phase('showing-subsession-activity');
+  await phoneSend('fixture:delegate-two-hold');
+  const heldPlan = await waitFor(
+    () => session(workers.id),
+    value =>
+      value.status === 'running' &&
+      value.runId !== plan.runId &&
+      value.delegations.filter(
+        item => item.runId === value.runId && item.status === 'pending',
+      ).length === 2,
+    'Phone held worker proposals missing',
+  );
+  for (const proposal of heldPlan.delegations.filter(
+    item => item.runId === heldPlan.runId,
+  ))
+    await tapInList(`approve-worker-${proposal.id}`);
+  const heldChildren = await waitFor(
+    async () =>
+      (await sessions()).filter(
+        value =>
+          value.parentId === workers.id && value.parentRunId === heldPlan.runId,
+      ),
+    values =>
+      values.length === 2 &&
+      values.every(
+        value =>
+          value.status === 'running' &&
+          value.messages.at(-1)?.body.includes('is waiting.'),
+      ),
+    'Phone held workers did not start',
+  );
+  await node('Waiting on 2 workers, show agents');
+  await node('2 of 2 workers running, show agents');
+  await screenshot('09-subsession-bar.png');
+  await tap('subsession-bar-count');
+  await node('agents-sheet');
+  const [stoppedChild, runningChild] = heldChildren;
+  await node(`agent-stop-${runningChild.id}`);
+  await screenshot('10-agents-sheet.png');
+  await tap(`agent-stop-${stoppedChild.id}`);
+  await waitState(stoppedChild.id, 'stopped');
+  assert.equal((await session(runningChild.id)).status, 'running');
+  assert.equal((await session(workers.id)).status, 'running');
+  await node(`Open ${stoppedChild.title}, Stopped`, { includes: true });
+  await screenshot('11-agents-stopped.png');
+  await tap('agents-close');
+  await node('1 of 2 workers running, show agents');
+  await tap('subsession-bar-stop');
+  await waitState(workers.id, 'stopped');
+  await waitState(runningChild.id, 'stopped');
   phase('reconnecting-active-run');
   await adb(['shell', 'input', 'keyevent', '4']);
   await tap('Open session: Phone conversation');
@@ -826,13 +876,13 @@ try {
     value => value.clients === 1,
     'Android did not reconnect to the restored gateway',
   );
-  await node('Stop');
+  await node('stop-run');
   assert.deepEqual(await turns(), beforeDisconnect);
   assert.equal(
     (await session(conversation.id)).providerSessionId,
     active.providerSessionId,
   );
-  await tap('Stop');
+  await tap('stop-run');
   const stopped = await waitState(conversation.id, 'stopped');
   assert.equal(stopped.runId, active.runId);
   assert.equal(stopped.messages.at(-1).state, 'stopped');
