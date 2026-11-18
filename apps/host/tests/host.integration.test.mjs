@@ -1130,6 +1130,7 @@ test(
         'message-attachments',
         'terminal-handoff',
         'transcript-search',
+        'session-delete',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6132,6 +6133,7 @@ test(
       'message-attachments',
       'terminal-handoff',
       'transcript-search',
+      'session-delete',
     ]);
     const id = randomUUID();
     const jobInput = {
