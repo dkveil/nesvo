@@ -6,6 +6,7 @@ import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { Separator } from '@/shared/ui/separator';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { scopeLabels, transportLabels } from './mcp-labels';
@@ -39,21 +40,25 @@ export function McpChip({
     repository?.status === 'needs-trust' ||
     repository?.status === 'unavailable';
   const readOnlyIsolation = readOnly && list?.readOnlyMcp !== 'approval';
+  const pausedLabel =
+    isolated || readOnlyIsolation
+      ? 'MCP paused'
+      : paused
+        ? 'Repository MCP paused'
+        : null;
+  const label = pausedLabel ? `${hint}. ${pausedLabel}` : hint;
   return (
     <Popover onOpenChange={open => open && void configuration.refresh()}>
-      <Hint label={hint}>
+      <Hint label={pausedLabel ?? hint}>
         <PopoverTrigger asChild>
           <ComposerChip
             disabled={disabled || unsupported}
-            aria-label={hint}
+            aria-label={label}
             data-session-mcp=""
             icon={<Plug aria-hidden="true" />}
           >
-            {isolated || readOnlyIsolation
-              ? 'MCP paused'
-              : paused
-                ? 'MCP · Repository paused'
-                : 'MCP'}
+            MCP
+            {pausedLabel && <StatusDot tone="warning" size="sm" />}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>
