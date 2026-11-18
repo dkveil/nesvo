@@ -82,6 +82,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'create-session',
   'adopt-conversation',
   'finish-session-worktree',
+  'fork-session',
+  'restart-session',
   'send-message',
   'queue-message',
   'assign-session-workflow',
@@ -725,6 +727,27 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             mcpRequests--;
             probes.pending.delete(discovery);
           });
+          continue;
+        }
+        if (request.method === 'fork-session') {
+          const fork = sessions
+            .fork(request.input, probes.controller.signal)
+            .then(session => send({ type: 'session', id: request.id, session }))
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The session could not be forked.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(fork);
+          void fork.finally(() => probes.pending.delete(fork));
           continue;
         }
         if (request.method === 'assign-session-workflow') {
@@ -1395,6 +1418,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.create(request.input),
+              };
+            if (request.method === 'restart-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.restart(request.input),
               };
             if (request.method === 'list-session-groups')
               return {

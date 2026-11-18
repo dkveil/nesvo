@@ -14,6 +14,8 @@ import {
   decideReviewSchema,
   hostHealthSchema,
   assignSessionWorkflowSchema,
+  forkSessionSchema,
+  restartSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
   moveSessionGroupSchema,
@@ -564,6 +566,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:assign-session-workflow',
         assignSessionWorkflowSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  forkSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:fork-session',
+        forkSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  restartSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:restart-session',
+        restartSessionSchema.parse(input),
         route(hostId),
       ),
     ),

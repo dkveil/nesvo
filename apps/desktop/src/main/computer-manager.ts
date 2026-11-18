@@ -138,6 +138,8 @@ const costResponses = {
 } as const;
 
 const capabilityUpdates: Record<HostCapability, string> = {
+  'session-fork':
+    'Update this computer’s Nesvo host and reconnect to fork or restart sessions.',
   costs:
     'Costs are unavailable on this computer. Update its Nesvo host, then reconnect.',
   'scheduled-jobs':
@@ -201,6 +203,8 @@ function requiredCapability(
   )
     return 'session-groups';
   if (method === 'assign-session-workflow') return 'session-workflow';
+  if (method === 'fork-session' || method === 'restart-session')
+    return 'session-fork';
   if (method === 'list-mcp-servers' || method === 'set-session-mcp')
     return 'mcp-servers';
   if (
@@ -844,6 +848,8 @@ export class ComputerManager {
       'finish-session-worktree': 'session',
       'send-message': 'session',
       'assign-session-workflow': 'session',
+      'fork-session': 'session',
+      'restart-session': 'session',
       'set-session-mcp': 'session',
       'list-mcp-servers': 'mcp-servers',
       'queue-message': 'session',

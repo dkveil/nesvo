@@ -409,6 +409,7 @@ async function inspect(cancelled: () => boolean): Promise<{
   status: ClaudeStatus;
   executable: Executable | null;
   permissionModes: string[];
+  supportsFork?: boolean;
 }> {
   let version: string | null = null;
   let permissionModes: string[] = [];
@@ -513,7 +514,12 @@ async function inspect(cancelled: () => boolean): Promise<{
     }
     const ready = status('ready', null);
     lastReadyModes = ready.modes.filter(isClaudeMode);
-    return { executable, status: ready, permissionModes };
+    return {
+      executable,
+      status: ready,
+      permissionModes,
+      supportsFork: /(?:^|\s)--fork-session(?:\s|$)/.test(help.stdout),
+    };
   } catch (error) {
     return {
       executable: null,
@@ -727,10 +733,29 @@ export async function inspectClaudeUsage(
   return result;
 }
 
+export async function confirmClaudeFork(
+  mode: SessionMode,
+  signal: AbortSignal,
+): Promise<void> {
+  const inspection = await inspect(() => signal.aborted);
+  if (signal.aborted) throw new Error('Claude Code fork inspection stopped.');
+  if (inspection.status.status !== 'ready')
+    throw new Error(inspection.status.detail ?? 'Claude Code is unavailable.');
+  if (!inspection.supportsFork)
+    throw new Error(
+      'This Claude Code version does not support native session forking.',
+    );
+  if (!inspection.status.modes.includes(mode))
+    throw new Error(
+      'Claude Code does not offer the source session permission mode.',
+    );
+}
+
 export function startClaude(options: {
   directory: string;
   sessionId: string;
   resume: boolean;
+  forkFrom?: string;
   model: string;
   prompt: string;
   environment?: Readonly<Record<string, string>>;
@@ -780,6 +805,10 @@ export function startClaude(options: {
             'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
           modeUnavailable: true,
         };
+      if (options.forkFrom && !inspection.supportsFork)
+        throw new Error(
+          'This Claude Code version does not support native session forking.',
+        );
       const permission = claudeModes[options.mode];
       const tools = permission.tools.join(',');
       const allowedTools = permission.allowed.join(',');
@@ -816,6 +845,9 @@ export function startClaude(options: {
           : ['--settings', '{"disableAllHooks":true}']),
         options.resume ? '--resume' : '--session-id',
         options.sessionId,
+        ...(options.forkFrom
+          ? ['--resume', options.forkFrom, '--fork-session']
+          : []),
       ];
       if (options.model !== 'default') args.push('--model', options.model);
       if (options.ephemeral) args.push('--no-session-persistence');
@@ -1034,7 +1066,8 @@ export function startClaude(options: {
         if (value.type === 'system' && value.subtype === 'init') {
           if (
             typeof value.session_id !== 'string' ||
-            typeof value.model !== 'string'
+            typeof value.model !== 'string' ||
+            (options.forkFrom && value.session_id !== options.sessionId)
           ) {
             fail('Claude returned invalid session metadata.');
           } else {

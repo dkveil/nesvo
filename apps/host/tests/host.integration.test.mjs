@@ -260,6 +260,175 @@ async function processesGone(pids, tracked) {
 
 const agent = session => session.messages.at(-1);
 
+test('session fork and restart preserve mode, history and provider identity across host reopen', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-thread-actions-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const claudeLog = join(directory, 'claude-launches.jsonl');
+  const codexLog = join(directory, 'codex-threads.jsonl');
+  await mkdir(project);
+  const open = () =>
+    launch(directory, pidFile, {
+      NESVO_FIXTURE_LAUNCH_LOG: claudeLog,
+      NESVO_FIXTURE_THREAD_LOG: codexLog,
+    });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const send = async (sessionId, text) => {
+    const response = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return response.session;
+  };
+  const finish = run =>
+    host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  const complete = async sessionId => {
+    const session = await finish(await send(sessionId, 'fixture:continue'));
+    assert.equal(session.status, 'completed', session.error);
+    return session;
+  };
+  const fork = session =>
+    host.request('fork-session', { sessionId: session.id });
+  const restart = session =>
+    host.request('restart-session', {
+      sessionId: session.id,
+      revision: session.revision,
+    });
+  const cases = [];
+  for (const [provider, model, mode] of [
+    ['Claude Code', 'sonnet', 'accept-edits'],
+    ['Codex', 'fixture-codex', 'supervised'],
+  ]) {
+    const created = await host.request('create-session', {
+      title: provider,
+      provider,
+      model,
+      mode,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const original = await complete(created.session.id);
+    const held = await send(original.id, 'fixture:hold');
+    await host.event(
+      session =>
+        session.id === original.id &&
+        session.runId === held.runId &&
+        agent(session)?.body,
+    );
+    assert.equal((await fork(held)).code, 'busy');
+    assert.equal((await restart(held)).code, 'busy');
+    await host.request('stop-run', {
+      sessionId: original.id,
+      runId: held.runId,
+    });
+    const source = await finish(held);
+    assert.equal(source.status, 'stopped');
+    assert.equal(source.providerSessionId, original.providerSessionId);
+
+    const response = await fork(source);
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    const child = response.session;
+    assert.notEqual(source.id, child.id);
+    assert.notEqual(source.providerSessionId, child.providerSessionId);
+    assert.equal(child.mode, mode);
+    assert.equal(child.model, model);
+    assert.equal(child.directory, source.directory);
+    assert.equal(child.title, `Fork of ${source.title}`);
+    assert.deepEqual(child.forkOf, {
+      sessionId: source.id,
+      title: source.title,
+      messageId: agent(source).id,
+    });
+    assert.deepEqual(child.messages, []);
+    const reset = await restart(source);
+    assert.equal(reset.type, 'session', JSON.stringify(reset));
+    assert.equal(reset.session.id, source.id);
+    assert.equal(reset.session.providerSessionId, null);
+    assert.equal(reset.session.providerInitialized, false);
+    assert.deepEqual(reset.session.messages, source.messages);
+    assert.deepEqual(reset.session.providerThreadStarts, [
+      source.messages.length,
+    ]);
+    assert.equal((await restart(source)).code, 'invalid-request');
+    cases.push({ source, child, reset: reset.session });
+  }
+  await host.stop();
+  host = open();
+  const restored = (await host.request('list-sessions')).sessions;
+  const readLog = async file =>
+    (await readFile(file, 'utf8')).trim().split('\n').map(JSON.parse);
+  const flag = (args, name) => args[args.indexOf(name) + 1];
+  for (const { source, child, reset } of cases) {
+    assert.deepEqual(
+      restored.find(session => session.id === child.id),
+      child,
+    );
+    assert.deepEqual(
+      restored.find(session => session.id === reset.id),
+      reset,
+    );
+    const fresh = await complete(source.id);
+    assert.notEqual(fresh.providerSessionId, source.providerSessionId);
+    assert.equal(fresh.mode, source.mode);
+    assert.deepEqual(
+      fresh.messages.slice(0, source.messages.length),
+      source.messages,
+    );
+    assert.deepEqual(fresh.providerThreadStarts, [source.messages.length]);
+    const forked = await complete(child.id);
+    assert.equal(forked.mode, source.mode);
+    assert.equal(forked.providerSessionId, child.providerSessionId);
+    const continued = await complete(child.id);
+    assert.equal(continued.providerSessionId, forked.providerSessionId);
+    if (source.provider === 'Claude Code') {
+      const args = (await readLog(claudeLog))
+        .filter(entry => entry.provider === 'Claude Code')
+        .map(entry => entry.args);
+      assert.ok(args.at(-2).includes('--fork-session'));
+      assert.equal(flag(args.at(-2), '--resume'), source.providerSessionId);
+      assert.equal(flag(args.at(-2), '--session-id'), forked.providerSessionId);
+      assert.equal(flag(args.at(-2), '--permission-mode'), 'acceptEdits');
+      assert.equal(args.at(-3).includes('--resume'), false);
+      assert.equal(flag(args.at(-3), '--session-id'), fresh.providerSessionId);
+      assert.equal(args.at(-1).includes('--fork-session'), false);
+      assert.equal(flag(args.at(-1), '--resume'), forked.providerSessionId);
+    } else {
+      const log = await readLog(codexLog);
+      assert.deepEqual(
+        log.find(entry => entry.method === 'thread/fork'),
+        {
+          method: 'thread/fork',
+          id: forked.providerSessionId,
+          source: source.providerSessionId,
+          sandbox: 'workspace-write',
+        },
+      );
+      assert.deepEqual(
+        log.slice(-3).map(entry => [entry.method, entry.id, entry.sandbox]),
+        [
+          ['thread/start', fresh.providerSessionId, 'workspace-write'],
+          ['thread/resume', forked.providerSessionId, 'workspace-write'],
+          ['thread/resume', forked.providerSessionId, 'workspace-write'],
+        ],
+      );
+    }
+  }
+  await host.stop();
+});
+
 test(
   'Cost reports use local calendar dates and budgets gate only new turns',
   { timeout: 45_000 },
@@ -672,6 +841,7 @@ test(
         'session-worktrees',
         'permission-modes',
         'session-workflow',
+        'session-fork',
         'pull-requests',
         'history-search',
         'session-groups',
@@ -5649,6 +5819,7 @@ test(
       'session-worktrees',
       'permission-modes',
       'session-workflow',
+      'session-fork',
       'pull-requests',
       'history-search',
       'session-groups',

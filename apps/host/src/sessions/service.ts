@@ -15,6 +15,8 @@ import {
   type CreateSessionInput,
   type FinishSessionWorktreeInput,
   type ReadSessionWorktreeInput,
+  type ForkSessionInput,
+  type RestartSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
   type DecideWorkerPlanInput,
@@ -42,6 +44,7 @@ import {
   type TurnMcp,
 } from '../mcp/service';
 import {
+  confirmClaudeFork,
   reportedClaudeModes,
   startClaude,
   type ClaudeEvent,
@@ -323,6 +326,7 @@ export class SessionService {
   private mcpKey?: Buffer;
   private checkingOut = false;
   private removingWorktree = false;
+  private forking = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
 
@@ -481,6 +485,7 @@ export class SessionService {
       this.closing ||
       this.checkingOut ||
       this.removingWorktree ||
+      this.forking ||
       this.active.size > 0 ||
       !!this.reviewDecision
     );
@@ -793,6 +798,138 @@ export class SessionService {
     );
     this.emitSession(session);
     return session;
+  }
+
+  async fork(input: ForkSessionInput, signal: AbortSignal): Promise<Session> {
+    const source = this.threadActionSession(input.sessionId);
+    if (!source.providerInitialized || !source.providerSessionId)
+      throw new SessionError(
+        'invalid-request',
+        'Send a message before forking this session.',
+      );
+    if (!isProviderSessionMode(source.provider, source.mode))
+      throw new SessionError(
+        'invalid-request',
+        'The source permission mode is unsupported.',
+      );
+    const directory = this.resolveDirectory(source.directory);
+    const forkOf = {
+      sessionId: source.id,
+      title: source.title,
+      messageId: source.messages.at(-1)?.id ?? null,
+    };
+    this.forking = true;
+    try {
+      let native: { sessionId: string; model: string } | null = null;
+      if (source.provider === 'Claude Code') {
+        await confirmClaudeFork(source.mode, signal);
+      } else {
+        const operation = startCodex({
+          directory,
+          sessionId: source.providerSessionId,
+          resume: false,
+          fork: true,
+          model: source.model,
+          effort: source.effort,
+          mode: source.mode === 'supervised' ? 'supervised' : 'read-only',
+          onEvent: event => {
+            if (event.type === 'init')
+              native = { sessionId: event.sessionId, model: event.model };
+          },
+        });
+        const cancel = () => void operation.stop();
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted) cancel();
+        try {
+          const result = await operation.done;
+          if (result.status !== 'completed' || !native)
+            throw new Error(
+              result.error ?? 'Codex could not fork the recorded thread.',
+            );
+        } finally {
+          signal.removeEventListener('abort', cancel);
+        }
+      }
+      if (this.closing || signal.aborted)
+        throw new Error('Session fork stopped.');
+      const session = this.store.fork(source, forkOf, native);
+      this.emitSession(session);
+      return session;
+    } catch (error) {
+      throw new SessionError(
+        'unavailable',
+        error instanceof Error
+          ? error.message
+          : 'The session could not be forked.',
+      );
+    } finally {
+      this.forking = false;
+    }
+  }
+
+  restart(input: RestartSessionInput): Session {
+    const session = this.threadActionSession(input.sessionId);
+    if (session.revision !== input.revision)
+      throw new SessionError(
+        'invalid-request',
+        'The session changed. Reopen the restart confirmation.',
+      );
+    session.providerSessionId = null;
+    session.providerInitialized = false;
+    session.pendingClaudeFork = null;
+    session.actualModel = null;
+    session.runId = null;
+    session.status = 'ready';
+    session.activity = null;
+    session.error = null;
+    session.interruption = null;
+    session.pendingApprovals = [];
+    if (session.providerThreadStarts.at(-1) !== session.messages.length)
+      session.providerThreadStarts.push(session.messages.length);
+    holdQueue(session);
+    this.publish(session);
+    return session;
+  }
+
+  private threadActionSession(sessionId: string): Session {
+    const session = this.acceptingSession(sessionId);
+    if (this.isBusy() || this.unsaved.has(sessionId))
+      throw new SessionError(
+        'busy',
+        'Wait for the active workspace operation to finish.',
+      );
+    if (
+      session.role === 'worker' ||
+      session.workflowRunId ||
+      session.scheduledJobId
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This session is managed by its parent run.',
+      );
+    return session;
+  }
+
+  private confirmForkPoint(session: Session): void {
+    if (!session.pendingClaudeFork || !session.forkOf) return;
+    const { sessionId, messageId } = session.forkOf;
+    const source = this.store.get(sessionId);
+    const boundary = messageId
+      ? (source?.messages.findIndex(message => message.id === messageId) ??
+          -1) + 1
+      : 0;
+    if (
+      source &&
+      (!messageId || boundary > 0) &&
+      (source.providerSessionId === session.pendingClaudeFork
+        ? source.messages.length === boundary
+        : source.providerThreadStarts.includes(boundary))
+    )
+      return;
+    throw new SessionError(
+      'invalid-request',
+      'The source Claude conversation advanced before this fork started. Fork the source again or restart this session to begin a new thread.',
+    );
   }
 
   async finished(sessionId: string, runId: string): Promise<RunOutcome> {
@@ -1141,6 +1278,7 @@ export class SessionService {
         'A skill snapshot requires a selected skill.',
       );
     const selection = resolveTurnSelection(session, input);
+    this.confirmForkPoint(session);
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
     const prompt = this.recoveryPrompt(session, input.text);
@@ -1734,7 +1872,11 @@ export class SessionService {
       throw new BudgetRefusal(budget.refusal);
     }
     const runId = randomUUID();
-    if (!session.providerInitialized && session.runId)
+    if (
+      !session.providerInitialized &&
+      !session.pendingClaudeFork &&
+      (session.runId || !session.providerSessionId)
+    )
       session.providerSessionId =
         session.provider === 'Claude Code' ? randomUUID() : null;
     const createdAt = now.toISOString();
@@ -2044,6 +2186,7 @@ export class SessionService {
                   : {}),
                 mode: readOnly ? 'read-only' : session.mode,
                 sessionId: session.providerSessionId!,
+                forkFrom: session.pendingClaudeFork ?? undefined,
               });
         return provider.done;
       }),
@@ -2514,6 +2657,7 @@ export class SessionService {
         throw new Error('Provider session mismatch');
       session.providerSessionId = event.sessionId;
       session.providerInitialized = true;
+      session.pendingClaudeFork = null;
       session.actualModel = event.model;
       session.activity = `${session.provider} is working…`;
       this.publish(session);

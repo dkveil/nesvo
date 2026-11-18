@@ -194,6 +194,13 @@ export const assignSessionWorkflowSchema = z.strictObject({
   sessionId: z.uuid(),
   workflow: sessionWorkflowSchema.nullable(),
 });
+export const forkSessionSchema = z.strictObject({
+  sessionId: z.uuid(),
+});
+export const restartSessionSchema = z.strictObject({
+  sessionId: z.uuid(),
+  revision: z.number().int().nonnegative(),
+});
 export const queuedMessageSchema = z.strictObject({
   id: z.uuid(),
   text: z.string().trim().min(1).max(32000),
@@ -312,6 +319,16 @@ export const sessionSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   messages: z.array(sessionMessageSchema),
+  forkOf: z
+    .strictObject({
+      sessionId: z.uuid(),
+      title: z.string(),
+      messageId: z.uuid().nullable(),
+    })
+    .nullable()
+    .default(null),
+  pendingClaudeFork: z.uuid().nullable().default(null),
+  providerThreadStarts: z.array(z.number().int().nonnegative()).default([]),
   queue: z.array(queuedMessageSchema).max(sessionQueueLimit).default([]),
   groupId: z.uuid().nullable().default(null),
   order: z.number().int().default(0),
@@ -358,6 +375,8 @@ export type FinishSessionWorktreeInput = z.infer<
 export type Session = z.infer<typeof sessionSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+export type ForkSessionInput = z.infer<typeof forkSessionSchema>;
+export type RestartSessionInput = z.infer<typeof restartSessionSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;

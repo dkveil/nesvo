@@ -57,6 +57,8 @@ import {
   finishSessionWorktreeSchema,
   sendMessageSchema,
   assignSessionWorkflowSchema,
+  forkSessionSchema,
+  restartSessionSchema,
   queuedMessageRefSchema,
   sessionSchema,
   stopRunSchema,
@@ -71,6 +73,8 @@ import {
   type FinishSessionWorktreeInput,
   type SendMessageInput,
   type AssignSessionWorkflowInput,
+  type ForkSessionInput,
+  type RestartSessionInput,
   type QueuedMessageRefInput,
   type StopRunInput,
   type RespondApprovalInput,
@@ -408,6 +412,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('assign-session-workflow'),
     input: assignSessionWorkflowSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('fork-session'),
+    input: forkSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('restart-session'),
+    input: restartSessionSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-session-groups') }),
   z.strictObject({
@@ -1129,6 +1143,14 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   assignSessionWorkflow: (
     input: AssignSessionWorkflowInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  forkSession: (
+    input: ForkSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  restartSession: (
+    input: RestartSessionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   listSessionGroups: (hostId?: HostId) => Promise<SessionGroupList>;

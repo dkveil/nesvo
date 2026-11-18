@@ -22,6 +22,7 @@ const flags = [
   '--settings',
   '--session-id',
   '--resume',
+  '--fork-session',
   '--model',
   '--no-session-persistence',
   '--json-schema',
@@ -166,6 +167,7 @@ if (args.length === 1 && args[0] === '--version') {
     '--include-partial-messages',
     '--strict-mcp-config',
     '--no-session-persistence',
+    '--fork-session',
   ]);
   const values = new Map();
   for (let index = 0; index < args.length; index += 1) {
@@ -175,7 +177,7 @@ if (args.length === 1 && args[0] === '--version') {
     values.set(flag, switches.has(flag) ? true : args[++index]);
   }
   for (const flag of switches)
-    if (flag !== '--no-session-persistence')
+    if (flag !== '--no-session-persistence' && flag !== '--fork-session')
       assert.equal(values.get(flag), true, flag);
   const permissionMode = values.get('--permission-mode');
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
@@ -208,7 +210,13 @@ if (args.length === 1 && args[0] === '--version') {
       }) + '\n',
       { flag: 'a' },
     );
-  assert.notEqual(values.has('--session-id'), values.has('--resume'));
+  const forked = values.has('--fork-session');
+  if (forked) {
+    assert.ok(values.has('--session-id') && values.has('--resume'));
+    assert.notEqual(values.get('--session-id'), values.get('--resume'));
+  } else {
+    assert.notEqual(values.has('--session-id'), values.has('--resume'));
+  }
   if (process.env.NESVO_FIXTURE_LAUNCH_LOG)
     writeFileSync(
       process.env.NESVO_FIXTURE_LAUNCH_LOG,
@@ -221,7 +229,7 @@ if (args.length === 1 && args[0] === '--version') {
       { flag: 'a' },
     );
   const resumed = values.has('--resume');
-  const sessionId = values.get(resumed ? '--resume' : '--session-id');
+  const sessionId = values.get('--session-id') ?? values.get('--resume');
   assert.match(sessionId, /^[0-9a-f-]{36}$/);
   if (values.has('--model'))
     assert.ok(['opus', 'sonnet', 'haiku'].includes(values.get('--model')));
@@ -320,9 +328,16 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.has('--no-session-persistence'), false);
   }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);
-  assert.equal(existsSync(statePath), resumed, 'Resume must retain CLI state');
+  assert.equal(
+    existsSync(statePath),
+    resumed && !forked,
+    'Resume must retain CLI state',
+  );
+  const sourcePath = forked
+    ? join(process.cwd(), `.nesvo-fixture-${values.get('--resume')}.json`)
+    : statePath;
   const turn = resumed
-    ? JSON.parse(readFileSync(statePath, 'utf8')).turn + 1
+    ? JSON.parse(readFileSync(sourcePath, 'utf8')).turn + 1
     : 1;
   writeFileSync(statePath, JSON.stringify({ turn }));
   emit({

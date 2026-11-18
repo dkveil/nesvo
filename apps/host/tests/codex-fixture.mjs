@@ -91,6 +91,7 @@ if (args.length === 1 && args[0] === '--version') {
     'model/list',
     'thread/start',
     'thread/resume',
+    'thread/fork',
     'turn/start',
   ]);
   const skillsTrace = (directory, method, extra = {}) => {
@@ -625,7 +626,9 @@ if (args.length === 1 && args[0] === '--version') {
         ],
         nextCursor: null,
       });
-    } else if (method === 'thread/start' || method === 'thread/resume') {
+    } else if (
+      ['thread/start', 'thread/resume', 'thread/fork'].includes(method)
+    ) {
       assert.ok(isAbsolute(params.cwd));
       assert.ok(['read-only', 'workspace-write'].includes(params.sandbox));
       const supervised = params.sandbox === 'workspace-write';
@@ -633,6 +636,7 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(params.approvalsReviewer, 'user');
       assert.ok(params.model === undefined || params.model === 'fixture-codex');
       const resumed = method === 'thread/resume';
+      const forked = method === 'thread/fork';
       const effort = params.config?.model_reasoning_effort ?? null;
       assert.ok(
         effort === null || ['low', 'medium', 'high'].includes(effort),
@@ -674,13 +678,30 @@ if (args.length === 1 && args[0] === '--version') {
         effort,
         projectDocBytes: params.config?.project_doc_max_bytes ?? null,
       };
+      if (process.env.NESVO_FIXTURE_THREAD_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_THREAD_LOG,
+          JSON.stringify({
+            method,
+            id: thread.id,
+            source: params.threadId,
+            sandbox: params.sandbox,
+          }) + '\n',
+          { flag: 'a' },
+        );
       assert.equal(
         existsSync(statePath(thread.id)),
         resumed,
         'Resume requires existing native thread state',
       );
-      if (resumed) assert.equal(params.excludeTurns, true);
-      if (resumed) {
+      if (resumed || forked) assert.equal(params.excludeTurns, true);
+      if (forked) {
+        assert.equal(params.dynamicTools, undefined);
+        writeFileSync(
+          statePath(thread.id),
+          readFileSync(statePath(params.threadId)),
+        );
+      } else if (resumed) {
         assert.equal(
           params.dynamicTools,
           undefined,

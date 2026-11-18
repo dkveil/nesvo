@@ -28,6 +28,7 @@ export const hostCapabilitySchema = z.enum([
   'session-worktrees',
   'permission-modes',
   'session-workflow',
+  'session-fork',
   'pull-requests',
   'history-search',
   'session-groups',

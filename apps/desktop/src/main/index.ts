@@ -40,6 +40,8 @@ import {
   decideReviewSchema,
   respondApprovalSchema,
   assignSessionWorkflowSchema,
+  forkSessionSchema,
+  restartSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
   moveSessionGroupSchema,
@@ -840,7 +842,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:decide-scheduled-job-start',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -941,6 +943,23 @@ void app.whenReady().then(async () => {
     authorize(event);
     return computers.execute('list-session-groups', undefined, route(hostId));
   });
+  const sessionThreadInputs = {
+    'fork-session': forkSessionSchema,
+    'restart-session': restartSessionSchema,
+  } as const;
+  for (const method of ['fork-session', 'restart-session'] as const) {
+    handle(
+      `nesvo:${method}`,
+      async (event, input: unknown, hostId: unknown) => {
+        authorize(event);
+        return computers.execute(
+          method,
+          sessionThreadInputs[method].parse(input),
+          route(hostId),
+        );
+      },
+    );
+  }
   const sessionGroupInputs = {
     'create-session-group': createSessionGroupSchema,
     'update-session-group': updateSessionGroupSchema,

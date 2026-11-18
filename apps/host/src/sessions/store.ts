@@ -215,13 +215,65 @@ export class SessionStore {
   create(
     input: CreateSessionInput,
     directory: string,
+    origin?: SessionOrigin,
+    mcp?: SessionMcp,
+    worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
+  ): Session {
+    const session = this.newSession(input, directory, origin, mcp, worktree);
+    const { requestId } = input;
+    this.saveMany(
+      [session],
+      requestId
+        ? () => {
+            this.database
+              .prepare('UPDATE sessions SET create_request_id = ? WHERE id = ?')
+              .run(requestId, session.id);
+          }
+        : undefined,
+    );
+    return session;
+  }
+
+  fork(
+    source: Session,
+    forkOf: NonNullable<Session['forkOf']>,
+    native: { sessionId: string; model: string } | null,
+  ): Session {
+    const session = this.newSession(
+      {
+        title: `Fork of ${source.title}`,
+        provider: source.provider,
+        model: source.model,
+        mode: source.mode,
+        directory: source.directory,
+        effort: source.effort ?? undefined,
+      },
+      source.directory,
+    );
+    session.forkOf = forkOf;
+    session.delegationEnabled = source.delegationEnabled;
+    if (native) {
+      session.providerSessionId = native.sessionId;
+      session.providerInitialized = true;
+      session.actualModel = native.model;
+    } else {
+      session.pendingClaudeFork = source.providerSessionId;
+    }
+    this.save(session);
+    return session;
+  }
+
+  private newSession(
+    input: CreateSessionInput,
+    directory: string,
     origin: SessionOrigin = { kind: 'operator' },
     mcp: SessionMcp = { servers: [], hooks: false },
     worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
   ): Session {
-    const { requestId, ...settings } = input;
-    const now = new Date().toISOString();
+    const settings = { ...input };
+    delete settings.requestId;
     delete settings.isolation;
+    const now = new Date().toISOString();
     const session: Session = {
       ...settings,
       mcp,
@@ -252,6 +304,9 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       messages: origin.kind === 'import' ? origin.messages : [],
+      forkOf: null,
+      pendingClaudeFork: null,
+      providerThreadStarts: [],
       queue: [],
       parentId: null,
       parentRunId: null,
@@ -265,16 +320,6 @@ export class SessionStore {
       archivedAt: null,
       ...originLinks(origin, input),
     };
-    this.saveMany(
-      [session],
-      requestId
-        ? () => {
-            this.database
-              .prepare('UPDATE sessions SET create_request_id = ? WHERE id = ?')
-              .run(requestId, session.id);
-          }
-        : undefined,
-    );
     return session;
   }
 
@@ -360,6 +405,9 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       messages: [],
+      forkOf: null,
+      pendingClaudeFork: null,
+      providerThreadStarts: [],
       queue: [],
       groupId: null,
       order: 0,

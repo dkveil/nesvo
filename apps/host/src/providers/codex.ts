@@ -1288,7 +1288,7 @@ const constrainedMessage = (messages: ReadonlyMap<string, string>): unknown => {
   }
 };
 
-export function startCodex(options: {
+type CodexRunOptions = {
   directory: string;
   sessionId: string | null;
   resume: boolean;
@@ -1296,7 +1296,6 @@ export function startCodex(options: {
   effort?: string | null;
   mode: 'read-only' | 'supervised';
   turnSandbox?: 'read-only';
-  prompt: string;
   environment?: Readonly<Record<string, string>>;
   skillId?: string;
   skillRoots?: string[];
@@ -1310,7 +1309,9 @@ export function startCodex(options: {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
   };
-}): {
+} & ({ fork: true; prompt?: never } | { fork?: false; prompt: string });
+
+export function startCodex(options: CodexRunOptions): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
   respondApproval: (requestId: string, decision: 'accept' | 'decline') => void;
@@ -1905,10 +1906,10 @@ export function startCodex(options: {
       if (options.onDelegate && !object(options.delegationSchema))
         throw new Error('Codex delegation requires an explicit input schema.');
       if (
-        options.resume &&
+        (options.resume || options.fork) &&
         (!options.sessionId || options.sessionId.length > 200)
       )
-        throw new Error('Codex resume requires a valid provider thread ID.');
+        throw new Error('A valid Codex provider thread ID is required.');
       const executable = await executablePath();
       if (stopped) return { status: 'stopped', error: null };
       if (!executable)
@@ -2048,13 +2049,17 @@ export function startCodex(options: {
       const model = options.model === 'default' ? {} : { model: options.model };
       const effort = options.effort ? { effort: options.effort } : {};
       const response = await peer.request(
-        options.resume ? 'thread/resume' : 'thread/start',
+        options.fork
+          ? 'thread/fork'
+          : options.resume
+            ? 'thread/resume'
+            : 'thread/start',
         {
-          ...(options.resume
+          ...(options.resume || options.fork
             ? { threadId: options.sessionId, excludeTurns: true }
             : {}),
           ...model,
-          ...(!options.resume && options.onDelegate
+          ...(!options.resume && !options.fork && options.onDelegate
             ? {
                 dynamicTools: [
                   {
@@ -2097,7 +2102,8 @@ export function startCodex(options: {
         !thread.id ||
         thread.id.length > 200 ||
         typeof response.model !== 'string' ||
-        (options.resume && thread.id !== options.sessionId)
+        (options.resume && thread.id !== options.sessionId) ||
+        (options.fork && thread.id === options.sessionId)
       )
         throw new Error('Codex returned an invalid or mismatched thread.');
       if (
@@ -2113,6 +2119,14 @@ export function startCodex(options: {
           'Codex did not apply the requested reasoning effort. No provider turn was started.',
         );
       threadId = thread.id;
+      if (options.fork) {
+        const exit = await peer.closeIdle();
+        if (!exit.confirmed)
+          throw new Error('Codex fork process closure could not be confirmed.');
+        peer = null;
+        emit({ type: 'init', sessionId: threadId, model: response.model });
+        return { status: 'completed', error: null };
+      }
       emit({ type: 'init', sessionId: threadId, model: response.model });
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       startingTurn = true;
@@ -2151,6 +2165,12 @@ export function startCodex(options: {
         ),
       ]);
     } catch (error) {
+      if (
+        options.fork &&
+        error instanceof CodexRpcError &&
+        error.code === -32601
+      )
+        failure = 'This Codex version does not support native thread forking.';
       result = failure
         ? { status: 'failed', error: failure }
         : stopped
