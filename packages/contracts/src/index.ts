@@ -415,6 +415,7 @@ export * from './tracked-repositories';
 export * from './running-apps';
 export * from './default-session-folder';
 export * from './worktree-recipes';
+export * from './workflow-share';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
