@@ -19915,7 +19915,13 @@ test(
     const hook = command => ({
       SessionStart: [{ hooks: [{ type: 'command', command }] }],
     });
-    const projectHooks = hook('fixture-project-hook');
+    const projectHooks = hook(
+      '/opt/fixtures/project-hook --auth "short hook token" runtime="short env value"',
+    );
+    projectHooks.SessionStart[0].hooks.push({
+      type: 'http',
+      url: 'https://fixture-user:fixture-pass@hooks.example.test/mcp/notify?query=hidden#fragment',
+    });
     const localHooks = hook('fixture-local-hook');
     await writeFile(
       join(project, '.claude', 'settings.json'),
@@ -19972,7 +19978,18 @@ test(
       join(project, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          repo: { command: 'npx', args: ['-y', 'repo-mcp', secret] },
+          repo: {
+            command: '/opt/fixtures/repository-mcp',
+            args: [
+              '-y',
+              'repo-mcp\n\u202e',
+              secret,
+              '--api-key',
+              'short key',
+              'auth=short auth',
+            ],
+            env: { REPO_TOKEN: secret },
+          },
         },
       }),
     );
@@ -20037,7 +20054,20 @@ test(
     assert.equal(claudeList.type, 'mcp-servers', JSON.stringify(claudeList));
     assert.equal(claudeList.list.configuration, 'native');
     const serialized = JSON.stringify(claudeList);
-    for (const leaked of [secret, 'Bearer', 'key=', '/mcp', 'tools'])
+    for (const leaked of [
+      secret,
+      'Bearer',
+      'key=',
+      'short hook token',
+      'short env value',
+      'short key',
+      'short auth',
+      'fixture-user',
+      'fixture-pass',
+      'query=hidden',
+      '#fragment',
+      'tools',
+    ])
       assert.equal(serialized.includes(leaked), false, leaked);
     const byKey = Object.fromEntries(
       claudeList.list.servers.map(server => [server.key, server]),
@@ -20121,6 +20151,43 @@ test(
     const before = await listFor(claude);
     assert.equal(before.repository.status, 'needs-trust');
     assert.equal(before.repository.definitions.length, 4);
+    const detailFields = (repository, name) =>
+      repository.definitions
+        .find(item => item.name === name)
+        .launches.flatMap(launch => launch.fields);
+    assert.deepEqual(detailFields(before.repository, 'repo'), [
+      { label: 'Command', value: '/opt/fixtures/repository-mcp' },
+      { label: 'Argument', value: '-y' },
+      { label: 'Argument', value: 'repo-mcp\\u000a\\u202e' },
+      { label: 'Argument', value: '••••' },
+      { label: 'Argument', value: '--api-key' },
+      { label: 'Argument', value: '••••' },
+      { label: 'Argument', value: 'auth=••••' },
+      { label: 'Working directory', value: project },
+      { label: 'Environment variable', value: 'REPO_TOKEN' },
+    ]);
+    const reviewedHooks = before.repository.definitions.find(
+      item => item.detail === 'Project hooks',
+    );
+    assert.deepEqual(reviewedHooks.launches, [
+      {
+        kind: 'command hook',
+        fields: [
+          {
+            label: 'Command',
+            value: '/opt/fixtures/project-hook --auth •••• runtime=••••',
+          },
+          { label: 'Working directory', value: project },
+          { label: 'Environment variable', value: 'runtime' },
+        ],
+      },
+      {
+        kind: 'http hook',
+        fields: [
+          { label: 'URL', value: 'https://hooks.example.test/mcp/notify' },
+        ],
+      },
+    ]);
     assert.equal(
       (await trust(claude, before.repository.fingerprint)).list.repository
         .status,
@@ -20153,6 +20220,12 @@ test(
     const changed = await listFor(claude);
     assert.equal(changed.repository.status, 'needs-trust');
     assert.equal(changed.repository.changed, true);
+    assert.ok(
+      detailFields(changed.repository, 'repo').some(
+        field =>
+          field.label === 'Argument' && field.value === 'changed-argument',
+      ),
+    );
     assert.deepEqual(
       changed.repository.definitions
         .filter(definition => definition.change)

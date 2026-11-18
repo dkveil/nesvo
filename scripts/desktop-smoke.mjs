@@ -937,12 +937,48 @@ try {
   await mcpPopover.waitFor({ state: 'hidden' });
   await waitForFocus(mcpChip);
   const repoMcp = join(first.directory, '.mcp.json');
+  const repoHooks = join(first.directory, '.claude', 'settings.json');
+  await writeSkill(
+    repoHooks,
+    JSON.stringify({
+      hooks: {
+        SessionStart: [
+          {
+            matcher: 'startup',
+            hooks: [
+              {
+                type: 'command',
+                command: 'tools/refresh-index --token fixture-hook-value',
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  const longArgument = '/workspace/' + 'projects/'.repeat(16) + 'documents';
   const writeRepositoryMcp = command =>
     writeFile(
       repoMcp,
-      JSON.stringify({ mcpServers: { repository: { command } } }),
+      JSON.stringify({
+        mcpServers: {
+          documents: {
+            command,
+            args: ['--root', longArgument, '--api-token=fixture-value'],
+            env: { DOCUMENTS_TOKEN: 'fixture-env-value' },
+          },
+          index: {
+            type: 'http',
+            url: 'https://fixture:password@index.example.test/api/mcp?token=fixture-query',
+          },
+        },
+      }),
     );
-  await writeRepositoryMcp('fixture-repository-mcp');
+  const mcpCommand =
+    process.platform === 'win32'
+      ? 'C:\\Program Files\\Workspace Tools\\documents-mcp.exe'
+      : '/opt/workspace-tools/bin/documents-mcp';
+  await writeRepositoryMcp(mcpCommand);
   await mcpChip.click();
   await mcpPopover
     .getByText('Repository MCP servers and hooks are paused.', { exact: true })
@@ -953,12 +989,36 @@ try {
     { exact: true },
   );
   await trustNotice.waitFor();
+  const detailRegion = conversation.getByRole('region', {
+    name: 'Repository integration details',
+  });
+  await detailRegion.getByText(mcpCommand, { exact: true }).waitFor();
+  await detailRegion
+    .getByText('…(+' + (longArgument.length - 104) + ' chars)', {
+      exact: false,
+    })
+    .waitFor();
+  await detailRegion.getByText('--api-token=••••', { exact: true }).waitFor();
+  await detailRegion.getByText('DOCUMENTS_TOKEN', { exact: true }).waitFor();
+  await detailRegion
+    .getByText('tools/refresh-index --token ••••', { exact: true })
+    .waitFor();
+  await detailRegion
+    .getByText('https://index.example.test/api/mcp', { exact: true })
+    .waitFor();
+  assert.doesNotMatch(
+    await detailRegion.innerText(),
+    /fixture-(?:value|env-value|hook-value|query)|password/,
+  );
   await screenshot('-mcp-prompt');
+  await detailRegion.getByRole('button', { name: 'Expand argument' }).click();
+  await detailRegion.getByText(longArgument, { exact: true }).waitFor();
+  await detailRegion.getByRole('button', { name: 'Collapse argument' }).click();
   await conversation
     .getByRole('button', { name: 'Trust', exact: true })
     .click();
   await trustNotice.waitFor({ state: 'hidden' });
-  await writeRepositoryMcp('fixture-repository-mcp-v2');
+  await writeRepositoryMcp(mcpCommand + '-v2');
   await mcpChip.click();
   await mcpPopover
     .getByText('Repository MCP servers and hooks are paused.', { exact: true })
@@ -970,12 +1030,15 @@ try {
       'Repository definitions changed and are paused until you trust them again.',
     )
     .waitFor();
+  await detailRegion.getByText(mcpCommand + '-v2', { exact: true }).waitFor();
+  await detailRegion.getByText('Changed', { exact: false }).waitFor();
   await screenshot('-mcp-changed');
   await conversation
     .getByRole('button', { name: 'Not now', exact: true })
     .click();
   await trustNotice.waitFor({ state: 'hidden' });
   await rm(repoMcp);
+  await rm(repoHooks);
   const projectSkillPath = join(
     first.directory,
     '.claude',

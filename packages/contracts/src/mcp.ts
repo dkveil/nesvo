@@ -18,10 +18,30 @@ export const mcpServerSchema = z.strictObject({
   problem: z.string().max(mcpLimits.problem).nullable(),
 });
 
+const mcpRepositoryLaunchSchema = z.strictObject({
+  kind: z.string().max(1024).optional(),
+  fields: z
+    .array(
+      z.strictObject({
+        label: z.enum([
+          'Command',
+          'Argument',
+          'Working directory',
+          'Environment variable',
+          'URL',
+          'Matcher',
+        ]),
+        value: z.string().max(1024 * 1024),
+      }),
+    )
+    .max(16_384),
+});
+
 const mcpRepositoryDefinitionSchema = z.strictObject({
   id: z.string().min(1).max(400),
   name: z.string().min(1).max(300),
   detail: z.string().max(mcpLimits.summary),
+  launches: z.array(mcpRepositoryLaunchSchema).max(8192).optional(),
   change: z.enum(['added', 'changed', 'removed']).nullable(),
 });
 
@@ -29,7 +49,7 @@ const mcpRepositorySchema = z.strictObject({
   name: z.string().max(4096),
   status: z.enum(['empty', 'needs-trust', 'trusted', 'unavailable']),
   fingerprint: mcpFingerprintSchema,
-  definitions: z.array(mcpRepositoryDefinitionSchema).max(mcpLimits.listed),
+  definitions: z.array(mcpRepositoryDefinitionSchema).max(2 * mcpLimits.listed),
   changed: z.boolean(),
 });
 
@@ -41,6 +61,7 @@ export const trustRepositoryMcpSchema = z.strictObject({
 export type McpRepositoryDefinition = z.infer<
   typeof mcpRepositoryDefinitionSchema
 >;
+export type McpRepositoryLaunch = z.infer<typeof mcpRepositoryLaunchSchema>;
 export type TrustRepositoryMcpInput = z.infer<typeof trustRepositoryMcpSchema>;
 
 export const mcpServerListSchema = z.strictObject({

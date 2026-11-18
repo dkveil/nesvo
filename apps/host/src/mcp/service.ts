@@ -1,6 +1,6 @@
 ﻿import { createHmac, randomUUID } from 'node:crypto';
 import { SessionError } from '../sessions/session-error';
-import { basename, win32 } from 'node:path';
+import { basename } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   MCP_SERVER_NAME_PATTERN,
@@ -12,6 +12,7 @@ import {
 } from '@nesvo/contracts';
 import { claudeServer, readClaudeConfiguration } from './claude-servers';
 import { codexServer, readCodexConfiguration } from './codex-servers';
+import { hookLaunches, reviewText, serverLaunch } from './repository-details';
 import {
   directoryKey,
   mergeHooks,
@@ -63,41 +64,6 @@ function canonical(value: unknown, depth = 0): string {
   );
 }
 
-function executableName(command: unknown) {
-  if (typeof command !== 'string') return '';
-  const first = /^(?:"([^"]+)"|'([^']+)'|([^\s]+))/.exec(command.trim());
-  const name = win32.basename(first?.[1] ?? first?.[2] ?? first?.[3] ?? '');
-  return /^[a-zA-Z0-9._-]{1,70}$/.test(name) ? name : '';
-}
-
-function serverDetail(config: unknown) {
-  if (!config || typeof config !== 'object' || !('command' in config))
-    return '';
-  const executable = executableName(config.command);
-  const count =
-    'args' in config && Array.isArray(config.args) ? config.args.length : 0;
-  return [
-    executable,
-    count === 0 ? '' : count + (count === 1 ? ' argument' : ' arguments'),
-  ]
-    .filter(Boolean)
-    .join(' ? ');
-}
-
-function hookDetail(groups: unknown) {
-  if (!Array.isArray(groups)) return '';
-  const handlers = groups.flatMap(group =>
-    Array.isArray(group?.hooks) ? group.hooks : [],
-  );
-  return [
-    ...new Set(
-      handlers.map(handler => executableName(handler?.command)).filter(Boolean),
-    ),
-  ]
-    .slice(0, 3)
-    .join(', ');
-}
-
 function definitionChanges(current: Definition[], previous: Definition[]) {
   const earlier = new Map(previous.map(item => [item.id, item.hash]));
   const currentIds = new Set(current.map(item => item.id));
@@ -113,10 +79,18 @@ function definitionChanges(current: Definition[], previous: Definition[]) {
               ? ('changed' as const)
               : null,
     })),
-    ...previous.flatMap(({ id, name, detail }) =>
+    ...previous.flatMap(({ id, name, detail, launches }) =>
       currentIds.has(id)
         ? []
-        : [{ id, name, detail, change: 'removed' as const }],
+        : [
+            {
+              id,
+              name: reviewText(name),
+              detail,
+              launches,
+              change: 'removed' as const,
+            },
+          ],
     ),
   ];
 }
@@ -172,11 +146,13 @@ export class McpPolicy {
     );
     const projectEntries = new Map<string, ReturnType<typeof describe>>();
     const definitions: Definition[] = [];
+    let reviewBytes = 0;
     const addDefinition = (
       id: string,
       name: string,
       detail: string,
       config: unknown,
+      launches?: Definition['launches'],
     ) => {
       if (definitions.length >= mcpLimits.listed) {
         projectIssues.push(
@@ -185,10 +161,20 @@ export class McpPolicy {
         return;
       }
       try {
+        if (launches) {
+          reviewBytes += Buffer.byteLength(JSON.stringify(launches));
+          if (reviewBytes > 512 * 1024) {
+            projectIssues.push(
+              'The repository MCP and hook details are too large to review.',
+            );
+            launches = undefined;
+          }
+        }
         definitions.push({
           id: id.length <= 400 ? id : 'definition:' + this.fingerprint(id),
-          name: name.slice(0, 300),
+          name: reviewText(name).slice(0, 300),
           detail: detail.slice(0, mcpLimits.summary),
+          ...(launches ? { launches } : {}),
           hash: this.fingerprint(config),
         });
       } catch {
@@ -217,12 +203,12 @@ export class McpPolicy {
               'A repository MCP server definition is unsupported.',
             );
           projectServers[name] = config;
-          const launch = serverDetail(config);
           addDefinition(
             `${index}:${scope}:server:${name}`,
             name || '?',
-            `${scope === 'project' ? 'Project' : 'Local'} MCP server · ${entry.transport ?? 'Unknown transport'}${launch ? ' · ' + launch : ''}`,
+            `${scope === 'project' ? 'Project' : 'Local'} MCP server · ${entry.transport ?? 'Unknown transport'}`,
             config,
+            serverLaunch(config, directory),
           );
         }
       for (const [scope, hooks] of [
@@ -231,12 +217,12 @@ export class McpPolicy {
       ] as const) {
         hookSources.push(hooks);
         for (const [event, groups] of Object.entries(hooks)) {
-          const launch = hookDetail(groups);
           addDefinition(
             `${index}:${scope}:hook:${event}`,
             event || '?',
-            `${scope === 'project' ? 'Project' : 'Local'} hooks${launch ? ' · ' + launch : ''}`,
+            `${scope === 'project' ? 'Project' : 'Local'} hooks`,
             groups,
+            hookLaunches(groups, directory),
           );
         }
       }
@@ -290,7 +276,10 @@ export class McpPolicy {
         mcpLimits.issues,
       ),
       repository: {
-        name: basename(folders.at(-1)!) || folders.at(-1)!,
+        name: reviewText(basename(folders.at(-1)!) || folders.at(-1)!).slice(
+          0,
+          4096,
+        ),
         status: projectIssues.length
           ? 'unavailable'
           : trusted
@@ -300,10 +289,7 @@ export class McpPolicy {
               : 'empty',
         fingerprint,
         changed: !!stored && (!trusted || stored.fingerprint !== fingerprint),
-        definitions: definitionChanges(definitions, previous).slice(
-          0,
-          mcpLimits.listed,
-        ),
+        definitions: definitionChanges(definitions, previous),
       },
     };
     const servers = Object.fromEntries(
