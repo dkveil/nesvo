@@ -9,6 +9,12 @@ export const colors = {
   muted: '#a1a1a1',
   border: '#242424',
   error: '#f2a2a2',
+  info: '#4fd1c5',
+  success: '#5ad38c',
+  warning: '#f2b94b',
+  danger: '#fb414a',
+  dangerSurface: '#2a0d10',
+  overlay: 'rgba(0, 0, 0, 0.6)',
 };
 
 export function Action({
