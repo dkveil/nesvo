@@ -50,7 +50,16 @@ function reviewSection(name: string, value: unknown) {
         { mcpServers: reviewServers(tableSchema.parse(config).mcpServers) },
       ]),
     );
-  if (name === 'disableAllHooks' || name === 'settings' || name === 'commands')
+  if (
+    [
+      'disableAllHooks',
+      'settings',
+      'commands',
+      'agents',
+      'skills',
+      'output-styles',
+    ].includes(name)
+  )
     return value;
   return reviewServers(value);
 }

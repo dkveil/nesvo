@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import type { McpRepositoryDefinition } from '@nesvo/contracts';
 import type { ConfigTable } from './scoped-config';
 
 export type ProjectFileDefinition = {
@@ -8,6 +9,15 @@ export type ProjectFileDefinition = {
   name: string;
   detail: string;
   config: unknown;
+  launches?: McpRepositoryDefinition['launches'];
+};
+
+type ReviewedFolder = {
+  id: string;
+  path: string;
+  label: string;
+  includes: (name: string) => boolean;
+  entryName: (parts: string[], name: string) => string;
 };
 
 const instructionFiles = [
@@ -15,10 +25,43 @@ const instructionFiles = [
   { path: join('.claude', 'CLAUDE.md'), detail: 'Project instructions' },
   { path: 'CLAUDE.local.md', detail: 'Local instructions' },
 ];
-const maxCommands = 200;
-const maxCommandBytes = 256 * 1024;
-const maxCommandDepth = 4;
-const commandListChars = 300;
+const markdownName = (parts: string[], name: string) =>
+  [...parts, name.slice(0, -3)].join(':');
+const reviewedFolders: ReviewedFolder[] = [
+  {
+    id: 'commands',
+    path: join('.claude', 'commands'),
+    label: 'Project commands',
+    includes: name => name.endsWith('.md'),
+    entryName: (parts, name) => `/${markdownName(parts, name)}`,
+  },
+  {
+    id: 'agents',
+    path: join('.claude', 'agents'),
+    label: 'Project subagents',
+    includes: name => name.endsWith('.md'),
+    entryName: markdownName,
+  },
+  {
+    id: 'skills',
+    path: join('.claude', 'skills'),
+    label: 'Project skills',
+    includes: name => name === 'SKILL.md',
+    entryName: parts => parts.join('/'),
+  },
+  {
+    id: 'output-styles',
+    path: join('.claude', 'output-styles'),
+    label: 'Project output styles',
+    includes: name => name.endsWith('.md'),
+    entryName: markdownName,
+  },
+];
+const maxFiles = 200;
+const maxFileBytes = 256 * 1024;
+const maxDepth = 4;
+const detailChars = 300;
+const rawReviewLaunch = [{ requiresRawReview: true as const, fields: [] }];
 
 const missing = (error: unknown) =>
   ['ENOENT', 'ENOTDIR'].includes(String((error as NodeJS.ErrnoException).code));
@@ -35,14 +78,18 @@ const insideRepository = async (path: string, repositoryRoot: string) => {
 const instructionDefinitions = async (
   folder: string,
   repositoryRoot: string,
+  issues: string[],
 ): Promise<ProjectFileDefinition[]> => {
   const found: ProjectFileDefinition[] = [];
   for (const file of instructionFiles) {
     const path = join(folder, file.path);
     const info = await stat(path).catch(() => null);
-    if (!info?.isFile() || !(await insideRepository(path, repositoryRoot)))
-      continue;
+    if (!info) continue;
     const name = file.path.replaceAll('\\', '/');
+    if (!info.isFile() || !(await insideRepository(path, repositoryRoot))) {
+      issues.push(`The repository ${name} resolves outside the repository.`);
+      continue;
+    }
     found.push({
       id: `instructions:${name}`,
       name,
@@ -53,16 +100,18 @@ const instructionDefinitions = async (
   return found;
 };
 
-const commandHashes = async (
+const folderHashes = async (
+  folder: ReviewedFolder,
   root: string,
   repositoryRoot: string,
   issues: string[],
   signal?: AbortSignal,
 ): Promise<ConfigTable> => {
   const hashes: ConfigTable = {};
+  const label = folder.label.toLowerCase();
   const visit = async (directory: string, parts: string[], depth: number) => {
-    if (depth > maxCommandDepth) {
-      issues.push('The repository commands are nested too deeply to review.');
+    if (depth > maxDepth) {
+      issues.push(`The repository ${label} are nested too deeply to review.`);
       return;
     }
     const entries = await readdir(directory, { withFileTypes: true });
@@ -71,37 +120,38 @@ const commandHashes = async (
     )) {
       signal?.throwIfAborted();
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await visit(path, [...parts, entry.name], depth + 1);
-        continue;
-      }
-      if (!entry.name.endsWith('.md')) continue;
-      if (Object.keys(hashes).length >= maxCommands) {
-        issues.push('The repository has too many commands to review.');
-        return;
-      }
       if (!(await insideRepository(path, repositoryRoot))) {
-        issues.push('A repository command resolves outside the repository.');
+        issues.push(
+          `A repository entry in ${label} resolves outside the repository.`,
+        );
         continue;
       }
       const info = await stat(path);
-      if (info.size > maxCommandBytes) {
-        issues.push('A repository command is too large to review.');
+      if (info.isDirectory()) {
+        await visit(path, [...parts, entry.name], depth + 1);
         continue;
       }
-      hashes[[...parts, entry.name.slice(0, -3)].join(':')] = createHash(
-        'sha256',
-      )
+      if (!info.isFile() || !folder.includes(entry.name)) continue;
+      if (Object.keys(hashes).length >= maxFiles) {
+        issues.push(`The repository has too many ${label} to review.`);
+        return;
+      }
+      if (info.size > maxFileBytes) {
+        issues.push(`A repository entry in ${label} is too large to review.`);
+        continue;
+      }
+      hashes[folder.entryName(parts, entry.name)] = createHash('sha256')
         .update(await readFile(path, { signal }))
         .digest('hex');
     }
   };
   try {
     if (await insideRepository(root, repositoryRoot)) await visit(root, [], 0);
+    else issues.push(`The repository ${label} resolve outside the repository.`);
   } catch (error) {
     if (signal?.aborted) throw error;
     if (!missing(error))
-      issues.push('The repository commands could not be read.');
+      issues.push(`The repository ${label} could not be read.`);
   }
   return hashes;
 };
@@ -120,24 +170,33 @@ export const readClaudeProjectFiles = async (
   issues: string[],
   signal?: AbortSignal,
 ) => {
-  const commandsPath = join(folder, '.claude', 'commands');
-  const [instructions, commands] = await Promise.all([
-    instructionDefinitions(folder, repositoryRoot),
-    commandHashes(commandsPath, repositoryRoot, issues, signal),
+  const [instructions, ...folders] = await Promise.all([
+    instructionDefinitions(folder, repositoryRoot, issues),
+    ...reviewedFolders.map(async reviewed => {
+      const path = join(folder, reviewed.path);
+      const hashes = await folderHashes(
+        reviewed,
+        path,
+        repositoryRoot,
+        issues,
+        signal,
+      );
+      return { reviewed, path, hashes };
+    }),
   ]);
   const definitions: ProjectFileDefinition[] = [...instructions];
-  const commandNames = Object.keys(commands);
-  if (commandNames.length)
+  const sources: { path: string; sections: ConfigTable }[] = [];
+  for (const { reviewed, path, hashes } of folders) {
+    const names = Object.keys(hashes);
+    if (!names.length) continue;
     definitions.push({
-      id: 'commands',
-      name: '.claude/commands',
-      detail:
-        `Project commands: ${commandNames.map(name => `/${name}`).join(', ')}`.slice(
-          0,
-          commandListChars,
-        ),
-      config: commands,
+      id: reviewed.id,
+      name: reviewed.path.replaceAll('\\', '/'),
+      detail: `${reviewed.label}: ${names.join(', ')}`.slice(0, detailChars),
+      config: hashes,
     });
+    sources.push({ path, sections: { [reviewed.id]: hashes } });
+  }
   for (const [scope, table] of [
     ['project', settings.project],
     ['local', settings.local],
@@ -154,15 +213,11 @@ export const readClaudeProjectFiles = async (
         detail:
           `${scope === 'project' ? 'Project' : 'Local'} settings: ${keys.join(', ')}`.slice(
             0,
-            commandListChars,
+            detailChars,
           ),
         config: rest,
+        launches: rawReviewLaunch,
       });
   }
-  return {
-    definitions,
-    commandsSource: commandNames.length
-      ? { path: commandsPath, sections: { commands } }
-      : null,
-  };
+  return { definitions, sources };
 };

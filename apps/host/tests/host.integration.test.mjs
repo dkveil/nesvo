@@ -24234,6 +24234,11 @@ test('Claude Code native commands are listed from the CLI, passed through and re
     join(project, '.claude', 'commands', 'ship.md'),
     'Prepare the release notes.\n',
   );
+  await mkdir(join(project, '.claude', 'agents'));
+  await writeFile(
+    join(project, '.claude', 'agents', 'helper.md'),
+    '---\nname: helper\n---\nHelp.\n',
+  );
   const host = launch(directory, pidFile, {
     NESVO_FIXTURE_PROMPT_LOG: promptLog,
     NESVO_FIXTURE_MCP_LOG: mcpLog,
@@ -24326,6 +24331,7 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   assert.deepEqual(
     repository.definitions.map(item => [item.name, item.detail]).sort(),
     [
+      ['.claude/agents', 'Project subagents: helper'],
       ['.claude/commands', 'Project commands: /ship'],
       ['CLAUDE.md', 'Project instructions'],
     ],

@@ -237,6 +237,7 @@ export class McpPolicy {
           extra.name,
           extra.detail,
           extra.config,
+          extra.launches,
         );
       projectDisablesHooks ||= layer.hooksDisabled;
       if (layer.hooksDisabled)

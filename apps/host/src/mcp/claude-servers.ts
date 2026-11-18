@@ -151,7 +151,7 @@ export async function readClaudeConfiguration(
                 : {}),
             },
           },
-          ...(projectFiles.commandsSource ? [projectFiles.commandsSource] : []),
+          ...projectFiles.sources,
         ],
       };
     }),
