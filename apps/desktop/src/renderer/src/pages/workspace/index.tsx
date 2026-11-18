@@ -3730,6 +3730,7 @@ ${text}`
                 cardSession && (
                   <SubsessionsSection
                     entries={subsessions}
+                    parentDirectory={cardSession.directory}
                     connected={store.hostReady(selectedHostId)}
                     onSession={select}
                     onStop={child => void stop(child)}

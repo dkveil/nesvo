@@ -1,22 +1,24 @@
 import type { ComponentProps } from 'react';
-import { ChevronRight, Folder, GitBranch, Square } from 'lucide-react';
+import { Square } from 'lucide-react';
 import type { SubsessionEntry } from '@nesvo/contracts';
 import { elapsedLabel } from '@/entities/activity';
 import { cn } from '@/shared/lib/cn';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
-import { StatusDot, type StatusDotTone } from '@/shared/ui/status-dot';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { ProviderGlyph } from './provider-glyph';
+import { directoryLabel, modelLabel, type Session } from './index';
 import {
-  directoryLabel,
-  modelLabel,
-  sessionStatusLabel,
-  type Session,
-} from './index';
+  statusTextTones,
+  subsessionStatus,
+  type SubsessionStatus,
+} from './subsession-status';
 
 type SubsessionRowProps = {
   entry: SubsessionEntry<Session>;
   now: number;
+  density?: 'two-line' | 'compact';
+  parentDirectory?: string;
   stopping?: boolean;
   stopDisabled?: boolean;
   onOpen: () => void;
@@ -24,24 +26,37 @@ type SubsessionRowProps = {
   mainProps?: ComponentProps<typeof ListRow>['mainProps'];
 };
 
-const stateTone = (session: Session, state: string): StatusDotTone => {
-  if (state === 'Needs approval') return 'warning';
-  if (session.status === 'running' || session.status === 'stopping')
-    return 'info';
-  if (session.status === 'completed') return 'success';
-  if (session.status === 'failed') return 'error';
-  return 'neutral';
-};
-
-const stateText: Partial<Record<StatusDotTone, string>> = {
-  info: 'text-info-foreground',
-  warning: 'text-warning-foreground',
-  error: 'text-error-foreground',
-};
+function ProviderMark({
+  session,
+  status,
+}: {
+  session: Session;
+  status: SubsessionStatus;
+}) {
+  const badge = status.attention || status.variant === 'spinner';
+  return (
+    <span className="relative inline-flex">
+      <ProviderGlyph provider={session.provider} />
+      {badge && (
+        <StatusDot
+          tone={status.tone}
+          variant={status.variant}
+          ringClassName="border-info-panel"
+          className={cn(
+            'absolute -right-1 -bottom-1',
+            status.variant === 'spinner' && 'bg-info-panel',
+          )}
+        />
+      )}
+    </span>
+  );
+}
 
 export function SubsessionRow({
   entry,
   now,
+  density = 'two-line',
+  parentDirectory,
   stopping = false,
   stopDisabled = false,
   onOpen,
@@ -49,43 +64,61 @@ export function SubsessionRow({
   mainProps,
 }: SubsessionRowProps) {
   const { session, active, startedAt, finishedAt } = entry;
-  const state = stopping ? 'Stopping…' : sessionStatusLabel(session);
-  const tone = stateTone(session, state);
+  const status = subsessionStatus(session, stopping);
   const elapsed = elapsedLabel(startedAt, finishedAt, now);
   const model = modelLabel(session.actualModel ?? session.model);
-  const branch = session.worktree?.branch;
-  const location = branch ?? directoryLabel(session.directory);
+  const folder =
+    parentDirectory && session.directory !== parentDirectory
+      ? directoryLabel(session.directory)
+      : '';
+  const compact = density === 'compact';
+  const stateWord = status.attention && (
+    <span className={statusTextTones[status.tone]}>{status.state}</span>
+  );
+  const elapsedText = elapsed && (
+    <span className="text-muted-foreground tabular-nums">{elapsed}</span>
+  );
   return (
     <ListRow
-      density="two-line"
+      density={density}
+      size={compact ? 'md' : 'sm'}
       data-subsession-row=""
       data-active={active ? '' : undefined}
       className={cn(!active && 'opacity-60')}
       leading={
-        <StatusDot tone={tone} size="md" pulse={active && tone === 'info'} />
+        compact ? (
+          <ProviderMark session={session} status={status} />
+        ) : (
+          <StatusDot tone={status.tone} variant={status.variant} size="md" />
+        )
       }
       title={session.title}
       meta={
-        <>
-          <span className={stateText[tone]}>{state}</span>
-          {elapsed && <span>{elapsed}</span>}
-        </>
+        compact ? undefined : (
+          <>
+            {stateWord}
+            {elapsedText}
+          </>
+        )
       }
       description={
-        <span className="flex min-w-0 items-center gap-1">
-          <ProviderGlyph provider={session.provider} className="size-3" />
-          <span className="shrink-0">{model}</span>
-          <span aria-hidden="true">·</span>
-          {branch ? (
-            <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-          ) : (
-            <Folder className="size-3 shrink-0" aria-hidden="true" />
-          )}
-          <span className="truncate">{location}</span>
-        </span>
+        compact ? undefined : (
+          <span className="flex min-w-0 items-center gap-1">
+            <ProviderGlyph provider={session.provider} className="size-3" />
+            <span className="truncate">
+              {folder ? `${model} · ${folder}` : model}
+            </span>
+          </span>
+        )
       }
-      trailing={<ChevronRight className="size-3.5" aria-hidden="true" />}
-      actionsPlacement="visible"
+      trailing={
+        compact ? (
+          <>
+            {stateWord}
+            {elapsedText}
+          </>
+        ) : undefined
+      }
       actions={
         active && onStop ? (
           <IconButton
@@ -101,7 +134,15 @@ export function SubsessionRow({
       }
       mainProps={{
         ...mainProps,
-        'aria-label': `Open ${session.title}, ${state}${elapsed ? `, ${elapsed}` : ''}, ${session.provider} ${model}, ${location}`,
+        'aria-label': [
+          `Open ${session.title}`,
+          status.state,
+          elapsed,
+          `${session.provider} ${model}`,
+          folder,
+        ]
+          .filter(Boolean)
+          .join(', '),
       }}
       onClick={onOpen}
     />
