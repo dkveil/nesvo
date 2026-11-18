@@ -19,32 +19,17 @@ function tokenPair(input: number | null, output: number | null) {
   return `${formatTokens(input)} in · ${formatTokens(output)} out`;
 }
 
-function sessionUsage(session: Session) {
-  const used = session.messages.flatMap(message =>
-    message.usage ? [{ author: message.author, usage: message.usage }] : [],
-  );
-  const turns = session.messages.filter(message => message.author === 'agent');
-  if (turns.length === 0) return null;
-  const last = used.findLast(entry => entry.author === 'agent')?.usage;
-  const costs = turns
-    .map(turn =>
-      turn.usage?.source === 'provider-report' ? turn.usage.costUsd : null,
-    )
-    .filter(cost => cost !== null);
-  const sum = (pick: (entry: (typeof used)[number]) => number | null) =>
-    used.reduce((total, entry) => total + (pick(entry) ?? 0), 0);
+function sessionUsage({ usageTotals: totals }: Session) {
+  if (totals.turns === 0) return null;
   return {
-    last: last ? tokenPair(last.inputTokens, last.outputTokens) : null,
-    total: used.length
-      ? tokenPair(
-          sum(entry => entry.usage.inputTokens),
-          sum(entry => entry.usage.outputTokens),
-        )
+    last: totals.last
+      ? tokenPair(totals.last.inputTokens, totals.last.outputTokens)
       : null,
-    cost: formatCost(
-      costs.length ? costs.reduce((total, cost) => total + cost, 0) : null,
-    ),
-    unknown: turns.length - costs.length,
+    total: totals.reportedTurns
+      ? tokenPair(totals.inputTokens, totals.outputTokens)
+      : null,
+    cost: formatCost(totals.costUsd),
+    unknown: totals.turns - totals.costTurns,
   };
 }
 

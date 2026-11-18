@@ -1,10 +1,23 @@
-import { type DesktopEvent } from '@nesvo/contracts';
+import {
+  applySessionChange,
+  type DesktopEvent,
+  type SessionChange,
+} from '@nesvo/contracts';
 
 const MAX_BUFFERED_ENTITIES = 4096;
+
+type SessionEvent = Extract<
+  DesktopEvent,
+  { type: 'session-changed' | 'session-message-upserted' }
+>;
+
+const isSessionEvent = (event: DesktopEvent): event is SessionEvent =>
+  event.type === 'session-changed' || event.type === 'session-message-upserted';
 
 const entityKey = (event: DesktopEvent, sequence: number) => {
   switch (event.type) {
     case 'session-changed':
+    case 'session-message-upserted':
       return `session:${event.session.id}`;
     case 'review-changed':
       return `review:${event.review.id}`;
@@ -28,6 +41,7 @@ const entityKey = (event: DesktopEvent, sequence: number) => {
 const revisionOf = (event: DesktopEvent) => {
   switch (event.type) {
     case 'session-changed':
+    case 'session-message-upserted':
       return event.session.revision;
     case 'review-changed':
       return event.review.revision;
@@ -38,6 +52,26 @@ const revisionOf = (event: DesktopEvent) => {
     default:
       return null;
   }
+};
+
+const toChange = (event: SessionEvent): SessionChange =>
+  event.type === 'session-changed'
+    ? { type: 'snapshot', session: event.session }
+    : { ...event, type: 'upsert' };
+
+const combine = (previous: DesktopEvent, next: DesktopEvent): DesktopEvent => {
+  if (!isSessionEvent(previous) || !isSessionEvent(next)) return next;
+  if (previous.type === 'session-changed') {
+    const applied = applySessionChange(previous.session, toChange(next));
+    return applied && !applied.gap
+      ? { type: 'session-changed', session: applied.session }
+      : next;
+  }
+  return next.type === 'session-message-upserted' &&
+    next.baseRevision === previous.session.revision &&
+    next.index === previous.index
+    ? { ...next, baseRevision: previous.baseRevision }
+    : next;
 };
 
 export class EventBuffer {
@@ -52,7 +86,10 @@ export class EventBuffer {
       const after = revisionOf(event);
       if (before !== null && after !== null && after < before) return true;
       this.events.delete(key);
-    } else if (this.events.size >= MAX_BUFFERED_ENTITIES) return false;
+      this.events.set(key, combine(previous, event));
+      return true;
+    }
+    if (this.events.size >= MAX_BUFFERED_ENTITIES) return false;
     this.events.set(key, event);
     return true;
   }

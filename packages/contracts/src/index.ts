@@ -29,6 +29,16 @@ import {
   type SavedTextFile,
 } from './diagnostics';
 import {
+  getSessionSchema,
+  readSessionMessagesSchema,
+  sessionMessagePageSchema,
+  sessionMessageUpsertSchema,
+  sessionWindowSchema,
+  type GetSessionInput,
+  type ReadSessionMessagesInput,
+  type SessionMessagePage,
+} from './session-history';
+import {
   historySearchInputSchema,
   historySearchPageSchema,
   type HistorySearchInput,
@@ -67,7 +77,6 @@ import {
   forkSessionSchema,
   restartSessionSchema,
   queuedMessageRefSchema,
-  sessionSchema,
   stopRunSchema,
   respondApprovalSchema,
   decideDelegationSchema,
@@ -242,6 +251,7 @@ import {
 } from './pull-requests';
 
 export * from './sessions';
+export * from './session-history';
 export * from './session-groups';
 export * from './pull-requests';
 export * from './reasoning-effort';
@@ -265,7 +275,10 @@ export * from './workflows';
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('session-changed'),
-    session: sessionSchema,
+    session: sessionWindowSchema,
+  }),
+  sessionMessageUpsertSchema.extend({
+    type: z.literal('session-message-upserted'),
   }),
   z.strictObject({ type: z.literal('review-changed'), review: reviewSchema }),
   z.strictObject({ type: z.literal('host-disconnected') }),
@@ -338,6 +351,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: providerUsageInputSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-sessions') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('get-session'),
+    input: getSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-session-messages'),
+    input: readSessionMessagesSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('search-history'),
@@ -804,12 +827,17 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('sessions'),
     id: z.uuid(),
-    sessions: z.array(sessionSchema),
+    sessions: z.array(sessionWindowSchema),
   }),
   z.strictObject({
     type: z.literal('session'),
     id: z.uuid(),
-    session: sessionSchema,
+    session: sessionWindowSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-messages'),
+    id: z.uuid(),
+    page: sessionMessagePageSchema,
   }),
   z.strictObject({
     type: z.literal('session-groups'),
@@ -1102,6 +1130,14 @@ export type DesktopApi = {
   claudeStatus: (hostId?: HostId) => Promise<ClaudeStatus>;
   codexStatus: (hostId?: HostId) => Promise<CodexStatus>;
   listSessions: (hostId?: HostId) => Promise<DesktopSession[]>;
+  getSession: (
+    input: GetSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  readSessionMessages: (
+    input: ReadSessionMessagesInput,
+    hostId?: HostId,
+  ) => Promise<SessionMessagePage>;
   listReviews: (hostId?: HostId) => Promise<DesktopReview[]>;
   discoverSkills: (
     input: DiscoverSkillsInput,

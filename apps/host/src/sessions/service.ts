@@ -8,8 +8,16 @@ import {
   isProviderSessionMode,
   isWritableSessionMode,
   sessionModeSchema,
+  sessionHistoryLimits,
   sessionQueueLimit,
+  toSessionMessagePage,
+  toSessionMetadata,
+  toSessionWindow,
   workerProposalSchema,
+  type GetSessionInput,
+  type ReadSessionMessagesInput,
+  type SessionMessagePage,
+  type SessionWindow,
   type AssignSessionWorkflowInput,
   type LinkSessionPullRequestInput,
   type CreateSessionInput,
@@ -322,6 +330,7 @@ export class SessionService {
   private readonly pendingCreates = new Map<string, Promise<Session>>();
   private readonly planRuns = new Set<string>();
   private readonly finishedListeners = new Set<(run: RunFinished) => void>();
+  private readonly emittedRevisions = new Map<string, number>();
   private closing = false;
   private mcpKey?: Buffer;
   private checkingOut = false;
@@ -333,7 +342,10 @@ export class SessionService {
   constructor(
     private readonly store: SessionStore,
     private readonly directory: string,
-    private readonly emit: (event: DesktopEvent) => void,
+    private readonly emit: (
+      event: DesktopEvent,
+      session: Session | null,
+    ) => void,
     private readonly reviews: ReviewStore,
     recoverRelated?: () => void,
     private readonly options: SessionServiceOptions = {},
@@ -713,10 +725,13 @@ export class SessionService {
 
   private emitReviews(reviews: Review[]): void {
     for (const review of reviews)
-      this.emit({ type: 'review-changed', review: structuredClone(review) });
+      this.emit(
+        { type: 'review-changed', review: structuredClone(review) },
+        null,
+      );
   }
 
-  list(): Session[] {
+  list(): SessionWindow[] {
     for (const [id, session] of this.unsaved) {
       try {
         this.publish(session);
@@ -725,11 +740,11 @@ export class SessionService {
         continue;
       }
     }
-    const sessions = this.store.list().map(session => {
-      const active = this.active.get(session.id);
+    const sessions = this.store.listSummaries().map(summary => {
+      const active = this.active.get(summary.id);
       return active && !active.finalizing
-        ? structuredClone(active.session)
-        : session;
+        ? structuredClone(toSessionWindow(active.session))
+        : summary;
     });
     sessions.sort(
       (first, second) =>
@@ -737,9 +752,43 @@ export class SessionService {
         first.id.localeCompare(second.id),
     );
     return [
-      ...[...this.unsaved.values()].map(session => structuredClone(session)),
+      ...[...this.unsaved.values()].map(session =>
+        structuredClone(toSessionWindow(session)),
+      ),
       ...sessions.filter(session => !this.unsaved.has(session.id)),
     ];
+  }
+
+  getSession(input: GetSessionInput): SessionWindow {
+    return structuredClone(
+      toSessionWindow(
+        this.current(input.sessionId),
+        input.limit ?? sessionHistoryLimits.page,
+      ),
+    );
+  }
+
+  readSessionMessages(input: ReadSessionMessagesInput): SessionMessagePage {
+    const page = toSessionMessagePage(
+      this.current(input.sessionId),
+      input.cursor,
+      input.limit ?? sessionHistoryLimits.page,
+    );
+    if (!page)
+      throw new SessionError(
+        'invalid-request',
+        'This part of the conversation is no longer available. Reload the conversation.',
+      );
+    return structuredClone(page);
+  }
+
+  private current(sessionId: string): Session {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session) throw new SessionError('not-found', 'Session not found.');
+    return session;
   }
 
   adoptConversation(
@@ -2700,7 +2749,7 @@ export class SessionService {
         active.timer = undefined;
         session.revision += 1;
         session.updatedAt = new Date().toISOString();
-        this.emitSession(session);
+        this.emitStream(session);
       }, 75);
     }
   }
@@ -2723,7 +2772,34 @@ export class SessionService {
   }
 
   private emitSession(session: Session): void {
-    this.emit({ type: 'session-changed', session: structuredClone(session) });
+    this.emittedRevisions.set(session.id, session.revision);
+    this.emit(
+      {
+        type: 'session-changed',
+        session: structuredClone(toSessionWindow(session)),
+      },
+      session,
+    );
+  }
+
+  private emitStream(session: Session): void {
+    const baseRevision = this.emittedRevisions.get(session.id);
+    const message = session.messages.at(-1);
+    if (baseRevision === undefined || !message) {
+      this.emitSession(session);
+      return;
+    }
+    this.emittedRevisions.set(session.id, session.revision);
+    this.emit(
+      {
+        type: 'session-message-upserted',
+        baseRevision,
+        session: structuredClone(toSessionMetadata(session)),
+        index: session.messages.length - 1,
+        message: structuredClone(message),
+      },
+      session,
+    );
   }
 
   private publish(session: Session): void {

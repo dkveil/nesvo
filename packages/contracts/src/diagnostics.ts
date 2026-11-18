@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const HOST_CONTRACT_REVISION = 1;
+export const HOST_CONTRACT_REVISION = 2;
 
 export const MAX_RENDERER_ERROR_REPORT_BYTES = 48 * 1024;
 

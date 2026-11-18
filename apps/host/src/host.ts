@@ -6,12 +6,15 @@ import {
   claudeStatusSchema,
   codexStatusSchema,
   isWorkflowMethod,
+  toSessionWindow,
   type DefinitionCatalog,
   type DefinitionWriteResult,
+  type DesktopEvent,
   type HostMessage,
   type HostRequest,
   type HostResponse,
   type Session,
+  type SessionWindow,
   type SkillCatalog,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
@@ -170,9 +173,28 @@ type HostTransport = {
   send: (response: HostMessage) => Promise<void>;
 };
 
-export const serveHost = ({ directory, incoming, send }: HostTransport) =>
+type HostReply =
+  | Exclude<HostResponse, { type: 'session' }>
+  | { type: 'session'; id: string; session: Session | SessionWindow };
+
+const toHostMessage = (message: HostReply | DesktopEvent): HostMessage => {
+  if (message.type !== 'session') return message;
+  const { session } = message;
+  return {
+    ...message,
+    session: 'messageCount' in session ? session : toSessionWindow(session),
+  };
+};
+
+export const serveHost = ({
+  directory,
+  incoming,
+  send: deliver,
+}: HostTransport) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const send = (message: HostReply | DesktopEvent) =>
+        deliver(toHostMessage(message));
       yield* ownDataDirectory(directory);
       const database = yield* openDatabase(directory);
       const backupDatabase = () => {
@@ -201,16 +223,19 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       const reviewStore = new ReviewStore(database);
       const workspace = new WorkspaceFiles(id => store.get(id));
       let outgoing = Promise.resolve();
-      const emit = (message: HostMessage) => {
+      const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
       };
       let wakeIdleRuns = () => {};
       let observeAssistant: (session: Session) => void = () => {};
-      const emitSessionEvent = (message: HostMessage) => {
+      const emitSessionEvent = (
+        message: DesktopEvent,
+        session: Session | null,
+      ) => {
         emit(message);
-        if (message.type !== 'session-changed') return;
+        if (!session) return;
         wakeIdleRuns();
-        observeAssistant(message.session);
+        observeAssistant(session);
       };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
@@ -559,7 +584,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           }
           if (worktree) worktreeRequests++;
           const signal = probes.controller.signal;
-          const operation = async (): Promise<HostResponse> => {
+          const operation = async (): Promise<HostReply> => {
             if (request.method === 'read-session-worktree')
               return {
                 type: 'session-worktree-status',
@@ -631,7 +656,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             continue;
           }
           conversationRequests++;
-          const operation = async (): Promise<HostResponse> =>
+          const operation = async (): Promise<HostReply> =>
             request.method === 'list-conversations'
               ? {
                   type: 'conversation-import-catalog',
@@ -1199,7 +1224,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           request.method === 'find-session-pull-request'
         ) {
           const { id } = request;
-          const operation = async (): Promise<HostResponse> => {
+          const operation = async (): Promise<HostReply> => {
             switch (request.method) {
               case 'list-pull-requests':
                 return {
@@ -1280,7 +1305,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             continue;
           }
           workspaceRequests++;
-          const operation = async (): Promise<HostResponse> => {
+          const operation = async (): Promise<HostReply> => {
             if (request.method === 'list-workspace-directory')
               return {
                 type: 'workspace-directory',
@@ -1352,7 +1377,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
           probes.pending.add(pending);
           continue;
         }
-        const response = yield* Effect.sync((): HostResponse => {
+        const response = yield* Effect.sync((): HostReply => {
           try {
             if (request.method === 'read-costs')
               return {
@@ -1416,6 +1441,18 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'sessions',
                 id: request.id,
                 sessions: sessions.list(),
+              };
+            if (request.method === 'get-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.getSession(request.input),
+              };
+            if (request.method === 'read-session-messages')
+              return {
+                type: 'session-messages',
+                id: request.id,
+                page: sessions.readSessionMessages(request.input),
               };
             if (request.method === 'search-history')
               return {

@@ -13,15 +13,24 @@ import {
   type HostHealth,
   type HostRequest,
   type HostResponse,
-  type Session,
+  type GetSessionInput,
+  type ReadSessionMessagesInput,
+  type SessionChange,
+  type SessionMessagePage,
+  type SessionWindow,
   type Review,
   type ScheduledJob,
   type WorkflowMethod,
   type SshComputerInput,
   type WorkspaceEvent,
   HOST_CONTRACT_REVISION,
+  applySessionChange,
   isWorkflowMethod,
+  prependSessionMessages,
+  sessionHistoryLimits,
   sshComputerInputSchema,
+  trimSessionWindow,
+  windowOffset,
 } from '@nesvo/contracts';
 import {
   IncompatibleHostError,
@@ -43,6 +52,7 @@ type ScheduledJobMethod = Extract<
   `${string}scheduled-job${string}`
 >;
 type SessionWorkflowMethod = 'assign-session-workflow';
+type SessionHistoryMethod = 'get-session' | 'read-session-messages';
 export type CatalogWorkflowMethod = Exclude<
   WorkflowMethod,
   SessionWorkflowMethod
@@ -51,6 +61,7 @@ type ExecutableMethod = Exclude<
   HostRequest['method'],
   | 'shutdown'
   | 'list-sessions'
+  | SessionHistoryMethod
   | 'list-reviews'
   | ScheduledJobMethod
   | CatalogWorkflowMethod
@@ -65,7 +76,8 @@ type Connection = {
 };
 type Entry = {
   computer: Computer;
-  sessions: Map<string, Session>;
+  sessions: Map<string, SessionWindow>;
+  recent: Map<string, SessionWindow>;
   reviews: Map<string, Review>;
   scheduledJobRevisions: Map<string, number>;
   workflowRunRevisions: Map<string, number>;
@@ -84,6 +96,20 @@ type Entry = {
 
 type LocalHost = ReturnType<typeof startHost>;
 
+const RECENT_SESSION_WINDOWS = 8;
+const OFFLINE_CACHE_BYTES = 16 * 1024 * 1024;
+const LEGACY_OFFLINE_CACHE_BYTES = 64 * 1024 * 1024;
+
+const sessionChange = (
+  event: Extract<
+    DesktopEvent,
+    { type: 'session-changed' | 'session-message-upserted' }
+  >,
+): SessionChange =>
+  event.type === 'session-changed'
+    ? { type: 'snapshot', session: event.session }
+    : { ...event, type: 'upsert' };
+
 const LOCAL_RESTART_DELAYS_MS = [1000, 2000, 5000, 15_000];
 const REMOTE_RECONNECT_DELAYS_MS = [2000, 5000, 15_000, 30_000, 60_000];
 const STABLE_CONNECTION_MS = 60_000;
@@ -91,6 +117,7 @@ const STABLE_CONNECTION_MS = 60_000;
 const newEntry = (computer: Computer): Entry => ({
   computer,
   sessions: new Map(),
+  recent: new Map(),
   reviews: new Map(),
   scheduledJobRevisions: new Map(),
   workflowRunRevisions: new Map(),
@@ -351,7 +378,7 @@ export class ComputerManager {
     try {
       const raw = await this.store.read(
         'computer-cache.json',
-        64 * 1024 * 1024,
+        LEGACY_OFFLINE_CACHE_BYTES,
       );
       for (const cache of raw === undefined
         ? []
@@ -359,7 +386,13 @@ export class ComputerManager {
         const entry = this.entries.get(cache.id);
         if (!entry || entry.computer.instanceId !== cache.instanceId) continue;
         entry.sessions = new Map(
-          cache.sessions.map(session => [session.id, session]),
+          cache.sessions.map(session => [
+            session.id,
+            trimSessionWindow(session),
+          ]),
+        );
+        entry.recent = new Map(
+          cache.recent.map(session => [session.id, session]),
         );
         entry.reviews = new Map(
           cache.reviews.map(review => [review.id, review]),
@@ -679,7 +712,11 @@ export class ComputerManager {
   }
 
   private async dispatch(
-    method: ExecutableMethod | ScheduledJobMethod | WorkflowMethod,
+    method:
+      | ExecutableMethod
+      | ScheduledJobMethod
+      | WorkflowMethod
+      | SessionHistoryMethod,
     input: unknown,
     hostId: string,
     requires?: HostCapability,
@@ -1048,8 +1085,14 @@ export class ComputerManager {
     if (sessions.type !== 'sessions' || reviews.type !== 'reviews')
       throw new Error('Invalid host history.');
     entry.sessions = new Map(
-      sessions.sessions.map(session => [session.id, session]),
+      sessions.sessions.map(session => [
+        session.id,
+        trimSessionWindow(session),
+      ]),
     );
+    for (const [id, window] of entry.recent)
+      if (entry.sessions.get(id)?.revision !== window.revision)
+        entry.recent.delete(id);
     entry.reviews = new Map(reviews.reviews.map(review => [review.id, review]));
     entry.scheduledJobRevisions = new Map();
     entry.workflowRunRevisions = new Map();
@@ -1154,15 +1197,20 @@ export class ComputerManager {
       if (publish) this.publish({ ...event, hostId });
       return;
     }
-    if (event.type === 'session-changed') {
-      const old = entry.sessions.get(event.session.id);
-      if (old && old.revision >= event.session.revision) return;
-      entry.sessions.set(event.session.id, event.session);
+    if (
+      event.type === 'session-changed' ||
+      event.type === 'session-message-upserted'
+    ) {
+      if (!this.applySession(entry, sessionChange(event))) return;
       if (publish)
-        this.publish({
-          type: 'session-changed',
-          session: { ...event.session, hostId },
-        });
+        this.publish(
+          event.type === 'session-changed'
+            ? {
+                type: 'session-changed',
+                session: { ...event.session, hostId },
+              }
+            : { ...event, session: { ...event.session, hostId } },
+        );
     } else if (event.type === 'review-changed') {
       const old = entry.reviews.get(event.review.id);
       if (old && old.revision >= event.review.revision) return;
@@ -1175,6 +1223,104 @@ export class ComputerManager {
     }
     entry.computer.lastSyncedAt = new Date().toISOString();
     this.scheduleCache();
+  }
+
+  private applySession(entry: Entry, change: SessionChange) {
+    const id = change.session.id;
+    const summary = applySessionChange(entry.sessions.get(id), change);
+    if (!summary) return false;
+    entry.sessions.set(id, trimSessionWindow(summary.session));
+    const recent = entry.recent.get(id);
+    if (recent) {
+      const applied = applySessionChange(recent, change);
+      if (applied?.gap) entry.recent.delete(id);
+      else if (applied) entry.recent.set(id, applied.session);
+    }
+    return true;
+  }
+
+  private remember(entry: Entry, window: SessionWindow) {
+    const known = entry.recent.get(window.id);
+    entry.recent.delete(window.id);
+    entry.recent.set(
+      window.id,
+      known && known.revision > window.revision ? known : window,
+    );
+    for (const id of entry.recent.keys()) {
+      if (entry.recent.size <= RECENT_SESSION_WINDOWS) break;
+      entry.recent.delete(id);
+    }
+  }
+
+  async getSession(
+    input: GetSessionInput,
+    hostId = 'local',
+  ): Promise<DesktopSession> {
+    const entry = this.get(hostId);
+    if (entry.computer.status !== 'connected') {
+      const offline =
+        entry.recent.get(input.sessionId) ??
+        entry.sessions.get(input.sessionId);
+      if (!offline)
+        throw new Error(
+          'This conversation is not saved on this device. Connect to load it.',
+        );
+      return { ...offline, hostId };
+    }
+    const { response } = await this.dispatch('get-session', input, hostId);
+    if (response.type !== 'session')
+      throw new Error('Unexpected host response.');
+    this.apply(entry, { type: 'session-changed', session: response.session });
+    this.remember(entry, response.session);
+    this.scheduleCache();
+    return { ...response.session, hostId };
+  }
+
+  async readSessionMessages(
+    input: ReadSessionMessagesInput,
+    hostId = 'local',
+  ): Promise<SessionMessagePage> {
+    const entry = this.get(hostId);
+    if (entry.computer.status !== 'connected')
+      return this.offlinePage(entry, input);
+    const { response } = await this.dispatch(
+      'read-session-messages',
+      input,
+      hostId,
+    );
+    if (response.type !== 'session-messages')
+      throw new Error('Unexpected host response.');
+    const recent = entry.recent.get(input.sessionId);
+    const extended = recent && prependSessionMessages(recent, response.page);
+    if (extended) {
+      entry.recent.set(input.sessionId, extended);
+      this.scheduleCache();
+    }
+    return response.page;
+  }
+
+  private offlinePage(
+    entry: Entry,
+    input: ReadSessionMessagesInput,
+  ): SessionMessagePage {
+    const window = entry.recent.get(input.sessionId);
+    const end =
+      window?.messages.findIndex(message => message.id === input.cursor) ?? -1;
+    if (!window || end < 1)
+      throw new Error(
+        'Earlier messages are not saved on this device. Connect to load them.',
+      );
+    const start = Math.max(0, end - (input.limit ?? sessionHistoryLimits.page));
+    const offset = windowOffset(window);
+    return {
+      sessionId: window.id,
+      revision: window.revision,
+      messageCount: window.messageCount,
+      startIndex: offset + start,
+      messages: window.messages.slice(start, end),
+      nextCursor:
+        offset + start > 0 ? (window.messages[start]?.id ?? null) : null,
+    };
   }
 
   private persistConfiguration() {
@@ -1220,6 +1366,7 @@ export class ComputerManager {
 
   private persistCache() {
     const computers: CachedComputer[] = [];
+    const value = { version: 2, computers };
     for (const entry of this.entries.values()) {
       if (
         entry.computer.kind !== 'ssh' ||
@@ -1232,13 +1379,15 @@ export class ComputerManager {
         instanceId: entry.computer.instanceId,
         lastSyncedAt: entry.computer.lastSyncedAt,
         sessions: [...entry.sessions.values()],
+        recent: [...entry.recent.values()],
         reviews: [...entry.reviews.values()],
       });
     }
-    return this.store.write(
-      'computer-cache.json',
-      { version: 1, computers },
-      64 * 1024 * 1024,
-    );
+    while (
+      Buffer.byteLength(JSON.stringify(value)) > OFFLINE_CACHE_BYTES &&
+      computers.some(computer => computer.recent.length > 0)
+    )
+      for (const computer of computers) computer.recent.shift();
+    return this.store.write('computer-cache.json', value, OFFLINE_CACHE_BYTES);
   }
 }

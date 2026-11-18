@@ -54,6 +54,19 @@ const env = {
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
 let hostPid;
+const fullSessions = target =>
+  target.evaluate(async () =>
+    Promise.all(
+      (await window.nesvo.listSessions()).map(session =>
+        session.messageCount > session.messages.length
+          ? window.nesvo.getSession(
+              { sessionId: session.id, limit: 200 },
+              session.hostId,
+            )
+          : session,
+      ),
+    ),
+  );
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const launchArgs = [resolve('apps/desktop')];
@@ -1505,9 +1518,9 @@ try {
   await waitState(codex.id, 'completed');
   await page.reload();
   await navigation.getByRole('button', { name: /^Supervised Codex/ }).click();
-  const restoredActivitySession = (
-    await page.evaluate(() => window.nesvo.listSessions())
-  ).find(session => session.id === codex.id);
+  const restoredActivitySession = (await fullSessions(page)).find(
+    session => session.id === codex.id,
+  );
   assert.deepEqual(
     runActivities(restoredActivitySession, codexCompleted.runId),
     completedActivities,
@@ -3352,9 +3365,7 @@ try {
     ['fixture:assistant-prose', 'fixture:assistant-live'],
   );
   await bothShots('live');
-  const dockConversation = (
-    await restartedPage.evaluate(() => window.nesvo.listSessions())
-  ).find(
+  const dockConversation = (await fullSessions(restartedPage)).find(
     session =>
       session.title === 'Workflow assistant · smoke' &&
       session.messages.some(message =>
@@ -3410,9 +3421,7 @@ try {
   await restartedPage
     .getByRole('heading', { name: assistantSessionTitle, level: 1 })
     .waitFor();
-  const assistantSession = (
-    await restartedPage.evaluate(() => window.nesvo.listSessions())
-  ).find(
+  const assistantSession = (await fullSessions(restartedPage)).find(
     session =>
       session.title === assistantSessionTitle &&
       session.messages.some(message =>

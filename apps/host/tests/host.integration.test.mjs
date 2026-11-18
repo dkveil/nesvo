@@ -68,6 +68,35 @@ const fixtureEnvironment = (directory, pidFile) => ({
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
 });
 
+function reconstruct(history, event) {
+  const current = history.get(event.session.id);
+  if (current && current.revision >= event.session.revision) return null;
+  let messages;
+  if (event.type === 'session-changed') {
+    const offset = event.session.messageCount - event.session.messages.length;
+    messages =
+      current && offset <= current.messages.length
+        ? [...current.messages.slice(0, offset), ...event.session.messages]
+        : event.session.messages;
+  } else if (!current) {
+    messages = [event.message];
+  } else {
+    assert.equal(
+      current?.revision,
+      event.baseRevision,
+      'A streaming update skipped a revision',
+    );
+    messages = [...current.messages];
+    messages[event.index] = event.message;
+  }
+  const { messageCount, ...rest } = event.session;
+  const session = { ...rest, messages };
+  if (session.messages.length === messageCount)
+    history.set(session.id, session);
+  else history.delete(session.id);
+  return session;
+}
+
 function launch(directory, pidFile, extraEnvironment = {}) {
   const child = spawn(process.execPath, ['apps/host/dist/main.js'], {
     env: {
@@ -91,6 +120,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   const workflowEvents = [];
   const groupEvents = [];
   const timeline = [];
+  const sessionHistory = new Map();
   let transportError;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', data => {
@@ -106,13 +136,18 @@ function launch(directory, pidFile, extraEnvironment = {}) {
     try {
       const message = JSON.parse(line);
       if (!message.id) timeline.push(message);
-      if (message.type === 'session-changed') {
-        observed.push(message.session);
-        const waiter = [...waiters].find(item => item.match(message.session));
+      if (
+        message.type === 'session-changed' ||
+        message.type === 'session-message-upserted'
+      ) {
+        const session = reconstruct(sessionHistory, message);
+        if (!session) return;
+        observed.push(session);
+        const waiter = [...waiters].find(item => item.match(session));
         if (waiter) {
           waiters.delete(waiter);
-          waiter.resolve(message.session);
-        } else events.push(message.session);
+          waiter.resolve(session);
+        } else events.push(session);
       } else if (message.type === 'review-changed') {
         observedReviews.push(message.review);
         const waiter = [...reviewWaiters].find(item =>
@@ -161,8 +196,47 @@ function launch(directory, pidFile, extraEnvironment = {}) {
       `Host response timed out (${id}): ${stderr}`,
     ).finally(() => pending.delete(id));
   };
-  const request = (method, input) =>
-    send({ id: randomUUID(), method, ...(input ? { input } : {}) });
+  const complete = async session => {
+    const known = sessionHistory.get(session.id);
+    const offset = session.messageCount - session.messages.length;
+    const { messageCount: _count, ...rest } = session;
+    if (offset === 0) return { ...rest, messages: session.messages };
+    if (known && known.messages.length >= offset)
+      return {
+        ...rest,
+        messages: [...known.messages.slice(0, offset), ...session.messages],
+      };
+    const loaded = await send({
+      id: randomUUID(),
+      method: 'get-session',
+      input: { sessionId: session.id, limit: 200 },
+    });
+    assert.equal(loaded.type, 'session', JSON.stringify(loaded));
+    assert.equal(loaded.session.messageCount, loaded.session.messages.length);
+    const history = loaded.session.messages.slice(0, offset);
+    if (!known || known.revision <= loaded.session.revision) {
+      const { messageCount: _count, ...full } = loaded.session;
+      sessionHistory.set(session.id, full);
+    }
+    return { ...rest, messages: [...history, ...session.messages] };
+  };
+  const request = async (method, input) => {
+    const response = await send({
+      id: randomUUID(),
+      method,
+      ...(input ? { input } : {}),
+    });
+    if (method === 'get-session' || method === 'read-session-messages')
+      return response;
+    if (response.type === 'session')
+      return { ...response, session: await complete(response.session) };
+    if (response.type === 'sessions')
+      return {
+        ...response,
+        sessions: await Promise.all(response.sessions.map(complete)),
+      };
+    return response;
+  };
   return {
     child,
     exited,
@@ -259,6 +333,145 @@ async function processesGone(pids, tracked) {
 }
 
 const agent = session => session.messages.at(-1);
+
+test('streaming sends bounded message upserts and long histories page newest first by cursor', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-history-paging-')),
+  );
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const host = launch(directory, join(directory, 'pids.json'));
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const raw = (method, input) =>
+    host.send({ id: randomUUID(), method, ...(input ? { input } : {}) });
+  const created = await host.request('create-session', {
+    title: 'Long history',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    directory: project,
+  });
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  const sessionId = created.session.id;
+  const turn = async text => {
+    const sent = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const finished = await host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === sent.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+    assert.equal(finished.status, 'completed', finished.error);
+    return finished;
+  };
+  const turns = 30;
+  const filler = 'x'.repeat(8000);
+  for (let index = 0; index < turns; index += 1)
+    await turn(`fixture:continue\n${index} ${filler}`);
+
+  const streamStart = host.timeline.length;
+  const streamed = await turn('fixture:stream');
+  const messageCount = turns * 2 + 2;
+  assert.equal(streamed.messages.length, messageCount);
+  const events = host.timeline
+    .slice(streamStart)
+    .filter(
+      event =>
+        (event.type === 'session-changed' ||
+          event.type === 'session-message-upserted') &&
+        event.session.id === sessionId,
+    );
+  const upserts = events.filter(
+    event => event.type === 'session-message-upserted',
+  );
+  assert.ok(
+    upserts.some(
+      event =>
+        event.session.status === 'running' &&
+        event.message.body === 'Fixture streamed ' &&
+        event.index === messageCount - 1,
+    ),
+    'The partial reply was not streamed as a message upsert',
+  );
+  let emitted = null;
+  for (const event of events) {
+    assert.equal(event.session.messageCount, messageCount);
+    if (event.type === 'session-changed')
+      assert.ok(event.session.messages.length <= 2);
+    else {
+      assert.equal(event.baseRevision, emitted);
+      assert.equal('messages' in event.session, false);
+    }
+    assert.ok(event.session.revision > (emitted ?? -1));
+    emitted = event.session.revision;
+  }
+  const fullBytes = Buffer.byteLength(JSON.stringify(streamed));
+  const upsertBytes = Math.max(
+    ...upserts.map(event => Buffer.byteLength(JSON.stringify(event))),
+  );
+  assert.ok(upsertBytes * 20 < fullBytes, `${upsertBytes} vs ${fullBytes}`);
+  t.diagnostic(
+    `history ${messageCount} messages: full snapshot ${fullBytes} B, largest streaming upsert ${upsertBytes} B`,
+  );
+
+  const listed = await raw('list-sessions');
+  const summary = listed.sessions.find(session => session.id === sessionId);
+  assert.equal(summary.messageCount, messageCount);
+  assert.deepEqual(
+    summary.messages.map(message => message.id),
+    streamed.messages.slice(-2).map(message => message.id),
+  );
+
+  const opened = await raw('get-session', { sessionId, limit: 7 });
+  assert.equal(opened.type, 'session', JSON.stringify(opened));
+  assert.equal(opened.session.messageCount, messageCount);
+  assert.deepEqual(
+    opened.session.messages.map(message => message.id),
+    streamed.messages.slice(-7).map(message => message.id),
+  );
+  const pages = [];
+  let cursor = opened.session.messages[0].id;
+  while (cursor) {
+    const response = await raw('read-session-messages', {
+      sessionId,
+      cursor,
+      limit: 16,
+    });
+    assert.equal(response.type, 'session-messages', JSON.stringify(response));
+    const { page } = response;
+    assert.equal(page.messageCount, messageCount);
+    assert.equal(
+      page.startIndex + page.messages.length,
+      streamed.messages.findIndex(message => message.id === cursor),
+    );
+    assert.equal(
+      page.nextCursor,
+      page.startIndex > 0 ? page.messages[0].id : null,
+    );
+    pages.unshift(page.messages);
+    cursor = page.nextCursor;
+  }
+  assert.deepEqual(
+    [...pages.flat(), ...opened.session.messages].map(message => message.id),
+    streamed.messages.map(message => message.id),
+  );
+  assert.equal(
+    (await raw('read-session-messages', { sessionId, cursor: randomUUID() }))
+      .code,
+    'invalid-request',
+  );
+  assert.equal(
+    (await raw('get-session', { sessionId: randomUUID() })).code,
+    'not-found',
+  );
+});
 
 test('session fork and restart preserve mode, history and provider identity across host reopen', async t => {
   const directory = await realpath(
@@ -831,7 +1044,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
-      contractRevision: 1,
+      contractRevision: 2,
       instanceId,
       capabilities: [
         'scheduled-jobs',
@@ -9772,7 +9985,8 @@ test(
         .split('\n')
         .filter(Boolean)
         .map(line => JSON.parse(line));
-    const sessionById = id => sessions.list().find(item => item.id === id);
+    const sessionById = id =>
+      sessions.getSession({ sessionId: id, limit: 200 });
     const save = (name, overrides = {}) =>
       scheduler.save({
         id: randomUUID(),
@@ -9867,10 +10081,10 @@ test(
         assert.ok(
           events.some(
             event =>
-              event.type === 'session-changed' &&
+              event.type === 'session-message-upserted' &&
               event.session.id === session.id &&
               event.session.status === 'running' &&
-              agent(event.session).body === 'Fixture streamed ',
+              event.message.body === 'Fixture streamed ',
           ),
           'Partial fixture text was not published before completion',
         );

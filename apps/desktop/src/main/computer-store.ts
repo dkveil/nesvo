@@ -12,7 +12,9 @@ import { z } from 'zod';
 import {
   reviewSchema,
   sessionSchema,
+  sessionWindowSchema,
   sshComputerInputSchema,
+  toSessionWindow,
 } from '@nesvo/contracts';
 
 const savedComputerSchema = z.strictObject({
@@ -35,13 +37,33 @@ const cachedComputerSchema = z.strictObject({
   id: z.uuid(),
   instanceId: z.uuid(),
   lastSyncedAt: z.iso.datetime(),
-  sessions: z.array(sessionSchema),
+  sessions: z.array(sessionWindowSchema),
+  recent: z.array(sessionWindowSchema).max(32),
   reviews: z.array(reviewSchema),
 });
-export const computerCacheSchema = z.strictObject({
-  version: z.literal(1),
-  computers: z.array(cachedComputerSchema).max(8),
-});
+const legacyCachedComputerSchema = z
+  .strictObject({
+    id: z.uuid(),
+    instanceId: z.uuid(),
+    lastSyncedAt: z.iso.datetime(),
+    sessions: z.array(sessionSchema),
+    reviews: z.array(reviewSchema),
+  })
+  .transform(cache => ({
+    ...cache,
+    sessions: cache.sessions.map(session => toSessionWindow(session)),
+    recent: [],
+  }));
+export const computerCacheSchema = z.union([
+  z.strictObject({
+    version: z.literal(2),
+    computers: z.array(cachedComputerSchema).max(8),
+  }),
+  z.strictObject({
+    version: z.literal(1),
+    computers: z.array(legacyCachedComputerSchema).max(8),
+  }),
+]);
 export type CachedComputer = z.infer<typeof cachedComputerSchema>;
 
 export class ComputerStore {

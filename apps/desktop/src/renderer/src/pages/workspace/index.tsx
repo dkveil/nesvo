@@ -74,6 +74,7 @@ import { CommandPalette, type PaletteMode } from '@/features/command-palette';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
+import { hasEarlierMessages } from '@nesvo/contracts';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
@@ -783,6 +784,21 @@ export function Workspace() {
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
   const selectedKey = selected ? entityKey(selected) : '';
+  const selectedLoaded = !!selected;
+  const { openSession, loadEarlier } = store;
+  useEffect(() => {
+    if (selectedLoaded) openSession(selectedKey);
+  }, [openSession, selectedKey, selectedLoaded]);
+  const targetMissing =
+    !!messageTarget &&
+    !!selected &&
+    hasEarlierMessages(selected) &&
+    !selected.messages.some(message => message.id === messageTarget.id);
+  const selectedFirstMessage = selected?.messages[0]?.id ?? '';
+  useEffect(() => {
+    if (!targetMissing) return;
+    void loadEarlier(selectedKey).catch(() => undefined);
+  }, [targetMissing, selectedFirstMessage, selectedKey, loadEarlier]);
   const selectedRevision = selected?.revision ?? 0;
   const selectedVisible = !browsing && !creating;
   const markSeen = useCallback(() => {
@@ -3373,6 +3389,7 @@ ${text}`
                     }
                   />
                 }
+                onLoadEarlier={() => loadEarlier(selectedKey)}
                 mcpChip={
                   <McpChip
                     hostId={selected.hostId}

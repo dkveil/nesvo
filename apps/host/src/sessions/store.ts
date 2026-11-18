@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
+import { z } from 'zod';
 import {
+  sessionHistoryLimits,
   sessionSchema,
   providerSchema,
+  summarizeSessionUsage,
+  toSessionWindow,
+  turnUsageSchema,
+  type SessionWindow,
   type CreateSessionInput,
   type ScheduledJobSessionOrigin,
   type Session,
@@ -112,6 +118,51 @@ const decodeSession = (row: Record<string, SQLOutputValue>) => {
   return { session: parsed.data };
 };
 
+const MESSAGES_TYPE =
+  "CASE WHEN json_valid(document) THEN json_type(document, '$.messages') END";
+
+const usageEntriesSchema = z.array(
+  z.tuple([z.enum(['operator', 'agent']), turnUsageSchema.nullable()]),
+);
+
+const parseJson = (value: SQLOutputValue | undefined): unknown => {
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return undefined;
+  }
+};
+
+const decodeSummary = (
+  row: Record<string, SQLOutputValue>,
+): SessionWindow | undefined => {
+  const document = parseJson(row.document);
+  if (!document || typeof document !== 'object' || Array.isArray(document))
+    return;
+  const messages = Array.from(
+    { length: sessionHistoryLimits.tail },
+    (_, index) => row[`tail${index}`],
+  )
+    .filter(value => value != null)
+    .map(parseJson);
+  const parsed = sessionSchema.safeParse({
+    pullRequest: null,
+    ...document,
+    messages,
+    scheduledJobId: row.scheduledJobId ?? null,
+    scheduledJobRunId: row.scheduledJobRunId ?? null,
+  });
+  const usage = usageEntriesSchema.safeParse(parseJson(row.usage));
+  if (!parsed.success || !usage.success || parsed.data.id !== row.id) return;
+  return {
+    ...parsed.data,
+    messageCount: Number(row.messageCount),
+    usageTotals: summarizeSessionUsage(
+      usage.data.map(([author, entry]) => ({ author, usage: entry })),
+    ),
+  };
+};
+
 type QuarantinedSession = { id: string; document: string; error: string };
 
 export class SessionStore {
@@ -137,6 +188,40 @@ export class SessionStore {
     }
     this.quarantine(invalid);
     return sessions;
+  }
+
+  listSummaries(): SessionWindow[] {
+    const tail = Array.from(
+      { length: sessionHistoryLimits.tail },
+      (_, index) =>
+        `json_extract(document, '$.messages[#-${sessionHistoryLimits.tail - index}]') AS tail${index}`,
+    ).join(', ');
+    const rows = this.database
+      .prepare(
+        `SELECT id, json_remove(document, '$.messages') AS document, json_array_length(document, '$.messages') AS messageCount, ${tail}, (SELECT json_group_array(json_array(value ->> '$.author', value -> '$.usage')) FROM json_each(document, '$.messages')) AS usage, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId FROM sessions WHERE ${NOT_QUARANTINED} AND ${MESSAGES_TYPE} = 'array' ORDER BY updated_at DESC, id`,
+      )
+      .all();
+    const summaries: SessionWindow[] = [];
+    const invalid: string[] = [];
+    for (const row of rows) {
+      const summary = decodeSummary(row);
+      if (summary) summaries.push(summary);
+      else invalid.push(String(row.id));
+    }
+    for (const id of invalid) {
+      const session = this.get(id);
+      if (session) summaries.push(toSessionWindow(session));
+    }
+    const ids = new Set(summaries.map(summary => summary.id));
+    const malformed = this.database
+      .prepare(
+        `SELECT id FROM sessions WHERE ${NOT_QUARANTINED} AND ${MESSAGES_TYPE} IS NOT 'array'`,
+      )
+      .all()
+      .map(row => String(row.id))
+      .filter(id => !ids.has(id));
+    for (const id of malformed) this.get(id);
+    return summaries;
   }
 
   providerConversations(): {

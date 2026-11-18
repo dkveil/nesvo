@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  applySessionChange,
+  hasEarlierMessages,
+  prependSessionMessages,
+  sessionHistoryLimits,
+  trimSessionWindow,
+  type DesktopSessionMessageUpsert,
+  type SessionChange,
+} from '@nesvo/contracts';
 import type {
   AssistantChange,
   AssistantChangeRefusal,
@@ -36,6 +45,8 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     codexStatus: () => api.codexStatus(hostId),
     providerUsage: input => api.providerUsage(input, hostId),
     listSessions: () => api.listSessions(hostId),
+    getSession: input => api.getSession(input, hostId),
+    readSessionMessages: input => api.readSessionMessages(input, hostId),
     listConversations: () => api.listConversations(hostId),
     adoptConversation: input => api.adoptConversation(input, hostId),
     listReviews: () => api.listReviews(hostId),
@@ -89,6 +100,19 @@ function mergeByRevision<T extends Revisioned>(previous: T[], updates: T[]) {
   }
   return changed ? [...merged.values()] : previous;
 }
+
+const OPEN_SESSION_WINDOWS = 4;
+
+const sortSessions = (sessions: Iterable<DesktopSession>) =>
+  [...sessions].sort(
+    (a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt) ||
+      entityKey(a).localeCompare(entityKey(b)),
+  );
+
+const upsertChange = (
+  event: DesktopSessionMessageUpsert,
+): SessionChange<DesktopSession> => ({ ...event, type: 'upsert' });
 
 const emptyProviders: ProviderStates = {
   'Claude Code': { status: null, loading: false, error: '' },
@@ -150,22 +174,121 @@ export function useSessions() {
   >({});
   const [attempt, setAttempt] = useState(0);
   const statusRequests = useRef<Record<string, number>>({});
-  const merge = useCallback((updates: DesktopSession[]) => {
-    setSessions(previous => {
-      const merged = new Map(previous.map(item => [entityKey(item), item]));
-      for (const item of updates) {
-        if (!computersRef.current.some(computer => computer.id === item.hostId))
-          continue;
-        const current = merged.get(entityKey(item));
-        if (!current || item.revision > current.revision)
-          merged.set(entityKey(item), item);
+  const sessionsRef = useRef<DesktopSession[]>([]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+  const openKeys = useRef<string[]>([]);
+  const staleKeys = useRef(new Set<string>());
+  const historyRequests = useRef(new Map<string, Promise<void>>());
+  const refreshStale = useRef(() => {});
+  const loadLatest = useCallback(async (session: DesktopSession) => {
+    const key = entityKey(session);
+    const pending = historyRequests.current.get(key);
+    if (pending) return pending;
+    const request = window.nesvo
+      .getSession({ sessionId: session.id }, session.hostId)
+      .then(
+        loaded =>
+          setSessions(previous =>
+            previous.map(item => {
+              if (entityKey(item) !== key) return item;
+              if (item.revision <= loaded.revision) return loaded;
+              const applied = applySessionChange(loaded, {
+                type: 'snapshot',
+                session: item,
+              });
+              return applied && !applied.gap ? applied.session : item;
+            }),
+          ),
+        () => undefined,
+      )
+      .finally(() => {
+        historyRequests.current.delete(key);
+        if (staleKeys.current.size > 0)
+          queueMicrotask(() => refreshStale.current());
+      });
+    historyRequests.current.set(key, request);
+    return request;
+  }, []);
+  useEffect(() => {
+    refreshStale.current = () => {
+      const keys = [...staleKeys.current];
+      staleKeys.current.clear();
+      for (const key of keys) {
+        if (!openKeys.current.includes(key)) continue;
+        const session = sessionsRef.current.find(
+          item => entityKey(item) === key,
+        );
+        if (session) void loadLatest(session);
       }
-      return [...merged.values()].sort(
-        (a, b) =>
-          b.updatedAt.localeCompare(a.updatedAt) ||
-          entityKey(a).localeCompare(entityKey(b)),
-      );
-    });
+    };
+  }, [loadLatest]);
+  const applyChanges = useCallback(
+    (changes: SessionChange<DesktopSession>[]) => {
+      setSessions(previous => {
+        const merged = new Map(previous.map(item => [entityKey(item), item]));
+        let changed = false;
+        for (const change of changes) {
+          const hostId = change.session.hostId;
+          if (!computersRef.current.some(computer => computer.id === hostId))
+            continue;
+          const key = entityKey(change.session);
+          const applied = applySessionChange(merged.get(key), change);
+          if (!applied) continue;
+          if (applied.gap) staleKeys.current.add(key);
+          merged.set(key, applied.session);
+          changed = true;
+        }
+        return changed ? sortSessions(merged.values()) : previous;
+      });
+      queueMicrotask(() => refreshStale.current());
+    },
+    [],
+  );
+  const merge = useCallback(
+    (updates: DesktopSession[]) =>
+      applyChanges(
+        updates.map(session => ({ type: 'snapshot', session }) as const),
+      ),
+    [applyChanges],
+  );
+  const openSession = useCallback(
+    (key: string) => {
+      const next = [key, ...openKeys.current.filter(item => item !== key)];
+      const closed = new Set(next.slice(OPEN_SESSION_WINDOWS));
+      openKeys.current = next.slice(0, OPEN_SESSION_WINDOWS);
+      if (closed.size > 0)
+        setSessions(previous =>
+          previous.map(item =>
+            closed.has(entityKey(item)) ? trimSessionWindow(item) : item,
+          ),
+        );
+      const session = sessionsRef.current.find(item => entityKey(item) === key);
+      if (
+        session &&
+        session.messages.length < sessionHistoryLimits.page &&
+        hasEarlierMessages(session)
+      )
+        void loadLatest(session);
+    },
+    [loadLatest],
+  );
+  const loadEarlier = useCallback(async (key: string) => {
+    const session = sessionsRef.current.find(item => entityKey(item) === key);
+    const cursor = session?.messages[0]?.id;
+    if (!session || !cursor || !hasEarlierMessages(session)) return false;
+    const page = await window.nesvo.readSessionMessages(
+      { sessionId: session.id, cursor },
+      session.hostId,
+    );
+    setSessions(previous =>
+      previous.map(item => {
+        if (entityKey(item) !== key) return item;
+        return prependSessionMessages(item, page) ?? item;
+      }),
+    );
+    return page.messages.length > 0;
   }, []);
   const mergeReviews = useCallback((updates: DesktopReview[]) => {
     setReviews(previous => {
@@ -325,6 +448,8 @@ export function useSessions() {
     };
     const apply = (event: WorkspaceEvent) => {
       if (event.type === 'session-changed') merge([event.session]);
+      else if (event.type === 'session-message-upserted')
+        applyChanges([upsertChange(event)]);
       else if (event.type === 'review-changed') mergeReviews([event.review]);
       else if (event.type === 'workflow-run-changed')
         mergeWorkflowRuns([event.run]);
@@ -355,10 +480,32 @@ export function useSessions() {
               : key.startsWith(`${event.hostId}/`)
           )
             runRequests.current.delete(key);
-        setSessions(previous => [
-          ...previous.filter(item => item.hostId !== event.hostId),
-          ...event.sessions,
-        ]);
+        setSessions(previous => {
+          const known = new Map(
+            previous
+              .filter(item => item.hostId === event.hostId)
+              .map(item => [entityKey(item), item]),
+          );
+          return sortSessions([
+            ...previous.filter(item => item.hostId !== event.hostId),
+            ...event.sessions.map(session => {
+              const current = known.get(entityKey(session));
+              if (!current) return session;
+              return (
+                applySessionChange(current, { type: 'snapshot', session })
+                  ?.session ?? current
+              );
+            }),
+          ]);
+        });
+        for (const key of openKeys.current)
+          if (
+            event.hostId === 'local'
+              ? !key.includes('/')
+              : key.startsWith(`${event.hostId}/`)
+          )
+            staleKeys.current.add(key);
+        queueMicrotask(() => refreshStale.current());
         setReviews(previous => [
           ...previous.filter(item => item.hostId !== event.hostId),
           ...event.reviews,
@@ -428,6 +575,7 @@ export function useSessions() {
     recordAssistantChange,
     inspectProvider,
     merge,
+    applyChanges,
     mergeReviews,
     mergeWorkflowRuns,
     mergeWorkflowSteps,
@@ -499,6 +647,8 @@ export function useSessions() {
     hostReady,
     providerStates,
     merge,
+    openSession,
+    loadEarlier,
     mergeReviews,
     recover,
     recoverReviews,

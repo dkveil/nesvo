@@ -8,6 +8,7 @@ import {
   Square,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
+import { hasEarlierMessages, windowOffset } from '@nesvo/contracts';
 import type {
   DesktopApi,
   ReasoningEffort,
@@ -116,6 +117,7 @@ type Props = {
   canChangeMode: boolean;
   workflowChip?: ReactNode;
   mcpChip?: ReactNode;
+  onLoadEarlier: () => Promise<boolean>;
 };
 
 export function Conversation({
@@ -159,6 +161,7 @@ export function Conversation({
   canChangeMode,
   workflowChip,
   mcpChip,
+  onLoadEarlier,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -182,6 +185,42 @@ export function Conversation({
   const modeNoticeTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
   const visibleSession = useRef('');
+  const firstIndex = windowOffset(session);
+  const earlierAvailable = hasEarlierMessages(session);
+  const earlierMarker = useRef<HTMLDivElement>(null);
+  const loadingEarlierRef = useRef(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [earlierError, setEarlierError] = useState('');
+  const showEarlier = async () => {
+    if (loadingEarlierRef.current) return;
+    loadingEarlierRef.current = true;
+    setLoadingEarlier(true);
+    setEarlierError('');
+    try {
+      await onLoadEarlier();
+    } catch {
+      setEarlierError(
+        'Earlier messages could not be loaded. Check the connection and try again.',
+      );
+    } finally {
+      loadingEarlierRef.current = false;
+      setLoadingEarlier(false);
+    }
+  };
+  const showEarlierRef = useRef(showEarlier);
+  useEffect(() => {
+    showEarlierRef.current = showEarlier;
+  });
+  useEffect(() => {
+    const marker = earlierMarker.current;
+    if (!marker || !earlierAvailable || earlierError) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting) && !followOutput.current)
+        void showEarlierRef.current();
+    });
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, [earlierAvailable, earlierError, firstIndex, session.id]);
   const running = session.status === 'running' || session.status === 'stopping';
   const queueing = running || otherRun;
   const canSubmit = queueing ? canQueue : canSend;
@@ -196,7 +235,7 @@ export function Conversation({
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
   const threadStarts = new Set(session.providerThreadStarts);
   const empty =
-    session.messages.length === 0 &&
+    session.messageCount === 0 &&
     !session.pendingClaudeFork &&
     threadStarts.size === 0 &&
     !running &&
@@ -682,6 +721,9 @@ export function Conversation({
       followOutput.current = false;
     }
   }, [session.id, focusTarget]);
+  const targetLoaded =
+    !!messageTarget &&
+    session.messages.some(message => message.id === messageTarget.id);
   useEffect(() => {
     if (!messageTarget) return;
     const target = document.getElementById(`message-${messageTarget.id}`);
@@ -696,7 +738,7 @@ export function Conversation({
       { duration: 1800, easing: 'ease-out' },
     );
     return () => highlight.cancel();
-  }, [messageTarget, session.id]);
+  }, [messageTarget, session.id, targetLoaded]);
   const scrollToEnd = () => {
     const viewport = bottom.current?.closest<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
@@ -722,7 +764,28 @@ export function Conversation({
         }
       >
         <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
-          {session.pendingClaudeFork && session.messages.length === 0 && (
+          {earlierAvailable && (
+            <div
+              ref={earlierMarker}
+              className="flex flex-col items-center gap-2"
+            >
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={loadingEarlier}
+                onClick={() => void showEarlier()}
+              >
+                {loadingEarlier
+                  ? 'Loading earlier messages…'
+                  : `Show earlier messages (${firstIndex})`}
+              </Button>
+              {earlierError && (
+                <StatusMessage tone="error">{earlierError}</StatusMessage>
+              )}
+            </div>
+          )}
+          {session.pendingClaudeFork && session.messageCount === 0 && (
             <StatusMessage>
               Claude Code will fork the conversation on your next message.
             </StatusMessage>
@@ -768,11 +831,11 @@ export function Conversation({
                   }
                   showInterruption={message.runId !== session.runId}
                   selectionChange={selectionChanges.get(message.id)}
-                  threadStart={threadStarts.has(index)}
+                  threadStart={threadStarts.has(firstIndex + index)}
                 />
               );
             })}
-            {threadStarts.has(session.messages.length) && (
+            {threadStarts.has(session.messageCount) && (
               <Separator label="Session restarted" />
             )}
           </div>

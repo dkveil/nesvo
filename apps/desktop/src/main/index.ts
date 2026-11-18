@@ -40,6 +40,8 @@ import {
   decideWorkerPlanSchema,
   decideReviewSchema,
   respondApprovalSchema,
+  getSessionSchema,
+  readSessionMessagesSchema,
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
@@ -634,6 +636,31 @@ void app.whenReady().then(async () => {
     const id = hostIdSchema.optional().parse(hostId);
     return withDemoSessions(computers.listSessions(id), id);
   });
+  handle(
+    'nesvo:get-session',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      const parsed = getSessionSchema.parse(input);
+      const target = route(hostId);
+      const demo =
+        target === 'local'
+          ? workflowDemo
+              ?.sessions()
+              .find(session => session.id === parsed.sessionId)
+          : undefined;
+      return demo ?? computers.getSession(parsed, target);
+    },
+  );
+  handle(
+    'nesvo:read-session-messages',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.readSessionMessages(
+        readSessionMessagesSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle('nesvo:list-reviews', async (event, hostId: unknown) => {
     authorize(event);
     return computers.listReviews(hostIdSchema.optional().parse(hostId));

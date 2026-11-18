@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { sessionSchema } from './sessions';
+import { sessionMetadataSchema, sessionWindowSchema } from './session-history';
 import { reviewSchema } from './reviews';
+import { sessionMessageSchema } from './sessions';
 import { sessionGroupListSchema } from './session-groups';
 import {
   scheduledJobRunPageSchema,
@@ -110,9 +111,19 @@ export const computerSchema = z.strictObject({
 });
 export type Computer = z.infer<typeof computerSchema>;
 
-export const desktopSessionSchema = sessionSchema.extend({
+export const desktopSessionSchema = sessionWindowSchema.extend({
   hostId: hostIdSchema,
 });
+export const desktopSessionMessageUpsertSchema = z.strictObject({
+  type: z.literal('session-message-upserted'),
+  baseRevision: z.number().int().nonnegative(),
+  session: sessionMetadataSchema.extend({ hostId: hostIdSchema }),
+  index: z.number().int().nonnegative(),
+  message: sessionMessageSchema,
+});
+export type DesktopSessionMessageUpsert = z.infer<
+  typeof desktopSessionMessageUpsertSchema
+>;
 export const desktopReviewSchema = reviewSchema.extend({
   hostId: hostIdSchema,
 });
@@ -167,6 +178,7 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
     type: z.literal('session-changed'),
     session: desktopSessionSchema,
   }),
+  desktopSessionMessageUpsertSchema,
   z.strictObject({
     type: z.literal('review-changed'),
     review: desktopReviewSchema,

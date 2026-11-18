@@ -63,6 +63,9 @@ import {
   computerSchema,
   desktopSessionSchema,
   desktopReviewSchema,
+  getSessionSchema,
+  readSessionMessagesSchema,
+  sessionMessagePageSchema,
   hostIdSchema,
   sshComputerInputSchema,
   workspaceEventSchema,
@@ -530,6 +533,22 @@ const api: DesktopApi = {
           hostIdSchema.optional().parse(hostId),
         ),
       ),
+  getSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:get-session',
+        getSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readSessionMessages: async (input, hostId) =>
+    sessionMessagePageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-session-messages',
+        readSessionMessagesSchema.parse(input),
+        route(hostId),
+      ),
+    ),
   listReviews: async hostId =>
     desktopReviewSchema
       .array()

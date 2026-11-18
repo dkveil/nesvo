@@ -16,7 +16,10 @@ import {
   mobilePairRequestSchema,
   mobileServerMessageSchema,
   mobileSnapshotSchema,
+  applySessionChange,
+  trimSessionWindow,
   type DesktopApi,
+  type DesktopSession,
   type MobileComputer,
   type MobileError,
   type MobileGatewayStatus,
@@ -174,6 +177,7 @@ export class MobileGateway {
   private transition: Promise<unknown> = Promise.resolve();
   private accepting = false;
   private sequence = 0;
+  private readonly sessions = new Map<string, DesktopSession>();
   private url: string | null = null;
   private readonly host: string;
   private readonly port: number;
@@ -622,6 +626,7 @@ export class MobileGateway {
         'This workspace exceeds the mobile snapshot limit. Open it on desktop.',
         413,
       );
+    for (const session of sessions) this.remember(session);
     const snapshot = mobileSnapshotSchema.parse({
       serverId: this.store.serverId,
       sequence,
@@ -837,8 +842,42 @@ export class MobileGateway {
     });
   }
 
-  private publish(event: WorkspaceEvent) {
+  private remember(session: DesktopSession) {
+    const key = `${session.hostId}/${session.id}`;
+    const applied = applySessionChange(this.sessions.get(key), {
+      type: 'snapshot',
+      session,
+    });
+    if (applied) this.sessions.set(key, trimSessionWindow(applied.session));
+  }
+
+  private mobileEvent(event: WorkspaceEvent): WorkspaceEvent | null {
+    if (event.type === 'host-snapshot') {
+      for (const key of [...this.sessions.keys()])
+        if (key.startsWith(`${event.hostId}/`)) this.sessions.delete(key);
+      for (const session of event.sessions) this.remember(session);
+      return event;
+    }
+    if (event.type === 'session-changed') {
+      this.remember(event.session);
+      return event;
+    }
+    if (event.type !== 'session-message-upserted') return event;
+    const key = `${event.session.hostId}/${event.session.id}`;
+    const applied = applySessionChange(this.sessions.get(key), {
+      ...event,
+      type: 'upsert',
+    });
+    if (!applied) return null;
+    const session = trimSessionWindow(applied.session);
+    this.sessions.set(key, session);
+    return { type: 'session-changed', session };
+  }
+
+  private publish(workspaceEvent: WorkspaceEvent) {
+    const event = this.mobileEvent(workspaceEvent);
     if (
+      !event ||
       !this.accepting ||
       event.type === 'review-changed' ||
       event.type.startsWith('scheduled-job') ||
