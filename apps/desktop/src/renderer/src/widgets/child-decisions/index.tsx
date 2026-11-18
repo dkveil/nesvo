@@ -139,13 +139,21 @@ export function ChildDecisions({
             <article
               key={key}
               aria-label={`Child decision: ${item.sessionTitle}`}
-              data-inbox-rule={item.rule.name}
+              data-inbox-rule={item.rule?.name}
             >
               <ListRow density="block" columns={COLUMNS}>
                 <div className="min-w-0 space-y-1">
                   <CardHeader
-                    title={item.sessionTitle}
-                    what={inboxRuleMeta(item)}
+                    title={
+                      item.binding === 'external'
+                        ? item.subject
+                        : item.sessionTitle
+                    }
+                    what={
+                      item.binding === 'external'
+                        ? `${item.sessionTitle} · ${inboxRuleMeta(item)}`
+                        : inboxRuleMeta(item)
+                    }
                     onOpen={() =>
                       item.sessionId &&
                       onOpen(

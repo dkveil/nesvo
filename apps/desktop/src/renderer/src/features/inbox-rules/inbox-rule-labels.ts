@@ -12,6 +12,7 @@ const triggerLabels: Record<HostedInboxItem['trigger'], string> = {
   'ci-checks': 'Pull request checks',
   'files-changed': 'Files changed',
   'run-cost': 'Run cost',
+  external: 'External',
 };
 
 const statusLabels: Record<HostedInboxItem['status'], string> = {
@@ -21,7 +22,16 @@ const statusLabels: Record<HostedInboxItem['status'], string> = {
   answered: 'Answered',
   dismissed: 'Dismissed',
   interrupted: 'Interrupted',
+  cancelled: 'Withdrawn',
 };
 
 export const inboxRuleMeta = (item: HostedInboxItem) =>
-  `Inbox rule ${item.rule.name} · ${triggerLabels[item.trigger]} · ${statusLabels[item.status]}`;
+  item.binding === 'external'
+    ? [
+        'External',
+        item.deviceName !== item.source ? item.deviceName : null,
+        item.answer ?? statusLabels[item.status],
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : `Inbox rule ${item.rule.name} · ${triggerLabels[item.trigger]} · ${statusLabels[item.status]}`;

@@ -312,6 +312,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to classify its running apps.',
   'gate-rules':
     'Update this computer’s Nesvo host and reconnect to use gate rules.',
+  'external-inbox':
+    'Update this computer’s Nesvo host and reconnect to manage external Inbox devices.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -450,6 +452,12 @@ function requiredCapability(
   if (method === 'resume-session') return 'session-resume';
   if (method === 'read-inbox-settings' || method === 'save-inbox-settings')
     return 'decision-routing';
+  if (
+    method === 'list-external-inbox-devices' ||
+    method === 'enroll-external-inbox-device' ||
+    method === 'revoke-external-inbox-device'
+  )
+    return 'external-inbox';
   if (
     method === 'list-inbox-rules' ||
     method === 'validate-inbox-rule' ||
@@ -1276,6 +1284,10 @@ export class ComputerManager {
       'decide-inbox-item': 'inbox-item',
       'read-inbox-settings': 'inbox-settings',
       'save-inbox-settings': 'inbox-settings',
+      'list-external-inbox-devices': 'external-inbox-devices',
+      'enroll-external-inbox-device': 'external-inbox-enrollment',
+      'revoke-external-inbox-device': 'external-inbox-devices',
+      'external-inbox': 'external-inbox-result',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1354,6 +1366,12 @@ export class ComputerManager {
         return response.proposal;
       case 'inbox-items':
         return response.items;
+      case 'external-inbox-devices':
+        return response.devices;
+      case 'external-inbox-enrollment':
+        return response.enrollment;
+      case 'external-inbox-result':
+        return response.result;
       case 'inbox-item':
         this.apply(entry, { type: 'inbox-item-changed', item: response.item });
         return response.item;

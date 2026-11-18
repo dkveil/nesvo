@@ -204,6 +204,7 @@ import { GateRuleSettings } from '@/features/gate-rules/gate-rule-settings';
 import { LessonsSettings } from '@/widgets/lessons-settings';
 import { LessonInbox } from '@/widgets/lesson-inbox';
 import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
+import { DevicesSettings } from '@/widgets/settings/devices-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -5355,6 +5356,15 @@ ${text}`
               />
             ) : page === 'phone' ? (
               <MobileAccess api={desktopApi()} />
+            ) : page === 'devices' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <DevicesSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
             ) : page === 'worktree-recipes' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}

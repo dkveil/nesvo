@@ -63,6 +63,8 @@ import {
   decideSessionParentSchema,
   decideSessionPlanSchema,
   decideInboxItemSchema,
+  externalInboxDeviceIdSchema,
+  externalInboxDeviceNameSchema,
   deleteInboxRuleSchema,
   inboxSettingsSchema,
   listInboxRulesSchema,
@@ -1151,6 +1153,16 @@ void app.whenReady().then(async () => {
     ['nesvo:propose-inbox-rule', 'propose-inbox-rule', proposeInboxRuleSchema],
     ['nesvo:decide-inbox-item', 'decide-inbox-item', decideInboxItemSchema],
     ['nesvo:save-inbox-settings', 'save-inbox-settings', inboxSettingsSchema],
+    [
+      'nesvo:enroll-external-inbox-device',
+      'enroll-external-inbox-device',
+      externalInboxDeviceNameSchema,
+    ],
+    [
+      'nesvo:revoke-external-inbox-device',
+      'revoke-external-inbox-device',
+      externalInboxDeviceIdSchema,
+    ],
   ] as const;
   for (const [channel, method, schema] of inboxRuleCalls)
     handle(channel, (event, input: unknown, hostId: unknown) => {
@@ -1160,6 +1172,14 @@ void app.whenReady().then(async () => {
   handle('nesvo:list-inbox-items', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-inbox-items', undefined, route(hostId));
+  });
+  handle('nesvo:list-external-inbox-devices', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'list-external-inbox-devices',
+      undefined,
+      route(hostId),
+    );
   });
   handle('nesvo:read-inbox-settings', (event, hostId: unknown) => {
     authorize(event);

@@ -36,6 +36,10 @@ import {
   decideSessionParentSchema,
   decideSessionPlanSchema,
   decideInboxItemSchema,
+  externalInboxDeviceIdSchema,
+  externalInboxDeviceNameSchema,
+  externalInboxDevicesSchema,
+  externalInboxEnrollmentSchema,
   deleteInboxRuleSchema,
   inboxItemSchema,
   inboxRuleCatalogSchema,
@@ -1383,6 +1387,29 @@ const api: DesktopApi = {
     inboxItemSchema
       .array()
       .parse(await ipcRenderer.invoke('nesvo:list-inbox-items', route(hostId))),
+  listExternalInboxDevices: async hostId =>
+    externalInboxDevicesSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-external-inbox-devices',
+        route(hostId),
+      ),
+    ),
+  enrollExternalInboxDevice: async (input, hostId) =>
+    externalInboxEnrollmentSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:enroll-external-inbox-device',
+        externalInboxDeviceNameSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  revokeExternalInboxDevice: async (input, hostId) =>
+    externalInboxDevicesSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:revoke-external-inbox-device',
+        externalInboxDeviceIdSchema.parse(input),
+        route(hostId),
+      ),
+    ),
   decideInboxItem: async (input, hostId) =>
     inboxItemSchema.parse(
       await ipcRenderer.invoke(

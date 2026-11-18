@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import type { PullRequestReference } from '@nesvo/contracts';
+import { inboxRuleLimits, type PullRequestReference } from '@nesvo/contracts';
+import ReactMarkdown from 'react-markdown';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
@@ -20,6 +22,37 @@ export function InboxRuleSummary({
 }: SummaryProps) {
   const { presentation } = item;
   const diff = presentation.diff;
+  if (item.binding === 'external')
+    return (
+      <div className="min-w-0 space-y-2">
+        <Badge appearance="outline" className="max-w-full">
+          <span className="truncate">{item.source}</span>
+        </Badge>
+        <div className="max-h-48 space-y-1.5 overflow-y-auto text-ui [overflow-wrap:anywhere] [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5 [&_pre]:whitespace-pre-wrap">
+          <ReactMarkdown
+            skipHtml
+            allowedElements={[
+              'p',
+              'strong',
+              'em',
+              'ol',
+              'ul',
+              'li',
+              'pre',
+              'code',
+              'blockquote',
+              'br',
+            ]}
+            unwrapDisallowed
+          >
+            {presentation.text}
+          </ReactMarkdown>
+        </div>
+        {item.note && (
+          <p className="text-2xs text-muted-foreground">{item.note}</p>
+        )}
+      </div>
+    );
   return (
     <div className="min-w-0 space-y-1.5">
       <p className="text-ui [overflow-wrap:anywhere] whitespace-pre-wrap">
@@ -127,14 +160,20 @@ export function InboxRuleDecisions({
 }: DecisionsProps) {
   const [note, setNote] = useState('');
   if (item.status !== 'pending') return null;
+  const external = item.binding === 'external';
   const disabled = !enabled || deciding;
   const withNote = note.trim() ? { note: note.trim() } : {};
   return (
     <div className="col-start-2 row-start-1 flex max-w-72 flex-col items-end gap-1.5 self-center">
-      {item.action === 'hold' && (
+      {(item.action === 'hold' || external) && (
         <Input
-          aria-label={`Note for ${item.rule.name}`}
-          placeholder="Note for the agent (optional)"
+          aria-label={
+            external ? 'Operator comment' : `Note for ${item.rule?.name}`
+          }
+          placeholder={
+            external ? 'Comment (optional)' : 'Note for the agent (optional)'
+          }
+          maxLength={inboxRuleLimits.note}
           value={note}
           disabled={disabled}
           onChange={event => setNote(event.target.value)}
@@ -169,12 +208,19 @@ export function InboxRuleDecisions({
               key={option}
               variant="secondary"
               disabled={disabled}
-              onClick={() => onDecide({ decision: 'answer', option, via })}
+              onClick={() =>
+                onDecide({
+                  decision: 'answer',
+                  option,
+                  via,
+                  ...(external ? withNote : {}),
+                })
+              }
             >
               {option}
             </Button>
           ))}
-        {item.action !== 'hold' && (
+        {item.action !== 'hold' && !external && (
           <Button
             variant="ghost"
             disabled={disabled}

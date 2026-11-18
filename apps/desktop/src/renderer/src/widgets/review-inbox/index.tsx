@@ -178,7 +178,7 @@ function FullText({ text, children }: { text: string; children: ReactNode }) {
 type ActionItemProps = Omit<ComponentProps<'article'>, 'title'> & {
   openLabel?: string;
   title: string;
-  onOpen: () => void;
+  onOpen?: () => void;
   location: string;
   summary: ReactNode;
   meta: ReactNode;
@@ -198,16 +198,22 @@ function ActionItem({
     <article {...props}>
       <ListRow density="block" columns={ROW_COLUMNS}>
         <div className="min-w-0 space-y-1">
-          <Button
-            variant="link"
-            size="inline"
-            className="max-w-full justify-start text-ui text-foreground"
-            aria-label={openLabel}
-            onClick={onOpen}
-          >
-            <span className="truncate">{title}</span>
-            <ArrowUpRight className="size-3 text-muted-foreground" />
-          </Button>
+          {onOpen ? (
+            <Button
+              variant="link"
+              size="inline"
+              className="max-w-full justify-start text-ui text-foreground"
+              aria-label={openLabel}
+              onClick={onOpen}
+            >
+              <span className="truncate">{title}</span>
+              <ArrowUpRight className="size-3 text-muted-foreground" />
+            </Button>
+          ) : (
+            <p className="text-ui font-medium [overflow-wrap:anywhere]">
+              {title}
+            </p>
+          )}
           {location && (
             <p className="text-2xs text-muted-foreground">{location}</p>
           )}
@@ -427,7 +433,14 @@ export function ReviewInbox({
         });
   for (const item of ruleItems)
     if (
-      routesToInbox(item.route) &&
+      (routesToInbox(item.route) ||
+        (item.binding === 'external' &&
+          !sessions.some(
+            session =>
+              session.id === item.parentId &&
+              session.hostId === item.hostId &&
+              !session.archivedAt,
+          ))) &&
       (filter === 'all' ||
         (filter === 'pending'
           ? item.status === 'pending'
@@ -739,18 +752,37 @@ export function ReviewInbox({
                 return (
                   <ActionItem
                     key={`rule/${row.id}`}
-                    aria-label={`Inbox rule ${item.rule.name}: ${item.sessionTitle}`}
+                    aria-label={
+                      item.binding === 'external'
+                        ? `External Inbox item: ${item.subject}`
+                        : `Inbox rule ${item.rule.name}: ${item.sessionTitle}`
+                    }
                     data-host-id={item.hostId}
-                    data-inbox-rule={item.rule.name}
-                    title={subjectSession?.title ?? item.sessionTitle}
-                    onOpen={() =>
+                    data-inbox-rule={item.rule?.name}
+                    data-inbox-type={
+                      item.binding === 'external' ? 'external' : undefined
+                    }
+                    title={
+                      item.binding === 'external'
+                        ? item.subject
+                        : (subjectSession?.title ?? item.sessionTitle)
+                    }
+                    openLabel={
                       item.sessionId
-                        ? onSession(hostKey(item.sessionId, item.hostId))
-                        : item.presentation.pullRequest &&
-                          onRuleOpenPullRequest(
-                            item,
-                            item.presentation.pullRequest,
-                          )
+                        ? `Open session: ${subjectSession?.title ?? item.sessionTitle}`
+                        : undefined
+                    }
+                    onOpen={
+                      item.sessionId || item.presentation.pullRequest
+                        ? () =>
+                            item.sessionId
+                              ? onSession(hostKey(item.sessionId, item.hostId))
+                              : item.presentation.pullRequest &&
+                                onRuleOpenPullRequest(
+                                  item,
+                                  item.presentation.pullRequest,
+                                )
+                        : undefined
                     }
                     location={location(item.hostId)}
                     summary={
@@ -769,6 +801,11 @@ export function ReviewInbox({
                     meta={
                       <>
                         <span>{inboxRuleMeta(item)}</span>
+                        {item.binding === 'external' && item.sessionId && (
+                          <span>
+                            {subjectSession?.title ?? item.sessionTitle}
+                          </span>
+                        )}
                         <time dateTime={row.at}>{reviewDate(row.at)}</time>
                       </>
                     }

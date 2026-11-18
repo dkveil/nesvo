@@ -10,6 +10,7 @@ const actionLabels = {
   hold: 'waits for your decision',
   notify: 'adds an Inbox item',
   ask: 'asks you a question',
+  route: 'routes the item',
 } as const;
 
 export const statusTone = {
@@ -34,7 +35,9 @@ export const ruleSummary = (entry: InboxRuleEntry) => {
                 ? `When files matching ${rule.glob} changed`
                 : rule.trigger === 'run-cost'
                   ? `When a run costs more than $${rule.above_usd}`
-                  : `When ${rule.trigger.replace('-', ' ')}`;
+                  : rule.trigger === 'external'
+                    ? `When an external item arrives${rule.pattern ? ` from ${rule.pattern}` : ''}`
+                    : `When ${rule.trigger.replace('-', ' ')}`;
   const route = rule.route ? ` · ${routeLabels[rule.route]}` : '';
   return `${when}, Nesvo ${actionLabels[rule.action]}${route}.`;
 };

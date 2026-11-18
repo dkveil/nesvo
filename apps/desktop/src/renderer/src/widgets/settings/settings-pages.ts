@@ -2,6 +2,7 @@ import {
   Bell,
   Blocks,
   Database,
+  KeyRound,
   FolderGit2,
   GitFork,
   Inbox,
@@ -33,6 +34,7 @@ export type SettingsPage =
   | 'inbox-rules'
   | 'workflows'
   | 'computers'
+  | 'devices'
   | 'phone'
   | 'repositories'
   | 'sharing'
@@ -140,6 +142,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Monitor,
     group: 'Connections',
     keywords: 'ssh remote vps host machine add connect',
+  },
+  {
+    id: 'devices',
+    label: 'Devices',
+    icon: KeyRound,
+    group: 'Connections',
+    keywords: 'external inbox cli mcp token revoke install',
   },
   {
     id: 'phone',

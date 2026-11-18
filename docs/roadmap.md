@@ -118,6 +118,12 @@ Settled workflow runs can propose up to two gate rules from the owner's commente
 
 The step inspector and Settings › Lessons display per-entry delivery counts, broken-rule citation counts and the last cited date. The host validates cited lesson IDs against the verifier prompt. Repeatedly cited instructions and entries unused for 60 days are flagged for owner review.
 
+## D79 External Inbox
+
+D79 (2026-11-18) authorizes external Inbox items: a `nesvo` command line tool and an equivalent MCP tool (`inbox_post`) let scripts, CI and agents outside Nesvo post an item to a computer's Inbox and optionally wait for the operator's decision. The tool talks to the host on that computer with a revocable per-device token; nothing travels in URLs or logs. An item is data only: Nesvo never runs anything from it and its text is never treated as instructions. Every post carries an idempotency key, is never replayed after reconnect, and shows its source. Inbox rules route external items like any other row (Inbox, parent session or both). Decisions are the item's declared actions only; session permissions never change.
+
+The first delivery covers the desktop Inbox and parent conversation, the host and the repository CLI and stdio MCP server. Installer distribution and mobile rendering remain separate.
+
 ## D80 — Costs from local transcripts
 
 Approved on November 18, 2026. This supersedes the D72 rule that counted only provider-reported USD from Nesvo turns. The Costs view includes activity from local Claude Code and Codex transcripts on each computer, including CLI sessions outside Nesvo. The host reads the transcripts without modifying them and keeps an incremental index of usage metadata in its own data directory.
