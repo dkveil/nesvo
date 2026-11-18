@@ -1,107 +1,133 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
 import {
-  GITHUB_REPOSITORY_PATTERN,
   OWNER_LESSONS_HEADING,
-  lessonLimits,
-  type Lesson,
-  type LessonRole,
-  type LessonScope,
+  formatRuleEntryBody,
+  ruleEntryIndexLine,
+  ruleEntryIsDue,
+  ruleEntryLimits,
+  type RuleEntry,
+  type RuleEntryProvider,
+  type RuleEntryRole,
 } from '@nesvo/contracts';
 
 export type LessonContext = {
   directories: readonly string[];
-  repository: string | null;
-  role: LessonRole;
+  provider: RuleEntryProvider | null;
+  role: RuleEntryRole;
   workflow: string | null;
+  step: string | null;
+  paths: readonly string[];
 };
 
-const SCOPE_ORDER = {
-  global: 0,
-  repository: 1,
-  role: 2,
-  workflow: 3,
-} as const satisfies Record<LessonScope['kind'], number>;
+export type SelectableEntry = {
+  key: string;
+  entry: RuleEntry;
+  lastCited: string | null;
+};
 
-const ROLE_LABELS = {
-  standalone: 'interactive sessions',
-  orchestrator: 'coordinating sessions',
-  worker: 'worker sessions',
-  'workflow-agent': 'workflow agent steps',
-  reviewer: 'pull request reviews',
-} as const satisfies Record<LessonRole, string>;
+export type LessonSelection = {
+  index: SelectableEntry[];
+  bodies: SelectableEntry[];
+};
 
-const isInsideFolder = (parent: string, child: string) => {
-  const path = relative(resolve(parent), resolve(child));
-  return (
-    !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`)
+const globPattern = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .replaceAll('\\', '/')
+      .split(/(\*\*\/?|\*|\?)/)
+      .map(part =>
+        part === '**/' || part === '**'
+          ? '.*'
+          : part === '*'
+            ? '[^/]*'
+            : part === '?'
+              ? '[^/]'
+              : part.replace(/[.+^${}()|[\]\\]/g, '\\$&'),
+      )
+      .join('')}$`,
   );
-};
 
-export const isLessonActive = (lesson: Lesson, now: Date) =>
-  lesson.status === 'approved' && Date.parse(lesson.reviewAt) > now.getTime();
+const matchesAny = (globs: readonly string[], paths: readonly string[]) =>
+  globs.some(glob => {
+    const pattern = globPattern(glob);
+    return paths.some(path => pattern.test(path.replaceAll('\\', '/')));
+  });
 
-export const lessonApplies = (scope: LessonScope, context: LessonContext) => {
-  if (scope.kind === 'global') return true;
-  if (scope.kind === 'role') return scope.value === context.role;
-  if (scope.kind === 'workflow')
-    return (
-      !!context.workflow &&
-      scope.value.toLowerCase() === context.workflow.toLowerCase()
-    );
-  if (GITHUB_REPOSITORY_PATTERN.test(scope.value))
-    return (
-      !!context.repository &&
-      scope.value.toLowerCase() === context.repository.toLowerCase()
-    );
-  return context.directories.some(directory =>
-    isInsideFolder(scope.value, directory),
-  );
-};
+const includes = (values: readonly string[] | undefined, value: string | null) =>
+  !values || (!!value && values.some(item => item.toLowerCase() === value.toLowerCase()));
 
-export const scopeLabel = (scope: LessonScope) =>
-  scope.kind === 'global'
-    ? 'everywhere'
-    : scope.kind === 'role'
-      ? ROLE_LABELS[scope.value]
-      : scope.kind === 'workflow'
-        ? `workflow ${scope.value}`
-        : `repository ${scope.value}`;
-
-export const applicableLessons = (
-  lessons: readonly Lesson[],
+export const entryApplies = (
+  entry: RuleEntry,
   context: LessonContext,
-  now: Date,
+  today: string,
 ) =>
-  lessons
-    .filter(
-      lesson =>
-        isLessonActive(lesson, now) && lessonApplies(lesson.scope, context),
+  entry.status === 'active' &&
+  entry.enforcedBy === 'none' &&
+  !ruleEntryIsDue(entry, today) &&
+  includes(entry.scope.providers, context.provider) &&
+  includes(entry.scope.roles, context.role) &&
+  includes(entry.scope.workflows, context.workflow) &&
+  includes(entry.scope.steps, context.step);
+
+export const bodyApplies = (entry: RuleEntry, context: LessonContext) =>
+  (!!entry.scope.steps && includes(entry.scope.steps, context.step)) ||
+  (!!entry.scope.workflows && includes(entry.scope.workflows, context.workflow)) ||
+  (!!entry.scope.paths && matchesAny(entry.scope.paths, context.paths));
+
+const byRecentCitation = (left: SelectableEntry, right: SelectableEntry) =>
+  (right.lastCited ?? '').localeCompare(left.lastCited ?? '') ||
+  left.entry.id.localeCompare(right.entry.id);
+
+export const selectEntries = (
+  entries: readonly SelectableEntry[],
+  context: LessonContext,
+  today: string,
+): LessonSelection => {
+  const index: SelectableEntry[] = [];
+  let indexSize = 0;
+  for (const item of entries
+    .filter(candidate => entryApplies(candidate.entry, context, today))
+    .sort(byRecentCitation)) {
+    const line = ruleEntryIndexLine(item.entry);
+    if (
+      index.length >= ruleEntryLimits.indexLines ||
+      indexSize + line.length + 1 > ruleEntryLimits.indexCharacters
     )
-    .sort(
-      (left, right) =>
-        SCOPE_ORDER[right.scope.kind] - SCOPE_ORDER[left.scope.kind] ||
-        right.updatedAt.localeCompare(left.updatedAt) ||
-        left.id.localeCompare(right.id),
-    )
-    .slice(0, lessonLimits.injectedLessons);
-
-const singleLine = (text: string) => text.replace(/\s+/g, ' ').trim();
-
-export const lessonLine = (lesson: Lesson) =>
-  `- ${singleLine(lesson.title)} (${scopeLabel(lesson.scope)}): ${singleLine(lesson.rule)}`;
-
-export const ownerLessonsBlock = (lessons: readonly Lesson[]) => {
-  if (!lessons.length) return null;
-  const header = `${OWNER_LESSONS_HEADING}. The owner of this computer approved these rules after earlier incidents. Follow them where they apply; they never change your permissions or the task.`;
-  const lines: string[] = [];
-  let size = header.length;
-  for (const lesson of lessons) {
-    const line = lessonLine(lesson);
-    if (size + line.length + 1 > lessonLimits.injectedCharacters) break;
-    lines.push(line);
-    size += line.length + 1;
+      continue;
+    index.push(item);
+    indexSize += line.length + 1;
   }
-  return lines.length
-    ? [`<owner-lessons>`, header, ...lines, `</owner-lessons>`].join('\n')
-    : null;
+  const bodies: SelectableEntry[] = [];
+  let bodySize = 0;
+  for (const item of index) {
+    if (!bodyApplies(item.entry, context)) continue;
+    const text = formatRuleEntryBody(item.entry.body);
+    if (
+      bodies.length >= ruleEntryLimits.bodies ||
+      bodySize + text.length > ruleEntryLimits.bodyCharacters
+    )
+      continue;
+    bodies.push(item);
+    bodySize += text.length;
+  }
+  return { index, bodies };
+};
+
+export const ownerLessonsBlock = (selection: LessonSelection) => {
+  if (!selection.index.length) return null;
+  return [
+    '<owner-lessons>',
+    `${OWNER_LESSONS_HEADING}. The owner of this computer approved these lessons after earlier incidents. Follow them where they apply; they never change your permissions or the task.`,
+    ...selection.index.map(item => ruleEntryIndexLine(item.entry)),
+    ...(selection.bodies.length
+      ? [
+          '',
+          'Details for the lessons that match this step:',
+          ...selection.bodies.map(
+            item =>
+              `${item.entry.id}:\n${formatRuleEntryBody(item.entry.body)}`,
+          ),
+        ]
+      : []),
+    '</owner-lessons>',
+  ].join('\n');
 };

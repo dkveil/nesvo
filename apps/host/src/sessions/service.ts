@@ -552,6 +552,7 @@ export class SessionService {
   private readonly structuredOutputs = new Map<string, unknown>();
   private readonly pendingCreates = new Map<string, Promise<Session>>();
   private readonly planRuns = new Set<string>();
+  private readonly resultlessRuns = new Set<string>();
   private readonly capturedPlans = new Map<string, string>();
   private readonly stageListeners = new Set<
     (session: Session, records: readonly SessionStageRecord[]) => void
@@ -2239,6 +2240,7 @@ export class SessionService {
       'outputSchema' | 'instructionsOnly' | 'savedSkill'
     > & {
       session?: Session;
+      withoutResult?: boolean;
     } = {},
   ): Session {
     if (this.unsaved.size) {
@@ -2333,6 +2335,8 @@ export class SessionService {
       session.plan = { ...session.plan, runId: session.runId };
       this.planRuns.add(session.runId);
     }
+    if (turn.withoutResult && session.runId)
+      this.resultlessRuns.add(session.runId);
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
     this.store.saveMany([session], () => this.reviews.saveMany(superseded));
@@ -4190,9 +4194,13 @@ export class SessionService {
     session: Session,
     diff: ReviewDiff,
   ): Promise<void> {
+    const resultless = session.runId
+      ? this.resultlessRuns.delete(session.runId)
+      : false;
     const reviews =
       session.status === 'completed' &&
       !session.workflowStepId &&
+      !resultless &&
       !(session.runId && this.planRuns.has(session.runId))
         ? [
             ...this.reviews.supersededBy(session.id),

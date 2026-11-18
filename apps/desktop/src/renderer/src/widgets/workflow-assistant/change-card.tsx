@@ -23,6 +23,7 @@ const kindIcons: Record<AssistantChange['kind'], LucideIcon> = {
   workflow: Workflow,
   automation: CalendarClock,
   lesson: Lightbulb,
+  'gate-rule': Lightbulb,
 };
 
 const kindLabels: Record<AssistantChange['kind'], string> = {
@@ -30,6 +31,7 @@ const kindLabels: Record<AssistantChange['kind'], string> = {
   workflow: 'workflow',
   automation: 'automation',
   lesson: 'lesson',
+  'gate-rule': 'gate rule',
 };
 
 const opLabels: Record<AssistantChange['op'], string> = {

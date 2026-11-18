@@ -65,7 +65,7 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<string | null>;
-  lessons?: (run: WorkflowRun) => string | null;
+  lessons?: (run: WorkflowRun, step: string) => string | null;
 };
 
 type StepSkill = { skillId: string; skillHash: string | undefined };
@@ -480,7 +480,7 @@ export const createAgentExecutor =
       body: display(definition.body),
       skill: definition.prompt_skill?.name ?? definition.skill,
       probeFindings: findings,
-      lessons: ports.lessons?.(run) ?? null,
+      lessons: ports.lessons?.(run, step.name) ?? null,
     });
 
     const input: CreateSessionInput = {

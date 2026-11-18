@@ -91,9 +91,9 @@ import {
 } from './workflows/tasks';
 import {
   deleteDefinition,
-  deleteLessonFile,
+  deleteRuleEntryFile,
   saveDefinition,
-  saveLessonFile,
+  saveRuleEntryFile,
 } from './workflows/writer';
 import { importBundle, prepareShare } from './workflows/sharing';
 import { ScheduledJobStore } from './scheduled-jobs/store';
@@ -587,12 +587,14 @@ export const serveHost = ({
                     { unattended: true },
                     signal,
                   ),
-                lessons: run =>
+                lessons: (run, step) =>
                   lessons.current?.blockFor({
                     directories: [run.directory, run.projectRoot],
-                    repository: null,
+                    provider: run.gateProvider === 'Codex' ? 'codex' : 'claude',
                     role: 'workflow-agent',
                     workflow: run.workflow.name,
+                    step,
+                    paths: [],
                   }) ?? null,
               }),
               session: childExecutor,
@@ -738,11 +740,11 @@ export const serveHost = ({
           save: input => scheduledJobs.save(input),
           delete: input => scheduledJobs.delete(input),
         },
-        lessons: {
+        ruleEntries: {
           save: (input, options) =>
-            saveLessonFile(input, probes.controller.signal, options),
+            saveRuleEntryFile(input, probes.controller.signal, options),
           remove: (input, options) =>
-            deleteLessonFile(input, probes.controller.signal, options),
+            deleteRuleEntryFile(input, probes.controller.signal, options),
         },
         emit,
       });
@@ -761,8 +763,17 @@ export const serveHost = ({
                     session =>
                       session.worktree?.projectDirectory ?? session.directory,
                   ),
-              workflowName: runId =>
-                workflowRunStore.getRun(runId)?.workflow.name ?? null,
+              workflowOf: (runId, stepId) => {
+                const run = workflowRunStore.getRun(runId);
+                return run
+                  ? {
+                      workflow: run.workflow.name,
+                      step: stepId
+                        ? (workflowRunStore.getStep(stepId)?.name ?? null)
+                        : null,
+                    }
+                  : null;
+              },
               archive: sessionId =>
                 void housekeeping.setArchived({ sessionId, archived: true }),
             }),

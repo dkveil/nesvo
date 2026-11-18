@@ -486,6 +486,7 @@ export * from './diagnostics';
 export * from './workflows';
 export * from './session-resume';
 export * from './merged-worktree-cleanup';
+export * from './rule-entries';
 export * from './lessons';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [

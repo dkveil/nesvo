@@ -978,11 +978,15 @@ if (args.length === 1 && args[0] === '--version') {
         )
       : {
           lessons: incidents.slice(0, 1).map(incident => ({
-            title: 'Confirm the plan scope first',
+            description:
+              'Applies when planning a change. Name every file the plan will touch.',
+            kind: 'instruction',
             rule: 'State the files you will change before proposing a plan.',
-            scope: incident.directory
-              ? { kind: 'repository', value: incident.directory }
-              : { kind: 'global' },
+            why: 'Plans that touched unexpected files were rejected.',
+            check: 'The plan lists every changed file.',
+            scope: {},
+            project: incident.directory,
+            enforcedBy: 'none',
             evidence: [incident.id, '00000000-0000-4000-8000-000000000000'],
             reviewInDays: 14,
           })),

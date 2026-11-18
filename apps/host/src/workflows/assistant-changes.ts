@@ -19,6 +19,7 @@ import {
   type ScheduledJob,
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
+import { RULE_ENTRY_FOLDERS, type RuleEntryType } from '@nesvo/contracts';
 import { realpathSync } from 'node:fs';
 import { ScheduledJobError } from '../scheduled-jobs/service';
 import type { AssistantChangeStore } from './assistant-change-store';
@@ -31,10 +32,10 @@ import {
 import { filterResultText } from './evidence';
 import type {
   DeleteDefinitionInput,
-  DeleteLessonFileInput,
-  LessonFileWriteResult,
+  DeleteRuleEntryFileInput,
+  RuleEntryFileWriteResult,
   SaveDefinitionInput,
-  SaveLessonFileInput,
+  SaveRuleEntryFileInput,
   WriteOptions,
 } from './writer';
 
@@ -66,21 +67,22 @@ type ChangePorts = {
     save: (input: SaveAutomationInput) => ScheduledJob;
     delete: (input: { id: string; expectedRevision: number }) => void;
   };
-  lessons?: {
+  ruleEntries?: {
     save: (
-      input: SaveLessonFileInput,
+      input: SaveRuleEntryFileInput,
       options: WriteOptions,
-    ) => Promise<LessonFileWriteResult>;
+    ) => Promise<RuleEntryFileWriteResult>;
     remove: (
-      input: DeleteLessonFileInput,
+      input: DeleteRuleEntryFileInput,
       options: WriteOptions,
-    ) => Promise<LessonFileWriteResult>;
+    ) => Promise<RuleEntryFileWriteResult>;
   };
   emit: (event: DesktopEvent) => void;
   now?: () => Date;
 };
 
-export type LessonFileOperation = {
+export type RuleEntryFileOperation = {
+  type: RuleEntryType;
   op: AssistantChange['op'];
   scope: AssistantDefinitionOperation['scope'];
   name: string;
@@ -90,7 +92,7 @@ export type LessonFileOperation = {
   validate: (document: string) => string[];
 };
 
-export type LessonChangeOutcome =
+export type RuleEntryChangeOutcome =
   | { status: 'applied'; change: AssistantChange; path: string }
   | {
       status: 'refused';
@@ -116,6 +118,10 @@ export class AssistantChangeError extends Error {
     super(message);
   }
 }
+
+const isRuleEntryKind = (
+  kind: AssistantChange['kind'],
+): kind is RuleEntryType => kind === 'lesson' || kind === 'gate-rule';
 
 const hashOf = (text: string) =>
   createHash('sha256').update(text).digest('hex');
@@ -228,12 +234,12 @@ export class AssistantChanges {
       });
   }
 
-  applyLesson(
+  applyRuleEntry(
     context: ChangeContext,
-    operation: LessonFileOperation,
-  ): Promise<LessonChangeOutcome> {
+    operation: RuleEntryFileOperation,
+  ): Promise<RuleEntryChangeOutcome> {
     return this.serial(context.conversationId, () =>
-      this.applyLessonNow(context, operation),
+      this.applyRuleEntryNow(context, operation),
     );
   }
 
@@ -307,26 +313,26 @@ export class AssistantChanges {
     }
   }
 
-  private async applyLessonNow(
+  private async applyRuleEntryNow(
     context: ChangeContext,
-    operation: LessonFileOperation,
-  ): Promise<LessonChangeOutcome> {
-    const lessons = this.ports.lessons;
+    operation: RuleEntryFileOperation,
+  ): Promise<RuleEntryChangeOutcome> {
+    const files = this.ports.ruleEntries;
     const target: DefinitionTarget = {
       type: 'definition',
       root: operation.scope,
-      path: `lessons/${operation.name}.md`,
+      path: `${RULE_ENTRY_FOLDERS[operation.type]}/${operation.name}.md`,
       name: operation.name,
     };
     const refused = (
       reason: 'invalid' | 'conflict' | 'unavailable',
       message: string,
-    ): LessonChangeOutcome => ({
+    ): RuleEntryChangeOutcome => ({
       status: 'refused',
       reason,
       issues: [issueAt(target.path, message)],
     });
-    if (!lessons) return refused('unavailable', 'Lesson files are unavailable.');
+    if (!files) return refused('unavailable', 'Entry files are unavailable.');
     if ((operation.op === 'create') !== (operation.basedOnHash === null))
       return refused('invalid', 'Only a create has no basedOnHash.');
     if (operation.op !== 'delete' && operation.document === null)
@@ -340,19 +346,20 @@ export class AssistantChanges {
       },
     };
     const base = {
+      type: operation.type,
       directory: context.directory,
       scope: operation.scope,
       name: operation.name,
     };
-    let result: LessonFileWriteResult;
+    let result: RuleEntryFileWriteResult;
     try {
       result =
         operation.op === 'delete'
-          ? await lessons.remove(
+          ? await files.remove(
               { ...base, expectedHash: operation.basedOnHash! },
               options,
             )
-          : await lessons.save(
+          : await files.save(
               {
                 ...base,
                 document: operation.document!,
@@ -385,7 +392,7 @@ export class AssistantChanges {
       const change = this.record(
         context,
         {
-          kind: 'lesson',
+          kind: operation.type,
           op: operation.op,
           target,
           before: replaced ? { type: 'hash', hash: replaced.contentHash } : null,
@@ -428,7 +435,7 @@ export class AssistantChanges {
       undoneAt: null,
     });
     this.ports.store.insert(change, previous, root);
-    if (change.kind !== 'lesson')
+    if (!isRuleEntryKind(change.kind))
       this.ports.emit({ type: 'workflow-assistant-change', change });
     return change;
   }
@@ -670,8 +677,14 @@ export class AssistantChanges {
     const outcome =
       change.target.type === 'automation'
         ? this.undoAutomation(change, change.target.automationId, previous)
-        : change.kind === 'lesson'
-          ? await this.undoLesson(change, change.target, previous, root)
+        : isRuleEntryKind(change.kind)
+          ? await this.undoRuleEntry(
+              change.kind,
+              change,
+              change.target,
+              previous,
+              root,
+            )
           : await this.undoDefinition(change, change.target, previous, root);
     if (outcome) return outcome;
     const undone = assistantChangeSchema.parse({
@@ -680,7 +693,7 @@ export class AssistantChanges {
       undoneAt: this.now(),
     });
     this.ports.store.markUndone(undone);
-    if (undone.kind !== 'lesson')
+    if (!isRuleEntryKind(undone.kind))
       this.ports.emit({ type: 'workflow-assistant-change', change: undone });
     return { status: 'undone', change: undone };
   }
@@ -758,14 +771,15 @@ export class AssistantChanges {
     };
   }
 
-  private async undoLesson(
+  private async undoRuleEntry(
+    type: RuleEntryType,
     change: AssistantChange,
     target: DefinitionTarget,
     previous: string | null,
     root: string | null,
   ): Promise<AssistantUndoResult | null> {
-    const lessons = this.ports.lessons;
-    if (!root || !lessons)
+    const files = this.ports.ruleEntries;
+    if (!root || !files)
       return {
         status: 'refused',
         changeId: change.changeId,
@@ -778,17 +792,18 @@ export class AssistantChanges {
       };
     const options: WriteOptions = { expectedRoot: root };
     const base = {
+      type,
       directory: change.directory,
       scope: target.root,
       name: target.name,
     };
     const afterHash = change.after?.type === 'hash' ? change.after.hash : null;
-    let result: LessonFileWriteResult;
+    let result: RuleEntryFileWriteResult;
     try {
       result =
         change.op === 'create'
-          ? await lessons.remove({ ...base, expectedHash: afterHash! }, options)
-          : await lessons.save(
+          ? await files.remove({ ...base, expectedHash: afterHash! }, options)
+          : await files.save(
               {
                 ...base,
                 document: previous ?? '',

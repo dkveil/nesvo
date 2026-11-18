@@ -1,12 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import {
-  GITHUB_REPOSITORY_PATTERN,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { join } from 'node:path';
+import {
   LESSON_PROPOSAL_INTERVAL_MS,
   codeReviewLimits,
+  formatRuleEntryBody,
   lessonLimits,
   lessonProposalOutputJsonSchema,
+  lessonSchema,
+  localDate,
+  ruleEntryIndexLine,
+  serializeRuleEntry,
   type DecideLessonInput,
   type Delegation,
   type Lesson,
@@ -14,11 +25,12 @@ import {
   type LessonIncident,
   type LessonOverview,
   type LessonProposalState,
-  type LessonScope,
   type LessonSettings,
   type ProposeLessonsInput,
   type ReviewConvention,
   type ReviewDraft,
+  type RuleEntry,
+  type RuleEntryProvenance,
   type Session,
   type SessionStageRecord,
   type WorkflowRun,
@@ -29,22 +41,21 @@ import { SessionError } from '../sessions/session-error';
 import type { RunFinished, SessionService } from '../sessions/service';
 import type {
   AssistantChanges,
-  LessonChangeOutcome,
+  RuleEntryChangeOutcome,
 } from '../workflows/assistant-changes';
 import { pathKey } from '../workflows/definitions';
 import {
-  globalLessonRoot,
-  lessonFileName,
-  parseLessonDocument,
-  projectLessonRoot,
+  globalWorkflowsRoot,
+  highestRuleEntryNumber,
+  projectRootOfWorkflowsRoot,
   projectRootSync,
-  readLessonFolder,
-  serializeLesson,
-  type LessonFileDocument,
-  type LessonFolderRead,
-  type LessonRoot,
-  type StoredLessonFile,
-} from './files';
+  projectWorkflowsRoot,
+  readRuleEntryFolder,
+  validateRuleEntryDocument,
+  type RuleEntryFolderRead,
+  type RuleEntryRoot,
+  type StoredRuleEntry,
+} from '../workflows/rule-entry-files';
 import {
   finishedRunIncidents,
   stageRecordIncidents,
@@ -52,12 +63,17 @@ import {
   workflowStepIncidents,
   type IncidentDraft,
 } from './incidents';
-import { lessonProposalPrompt, parseLessonProposal } from './proposal';
 import {
-  applicableLessons,
-  lessonLine,
+  lessonProposalPrompt,
+  parseLessonProposal,
+  type AdmittedLesson,
+  type ExistingEntry,
+} from './proposal';
+import {
   ownerLessonsBlock,
+  selectEntries,
   type LessonContext,
+  type SelectableEntry,
 } from './scope';
 import { idleProposal, type LessonStore } from './store';
 
@@ -71,7 +87,10 @@ type LessonSessions = Pick<
   'createWithEffort' | 'send' | 'finished' | 'whenFolderFree' | 'snapshot'
 >;
 
-type LessonChanges = Pick<AssistantChanges, 'applyLesson' | 'undo' | 'latest'>;
+type LessonChanges = Pick<
+  AssistantChanges,
+  'applyRuleEntry' | 'undo' | 'latest'
+>;
 
 type LessonPorts = {
   store: LessonStore;
@@ -79,7 +98,10 @@ type LessonPorts = {
   changes: LessonChanges;
   dataDirectory: string;
   directories?: () => readonly string[];
-  workflowName?: (runId: string) => string | null;
+  workflowOf?: (
+    runId: string,
+    stepId: string | null,
+  ) => { workflow: string; step: string | null } | null;
   archive?: (sessionId: string) => void;
   now?: () => Date;
   timers?: boolean;
@@ -104,11 +126,6 @@ const OUTCOME_MESSAGES = {
 const hash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
 
-const proposalVersion = (revision: number) => `proposal-${revision}`;
-
-const nextProposalVersion = (version: string) =>
-  proposalVersion(Number(version.replace(/^proposal-/, '')) + 1);
-
 const evidenceOf = (incident: LessonIncident): LessonEvidence => ({
   incidentId: incident.id,
   kind: incident.kind,
@@ -119,8 +136,17 @@ const evidenceOf = (incident: LessonIncident): LessonEvidence => ({
   workflowRunId: incident.workflowRunId,
 });
 
-const isProjectScope = (scope: LessonScope) =>
-  scope.kind === 'repository' && !GITHUB_REPOSITORY_PATTERN.test(scope.value);
+const entryKey = (stored: StoredRuleEntry) =>
+  `${stored.entry.id}:${hash(pathKey(stored.root.root)).slice(0, 8)}`;
+
+const metricKey = (stored: StoredRuleEntry) =>
+  `${pathKey(stored.root.root)}#${stored.entry.id}`;
+
+const conversationOf = (stored: Pick<StoredRuleEntry, 'root' | 'entry'>) =>
+  derivedId('rule-entry', `${pathKey(stored.root.root)}#${stored.entry.id}`);
+
+const providerOf = (provider: Session['provider']) =>
+  provider === 'Codex' ? ('codex' as const) : ('claude' as const);
 
 export class LessonService {
   private readonly controller = new AbortController();
@@ -128,7 +154,7 @@ export class LessonService {
   private readonly injected = new Map<string, string>();
   private readonly folders = new Map<
     string,
-    { at: number; read: LessonFolderRead }
+    { at: number; read: RuleEntryFolderRead }
   >();
   private running: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -147,7 +173,11 @@ export class LessonService {
     const { store } = this.ports;
     const settings = store.settings();
     const proposal = store.proposalState();
-    const files = this.allFiles();
+    const files = this.allEntries();
+    const metrics = store.metrics(files.entries.map(metricKey));
+    const lessons = files.entries.map(stored =>
+      this.toLesson(stored, metrics.get(metricKey(stored)) ?? null),
+    );
     return {
       settings,
       proposal,
@@ -161,16 +191,13 @@ export class LessonService {
             ),
           ).toISOString()
         : null,
-      lessons: [
-        ...store.proposals(),
-        ...files.lessons.map(file => this.withChange(file.lesson)),
-      ],
+      lessons: [...this.proposals(), ...lessons],
       issues: [
-        ...files.lessons
-          .filter(file => !this.isOwnerApproved(file.lesson))
+        ...lessons
+          .filter(lesson => lesson.location && !lesson.location.trusted)
           .map(
-            file =>
-              `${file.lesson.location?.path ?? file.lesson.title}: this project lesson was not written by your decision in Nesvo, so it is not added to prompts. Keep it to approve the current text.`,
+            lesson =>
+              `${lesson.location!.path}: this project lesson was not written by your decision in Nesvo, so it is not added to prompts. Keep it to approve the current text.`,
           ),
         ...files.issues,
       ]
@@ -259,25 +286,25 @@ export class LessonService {
   }
 
   async decide(input: DecideLessonInput): Promise<LessonOverview> {
-    const proposal = this.ports.store.proposalRecord(input.lessonId);
+    const proposal = this.proposal(input.key);
     if (proposal) {
-      if (proposal.version !== input.expectedVersion)
-        throw this.changed();
+      if (proposal.version !== input.expectedVersion) throw this.changed();
       await this.decideProposal(proposal, input);
     } else {
-      const file = this.allFiles().lessons.find(
-        item => item.lesson.id === input.lessonId,
+      const stored = this.allEntries().entries.find(
+        item => entryKey(item) === input.key,
       );
-      if (!file) throw new LessonError('not-found', 'Lesson not found.');
-      if (file.lesson.version !== input.expectedVersion) throw this.changed();
-      await this.decideFile(file, input);
+      if (!stored) throw new LessonError('not-found', 'Lesson not found.');
+      if (stored.hash !== input.expectedVersion) throw this.changed();
+      await this.decideEntry(stored, input);
     }
     this.folders.clear();
     return this.overview();
   }
 
   instructions(session: Session): string | null {
-    const block = this.blockFor(this.contextOf(session));
+    const { selection, keys } = this.select(this.contextOf(session));
+    const block = ownerLessonsBlock(selection);
     if (!block) {
       this.injected.delete(session.id);
       return null;
@@ -289,43 +316,45 @@ export class LessonService {
     )
       return null;
     this.injected.set(session.id, digest);
+    this.delivered(keys);
     return block;
   }
 
   blockFor(context: LessonContext): string | null {
     try {
-      return ownerLessonsBlock(
-        applicableLessons(this.lessonsFor(context), context, this.now()),
-      );
+      const { selection, keys } = this.select(context);
+      const block = ownerLessonsBlock(selection);
+      if (block) this.delivered(keys);
+      return block;
     } catch {
       return null;
     }
   }
 
   reviewConventions(
-    draft: Pick<ReviewDraft, 'directory' | 'reference'>,
+    draft: Pick<ReviewDraft, 'directory' | 'profile'>,
   ): ReviewConvention[] {
-    const context: LessonContext = {
-      directories: [draft.directory],
-      repository: draft.reference.repository,
-      role: 'reviewer',
-      workflow: null,
-    };
     try {
-      return applicableLessons(
-        this.lessonsFor(context),
-        context,
-        this.now(),
-      ).map(lesson => ({
-        id: lesson.id,
+      const { selection, keys } = this.select({
+        directories: [draft.directory],
+        provider: providerOf(draft.profile.provider),
+        role: 'reviewer',
+        workflow: null,
+        step: null,
+        paths: [],
+      });
+      this.delivered(keys);
+      const at = this.now().toISOString();
+      return selection.index.map(item => ({
+        id: randomUUID(),
         layer: 'global',
         scope: '',
-        text: `Owner lesson: ${lessonLine(lesson).slice(2)}`.slice(
+        text: `Owner lesson ${ruleEntryIndexLine(item.entry)} ${formatRuleEntryBody(item.entry.body).replaceAll('\n', ' ')}`.slice(
           0,
           codeReviewLimits.conventionText,
         ),
-        createdAt: lesson.createdAt,
-        updatedAt: lesson.updatedAt,
+        createdAt: at,
+        updatedAt: at,
       }));
     } catch {
       return [];
@@ -360,6 +389,14 @@ export class LessonService {
     await this.running?.catch(() => undefined);
   }
 
+  private today(): string {
+    return localDate(this.now());
+  }
+
+  private inDays(days: number): string {
+    return localDate(new Date(this.now().getTime() + days * DAY_MS));
+  }
+
   private changed(): LessonError {
     return new LessonError(
       'invalid-request',
@@ -368,21 +405,69 @@ export class LessonService {
   }
 
   private contextOf(session: Session): LessonContext {
+    const workflow = session.workflowRunId
+      ? (this.ports.workflowOf?.(
+          session.workflowRunId,
+          session.workflowStepId,
+        ) ?? null)
+      : null;
     return {
       directories: [
         session.directory,
         ...(session.worktree ? [session.worktree.projectDirectory] : []),
       ],
-      repository: session.pullRequest?.repository ?? null,
+      provider: providerOf(session.provider),
       role: session.role,
-      workflow: session.workflowRunId
-        ? (this.ports.workflowName?.(session.workflowRunId) ?? null)
-        : null,
+      workflow: workflow?.workflow ?? null,
+      step: workflow?.step ?? null,
+      paths: [],
     };
   }
 
-  private globalRoot(): LessonRoot {
-    return { scope: 'global', root: globalLessonRoot() };
+  private delivered(keys: readonly string[]): void {
+    if (!keys.length) return;
+    try {
+      this.ports.store.recordDelivery(keys, this.now().toISOString());
+    } catch {
+      return;
+    }
+  }
+
+  private select(context: LessonContext) {
+    const entries = this.entriesIn(
+      this.projectRoots(context.directories),
+    ).entries.filter(stored => this.isTrusted(stored));
+    const metrics = this.ports.store.metrics(entries.map(metricKey));
+    const byKey = new Map(entries.map(stored => [entryKey(stored), stored]));
+    const selection = selectEntries(
+      entries.map(
+        (stored): SelectableEntry => ({
+          key: entryKey(stored),
+          entry: stored.entry,
+          lastCited: metrics.get(metricKey(stored))?.lastCited ?? null,
+        }),
+      ),
+      context,
+      this.today(),
+    );
+    return {
+      selection,
+      keys: selection.index.map(item => metricKey(byKey.get(item.key)!)),
+    };
+  }
+
+  private isTrusted(stored: StoredRuleEntry): boolean {
+    if (stored.root.scope === 'global') return true;
+    const latest = this.ports.changes.latest(conversationOf(stored));
+    return (
+      latest?.createdBy === 'owner' &&
+      latest.after?.type === 'hash' &&
+      latest.after.hash === stored.hash
+    );
+  }
+
+  private globalRoot(): RuleEntryRoot {
+    return { scope: 'global', root: globalWorkflowsRoot() };
   }
 
   private projectRoots(directories: readonly string[]) {
@@ -395,44 +480,32 @@ export class LessonService {
     return [...roots.values()];
   }
 
-  private readFolder(root: LessonRoot, projectRoot: string | null) {
+  private readFolder(root: RuleEntryRoot) {
     const key = `${root.scope}:${pathKey(root.root)}`;
     const cached = this.folders.get(key);
     const now = Date.now();
     if (cached && now - cached.at < FOLDER_CACHE_MS) return cached.read;
-    const read = readLessonFolder(root, projectRoot);
+    const read = readRuleEntryFolder('lesson', root);
     this.folders.set(key, { at: now, read });
     return read;
   }
 
-  private filesIn(projectRoots: readonly string[]): LessonFolderRead {
+  private entriesIn(projectRoots: readonly string[]): RuleEntryFolderRead {
     const global = this.globalRoot();
     const reads = [
       ...projectRoots
-        .filter(
-          projectRoot =>
-            pathKey(projectLessonRoot(projectRoot)) !== pathKey(global.root),
-        )
-        .map(projectRoot =>
-          this.readFolder(
-            { scope: 'project', root: projectLessonRoot(projectRoot) },
-            projectRoot,
-          ),
-        ),
-      this.readFolder(global, null),
+        .map(projectRoot => projectWorkflowsRoot(projectRoot))
+        .filter(root => pathKey(root) !== pathKey(global.root))
+        .map(root => this.readFolder({ scope: 'project', root })),
+      this.readFolder(global),
     ];
-    const seen = new Set<string>();
-    const lessons: StoredLessonFile[] = [];
-    for (const read of reads)
-      for (const file of read.lessons) {
-        if (seen.has(file.lesson.id)) continue;
-        seen.add(file.lesson.id);
-        lessons.push(file);
-      }
-    return { lessons, issues: reads.flatMap(read => read.issues) };
+    return {
+      entries: reads.flatMap(read => read.entries),
+      issues: reads.flatMap(read => read.issues),
+    };
   }
 
-  private allFiles(): LessonFolderRead {
+  private allEntries(): RuleEntryFolderRead {
     const directories = [
       ...(this.ports.directories?.() ?? []),
       ...this.ports.store
@@ -440,124 +513,193 @@ export class LessonService {
         .map(incident => incident.directory)
         .filter(directory => directory !== null),
     ];
-    return this.filesIn(this.projectRoots(directories));
+    return this.entriesIn(this.projectRoots(directories));
   }
 
-  private lessonsFor(context: LessonContext): Lesson[] {
-    return this.filesIn(this.projectRoots(context.directories))
-      .lessons.filter(file => this.isOwnerApproved(file.lesson))
-      .map(file => file.lesson);
-  }
-
-  private isOwnerApproved(lesson: Lesson): boolean {
-    if (lesson.location?.scope !== 'project') return true;
-    const latest = this.ports.changes.latest(lesson.id);
-    return (
-      latest?.createdBy === 'owner' &&
-      latest.after?.type === 'hash' &&
-      latest.after.hash === lesson.version
-    );
-  }
-
-  private withChange(lesson: Lesson): Lesson {
-    if (!lesson.location) return lesson;
-    const latest = this.ports.changes.latest(lesson.id);
+  private toLesson(
+    stored: StoredRuleEntry,
+    metrics: Lesson['metrics'],
+  ): Lesson {
+    const { entry } = stored;
+    const latest = this.ports.changes.latest(conversationOf(stored));
     return {
-      ...lesson,
-      location: { ...lesson.location, changeId: latest?.changeId ?? null },
+      key: entryKey(stored),
+      id: entry.id,
+      state: entry.status,
+      description: entry.description,
+      kind: entry.kind,
+      scope: entry.scope,
+      enforcedBy: entry.enforcedBy,
+      review: entry.review ?? null,
+      provenance: entry.provenance,
+      body: entry.body,
+      project:
+        stored.root.scope === 'project'
+          ? projectRootOfWorkflowsRoot(stored.root.root)
+          : null,
+      version: stored.hash,
+      location: {
+        scope: stored.root.scope,
+        root: stored.root.root,
+        path: stored.path,
+        changeId: latest?.changeId ?? null,
+        trusted: this.isTrusted(stored),
+      },
+      evidence: this.ports.store
+        .incidentsById(entry.provenance.incidents ?? [])
+        .map(evidenceOf),
+      metrics,
+      createdAt: `${entry.provenance.date}T00:00:00.000Z`,
     };
+  }
+
+  private proposalFolder(): string {
+    const folder = join(this.ports.dataDirectory, 'lessons', 'proposals');
+    mkdirSync(folder, { recursive: true });
+    return folder;
+  }
+
+  private proposals(): Lesson[] {
+    const folder = this.proposalFolder();
+    return readdirSync(folder)
+      .filter(name => name.endsWith('.json'))
+      .slice(0, lessonLimits.proposals)
+      .map(name => this.readProposal(join(folder, name)))
+      .filter(lesson => lesson !== null)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  private readProposal(path: string): Lesson | null {
+    try {
+      const text = readFileSync(path, 'utf8');
+      const parsed = lessonSchema.safeParse(JSON.parse(text));
+      return parsed.success ? { ...parsed.data, version: hash(text) } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private proposal(key: string): Lesson | null {
+    if (!/^[0-9a-f-]{36}$/.test(key)) return null;
+    return this.readProposal(join(this.proposalFolder(), `${key}.json`));
+  }
+
+  private writeProposal(lesson: Lesson): void {
+    const path = join(this.proposalFolder(), `${lesson.key}.json`);
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    writeFileSync(
+      temporary,
+      JSON.stringify(lessonSchema.parse({ ...lesson, version: 'stored' })),
+      { mode: 0o600 },
+    );
+    renameSync(temporary, path);
+  }
+
+  private removeProposal(key: string): void {
+    rmSync(join(this.proposalFolder(), `${key}.json`), { force: true });
+  }
+
+  private requireFutureReview(review: string | undefined): void {
+    if (review && review <= this.today())
+      throw new LessonError(
+        'invalid-request',
+        'Choose a review date in the future.',
+      );
   }
 
   private async decideProposal(
     proposal: Lesson,
     input: DecideLessonInput,
   ): Promise<void> {
-    const { store } = this.ports;
-    const at = this.now().toISOString();
-    const edited: Lesson = {
-      ...proposal,
-      title: input.title ?? proposal.title,
-      rule: input.rule ?? proposal.rule,
-      scope: input.scope ?? proposal.scope,
-      reviewAt: input.reviewAt ?? proposal.reviewAt,
-      version: nextProposalVersion(proposal.version),
-      updatedAt: at,
-    };
-    if (input.reviewAt) this.requireFuture(input.reviewAt);
-    if (input.decision === 'edit' || input.decision === 'reject') {
-      if (proposal.status === 'rejected')
-        throw new LessonError(
-          'invalid-request',
-          'A rejected proposal cannot be changed.',
-        );
-      const next: Lesson =
-        input.decision === 'reject'
-          ? { ...edited, status: 'rejected', decidedAt: at }
-          : edited;
-      if (!store.replaceProposal(next, proposal.version)) throw this.changed();
+    if (input.decision === 'reject') {
+      this.removeProposal(proposal.key);
       return;
     }
-    if (input.decision !== 'approve')
+    if (input.decision === 'retire' || input.decision === 'undo')
       throw new LessonError(
         'invalid-request',
-        input.decision === 'undo'
-          ? 'Only an approved lesson file has changes to undo.'
-          : 'Only an approved lesson can be retired. Reject the proposal instead.',
+        'Approve or reject a proposed lesson first.',
       );
-    if (proposal.status === 'rejected')
-      throw new LessonError(
-        'invalid-request',
-        'A rejected proposal cannot be approved.',
-      );
-    const document: LessonFileDocument = {
-      id: proposal.id,
-      title: edited.title,
-      rule: edited.rule,
-      scope: edited.scope,
-      status: 'approved',
-      reviewAt: this.reviewDate(edited.reviewAt),
-      approvedAt: at,
-      proposalId: proposal.proposalId,
-      evidence: proposal.evidence,
+    const changes = input.changes ?? {};
+    this.requireFutureReview(changes.review);
+    const edited: Lesson = {
+      ...proposal,
+      description: changes.description ?? proposal.description,
+      kind: changes.kind ?? proposal.kind,
+      body: changes.body ?? proposal.body,
+      scope: changes.scope ?? proposal.scope,
+      enforcedBy: changes.enforcedBy ?? proposal.enforcedBy,
+      review: changes.review ?? proposal.review,
+      project:
+        changes.project === undefined ? proposal.project : changes.project,
     };
-    const target = this.targetFor(document.scope);
-    const outcome = await this.ports.changes.applyLesson(
+    if (input.decision === 'edit') {
+      this.writeProposal(edited);
+      return;
+    }
+    const target = this.targetFor(edited.project);
+    const known = this.allEntries().entries.map(stored => stored.entry);
+    const number = this.ports.store.claimNumber(
+      highestRuleEntryNumber(known) + 1,
+    );
+    const id = `lesson-${String(number).padStart(4, '0')}`;
+    const entry: RuleEntry = {
+      id,
+      type: 'lesson',
+      description: edited.description,
+      kind: edited.kind,
+      scope: edited.scope,
+      status: 'active',
+      enforcedBy: edited.enforcedBy,
+      review:
+        edited.review && edited.review > this.today()
+          ? edited.review
+          : this.inDays(lessonLimits.defaultReviewDays),
+      provenance: { ...edited.provenance, date: this.today() },
+      body: edited.body,
+    };
+    const root: RuleEntryRoot = {
+      scope: target.scope,
+      root:
+        target.scope === 'project'
+          ? projectWorkflowsRoot(target.directory)
+          : globalWorkflowsRoot(),
+    };
+    const outcome = await this.ports.changes.applyRuleEntry(
       {
-        conversationId: proposal.id,
+        conversationId: conversationOf({ root, entry }),
         messageId: randomUUID(),
         directory: target.directory,
       },
       {
+        type: 'lesson',
         op: 'create',
         scope: target.scope,
-        name: lessonFileName(document.title, document.id),
+        name: id,
         basedOnHash: null,
-        document: serializeLesson(
-          document,
-          target.scope === 'project' ? target.directory : null,
-        ),
-        summary: `Approve lesson: ${document.title}`,
-        validate: this.validator(target),
+        document: serializeRuleEntry(entry),
+        summary: `Approve ${id}`,
+        validate: text => validateRuleEntryDocument('lesson', id, text),
       },
     );
     this.requireApplied(outcome);
-    store.deleteProposal(proposal.id, proposal.version);
+    this.removeProposal(proposal.key);
   }
 
-  private async decideFile(
-    file: StoredLessonFile,
+  private async decideEntry(
+    stored: StoredRuleEntry,
     input: DecideLessonInput,
   ): Promise<void> {
-    const location = file.lesson.location!;
+    const conversationId = conversationOf(stored);
     if (input.decision === 'undo') {
-      const latest = this.ports.changes.latest(file.lesson.id);
+      const latest = this.ports.changes.latest(conversationId);
       if (!latest)
         throw new LessonError(
           'invalid-request',
           'This lesson has no change from Nesvo to undo.',
         );
       const result = await this.ports.changes.undo({
-        conversationId: file.lesson.id,
+        conversationId,
         changeId: latest.changeId,
       });
       if (result.status === 'conflict')
@@ -574,104 +716,82 @@ export class LessonService {
         'invalid-request',
         'An approved lesson cannot be rejected. Retire it instead.',
       );
-    if (input.reviewAt) this.requireFuture(input.reviewAt);
-    const scope = input.scope ?? file.document.scope;
-    if (isProjectScope(scope) !== (location.scope === 'project'))
+    const changes = input.changes ?? {};
+    if (changes.project !== undefined)
       throw new LessonError(
         'invalid-request',
-        'This scope belongs in another workflows folder. Retire the lesson and approve a new one instead.',
+        'An approved lesson stays in its workflows folder. Retire it and approve a new one instead.',
       );
-    if (input.decision === 'retire' && file.document.status !== 'approved')
-      throw new LessonError(
-        'invalid-request',
-        'Only an approved lesson can be retired.',
-      );
-    if (input.decision === 'approve' && file.document.status !== 'approved')
+    this.requireFutureReview(changes.review);
+    if (input.decision !== 'edit' && stored.entry.status !== 'active')
       throw new LessonError(
         'invalid-request',
         'A retired lesson stays retired. Approve a new proposal instead.',
       );
-    const document: LessonFileDocument = {
-      ...file.document,
-      title: input.title ?? file.document.title,
-      rule: input.rule ?? file.document.rule,
-      scope,
-      status: input.decision === 'retire' ? 'retired' : file.document.status,
-      reviewAt:
+    const entry: RuleEntry = {
+      ...stored.entry,
+      description: changes.description ?? stored.entry.description,
+      kind: changes.kind ?? stored.entry.kind,
+      body: changes.body ?? stored.entry.body,
+      scope: changes.scope ?? stored.entry.scope,
+      enforcedBy: changes.enforcedBy ?? stored.entry.enforcedBy,
+      status: input.decision === 'retire' ? 'retired' : stored.entry.status,
+      review:
         input.decision === 'approve'
-          ? this.reviewDate(input.reviewAt ?? null)
-          : (input.reviewAt ?? file.document.reviewAt),
-      approvedAt:
-        input.decision === 'approve'
-          ? this.now().toISOString()
-          : file.document.approvedAt,
+          ? (changes.review ?? this.inDays(lessonLimits.defaultReviewDays))
+          : (changes.review ?? stored.entry.review),
     };
-    const target = {
-      scope: location.scope,
-      directory:
-        location.scope === 'project'
-          ? dirname(dirname(location.root))
-          : this.globalDirectory(),
-    };
-    const outcome = await this.ports.changes.applyLesson(
+    const verb =
+      input.decision === 'retire'
+        ? 'Retire'
+        : input.decision === 'approve'
+          ? 'Keep'
+          : 'Edit';
+    const outcome = await this.ports.changes.applyRuleEntry(
       {
-        conversationId: file.lesson.id,
+        conversationId,
         messageId: randomUUID(),
-        directory: target.directory,
+        directory:
+          stored.root.scope === 'project'
+            ? projectRootOfWorkflowsRoot(stored.root.root)
+            : this.workspace(),
       },
       {
+        type: 'lesson',
         op: 'update',
-        scope: location.scope,
-        name: location.name,
-        basedOnHash: file.lesson.version,
-        document: serializeLesson(
-          document,
-          location.scope === 'project' ? target.directory : null,
-        ),
-        summary: `${input.decision === 'retire' ? 'Retire' : input.decision === 'approve' ? 'Keep' : 'Edit'} lesson: ${document.title}`,
-        validate: this.validator(target),
+        scope: stored.root.scope,
+        name: stored.entry.id,
+        basedOnHash: stored.hash,
+        document: serializeRuleEntry(entry),
+        summary: `${verb} ${stored.entry.id}`,
+        validate: text =>
+          validateRuleEntryDocument('lesson', stored.entry.id, text),
       },
     );
     this.requireApplied(outcome);
   }
 
-  private validator(target: {
-    scope: LessonRoot['scope'];
-    directory: string;
-  }) {
-    const root: LessonRoot =
-      target.scope === 'project'
-        ? { scope: 'project', root: target.directory }
-        : this.globalRoot();
-    return (document: string) => {
-      const parsed = parseLessonDocument(document, root);
-      return parsed.valid ? [] : parsed.issues;
-    };
-  }
-
-  private targetFor(scope: LessonScope): {
-    scope: LessonRoot['scope'];
+  private targetFor(project: string | null): {
+    scope: RuleEntryRoot['scope'];
     directory: string;
   } {
-    if (isProjectScope(scope) && scope.kind === 'repository') {
-      const projectRoot = projectRootSync(scope.value);
-      if (!projectRoot)
-        throw new LessonError(
-          'invalid-request',
-          'The project folder of this lesson does not exist on this computer.',
-        );
-      return { scope: 'project', directory: projectRoot };
-    }
-    return { scope: 'global', directory: this.globalDirectory() };
+    if (!project) return { scope: 'global', directory: this.workspace() };
+    const projectRoot = projectRootSync(project);
+    if (!projectRoot)
+      throw new LessonError(
+        'invalid-request',
+        'The project folder of this lesson does not exist on this computer.',
+      );
+    return { scope: 'project', directory: projectRoot };
   }
 
-  private globalDirectory(): string {
-    const directory = join(this.ports.dataDirectory, 'lessons');
+  private workspace(): string {
+    const directory = join(this.ports.dataDirectory, 'lessons', 'workspace');
     mkdirSync(directory, { recursive: true });
     return directory;
   }
 
-  private requireApplied(outcome: LessonChangeOutcome): void {
+  private requireApplied(outcome: RuleEntryChangeOutcome): void {
     if (outcome.status === 'applied') return;
     throw new LessonError(
       'invalid-request',
@@ -680,21 +800,6 @@ export class LessonService {
           ? 'The lesson file changed. Refresh and try again.'
           : 'The lesson file could not be written.'),
     );
-  }
-
-  private requireFuture(reviewAt: string): void {
-    if (Date.parse(reviewAt) <= this.now().getTime())
-      throw new LessonError(
-        'invalid-request',
-        'Choose a review date in the future.',
-      );
-  }
-
-  private reviewDate(requested: string | null): string {
-    const now = this.now().getTime();
-    return requested && Date.parse(requested) > now
-      ? requested
-      : new Date(now + lessonLimits.defaultReviewDays * DAY_MS).toISOString();
   }
 
   private recover(): void {
@@ -730,19 +835,88 @@ export class LessonService {
     });
   }
 
+  private provenanceOf(
+    lesson: AdmittedLesson,
+    byId: Map<string, LessonIncident>,
+  ): RuleEntryProvenance {
+    const sources = lesson.evidence
+      .map(id => byId.get(id))
+      .filter(incident => incident !== undefined);
+    const first = sources[0];
+    const quote = sources.find(incident => incident.quote)?.quote;
+    return {
+      source: 'incident',
+      incidents: lesson.evidence,
+      ...(first?.workflowRunId ? { run: first.workflowRunId } : {}),
+      ...(first?.step ? { step: first.step } : {}),
+      ...(first?.sessionId ? { session: first.sessionId } : {}),
+      date: this.today(),
+      ...(quote ? { quote } : {}),
+    };
+  }
+
+  private existingEntries(): ExistingEntry[] {
+    return [
+      ...this.proposals().map(lesson => ({
+        id: 'proposed',
+        description: lesson.description,
+        rule: lesson.body.rule,
+      })),
+      ...this.allEntries()
+        .entries.filter(stored => stored.entry.status === 'active')
+        .map(stored => ({
+          id: stored.entry.id,
+          description: stored.entry.description,
+          rule: stored.entry.body.rule,
+        })),
+    ];
+  }
+
+  private storeProposals(
+    proposalId: string,
+    lessons: readonly AdmittedLesson[],
+    incidents: readonly LessonIncident[],
+  ): number {
+    const byId = new Map(incidents.map(incident => [incident.id, incident]));
+    const room = Math.max(0, lessonLimits.proposals - this.proposals().length);
+    const accepted = lessons.slice(0, room);
+    const at = this.now().toISOString();
+    for (const lesson of accepted)
+      this.writeProposal({
+        key: derivedId(`lesson:${proposalId}`, lesson.description),
+        id: null,
+        state: 'proposed',
+        description: lesson.description,
+        kind: lesson.kind,
+        scope: lesson.scope,
+        enforcedBy: lesson.enforcedBy,
+        review: this.inDays(lesson.reviewInDays),
+        provenance: this.provenanceOf(lesson, byId),
+        body: lesson.body,
+        project: lesson.project,
+        version: 'stored',
+        location: null,
+        evidence: lesson.evidence
+          .map(id => byId.get(id))
+          .filter(incident => incident !== undefined)
+          .map(evidenceOf),
+        metrics: null,
+        createdAt: at,
+      });
+    this.ports.store.markProposed(
+      incidents.map(incident => incident.id),
+      at,
+    );
+    return accepted.length;
+  }
+
   private async run(proposalId: string, startedAt: string): Promise<void> {
     const { store, sessions } = this.ports;
     const settings = store.settings();
     const incidents = store.pendingIncidents(lessonLimits.proposalIncidents);
-    const existing = [
-      ...store.proposals().filter(lesson => lesson.status === 'proposed'),
-      ...this.allFiles()
-        .lessons.map(file => file.lesson)
-        .filter(lesson => lesson.status === 'approved'),
-    ];
+    const existing = this.existingEntries();
     let sessionId: string | null = null;
     try {
-      const directory = this.globalDirectory();
       const session = await sessions.createWithEffort(
         {
           requestId: derivedId('lesson-session', proposalId),
@@ -750,7 +924,7 @@ export class LessonService {
           provider: settings.provider,
           model: settings.model,
           mode: 'read-only',
-          directory,
+          directory: this.workspace(),
         },
         this.controller.signal,
       );
@@ -766,6 +940,7 @@ export class LessonService {
         {
           outputSchema: lessonProposalOutputJsonSchema(),
           instructionsOnly: true,
+          withoutResult: true,
         },
       );
       if (!started.runId)
@@ -786,47 +961,26 @@ export class LessonService {
         });
         return;
       }
-      const now = this.now();
       const parsed = parseLessonProposal(
         outcome.structured,
         incidents,
         existing,
-        now,
       );
       if (!parsed.valid) {
         this.finish({ status: 'invalid', error: parsed.error });
         return;
       }
-      const byId = new Map(incidents.map(incident => [incident.id, incident]));
-      const room = Math.max(0, lessonLimits.proposals - store.proposalCount());
-      const accepted = parsed.lessons.slice(0, room);
-      const at = now.toISOString();
-      store.transact(() => {
-        for (const lesson of accepted)
-          store.insertProposal({
-            id: derivedId(`lesson:${proposalId}`, lesson.rule),
-            version: proposalVersion(1),
-            status: 'proposed',
-            location: null,
-            title: lesson.title,
-            rule: lesson.rule,
-            scope: lesson.scope,
-            evidence: lesson.evidence
-              .map(id => byId.get(id))
-              .filter(incident => incident !== undefined)
-              .map(evidenceOf),
-            reviewAt: lesson.reviewAt,
-            proposalId,
-            createdAt: at,
-            updatedAt: at,
-            decidedAt: null,
-          });
-        store.markProposed(
-          incidents.map(incident => incident.id),
-          at,
-        );
+      const proposed = this.storeProposals(
+        proposalId,
+        parsed.lessons,
+        incidents,
+      );
+      this.finish({
+        status: 'idle',
+        error: null,
+        proposed,
+        dropped: parsed.dropped + parsed.lessons.length - proposed,
       });
-      this.finish({ status: 'idle', error: null, proposed: accepted.length });
     } catch (error) {
       this.finish({
         status: 'failed',

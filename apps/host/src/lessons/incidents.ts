@@ -22,6 +22,7 @@ export type IncidentDraft = {
 };
 
 export const PLAN_CORRECTION_THRESHOLD = 2;
+const QUOTE_LENGTH = 400;
 const FAILED_STEP_STATES: readonly WorkflowStepRecord['state'][] = [
   'failed',
   'error',
@@ -50,7 +51,9 @@ const draft = (
       | 'workflowRunId'
       | 'workflowStepId'
       | 'workflow'
+      | 'step'
       | 'directory'
+      | 'quote'
     >
   >,
 ): IncidentDraft => ({
@@ -69,7 +72,9 @@ const draft = (
     workflowRunId: links.workflowRunId ?? null,
     workflowStepId: links.workflowStepId ?? null,
     workflow: links.workflow ?? null,
+    step: links.step ?? null,
     directory: links.directory ?? null,
+    quote: links.quote ? bounded(links.quote, QUOTE_LENGTH) : null,
     proposedAt: null,
   },
 });
@@ -143,7 +148,10 @@ export const stageRecordIncidents = (
           record.at,
           `The owner rejected the plan of ${quotedTitle(session)}.`,
           record.text ? [`Reason: ${record.text}`] : [],
-          sessionLinks(session, session.plan?.runId ?? null),
+          {
+            ...sessionLinks(session, session.plan?.runId ?? null),
+            quote: record.text,
+          },
         ),
       );
     if (record.kind === 'plan-decision' && record.decision === 'correct') {
@@ -163,7 +171,10 @@ export const stageRecordIncidents = (
             record.at,
             `The plan of ${quotedTitle(session)} needed ${corrections} corrections.`,
             record.text ? [`Latest correction: ${record.text}`] : [],
-            sessionLinks(session, session.plan?.runId ?? null),
+            {
+              ...sessionLinks(session, session.plan?.runId ?? null),
+              quote: record.text,
+            },
           ),
         );
     }
@@ -207,7 +218,7 @@ export const workerPlanIncident = (
       at,
       `The owner rejected the plan of worker ${JSON.stringify(delegation.title.slice(0, 80))}.`,
       text ? [`Reason: ${text}`] : [],
-      links,
+      { ...links, quote: text },
     );
   if (decision === 'correct' && delegation.planRound > PLAN_CORRECTION_THRESHOLD)
     return draft(
@@ -216,7 +227,7 @@ export const workerPlanIncident = (
       at,
       `The plan of worker ${JSON.stringify(delegation.title.slice(0, 80))} needed ${delegation.planRound} corrections.`,
       text ? [`Latest correction: ${text}`] : [],
-      links,
+      { ...links, quote: text },
     );
   return null;
 };
@@ -247,6 +258,7 @@ export const workflowStepIncidents = (
     workflowRunId: run.id,
     workflowStepId: step.id,
     workflow: run.workflow.name,
+    step: step.name,
     directory: run.projectRoot,
   };
   const drafts: IncidentDraft[] = [];

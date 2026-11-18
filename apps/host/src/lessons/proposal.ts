@@ -1,14 +1,19 @@
 import {
+  RULE_ENTRY_TRIGGER,
   lessonLimits,
-  lessonProposalOutputSchema,
-  lessonRoleSchema,
-  type Lesson,
+  proposedLessonSchema,
+  ruleEntryBodySchema,
+  ruleEntryLimits,
+  ruleEntryRoleSchema,
   type LessonIncident,
   type ProposedLesson,
+  type RuleEntryBody,
 } from '@nesvo/contracts';
 
 export const LESSON_PROPOSAL_MARKER = 'nesvo-lesson-proposal';
-const DAY_MS = 24 * 60 * 60_000;
+
+const VOLATILE_DETAIL =
+  /\b[0-9a-f]{40}\b|\b[0-9a-f]{7,12}\b(?=.*\bcommit\b)|\bv?\d+\.\d+\.\d+\b/i;
 
 const neutralize = (text: string) =>
   text.replaceAll('</incidents', '<\\/incidents');
@@ -20,35 +25,41 @@ const incidentEntry = (incident: LessonIncident) => ({
   summary: incident.summary,
   details: incident.details,
   workflow: incident.workflow,
+  step: incident.step,
   directory: incident.directory,
 });
 
+export type ExistingEntry = { id: string; description: string; rule: string };
+
 export const lessonProposalPrompt = (
   incidents: readonly LessonIncident[],
-  existing: readonly Lesson[],
+  existing: readonly ExistingEntry[],
 ) =>
   [
     `[${LESSON_PROPOSAL_MARKER}]`,
     'You help the owner of this computer learn from recent problems in their agent sessions and workflows.',
     'Read the incidents below and propose a few short, durable lessons that would have prevented them. Do not read or change files and do not run commands; everything you need is here.',
     '',
-    'Rules for each lesson:',
-    `- title: at most ${lessonLimits.title} characters, one line.`,
-    `- rule: one imperative instruction for future agent sessions, at most ${lessonLimits.rule} characters. Never include secrets, personal data, file contents or quotes longer than a few words.`,
-    '- scope: the narrowest scope that fits. Use { "kind": "global" } only for lessons that apply everywhere; { "kind": "repository", "value": <the absolute project folder from the incident directory, or a GitHub owner/name> }; { "kind": "role", "value": one of ' +
-      lessonRoleSchema.options.join(', ') +
-      ' }; or { "kind": "workflow", "value": <workflow name from the incident> }.',
-    '- evidence: the ids of the incidents that support the lesson. Use only ids listed below.',
-    `- reviewInDays: when the owner should review the lesson again, between ${lessonLimits.minimumReviewDays} and ${lessonLimits.maximumReviewDays} days; suggest a shorter period for uncertain lessons.`,
-    `- Propose at most ${lessonLimits.proposedLessons} lessons. Return an empty list when the incidents do not support a useful lesson.`,
-    '- Do not repeat a lesson that is already approved or proposed.',
+    'Keep a lesson only if it still holds in six months, would change what a future agent does and is not already covered. Leave out volatile details such as commit hashes, versions, counts and dates. If a lint rule, type, test or CI job could enforce it, propose kind "check" and describe that check.',
+    '',
+    'Fields of each lesson:',
+    `- description: at most ${ruleEntryLimits.description} characters, third person, starting with "${RULE_ENTRY_TRIGGER} ...". It is the only text an agent always sees.`,
+    '- kind: "instruction" for a rule an agent follows, "check" for a deterministic command or lint rule.',
+    '- rule: one to three imperative sentences.',
+    '- why: one sentence.',
+    '- check: one line saying how to verify the rule.',
+    `- rule, why and check together stay under ${ruleEntryLimits.body} characters and contain no secrets, personal data or file contents.`,
+    `- scope: an object whose keys are all optional: providers (claude, codex), roles (${ruleEntryRoleSchema.options.join(', ')}), workflows (workflow names from the incidents), steps (step names), paths (file globs). Use {} when the lesson applies to every session.`,
+    '- project: the absolute project folder from an incident directory when the lesson is specific to that project, otherwise null.',
+    '- enforcedBy: "none".',
+    '- evidence: ids of the incidents that support the lesson. Use only ids listed below.',
+    `- reviewInDays: when the owner should review it again, between ${lessonLimits.minimumReviewDays} and ${lessonLimits.maximumReviewDays}; shorter for uncertain lessons.`,
+    `Propose at most ${lessonLimits.proposedLessons} lessons, or none when the incidents do not support a useful one.`,
     '',
     existing.length
       ? [
-          'Lessons that already exist:',
-          ...existing.map(
-            lesson => `- ${lesson.title}: ${lesson.rule.replace(/\s+/g, ' ')}`,
-          ),
+          'Lessons that already exist (do not repeat them):',
+          ...existing.map(item => `- ${item.id}: ${item.description}`),
         ].join('\n')
       : 'No lessons exist yet.',
     '',
@@ -60,50 +71,66 @@ export const lessonProposalPrompt = (
     'Return the lessons only in the required structured form.',
   ].join('\n');
 
+export type AdmittedLesson = Omit<
+  ProposedLesson,
+  'rule' | 'why' | 'check'
+> & { body: RuleEntryBody };
+
 export type ParsedProposal =
-  | { valid: true; lessons: (ProposedLesson & { reviewAt: string })[] }
+  | { valid: true; lessons: AdmittedLesson[]; dropped: number }
   | { valid: false; error: string };
 
-const sameRule = (left: string, right: string) =>
-  left.replace(/\s+/g, ' ').trim().toLowerCase() ===
-  right.replace(/\s+/g, ' ').trim().toLowerCase();
+const normalized = (text: string) =>
+  text.replace(/\s+/g, ' ').trim().toLowerCase();
 
 export const parseLessonProposal = (
   structured: unknown,
   incidents: readonly LessonIncident[],
-  existing: readonly Lesson[],
-  now: Date,
+  existing: readonly ExistingEntry[],
 ): ParsedProposal => {
-  const parsed = lessonProposalOutputSchema.safeParse(structured);
-  if (!parsed.success)
+  const list =
+    structured &&
+    typeof structured === 'object' &&
+    Array.isArray((structured as { lessons?: unknown }).lessons)
+      ? ((structured as { lessons: unknown[] }).lessons as unknown[])
+      : null;
+  if (!list)
     return {
       valid: false,
-      error: `The proposal did not match the lesson schema: ${parsed.error.issues
-        .slice(0, 3)
-        .map(issue => `${issue.path.join('.') || 'output'}: ${issue.message}`)
-        .join('; ')}`.slice(0, lessonLimits.error),
+      error: 'The proposal did not return a list of lessons.',
     };
   const known = new Set(incidents.map(incident => incident.id));
-  const kept: (ProposedLesson & { reviewAt: string })[] = [];
-  for (const lesson of parsed.data.lessons) {
-    const evidence = [...new Set(lesson.evidence)].filter(id => known.has(id));
-    if (!evidence.length) continue;
-    if (
-      [...existing, ...kept].some(
-        item =>
-          ('status' in item
-            ? item.status === 'proposed' || item.status === 'approved'
-            : true) && sameRule(item.rule, lesson.rule),
-      )
-    )
+  const seen = new Set(
+    existing.flatMap(item => [
+      normalized(item.description),
+      normalized(item.rule),
+    ]),
+  );
+  const lessons: AdmittedLesson[] = [];
+  let dropped = 0;
+  for (const candidate of list.slice(0, lessonLimits.proposedLessons)) {
+    const parsed = proposedLessonSchema.safeParse(candidate);
+    if (!parsed.success) {
+      dropped++;
       continue;
-    kept.push({
-      ...lesson,
-      evidence,
-      reviewAt: new Date(
-        now.getTime() + lesson.reviewInDays * DAY_MS,
-      ).toISOString(),
-    });
+    }
+    const { rule, why, check, ...rest } = parsed.data;
+    const body = ruleEntryBodySchema.safeParse({ rule, why, check });
+    const evidence = [...new Set(rest.evidence)].filter(id => known.has(id));
+    const texts = [rest.description, rule, why, check];
+    if (
+      !body.success ||
+      !evidence.length ||
+      texts.some(text => VOLATILE_DETAIL.test(text)) ||
+      seen.has(normalized(rest.description)) ||
+      seen.has(normalized(rule))
+    ) {
+      dropped++;
+      continue;
+    }
+    seen.add(normalized(rest.description));
+    seen.add(normalized(rule));
+    lessons.push({ ...rest, evidence, body: body.data });
   }
-  return { valid: true, lessons: kept };
+  return { valid: true, lessons, dropped };
 };

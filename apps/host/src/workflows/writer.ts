@@ -1,5 +1,7 @@
 import {
+  RULE_ENTRY_FOLDERS,
   stepNameSchema,
+  type RuleEntryType,
   type DefinitionCatalog,
   type DefinitionIssue,
   type DefinitionKind,
@@ -50,22 +52,24 @@ export type DefinitionTarget = {
 };
 
 type FolderTarget = Omit<DefinitionTarget, 'kind'> & {
-  kind: DefinitionKind | 'lesson';
+  kind: DefinitionKind | RuleEntryType;
 };
 
-export type LessonFileTarget = Omit<DefinitionTarget, 'kind'>;
+export type RuleEntryFileTarget = Omit<DefinitionTarget, 'kind'> & {
+  type: RuleEntryType;
+};
 
-export type SaveLessonFileInput = LessonFileTarget & {
+export type SaveRuleEntryFileInput = RuleEntryFileTarget & {
   document: string;
   expectedHash: string | null;
   validate: (document: string) => string[];
 };
 
-export type DeleteLessonFileInput = LessonFileTarget & {
+export type DeleteRuleEntryFileInput = RuleEntryFileTarget & {
   expectedHash: string;
 };
 
-export type LessonFileWriteResult =
+export type RuleEntryFileWriteResult =
   | { type: 'written'; path: string; root: string }
   | { type: 'conflict'; path: string; currentHash: string | null }
   | { type: 'refused'; issues: DefinitionIssue[] };
@@ -742,7 +746,10 @@ export async function deleteDefinition(
   });
 }
 
-const lessonRequested = async (target: LessonFileTarget, signal: AbortSignal) => {
+const entryRequested = async (
+  target: RuleEntryFileTarget,
+  signal: AbortSignal,
+) => {
   const roots = await resolveWriteRoots(target.directory, signal);
   return {
     roots,
@@ -750,23 +757,23 @@ const lessonRequested = async (target: LessonFileTarget, signal: AbortSignal) =>
   };
 };
 
-const lessonConflict = (
+const entryConflict = (
   path: string,
   current: Current,
-): LessonFileWriteResult => ({
+): RuleEntryFileWriteResult => ({
   type: 'conflict',
   path,
   currentHash: current.file?.contentHash ?? null,
 });
 
-export async function saveLessonFile(
-  input: SaveLessonFileInput,
+export async function saveRuleEntryFile(
+  input: SaveRuleEntryFileInput,
   signal: AbortSignal,
   options: WriteOptions = {},
-): Promise<LessonFileWriteResult> {
+): Promise<RuleEntryFileWriteResult> {
   requireName(input.name);
-  const { roots, requested } = await lessonRequested(input, signal);
-  const plannedPath = join(requested, 'lessons', `${input.name}.md`);
+  const { roots, requested } = await entryRequested(input, signal);
+  const plannedPath = join(requested, RULE_ENTRY_FOLDERS[input.type], `${input.name}.md`);
   const textIssues = checkFileText(input.document, plannedPath);
   if (textIssues.length) return { type: 'refused', issues: textIssues };
   const invalid = input.validate(input.document);
@@ -775,7 +782,7 @@ export async function saveLessonFile(
       type: 'refused',
       issues: invalid.map(message => issueAt(plannedPath, message)),
     };
-  const target = { ...input, kind: 'lesson' as const };
+  const target = { ...input, kind: input.type };
   return exclusive(pathKey(requested), async () => {
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return { type: 'refused' as const, issues: moved.issues };
@@ -789,7 +796,7 @@ export async function saveLessonFile(
     if (isRefusal(current))
       return { type: 'refused' as const, issues: current.issues };
     if ((current.file?.contentHash ?? null) !== input.expectedHash)
-      return lessonConflict(path, current);
+      return entryConflict(path, current);
     const location = await prepareFolder(target, roots, true);
     if (!location || 'type' in location)
       return {
@@ -822,21 +829,21 @@ export async function saveLessonFile(
       return { type: 'written' as const, path: location.path, root: location.root };
     if (isRefusal(outcome))
       return { type: 'refused' as const, issues: outcome.issues };
-    return lessonConflict(location.path, outcome);
+    return entryConflict(location.path, outcome);
   }).catch(error => {
     if (error instanceof DefinitionError) throw error;
     return unavailable(error);
   });
 }
 
-export async function deleteLessonFile(
-  input: DeleteLessonFileInput,
+export async function deleteRuleEntryFile(
+  input: DeleteRuleEntryFileInput,
   signal: AbortSignal,
   options: WriteOptions = {},
-): Promise<LessonFileWriteResult> {
+): Promise<RuleEntryFileWriteResult> {
   requireName(input.name);
-  const { roots, requested } = await lessonRequested(input, signal);
-  const target = { ...input, kind: 'lesson' as const };
+  const { roots, requested } = await entryRequested(input, signal);
+  const target = { ...input, kind: input.type };
   return exclusive(pathKey(requested), async () => {
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return { type: 'refused' as const, issues: moved.issues };
@@ -844,14 +851,14 @@ export async function deleteLessonFile(
     if (location && 'type' in location)
       return { type: 'refused' as const, issues: location.issues };
     const path =
-      location?.path ?? join(requested, 'lessons', `${input.name}.md`);
+      location?.path ?? join(requested, RULE_ENTRY_FOLDERS[input.type], `${input.name}.md`);
     const latest: Current | WorkflowDefinitionRefused = location
       ? await readCurrent(path, signal)
       : { file: null };
     if (isRefusal(latest))
       return { type: 'refused' as const, issues: latest.issues };
     if (latest.file?.contentHash !== input.expectedHash)
-      return lessonConflict(path, latest);
+      return entryConflict(path, latest);
     options.onPrevious?.(
       latest.file,
       location?.root ?? (await realpath(requested).catch(() => requested)),
