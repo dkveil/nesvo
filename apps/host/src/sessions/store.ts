@@ -32,6 +32,7 @@ export type SessionOrigin =
       messages: Session['messages'];
     }
   | { kind: 'workflow-assistant' }
+  | { kind: 'workflow-gate-rule-proposal'; runId: string; stepId: string }
   | ScheduledJobSessionOrigin
   | WorkflowSessionOrigin;
 
@@ -74,6 +75,7 @@ const originLinks = (
         workflowStepId: null,
         delegationEnabled: false,
       };
+    case 'workflow-gate-rule-proposal':
     case 'workflow':
       return {
         scheduledJobId: null,

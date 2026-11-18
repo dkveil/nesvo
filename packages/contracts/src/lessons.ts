@@ -4,6 +4,7 @@ import {
   ruleEntryDescriptionSchema,
   ruleEntryEnforcedBySchema,
   ruleEntryFieldsSchema,
+  ruleEntryMetricsSchema,
   ruleEntryProvenanceSchema,
   ruleEntryScopeSchema,
   type RuleEntryRole,
@@ -102,12 +103,7 @@ export const lessonLocationSchema = z.strictObject({
 });
 export type LessonLocation = z.infer<typeof lessonLocationSchema>;
 
-export const lessonMetricsSchema = z.strictObject({
-  delivered: z.number().int().nonnegative(),
-  cited: z.number().int().nonnegative(),
-  lastDelivered: timestampSchema.nullable(),
-  lastCited: timestampSchema.nullable(),
-});
+export const lessonMetricsSchema = ruleEntryMetricsSchema;
 export type LessonMetrics = z.infer<typeof lessonMetricsSchema>;
 
 export const lessonSchema = z.strictObject({

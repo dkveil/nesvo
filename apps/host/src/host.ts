@@ -118,6 +118,10 @@ import { ownerActor } from './sessions/stages';
 import { resumeSession } from './sessions/resume';
 import { MergedWorktreeCleanups } from './sessions/merged-cleanup';
 import { LessonError, LessonService } from './lessons/service';
+import { dirname } from 'node:path';
+import { GateRuleService } from './workflows/gate-rule-service';
+import { GateRuleStore } from './workflows/gate-rule-store';
+import { ruleEntryMetricKey } from './workflows/rule-entry-files';
 import { LessonStore } from './lessons/store';
 import { InboxRuleError, InboxRules } from './inbox-rules/service';
 import { InboxRuleFileError } from './inbox-rules/files';
@@ -180,6 +184,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'save-lesson-settings',
   'propose-lessons',
   'decide-lesson',
+  'gate-rules',
   'decide-review',
   'start-workflow-task',
   'run-workflow-steps',
@@ -354,8 +359,12 @@ export const serveHost = ({
       const recipes: { current?: WorktreeRecipes } = {};
       let outgoing = Promise.resolve();
       const lessons: { current?: LessonService } = {};
+      const ruleMetrics = new LessonStore(database);
+      const gateRules: { current?: GateRuleService } = {};
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
+        if (message.type === 'workflow-run-changed')
+          gateRules.current?.settled(message.run);
         if (message.type === 'workflow-step-changed')
           lessons.current?.workflowStepChanged(
             workflowRunStore.getRun(message.step.runId),
@@ -690,6 +699,7 @@ export const serveHost = ({
             store: workflowRunStore,
             emit,
             evidence,
+            ruleMetrics,
             stopChildren: id => children.stopChildren(id),
             createManualSession: run =>
               sessions.create(
@@ -740,16 +750,19 @@ export const serveHost = ({
                       { unattended: true },
                       signal,
                     ),
-                  lessons: (run, step) =>
-                    lessons.current?.blockFor({
-                      directories: [run.directory, run.projectRoot],
-                      provider:
-                        run.gateProvider === 'Codex' ? 'codex' : 'claude',
-                      role: 'workflow-agent',
-                      workflow: run.workflow.name,
-                      step,
-                      paths: [],
-                    }) ?? null,
+                  lessons: (run, step, paths, budget) =>
+                    lessons.current?.verifierLessons(
+                      {
+                        directories: [run.directory, run.projectRoot],
+                        provider:
+                          run.gateProvider === 'Codex' ? 'codex' : 'claude',
+                        role: 'workflow-agent',
+                        workflow: run.workflow.name,
+                        step,
+                        paths,
+                      },
+                      budget,
+                    ) ?? null,
                 }),
               ),
               session: gated(childExecutor),
@@ -872,8 +885,9 @@ export const serveHost = ({
               ),
           )
           .map(run => run.id);
+      const assistantChangeStore = new AssistantChangeStore(database);
       const assistantChanges = new AssistantChanges({
-        store: new AssistantChangeStore(database),
+        store: assistantChangeStore,
         definitions: {
           save: (input, options) =>
             saveDefinition(
@@ -907,7 +921,7 @@ export const serveHost = ({
         Effect.sync(
           () =>
             new LessonService({
-              store: new LessonStore(database),
+              store: ruleMetrics,
               sessions,
               changes: assistantChanges,
               dataDirectory: directory,
@@ -936,6 +950,29 @@ export const serveHost = ({
         service => Effect.promise(() => service.close()),
       );
       lessons.current = lessonService;
+      const gateRuleService = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new GateRuleService({
+              store: new GateRuleStore(database),
+              appliedChange: (sessionId, changeId) => {
+                const change = assistantChangeStore.get(
+                  sessionId,
+                  changeId,
+                )?.change;
+                return change?.status === 'applied' ? change : null;
+              },
+              runs: workflowRunStore,
+              sessions,
+              changes: assistantChanges,
+              usage,
+              review: id => reviewStore.get(id),
+              emit,
+            }),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
+      gateRules.current = gateRuleService;
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           const releaseRuns = sessions.onRunFinished(finished =>
@@ -1016,7 +1053,10 @@ export const serveHost = ({
           continue;
         }
         const request = parsed.data;
-        if (OPERATOR_ACTIVITY_METHODS.has(request.method))
+        if (
+          OPERATOR_ACTIVITY_METHODS.has(request.method) &&
+          !(request.method === 'gate-rules' && request.input.action === 'read')
+        )
           sessions.recordOperatorActivity();
         const unavailable =
           isWorkflowMethod(request.method) &&
@@ -1807,9 +1847,29 @@ export const serveHost = ({
           }
           definitionRequests++;
           const inspection = loading
-            .then(catalog =>
-              send({ type: 'workflow-definitions', id: request.id, catalog }),
-            )
+            .then(catalog => {
+              const entries = catalog.gateRules ?? [];
+              const key = (rule: (typeof entries)[number]) =>
+                ruleEntryMetricKey(dirname(dirname(rule.source.path)), rule.id);
+              const metrics = ruleMetrics.metrics(entries.map(key));
+              return send({
+                type: 'workflow-definitions',
+                id: request.id,
+                catalog: {
+                  ...catalog,
+                  gateRules: entries.map(rule => ({
+                    ...rule,
+                    metrics: metrics.get(key(rule)),
+                    undo: rule.provenance.proposal
+                      ? gateRuleService.undoFor(
+                          rule.provenance.proposal,
+                          rule.source.contentHash,
+                        )
+                      : undefined,
+                  })),
+                },
+              });
+            })
             .catch(error =>
               send({
                 type: 'error',
@@ -2403,6 +2463,30 @@ export const serveHost = ({
               probes.pending.delete(pending);
             });
           probes.pending.add(pending);
+          continue;
+        }
+        if (request.method === 'gate-rules') {
+          const { id, input } = request;
+          yield* Effect.tryPromise(async () => {
+            try {
+              await send({
+                type: 'gate-rules',
+                id,
+                overview: await gateRuleService.execute(input),
+              });
+            } catch (error) {
+              await send({
+                type: 'error',
+                id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The gate rule operation failed.',
+              });
+            }
+          });
           continue;
         }
         if (

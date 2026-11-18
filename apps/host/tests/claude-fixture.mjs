@@ -744,6 +744,13 @@ if (args.length === 1 && args[0] === '--version') {
     ]);
     assert.equal(values.get('--setting-sources'), 'user');
     assert.equal(values.has('--no-session-persistence'), false);
+  } else if (prompt.startsWith('[nesvo-gate-rule-proposal]')) {
+    const schema = JSON.parse(values.get('--json-schema'));
+    assert.deepEqual(Object.keys(schema.properties), ['proposals']);
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.equal(values.get('--setting-sources'), '');
+    assert.equal(values.get('--no-session-persistence'), true);
+    assert.equal(values.get('--allowedTools'), 'Read,Glob,Grep');
   } else if (prompt.startsWith('[nesvo-lesson-proposal]')) {
     const schema = JSON.parse(values.get('--json-schema'));
     assert.deepEqual(Object.keys(schema.properties), ['lessons']);
@@ -1004,7 +1011,47 @@ if (args.length === 1 && args[0] === '--version') {
     );
   const lessonProposal =
     values.has('--json-schema') && prompt.startsWith('[nesvo-lesson-proposal]');
-  if (lessonProposal) {
+  if (prompt.startsWith('[nesvo-gate-rule-proposal]')) {
+    verdict('Gate rule proposed.', {
+      proposals: [
+        {
+          description:
+            'Applies when verifying work that adds application logging.',
+          kind: 'instruction',
+          steps: ['review'],
+          body: {
+            rule: 'Use the shared logger for application messages.',
+            why: 'It preserves the application log format.',
+            check: 'Inspect the changed file for direct console calls.',
+          },
+          update: null,
+          quote: 'Application messages must use the shared logger.',
+          justification:
+            'The owner wrote “Application messages must use the shared logger.”',
+        },
+      ],
+    });
+  } else if (command === 'fixture:gate-rule-verdict') {
+    if (!prompt.includes('<gate-rules>\n')) verdict('Verified.', passVerdict);
+    else {
+      assert.match(prompt, /<gate-rules>[\s\S]*rule-0001[\s\S]*<\/gate-rules>/);
+      const ids = repairing
+        ? [
+            'rule-0001',
+            ...(prompt.includes('lesson-0001:') ? ['lesson-0001'] : []),
+          ]
+        : ['rule-0999'];
+      verdict('Gate rules were broken.', {
+        status: 'fail',
+        summary: 'The change uses the console directly.',
+        evidence: ids.map(rule => ({
+          reference: 'sample.txt:1',
+          note: 'Uses a direct console call.',
+          rule,
+        })),
+      });
+    }
+  } else if (lessonProposal) {
     const incidents = JSON.parse(
       /<incidents>\n([\s\S]*)\n<\/incidents>/.exec(prompt)[1],
     );

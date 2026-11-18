@@ -62,7 +62,7 @@ export type RuleEntryFileTarget = Omit<DefinitionTarget, 'kind'> & {
 export type SaveRuleEntryFileInput = RuleEntryFileTarget & {
   document: string;
   expectedHash: string | null;
-  validate: (document: string) => string[];
+  validate: (document: string) => string[] | Promise<string[]>;
 };
 
 export type DeleteRuleEntryFileInput = RuleEntryFileTarget & {
@@ -776,14 +776,14 @@ export async function saveRuleEntryFile(
   const plannedPath = join(requested, RULE_ENTRY_FOLDERS[input.type], `${input.name}.md`);
   const textIssues = checkFileText(input.document, plannedPath);
   if (textIssues.length) return { type: 'refused', issues: textIssues };
-  const invalid = input.validate(input.document);
-  if (invalid.length)
-    return {
-      type: 'refused',
-      issues: invalid.map(message => issueAt(plannedPath, message)),
-    };
   const target = { ...input, kind: input.type };
   return exclusive(pathKey(requested), async () => {
+    const invalid = await input.validate(input.document);
+    if (invalid.length)
+      return {
+        type: 'refused' as const,
+        issues: invalid.map(message => issueAt(plannedPath, message)),
+      };
     const moved = await movedRoot(requested, options.expectedRoot);
     if (moved) return { type: 'refused' as const, issues: moved.issues };
     const existing = await prepareFolder(target, roots, false);

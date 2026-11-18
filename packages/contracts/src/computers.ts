@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  gateRuleGenerationSchema,
+  gateRuleProposalSchema,
+} from './workflows/gate-rules';
 import { sessionMetadataSchema, sessionWindowSchema } from './session-history';
 import { reviewSchema } from './reviews';
 import { reviewDraftSchema } from './code-review';
@@ -72,6 +76,7 @@ export const hostCapabilitySchema = z.enum([
   'inbox-rules',
   'decision-routing',
   'running-apps-web',
+  'gate-rules',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -295,6 +300,16 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
     type: z.literal('inbox-item-changed'),
     hostId: hostIdSchema,
     item: inboxItemSchema,
+  }),
+  z.strictObject({
+    type: z.literal('gate-rule-proposal-changed'),
+    hostId: hostIdSchema,
+    proposal: gateRuleProposalSchema,
+  }),
+  z.strictObject({
+    type: z.literal('gate-rule-generation-changed'),
+    hostId: hostIdSchema,
+    generation: gateRuleGenerationSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

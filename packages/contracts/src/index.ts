@@ -473,6 +473,14 @@ import {
   type LessonSettings,
   type ProposeLessonsInput,
 } from './lessons';
+import {
+  gateRuleGenerationSchema,
+  gateRuleOverviewSchema,
+  gateRuleProposalSchema,
+  gateRulesInputSchema,
+  type GateRuleOverview,
+  type GateRulesInput,
+} from './workflows/gate-rules';
 import { resumeSessionSchema, type ResumeSessionInput } from './session-resume';
 import {
   finishMergedWorktreeSchema,
@@ -529,6 +537,7 @@ export * from './workflows';
 export * from './session-resume';
 export * from './merged-worktree-cleanup';
 export * from './rule-entries';
+export * from './workflows/gate-rules';
 export * from './lessons';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
@@ -561,6 +570,14 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('scheduled-job-run-changed'),
     run: scheduledJobRunSchema,
+  }),
+  z.strictObject({
+    type: z.literal('gate-rule-proposal-changed'),
+    proposal: gateRuleProposalSchema,
+  }),
+  z.strictObject({
+    type: z.literal('gate-rule-generation-changed'),
+    generation: gateRuleGenerationSchema,
   }),
   z.strictObject({
     type: z.literal('workflow-run-changed'),
@@ -1165,6 +1182,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('gate-rules'),
+    input: gateRulesInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('read-lessons'),
   }),
   z.strictObject({
@@ -1610,6 +1632,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-control-policy'),
     id: z.uuid(),
     policy: coordinatorPolicySchema,
+  }),
+  z.strictObject({
+    type: z.literal('gate-rules'),
+    id: z.uuid(),
+    overview: gateRuleOverviewSchema,
   }),
   z.strictObject({
     type: z.literal('lessons'),
@@ -2401,6 +2428,10 @@ export type DesktopApi = {
     policy: CoordinatorPolicy,
     hostId?: HostId,
   ) => Promise<CoordinatorPolicy>;
+  gateRules: (
+    input: GateRulesInput,
+    hostId?: HostId,
+  ) => Promise<GateRuleOverview>;
   readLessons: (hostId?: HostId) => Promise<LessonOverview>;
   saveLessonSettings: (
     settings: LessonSettings,

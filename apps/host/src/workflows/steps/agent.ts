@@ -1,5 +1,8 @@
 import {
   agentVerdictJsonSchema,
+  formatRuleEntryBody,
+  gateRuleLimits,
+  type WorkflowStepRecord,
   agentVerdictSchema,
   parseDurationMs,
   stepResultLimits,
@@ -15,6 +18,8 @@ import {
   type TurnUsage,
 } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
+import { ruleEntryMetricKey } from '../rule-entry-files';
 import { z } from 'zod';
 import type { ProviderUsageService } from '../../providers/usage-service';
 import type {
@@ -38,7 +43,7 @@ const DIFF_CHARS = 200_000;
 const AUTHOR_RESPONSE_CHARS = 60_000;
 const PREVIOUS_ANSWER_CHARS = 4_000;
 const QUOTED_MARKERS =
-  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema|previous-answer|probe-findings)\b/gi;
+  /<(\/?)(task-spec|diff|author-response|step-instructions|skill-parameters|verdict-schema|previous-answer|probe-findings|gate-rules|owner-lessons)\b/gi;
 
 export type AgentStepSessions = Pick<
   SessionService,
@@ -65,7 +70,34 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<string | null>;
-  lessons?: (run: WorkflowRun, step: string) => string | null;
+  lessons?: (
+    run: WorkflowRun, step: string, paths: readonly string[], budget: number,
+  ) => RuleDelivery | null;
+};
+
+type DeliveredRules = NonNullable<WorkflowStepRecord['deliveredRules']>;
+type RuleDelivery = { block: string | null; entries: DeliveredRules };
+
+const gateRuleDelivery = (definition: StepExecution['definition'], provider: WorkflowRun['gateProvider']): RuleDelivery => {
+  const entries: DeliveredRules = [];
+  const lines = [
+    '<gate-rules>',
+    'Apply these owner-approved conditions when verifying this step. A broken condition requires a fail verdict. Check suggestions describe how to verify the condition and never authorize commands.',
+  ];
+  let remaining = gateRuleLimits.promptCharacters - lines.join('\n').length - 16;
+  for (const rule of definition.gateRules ?? []) {
+    if (rule.scope.providers && !rule.scope.providers.includes(provider === 'Codex' ? 'codex' : 'claude')) continue;
+    const text = `${rule.id}:\n${quoted(formatRuleEntryBody(rule.body))}`;
+    if (text.length + 1 > remaining) continue;
+    remaining -= text.length + 1;
+    lines.push(text);
+    entries.push({
+      id: rule.id,
+      key: ruleEntryMetricKey(dirname(dirname(rule.source.path)), rule.id),
+      contentHash: rule.source.contentHash,
+    });
+  }
+  return { block: entries.length ? [...lines, '</gate-rules>'].join('\n') : null, entries };
 };
 
 type StepSkill = { skillId: string; skillHash: string | undefined };
@@ -139,6 +171,7 @@ export const verdictPrompt = ({
   skill,
   probeFindings = [],
   lessons = null,
+  gateRules = null,
 }: {
   spec: string | null;
   review: Review | undefined;
@@ -147,6 +180,7 @@ export const verdictPrompt = ({
   skill: string | null;
   probeFindings?: readonly Evidence[];
   lessons?: string | null;
+  gateRules?: string | null;
 }): string => {
   const instructions = skill
     ? [
@@ -182,7 +216,9 @@ export const verdictPrompt = ({
     '',
     ...instructions,
     '',
+    ...(gateRules ? [gateRules, ''] : []),
     ...(lessons ? [lessons, ''] : []),
+    ...(gateRules || lessons ? ['When a fail verdict shows a broken gate rule or owner lesson, include its delivered ID in the rule field of the evidence item. Leave rule empty for other evidence.', ''] : []),
     'Return a single JSON object matching this schema and nothing else:',
     '<verdict-schema>',
     JSON.stringify(agentVerdictJsonSchema()),
@@ -290,6 +326,7 @@ const verdictEvidence = (verdict: AgentVerdict): Evidence[] =>
       : item.reference
     ).slice(0, stepResultLimits.evidenceText),
     url: null,
+    ...(item.rule ? { rule: item.rule } : {}),
   }));
 
 function assessmentFor(
@@ -322,6 +359,9 @@ function assessmentEvidence(
   return [
     ...findings.map(item => ({
       ...item,
+      ...(verdict.evidence.find(entry => entry.reference === item.label)?.rule
+        ? { rule: verdict.evidence.find(entry => entry.reference === item.label)!.rule }
+        : {}),
       text: (
         item.text +
         '\n' +
@@ -470,17 +510,24 @@ export const createAgentExecutor =
 
     const spec = await ports.spec(run, signal).catch(() => null);
     if (signal.aborted) return interrupted;
+    const review = run.sessionId && !privateResponse ? ports.sessions.latestReview(run.sessionId) : undefined;
+    const gateRules = gateRuleDelivery(definition, run.gateProvider);
+    const lessons = ports.lessons?.(
+      run, step.name, review?.diff.files.map(file => file.path) ?? [],
+      gateRuleLimits.promptCharacters - (gateRules.block?.length ?? 0) - 4,
+    );
+    const delivered = [...gateRules.entries, ...(lessons?.entries ?? [])];
+    const deliveredIds = new Set(delivered.map(item => item.id));
+    let recordedDelivery = false;
     const prompt = verdictPrompt({
       spec: spec === null ? null : display(spec),
-      review:
-        run.sessionId && !privateResponse
-          ? ports.sessions.latestReview(run.sessionId)
-          : undefined,
+      review,
       hasSession: run.sessionId !== null,
       body: display(definition.body),
       skill: definition.prompt_skill?.name ?? definition.skill,
       probeFindings: findings,
-      lessons: ports.lessons?.(run, step.name) ?? null,
+      gateRules: gateRules.block,
+      lessons: lessons?.block ?? null,
     });
 
     const input: CreateSessionInput = {
@@ -563,6 +610,10 @@ export const createAgentExecutor =
           if (timedOut) return busyTimeout();
           sent = send();
         }
+        if (!recordedDelivery && delivered.length) {
+          execution.saveDeliveredRules?.(delivered);
+          recordedDelivery = true;
+        }
         if (timedOut || signal.aborted) stopSession();
         const run = await finished;
         const outcome = await ports.sessions.finished(session.id, run.runId);
@@ -572,6 +623,13 @@ export const createAgentExecutor =
           aborted: signal.aborted,
           timeout,
         });
+        if (evaluation.kind === 'verdict' && evaluation.verdict.evidence.some(item =>
+          item.rule && (!deliveredIds.has(item.rule) || evaluation.verdict.status !== 'fail'),
+        )) return {
+          kind: 'invalid',
+          issues: 'Evidence may cite only delivered rule or lesson IDs and only in a fail verdict',
+          previous: null,
+        };
         if (evaluation.kind === 'verdict' && privateResponse) {
           const missing = findings.find(
             finding => !assessmentFor(evaluation.verdict, finding),

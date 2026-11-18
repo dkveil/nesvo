@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ruleEntryCitationSchema } from '../rule-entries';
 import { providerSchema } from '../sessions';
 import { workflowChildQueueSchema } from './children';
 import { stepNameSchema, stepPhaseSchema, stepTypeSchema } from './definitions';
@@ -35,6 +36,7 @@ const ACTION_VERDICTS: readonly StepVerdict[] = ['done', 'error', 'blocked'];
 
 export const evidenceSchema = z
   .strictObject({
+    rule: ruleEntryCitationSchema.nullable().optional(),
     kind: z.enum(['log', 'text', 'file', 'screenshot', 'link', 'steps']),
     label: z.string().min(1).max(stepResultLimits.evidenceLabel),
     path: z.string().min(1).max(stepResultLimits.evidencePath).nullable(),
@@ -103,6 +105,7 @@ export const agentVerdictSchema = z.strictObject({
       z.strictObject({
         reference: z.string().min(1).max(stepResultLimits.agentReference),
         note: z.string().max(stepResultLimits.agentNote),
+        rule: ruleEntryCitationSchema.nullable().optional(),
       }),
     )
     .min(1)

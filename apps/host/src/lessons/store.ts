@@ -177,6 +177,13 @@ export class LessonStore {
     for (const key of keys) upsert.run(key, at);
   }
 
+  recordCitations(keys: readonly string[], at: string): void {
+    const update = this.database.prepare(
+      'UPDATE rule_entry_metrics SET cited = cited + 1, last_cited = ? WHERE entry_key = ?',
+    );
+    for (const key of new Set(keys)) update.run(at, key);
+  }
+
   private metadata(key: string): unknown {
     const row = this.database
       .prepare('SELECT value FROM metadata WHERE key = ?')

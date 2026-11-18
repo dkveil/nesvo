@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { promptSkillSchema, type PromptSkill } from '../skills';
 import { decisionRouteSchema } from '../decision-route';
+import {
+  GATE_RULES_PER_STEP,
+  ruleEntryMetricsSchema,
+  ruleEntrySchema,
+} from '../rule-entries';
 import { parsePullRequestUrl } from '../pull-requests';
 import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 import {
@@ -390,9 +395,23 @@ const definitionNotesSchema = z
   .max(workflowDefinitionLimits.notes)
   .default([]);
 
+export const resolvedGateRuleSchema = ruleEntrySchema.safeExtend({
+  type: z.literal('gate-rule'),
+  source: definitionSourceSchema,
+  metrics: ruleEntryMetricsSchema.optional(),
+  undo: z
+    .strictObject({ conversationId: z.uuid(), changeId: z.uuid() })
+    .optional(),
+});
+export type ResolvedGateRule = z.infer<typeof resolvedGateRuleSchema>;
+
 export const resolvedStepSchema = stepDefinitionSchema.safeExtend({
   source: definitionSourceSchema,
   notes: definitionNotesSchema,
+  gateRules: z
+    .array(resolvedGateRuleSchema)
+    .max(GATE_RULES_PER_STEP)
+    .optional(),
 });
 
 export const resolvedGraphEdgeSchema = z.strictObject({
@@ -450,6 +469,7 @@ export const definitionCatalogSchema = z.strictObject({
   workflows: z
     .array(resolvedWorkflowSchema)
     .max(workflowDefinitionLimits.catalogWorkflows),
+  gateRules: z.array(resolvedGateRuleSchema).max(400).optional(),
   specs: z
     .array(taskSpecSummarySchema)
     .max(workflowDefinitionLimits.catalogSpecs)

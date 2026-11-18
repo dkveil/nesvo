@@ -29,6 +29,20 @@ export const ruleEntryLimits = {
   fileBytes: 64 * 1024,
 } as const;
 
+export const ruleEntryMetricsSchema = z.strictObject({
+  delivered: z.number().int().nonnegative(),
+  cited: z.number().int().nonnegative(),
+  lastDelivered: z.iso.datetime().nullable(),
+  lastCited: z.iso.datetime().nullable(),
+});
+export type RuleEntryMetrics = z.infer<typeof ruleEntryMetricsSchema>;
+
+export const ruleEntryCitationSchema = z
+  .string()
+  .max(40)
+  .regex(/^(?:rule|lesson)-\d{4,}$/);
+export const GATE_RULES_PER_STEP = 12;
+
 export const RULE_ENTRY_TRIGGER = 'Applies when';
 
 const singleLine = (max: number) =>
@@ -73,6 +87,11 @@ export const ruleEntryProvenanceSchema = z.strictObject({
   session: z.uuid().optional(),
   decision: singleLine(40).optional(),
   date: dateSchema,
+  decisionId: z.uuid().optional(),
+  proposal: z.uuid().optional(),
+  workflow: singleLine(ruleEntryLimits.scopeItem).optional(),
+  attempt: z.number().int().positive().optional(),
+  edited: z.literal(true).optional(),
   quote: singleLine(ruleEntryLimits.quote).optional(),
 });
 export type RuleEntryProvenance = z.infer<typeof ruleEntryProvenanceSchema>;
@@ -89,6 +108,7 @@ export const ruleEntryEnforcedBySchema = z
 export const ruleEntryIdSchema = (type: RuleEntryType) =>
   z
     .string()
+    .max(40)
     .regex(
       new RegExp(`^${RULE_ENTRY_ID_PREFIXES[type]}-\\d{4,}$`),
       `Use ${RULE_ENTRY_ID_PREFIXES[type]}-NNNN.`,
@@ -205,7 +225,19 @@ export const parseRuleEntry = (
     );
   const parsedBody = parseRuleEntryBody(body);
   if (!parsedBody.valid) issues.push(parsedBody.issue);
-  if (!parsedId.success || !parsedFields.success || !parsedBody.valid)
+  if (type === 'gate-rule' && parsedFields.success) {
+    const { scope } = parsedFields.data;
+    if (!scope.steps?.length || scope.steps.length > 4)
+      issues.push('Gate rules need one to four target steps.');
+    if ((scope.workflows?.length ?? 0) > 8)
+      issues.push('Gate rules can target up to eight workflows.');
+  }
+  if (
+    issues.length ||
+    !parsedId.success ||
+    !parsedFields.success ||
+    !parsedBody.valid
+  )
     return { valid: false, issues };
   return {
     valid: true,
@@ -250,6 +282,15 @@ export const serializeRuleEntry = (entry: RuleEntry): string => {
       ? [`  decision: ${quoted(provenance.decision)}`]
       : []),
     `  date: ${provenance.date}`,
+    ...(provenance.decisionId
+      ? [`  decisionId: ${provenance.decisionId}`]
+      : []),
+    ...(provenance.proposal ? [`  proposal: ${provenance.proposal}`] : []),
+    ...(provenance.workflow
+      ? [`  workflow: ${quoted(provenance.workflow)}`]
+      : []),
+    ...(provenance.attempt ? [`  attempt: ${provenance.attempt}`] : []),
+    ...(provenance.edited ? ['  edited: true'] : []),
     ...(provenance.quote ? [`  quote: ${quoted(provenance.quote)}`] : []),
     '---',
     '',

@@ -13,9 +13,10 @@ import { installCodeReviewTables } from './code-review/store';
 import { installTrackedRepositoryTables } from './tracked-repositories';
 import { installWorktreeRecipeTables } from './worktree-recipes/store';
 import { installSessionControlTables } from './session-control/store';
+import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 28;
+const DATABASE_VERSION = 29;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -409,6 +410,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installWorktreeRecipeTables(database);
       installSessionControlTables(database);
       installLessonTables(database);
+      installGateRuleTables(database);
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       if (version < 28) migrateTranscriptCosts(database);

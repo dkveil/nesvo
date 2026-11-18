@@ -310,6 +310,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to route decisions to parent sessions.',
   'running-apps-web':
     'Update this computer’s Nesvo host and reconnect to classify its running apps.',
+  'gate-rules':
+    'Update this computer’s Nesvo host and reconnect to use gate rules.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -337,6 +339,7 @@ function requiredCapability(
     return 'provider-profiles';
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(lessonResponses, method)) return 'lessons';
+  if (method === 'gate-rules') return 'gate-rules';
   if (Object.hasOwn(trackedRepositoryResponses, method))
     return 'tracked-repositories';
   if (Object.hasOwn(worktreeRecipeResponses, method)) return 'worktree-recipes';
@@ -1283,6 +1286,7 @@ export class ComputerManager {
       ...codeReviewResponses,
       ...costResponses,
       ...lessonResponses,
+      'gate-rules': 'gate-rules',
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
@@ -1368,6 +1372,7 @@ export class ComputerManager {
       case 'session-control-policy':
         return response.policy;
       case 'lessons':
+      case 'gate-rules':
         return response.overview;
       case 'tracked-repository-suggestions':
         return response.suggestions;
@@ -1685,7 +1690,9 @@ export class ComputerManager {
     if (
       event.type === 'workflow-assistant-proposal' ||
       event.type === 'workflow-assistant-change' ||
-      event.type === 'workflow-assistant-change-refused'
+      event.type === 'workflow-assistant-change-refused' ||
+      event.type === 'gate-rule-generation-changed' ||
+      event.type === 'gate-rule-proposal-changed'
     ) {
       if (publish) this.publish({ ...event, hostId });
       return;

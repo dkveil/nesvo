@@ -52,6 +52,7 @@ import {
   projectRootSync,
   projectWorkflowsRoot,
   readRuleEntryFolder,
+  ruleEntryMetricKey,
   validateRuleEntryDocument,
   type RuleEntryFolderRead,
   type RuleEntryRoot,
@@ -141,7 +142,7 @@ const entryKey = (stored: StoredRuleEntry) =>
   `${stored.entry.id}:${hash(pathKey(stored.root.root)).slice(0, 8)}`;
 
 const metricKey = (stored: StoredRuleEntry) =>
-  `${pathKey(stored.root.root)}#${stored.entry.id}`;
+  ruleEntryMetricKey(stored.root.root, stored.entry.id);
 
 const conversationOf = (stored: Pick<StoredRuleEntry, 'root' | 'entry'>) =>
   derivedId('rule-entry', `${pathKey(stored.root.root)}#${stored.entry.id}`);
@@ -321,12 +322,11 @@ export class LessonService {
     return block;
   }
 
-  blockFor(context: LessonContext): string | null {
+  verifierLessons(context: LessonContext, bodyBudget: number) {
     try {
-      const { selection, keys } = this.select(context);
+      const { selection, entries } = this.select(context, bodyBudget);
       const block = ownerLessonsBlock(selection);
-      if (block) this.delivered(keys);
-      return block;
+      return block && block.length <= bodyBudget ? { block, entries } : null;
     } catch {
       return null;
     }
@@ -434,10 +434,13 @@ export class LessonService {
     }
   }
 
-  private select(context: LessonContext) {
-    const entries = this.entriesIn(
+  private select(context: LessonContext, bodyBudget?: number) {
+    const trusted = this.entriesIn(
       this.projectRoots(context.directories),
     ).entries.filter(stored => this.isTrusted(stored));
+    const entries = bodyBudget === undefined
+      ? trusted
+      : [...new Map(trusted.reverse().map(stored => [stored.entry.id, stored])).values()];
     const metrics = this.ports.store.metrics(entries.map(metricKey));
     const byKey = new Map(entries.map(stored => [entryKey(stored), stored]));
     const selection = selectEntries(
@@ -450,10 +453,17 @@ export class LessonService {
       ),
       context,
       this.today(),
+      bodyBudget,
     );
+    const selected = selection.index.map(item => byKey.get(item.key)!);
     return {
       selection,
-      keys: selection.index.map(item => metricKey(byKey.get(item.key)!)),
+      keys: selected.map(metricKey),
+      entries: selected.map(stored => ({
+        id: stored.entry.id,
+        key: metricKey(stored),
+        contentHash: stored.hash,
+      })),
     };
   }
 
@@ -797,6 +807,8 @@ export class LessonService {
 
   private requireApplied(outcome: RuleEntryChangeOutcome): void {
     if (outcome.status === 'applied') return;
+    if (outcome.status === 'saved-without-history')
+      throw new LessonError('unavailable', 'The lesson was saved without an Undo record.');
     throw new LessonError(
       'invalid-request',
       outcome.issues[0]?.message ??

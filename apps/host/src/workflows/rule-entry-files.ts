@@ -7,7 +7,7 @@ import {
   realpathSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, normalize } from 'node:path';
 import {
   RULE_ENTRY_FOLDERS,
   parseRuleEntry,
@@ -36,6 +36,12 @@ export type StoredRuleEntry = {
 export type RuleEntryFolderRead = {
   entries: StoredRuleEntry[];
   issues: string[];
+  fileCount?: number;
+};
+
+export const ruleEntryMetricKey = (root: string, id: string): string => {
+  const folder = normalize(root);
+  return `${process.platform === 'win32' ? folder.toLowerCase() : folder}#${id}`;
 };
 
 export const ruleEntryHash = (text: string) =>
@@ -127,16 +133,15 @@ export const readRuleEntryFolder = (
   let names: string[];
   try {
     if (!lstatSync(folder).isDirectory()) return { entries: [], issues: [] };
-    names = readdirSync(folder)
-      .filter(name => name.endsWith('.md'))
-      .sort()
-      .slice(0, ruleEntryLimits.entriesPerRoot);
+    names = readdirSync(folder).filter(name => name.endsWith('.md')).sort();
   } catch {
     return { entries: [], issues: [] };
   }
   const entries: StoredRuleEntry[] = [];
   const issues: string[] = [];
-  for (const name of names) {
+  const truncated = names.length > ruleEntryLimits.entriesPerRoot;
+  if (truncated) issues.push(`Only ${ruleEntryLimits.entriesPerRoot} entries can be read from ${folder}.`);
+  for (const name of names.slice(0, ruleEntryLimits.entriesPerRoot)) {
     const path = join(folder, name);
     let text: string | null;
     try {
@@ -145,10 +150,10 @@ export const readRuleEntryFolder = (
       continue;
     }
     if (text === null) continue;
-    const problems = validateRuleEntryDocument(type, name.slice(0, -3), text);
     const parsed = parseRuleEntryText(type, text);
-    if (problems.length || !parsed.valid) {
-      issues.push(`${path}: ${problems.join(' ')}`.slice(0, 1000));
+    if (!parsed.valid || parsed.entry.id !== name.slice(0, -3)) {
+      const problem = parsed.valid ? 'The entry ID must match the file name.' : parsed.issues.join(' ');
+      issues.push(`${path}: ${problem}`.slice(0, 1000));
       continue;
     }
     entries.push({
@@ -159,7 +164,7 @@ export const readRuleEntryFolder = (
       root,
     });
   }
-  return { entries, issues };
+  return { entries, issues, fileCount: names.length };
 };
 
 export const RULE_ENTRY_MAX_NUMBER = 9_999_999;

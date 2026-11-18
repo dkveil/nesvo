@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { promptSkillSchema } from '../skills';
+import { ruleEntryCitationSchema } from '../rule-entries';
 import { providerSchema } from '../sessions';
 import { pullRequestReferenceSchema } from '../pull-requests';
 import {
@@ -154,6 +155,16 @@ export const workflowStepRecordSchema = z.strictObject({
     .optional(),
   retryAt: z.iso.datetime().optional(),
   ciWait: ciWaitSchema.optional(),
+  deliveredRules: z
+    .array(
+      z.strictObject({
+        id: ruleEntryCitationSchema,
+        key: z.string().min(1).max(2048),
+        contentHash: definitionHashSchema,
+      }),
+    )
+    .max(32)
+    .optional(),
   children: workflowChildQueueSchema.optional(),
   iteration: z
     .number()

@@ -81,8 +81,12 @@ export const selectEntries = (
   entries: readonly SelectableEntry[],
   context: LessonContext,
   today: string,
+  bodyBudget?: number,
 ): LessonSelection => {
   const index: SelectableEntry[] = [];
+  const indexBudget = bodyBudget === undefined
+    ? ruleEntryLimits.indexCharacters
+    : Math.min(ruleEntryLimits.indexCharacters, Math.max(0, bodyBudget - 500));
   let indexSize = 0;
   for (const item of entries
     .filter(candidate => entryApplies(candidate.entry, context, today))
@@ -90,7 +94,7 @@ export const selectEntries = (
     const line = ruleEntryIndexLine(item.entry);
     if (
       index.length >= ruleEntryLimits.indexLines ||
-      indexSize + line.length + 1 > ruleEntryLimits.indexCharacters
+      indexSize + line.length + 1 > indexBudget
     )
       continue;
     index.push(item);
@@ -100,10 +104,10 @@ export const selectEntries = (
   let bodySize = 0;
   for (const item of index) {
     if (!bodyApplies(item.entry, context)) continue;
-    const text = formatRuleEntryBody(item.entry.body);
+    const text = `${item.entry.id}:\n${formatRuleEntryBody(item.entry.body)}\n`;
     if (
       bodies.length >= ruleEntryLimits.bodies ||
-      bodySize + text.length > ruleEntryLimits.bodyCharacters
+      bodySize + text.length > Math.min(ruleEntryLimits.bodyCharacters, (bodyBudget ?? Infinity) - indexSize - 500)
     )
       continue;
     bodies.push(item);

@@ -89,11 +89,12 @@ export type RuleEntryFileOperation = {
   basedOnHash: string | null;
   document: string | null;
   summary: string;
-  validate: (document: string) => string[];
+  validate: (document: string) => string[] | Promise<string[]>;
 };
 
 export type RuleEntryChangeOutcome =
   | { status: 'applied'; change: AssistantChange; path: string }
+  | { status: 'saved-without-history'; path: string }
   | {
       status: 'refused';
       reason: 'invalid' | 'conflict' | 'unavailable';
@@ -371,15 +372,15 @@ export class AssistantChanges {
     } catch (error) {
       return refused(
         'unavailable',
-        errorMessage(error, 'The lesson file could not be written.'),
+        errorMessage(error, 'The entry file could not be written.'),
       );
     }
     if (result.type === 'conflict')
       return refused(
         'conflict',
         result.currentHash
-          ? `The lesson file changed; its current hash is ${result.currentHash}.`
-          : 'The lesson file does not exist.',
+          ? `The entry file changed; its current hash is ${result.currentHash}.`
+          : 'The entry file does not exist.',
       );
     if (result.type === 'refused')
       return {
@@ -404,10 +405,12 @@ export class AssistantChanges {
           previous: replaced?.text ?? null,
           root,
         },
-        'owner',
+        operation.type === 'gate-rule' ? 'gate-rule-proposal' : 'owner',
       );
       return { status: 'applied', change, path: result.path };
     } catch {
+      if (operation.type === 'gate-rule')
+        return { status: 'saved-without-history', path: result.path };
       return refused(
         'unavailable',
         'The lesson was saved but could not be recorded, so it cannot be undone here.',
@@ -693,7 +696,7 @@ export class AssistantChanges {
       undoneAt: this.now(),
     });
     this.ports.store.markUndone(undone);
-    if (!isRuleEntryKind(undone.kind))
+    if (undone.kind !== 'lesson')
       this.ports.emit({ type: 'workflow-assistant-change', change: undone });
     return { status: 'undone', change: undone };
   }
@@ -786,7 +789,7 @@ export class AssistantChanges {
         issues: [
           issueAt(
             target.path,
-            'The workflows folder of this lesson was not recorded, so it cannot be undone here.',
+            'The workflows folder of this entry was not recorded, so it cannot be undone here.',
           ),
         ],
       };
@@ -819,7 +822,7 @@ export class AssistantChanges {
         issues: [
           issueAt(
             target.path,
-            errorMessage(error, 'The lesson change could not be undone.'),
+            errorMessage(error, 'The entry change could not be undone.'),
           ),
         ],
       };
@@ -833,14 +836,14 @@ export class AssistantChanges {
           ? { type: 'hash', hash: result.currentHash }
           : null,
         message:
-          'The lesson file changed after this decision. Undo would overwrite newer content, so nothing was changed.',
+          'The entry file changed after this decision. Undo would overwrite newer content, so nothing was changed.',
       };
     return {
       status: 'refused',
       changeId: change.changeId,
       issues: result.issues.length
         ? result.issues.slice(0, assistantChangeLimits.issues)
-        : [issueAt(target.path, 'The lesson change could not be undone.')],
+        : [issueAt(target.path, 'The entry change could not be undone.')],
     };
   }
 

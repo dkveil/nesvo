@@ -1,5 +1,6 @@
 import {
   checkGraphList,
+  GATE_RULES_PER_STEP,
   definitionCatalogSchema,
   graphListRules,
   workflowDefinitionLimits,
@@ -32,6 +33,13 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { workflowStepGuards } from '../inbox-rules/files';
 import { document, text } from '../skills/portable';
 import { YamlLimitError } from '../skills/yaml-limits';
+
+import {
+  activeGateRule,
+  gateRuleLimitMessage,
+  gateRuleMatches,
+  readGateRules,
+} from './gate-rule-catalog';
 
 export const definitionReadLimits = {
   fileBytes: 64 * 1024,
@@ -1124,6 +1132,14 @@ export async function loadCatalog(
     });
   }
   const guarded = await workflowStepGuards(root, signal);
+  const gateRules = readGateRules(
+    [
+      ...(global ? [{ root: global, scope: 'global' as const }] : []),
+      ...(project ? [{ root: project, scope: 'project' as const }] : []),
+    ],
+    resolvedSteps,
+    issues,
+  );
   const resolvedWorkflows: ResolvedWorkflow[] = [];
   for (const [, entry] of [...workflows].sort(([left], [right]) =>
     left.localeCompare(right, 'en'),
@@ -1135,8 +1151,20 @@ export async function loadCatalog(
     const members: ResolvedStep[] = [];
     for (const name of definition.steps) {
       const step = resolvedSteps.get(name);
-      if (step) members.push(step);
-      else
+      if (step) {
+        const rules = gateRules.rules.filter(
+          rule => activeGateRule(rule) && gateRuleMatches(rule, name, definition.name),
+        );
+        if (gateRules.invalidSteps.has(name) && rules.length)
+          issues.push(
+            issue(step.source.path, `Step "${name}" cannot receive gate rules.`, null),
+          );
+        if (rules.length > GATE_RULES_PER_STEP)
+          issues.push(issue(step.source.path, gateRuleLimitMessage(name), null));
+        members.push(
+          step.type === 'agent' && rules.length ? { ...step, gateRules: rules } : step,
+        );
+      } else
         issues.push(
           issue(
             entry.parsed.file.path,
@@ -1215,6 +1243,7 @@ export async function loadCatalog(
     steps: catalogSteps.slice(0, stepLimit),
     workflows: resolvedWorkflows.slice(0, workflowLimit),
     specs,
+    gateRules: gateRules.rules,
     issues: capIssues(issues),
   });
 }

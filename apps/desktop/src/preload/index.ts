@@ -103,6 +103,8 @@ import {
   saveReviewConventionSchema,
   deleteReviewConventionSchema,
   lessonOverviewSchema,
+  gateRuleOverviewSchema,
+  gateRulesInputSchema,
   lessonSettingsSchema,
   proposeLessonsSchema,
   decideLessonSchema,
@@ -1243,6 +1245,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:answer-session-question',
         answerSessionQuestionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  gateRules: async (input, hostId) =>
+    gateRuleOverviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:gate-rules',
+        gateRulesInputSchema.parse(input),
         route(hostId),
       ),
     ),

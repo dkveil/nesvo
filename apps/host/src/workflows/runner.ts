@@ -100,6 +100,9 @@ export type StepExecution = {
   environment: NodeJS.ProcessEnv;
   now: () => Date;
   link: (sessionId: string) => void;
+  saveDeliveredRules?: (
+    entries: NonNullable<WorkflowStepRecord['deliveredRules']>,
+  ) => void;
   saveCiWait?: (checkpoint: WorkflowCiWait) => boolean;
   saveChildren?: (items: WorkflowChildItem[]) => boolean;
   recovering?: boolean;
@@ -174,6 +177,10 @@ export type RunnerPorts = {
   createManualSession?: (run: WorkflowRun) => string;
   environment?: NodeJS.ProcessEnv;
   browserSteps?: boolean;
+  ruleMetrics?: {
+    recordDelivery: (keys: readonly string[], at: string) => void;
+    recordCitations: (keys: readonly string[], at: string) => void;
+  };
 };
 
 export class WorkflowRunError extends Error {
@@ -647,6 +654,7 @@ export class WorkflowRunner {
   private readonly createManualSession: RunnerPorts['createManualSession'];
   private readonly environment: NodeJS.ProcessEnv;
   private readonly browserSteps: boolean;
+  private readonly ruleMetrics: RunnerPorts['ruleMetrics'];
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
   private readonly retryTimers = new Map<
@@ -670,6 +678,7 @@ export class WorkflowRunner {
     this.createManualSession = ports.createManualSession;
     this.environment = ports.environment ?? process.env;
     this.browserSteps = ports.browserSteps === true;
+    this.ruleMetrics = ports.ruleMetrics;
   }
 
   async startManualRun(
@@ -1243,6 +1252,26 @@ export class WorkflowRunner {
       now: () => this.clock.now(),
       link: sessionId => this.linkStep(running, sessionId),
       recovering,
+      saveDeliveredRules: entries => {
+        const current = this.store.getStep(running.id);
+        if (current?.state !== 'running' || current.deliveredRules) return;
+        const updatedAt = this.timestamp();
+        const next = {
+          ...current,
+          updatedAt,
+          revision: current.revision + 1,
+          deliveredRules: entries,
+        };
+        const written = this.store.transact(() => {
+          if (!this.store.replaceStep(next, current.revision)) return false;
+          this.ruleMetrics?.recordDelivery(
+            entries.map(item => item.key),
+            updatedAt,
+          );
+          return true;
+        });
+        if (written) this.emit({ type: 'workflow-step-changed', step: next });
+      },
       saveChildren: children => {
         const current = this.store.getStep(running.id);
         return (
@@ -1367,7 +1396,7 @@ export class WorkflowRunner {
       this.finishAndQueue(current, state, result, [next]);
       return;
     }
-    this.writeStep(current, { state, result });
+    this.finishAndQueue(current, state, result, []);
   }
 
   private repeatSequence(
@@ -1404,6 +1433,14 @@ export class WorkflowRunner {
     };
     const written = this.store.transact(() => {
       if (!this.store.replaceStep(finished, current.revision)) return false;
+      if (result.status === 'fail' && current.deliveredRules?.length) {
+        const cited = new Set(result.evidence.map(item => item.rule));
+        const keys = current.deliveredRules
+          .filter(item => cited.has(item.id))
+          .map(item => item.key);
+        if (keys.length)
+          this.ruleMetrics?.recordCitations(keys, result.finishedAt);
+      }
       for (const step of queued)
         if (!this.store.insertStep(step)) throw new Error('Step row exists.');
       return true;
@@ -1632,6 +1669,7 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
     retry: undefined,
     retryAt: undefined,
     ciWait: undefined,
+    deliveredRules: undefined,
     children: undefined,
     id: randomUUID(),
     revision: 1,

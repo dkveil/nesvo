@@ -122,7 +122,7 @@ export const assistantChangeSchema = z
     before: assistantChangeVersionSchema.nullable(),
     after: assistantChangeVersionSchema.nullable(),
     summary: summarySchema,
-    createdBy: z.enum(['assistant', 'owner']),
+    createdBy: z.enum(['assistant', 'owner', 'gate-rule-proposal']),
     at: z.iso.datetime(),
     status: assistantChangeStatusSchema,
     undoneAt: z.iso.datetime().nullable(),

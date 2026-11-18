@@ -389,6 +389,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         } else reviewEvents.push(message.review);
       } else if (message.type.startsWith('scheduled-job-') && !message.id) {
         scheduledEvents.push(message);
+      } else if (message.type.startsWith('gate-rule-') && !message.id) {
+        assert.ok(message.proposal || message.generation);
       } else if (message.type.startsWith('workflow-') && !message.id) {
         workflowEvents.push(message);
       } else if (message.type === 'session-groups-changed') {
@@ -1449,6 +1451,7 @@ test(
         'inbox-rules',
         'decision-routing',
         'running-apps-web',
+        'gate-rules',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2455,7 +2458,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      28,
+      29,
     );
     migrated.close();
     const reopened = open();
@@ -4839,7 +4842,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 29');
+    database.exec('PRAGMA user_version = 30');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4856,7 +4859,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 29);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -7047,6 +7050,7 @@ test(
       'inbox-rules',
       'decision-routing',
       'running-apps-web',
+      'gate-rules',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7923,7 +7927,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            28,
+            29,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -8006,11 +8010,11 @@ test(
       }
     });
 
-    await t.test('a version 29 database is refused', async () => {
+    await t.test('a version 30 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 29');
+      newer.exec('PRAGMA user_version = 30');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -8022,7 +8026,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          29,
+          30,
         );
       } finally {
         check.close();
@@ -11063,7 +11067,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        28,
+        29,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11114,7 +11118,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        28,
+        29,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20670,7 +20674,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      28,
+      29,
     );
     database
       .prepare(
@@ -21033,7 +21037,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 28);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 29);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -21048,7 +21052,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        28,
+        29,
       );
       assert.deepEqual(
         migrated
@@ -21228,7 +21232,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 28);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 29);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -28061,6 +28065,7 @@ test(
           ...entry,
           id: 'rule-0001',
           type: 'gate-rule',
+          scope: { ...entry.scope, steps: ['review'] },
         }),
       );
       const lessonsRead = modules.readRuleEntryFolder('lesson', {
@@ -29088,3 +29093,290 @@ Push from {{ session.title }}.
   const refusedChild = await finishedChild(host, secondChild);
   assert.match(agent(refusedChild).body, /Their note: Wait for CI\./);
 });
+test(
+  'settled workflow feedback produces reviewed gate rules with validated citations and usage',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-gate-rules-')),
+    );
+    const project = join(directory, 'project');
+    const workflowsHome = join(directory, 'workflows-home');
+    const root = join(project, '.agents', 'workflows');
+    const specPath = join(project, '.agents', 'tasks', 'logging.md');
+    const pidFile = join(directory, 'pids.json');
+    const verdictLog = join(directory, 'verdicts.jsonl');
+    const quote = 'Application messages must use the shared logger.';
+    const data = join(directory, 'data');
+    const env = {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: workflowsHome,
+      NESVO_FIXTURE_VERDICT_LOG: verdictLog,
+    };
+    let host = launch(data, pidFile, env);
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.kill();
+      await host.exited;
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    for (const path of ['steps', 'workflows'])
+      await mkdir(join(root, path), { recursive: true });
+    await mkdir(join(workflowsHome, 'lessons'), { recursive: true });
+    await mkdir(join(specPath, '..'), { recursive: true });
+    await writeFile(
+      join(root, 'steps', 'review.md'),
+      '---\nname: review\ntype: agent\nphase: pre-done\non_fail: stop\n---\nfixture:gate-rule-verdict\n',
+    );
+    await writeFile(
+      join(root, 'steps', 'approve.md'),
+      '---\nname: approve\ntype: human\nphase: pre-done\n---\nReview changes.\n',
+    );
+    await writeFile(
+      join(root, 'workflows', 'logging.md'),
+      '---\nname: logging\nsteps: [review, approve]\n---\n',
+    );
+    await writeFile(
+      specPath,
+      '---\nworkflow: logging\ntitle: Update logging\n---\nfixture:read-only\n',
+    );
+    await promisify(execFile)('git', ['init', '-q', project]);
+    const poll = async (read, match) => {
+      const deadline = Date.now() + 30_000;
+      let current = await read();
+      while (!match(current) && Date.now() < deadline) {
+        await delay(50);
+        current = await read();
+      }
+      assert.ok(match(current), JSON.stringify(current));
+      return current;
+    };
+    const overview = async runId => {
+      const response = await host.request('gate-rules', {
+        action: 'read',
+        runId,
+      });
+      assert.equal(response.type, 'gate-rules', JSON.stringify(response));
+      return response.overview;
+    };
+    const start = async () => {
+      const response = await host.request('start-workflow-task', {
+        directory: project,
+        specPath,
+        workflowName: 'logging',
+        mode: 'read-only',
+        provider: 'Claude Code',
+        model: 'sonnet',
+        gateProvider: 'Claude Code',
+        gateModel: 'sonnet',
+        isolation: 'none',
+      });
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
+      return response.run.id;
+    };
+    const detail = async runId => {
+      const response = await host.request('get-workflow-run', { runId });
+      assert.equal(
+        response.type,
+        'workflow-run-detail',
+        JSON.stringify(response),
+      );
+      return response.detail;
+    };
+    const human = async (runId, decision, comment, afterStep) => {
+      const current = await poll(
+        () => detail(runId),
+        item =>
+          item.run.status === 'awaiting-human' &&
+          item.steps.at(-1).id !== afterStep,
+      );
+      const gate = current.steps.findLast(step => step.name === 'approve');
+      const response = await host.request('decide-workflow-gate', {
+        runId,
+        stepId: gate.id,
+        decisionId: randomUUID(),
+        decision,
+        comment,
+        reviewId: gate.reviewId,
+        version: gate.reviewVersion,
+      });
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
+      return gate.id;
+    };
+
+    await writeFile(
+      join(workflowsHome, 'lessons', 'lesson-0001.md'),
+      '---\nid: lesson-0001\ndescription: Applies when checking application logs.\nkind: instruction\nscope:\n  steps: [review]\n  roles: [workflow-agent]\nstatus: active\nprovenance:\n  source: manual\n  date: 2026-11-18\n---\nUse structured fields.\nWhy: Structured fields can be searched.\nCheck: Inspect the log call.\n',
+    );
+
+    const invalidRun = await start();
+    await human(invalidRun, 'reject', 'The explanation needs more detail.');
+    const invalid = await poll(
+      () => overview(invalidRun),
+      item => item.generation?.status === 'invalid',
+    );
+    assert.match(invalid.generation.reason, /quote.*owner/i);
+    assert.deepEqual(invalid.proposals, []);
+
+    const sourceRun = await start();
+    const fix = await human(sourceRun, 'fix', quote);
+    await human(sourceRun, 'accept', '', fix);
+    const pending = await poll(
+      () => overview(sourceRun),
+      item => item.generation?.status === 'done',
+    );
+    const [proposal] = pending.proposals;
+    assert.equal(proposal.proposal.quote, quote);
+    assert.equal(proposal.decisionKind, 'fix');
+    assert.ok(
+      host.timeline.some(
+        event =>
+          event.type === 'gate-rule-proposal-changed' &&
+          event.proposal.id === proposal.id,
+      ),
+    );
+    const proposalSession = (await host.request('list-sessions')).sessions.find(
+      session => session.id === proposal.sessionId,
+    );
+    assert.equal(proposalSession.mode, 'read-only');
+    assert.equal(proposalSession.model, 'sonnet');
+    assert.equal(proposalSession.delegationEnabled, false);
+    const send = await host.request('send-message', {
+      sessionId: proposal.sessionId,
+      messageId: randomUUID(),
+      text: 'Continue.',
+    });
+    assert.equal(send.code, 'invalid-request');
+
+    const input = {
+      action: 'decide',
+      decision: {
+        action: 'accept',
+        proposalId: proposal.id,
+        decisionId: randomUUID(),
+        revision: proposal.revision,
+      },
+    };
+    const accepted = await host.request('gate-rules', input);
+    assert.equal(accepted.type, 'gate-rules', JSON.stringify(accepted));
+    const [saved] = accepted.overview.proposals;
+    assert.equal(saved.status, 'accepted');
+    assert.equal(saved.ruleId, 'rule-0001');
+    assert.ok(saved.changeId);
+    const path = join(root, 'gate-rules', 'rule-0001.md');
+    const document = await readFile(path, 'utf8');
+    assert.match(document, /steps: \["review"\]/);
+    assert.match(document, /decision: "fix"/);
+    assert.ok(document.includes(sourceRun));
+    assert.ok(document.includes(quote));
+    assert.deepEqual(
+      await host.request('gate-rules', input).then(item => item.overview),
+      accepted.overview,
+    );
+    assert.equal(
+      (
+        await host.request('gate-rules', {
+          ...input,
+          decision: { ...input.decision, action: 'dismiss' },
+        })
+      ).code,
+      'invalid-request',
+    );
+
+    const verifyRun = await start();
+    const verified = await poll(
+      () => detail(verifyRun),
+      item => item.run.status === 'failed',
+    );
+    const step = verified.steps.find(item => item.name === 'review');
+    assert.deepEqual(
+      step.deliveredRules.map(item => item.id),
+      ['rule-0001', 'lesson-0001'],
+    );
+    assert.deepEqual(
+      step.result.evidence.map(item => item.rule),
+      ['rule-0001', 'lesson-0001'],
+    );
+    const verdicts = (await readFile(verdictLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    const turns = verdicts.filter(turn =>
+      turn.prompt.includes('<gate-rules>\n'),
+    );
+    assert.equal(turns.length, 2);
+    assert.match(turns[1].prompt, /Evidence may cite only delivered/);
+    assert.ok(
+      turns[1].prompt.indexOf('<gate-rules>') <
+        turns[1].prompt.indexOf('<owner-lessons>'),
+    );
+    const catalog = (
+      await host.request('list-workflow-definitions', { directory: project })
+    ).catalog;
+    assert.equal(catalog.gateRules[0].metrics.delivered, 1);
+    assert.equal(catalog.gateRules[0].metrics.cited, 1);
+    assert.equal(
+      catalog.gateRules[0].metrics.lastCited,
+      step.result.finishedAt,
+    );
+    const lessons = (await host.request('read-lessons')).overview.lessons;
+    assert.equal(
+      lessons.find(lesson => lesson.id === 'lesson-0001').metrics.cited,
+      1,
+    );
+
+    await writeFile(
+      path,
+      document.replace('Use the shared logger', 'Always use the shared logger'),
+    );
+    const undo = { conversationId: saved.sessionId, changeId: saved.changeId };
+    assert.equal(
+      (await host.request('workflow-assistant-undo', undo)).result.status,
+      'conflict',
+    );
+    await writeFile(path, document);
+    assert.equal(
+      (await host.request('workflow-assistant-undo', undo)).result.status,
+      'undone',
+    );
+    assert.equal(existsSync(path), false);
+
+    const dismissedRun = await start();
+    await human(dismissedRun, 'reject', quote);
+    const dismissible = (
+      await poll(
+        () => overview(dismissedRun),
+        item => item.generation?.status === 'done',
+      )
+    ).proposals[0];
+    await host.request('gate-rules', {
+      action: 'decide',
+      decision: {
+        action: 'dismiss',
+        proposalId: dismissible.id,
+        decisionId: randomUUID(),
+        revision: dismissible.revision,
+      },
+    });
+    await host.stop();
+    host = launch(data, pidFile, env);
+    assert.equal(
+      (await overview(dismissedRun)).proposals[0].status,
+      'dismissed',
+    );
+    assert.equal(
+      (
+        await host.request('gate-rules', {
+          action: 'retry',
+          runId: dismissedRun,
+          requestId: randomUUID(),
+        })
+      ).code,
+      'invalid-request',
+    );
+  },
+);

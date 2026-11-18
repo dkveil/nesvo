@@ -136,6 +136,7 @@ import {
   saveReviewConventionSchema,
   deleteReviewConventionSchema,
   lessonSettingsSchema,
+  gateRulesInputSchema,
   proposeLessonsSchema,
   decideLessonSchema,
   startPullRequestReviewSchema,
@@ -1085,6 +1086,14 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:gate-rules', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'gate-rules',
+      gateRulesInputSchema.parse(input),
+      route(hostId),
+    );
+  });
   handle('nesvo:read-lessons', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('read-lessons', undefined, route(hostId));
