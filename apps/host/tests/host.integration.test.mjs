@@ -1069,6 +1069,7 @@ test(
         'scheduled-job-change-triggers',
         'database-backup',
         'claude-approvals',
+        'message-attachments',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6068,6 +6069,7 @@ test(
       'scheduled-job-change-triggers',
       'database-backup',
       'claude-approvals',
+      'message-attachments',
     ]);
     const id = randomUUID();
     const jobInput = {
