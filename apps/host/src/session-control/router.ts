@@ -130,6 +130,29 @@ const childDirectory = (coordinator: Session, requested: string) => {
   return insideFolder(root, directory) ? directory : null;
 };
 
+type ChildPlacement = { directory?: string; folderNote?: string };
+
+const childPlacement = (
+  coordinator: Session,
+  requested: string | undefined,
+  defaultFolder: string | null,
+): ChildPlacement | null => {
+  if (requested) {
+    const directory = childDirectory(coordinator, requested);
+    return directory ? { directory } : null;
+  }
+  if (defaultFolder && childDirectory(coordinator, defaultFolder)) return {};
+  const directory = childDirectory(coordinator, '.');
+  if (!directory) return null;
+  const reason = defaultFolder
+    ? 'The default session folder is outside your folder'
+    : 'This computer has no default session folder';
+  return {
+    directory,
+    folderNote: `${reason}, so the child works in your folder (${basename(directory)}).`,
+  };
+};
+
 const allowedModes = (policy: CoordinatorPolicy) =>
   policy.childModes.length ? policy.childModes.join(', ') : 'no modes';
 
@@ -499,8 +522,13 @@ export class SessionControl {
           'forbidden-by-policy',
           'The coordinator policy does not allow creating worktrees.',
         );
-      const directory = childDirectory(coordinator, input.directory);
-      if (!directory)
+      const groupId = input.groupId ?? coordinator.groupId;
+      const placement = childPlacement(
+        coordinator,
+        input.directory,
+        this.params.sessions.defaultDirectory(groupId ?? undefined),
+      );
+      if (!placement)
         return refusal(
           'forbidden-by-policy',
           `Child sessions work in an existing folder inside your folder (${basename(coordinator.directory)}).`,
@@ -511,7 +539,7 @@ export class SessionControl {
         provider,
         model,
         mode: input.planFirst ? 'read-only' : input.mode,
-        directory,
+        ...(placement.directory ? { directory: placement.directory } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
         ...(input.worktree
           ? {
@@ -523,9 +551,7 @@ export class SessionControl {
               },
             }
           : {}),
-        ...((input.groupId ?? coordinator.groupId)
-          ? { groupId: input.groupId ?? coordinator.groupId }
-          : {}),
+        ...(groupId ? { groupId } : {}),
       });
       if (!create.success)
         return refusal(
@@ -557,6 +583,7 @@ export class SessionControl {
         messageId,
         ...this.delivery(child, messageId),
         planFirst: input.planFirst,
+        ...(placement.folderNote ? { folderNote: placement.folderNote } : {}),
       });
     },
     session_send: ({ coordinator, input, actionId, policy }) => {

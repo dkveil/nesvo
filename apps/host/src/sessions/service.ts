@@ -3970,6 +3970,10 @@ export class SessionService {
     this.emitSession(session);
   }
 
+  defaultDirectory(groupId?: string): string | null {
+    return this.options.defaultDirectory?.(groupId) || null;
+  }
+
   private requestedDirectory(input: CreateSessionInput): string {
     return (
       input.directory ?? this.options.defaultDirectory?.(input.groupId) ?? ''

@@ -24444,6 +24444,10 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     ]);
     assert.equal(created[0].isError, false, JSON.stringify(created[0]));
     assert.equal(created[1].isError, false, JSON.stringify(created[1]));
+    assert.match(
+      created[0].result.folderNote,
+      /no default session folder, so the child works in your folder/,
+    );
     assert.deepEqual(
       created.slice(2).map(item => [item.isError, item.result.code]),
       [
@@ -24701,6 +24705,43 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
         .length,
       2,
     );
+
+    const inside = join(cwd, 'default-inside');
+    await mkdir(inside);
+    const insideDefault = await host.request('set-default-session-folder', {
+      directory: inside,
+    });
+    assert.equal(
+      insideDefault.directory,
+      inside,
+      JSON.stringify(insideDefault),
+    );
+    const placedInside = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: { title: 'Child F', prompt: 'fixture:say Child F done' },
+      },
+    ]);
+    assert.equal(placedInside[0].isError, false);
+    assert.equal(placedInside[0].result.folderNote, undefined);
+    const childF = await finishedChild(host, placedInside[0].result.sessionId);
+    assert.equal(childF.directory, inside);
+    const outsideDefault = await host.request('set-default-session-folder', {
+      directory: elsewhere,
+    });
+    assert.equal(outsideDefault.directory, elsewhere);
+    const placedOutside = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: { title: 'Child G', prompt: 'fixture:say Child G done' },
+      },
+    ]);
+    assert.match(
+      placedOutside[0].result.folderNote,
+      /default session folder is outside your folder, so the child works in your folder/,
+    );
+    const childG = await finishedChild(host, placedOutside[0].result.sessionId);
+    assert.equal(childG.directory, cwd);
   } finally {
     await host?.stop();
     await rm(directory, { recursive: true, force: true });
