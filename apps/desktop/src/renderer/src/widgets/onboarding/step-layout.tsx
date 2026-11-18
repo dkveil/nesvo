@@ -22,13 +22,10 @@ export function OnboardingStepLayout({ step, heading, children }: Props) {
       >
         {heading && (
           <header className="space-y-1.5">
-            <h1
-              id="onboarding-title"
-              className="text-display-lg font-semibold tracking-tight"
-            >
+            <h1 id="onboarding-title" className="text-xl font-medium">
               {heading.title}
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-ui text-muted-foreground">
               {heading.description}
             </p>
           </header>

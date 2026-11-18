@@ -35,6 +35,25 @@ export function FieldMessages({ id, messages }: FieldMessagesProps) {
   );
 }
 
+type FieldLabelProps = {
+  id: string;
+  as?: 'label' | 'span';
+  children: ReactNode;
+};
+
+export function FieldLabel({ id, as = 'label', children }: FieldLabelProps) {
+  const className = 'text-2xs leading-4 font-medium text-muted-foreground';
+  return as === 'label' ? (
+    <Label htmlFor={id} className={className}>
+      {children}
+    </Label>
+  ) : (
+    <span id={`${id}-label`} className={className}>
+      {children}
+    </span>
+  );
+}
+
 type FieldProps = {
   id: string;
   label: string;
@@ -58,19 +77,11 @@ export function Field({
   className,
   children,
 }: FieldProps) {
-  const caption =
-    as === 'label' ? (
-      <Label htmlFor={id} className="text-2xs leading-4 text-muted-foreground">
-        {label}
-      </Label>
-    ) : (
-      <span
-        id={`${id}-label`}
-        className="text-2xs leading-4 font-medium text-muted-foreground"
-      >
-        {label}
-      </span>
-    );
+  const caption = (
+    <FieldLabel id={id} as={as}>
+      {label}
+    </FieldLabel>
+  );
   const notes = (
     <>
       {hint && (

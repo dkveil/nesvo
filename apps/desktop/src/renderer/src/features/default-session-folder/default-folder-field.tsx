@@ -3,7 +3,7 @@ import { FolderOpen } from 'lucide-react';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
-import { Field } from '@/shared/ui/field';
+import { Field, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 
@@ -60,7 +60,9 @@ export function DefaultFolderField({
       <div className={className}>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
-            <p className="text-xs font-medium">{label}</p>
+            <FieldLabel id={id} as="span">
+              {label}
+            </FieldLabel>
             {value ? (
               <MiddleTruncatedText
                 value={value}
