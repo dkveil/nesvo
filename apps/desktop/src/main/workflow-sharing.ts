@@ -214,7 +214,7 @@ export const createWorkflowSharing = ({
       PUBLIC_SHARE_ORIGIN,
     ]);
     if (!parsed.ok) {
-      log.warn('A Nesvo link was refused.', parsed.message);
+      log.warn('A Nesvo link was refused.');
       offer({ status: 'refused', message: parsed.message });
       return;
     }
@@ -239,7 +239,7 @@ export const createWorkflowSharing = ({
         error instanceof Error
           ? error.message
           : 'The shared workflow could not be opened.';
-      log.warn('A shared workflow could not be opened.', message);
+      log.warn('A shared workflow could not be opened.');
       offer({ status: 'refused', message });
     }
   };
