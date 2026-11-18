@@ -5,5 +5,12 @@
 - Desktop sessions with streaming chat, per-turn permissions, reusable skills, and configurable MCP servers and hooks.
 - Plan-first workers, a review inbox with revision-bound decisions, saved diffs, and history restored on restart.
 - Local and SSH-connected hosts, session groups, history search, usage and cost reports, and budgets.
-- A workflow editor, scheduled automations, and pull request review from the desktop.
-- Paired mobile access to existing sessions, plus unsigned Windows and macOS installers.
+- A workflow editor, scheduled automations, change-triggered automations, and pull request review from the desktop.
+- Claude Code operation approvals answered once from the inbox or the conversation.
+- Session worktrees with `.worktreeinclude`, approved setup scripts, cleanup of orphaned checkouts, and forks into a new worktree.
+- Fork, restart, compact, delete with undo, export as Markdown, and open in the system terminal.
+- Image attachments in the composer and a context window indicator from provider-reported usage.
+- Provider accounts per session, import of existing CLI conversations, and search across CLI transcripts.
+- A command palette with session actions, keyboard navigation, status filters, and tray attention badges.
+- About, Defaults, Notifications and Data settings, rotating logs, automatic host restart and reconnect, and database backups before migrations.
+- Paired mobile access to existing sessions, plus unsigned Windows and macOS installers with SHA-256 checksums.
