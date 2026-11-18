@@ -74,8 +74,8 @@ export function DataSettings({ api, computers }: Props) {
               description={
                 <div className="space-y-1">
                   <p>
-                    Writes a consistent copy of the session database next to it
-                    on {computer.name}.
+                    Writes a consistent copy of the session database next to the
+                    original.
                   </p>
                   {reason && <p>{reason}</p>}
                   {state.status === 'pending' && (
