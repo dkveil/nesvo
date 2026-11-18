@@ -57,6 +57,9 @@ Electron-builder writes these installers to `apps/desktop/release`. The workflow
 - `Nesvo-Windows-Setup.exe` installs the x64 app for the current user with desktop and Start menu shortcuts. Use Windows Installed apps to uninstall it.
 - `Nesvo-macOS-arm64.dmg` contains the Apple silicon app.
 - `Nesvo-macOS-x64.dmg` contains the Intel app.
+- `SHA256SUMS.txt` contains the SHA-256 digest of each installer.
+
+Download the checksum file alongside your installer. On Windows, run `Get-FileHash .\Nesvo-Windows-Setup.exe -Algorithm SHA256`. On macOS, run `shasum -a 256 Nesvo-macOS-arm64.dmg`, substituting the Intel filename if needed. Compare the output with the matching line in `SHA256SUMS.txt` before opening the installer.
 
 Download the latest installers from the [Nesvo releases page](https://github.com/dkveil/nesvo/releases/latest). Builds are unsigned, macOS builds are not notarized, and updates require downloading a new installer.
 
