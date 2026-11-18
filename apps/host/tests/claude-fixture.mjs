@@ -693,6 +693,7 @@ if (args.length === 1 && args[0] === '--version') {
         command: reviewCommand,
         cwd: process.cwd(),
         permissionMode: values.get('--permission-mode'),
+        settingSources: values.get('--setting-sources') ?? null,
         schema: JSON.parse(values.get('--json-schema')),
         prompt,
       }) + '\n',

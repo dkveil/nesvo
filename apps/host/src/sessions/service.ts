@@ -1661,7 +1661,7 @@ export class SessionService {
 
   send(
     input: SendMessageInput,
-    turn: Pick<LaunchTurn, 'outputSchema'> = {},
+    turn: Pick<LaunchTurn, 'outputSchema' | 'instructionsOnly'> = {},
   ): Session {
     if (this.unsaved.size) {
       this.list();
@@ -1747,6 +1747,7 @@ export class SessionService {
       skillHash: input.skillHash,
       ...(input.attachments ? { attachments: input.attachments } : {}),
       ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
+      ...(turn.instructionsOnly ? { instructionsOnly: true } : {}),
       previousSelection,
     });
     return structuredClone(session);

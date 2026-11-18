@@ -535,7 +535,7 @@ export class CodeReviews {
           messageId: derivedId('review-message', draft.id),
           text: reviewPrompt(draft, description, files, this.store.conventions()),
         },
-        { outputSchema: agentReviewOutputJsonSchema() },
+        { outputSchema: agentReviewOutputJsonSchema(), instructionsOnly: true },
       );
       if (!started.runId)
         throw new CodeReviewError(

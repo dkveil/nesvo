@@ -21117,6 +21117,7 @@ test(
       .split('\n')
       .map(line => JSON.parse(line));
     assert.equal(logged.permissionMode, 'plan');
+    assert.equal(logged.settingSources, '');
     assert.notEqual(await realpath(logged.cwd), project);
     assert.match(logged.prompt, /AGENTS\.md and CLAUDE\.md/);
     assert.match(logged.prompt, /\(language: ts\) Prefer named exports\./);
