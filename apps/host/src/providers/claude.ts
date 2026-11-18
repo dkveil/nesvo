@@ -11,6 +11,8 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
   reasoningEffortSchema,
+  SESSION_CONTROL_NAMESPACE,
+  sessionControlToolTitle,
   type Approval,
   type ImageMediaType,
   type ClaudeStatus,
@@ -46,6 +48,14 @@ import {
   type ContextFill,
 } from './turn-usage';
 import { recordProviderProcess } from '../process/provider-processes';
+import {
+  claudeControlInitialize,
+  claudeControlToolPrefix,
+  createClaudeControlChannel,
+  isClaudeControlServer,
+  isClaudeMcpMessage,
+} from './claude-control';
+import type { SessionControlTurn } from '../session-control/types';
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -945,6 +955,7 @@ export function startClaude(options: {
   approvals?: boolean;
   mcpTurn?: { verify: VerifyMcpTurn; dataDirectory: string };
   compact?: { instructions: string | null };
+  control?: SessionControlTurn;
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -1054,8 +1065,9 @@ export function startClaude(options: {
         !options.assistantPrompt &&
         !options.outputSchema &&
         inspection.supportsHostPrompts === true;
+      const controlled = !!options.control && canAsk;
       const hostPrompts =
-        canAsk && (!readOnly || Object.keys(servers).length > 0);
+        canAsk && (!readOnly || Object.keys(servers).length > 0 || controlled);
       if (integrations && options.mcpTurn)
         runConfig = await writeClaudeRunConfig(
           options.mcpTurn.dataDirectory,
@@ -1179,6 +1191,28 @@ export function startClaude(options: {
           throw new Error('Claude Code closed its input.');
         running.child.stdin.write(JSON.stringify(frame) + '\n');
       };
+      const control =
+        controlled && options.control
+          ? createClaudeControlChannel({
+              tools: options.control.tools,
+              call: options.control.call,
+              write: writeFrame,
+              onFailure: fail,
+            })
+          : null;
+      const controlUnavailable = () =>
+        emit({
+          type: 'tool-activity',
+          activity: makeActivity({
+            id: 'session-control-unavailable',
+            kind: 'tool',
+            title: 'Session control unavailable',
+            status: 'failed',
+            detail:
+              'This Claude Code version did not connect the Nesvo tools, so this turn cannot create or steer sessions.',
+          }),
+        });
+      if (options.control && !control) controlUnavailable();
       const settleApproval = (id: string) => {
         const pending = approvals.get(id);
         if (!pending) return;
@@ -1203,6 +1237,7 @@ export function startClaude(options: {
       releaseApprovals = () => {
         for (const pending of approvals.values()) clearTimeout(pending.timer);
         approvals.clear();
+        control?.close();
       };
       respond = (id, decision, message) => {
         const pending = approvals.get(id);
@@ -1229,6 +1264,10 @@ export function startClaude(options: {
       };
       const permissionRequest = (value: RecordValue) => {
         if (!hostPrompts) return;
+        if (control && isClaudeMcpMessage(value)) {
+          control.handle(value);
+          return;
+        }
         const request = object(value.request);
         if (request?.subtype !== 'can_use_tool') {
           if (typeof value.request_id === 'string')
@@ -1262,6 +1301,22 @@ export function startClaude(options: {
           return;
         }
         const { request: ask } = parsed;
+        if (
+          control &&
+          String(request.tool_name).startsWith(claudeControlToolPrefix)
+        ) {
+          try {
+            writeFrame(
+              claudePermissionAnswer(ask.requestId, {
+                behavior: 'allow',
+                input: ask.input,
+              }),
+            );
+          } catch {
+            fail('Claude permission answer could not be delivered.');
+          }
+          return;
+        }
         if (readOnly && !String(request.tool_name).startsWith('mcp__')) {
           deny(ask.requestId, 'Plan mode only asks for MCP tool approvals.');
           return;
@@ -1296,9 +1351,34 @@ export function startClaude(options: {
           emit({ type: 'text', text });
         }
       };
+      const controlActivity = (block: RecordValue, tool: string) => {
+        const title = sessionControlToolTitle(tool);
+        emit({ type: 'activity', text: title });
+        if (typeof block.id !== 'string') return;
+        const previous = toolActivities.get(block.id);
+        const input = object(block.input);
+        const next = makeActivity({
+          id: block.id,
+          kind: 'tool',
+          title,
+          status: previous?.status ?? 'running',
+          startedAt: previous?.startedAt,
+          completedAt: previous?.completedAt,
+          detail:
+            typeof input?.title === 'string'
+              ? input.title
+              : (previous?.detail ?? null),
+          output: previous?.output,
+          truncated: previous?.truncated,
+        });
+        toolActivities.set(next.id, next);
+        emit({ type: 'tool-activity', activity: next });
+      };
       const mcpActivity = (block: RecordValue) => {
         const name = String(block.name);
         const [server = '', ...tool] = name.slice('mcp__'.length).split('__');
+        if (server === SESSION_CONTROL_NAMESPACE && control)
+          return controlActivity(block, tool.join('__'));
         emit({ type: 'activity', text: 'MCP tool' });
         if (typeof block.id !== 'string') return;
         const previous = toolActivities.get(block.id);
@@ -1455,7 +1535,10 @@ export function startClaude(options: {
         }
         if (value.type === 'control_request') return permissionRequest(value);
         if (value.type === 'control_cancel_request') {
-          if (typeof value.request_id === 'string')
+          if (
+            typeof value.request_id === 'string' &&
+            !control?.cancel(value.request_id)
+          )
             settleApproval(value.request_id);
           return;
         }
@@ -1471,6 +1554,8 @@ export function startClaude(options: {
           } else {
             initialized = true;
             reportedModel = value.model;
+            if (control && !isClaudeControlServer(value.mcp_servers))
+              controlUnavailable();
             emit({
               type: 'init',
               sessionId: value.session_id,
@@ -1686,7 +1771,7 @@ export function startClaude(options: {
       const inactivityLimit = providerInactivityLimit();
       const watchdog = watchInactivity({
         limitMs: inactivityLimit,
-        isWaiting: () => approvals.size > 0,
+        isWaiting: () => approvals.size > 0 || (control?.pending() ?? 0) > 0,
         onInactive: () => fail(inactivityFailure('Claude', inactivityLimit)),
       });
       running.child.stdout.setEncoding('utf8');
@@ -1722,7 +1807,13 @@ export function startClaude(options: {
           writeFrame({
             type: 'control_request',
             request_id: randomUUID(),
-            request: { subtype: 'initialize', hooks: {}, sdkMcpServers: [] },
+            request: {
+              subtype: 'initialize',
+              hooks: {},
+              ...(control && options.control
+                ? claudeControlInitialize(options.control.tools)
+                : { sdkMcpServers: [] }),
+            },
           });
           writeFrame({
             type: 'user',

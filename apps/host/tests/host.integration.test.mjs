@@ -1375,6 +1375,7 @@ test(
         'running-apps',
         'default-session-folder',
         'worktree-recipes',
+        'session-control',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6573,6 +6574,7 @@ test(
       'running-apps',
       'default-session-folder',
       'worktree-recipes',
+      'session-control',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -24297,3 +24299,452 @@ test(
     );
   },
 );
+const controlTurn = async (host, sessionId, calls, method = 'send-message') => {
+  const sent = await host.request(method, {
+    sessionId,
+    messageId: randomUUID(),
+    text: `fixture:nesvo ${JSON.stringify(calls)}`,
+  });
+  assert.equal(sent.type, 'session', JSON.stringify(sent));
+  const completed = await host.event(
+    item =>
+      item.id === sessionId &&
+      item.runId === sent.session.runId &&
+      item.status !== 'running' &&
+      item.status !== 'stopping',
+  );
+  assert.equal(completed.status, 'completed', completed.error);
+  return JSON.parse(agent(completed).body);
+};
+
+const finishedChild = (host, sessionId, status = 'completed') =>
+  host.event(
+    item =>
+      item.id === sessionId &&
+      item.status === status &&
+      item.messages.at(-1)?.author === 'agent',
+  );
+
+test('a Claude coordinator creates, steers and waits for child sessions through Nesvo tools', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-control-claude-'));
+  const elsewhere = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-control-other-')),
+  );
+  const pidFile = join(directory, 'fixture.pid');
+  const controlLog = join(directory, 'control.log');
+  const cwd = await realpath(directory);
+  let host;
+  try {
+    host = launch(directory, pidFile, {
+      NESVO_FIXTURE_CONTROL_LOG: controlLog,
+    });
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('session-control'));
+    const initial = await host.request('read-session-control-policy');
+    assert.equal(initial.type, 'session-control-policy');
+    assert.deepEqual(initial.policy, {
+      enabled: false,
+      providers: ['Claude Code', 'Codex'],
+      models: [],
+      childModes: ['read-only', 'accept-edits'],
+      worktrees: false,
+      acceptPlans: true,
+    });
+    const coordinator = (
+      await host.request('create-session', {
+        title: 'Coordinator',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+      })
+    ).session;
+    const disabled = await host.request('send-message', {
+      sessionId: coordinator.id,
+      messageId: randomUUID(),
+      text: 'fixture:nesvo [{"tool":"session_children"}]',
+    });
+    const withoutTools = await host.event(
+      item =>
+        item.id === coordinator.id &&
+        item.runId === disabled.session.runId &&
+        item.status === 'completed',
+    );
+    assert.equal(
+      agent(withoutTools).body,
+      'Nesvo tools are not available in this turn.',
+    );
+    const saved = await host.request('save-session-control-policy', {
+      ...initial.policy,
+      enabled: true,
+    });
+    assert.equal(saved.policy.enabled, true);
+
+    const created = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_a',
+        arguments: { title: 'Child A', prompt: 'fixture:say Child A done' },
+      },
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_b',
+        arguments: {
+          title: 'Child B',
+          prompt: 'fixture:say Plan: edit sample.txt',
+          mode: 'accept-edits',
+          planFirst: true,
+        },
+      },
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_c',
+        arguments: { title: 'Child C', prompt: 'Do anything.', mode: 'auto' },
+      },
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_d',
+        arguments: {
+          title: 'Child D',
+          prompt: 'Work in a worktree.',
+          worktree: {},
+        },
+      },
+    ]);
+    assert.equal(created[0].isError, false, JSON.stringify(created[0]));
+    assert.equal(created[1].isError, false, JSON.stringify(created[1]));
+    assert.deepEqual(
+      created.slice(2).map(item => [item.isError, item.result.code]),
+      [
+        [true, 'forbidden-by-policy'],
+        [true, 'forbidden-by-policy'],
+      ],
+    );
+    const childA = created[0].result.sessionId;
+    const childB = created[1].result.sessionId;
+    assert.match(created[0].result.actionId, /^[0-9a-f]{64}$/);
+    const firstA = await finishedChild(host, childA);
+    assert.equal(firstA.parentId, coordinator.id);
+    assert.equal(firstA.parentRunId, null);
+    assert.equal(agent(firstA).body, 'Child A done');
+    const planned = await finishedChild(host, childB);
+    assert.equal(planned.mode, 'read-only');
+    const logged = (await readFile(controlLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.equal(logged.length, 1, 'Children do not receive Nesvo tools');
+    assert.equal(logged[0].permissionMode, 'plan');
+    assert.ok(logged[0].tools.includes('events_wait'));
+
+    const decided = await controlTurn(host, coordinator.id, [
+      { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 10 } },
+      { tool: 'session_children' },
+      { tool: 'session_output', arguments: { sessionId: childB } },
+      {
+        tool: 'session_decide',
+        arguments: { sessionId: childB, kind: 'operation', decision: 'accept' },
+      },
+      {
+        tool: 'session_set_mode',
+        arguments: { sessionId: childA, mode: 'auto' },
+      },
+      {
+        tool: 'session_send',
+        arguments: { sessionId: coordinator.id, text: 'Hello myself.' },
+      },
+      {
+        tool: 'session_decide',
+        id: 'toolu_control_decide_b',
+        arguments: {
+          sessionId: childB,
+          kind: 'plan',
+          decision: 'accept',
+          text: 'Keep the change small.',
+        },
+      },
+    ]);
+    const [waited, children, output, operation, mode, self, accepted] = decided;
+    assert.deepEqual(
+      waited.result.events.map(event => [event.sessionId, event.type]).sort(),
+      [
+        [childA, 'finished'],
+        [childB, 'plan-ready'],
+      ].sort(),
+    );
+    assert.deepEqual(
+      children.result.sessions.map(item => item.sessionId).sort(),
+      [childA, childB].sort(),
+    );
+    assert.equal(
+      children.result.sessions.find(item => item.sessionId === childB)
+        .waitingFor,
+      'plan',
+    );
+    assert.equal(output.result.text, 'Plan: edit sample.txt');
+    assert.equal(output.result.untrusted, true);
+    assert.equal(operation.result.code, 'human-only');
+    assert.equal(mode.result.code, 'forbidden-by-policy');
+    assert.equal(self.result.code, 'not-in-subtree');
+    assert.equal(accepted.isError, false, JSON.stringify(accepted));
+    assert.equal(accepted.result.mode, 'accept-edits');
+    const resumedB = await host.event(
+      item =>
+        item.id === childB &&
+        item.status === 'completed' &&
+        item.messages.at(-1)?.author === 'agent' &&
+        item.messages.some(message => message.body.includes('Approved plan')),
+    );
+    const approvedTurn = resumedB.messages.findLast(
+      message => message.author === 'operator',
+    );
+    assert.equal(approvedTurn.mode, 'accept-edits');
+    assert.match(approvedTurn.body, /Approved plan:\nPlan: edit sample.txt/);
+    assert.match(approvedTurn.body, /Keep the change small\./);
+    assert.equal(resumedB.mode, 'accept-edits');
+
+    const blocked = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'events_wait',
+        arguments: { cursor: waited.result.cursor, timeoutSeconds: 10 },
+      },
+      {
+        tool: 'session_send',
+        arguments: { sessionId: childA, text: 'fixture:say Child A again' },
+      },
+      {
+        tool: 'events_wait',
+        arguments: { cursor: '$cursor', timeoutSeconds: 30 },
+      },
+    ]);
+    assert.deepEqual(
+      blocked[0].result.events.map(event => [event.sessionId, event.type]),
+      [[childB, 'finished']],
+    );
+    assert.equal(blocked[1].result.status, 'started');
+    assert.deepEqual(
+      blocked[2].result.events.map(event => [event.sessionId, event.type]),
+      [[childA, 'finished']],
+    );
+
+    const asking = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_e',
+        arguments: {
+          title: 'Child E',
+          prompt: 'fixture:ask-write',
+          mode: 'accept-edits',
+          directory: elsewhere,
+        },
+      },
+      {
+        tool: 'events_wait',
+        arguments: { cursor: blocked[2].result.cursor, timeoutSeconds: 30 },
+      },
+    ]);
+    const childE = asking[0].result.sessionId;
+    assert.deepEqual(
+      asking[1].result.events.map(event => [event.sessionId, event.type]),
+      [[childE, 'approval-pending']],
+    );
+    const refusedApproval = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_decide',
+        arguments: { sessionId: childE, kind: 'operation', decision: 'accept' },
+      },
+    ]);
+    assert.equal(refusedApproval[0].result.code, 'human-only');
+    const waitingE = (await host.request('get-session', { sessionId: childE }))
+      .session;
+    assert.equal(waitingE.pendingApprovals.length, 1);
+    const answered = await host.request('respond-approval', {
+      sessionId: childE,
+      runId: waitingE.runId,
+      requestId: waitingE.pendingApprovals[0].id,
+      decision: 'decline',
+      fingerprint: waitingE.pendingApprovals[0].fingerprint,
+    });
+    assert.equal(answered.type, 'session', JSON.stringify(answered));
+    await finishedChild(host, childE);
+
+    const standalone = (
+      await host.request('create-session', {
+        title: 'Standalone',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: elsewhere,
+      })
+    ).session;
+    const adopting = await controlTurn(host, coordinator.id, [
+      { tool: 'session_set_parent', arguments: { sessionId: standalone.id } },
+    ]);
+    assert.equal(adopting[0].result.status, 'awaiting-operator');
+    const pending = (
+      await host.request('get-session', { sessionId: standalone.id })
+    ).session;
+    assert.equal(pending.parentId, null);
+    assert.equal(pending.parentRequest.parentId, coordinator.id);
+    assert.equal(pending.parentRequest.parentTitle, 'Coordinator');
+    const confirmed = await host.request('decide-session-parent', {
+      sessionId: standalone.id,
+      requestId: pending.parentRequest.id,
+      decision: 'accept',
+    });
+    assert.equal(confirmed.type, 'session', JSON.stringify(confirmed));
+    assert.equal(confirmed.session.parentId, coordinator.id);
+    assert.equal(confirmed.session.parentRequest, null);
+    const stale = await host.request('decide-session-parent', {
+      sessionId: standalone.id,
+      requestId: pending.parentRequest.id,
+      decision: 'accept',
+    });
+    assert.equal(stale.code, 'not-found');
+
+    await host.stop();
+    host = launch(directory, pidFile, {
+      NESVO_FIXTURE_CONTROL_LOG: controlLog,
+    });
+    const replayed = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        id: 'toolu_control_create_a',
+        arguments: { title: 'Child A', prompt: 'fixture:say Child A done' },
+      },
+      {
+        tool: 'session_decide',
+        id: 'toolu_control_decide_b',
+        arguments: { sessionId: childB, kind: 'plan', decision: 'accept' },
+      },
+      { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 1 } },
+    ]);
+    assert.equal(replayed[0].result.sessionId, childA);
+    assert.equal(replayed[0].result.actionId, created[0].result.actionId);
+    assert.deepEqual(replayed[1].result, accepted.result);
+    assert.ok(
+      replayed[2].result.events.some(
+        event =>
+          event.sessionId === standalone.id && event.type === 'parent-accepted',
+      ),
+    );
+    const listed = (await host.request('list-sessions')).sessions;
+    assert.deepEqual(
+      listed
+        .filter(item => item.parentId === coordinator.id)
+        .map(item => item.title)
+        .sort(),
+      ['Child A', 'Child B', 'Child E', 'Standalone'],
+    );
+    const afterRestartA = listed.find(item => item.id === childA);
+    assert.equal(
+      afterRestartA.messages.filter(message => message.author === 'operator')
+        .length,
+      2,
+    );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+    await rm(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on resume', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-control-codex-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const controlLog = join(directory, 'control.log');
+  const cwd = await realpath(directory);
+  let host;
+  try {
+    host = launch(directory, pidFile, {
+      NESVO_FIXTURE_CONTROL_LOG: controlLog,
+    });
+    const older = (
+      await host.request('create-session', {
+        title: 'Older Codex',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        directory: cwd,
+      })
+    ).session;
+    const before = await host.request('send-message', {
+      sessionId: older.id,
+      messageId: randomUUID(),
+      text: 'Hello.',
+    });
+    await host.event(
+      item =>
+        item.id === older.id &&
+        item.runId === before.session.runId &&
+        item.status === 'completed',
+    );
+    await host.request('save-session-control-policy', {
+      enabled: true,
+      providers: ['Codex'],
+      models: [],
+      childModes: ['read-only'],
+      worktrees: false,
+      acceptPlans: true,
+    });
+    const coordinator = (
+      await host.request('create-session', {
+        title: 'Codex coordinator',
+        provider: 'Codex',
+        model: 'fixture-codex',
+        directory: cwd,
+      })
+    ).session;
+    const created = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: { title: 'Codex child', prompt: 'Summarize the folder.' },
+      },
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Writable child',
+          prompt: 'Change things.',
+          mode: 'supervised',
+        },
+      },
+      {
+        tool: 'session_create',
+        arguments: {
+          title: 'Claude child',
+          prompt: 'Look around.',
+          provider: 'Claude Code',
+          model: 'default',
+        },
+      },
+    ]);
+    assert.equal(created[0].success, true, JSON.stringify(created[0]));
+    assert.deepEqual(
+      created.slice(1).map(item => [item.success, item.result.code]),
+      [
+        [false, 'forbidden-by-policy'],
+        [false, 'forbidden-by-policy'],
+      ],
+    );
+    const child = created[0].result.sessionId;
+    const finished = await finishedChild(host, child);
+    assert.equal(finished.parentId, coordinator.id);
+    const resumed = await controlTurn(host, coordinator.id, [
+      { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 10 } },
+      { tool: 'session_status' },
+    ]);
+    assert.deepEqual(
+      resumed[0].result.events.map(event => [event.sessionId, event.type]),
+      [[child, 'finished']],
+    );
+    assert.equal(resumed[1].result.sessions[0].status, 'completed');
+    const logged = (await readFile(controlLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.deepEqual(
+      logged.map(entry => entry.tools.includes('session_create')),
+      [false, true, false],
+    );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

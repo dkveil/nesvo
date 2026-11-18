@@ -100,6 +100,8 @@ import { WorktreeRecipes } from './worktree-recipes/service';
 import { WorktreeRecipeStore } from './worktree-recipes/store';
 import { RunningAppsError } from './running-apps/scan';
 import { DefaultSessionFolder } from './workspace/default-folder';
+import { SessionControl } from './session-control/router';
+import { SessionControlStore } from './session-control/store';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -146,6 +148,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'respond-approval',
   'decide-delegation',
   'decide-worker-plan',
+  'decide-session-parent',
+  'save-session-control-policy',
   'decide-review',
   'start-workflow-task',
   'run-workflow-steps',
@@ -277,12 +281,17 @@ export const serveHost = ({
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
       };
       let observeAssistant: (session: Session) => void = () => {};
+      const control: { current?: SessionControl } = {};
+      const controlStore = new SessionControlStore(database);
       const emitSessionEvent = (
         message: DesktopEvent,
         session: Session | null,
       ) => {
         emit(message);
-        if (session) observeAssistant(session);
+        if (session) {
+          observeAssistant(session);
+          control.current?.observe(session);
+        }
       };
       const sessions = yield* Effect.acquireRelease(
         Effect.sync(
@@ -298,6 +307,21 @@ export const serveHost = ({
                 workflowRunStore.interruptActiveRuns(at);
               },
               {
+                control: {
+                  available: session =>
+                    control.current?.bridge().available(session) ?? false,
+                  call: (caller, call, signal) =>
+                    control.current
+                      ? control.current.call(caller, call, signal)
+                      : Promise.resolve({
+                          ok: false,
+                          text: JSON.stringify({
+                            ok: false,
+                            code: 'unsupported',
+                            message: 'Session control is not ready yet.',
+                          }),
+                        }),
+                },
                 profiles,
                 mcp: new McpPolicy(database),
                 checkCostBudgets: (session, now) => costs.check(session, now),
@@ -361,6 +385,20 @@ export const serveHost = ({
         service => Effect.promise(() => service.close()),
       );
       recipes.current = worktreeRecipes;
+      const sessionControl = new SessionControl({
+        store: controlStore,
+        sessions,
+        signal: probes.controller.signal,
+      });
+      control.current = sessionControl;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onRunFinished(finished =>
+            sessionControl.runFinished(finished),
+          ),
+        ),
+        release => Effect.sync(() => release()),
+      );
       const housekeeping = new SessionHousekeeping(sessions, groupStore, emit);
       const deletions = yield* Effect.acquireRelease(
         Effect.sync(() => {
@@ -2339,6 +2377,24 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessions.decideWorkerPlan(request.input),
+              };
+            if (request.method === 'read-session-control-policy')
+              return {
+                type: 'session-control-policy',
+                id: request.id,
+                policy: sessionControl.policy(),
+              };
+            if (request.method === 'save-session-control-policy')
+              return {
+                type: 'session-control-policy',
+                id: request.id,
+                policy: sessionControl.savePolicy(request.input),
+              };
+            if (request.method === 'decide-session-parent')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessionControl.decideParent(request.input),
               };
             if (request.method === 'list-scheduled-jobs')
               return {

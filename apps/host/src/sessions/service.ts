@@ -55,6 +55,8 @@ import {
   type CodeComment,
   type MessageAttachment,
   type TurnUsage,
+  type SessionParentRequest,
+  sessionControlToolDefinitions,
 } from '@nesvo/contracts';
 import {
   interactiveMcpSession,
@@ -83,6 +85,10 @@ import {
 } from '../providers/codex';
 import { shiftPlacement } from '../providers/interleave';
 import { SessionStore, type SessionOrigin } from './store';
+import type {
+  SessionControlBridge,
+  SessionControlCall,
+} from '../session-control/types';
 import { AttachmentError, AttachmentStore } from './attachments';
 import { sameCodeComments, withCodeComments } from './code-comments';
 import { finishActivities, updateActivity } from './activities';
@@ -218,7 +224,7 @@ function resolveTurnMode(
   mode: SendMessageInput['mode'],
 ): Session['mode'] {
   if (!mode || mode === session.mode) return session.mode;
-  if (session.role === 'worker' || session.parentId)
+  if (session.role === 'worker')
     throw new SessionError(
       'invalid-request',
       'Worker permissions are set by the parent decision.',
@@ -308,9 +314,10 @@ export class FolderBusyError extends SessionError {
 const accessFor = (mode: Session['mode']): FolderAccess =>
   isWritableSessionMode(mode) ? 'write' : 'read';
 
-type FolderOwner = Pick<Session, 'id' | 'parentId' | 'directory'>;
+type FolderOwner = Pick<Session, 'id' | 'parentId' | 'directory' | 'role'>;
 
-const folderGroup = (session: FolderOwner) => session.parentId ?? session.id;
+const folderGroup = (session: FolderOwner) =>
+  session.role === 'worker' && session.parentId ? session.parentId : session.id;
 
 const queuedAccess = (session: Pick<Session, 'queue' | 'mode'>): FolderAccess =>
   accessFor(session.queue[0]?.mode ?? session.mode);
@@ -377,7 +384,15 @@ export type WorkflowTurn = {
   assistantPrompt?: string;
 };
 
+export const isCoordinatorCandidate = (session: Session): boolean =>
+  session.parentId === null &&
+  session.role !== 'worker' &&
+  !session.workflowRunId &&
+  !session.workflowStepId &&
+  !session.scheduledJobId;
+
 export type SessionServiceOptions = {
+  control?: SessionControlBridge;
   profiles?: ProviderProfiles;
   mcp?: McpPolicy;
   checkCostBudgets?: (
@@ -1123,6 +1138,14 @@ export class SessionService {
     return structuredClone(page);
   }
 
+  snapshot(sessionId: string): Session | undefined {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    return session ? structuredClone(session) : undefined;
+  }
+
   private current(sessionId: string): Session {
     const session =
       this.active.get(sessionId)?.session ??
@@ -1156,6 +1179,7 @@ export class SessionService {
       isolatedDirectory?: string;
       origin?: SessionOrigin;
       worktree?: { id: string; metadata: NonNullable<Session['worktree']> };
+      parentId?: string;
     } = {},
   ): Session {
     const existing = this.sessionForCreateRequest(input.requestId);
@@ -1193,6 +1217,7 @@ export class SessionService {
       directory,
       options.origin,
       options.worktree,
+      options.parentId,
     );
     this.emitSession(session);
     if (options.worktree) this.options.worktreeCreated?.(session);
@@ -1607,16 +1632,17 @@ export class SessionService {
   createWithEffort(
     input: CreateSessionInput,
     signal: AbortSignal,
+    parentId?: string,
   ): Promise<Session> {
     const { requestId } = input;
-    if (!requestId) return this.createConfirmed(input, signal);
+    if (!requestId) return this.createConfirmed(input, signal, parentId);
     const pending = this.pendingCreates.get(requestId);
     if (pending)
       return pending.then(session => {
         this.confirmUnchangedProfile(session, input.profileId ?? null);
         return session;
       });
-    const created = this.createConfirmed(input, signal).finally(() =>
+    const created = this.createConfirmed(input, signal, parentId).finally(() =>
       this.pendingCreates.delete(requestId),
     );
     this.pendingCreates.set(requestId, created);
@@ -1626,6 +1652,7 @@ export class SessionService {
   private async createConfirmed(
     input: CreateSessionInput,
     signal: AbortSignal,
+    parentId?: string,
   ): Promise<Session> {
     const existing = this.sessionForCreateRequest(input.requestId);
     if (existing) {
@@ -1650,7 +1677,7 @@ export class SessionService {
         signal,
         profileEnvironment(input.provider, profileDirectory),
       );
-    if (!input.isolation) return this.create(input);
+    if (!input.isolation) return this.create(input, { parentId });
     if (this.removingWorktrees)
       throw new SessionError(
         'busy',
@@ -1673,6 +1700,7 @@ export class SessionService {
       return this.create(input, {
         isolatedDirectory: isolated.directory,
         worktree: isolated.worktree,
+        parentId,
       });
     } finally {
       this.creatingWorktrees--;
@@ -1928,7 +1956,7 @@ export class SessionService {
   private ensureWorktreeOpen(session: Session): void {
     const worktree =
       session.worktree ??
-      (session.parentId
+      (session.role === 'worker' && session.parentId
         ? this.store.get(session.parentId)?.worktree
         : undefined);
     if (worktree && worktree.state !== 'active')
@@ -2693,6 +2721,47 @@ export class SessionService {
     return structuredClone(parent);
   }
 
+  changeSelection(
+    sessionId: string,
+    change: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
+  ): Session {
+    const session = this.acceptingSession(sessionId);
+    this.ensureSessionIdle(
+      session,
+      'This session is running. Change it after the turn finishes or send the change with the next message.',
+    );
+    const selection = resolveTurnSelection(session, change);
+    session.model = selection.model;
+    session.effort = selection.effort;
+    session.mode = selection.mode;
+    this.publish(session);
+    return structuredClone(session);
+  }
+
+  requestParent(sessionId: string, request: SessionParentRequest): Session {
+    const session = this.acceptingSession(sessionId);
+    session.parentRequest = request;
+    this.publish(session);
+    return structuredClone(session);
+  }
+
+  resolveParentRequest(
+    sessionId: string,
+    requestId: string,
+    parentId: string | null,
+  ): Session {
+    const session = this.acceptingSession(sessionId);
+    if (session.parentRequest?.id !== requestId)
+      throw new SessionError(
+        'not-found',
+        'This request was already decided. Refresh the Inbox.',
+      );
+    session.parentRequest = null;
+    if (parentId) session.parentId = parentId;
+    this.publish(session);
+    return structuredClone(session);
+  }
+
   stop(input: StopRunInput, reason?: SessionInterruption['reason']): Session {
     const active = this.active.get(input.sessionId);
     if (!active || active.session.runId !== input.runId) {
@@ -2961,6 +3030,28 @@ export class SessionService {
       },
     };
     const canDelegate = delegatesThroughCodex(session);
+    const control =
+      this.options.control &&
+      isCoordinatorCandidate(session) &&
+      session.runId &&
+      !readOnly &&
+      !outputSchema &&
+      !ephemeral &&
+      !instructionsOnly &&
+      !assistantPrompt &&
+      !unattended &&
+      !privateResponse &&
+      !session.pendingClaudeFork
+        ? this.options.control
+        : undefined;
+    const controlCaller = { sessionId: session.id, runId: session.runId ?? '' };
+    const controlCall = control
+      ? (call: SessionControlCall, signal: AbortSignal) =>
+          control.call(controlCaller, call, signal)
+      : undefined;
+    const controlTools = control?.available(session)
+      ? sessionControlToolDefinitions()
+      : undefined;
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
     let provider: ActiveRun['handle'] | undefined;
@@ -3188,6 +3279,12 @@ export class SessionService {
                       delegationSchema: delegationToolSchema,
                       onDelegate: (input: unknown, signal: AbortSignal) =>
                         this.delegate(session, input, signal),
+                      ...(controlCall
+                        ? {
+                            onControl: controlCall,
+                            ...(controlTools ? { controlTools } : {}),
+                          }
+                        : {}),
                     }
                   : {}),
               })
@@ -3224,6 +3321,9 @@ export class SessionService {
                 ...(assistantPrompt ? { assistantPrompt } : {}),
                 mode: readOnly ? 'read-only' : session.mode,
                 approvals: !readOnly && !ephemeral,
+                ...(controlCall && controlTools
+                  ? { control: { tools: controlTools, call: controlCall } }
+                  : {}),
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
               });

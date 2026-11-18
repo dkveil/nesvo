@@ -12,6 +12,8 @@ import { delimiter, isAbsolute, join, normalize } from 'node:path';
 import {
   activityLimits,
   delegationActivityTitle,
+  SESSION_CONTROL_NAMESPACE,
+  sessionControlToolTitle,
   modelEffortsSchema,
   skillLimits,
   type CodexStatus,
@@ -44,6 +46,10 @@ import {
   type ContextFill,
 } from './turn-usage';
 import { recordProviderProcess } from '../process/provider-processes';
+import type {
+  SessionControlHandler,
+  SessionControlToolDefinition,
+} from '../session-control/types';
 
 export type CodexEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -1457,6 +1463,8 @@ type CodexRunOptions = {
   onEvent: (event: CodexEvent) => void;
   onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
   delegationSchema?: Record<string, unknown>;
+  onControl?: SessionControlHandler;
+  controlTools?: readonly SessionControlToolDefinition[];
   outputSchema?: Record<string, unknown>;
   mcpTurn?: VerifyMcpTurn;
   instructionsOnly?: boolean;
@@ -1495,6 +1503,7 @@ export function startCodex(options: CodexRunOptions): {
     { rpcId: RpcId; threadId: string; turnId: string }
   >();
   const delegationController = new AbortController();
+  const pendingControls = new Map<RpcId, AbortController>();
   const queued: RecordValue[] = [];
   const messages = new Map<string, string>();
   const items = new Map<string, RecordValue>();
@@ -1682,6 +1691,103 @@ export function startCodex(options: CodexRunOptions): {
           'Codex returned an invalid or repeated server request ID.',
         );
       seenRequests.add(id);
+      if (
+        message.method === 'item/tool/call' &&
+        params?.namespace === SESSION_CONTROL_NAMESPACE &&
+        options.onControl
+      ) {
+        const callId = params.callId;
+        const tool = params.tool;
+        if (
+          !threadId ||
+          !turnId ||
+          params.threadId !== threadId ||
+          params.turnId !== turnId ||
+          typeof callId !== 'string' ||
+          !callId ||
+          callId.length > 200 ||
+          typeof tool !== 'string' ||
+          seenCalls.has(callId) ||
+          seenCalls.size >= 1000
+        ) {
+          peer.send({
+            id: rpcId,
+            result: {
+              contentItems: [
+                { type: 'inputText', text: 'Unsupported or stale Nesvo call.' },
+              ],
+              success: false,
+            },
+          });
+          return;
+        }
+        seenCalls.add(callId);
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        delegationController.signal.addEventListener('abort', abort, {
+          once: true,
+        });
+        if (delegationController.signal.aborted) controller.abort();
+        pendingControls.set(rpcId, controller);
+        const title = sessionControlToolTitle(tool);
+        const detail =
+          typeof object(params.arguments)?.title === 'string'
+            ? String(object(params.arguments)?.title)
+            : null;
+        emitTool(
+          makeActivity({ id, kind: 'tool', title, status: 'running', detail }),
+        );
+        void options
+          .onControl(
+            { tool, input: params.arguments ?? {}, callId },
+            controller.signal,
+          )
+          .catch(() => ({ text: 'The Nesvo tool failed.', ok: false }))
+          .then(result => {
+            delegationController.signal.removeEventListener('abort', abort);
+            if (pendingControls.get(rpcId) !== controller) return;
+            pendingControls.delete(rpcId);
+            if (
+              controller.signal.aborted ||
+              stopped ||
+              finished ||
+              failure ||
+              !peer
+            )
+              return;
+            const text =
+              Buffer.byteLength(result.text) > maxTextBytes
+                ? 'The Nesvo result exceeded the supported response size.'
+                : result.text;
+            emitTool(
+              makeActivity({
+                id,
+                kind: 'tool',
+                title,
+                status: result.ok ? 'completed' : 'failed',
+                detail,
+                output: result.ok ? '' : text,
+                startedAt: toolActivities.get(id)?.startedAt,
+              }),
+            );
+            try {
+              peer.send({
+                id: rpcId,
+                result: {
+                  contentItems: [{ type: 'inputText', text }],
+                  success: result.ok,
+                },
+              });
+            } catch (error) {
+              fail(
+                error instanceof Error
+                  ? error.message
+                  : 'Codex tool response failed.',
+              );
+            }
+          });
+        return;
+      }
       if (message.method === 'item/tool/call') {
         if (
           !options.onDelegate ||
@@ -1939,6 +2045,16 @@ export function startCodex(options: CodexRunOptions): {
     }
     if (!params || params.threadId !== threadId || !turnId) return;
     if (message.method === 'serverRequest/resolved') {
+      const control =
+        typeof params.requestId === 'string' ||
+        typeof params.requestId === 'number'
+          ? pendingControls.get(params.requestId)
+          : undefined;
+      if (control) {
+        pendingControls.delete(params.requestId as RpcId);
+        control.abort();
+        return;
+      }
       if (
         [...pendingDelegates.values()].some(
           pending => pending.rpcId === params.requestId,
@@ -2119,7 +2235,10 @@ export function startCodex(options: CodexRunOptions): {
     const inactivityLimit = providerInactivityLimit();
     watchdog = watchInactivity({
       limitMs: inactivityLimit,
-      isWaiting: () => approvals.size > 0 || pendingDelegates.size > 0,
+      isWaiting: () =>
+        approvals.size > 0 ||
+        pendingDelegates.size > 0 ||
+        pendingControls.size > 0,
       onInactive: () => fail(inactivityFailure('Codex', inactivityLimit)),
     });
     let result: CodexResult;
@@ -2368,6 +2487,22 @@ export function startCodex(options: CodexRunOptions): {
           ...(!options.resume && !options.fork && options.onDelegate
             ? {
                 dynamicTools: [
+                  ...(options.controlTools?.length
+                    ? [
+                        {
+                          type: 'namespace',
+                          name: SESSION_CONTROL_NAMESPACE,
+                          description:
+                            'Nesvo session control: create, steer and wait for your child sessions on this computer.',
+                          tools: options.controlTools.map(tool => ({
+                            type: 'function',
+                            name: tool.name,
+                            description: tool.description,
+                            inputSchema: tool.inputSchema,
+                          })),
+                        },
+                      ]
+                    : []),
                   {
                     type: 'function',
                     name: 'nesvo_delegate',

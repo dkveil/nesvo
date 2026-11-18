@@ -138,6 +138,36 @@ if (args.length === 1 && args[0] === '--version') {
   };
   const approvals = new Map();
   const delegations = new Map();
+  const controlCalls = new Map();
+  const callControl = (tool, callId, args) =>
+    new Promise(resolve => {
+      const id = `fixture-control-${randomUUID()}`;
+      controlCalls.set(id, resolve);
+      emit({
+        id,
+        method: 'item/tool/call',
+        params: scoped({ callId, namespace: 'nesvo', tool, arguments: args }),
+      });
+    });
+  const runControl = async calls => {
+    const results = [];
+    let lastCursor = 0;
+    for (const call of calls) {
+      if (call.arguments?.cursor === '$cursor')
+        call.arguments.cursor = lastCursor;
+      const reply = await callControl(
+        call.tool,
+        call.id ?? randomUUID(),
+        call.arguments ?? {},
+      );
+      const result = JSON.parse(reply.contentItems[0].text);
+      if (typeof result.cursor === 'number') lastCursor = result.cursor;
+      results.push({ tool: call.tool, success: reply.success, result });
+    }
+    const body = JSON.stringify(results);
+    delta(body);
+    complete(body);
+  };
   const response = (id, result) => emit({ id, result });
   const notify = (method, params) => emit({ method, params });
   const statePath = id => {
@@ -369,6 +399,14 @@ if (args.length === 1 && args[0] === '--version') {
   };
   const handle = async message => {
     if (!message.method) {
+      if (controlCalls.has(message.id)) {
+        const resolve = controlCalls.get(message.id);
+        controlCalls.delete(message.id);
+        assert.equal(message.result.contentItems.length, 1);
+        assert.equal(message.result.contentItems[0].type, 'inputText');
+        resolve(message.result);
+        return;
+      }
       if (delegations.has(message.id)) {
         delegations.delete(message.id);
         assert.equal(message.result.contentItems.length, 1);
@@ -783,15 +821,39 @@ if (args.length === 1 && args[0] === '--version') {
         );
       } else {
         const tools = params.dynamicTools ?? [];
-        assert.equal(tools.length, experimentalApi ? 1 : 0);
+        const namespace = tools.find(tool => tool.type === 'namespace');
+        const functions = tools.filter(tool => tool.type !== 'namespace');
+        assert.equal(functions.length, experimentalApi ? 1 : 0);
+        if (namespace) assert.ok(experimentalApi);
         if (experimentalApi) {
-          assert.equal(tools[0].name, 'nesvo_delegate');
-          assert.equal(tools[0].type, 'function');
-          assert.ok(tools[0].inputSchema.properties.workers);
+          assert.equal(functions[0].name, 'nesvo_delegate');
+          assert.equal(functions[0].type, 'function');
+          assert.ok(functions[0].inputSchema.properties.workers);
         }
+        if (namespace) {
+          assert.equal(namespace.name, 'nesvo');
+          for (const tool of namespace.tools) {
+            assert.equal(tool.type, 'function');
+            assert.equal(tool.inputSchema.type, 'object');
+          }
+        }
+        if (process.env.NESVO_FIXTURE_CONTROL_LOG)
+          writeFileSync(
+            process.env.NESVO_FIXTURE_CONTROL_LOG,
+            JSON.stringify({
+              provider: 'Codex',
+              threadId: thread.id,
+              tools: namespace ? namespace.tools.map(tool => tool.name) : [],
+            }) + '\n',
+            { flag: 'a' },
+          );
         writeFileSync(
           statePath(thread.id),
-          JSON.stringify({ turns: 0, delegationEnabled: experimentalApi }),
+          JSON.stringify({
+            turns: 0,
+            delegationEnabled: experimentalApi,
+            control: !!namespace,
+          }),
         );
       }
       response(id, {
@@ -1078,6 +1140,9 @@ if (args.length === 1 && args[0] === '--version') {
         );
         unlinkSync(join(thread.cwd, 'deleted.txt'));
         complete('Codex fixture initial files.');
+      } else if (command.startsWith('fixture:nesvo ')) {
+        const calls = JSON.parse(command.slice('fixture:nesvo '.length));
+        void runControl(Array.isArray(calls) ? calls : [calls]);
       } else if (/^fixture:delegate(?:-|$)/.test(command)) {
         delegate(command.slice('fixture:delegate-'.length) || 'default');
       } else if (command === 'fixture:disconnect') {

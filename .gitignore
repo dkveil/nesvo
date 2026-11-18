@@ -41,6 +41,7 @@
 !/apps/host/src/code-review/
 !/apps/host/src/running-apps/
 !/apps/host/src/worktree-recipes/
+!/apps/host/src/session-control/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs

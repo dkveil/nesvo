@@ -393,6 +393,32 @@ if (args.length === 1 && args[0] === '--version') {
   const frames = [];
   const readers = [];
   let inputEnded = false;
+  let controlTools = null;
+  let mcpId = 0;
+  const mcpRequest = async (method, params) => {
+    const requestId = randomUUID();
+    const notification = method.startsWith('notifications/');
+    emit({
+      type: 'control_request',
+      request_id: requestId,
+      request: {
+        subtype: 'mcp_message',
+        server_name: 'nesvo',
+        message: {
+          jsonrpc: '2.0',
+          ...(notification ? {} : { id: mcpId++ }),
+          method,
+          ...(params ? { params } : {}),
+        },
+      },
+    });
+    const frame = await nextFrame();
+    assert.ok(frame, 'The host closed input before answering an MCP message');
+    assert.equal(frame.type, 'control_response');
+    assert.equal(frame.response.subtype, 'success');
+    assert.equal(frame.response.request_id, requestId);
+    return frame.response.response.mcp_response;
+  };
   const nextFrame = () =>
     frames.length
       ? Promise.resolve(frames.shift())
@@ -414,6 +440,8 @@ if (args.length === 1 && args[0] === '--version') {
     const initialize = await nextFrame();
     assert.equal(initialize.type, 'control_request');
     assert.equal(initialize.request.subtype, 'initialize');
+    const servers = initialize.request.sdkMcpServers;
+    assert.ok(Array.isArray(servers));
     emit({
       type: 'control_response',
       response: {
@@ -427,6 +455,39 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(user.parent_tool_use_id, null);
     assert.equal(user.message.role, 'user');
     prompt = readUserContent(user.message.content);
+    if (servers.includes('nesvo')) {
+      const config = initialize.request.sdkMcpServerConfigs.nesvo;
+      assert.equal(config.disableAutoBackground, true);
+      assert.ok(
+        config.tools.every(tool => tool.permission_policy === 'always_allow'),
+      );
+      const started = await mcpRequest('initialize', {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'claude-code', version: '2.1.0' },
+      });
+      assert.equal(started.result.serverInfo.name, 'nesvo');
+      assert.deepEqual(await mcpRequest('notifications/initialized'), {
+        jsonrpc: '2.0',
+        result: {},
+      });
+      const listed = await mcpRequest('tools/list', {});
+      controlTools = listed.result.tools.map(tool => tool.name);
+      assert.deepEqual(
+        [...controlTools].sort(),
+        config.tools.map(tool => tool.name).sort(),
+      );
+      if (process.env.NESVO_FIXTURE_CONTROL_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_CONTROL_LOG,
+          JSON.stringify({
+            provider: 'Claude Code',
+            permissionMode,
+            tools: controlTools,
+          }) + '\n',
+          { flag: 'a' },
+        );
+    }
   } else {
     for await (const chunk of process.stdin) prompt += chunk;
     if (streamInput) {
@@ -579,6 +640,9 @@ if (args.length === 1 && args[0] === '--version') {
     session_id: sessionId,
     model: `fixture-${values.get('--model') ?? 'default'}`,
     tools: ['Read', 'Glob', 'Grep'],
+    mcp_servers: controlTools
+      ? [{ name: 'nesvo', status: 'connected', source: 'sdk' }]
+      : [],
   });
   emit({ type: 'assistant', parent_tool_use_id: 'fixture-subagent' });
   const messageId = `fixture-message-${turn}`;
@@ -1417,6 +1481,83 @@ if (args.length === 1 && args[0] === '--version') {
       ],
       'Renamed the automation.',
     );
+  } else if (command.startsWith('fixture:nesvo ')) {
+    const parsed = JSON.parse(command.slice('fixture:nesvo '.length));
+    const calls = Array.isArray(parsed) ? parsed : [parsed];
+    const results = [];
+    let lastCursor = 0;
+    if (!controlTools) {
+      const text = 'Nesvo tools are not available in this turn.';
+      start(text);
+      finish(text);
+    } else {
+      for (const [index, call] of calls.entries()) {
+        if (call.arguments?.cursor === '$cursor')
+          call.arguments.cursor = lastCursor;
+        const toolUse = call.id ?? `toolu_${randomUUID()}`;
+        const name = `mcp__nesvo__${call.tool}`;
+        const block = {
+          type: 'tool_use',
+          id: toolUse,
+          name,
+          input: call.arguments ?? {},
+        };
+        stream({
+          type: 'content_block_start',
+          index: index + 1,
+          content_block: { ...block, input: {} },
+        });
+        emit({
+          type: 'assistant',
+          message: { id: `fixture-control-${turn}-${index}`, content: [block] },
+        });
+        if (permissionMode === 'plan' && index === 0) {
+          const requestId = randomUUID();
+          emit({
+            type: 'control_request',
+            request_id: requestId,
+            request: {
+              subtype: 'can_use_tool',
+              tool_name: name,
+              input: call.arguments ?? {},
+              tool_use_id: toolUse,
+            },
+          });
+          const answer = await nextFrame();
+          assert.equal(answer.response.request_id, requestId);
+          assert.equal(answer.response.response.behavior, 'allow');
+        }
+        const reply = await mcpRequest('tools/call', {
+          name: call.tool,
+          arguments: call.arguments ?? {},
+          _meta: { 'claudecode/toolUseId': toolUse, progressToken: index },
+        });
+        const text = reply.result.content[0].text;
+        emit({
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: toolUse,
+                is_error: reply.result.isError === true,
+                content: text,
+              },
+            ],
+          },
+        });
+        const result = JSON.parse(text);
+        if (typeof result.cursor === 'number') lastCursor = result.cursor;
+        results.push({
+          tool: call.tool,
+          isError: reply.result.isError === true,
+          result,
+        });
+      }
+      const text = JSON.stringify(results);
+      start(text);
+      finish(text);
+    }
   } else if (command.startsWith('fixture:say ')) {
     const text = command.slice('fixture:say '.length);
     start(text);

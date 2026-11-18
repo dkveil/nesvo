@@ -10,6 +10,7 @@ import { installTranscriptIndex } from './sessions/transcript-index';
 import { installCodeReviewTables } from './code-review/store';
 import { installTrackedRepositoryTables } from './tracked-repositories';
 import { installWorktreeRecipeTables } from './worktree-recipes/store';
+import { installSessionControlTables } from './session-control/store';
 
 const DATABASE_VERSION = 22;
 class NewerDatabaseError extends Error {}
@@ -391,6 +392,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installCodeReviewTables(database);
       installTrackedRepositoryTables(database);
       installWorktreeRecipeTables(database);
+      installSessionControlTables(database);
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);

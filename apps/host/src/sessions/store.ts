@@ -304,8 +304,10 @@ export class SessionStore {
     directory: string,
     origin?: SessionOrigin,
     worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
+    parentId?: string,
   ): Session {
     const session = this.newSession(input, directory, origin, worktree);
+    if (parentId) session.parentId = parentId;
     const { requestId } = input;
     this.saveMany(
       [session],
@@ -413,6 +415,7 @@ export class SessionStore {
       pinned: false,
       archivedAt: null,
       externalAttachment: null,
+      parentRequest: null,
       ...originLinks(origin, input),
     };
     return session;
@@ -517,6 +520,7 @@ export class SessionStore {
       pinned: false,
       archivedAt: null,
       externalAttachment: null,
+      parentRequest: null,
     };
   }
 
