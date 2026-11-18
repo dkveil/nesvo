@@ -23,6 +23,7 @@ type MessageArticleProps = {
   activity: ReactNode;
   showInterruption: boolean;
   selectionChange: string | undefined;
+  threadStart: boolean;
 };
 
 function sameRenderedMessage(previous: Message, next: Message) {
@@ -51,6 +52,7 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
     previous.deferred === next.deferred &&
     previous.showInterruption === next.showInterruption &&
     previous.selectionChange === next.selectionChange &&
+    previous.threadStart === next.threadStart &&
     sameRenderedMessage(previous.message, next.message)
   );
 }
@@ -64,9 +66,11 @@ export const MessageArticle = memo(function MessageArticle({
   activity,
   showInterruption,
   selectionChange,
+  threadStart,
 }: MessageArticleProps) {
   return (
     <>
+      {threadStart && <Separator label="New provider thread" />}
       {selectionChange && <Separator label={selectionChange} />}
       <article
         id={`message-${message.id}`}

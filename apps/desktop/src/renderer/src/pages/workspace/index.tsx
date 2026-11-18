@@ -26,11 +26,13 @@ import {
   FileCode2,
   FolderOpen,
   Gauge,
+  GitFork,
   GitPullRequest,
   History,
   Menu,
   PanelRight,
   Plus,
+  RotateCcw,
   SquareDashed,
   WifiOff,
 } from 'lucide-react';
@@ -103,6 +105,10 @@ import { SessionReviews } from '@/widgets/session-reviews';
 import { NavigationRail } from '@/widgets/navigation-rail';
 import { CostsView } from '@/widgets/costs';
 import { SessionSidebar } from '@/widgets/session-sidebar';
+import {
+  RowActionsMenu,
+  type RowAction,
+} from '@/widgets/session-sidebar/row-actions-menu';
 import { useHousekeeping } from './use-housekeeping';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import {
@@ -702,6 +708,9 @@ export function Workspace() {
       ? (modeSelections[entityKey(target)] ?? null)
       : null;
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [restartTarget, setRestartTarget] = useState<Session | null>(null);
+  const [restartError, setRestartError] = useState('');
+  const [threadActionPending, setThreadActionPending] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [approvalPending, setApprovalPending] = useState<
@@ -2022,12 +2031,87 @@ ${text}`
     );
   };
   const housekeeping = useHousekeeping(store, openCreateInGroup);
+  const forkSession = async (target: Session) => {
+    setThreadActionPending(true);
+    try {
+      const fork = await desktopApi(target.hostId).forkSession({
+        sessionId: target.id,
+      });
+      store.merge([fork]);
+      select(entityKey(fork));
+    } catch (error) {
+      const key = entityKey(target);
+      setErrors(previous => ({ ...previous, [key]: errorDetail(error) }));
+      select(key);
+    } finally {
+      setThreadActionPending(false);
+    }
+  };
+  const restartSession = async (target: Session) => {
+    setThreadActionPending(true);
+    setRestartError('');
+    try {
+      const session = await desktopApi(target.hostId).restartSession({
+        sessionId: target.id,
+        revision: target.revision,
+      });
+      store.merge([session]);
+      const key = entityKey(session);
+      setErrors(previous => ({ ...previous, [key]: '' }));
+      setModeSelections(previous => ({ ...previous, [key]: null }));
+      setModelSelections(previous => ({ ...previous, [key]: null }));
+      setRestartTarget(null);
+      select(key);
+    } catch (error) {
+      setRestartError(errorDetail(error));
+    } finally {
+      setThreadActionPending(false);
+    }
+  };
+  const threadActions = (session: Session): RowAction[] => {
+    if (
+      !window.nesvo ||
+      session.role === 'worker' ||
+      session.workflowRunId ||
+      session.scheduledJobId ||
+      !store.computers
+        .find(computer => computer.id === session.hostId)
+        ?.capabilities.includes('session-fork')
+    )
+      return [];
+    const disabled =
+      threadActionPending ||
+      !store.hostReady(session.hostId) ||
+      session.status === 'running' ||
+      session.status === 'stopping';
+    return [
+      {
+        label: 'Fork session',
+        icon: <GitFork />,
+        disabled: disabled || !session.providerInitialized,
+        onSelect: () => void forkSession(session),
+      },
+      {
+        label: 'Restart session…',
+        icon: <RotateCcw />,
+        disabled,
+        onSelect: () => {
+          setRestartError('');
+          setRestartTarget(session);
+        },
+      },
+    ];
+  };
   const creationGroupName = creationGroup
     ? store
         .groups(creationGroup.hostId)
         .find(group => group.id === creationGroup.groupId)?.name
     : undefined;
+  const headerThreadActions =
+    !browsing && !creating && selected ? threadActions(selected) : [];
+  const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const sidebarProps = {
+    threadActions,
     housekeeping,
     loading: store.loading,
     currentHostId: creating ? threadSetup.hostId : selectedHostId,
@@ -2266,6 +2350,43 @@ ${text}`
           onClose={() => setPalette(null)}
         />
       )}
+      <Dialog
+        open={!!restartTarget}
+        onOpenChange={open => {
+          if (!open && !threadActionPending) setRestartTarget(null);
+        }}
+      >
+        {restartTarget && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Restart session?</DialogTitle>
+              <DialogDescription>
+                The next message in “{restartTarget.title}” will start a new
+                provider thread. Your history, folder and permission mode will
+                stay in this session.
+              </DialogDescription>
+            </DialogHeader>
+            {restartError && (
+              <StatusMessage tone="error">{restartError}</StatusMessage>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={threadActionPending}
+                onClick={() => setRestartTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={threadActionPending}
+                onClick={() => void restartSession(restartTarget)}
+              >
+                Restart session
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
       {historySearch && (
         <HistorySearchDialog
           computers={store.computers}
@@ -2390,7 +2511,7 @@ ${text}`
             <ol className="flex min-w-0 items-center gap-2 text-ui">
               {breadcrumbDirectory !== null && (
                 <>
-                  <li className="hidden max-w-80 shrink-0 items-center gap-1.5 text-muted-foreground sm:flex">
+                  <li className="hidden min-w-0 max-w-[min(20rem,50%)] shrink-0 items-center gap-1.5 text-muted-foreground sm:flex">
                     {breadcrumbDirectory ? (
                       <ProjectChip
                         label={directoryLabel(breadcrumbDirectory)}
@@ -2458,6 +2579,34 @@ ${text}`
                                 ? 'Automations'
                                 : (selected?.title ?? 'New thread')}
                 </h1>
+                {selected && forkSource && (
+                  <Button
+                    asChild
+                    variant="link"
+                    size="inline"
+                    className="min-w-0 text-2xs text-muted-foreground"
+                  >
+                    <a
+                      href={
+                        forkSource.messageId
+                          ? `#message-${forkSource.messageId}`
+                          : '#'
+                      }
+                      onClick={event => {
+                        event.preventDefault();
+                        selectNow(
+                          hostKey(forkSource.sessionId, selected.hostId),
+                        );
+                        if (forkSource.messageId)
+                          setMessageTarget({ id: forkSource.messageId });
+                      }}
+                    >
+                      <span className="truncate">
+                        Forked from {forkSource.title}
+                      </span>
+                    </a>
+                  </Button>
+                )}
                 {!browsing &&
                   !creating &&
                   selected &&
@@ -2532,6 +2681,13 @@ ${text}`
           >
             <Plus />
           </IconButton>
+          {headerThreadActions.length > 0 && (
+            <RowActionsMenu
+              header
+              label="Session actions"
+              actions={headerThreadActions}
+            />
+          )}
           {cardRun ? (
             <WorkflowStatus
               run={cardRun}

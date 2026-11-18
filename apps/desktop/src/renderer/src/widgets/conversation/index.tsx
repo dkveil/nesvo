@@ -36,6 +36,7 @@ import {
 } from '@/shared/ui/composer';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
@@ -193,8 +194,11 @@ export function Conversation({
     ) ||
       workers.some(worker => worker.parentRunId === session.runId));
   const stopLabel = groupRun ? 'Stop group' : 'Stop';
+  const threadStarts = new Set(session.providerThreadStarts);
   const empty =
     session.messages.length === 0 &&
+    !session.pendingClaudeFork &&
+    threadStarts.size === 0 &&
     !running &&
     !session.error &&
     !error &&
@@ -718,6 +722,11 @@ export function Conversation({
         }
       >
         <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
+          {session.pendingClaudeFork && session.messages.length === 0 && (
+            <StatusMessage>
+              Claude Code will fork the conversation on your next message.
+            </StatusMessage>
+          )}
           <div
             role="log"
             aria-live="polite"
@@ -759,9 +768,13 @@ export function Conversation({
                   }
                   showInterruption={message.runId !== session.runId}
                   selectionChange={selectionChanges.get(message.id)}
+                  threadStart={threadStarts.has(index)}
                 />
               );
             })}
+            {threadStarts.has(session.messages.length) && (
+              <Separator label="New provider thread" />
+            )}
           </div>
           {session.error &&
             session.status !== 'interrupted' &&

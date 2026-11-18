@@ -61,6 +61,7 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { toDropIndicator } from './drop-indicator';
 import { GroupedSessions } from './grouped-sessions';
+import { RowActionsMenu, type RowAction } from './row-actions-menu';
 import type { RowDecoration, SidebarHousekeeping } from './housekeeping';
 import { useCollapsedGroups } from './use-collapsed-groups';
 import { useSessionBranches, type ReadBranch } from './use-session-branches';
@@ -101,6 +102,7 @@ type Props = {
   filter?: SessionFilter;
   filterKeys?: SessionFilterKeys;
   onFilterChange?: (filter: SessionFilter) => void;
+  threadActions?: (session: Session) => RowAction[];
 };
 
 const TREE_INDENT_PX = 12;
@@ -178,6 +180,7 @@ export function SessionSidebar({
   inbox,
   workflows,
   onSelect,
+  threadActions,
   onSearchHistory,
   onInbox,
   onWorkflows,
@@ -420,6 +423,7 @@ export function SessionSidebar({
         />
       </span>
     );
+    const actions = decoration?.menu ? [] : (threadActions?.(session) ?? []);
     const leading = child ? (
       <CornerDownRight className="size-3" aria-hidden="true" />
     ) : (
@@ -449,7 +453,15 @@ export function SessionSidebar({
           trailing={child ? status : undefined}
           description={child ? undefined : details}
           selected={selected}
-          actions={decoration?.menu}
+          actions={
+            decoration?.menu ??
+            (actions.length > 0 && (
+              <RowActionsMenu
+                label={`Actions for ${session.title}`}
+                actions={actions}
+              />
+            ))
+          }
           actionsPlacement="overlay"
           dropIndicator={toDropIndicator(decoration?.indicator)}
           className={cn(renamingField && 'focus-ring-within')}
@@ -814,6 +826,7 @@ export function SessionSidebar({
                           onToggleCollapsed={collapsed.toggle}
                           renderRoot={rootWithChildren}
                           automations={automationRows}
+                          threadActions={threadActions}
                         />
                       ) : (
                         automationRows

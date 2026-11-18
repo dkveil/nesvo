@@ -68,6 +68,7 @@ type Props = {
   onToggleCollapsed: (key: string, value?: boolean) => void;
   renderRoot: (session: Session, decoration: RowDecoration) => ReactNode[];
   automations?: ReactNode;
+  threadActions?: (session: Session) => RowAction[];
 };
 
 export function GroupedSessions({
@@ -84,6 +85,7 @@ export function GroupedSessions({
   onToggleCollapsed,
   renderRoot,
   automations,
+  threadActions,
 }: Props) {
   const [menu, setMenu] = useState<string | null>(null);
   const [moveTarget, setMoveTarget] = useState<MoveTarget | null>(null);
@@ -166,6 +168,7 @@ export function GroupedSessions({
     },
   });
   const sessionActions = (session: Session): RowAction[] => {
+    const thread = threadActions?.(session) ?? [];
     const archived = !!session.archivedAt;
     const siblings = sessionSiblings(session.groupId);
     const index = siblings.findIndex(item => item.id === session.id);
@@ -218,6 +221,8 @@ export function GroupedSessions({
             },
           ] satisfies RowAction[])),
       'separator',
+      ...thread,
+      ...(thread.length ? ['separator' as const] : []),
       archived
         ? {
             label: 'Unarchive',

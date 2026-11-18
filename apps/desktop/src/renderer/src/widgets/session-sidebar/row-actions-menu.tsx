@@ -22,22 +22,34 @@ export type RowAction =
 type Props = {
   label: string;
   actions: RowAction[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  header?: boolean;
 };
 
-export function RowActionsMenu({ label, actions, open, onOpenChange }: Props) {
+export function RowActionsMenu({
+  label,
+  actions,
+  open,
+  onOpenChange,
+  header,
+}: Props) {
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
       <DropdownMenuTrigger asChild>
-        <IconButton label={label} size={20} tone="sidebar" tooltipSide="bottom">
+        <IconButton
+          label={label}
+          size={header ? 32 : 20}
+          tone={header ? undefined : 'sidebar'}
+          tooltipSide="bottom"
+        >
           <MoreHorizontal />
         </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align="start"
+        align={header ? 'end' : 'start'}
         className="min-w-44"
-        onCloseAutoFocus={event => event.preventDefault()}
+        onCloseAutoFocus={header ? undefined : event => event.preventDefault()}
       >
         {actions.map((action, index) =>
           action === 'separator' ? (
