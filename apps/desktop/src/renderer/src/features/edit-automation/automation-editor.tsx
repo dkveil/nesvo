@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
-import type { Computer, SaveScheduledJobInput } from '@nesvo/contracts';
+import type {
+  Computer,
+  DesktopApi,
+  SaveScheduledJobInput,
+} from '@nesvo/contracts';
 import type { ScheduledJob } from '@/entities/scheduled-job';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -40,6 +44,8 @@ import {
   type AutomationValues,
 } from './automation-form';
 import { errorMessages, messagesId } from './field-messages';
+import { ReviewTaskFields } from './review-task-fields';
+import { useReviewProfiles } from './use-review-profiles';
 import { ScheduleFields } from './schedule-fields';
 
 type SaveInput = Omit<SaveScheduledJobInput, 'expectedRevision'>;
@@ -60,11 +66,13 @@ type Props = {
   onRecover: (hostId: string, id: string) => Promise<ScheduledJob | undefined>;
   onSaved: (job: ScheduledJob) => void;
   onClose: () => void;
+  reviewApi?: (hostId: string) => Pick<DesktopApi, 'readCodeReviewSettings'>;
 };
 
 const fieldOrder: AutomationField[] = [
   'name',
   'prompt',
+  'review',
   'model',
   'minutes',
   'time',
@@ -91,6 +99,7 @@ export function AutomationEditor({
   onRecover,
   onSaved,
   onClose,
+  reviewApi,
 }: Props) {
   const [values, setValues] = useState(initial);
   const [baseRevision, setBaseRevision] = useState(job?.revision ?? null);
@@ -105,6 +114,16 @@ export function AutomationEditor({
   const connected = computer?.status === 'connected';
   const supportsCheck = !!computer?.capabilities.includes(
     'scheduled-job-change-triggers',
+  );
+  const supportsReviews =
+    !!reviewApi && !!computer?.capabilities.includes('pull-request-reviews');
+  const reviewProfiles = useReviewProfiles(
+    supportsReviews && reviewApi ? reviewApi(values.hostId) : null,
+    values.hostId,
+    supportsReviews && connected && values.reviewMode,
+  );
+  const reviewProfile = reviewProfiles.profiles.find(
+    profile => profile.id === values.reviewProfileId,
   );
   const providerStates = statuses(values.hostId);
   const providerState = providerStates[values.provider];
@@ -127,7 +146,15 @@ export function AutomationEditor({
       : models.length > 0 && !modelListed
         ? `${values.provider} no longer reports this model. Choose another one or runs may fail.`
         : '';
-  const resolved = { ...values, model, effort };
+  const resolved =
+    values.reviewMode && reviewProfile
+      ? {
+          ...values,
+          provider: reviewProfile.provider,
+          model: reviewProfile.model,
+          effort: reviewProfile.effort ?? '',
+        }
+      : { ...values, model, effort };
   const errors = validateAutomation(resolved);
   const visible = (field: AutomationField) =>
     attempted ||
@@ -176,7 +203,7 @@ export function AutomationEditor({
         ?.focus();
       return;
     }
-    const input = toSaveInput(resolved, effort);
+    const input = toSaveInput(resolved, resolved.effort);
     if (typeof input === 'string') {
       setError(input);
       return;
@@ -221,7 +248,9 @@ export function AutomationEditor({
           <SheetDescription>
             {values.workflow
               ? 'Runs a workflow on a schedule. Each run is a workflow run with its result in the Inbox.'
-              : 'Runs a read-only prompt on a schedule. Each run is a session with its result in the Inbox.'}
+              : values.reviewMode
+                ? 'Starts an agent review for each new or updated pull request. Draft reviews reach the Inbox and are never published automatically.'
+                : 'Runs a read-only prompt on a schedule. Each run is a session with its result in the Inbox.'}
           </SheetDescription>
         </SheetHeader>
         <form
@@ -258,7 +287,16 @@ export function AutomationEditor({
                   onBlur={() => touch('name')}
                 />
               </Field>
-              {values.workflow ? (
+              {supportsReviews && !values.workflow && (
+                <ReviewTaskFields
+                  values={values}
+                  profiles={reviewProfiles}
+                  error={visible('review')}
+                  disabled={pending || editing}
+                  onChange={change}
+                />
+              )}
+              {values.reviewMode ? null : values.workflow ? (
                 <Field id="automation-workflow" label="Workflow" as="span">
                   <p
                     data-field="workflow"
@@ -323,50 +361,57 @@ export function AutomationEditor({
                   />
                 </div>
               </Field>
-              <Field
-                id="automation-model"
-                label="Model and access"
-                as="span"
-                hint={accessDetail[values.provider]}
-                messages={[
-                  ...errorMessages(visible('model')),
-                  ...(catalogNotice
-                    ? [{ severity: 'warning' as const, message: catalogNotice }]
-                    : []),
-                ]}
-              >
-                <div
-                  className="flex min-w-0 flex-wrap items-center gap-2"
-                  data-field="model"
-                  tabIndex={-1}
-                  aria-describedby={messagesId(
-                    'automation-model',
-                    visible('model'),
-                  )}
+              {!values.reviewMode && (
+                <Field
+                  id="automation-model"
+                  label="Model and access"
+                  as="span"
+                  hint={accessDetail[values.provider]}
+                  messages={[
+                    ...errorMessages(visible('model')),
+                    ...(catalogNotice
+                      ? [
+                          {
+                            severity: 'warning' as const,
+                            message: catalogNotice,
+                          },
+                        ]
+                      : []),
+                  ]}
                 >
-                  <ModelPicker
-                    provider={values.provider}
-                    model={model}
-                    effort={effort}
-                    statuses={providerStates}
-                    disabled={pending}
-                    onChange={(provider, nextModel, nextEffort) =>
-                      change({
-                        provider,
-                        model: nextModel,
-                        effort: nextEffort,
-                      })
-                    }
-                    onRefreshProvider={provider =>
-                      onRefreshProvider(provider, values.hostId)
-                    }
-                  />
-                  <Badge appearance="outline">
-                    <Lock aria-hidden="true" />
-                    Read-only
-                  </Badge>
-                </div>
-              </Field>
+                  <div
+                    className="flex min-w-0 flex-wrap items-center gap-2"
+                    data-field="model"
+                    tabIndex={-1}
+                    aria-describedby={messagesId(
+                      'automation-model',
+                      visible('model'),
+                    )}
+                  >
+                    <ModelPicker
+                      provider={values.provider}
+                      model={model}
+                      effort={effort}
+                      statuses={providerStates}
+                      disabled={pending}
+                      onChange={(provider, nextModel, nextEffort) =>
+                        change({
+                          provider,
+                          model: nextModel,
+                          effort: nextEffort,
+                        })
+                      }
+                      onRefreshProvider={provider =>
+                        onRefreshProvider(provider, values.hostId)
+                      }
+                    />
+                    <Badge appearance="outline">
+                      <Lock aria-hidden="true" />
+                      Read-only
+                    </Badge>
+                  </div>
+                </Field>
+              )}
               <ScheduleFields
                 values={values}
                 errors={{

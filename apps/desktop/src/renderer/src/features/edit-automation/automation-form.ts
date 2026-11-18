@@ -40,6 +40,8 @@ export type AutomationValues = {
   checkCommand: string;
   dailyRunCap: string;
   askFirst: boolean;
+  reviewMode: boolean;
+  reviewProfileId: string;
 };
 
 export type AutomationField =
@@ -51,9 +53,20 @@ export type AutomationField =
   | 'timeZone'
   | 'timeoutMinutes'
   | 'checkCommand'
-  | 'dailyRunCap';
+  | 'dailyRunCap'
+  | 'review';
 
 export type AutomationErrors = Partial<Record<AutomationField, string>>;
+
+export const REVIEW_CHECK_COMMAND = JSON.stringify([
+  'gh',
+  'pr',
+  'list',
+  '--state',
+  'open',
+  '--json',
+  'number,headRefOid',
+]);
 
 export const SKILL_PROMPT_MESSAGE =
   'Automation prompts are plain text. Skills (/name) are not supported yet.';
@@ -96,6 +109,8 @@ export const newAutomationValues = (
   checkCommand: '',
   dailyRunCap: String(scheduledJobLimits.defaultDailyRunCap),
   askFirst: true,
+  reviewMode: false,
+  reviewProfileId: '',
 });
 
 export const automationValues = (job: ScheduledJob): AutomationValues => ({
@@ -126,6 +141,8 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
     job.changeTrigger?.dailyRunCap ?? scheduledJobLimits.defaultDailyRunCap,
   ),
   askFirst: job.changeTrigger?.askFirst ?? true,
+  reviewMode: !!job.pullRequestReview,
+  reviewProfileId: job.pullRequestReview?.profileId ?? '',
 });
 
 export const duplicateValues = (job: ScheduledJob): AutomationValues => ({
@@ -172,7 +189,11 @@ export const validateAutomation = (
     errors.name = `Use at most ${scheduledJobLimits.name} characters.`;
   else if (CONTROL_CHARACTERS.test(name))
     errors.name = 'Use a single line without control characters.';
-  if (!prompt) {
+  if (values.reviewMode) {
+    if (!values.reviewProfileId) errors.review = 'Choose a reviewer profile.';
+    else if (!values.directory.trim())
+      errors.review = 'Choose a checkout of the repository to review.';
+  } else if (!prompt) {
     if (!values.workflow) errors.prompt = 'Enter a prompt.';
   } else if (prompt.startsWith('/')) errors.prompt = SKILL_PROMPT_MESSAGE;
   else if (prompt.length > scheduledJobLimits.prompt)
@@ -227,7 +248,7 @@ export const toSaveInput = (
   if (!schedule) return 'Check the schedule.';
   const definition = {
     name: values.name.trim(),
-    prompt: values.prompt.trim(),
+    prompt: values.reviewMode ? '' : values.prompt.trim(),
     directory: values.directory.trim(),
     provider: jobProviders[values.provider],
     model: values.model,
@@ -238,6 +259,9 @@ export const toSaveInput = (
     active: values.active,
     timeoutMinutes: wholeNumber(values.timeoutMinutes),
     workflow: values.workflow,
+    ...(values.reviewMode && values.reviewProfileId
+      ? { pullRequestReview: { profileId: values.reviewProfileId } }
+      : {}),
     ...(values.checkEnabled
       ? {
           changeTrigger: {
