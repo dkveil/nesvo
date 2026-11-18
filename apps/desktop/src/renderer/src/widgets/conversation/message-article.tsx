@@ -2,6 +2,7 @@ import { memo, type ReactNode } from 'react';
 import { BookOpen } from 'lucide-react';
 import { statusLabels, type Provider, type Session } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
+import { MessageAttachments } from '@/features/attach-images/attachment-tray';
 import { Chip } from '@/shared/ui/chip';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Separator } from '@/shared/ui/separator';
@@ -38,6 +39,8 @@ function sameRenderedMessage(previous: Message, next: Message) {
       previous.costWarning === next.costWarning &&
       previous.skillId === next.skillId &&
       previous.skillHash === next.skillHash &&
+      previous.attachments?.map(item => item.id).join() ===
+        next.attachments?.map(item => item.id).join() &&
       previous.interruption?.reason === next.interruption?.reason &&
       JSON.stringify(previous.skill) === JSON.stringify(next.skill))
   );
@@ -143,6 +146,9 @@ export const MessageArticle = memo(function MessageArticle({
           </InlineNotice>
         )}
         {showActivity && activity}
+        {message.author === 'operator' && !!message.attachments?.length && (
+          <MessageAttachments attachments={message.attachments} />
+        )}
         {(message.body || !live) &&
           (message.author === 'operator' ? (
             isLongPrompt(message.body) ? (

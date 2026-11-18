@@ -53,6 +53,14 @@ import {
   resolveEffort,
 } from '@/features/new-thread/reasoning-effort';
 import { entityKey } from '@/shared/lib/host-key';
+import { AttachButton } from '@/features/attach-images/attach-button';
+import { AttachmentPreviewProvider } from '@/features/attach-images/attachment-preview';
+import { AttachmentTray } from '@/features/attach-images/attachment-tray';
+import type { ImageSupport } from '@/features/attach-images/image-support';
+import {
+  imageFiles,
+  type ComposerAttachment,
+} from '@/features/attach-images/use-composer-attachments';
 import { MessageBody } from './message-body';
 import { interruptionLabels } from './interruption-labels';
 import { MessageArticle } from './message-article';
@@ -63,6 +71,16 @@ const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
 const ANNOUNCED_REPLY_LENGTH = 280;
 const EAGER_TAIL_MESSAGES = 8;
+
+export type ConversationAttachments = {
+  items: ComposerAttachment[];
+  notice: string;
+  support: ImageSupport;
+  api: Pick<DesktopApi, 'readAttachment'>;
+  onAdd: (files: File[]) => void;
+  onRemove: (localId: string) => void;
+  onNotice: (notice: string) => void;
+};
 
 export type ModelSelection = {
   model: string;
@@ -121,6 +139,7 @@ type Props = {
   workflowChip?: ReactNode;
   mcpChip?: ReactNode;
   onLoadEarlier: () => Promise<boolean>;
+  attachments: ConversationAttachments;
 };
 
 export function Conversation({
@@ -165,6 +184,7 @@ export function Conversation({
   workflowChip,
   mcpChip,
   onLoadEarlier,
+  attachments,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -229,7 +249,20 @@ export function Conversation({
   }, [earlierAvailable, earlierError, firstIndex, session.id]);
   const running = session.status === 'running' || session.status === 'stopping';
   const queueing = running || otherRun;
-  const canSubmit = queueing ? canQueue : canSend;
+  const [dragging, setDragging] = useState(false);
+  const uploading = attachments.items.some(item => item.status === 'uploading');
+  const attachmentFailed = attachments.items.some(
+    item => item.status === 'failed',
+  );
+  const attachmentsReady = !uploading && !attachmentFailed;
+  const canSubmit = (queueing ? canQueue : canSend) && attachmentsReady;
+  const addImages = (files: File[]) => {
+    if (attachments.support.enabled) attachments.onAdd(files);
+    else
+      attachments.onNotice(
+        `Images cannot be attached in this session. ${attachments.support.reason}`,
+      );
+  };
   const groupRun =
     !session.parentId &&
     (session.delegations.some(
@@ -384,7 +417,7 @@ export function Conversation({
       <ComposerSend
         label="Queue message"
         tooltip={false}
-        disabled={!draft.trim() || !canQueue}
+        disabled={!draft.trim() || !canQueue || !attachmentsReady}
       >
         <ListEnd />
       </ComposerSend>
@@ -418,6 +451,32 @@ export function Conversation({
       }) => (
         <form
           className="mx-auto w-full max-w-(--composer-max-width) space-y-2"
+          onDragEnter={event => {
+            if (event.dataTransfer.types.includes('Files')) setDragging(true);
+          }}
+          onDragOver={event => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = attachments.support.enabled
+              ? 'copy'
+              : 'none';
+          }}
+          onDragLeave={event => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node))
+              setDragging(false);
+          }}
+          onDrop={event => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            setDragging(false);
+            const files = [...event.dataTransfer.files];
+            const images = imageFiles(files);
+            if (images.length) addImages(files);
+            else if (files.length)
+              attachments.onNotice(
+                'Only PNG, JPEG, WebP and GIF images can be attached.',
+              );
+          }}
           onSubmit={event => {
             event.preventDefault();
             if (!draft.trim() || !canSubmit) return;
@@ -439,7 +498,18 @@ export function Conversation({
             Message
           </label>
           {anchor(
-            <Composer className="z-10">
+            <Composer
+              className={cn(
+                'z-10',
+                dragging &&
+                  attachments.support.enabled &&
+                  'border-input bg-accent/40',
+              )}
+            >
+              <AttachmentTray
+                items={attachments.items}
+                onRemove={attachments.onRemove}
+              />
               {selectedSkill && (
                 <SelectedSkillChip
                   skill={selectedSkill}
@@ -523,6 +593,14 @@ export function Conversation({
                 onPaste={event => {
                   const target = event.currentTarget;
                   const pasted = event.clipboardData.getData('text');
+                  const images = imageFiles(event.clipboardData.files);
+                  if (images.length) {
+                    addImages(images);
+                    if (!pasted) {
+                      event.preventDefault();
+                      return;
+                    }
+                  }
                   const selected = target.selectionEnd - target.selectionStart;
                   if (
                     draft.length - selected + pasted.length <=
@@ -548,6 +626,11 @@ export function Conversation({
               <ComposerToolbar
                 start={
                   <>
+                    <AttachButton
+                      support={attachments.support}
+                      disabled={!connected}
+                      onFiles={addImages}
+                    />
                     <ModeSwitch
                       provider={session.provider}
                       modes={modes}
@@ -562,19 +645,21 @@ export function Conversation({
                     <span role="status" className="min-w-0 truncate">
                       {otherRun
                         ? (otherRunLabel ?? 'Another session is working')
-                        : running && draft.trim()
-                          ? 'Will send when this turn ends'
-                          : sending
-                            ? 'Sending…'
-                            : session.delegations.some(
-                                  delegation =>
-                                    delegation.runId === session.runId &&
-                                    delegation.status === 'pending',
-                                )
-                              ? 'Worker approval needed'
-                              : session.pendingApprovals.length > 0
-                                ? 'Approval needed'
-                                : modeNotice}
+                        : uploading
+                          ? 'Attaching images…'
+                          : running && draft.trim()
+                            ? 'Will send when this turn ends'
+                            : sending
+                              ? 'Sending…'
+                              : session.delegations.some(
+                                    delegation =>
+                                      delegation.runId === session.runId &&
+                                      delegation.status === 'pending',
+                                  )
+                                ? 'Worker approval needed'
+                                : session.pendingApprovals.length > 0
+                                  ? 'Approval needed'
+                                  : modeNotice}
                     </span>
                   </>
                 }
@@ -634,7 +719,9 @@ export function Conversation({
                       queueButton
                     ) : (
                       <ComposerSend
-                        disabled={!draft.trim() || !canSend}
+                        disabled={
+                          !draft.trim() || !canSend || !attachmentsReady
+                        }
                         shortcut="Enter"
                       />
                     )}
@@ -644,6 +731,12 @@ export function Conversation({
             </Composer>,
           )}
           {notice}
+          {(attachments.notice || attachmentFailed) && (
+            <StatusMessage tone="warning" className="px-3">
+              {attachments.notice ||
+                'Remove the images that could not be attached before sending.'}
+            </StatusMessage>
+          )}
           {(limitReached || pasteTruncated) && (
             <StatusMessage className="px-3">
               Message limit reached (32,000 characters). Shorten it or split it
@@ -756,347 +849,349 @@ export function Conversation({
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
   };
   return (
-    <section
-      aria-label="Conversation"
-      data-host-id={session.hostId}
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
-    >
-      <p key={session.id} role="status" className="sr-only">
-        {announcement}
-      </p>
-      <ScrollArea
-        className={
-          empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
-        }
+    <AttachmentPreviewProvider hostId={session.hostId} api={attachments.api}>
+      <section
+        aria-label="Conversation"
+        data-host-id={session.hostId}
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
       >
-        <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
-          {earlierAvailable && (
-            <div
-              ref={earlierMarker}
-              className="flex flex-col items-center gap-2"
-            >
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                disabled={loadingEarlier}
-                onClick={() => void showEarlier()}
+        <p key={session.id} role="status" className="sr-only">
+          {announcement}
+        </p>
+        <ScrollArea
+          className={
+            empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
+          }
+        >
+          <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
+            {earlierAvailable && (
+              <div
+                ref={earlierMarker}
+                className="flex flex-col items-center gap-2"
               >
-                {loadingEarlier
-                  ? 'Loading earlier messages…'
-                  : `Show earlier messages (${firstIndex})`}
-              </Button>
-              {earlierError && (
-                <StatusMessage tone="error">{earlierError}</StatusMessage>
-              )}
-            </div>
-          )}
-          {session.pendingClaudeFork && session.messageCount === 0 && (
-            <StatusMessage>
-              Claude Code will fork the conversation on your next message.
-            </StatusMessage>
-          )}
-          <div
-            role="log"
-            aria-live="polite"
-            aria-relevant="additions"
-            aria-label="Messages"
-            className="space-y-8"
-          >
-            {session.messages.map((message, index) => {
-              const live =
-                message.author === 'agent' &&
-                message.runId === session.runId &&
-                running;
-              const showActivity =
-                message.origin !== 'imported' &&
-                firstAgents.get(message.runId) === message.id &&
-                (live ||
-                  !!message.completedAt ||
-                  activityRunIds.has(message.runId));
-              return (
-                <MessageArticle
-                  key={message.id}
-                  message={message}
-                  provider={session.provider}
-                  live={live}
-                  deferred={
-                    !live &&
-                    index < session.messages.length - EAGER_TAIL_MESSAGES
-                  }
-                  showActivity={showActivity}
-                  activity={
-                    showActivity &&
-                    activity(
-                      message.runId,
-                      runStarts.get(message.runId) ?? null,
-                      message.completedAt,
-                      live ? session.status : message.state,
-                      live,
-                    )
-                  }
-                  showInterruption={message.runId !== session.runId}
-                  selectionChange={selectionChanges.get(message.id)}
-                  threadStart={threadStarts.has(firstIndex + index)}
-                />
-              );
-            })}
-            {threadStarts.has(session.messageCount) && (
-              <Separator label="Session restarted" />
-            )}
-          </div>
-          {session.error &&
-            session.status !== 'interrupted' &&
-            session.status !== 'completed' && (
-              <section aria-label="Failed run" className="space-y-2">
-                <StatusMessage
-                  tone="error"
-                  variant="notice"
-                  className="whitespace-pre-wrap"
-                >
-                  {session.error}
-                </StatusMessage>
-                {canResend && (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={!canSend || sending}
-                    onClick={onResend}
-                  >
-                    Resend last message
-                  </Button>
-                )}
-              </section>
-            )}
-          {session.status === 'interrupted' && (
-            <section aria-label="Interrupted run" className="space-y-2">
-              <StatusMessage tone="warning" variant="notice">
-                <span className="block font-medium text-foreground">
-                  {session.interruption
-                    ? interruptionLabels[session.interruption.reason]
-                    : 'This run was interrupted'}
-                </span>
-                {session.error ||
-                  'The last outcome is unconfirmed. Review the current state before continuing.'}
-              </StatusMessage>
-              <div className="flex flex-wrap gap-2">
-                {canResend && (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={!canSend || sending}
-                    onClick={onResend}
-                  >
-                    Resend last message
-                  </Button>
-                )}
                 <Button
                   type="button"
                   size="xs"
-                  variant="ghost"
-                  disabled={!canSend || sending}
-                  onClick={() => messageInput.current?.focus()}
+                  variant="outline"
+                  disabled={loadingEarlier}
+                  onClick={() => void showEarlier()}
                 >
-                  Continue conversation
+                  {loadingEarlier
+                    ? 'Loading earlier messages…'
+                    : `Show earlier messages (${firstIndex})`}
                 </Button>
+                {earlierError && (
+                  <StatusMessage tone="error">{earlierError}</StatusMessage>
+                )}
               </div>
-            </section>
-          )}
-          {delegations}
-          {session.queue.length > 0 && (
-            <section aria-label="Queued messages" className="space-y-3">
-              {queueStartError && (
-                <StatusMessage
-                  tone="warning"
-                  variant="notice"
-                  className="whitespace-pre-wrap"
-                >
-                  {queueStartError}
-                </StatusMessage>
-              )}
-              {session.queue.map(entry => (
-                <article
-                  key={entry.id}
-                  aria-label="Queued message"
-                  className="flex flex-col items-end gap-1"
-                >
-                  <Hint label={entry.held ? 'Waiting for Send now' : ''}>
-                    <Chip interactive={false} size="sm">
-                      <span>{entry.held ? 'Held' : 'Queued'}</span>
-                    </Chip>
-                  </Hint>
-                  <MessageBody
-                    body={entry.text}
-                    className="max-w-[85%] rounded-composer border border-dashed px-3.5 py-2 text-sm leading-6"
+            )}
+            {session.pendingClaudeFork && session.messageCount === 0 && (
+              <StatusMessage>
+                Claude Code will fork the conversation on your next message.
+              </StatusMessage>
+            )}
+            <div
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              aria-label="Messages"
+              className="space-y-8"
+            >
+              {session.messages.map((message, index) => {
+                const live =
+                  message.author === 'agent' &&
+                  message.runId === session.runId &&
+                  running;
+                const showActivity =
+                  message.origin !== 'imported' &&
+                  firstAgents.get(message.runId) === message.id &&
+                  (live ||
+                    !!message.completedAt ||
+                    activityRunIds.has(message.runId));
+                return (
+                  <MessageArticle
+                    key={message.id}
+                    message={message}
+                    provider={session.provider}
+                    live={live}
+                    deferred={
+                      !live &&
+                      index < session.messages.length - EAGER_TAIL_MESSAGES
+                    }
+                    showActivity={showActivity}
+                    activity={
+                      showActivity &&
+                      activity(
+                        message.runId,
+                        runStarts.get(message.runId) ?? null,
+                        message.completedAt,
+                        live ? session.status : message.state,
+                        live,
+                      )
+                    }
+                    showInterruption={message.runId !== session.runId}
+                    selectionChange={selectionChanges.get(message.id)}
+                    threadStart={threadStarts.has(firstIndex + index)}
                   />
-                  <div className="flex items-center gap-1">
+                );
+              })}
+              {threadStarts.has(session.messageCount) && (
+                <Separator label="Session restarted" />
+              )}
+            </div>
+            {session.error &&
+              session.status !== 'interrupted' &&
+              session.status !== 'completed' && (
+                <section aria-label="Failed run" className="space-y-2">
+                  <StatusMessage
+                    tone="error"
+                    variant="notice"
+                    className="whitespace-pre-wrap"
+                  >
+                    {session.error}
+                  </StatusMessage>
+                  {canResend && (
                     <Button
                       type="button"
                       size="xs"
-                      variant="ghost"
-                      disabled={!canQueue}
-                      onClick={() => onQueuedEdit(entry.id, entry.text)}
+                      variant="outline"
+                      disabled={!canSend || sending}
+                      onClick={onResend}
                     >
-                      Edit
+                      Resend last message
                     </Button>
+                  )}
+                </section>
+              )}
+            {session.status === 'interrupted' && (
+              <section aria-label="Interrupted run" className="space-y-2">
+                <StatusMessage tone="warning" variant="notice">
+                  <span className="block font-medium text-foreground">
+                    {session.interruption
+                      ? interruptionLabels[session.interruption.reason]
+                      : 'This run was interrupted'}
+                  </span>
+                  {session.error ||
+                    'The last outcome is unconfirmed. Review the current state before continuing.'}
+                </StatusMessage>
+                <div className="flex flex-wrap gap-2">
+                  {canResend && (
                     <Button
                       type="button"
                       size="xs"
-                      variant="ghost"
-                      disabled={!canQueue}
-                      onClick={() => onQueuedCancel(entry.id)}
+                      variant="outline"
+                      disabled={!canSend || sending}
+                      onClick={onResend}
                     >
-                      Remove
+                      Resend last message
                     </Button>
-                    {!running && (
+                  )}
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={!canSend || sending}
+                    onClick={() => messageInput.current?.focus()}
+                  >
+                    Continue conversation
+                  </Button>
+                </div>
+              </section>
+            )}
+            {delegations}
+            {session.queue.length > 0 && (
+              <section aria-label="Queued messages" className="space-y-3">
+                {queueStartError && (
+                  <StatusMessage
+                    tone="warning"
+                    variant="notice"
+                    className="whitespace-pre-wrap"
+                  >
+                    {queueStartError}
+                  </StatusMessage>
+                )}
+                {session.queue.map(entry => (
+                  <article
+                    key={entry.id}
+                    aria-label="Queued message"
+                    className="flex flex-col items-end gap-1"
+                  >
+                    <Hint label={entry.held ? 'Waiting for Send now' : ''}>
+                      <Chip interactive={false} size="sm">
+                        <span>{entry.held ? 'Held' : 'Queued'}</span>
+                      </Chip>
+                    </Hint>
+                    <MessageBody
+                      body={entry.text}
+                      className="max-w-[85%] rounded-composer border border-dashed px-3.5 py-2 text-sm leading-6"
+                    />
+                    <div className="flex items-center gap-1">
                       <Button
                         type="button"
                         size="xs"
                         variant="ghost"
-                        disabled={!canSend}
-                        onClick={() => onQueuedStart(entry.id)}
+                        disabled={!canQueue}
+                        onClick={() => onQueuedEdit(entry.id, entry.text)}
                       >
-                        Send now
+                        Edit
                       </Button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </section>
-          )}
-          {session.pendingApprovals.map(approval => {
-            const pending =
-              !!approvalPending[
-                `${entityKey(session)}/${session.runId}/${approval.id}`
-              ];
-            const enabled =
-              approvalsEnabled &&
-              session.status === 'running' &&
-              !!session.runId &&
-              !pending;
-            return (
-              <section
-                key={`${session.runId}/${approval.id}`}
-                id={`approval-${approval.id}`}
-                aria-label="Operation approval"
-                className="space-y-3 rounded-surface border bg-card p-4"
-              >
-                <p className="text-2xs text-muted-foreground">
-                  {approvalKindLabels[approval.kind]}
-                </p>
-                <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
-                  {approval.title}
-                </h2>
-                <CodeBlock
-                  code={approval.detail}
-                  wrap
-                  maxHeightClassName="max-h-60"
-                  className="[overflow-wrap:anywhere]"
-                />
-                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                  Working directory: {approval.directory ?? session.directory}
-                </p>
-                {approval.fingerprint && (
-                  <Input
-                    aria-label="Message with the denial"
-                    placeholder="Message for Claude if you deny (optional)"
-                    maxLength={2000}
-                    disabled={!enabled}
-                    value={denialMessages[approval.id] ?? ''}
-                    onChange={event =>
-                      setDenialMessages(previous => ({
-                        ...previous,
-                        [approval.id]: event.target.value,
-                      }))
-                    }
-                  />
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    disabled={!enabled}
-                    onClick={() => onApproval(approval.id, 'accept')}
-                  >
-                    Allow once
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!enabled}
-                    onClick={() =>
-                      onApproval(
-                        approval.id,
-                        'decline',
-                        denialMessages[approval.id]?.trim() || undefined,
-                      )
-                    }
-                  >
-                    Deny
-                  </Button>
-                </div>
-                <StatusMessage tone={pending ? 'loading' : 'info'}>
-                  {pending
-                    ? 'Sending decision…'
-                    : enabled
-                      ? 'Applies to this operation only.'
-                      : 'This request is inactive. Refresh the connection to check its status.'}
-                </StatusMessage>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        disabled={!canQueue}
+                        onClick={() => onQueuedCancel(entry.id)}
+                      >
+                        Remove
+                      </Button>
+                      {!running && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={!canSend}
+                          onClick={() => onQueuedStart(entry.id)}
+                        >
+                          Send now
+                        </Button>
+                      )}
+                    </div>
+                  </article>
+                ))}
               </section>
-            );
-          })}
-          {results}
-          {error && (
-            <StatusMessage
-              tone="error"
-              variant="notice"
-              className="whitespace-pre-wrap"
-            >
-              {error}
-            </StatusMessage>
+            )}
+            {session.pendingApprovals.map(approval => {
+              const pending =
+                !!approvalPending[
+                  `${entityKey(session)}/${session.runId}/${approval.id}`
+                ];
+              const enabled =
+                approvalsEnabled &&
+                session.status === 'running' &&
+                !!session.runId &&
+                !pending;
+              return (
+                <section
+                  key={`${session.runId}/${approval.id}`}
+                  id={`approval-${approval.id}`}
+                  aria-label="Operation approval"
+                  className="space-y-3 rounded-surface border bg-card p-4"
+                >
+                  <p className="text-2xs text-muted-foreground">
+                    {approvalKindLabels[approval.kind]}
+                  </p>
+                  <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
+                    {approval.title}
+                  </h2>
+                  <CodeBlock
+                    code={approval.detail}
+                    wrap
+                    maxHeightClassName="max-h-60"
+                    className="[overflow-wrap:anywhere]"
+                  />
+                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    Working directory: {approval.directory ?? session.directory}
+                  </p>
+                  {approval.fingerprint && (
+                    <Input
+                      aria-label="Message with the denial"
+                      placeholder="Message for Claude if you deny (optional)"
+                      maxLength={2000}
+                      disabled={!enabled}
+                      value={denialMessages[approval.id] ?? ''}
+                      onChange={event =>
+                        setDenialMessages(previous => ({
+                          ...previous,
+                          [approval.id]: event.target.value,
+                        }))
+                      }
+                    />
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      disabled={!enabled}
+                      onClick={() => onApproval(approval.id, 'accept')}
+                    >
+                      Allow once
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!enabled}
+                      onClick={() =>
+                        onApproval(
+                          approval.id,
+                          'decline',
+                          denialMessages[approval.id]?.trim() || undefined,
+                        )
+                      }
+                    >
+                      Deny
+                    </Button>
+                  </div>
+                  <StatusMessage tone={pending ? 'loading' : 'info'}>
+                    {pending
+                      ? 'Sending decision…'
+                      : enabled
+                        ? 'Applies to this operation only.'
+                        : 'This request is inactive. Refresh the connection to check its status.'}
+                  </StatusMessage>
+                </section>
+              );
+            })}
+            {results}
+            {error && (
+              <StatusMessage
+                tone="error"
+                variant="notice"
+                className="whitespace-pre-wrap"
+              >
+                {error}
+              </StatusMessage>
+            )}
+            <div ref={bottom} />
+          </div>
+        </ScrollArea>
+        {empty && !finishedWorktree && (
+          <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
+            <h2 className="text-display font-normal tracking-tight sm:text-display-lg">
+              What would you like to work on?
+            </h2>
+            <p className="truncate text-ui font-semibold">
+              {sessionProjectLabel(session)}
+            </p>
+          </div>
+        )}
+        <div
+          className={cn(
+            'relative shrink-0 px-5',
+            empty ? 'mb-auto pb-16' : 'pt-2 pb-4',
           )}
-          <div ref={bottom} />
+        >
+          {jumpSessionId === session.id && !empty && (
+            <IconButton
+              label="Scroll to end"
+              shape="round"
+              className="glass-popover absolute -top-9 left-1/2 z-20 -translate-x-1/2 border"
+              onMouseDown={event => event.preventDefault()}
+              onClick={scrollToEnd}
+            >
+              <ArrowDown />
+            </IconButton>
+          )}
+          {finishedWorktree ? (
+            <StatusMessage
+              tone="info"
+              className="mx-auto max-w-(--composer-max-width)"
+            >
+              This worktree session is finished.
+            </StatusMessage>
+          ) : (
+            composer
+          )}
         </div>
-      </ScrollArea>
-      {empty && !finishedWorktree && (
-        <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
-          <h2 className="text-display font-normal tracking-tight sm:text-display-lg">
-            What would you like to work on?
-          </h2>
-          <p className="truncate text-ui font-semibold">
-            {sessionProjectLabel(session)}
-          </p>
-        </div>
-      )}
-      <div
-        className={cn(
-          'relative shrink-0 px-5',
-          empty ? 'mb-auto pb-16' : 'pt-2 pb-4',
-        )}
-      >
-        {jumpSessionId === session.id && !empty && (
-          <IconButton
-            label="Scroll to end"
-            shape="round"
-            className="glass-popover absolute -top-9 left-1/2 z-20 -translate-x-1/2 border"
-            onMouseDown={event => event.preventDefault()}
-            onClick={scrollToEnd}
-          >
-            <ArrowDown />
-          </IconButton>
-        )}
-        {finishedWorktree ? (
-          <StatusMessage
-            tone="info"
-            className="mx-auto max-w-(--composer-max-width)"
-          >
-            This worktree session is finished.
-          </StatusMessage>
-        ) : (
-          composer
-        )}
-      </div>
-    </section>
+      </section>
+    </AttachmentPreviewProvider>
   );
 }

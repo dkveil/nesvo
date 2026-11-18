@@ -1,0 +1,41 @@
+import {
+  attachmentLimits,
+  type DesktopApi,
+  type MessageAttachment,
+} from '@nesvo/contracts';
+
+const BINARY_SLICE_BYTES = 32 * 1024;
+
+const toBase64 = (bytes: Uint8Array) => {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += BINARY_SLICE_BYTES)
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + BINARY_SLICE_BYTES),
+    );
+  return btoa(binary);
+};
+
+export const stageImage = async (
+  api: Pick<DesktopApi, 'stageAttachment'>,
+  file: Blob,
+  name: string,
+): Promise<MessageAttachment> => {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const uploadId = crypto.randomUUID();
+  for (let offset = 0; ;) {
+    const chunk = bytes.subarray(offset, offset + attachmentLimits.chunkBytes);
+    const final = offset + chunk.length >= bytes.length;
+    const upload = await api.stageAttachment({
+      uploadId,
+      name,
+      offset,
+      data: toBase64(chunk),
+      final,
+    });
+    offset += chunk.length;
+    if (!final) continue;
+    if (!upload.attachment)
+      throw new Error('The computer did not confirm the image.');
+    return upload.attachment;
+  }
+};

@@ -17,6 +17,7 @@ import type {
   DesktopSession as Session,
   ForkSessionInput,
   McpSelection,
+  MessageAttachment,
   RespondApprovalInput,
   SessionMode,
   StartWorkflowTaskInput,
@@ -137,6 +138,8 @@ import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';
 import { SessionWorkflowChip } from '@/features/session-workflow';
+import { imageSupport } from '@/features/attach-images/image-support';
+import { useComposerAttachments } from '@/features/attach-images/use-composer-attachments';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import { SessionPullRequest } from '@/features/session-pull-request';
 import {
@@ -741,10 +744,12 @@ export function Workspace() {
         skillHash?: string;
         selection: ModelSelection | null;
         mode: SessionMode | null;
+        attachmentIds: string;
         messageId: string;
       }
     >
   >({});
+  const composerAttachments = useComposerAttachments();
   const stopping = useRef(new Set<string>());
   const automations = useScheduledJobs(store.computers);
   const jobOf = (
@@ -1195,8 +1200,10 @@ export function Workspace() {
     queued = false,
     selection: ModelSelection | null = null,
     mode: SessionMode | null = null,
+    attachments: readonly MessageAttachment[] = [],
   ) => {
     const sessionId = target.id;
+    const attachmentIds = attachments.map(item => item.id).join();
     const sessionKey = entityKey(target);
     const hostId = target.hostId;
     const skillId = skill?.id;
@@ -1208,7 +1215,8 @@ export function Workspace() {
       prior.skillHash === skillHash &&
       prior.selection?.model === selection?.model &&
       prior.selection?.effort === selection?.effort &&
-      prior.mode === mode
+      prior.mode === mode &&
+      prior.attachmentIds === attachmentIds
         ? prior
         : {
             text,
@@ -1216,6 +1224,7 @@ export function Workspace() {
             skillHash,
             selection,
             mode,
+            attachmentIds,
             messageId: crypto.randomUUID(),
           };
     sendAttempts.current[sessionKey] = attempt;
@@ -1238,6 +1247,7 @@ export function Workspace() {
           ? { model: selection.model, effort: selection.effort }
           : {}),
         ...(mode ? { mode } : {}),
+        ...(attachments.length ? { attachments: [...attachments] } : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -1279,6 +1289,8 @@ export function Workspace() {
     const sessionKey = entityKey(selected);
     const text = typed?.text ?? drafts[sessionKey]?.trim();
     if (!text || text.length > 32000) return;
+    if (composerAttachments.pending(sessionKey)) return;
+    const attachments = composerAttachments.ready(sessionKey);
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
@@ -1290,6 +1302,7 @@ export function Workspace() {
       () => {
         clearModelSelection(sessionKey, selection);
         clearModeSelection(sessionKey, mode);
+        composerAttachments.clear(sessionKey, attachments);
         if ((draftVersions.current[sessionKey] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
@@ -1298,6 +1311,7 @@ export function Workspace() {
       !!activeRun,
       selection,
       mode,
+      attachments,
     );
   };
   const resend = async () => {
@@ -1322,6 +1336,7 @@ export function Workspace() {
       false,
       selection,
       mode,
+      last.attachments,
     );
   };
   const changeQueued = async (
@@ -1357,6 +1372,7 @@ export function Workspace() {
     if (!(await changeQueued(target, messageId, 'cancel'))) return;
     const key = entityKey(target);
     changeDraft(key, text);
+    if (entry?.attachments) composerAttachments.restore(key, entry.attachments);
     const model = entry?.model;
     if (model)
       setModelSelections(previous => ({
@@ -3415,6 +3431,35 @@ ${text}`
                   }))
                 }
                 canChangeMode={supportsModes(selectedHostId)}
+                attachments={{
+                  items: composerAttachments.items(selectedKey),
+                  notice: composerAttachments.notice(selectedKey),
+                  support: imageSupport({
+                    provider: selected.provider,
+                    model:
+                      modelSelections[selectedKey]?.model ?? selected.model,
+                    modelLabel:
+                      selectedProviderState?.status?.models.find(
+                        option =>
+                          option.id ===
+                          (modelSelections[selectedKey]?.model ??
+                            selected.model),
+                      )?.label ?? 'This model',
+                    state: selectedProviderState,
+                    capabilities: selectedComputer?.capabilities ?? [],
+                  }),
+                  api: desktopApi(selectedHostId),
+                  onAdd: files =>
+                    composerAttachments.add(
+                      selectedKey,
+                      desktopApi(selectedHostId),
+                      files,
+                    ),
+                  onRemove: localId =>
+                    composerAttachments.remove(selectedKey, localId),
+                  onNotice: notice =>
+                    composerAttachments.notify(selectedKey, notice),
+                }}
                 workflowChip={
                   <SessionWorkflowChip
                     hostId={selected.hostId}
