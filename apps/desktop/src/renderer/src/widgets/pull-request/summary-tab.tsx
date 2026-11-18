@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { PullRequest, PullRequestCheck } from '@nesvo/contracts';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
@@ -8,12 +8,10 @@ import { Badge } from '@/shared/ui/badge';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { SectionLabel } from '@/shared/ui/section-label';
-import { SegmentedControl } from '@/shared/ui/segmented-control';
-import { CommentBox } from './comment-box';
 import { openExternal } from './open-external';
-import { isActionLocked, type ActionState } from './use-pull-request-actions';
-
-type ReviewEvent = 'approve' | 'request-changes' | 'comment';
+import type { ReviewDraft, ReviewEvent } from './review-event';
+import { ReviewForm } from './review-form';
+import type { ActionState } from './use-pull-request-actions';
 
 const REVIEW_DECISION_LABELS: Record<PullRequest['reviewDecision'], string> = {
   approved: 'Approved',
@@ -22,18 +20,14 @@ const REVIEW_DECISION_LABELS: Record<PullRequest['reviewDecision'], string> = {
   none: '',
 };
 
-const REVIEW_EVENT_LABELS: Record<ReviewEvent, string> = {
-  approve: 'Approve',
-  'request-changes': 'Request changes',
-  comment: 'Comment',
-};
-
 type SummaryTabProps = {
   pullRequest: PullRequest;
   blockedReason: string;
+  reviewEvents: ReviewEvent[];
+  reviewDraft: ReviewDraft;
   reviewState: ActionState | undefined;
-  onReview: (event: ReviewEvent, body: string) => Promise<boolean>;
-  onReviewEdit: () => void;
+  onReviewDraftChange: (draft: ReviewDraft) => void;
+  onReview: () => void;
 };
 
 function Section({
@@ -76,21 +70,13 @@ const checkLabel = (check: PullRequestCheck) =>
 export function SummaryTab({
   pullRequest,
   blockedReason,
+  reviewEvents,
+  reviewDraft,
   reviewState,
+  onReviewDraftChange,
   onReview,
-  onReviewEdit,
 }: SummaryTabProps) {
-  const events: ReviewEvent[] = pullRequest.viewerCanReview
-    ? ['approve', 'request-changes', 'comment']
-    : ['comment'];
-  const [chosen, setChosen] = useState<ReviewEvent>('comment');
-  const event = events.includes(chosen) ? chosen : 'comment';
-  const [body, setBody] = useState('');
   const decision = REVIEW_DECISION_LABELS[pullRequest.reviewDecision];
-  const canSubmit = event === 'approve' || !!body.trim();
-  const submit = async () => {
-    if (await onReview(event, body.trim())) setBody('');
-  };
   return (
     <div className="space-y-5 px-4 py-4">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -180,37 +166,13 @@ export function SummaryTab({
       </Section>
       {pullRequest.state === 'open' && (
         <Section title="Your review">
-          <CommentBox
-            label="Review comment"
-            placeholder={
-              event === 'approve'
-                ? 'Optional note with the approval'
-                : 'Leave a review comment'
-            }
-            value={body}
-            onChange={value => {
-              setBody(value);
-              onReviewEdit();
-            }}
-            submitLabel="Submit review"
-            canSubmit={canSubmit}
-            state={reviewState}
+          <ReviewForm
+            events={reviewEvents}
+            draft={reviewDraft}
             blockedReason={blockedReason}
-            onSubmit={() => void submit()}
-            controls={
-              events.length > 1 && (
-                <SegmentedControl
-                  label="Review decision"
-                  value={event}
-                  options={events.map(value => ({
-                    value,
-                    label: REVIEW_EVENT_LABELS[value],
-                  }))}
-                  onChange={setChosen}
-                  disabled={isActionLocked(reviewState)}
-                />
-              )
-            }
+            state={reviewState}
+            onChange={onReviewDraftChange}
+            onSubmit={onReview}
           />
         </Section>
       )}

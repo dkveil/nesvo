@@ -44,6 +44,8 @@ import { CodeTab } from './code-tab';
 import { MergeControl } from './merge-control';
 import { mergeHint } from './merge-hint';
 import { openExternal } from './open-external';
+import { ReviewControl } from './review-control';
+import { reviewEvents, type ReviewDraft } from './review-event';
 import {
   discussionPrompt,
   threadPrompt,
@@ -67,6 +69,8 @@ const STALE_REVISION_REASON =
   'The pull request changed. Refresh to review the latest commit.';
 
 const PANEL_ID_PREFIX = 'pull-request';
+
+const EMPTY_REVIEW_DRAFT: ReviewDraft = { event: 'comment', body: '' };
 
 type PanelTab = 'summary' | 'timeline' | 'code';
 
@@ -106,6 +110,8 @@ export default function PullRequestPanel({
     text: string;
   } | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  const [storedReviewDraft, setReviewDraft] =
+    useState<ReviewDraft>(EMPTY_REVIEW_DRAFT);
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
   const {
@@ -177,6 +183,32 @@ export default function PullRequestPanel({
       : '';
   const commentReason = blockedReason || staleReason;
   const viewedPaths = new Set(viewed[headSha] ?? []);
+  const changedPaths = files.data?.files.map(file => file.path) ?? [];
+  const viewedCount = changedPaths.filter(path => viewedPaths.has(path)).length;
+  const allowedReviewEvents = reviewEvents(!!data?.viewerCanReview);
+  const reviewDraft = allowedReviewEvents.includes(storedReviewDraft.event)
+    ? storedReviewDraft
+    : { ...storedReviewDraft, event: 'comment' as const };
+  const editReview = (draft: ReviewDraft) => {
+    setReviewDraft(draft);
+    actions.clear('review');
+  };
+  const submitReview = async () => {
+    const done = await actions.run(
+      'review',
+      {
+        action: 'review',
+        event: reviewDraft.event,
+        body: reviewDraft.body.trim(),
+      },
+      'Review submitted.',
+    );
+    if (done) {
+      setReviewDraft(EMPTY_REVIEW_DRAFT);
+      bump('pullRequest');
+    }
+    return done;
+  };
   const toggleViewed = (path: string) =>
     setViewed(previous => {
       const current = previous[headSha] ?? [];
@@ -277,7 +309,9 @@ export default function PullRequestPanel({
       ? { tone: 'success' as const, text: actions.states.merge.message }
       : actions.states.checkout?.status === 'success'
         ? { tone: 'success' as const, text: actions.states.checkout.message }
-        : null);
+        : actions.states.review?.status === 'success'
+          ? { tone: 'success' as const, text: actions.states.review.message }
+          : null);
   return (
     <section
       role="region"
@@ -470,21 +504,44 @@ export default function PullRequestPanel({
               )}
             </div>
           </div>
-          <Tabs
-            label="Pull request sections"
-            idPrefix={PANEL_ID_PREFIX}
-            value={tab}
-            onChange={changeTab}
-            options={[
-              { value: 'summary', label: 'Summary' },
-              {
-                value: 'timeline',
-                label: 'Timeline',
-                count: data.timeline.length,
-              },
-              { value: 'code', label: 'Code', count: data.changedFiles },
-            ]}
-          />
+          <div className="flex shrink-0 items-center border-b">
+            <Tabs
+              label="Pull request sections"
+              idPrefix={PANEL_ID_PREFIX}
+              value={tab}
+              onChange={changeTab}
+              options={[
+                { value: 'summary', label: 'Summary' },
+                {
+                  value: 'timeline',
+                  label: 'Timeline',
+                  count: data.timeline.length,
+                },
+                { value: 'code', label: 'Code', count: data.changedFiles },
+              ]}
+              className="min-w-0 flex-1 border-b-0"
+            />
+            <div className="flex shrink-0 items-center gap-2 pr-2">
+              {tab === 'code' && files.data && (
+                <span
+                  className="text-2xs text-muted-foreground tabular-nums"
+                  aria-live="polite"
+                >
+                  {viewedCount} / {changedPaths.length} viewed
+                </span>
+              )}
+              {data.state === 'open' && (
+                <ReviewControl
+                  events={allowedReviewEvents}
+                  draft={reviewDraft}
+                  blockedReason={blockedReason}
+                  state={actions.states.review}
+                  onDraftChange={editReview}
+                  onSubmit={submitReview}
+                />
+              )}
+            </div>
+          </div>
           <TabPanel
             idPrefix={PANEL_ID_PREFIX}
             value={tab}
@@ -497,17 +554,11 @@ export default function PullRequestPanel({
               <SummaryTab
                 pullRequest={data}
                 blockedReason={blockedReason}
+                reviewEvents={allowedReviewEvents}
+                reviewDraft={reviewDraft}
                 reviewState={actions.states.review}
-                onReviewEdit={() => actions.clear('review')}
-                onReview={async (event, body) => {
-                  const done = await actions.run(
-                    'review',
-                    { action: 'review', event, body },
-                    'Review submitted.',
-                  );
-                  if (done) bump('pullRequest');
-                  return done;
-                }}
+                onReviewDraftChange={editReview}
+                onReview={() => void submitReview()}
               />
             )}
             {tab === 'timeline' && (
