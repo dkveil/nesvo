@@ -11,6 +11,7 @@ export const pullRequestLimits = {
   checks: 100,
   bodyLength: 65_536,
   commentLength: 65_536,
+  reviewComments: 100,
 } as const;
 
 export const GITHUB_REPOSITORY_PATTERN =
@@ -298,6 +299,27 @@ export const pullRequestActionSchema = z.discriminatedUnion('action', [
     action: z.literal('checkout'),
     sessionId: z.uuid(),
   }),
+  z.strictObject({
+    action: z.literal('submit-review'),
+    event: z.enum(['approve', 'request-changes', 'comment']),
+    commitId: shaSchema,
+    body: z.string().trim().max(pullRequestLimits.commentLength),
+    comments: z
+      .array(
+        z
+          .strictObject({
+            path: pathSchema.min(1),
+            line: z.number().int().positive(),
+            startLine: z.number().int().positive().nullable(),
+            body: commentBodySchema,
+          })
+          .refine(
+            value => value.startLine === null || value.startLine < value.line,
+            { message: 'A comment range must start before its last line.' },
+          ),
+      )
+      .max(pullRequestLimits.reviewComments),
+  }),
 ]);
 export type PullRequestAction = z.input<typeof pullRequestActionSchema>;
 
@@ -318,6 +340,7 @@ export const pullRequestActionResultSchema = z.strictObject({
     'line-comment',
     'merge',
     'checkout',
+    'submit-review',
   ]),
   detail: z.string().max(1000).nullable(),
 });

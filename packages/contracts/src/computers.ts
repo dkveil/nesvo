@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sessionMetadataSchema, sessionWindowSchema } from './session-history';
 import { reviewSchema } from './reviews';
+import { reviewDraftSchema } from './code-review';
 import { sessionMessageSchema } from './sessions';
 import { sessionGroupListSchema } from './session-groups';
 import {
@@ -47,6 +48,7 @@ export const hostCapabilitySchema = z.enum([
   'conversation-compaction',
   'provider-profiles',
   'inline-attachments',
+  'pull-request-reviews',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -136,6 +138,24 @@ export type DesktopSessionMessageUpsert = z.infer<
 export const desktopReviewSchema = reviewSchema.extend({
   hostId: hostIdSchema,
 });
+export const desktopReviewDraftSchema = reviewDraftSchema.extend({
+  hostId: hostIdSchema,
+});
+export const desktopReviewPublishResultSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('published'),
+    draft: desktopReviewDraftSchema,
+  }),
+  z.strictObject({
+    status: z.literal('head-moved'),
+    currentHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+    draft: desktopReviewDraftSchema,
+  }),
+]);
+export type DesktopReviewDraft = z.infer<typeof desktopReviewDraftSchema>;
+export type DesktopReviewPublishResult = z.infer<
+  typeof desktopReviewPublishResultSchema
+>;
 export const desktopScheduledJobSchema = scheduledJobSchema.safeExtend({
   hostId: hostIdSchema,
 });
@@ -243,6 +263,10 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
     type: z.literal('session-groups-changed'),
     hostId: hostIdSchema,
     list: sessionGroupListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-review-changed'),
+    draft: desktopReviewDraftSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

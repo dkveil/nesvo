@@ -79,6 +79,8 @@ import {
   hostCapabilitySchema,
   type Computer,
   type DesktopReview,
+  type DesktopReviewDraft,
+  type DesktopReviewPublishResult,
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
   type DesktopScheduledJobRunPage,
@@ -308,6 +310,32 @@ import {
   type PullRequestThreads,
   type ReadPullRequestInput,
 } from './pull-requests';
+import {
+  codeReviewSettingsSchema,
+  deleteReviewConventionSchema,
+  deleteReviewerProfileSchema,
+  discardPullRequestReviewSchema,
+  listPullRequestReviewsSchema,
+  publishPullRequestReviewResultSchema,
+  publishPullRequestReviewSchema,
+  reviewDraftEventSchema,
+  reviewDraftListSchema,
+  reviewDraftSchema,
+  saveReviewConventionSchema,
+  saveReviewerProfileSchema,
+  startPullRequestReviewSchema,
+  updateReviewFindingSchema,
+  type CodeReviewSettings,
+  type DeleteReviewConventionInput,
+  type DeleteReviewerProfileInput,
+  type DiscardPullRequestReviewInput,
+  type ListPullRequestReviewsInput,
+  type PublishPullRequestReviewInput,
+  type SaveReviewConventionInput,
+  type SaveReviewerProfileInput,
+  type StartPullRequestReviewInput,
+  type UpdateReviewFindingInput,
+} from './code-review';
 
 export * from './sessions';
 export * from './session-history';
@@ -315,6 +343,7 @@ export * from './attachments';
 export * from './session-groups';
 export * from './session-deletion';
 export * from './pull-requests';
+export * from './code-review';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -384,6 +413,9 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   assistantChangeRefusedEventSchema.extend({
     type: z.literal('workflow-assistant-change-refused'),
+  }),
+  reviewDraftEventSchema.extend({
+    type: z.literal('pull-request-review-changed'),
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -680,6 +712,55 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('find-session-pull-request'),
     input: findSessionPullRequestSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-code-review-settings'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-reviewer-profile'),
+    input: saveReviewerProfileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-reviewer-profile'),
+    input: deleteReviewerProfileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-review-convention'),
+    input: saveReviewConventionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-review-convention'),
+    input: deleteReviewConventionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('start-pull-request-review'),
+    input: startPullRequestReviewSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-pull-request-reviews'),
+    input: listPullRequestReviewsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('update-review-finding'),
+    input: updateReviewFindingSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('discard-pull-request-review'),
+    input: discardPullRequestReviewSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('publish-pull-request-review'),
+    input: publishPullRequestReviewSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1074,6 +1155,26 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('pull-request-reference'),
     id: z.uuid(),
     reference: pullRequestReferenceSchema.nullable(),
+  }),
+  z.strictObject({
+    type: z.literal('code-review-settings'),
+    id: z.uuid(),
+    settings: codeReviewSettingsSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-review'),
+    id: z.uuid(),
+    draft: reviewDraftSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-reviews'),
+    id: z.uuid(),
+    drafts: reviewDraftListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('pull-request-review-publish'),
+    id: z.uuid(),
+    result: publishPullRequestReviewResultSchema,
   }),
   z.strictObject({
     type: z.literal('scheduled-jobs'),
@@ -1538,6 +1639,43 @@ export type DesktopApi = {
     input: FindSessionPullRequestInput,
     hostId?: HostId,
   ) => Promise<PullRequestReference | null>;
+  readCodeReviewSettings: (hostId?: HostId) => Promise<CodeReviewSettings>;
+  saveReviewerProfile: (
+    input: SaveReviewerProfileInput,
+    hostId?: HostId,
+  ) => Promise<CodeReviewSettings>;
+  deleteReviewerProfile: (
+    input: DeleteReviewerProfileInput,
+    hostId?: HostId,
+  ) => Promise<CodeReviewSettings>;
+  saveReviewConvention: (
+    input: SaveReviewConventionInput,
+    hostId?: HostId,
+  ) => Promise<CodeReviewSettings>;
+  deleteReviewConvention: (
+    input: DeleteReviewConventionInput,
+    hostId?: HostId,
+  ) => Promise<CodeReviewSettings>;
+  startPullRequestReview: (
+    input: StartPullRequestReviewInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReviewDraft>;
+  listPullRequestReviews: (
+    input: ListPullRequestReviewsInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReviewDraft[]>;
+  updateReviewFinding: (
+    input: UpdateReviewFindingInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReviewDraft>;
+  discardPullRequestReview: (
+    input: DiscardPullRequestReviewInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReviewDraft>;
+  publishPullRequestReview: (
+    input: PublishPullRequestReviewInput,
+    hostId?: HostId,
+  ) => Promise<DesktopReviewPublishResult>;
   queueMessage: (
     input: SendMessageInput,
     hostId?: HostId,

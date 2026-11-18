@@ -109,6 +109,10 @@ export const scheduledJobChangeTriggerSchema = z.strictObject({
   askFirst: z.boolean().default(true),
 });
 
+export const scheduledJobPullRequestReviewSchema = z.strictObject({
+  profileId: z.uuid(),
+});
+
 const scheduledJobCheckSchema = z.strictObject({
   at: z.iso.datetime(),
   status: z.enum(['changed', 'unchanged', 'failed']),
@@ -150,6 +154,7 @@ const scheduledJobDefinitionShape = {
     .default(scheduledJobLimits.defaultTimeoutMinutes),
   workflow: scheduledJobWorkflowSchema.nullable().default(null),
   changeTrigger: scheduledJobChangeTriggerSchema.optional(),
+  pullRequestReview: scheduledJobPullRequestReviewSchema.optional(),
 };
 
 type ProviderRuleSubject = {
@@ -178,14 +183,32 @@ const enforceProviderRules = (
 };
 
 const enforcePromptRule = (
-  value: { prompt: string; workflow: unknown },
+  value: { prompt: string; workflow: unknown; pullRequestReview?: unknown },
   context: z.RefinementCtx,
 ) => {
-  if (value.prompt === '' && !value.workflow)
+  if (value.prompt === '' && !value.workflow && !value.pullRequestReview)
     context.addIssue({
       code: 'custom',
       path: ['prompt'],
       message: 'Enter a prompt.',
+    });
+  if (value.workflow && value.pullRequestReview)
+    context.addIssue({
+      code: 'custom',
+      path: ['pullRequestReview'],
+      message: 'An automation runs either a workflow or pull request reviews.',
+    });
+};
+
+const enforceReviewFolder = (
+  value: { pullRequestReview?: unknown; directory: string },
+  context: z.RefinementCtx,
+) => {
+  if (value.pullRequestReview && !value.directory)
+    context.addIssue({
+      code: 'custom',
+      path: ['directory'],
+      message: 'Choose a checkout of the repository to review.',
     });
 };
 
@@ -208,7 +231,8 @@ export const scheduledJobDefinitionSchema = z
   .strictObject(scheduledJobDefinitionShape)
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
-  .superRefine(enforceTriggerFolder);
+  .superRefine(enforceTriggerFolder)
+  .superRefine(enforceReviewFolder);
 
 export const scheduledJobSchema = z
   .strictObject({
@@ -223,7 +247,8 @@ export const scheduledJobSchema = z
   })
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
-  .superRefine(enforceTriggerFolder);
+  .superRefine(enforceTriggerFolder)
+  .superRefine(enforceReviewFolder);
 
 export const scheduledJobRunStatusSchema = z.enum([
   'starting',
@@ -282,7 +307,8 @@ export const saveScheduledJobSchema = z
   })
   .superRefine(enforceProviderRules)
   .superRefine(enforcePromptRule)
-  .superRefine(enforceTriggerFolder);
+  .superRefine(enforceTriggerFolder)
+  .superRefine(enforceReviewFolder);
 
 export const setScheduledJobActiveSchema = z.strictObject({
   id: idSchema,
