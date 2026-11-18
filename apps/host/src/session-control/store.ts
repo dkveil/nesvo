@@ -49,6 +49,12 @@ export const installSessionControlTables = (database: DatabaseSync) => {
   database.exec(
     'CREATE INDEX IF NOT EXISTS session_control_events_parent ON session_control_events (parent_id, seq)',
   );
+  const columns = database
+    .prepare('PRAGMA table_info(session_control_events)')
+    .all()
+    .map(column => String(column.name));
+  if (!columns.includes('detail'))
+    database.exec('ALTER TABLE session_control_events ADD COLUMN detail TEXT');
 };
 
 const toChild = (row: Row): ControlledChild => ({
@@ -150,10 +156,11 @@ export class SessionControlStore {
     type: SessionControlEventType;
     status: SessionState | null;
     summary: string;
+    detail?: string | null;
   }): void {
     this.database
       .prepare(
-        'INSERT INTO session_control_events (parent_id, session_id, run_id, type, status, summary, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO session_control_events (parent_id, session_id, run_id, type, status, summary, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         event.parentId,
@@ -162,6 +169,7 @@ export class SessionControlStore {
         event.type,
         event.status,
         event.summary.slice(0, 2000),
+        event.detail?.slice(0, 2000) ?? null,
         new Date().toISOString(),
       );
     this.database
@@ -177,7 +185,7 @@ export class SessionControlStore {
   ): { events: SessionControlEvent[]; more: boolean } {
     const rows = this.database
       .prepare(
-        'SELECT seq, session_id, run_id, type, status, summary, at FROM session_control_events WHERE parent_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+        'SELECT seq, session_id, run_id, type, status, summary, detail, at FROM session_control_events WHERE parent_id = ? AND seq > ? ORDER BY seq LIMIT ?',
       )
       .all(parentId, cursor, sessionControlLimits.events + 1);
     const events = rows
@@ -191,6 +199,7 @@ export class SessionControlStore {
           type: row.type,
           status: row.status ?? null,
           summary: row.summary,
+          detail: row.detail ?? null,
         }),
       );
     return { events, more: rows.length > sessionControlLimits.events };

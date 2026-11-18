@@ -24897,10 +24897,11 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
         [childB, 'finished'],
       ],
     );
-    assert.match(
+    assert.equal(
       blocked[0].result.events[0].summary,
-      /^The coordinator approved the plan of Child B in accept-edits\. Keep the change small\.$/,
+      'The coordinator approved the plan of Child B in accept-edits.',
     );
+    assert.equal(blocked[0].result.events[0].detail, 'Keep the change small.');
     assert.equal(blocked[1].result.status, 'started');
     assert.deepEqual(
       blocked[2].result.events.map(event => [event.sessionId, event.type]),
@@ -25806,12 +25807,25 @@ test('child sessions report stages and ask blocking questions that reach the coo
         ),
         JSON.stringify(expected),
       );
-    assert.match(
-      coordinated[0].result.events.find(event => event.type === 'question')
-        .summary,
-      /asks a product question: Should empty files fail the import\?/,
+    const asked = coordinated[0].result.events.find(
+      event => event.type === 'question',
+    );
+    assert.equal(
+      asked.summary,
+      'Asker asks a product question. The owner answers it.',
+    );
+    assert.equal(asked.detail, question.question);
+    assert.equal(
+      coordinated[0].result.events.find(
+        event => event.sessionId === reporter && event.type === 'progress',
+      ).detail,
+      'Gate 1 passed.',
     );
     assert.equal(coordinated[1].result.sessions[0].waitingFor, 'question');
+    assert.equal(
+      coordinated[1].result.sessions[0].question.question,
+      question.question,
+    );
     assert.equal(coordinated[1].result.sessions[0].needsDecision, true);
     assert.equal(coordinated[2].result.code, 'human-only');
 
@@ -25857,7 +25871,8 @@ test('child sessions report stages and ask blocking questions that reach the coo
         event =>
           event.sessionId === asker &&
           event.type === 'question-answered' &&
-          /The owner answered the question of Asker: Skip/.test(event.summary),
+          event.summary === 'The owner answered the question of Asker.' &&
+          event.detail === 'Skip\nLog a warning too.',
       ),
       JSON.stringify(followed[0].result.events),
     );

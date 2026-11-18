@@ -94,6 +94,7 @@ export const appendStageRecord = (
 
 export const hasStageTools = (session: Session): boolean =>
   (session.parentId !== null || session.workflowRunId !== null) &&
+  session.role !== 'worker' &&
   !session.workflowStepId;
 
 export const actorLabel = (actor: StageActor) =>

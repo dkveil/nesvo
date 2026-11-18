@@ -585,7 +585,16 @@ export class MobileGateway {
                 ? workspace.decideDelegation(command.input, command.hostId)
                 : command.method === 'decide-session-plan'
                   ? workspace.decideSessionPlan(
-                      { ...command.input, via: 'mobile' },
+                      {
+                        sessionId: command.input.sessionId,
+                        planId: command.input.planId,
+                        decisionId: command.input.decisionId,
+                        decision: command.input.decision,
+                        ...(command.input.text
+                          ? { text: command.input.text }
+                          : {}),
+                        via: 'mobile',
+                      },
                       command.hostId,
                     )
                   : workspace.answerSessionQuestion(

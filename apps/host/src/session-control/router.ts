@@ -6,6 +6,7 @@ import {
   isProviderSessionMode,
   isSessionControlToolName,
   isStageToolName,
+  latestStageReport,
   pendingStageQuestion,
   sessionControlLimits,
   sessionControlTools,
@@ -323,38 +324,46 @@ export class SessionControl {
       return {
         ...base,
         type: 'plan-decided',
-        summary: `${actorLabel(entry.by)} ${action}.${entry.text ? ` ${entry.text}` : ''}`,
+        summary: `${actorLabel(entry.by)} ${action}.`,
+        detail: entry.text,
       };
     }
     if (entry.kind === 'report')
       return {
         ...base,
         type: 'reported',
-        summary: `${session.title} reported ${entry.report.status}: ${entry.report.summary}`,
+        summary: `${session.title} reported ${entry.report.status}. Read the report with session_status.`,
+        detail: entry.report.summary,
       };
     if (entry.kind === 'report-invalid')
       return {
         ...base,
         type: 'reported',
-        summary: `${session.title} ended with an invalid report: ${entry.error}`,
+        summary: `${session.title} ended with an invalid report.`,
+        detail: entry.error,
       };
     if (entry.kind === 'question')
       return entry.status === 'pending'
         ? {
             ...base,
             type: 'question',
-            summary: `${session.title} asks a ${entry.question.kind} question: ${entry.question.question}`,
+            summary: `${session.title} asks a ${entry.question.kind} question.${entry.question.kind === 'technical' ? ' Answer it with session_answer.' : ' The owner answers it.'}`,
+            detail: entry.question.question,
           }
         : {
             ...base,
             type: 'question-answered',
-            summary: `${entry.answer ? actorLabel(entry.answer.by) : 'The owner'} answered the question of ${session.title}${entry.answer?.option ? `: ${entry.answer.option}` : '.'}`,
+            summary: `${entry.answer ? actorLabel(entry.answer.by) : 'The owner'} answered the question of ${session.title}.`,
+            detail: [entry.answer?.option, entry.answer?.text]
+              .filter(Boolean)
+              .join('\n'),
           };
     if (entry.kind === 'progress')
       return {
         ...base,
         type: 'progress',
-        summary: `${session.title}: ${entry.text}`,
+        summary: `${session.title} shared progress.`,
+        detail: entry.text,
       };
     return null;
   }
@@ -521,7 +530,8 @@ export class SessionControl {
   private summary(child: Session): SessionControlChild {
     const window = this.params.sessions.window(child, 1);
     const plan = child.plan?.status;
-    const question = !!pendingStageQuestion(child);
+    const open = pendingStageQuestion(child);
+    const question = !!open;
     const running = child.status === 'running' || child.status === 'stopping';
     return {
       sessionId: child.id,
@@ -550,6 +560,8 @@ export class SessionControl {
       queued: child.queue.length,
       lastActivityAt: child.updatedAt,
       pullRequest: child.pullRequest,
+      report: latestStageReport(child)?.report ?? null,
+      question: open?.question ?? null,
     };
   }
 
