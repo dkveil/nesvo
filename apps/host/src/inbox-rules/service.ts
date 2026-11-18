@@ -176,6 +176,7 @@ export class InboxRules {
     { at: number; rules: Promise<ApplicableRule[]> }
   >();
   private readonly ciSeen = new Map<string, string>();
+  private readonly skippedProject = new Map<string, number>();
   private ciTimer: ReturnType<typeof setInterval> | null = null;
   private ciSweeping = false;
 
@@ -386,9 +387,12 @@ export class InboxRules {
             session.provider,
             signal,
           ))
-        )
+        ) {
+          this.skippedProject.set(key, project.length);
           project = [];
+        } else this.skippedProject.delete(key);
       } catch {
+        this.skippedProject.set(key, -1);
         project = [];
       }
       return [...global, ...project].flatMap(file =>
@@ -477,6 +481,15 @@ export class InboxRules {
     );
     const refusals: string[] = [];
     const warnings: string[] = [];
+    const skipped = this.skippedProject.get(
+      `${session.provider}\u0000${session.directory}`,
+    );
+    if (skipped)
+      warnings.push(
+        skipped < 0
+          ? 'Project Inbox rules could not be read, so only global rules apply to this turn.'
+          : `${skipped} project Inbox ${skipped === 1 ? 'rule is' : 'rules are'} not applied: this repository is not trusted, or its rules changed since you trusted it. Review the repository to apply them.`,
+      );
     const askRules: string[] = [];
     const needPrompts: InboxRule[] = [];
     for (const { rule } of holds) {
@@ -821,14 +834,15 @@ export class InboxRules {
       });
     const hold = rules.find(({ rule }) => rule.action === 'hold');
     if (!hold) return null;
-    const dedupe = `workflow-step-hold:${run.id}:${step.name}:${hold.scope}:${hold.rule.name}`;
+    const dedupe = `workflow-step-hold:${run.id}:${step.name}:${step.attempt}:${hold.scope}:${hold.rule.name}`;
     const existing = this.ports.store
       .list()
       .find(
-        ({ binding }) =>
+        ({ item, binding }) =>
           binding.kind === 'workflow-step' &&
           binding.runId === run.id &&
-          binding.stepName === step.name,
+          binding.stepName === step.name &&
+          (binding.attempt === step.attempt || item.status === 'pending'),
       );
     const item =
       existing?.item ??
