@@ -2415,7 +2415,11 @@ try {
       'unavailable',
     );
   }
-  for (const trace of await readUsageTrace()) {
+  const restartedUsageProbes = (await readUsageTrace()).slice(
+    initialUsageProbes.length,
+  );
+  assert.ok(restartedUsageProbes.length > 0);
+  for (const trace of restartedUsageProbes) {
     providerPids.add(trace.pid);
     await waitDead(trace.pid);
   }
