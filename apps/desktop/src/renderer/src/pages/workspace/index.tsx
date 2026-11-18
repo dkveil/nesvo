@@ -4107,7 +4107,38 @@ ${text}`
                   </SheetDescription>
                 </SheetHeader>
                 <ScrollArea className="min-h-0 flex-1">
-                  <SessionDetails session={selected}>
+                  <SessionDetails
+                    session={selected}
+                    permissions={
+                      selected.provider === 'Claude Code' &&
+                      autonomy.data && (
+                        <PermissionRules
+                          key={selectedKey}
+                          rules={autonomy.data.rules.filter(rule => {
+                            if (rule.scope === 'session')
+                              return rule.sessionId === selected.id;
+                            const folder = selected.directory.replaceAll(
+                              '\\',
+                              '/',
+                            );
+                            const project = rule.directory
+                              .replaceAll('\\', '/')
+                              .replace(/\/$/, '');
+                            return (
+                              folder === project ||
+                              folder.startsWith(project + '/')
+                            );
+                          })}
+                          onRemove={async id => {
+                            await autonomy.execute({
+                              action: 'remove-rule',
+                              id,
+                            });
+                          }}
+                        />
+                      )
+                    }
+                  >
                     <RunningAppsSection
                       apps={selectedApps}
                       owner={portOwner}
@@ -4123,31 +4154,6 @@ ${text}`
                       />
                     )}
                   </SessionDetails>
-                  {selected.provider === 'Claude Code' && autonomy.data && (
-                    <div className="px-4 py-3">
-                      <PermissionRules
-                        key={selectedKey}
-                        rules={autonomy.data.rules.filter(rule => {
-                          if (rule.scope === 'session')
-                            return rule.sessionId === selected.id;
-                          const folder = selected.directory.replaceAll(
-                            '\\',
-                            '/',
-                          );
-                          const project = rule.directory
-                            .replaceAll('\\', '/')
-                            .replace(/\/$/, '');
-                          return (
-                            folder === project ||
-                            folder.startsWith(project + '/')
-                          );
-                        })}
-                        onRemove={async id => {
-                          await autonomy.execute({ action: 'remove-rule', id });
-                        }}
-                      />
-                    </div>
-                  )}
                 </ScrollArea>
               </SheetContent>
             </Sheet>
@@ -4207,6 +4213,15 @@ ${text}`
               }
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
+              onPermissions={
+                cardSession?.provider === 'Claude Code' &&
+                supportsAutonomy(cardSession.hostId)
+                  ? () => {
+                      setCardOpen(false);
+                      setDetailsOpen(true);
+                    }
+                  : undefined
+              }
               changes={
                 cardSession &&
                 store.hostReady(cardSession.hostId) &&

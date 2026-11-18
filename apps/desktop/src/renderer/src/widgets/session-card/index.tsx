@@ -13,6 +13,7 @@ import {
   Monitor,
   Play,
   Server,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { WorkflowRun } from '@/entities/workflow';
@@ -45,6 +46,7 @@ type Props = {
   changes?: ReactNode;
   onComputers: () => void;
   onFiles: () => void;
+  onPermissions?: () => void;
   onRunWorkflow: () => void;
   onClose: () => void;
 };
@@ -122,6 +124,7 @@ export function SessionCard({
   changes,
   onComputers,
   onFiles,
+  onPermissions,
   onRunWorkflow,
   onClose,
 }: Props) {
@@ -249,6 +252,16 @@ export function SessionCard({
       {workers}
       {usage}
       {context}
+      {onPermissions && (
+        <div className={cardSection}>
+          <ListRow
+            leading={<ShieldCheck />}
+            title="Allow rules"
+            mainProps={cardRowProps}
+            onClick={onPermissions}
+          />
+        </div>
+      )}
     </aside>
   );
 }

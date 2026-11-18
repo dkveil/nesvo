@@ -3,6 +3,7 @@ import {
   formatDateTime,
   modelLabel,
   sessionLastActivityAt,
+  modeDescription,
   modeLabel,
   sessionRoleLabel,
   statusLabels,
@@ -15,7 +16,11 @@ import { Globe } from 'lucide-react';
 import { Chip } from '@/shared/ui/chip';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 
-type Props = { session: Session; children?: ReactNode };
+type Props = {
+  session: Session;
+  children?: ReactNode;
+  permissions?: ReactNode;
+};
 
 const DETAILS_CLOCK_MS = 60_000;
 
@@ -42,7 +47,7 @@ function sessionUsage({ usageTotals: totals }: Session) {
   };
 }
 
-export function SessionDetails({ session, children }: Props) {
+export function SessionDetails({ session, children, permissions }: Props) {
   const role = sessionRoleLabel(session);
   const usage = sessionUsage(session);
   const now = useNow(DETAILS_CLOCK_MS);
@@ -132,12 +137,9 @@ export function SessionDetails({ session, children }: Props) {
           {modeLabel(session.provider, session.mode)}
         </h2>
         <p className="text-xs leading-5 text-muted-foreground">
-          {session.provider === 'Claude Code'
-            ? 'File reading and search. Editing and shell commands are disabled.'
-            : session.mode === 'read-only'
-              ? 'File reading and read commands. Writes and elevated access are disabled.'
-              : 'Files can be edited in this directory. Codex asks for approval when required; not every change needs confirmation.'}
+          {modeDescription(session.provider, session.mode)}
         </p>
+        {permissions}
       </section>
       <section className="space-y-2 border-t pt-5">
         <h2 className="text-xs font-medium">Workers</h2>
