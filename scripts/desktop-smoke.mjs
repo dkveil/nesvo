@@ -17,9 +17,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { _electron as electron } from 'playwright';
+import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
-import { startShareServer } from './share-server-fixture.mjs';
+import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
 
 const directory = await realpath(
   await mkdtemp(join(tmpdir(), 'nesvo-desktop-')),
@@ -60,8 +60,24 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.NESVO_WORK_LAPTOP_MODE;
-const shareServer = await startShareServer();
+const localShareOrigin = process.env.NESVO_SMOKE_SHARE_ORIGIN;
+if (
+  localShareOrigin &&
+  !/^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/.test(localShareOrigin)
+)
+  throw new Error('NESVO_SMOKE_SHARE_ORIGIN must be a loopback http origin.');
+const shareServer = localShareOrigin
+  ? { origin: localShareOrigin, fake: false, close: async () => undefined }
+  : { ...(await startShareServer()), fake: true };
 env.NESVO_SHARE_ORIGIN = shareServer.origin;
+const readSharedBundle = async id => {
+  const response = await fetch(`${shareServer.origin}/api/shares/${id}`);
+  return {
+    status: response.status,
+    expiresAt: response.headers.get('nesvo-share-expires-at'),
+    bundle: response.ok ? await response.json() : null,
+  };
+};
 let application;
 let hostPid;
 const fullSessions = target =>
@@ -4057,7 +4073,7 @@ try {
     });
     await mkdir(folder, { recursive: true });
     await writeFile(
-      join(folder, `share-${name}.png`),
+      join(folder, `${shareServer.fake ? 'share' : 'share-e2e'}-${name}.png`),
       Buffer.from(encoded, 'base64'),
     );
   };
@@ -4124,15 +4140,29 @@ try {
     .getByRole('region', { name: 'Files to upload', exact: true })
     .getByText('steps/smoke-check.md · Command', { exact: true })
     .waitFor();
-  assert.equal(shareServer.shares.size, 0);
+  if (shareServer.fake) assert.equal(shareServer.shares.size, 0);
   await shareShot('review');
+  if (shareServer.fake) {
+    shareServer.failNextCreate({ status: 429, retryAfter: 90 });
+    await uploadButton.click();
+    await shareDialog
+      .getByText(/limiting new links\. Try again in 2 minutes\./)
+      .waitFor();
+    await shareShot('rate-limited');
+    assert.equal(shareServer.shares.size, 0);
+  }
   await uploadButton.click();
   const linkField = shareDialog.getByLabel('Link', { exact: true });
   await linkField.waitFor();
   const sharedUrl = await linkField.inputValue();
-  assert.equal(shareServer.shares.size, 1);
-  const [[shareId, uploaded]] = [...shareServer.shares];
-  assert.equal(sharedUrl, `${shareServer.origin}/s/${shareId}`);
+  const shareId = /\/w\/([A-Za-z0-9_-]{32})$/.exec(sharedUrl)?.[1];
+  assert.ok(shareId, sharedUrl);
+  assert.equal(sharedUrl, `${shareServer.origin}/w/${shareId}`);
+  if (shareServer.fake) assert.equal(shareServer.shares.size, 1);
+  const served = await readSharedBundle(shareId);
+  assert.equal(served.status, 200);
+  assert.ok(served.expiresAt);
+  const uploaded = { bundle: served.bundle };
   assert.deepEqual(
     {
       version: uploaded.bundle.version,
@@ -4162,7 +4192,36 @@ try {
   const storedSharing = JSON.parse(
     await readFile(join(directory, 'sharing.json'), 'utf8'),
   );
-  assert.equal(storedSharing.links[0].revokeToken, uploaded.revokeToken);
+  uploaded.revokeToken = storedSharing.links[0].revokeToken;
+  assert.match(uploaded.revokeToken, /^[A-Za-z0-9_-]{43}$/);
+  if (shareServer.fake)
+    assert.equal(
+      shareServer.shares.get(shareId).revokeToken,
+      uploaded.revokeToken,
+    );
+  if (!shareServer.fake && process.env.NESVO_SHARE_SCREENSHOT_DIR) {
+    const browser = await chromium.launch();
+    try {
+      const sharePage = await browser.newPage({
+        viewport: { width: 1280, height: 860 },
+        colorScheme: 'dark',
+      });
+      await sharePage.goto(sharedUrl);
+      await sharePage
+        .getByText('smoke-check', { exact: false })
+        .first()
+        .waitFor();
+      await sharePage.screenshot({
+        path: join(
+          process.env.NESVO_SHARE_SCREENSHOT_DIR,
+          'share-e2e-web-page.png',
+        ),
+        fullPage: true,
+      });
+    } finally {
+      await browser.close();
+    }
+  }
   const linkList = await restartedPage.evaluate(() =>
     window.nesvo.sharing.links(),
   );
@@ -4184,6 +4243,18 @@ try {
     .click();
   await refusedDialog.waitFor({ state: 'hidden' });
 
+  if (shareServer.fake) {
+    await deliverLink(
+      `nesvo://import-workflow?share=${EXPIRED_SHARE_ID}&origin=${encodeURIComponent(shareServer.origin)}`,
+    );
+    await refusedDialog.getByText(/link has expired/).waitFor();
+    await refusedDialog
+      .getByRole('button', { name: 'Close', exact: true })
+      .first()
+      .click();
+    await refusedDialog.waitFor({ state: 'hidden' });
+  }
+
   const shareTarget = join(directory, 'share-target');
   await mkdir(join(shareTarget, '.git'), { recursive: true });
   await application.evaluate(({ dialog }, folder) => {
@@ -4202,6 +4273,10 @@ try {
   await importDialog.waitFor();
   await importDialog.getByText('echo ok', { exact: false }).first().waitFor();
   await importDialog.getByText(/run on your computer/).waitFor();
+  await importDialog
+    .getByText(/Expires /)
+    .first()
+    .waitFor();
   await importDialog.getByRole('combobox', { name: 'Save to' }).click();
   await restartedPage
     .getByRole('option', { name: 'Choose a folder…', exact: true })
@@ -4267,13 +4342,17 @@ try {
     .getByRole('button', { name: 'Revoke link', exact: true })
     .click();
   await sharingPage.getByText('No shared links', { exact: true }).waitFor();
-  assert.equal(shareServer.shares.size, 0);
-  assert.deepEqual(
-    shareServer.requests
-      .filter(item => item.method === 'DELETE')
-      .map(item => [item.path, item.authorization]),
-    [[`/api/shares/${shareId}`, `Bearer ${uploaded.revokeToken}`]],
-  );
+  await shareShot('revoked');
+  assert.equal((await readSharedBundle(shareId)).status, 404);
+  if (shareServer.fake) {
+    assert.equal(shareServer.shares.size, 0);
+    assert.deepEqual(
+      shareServer.requests
+        .filter(item => item.method === 'DELETE')
+        .map(item => [item.path, item.authorization]),
+      [[`/api/shares/${shareId}`, `Bearer ${uploaded.revokeToken}`]],
+    );
+  }
   await restartedPage.keyboard.press('Escape');
   await shareSettings.waitFor({ state: 'hidden' });
   await restartedPage
