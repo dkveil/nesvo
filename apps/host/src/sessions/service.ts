@@ -4617,8 +4617,9 @@ export class SessionService {
         !updateActivity(session, event.activity, active.evictedActivities)
       )
         return;
-      session.activity =
-        event.activity.status === 'running' ? event.activity.title : null;
+      if (!session.pendingApprovals.length)
+        session.activity =
+          event.activity.status === 'running' ? event.activity.title : null;
     } else if (event.type === 'init') {
       if (
         (session.providerInitialized || session.provider === 'Claude Code') &&
@@ -4665,10 +4666,16 @@ export class SessionService {
     } else if (event.type === 'text') {
       session.messages.at(-1)!.body = event.text;
       session.activity = session.status === 'stopping' ? 'Stopping…' : null;
-    } else if (session.status !== 'stopping') {
+    } else if (
+      session.status !== 'stopping' &&
+      !session.pendingApprovals.length
+    ) {
       session.activity = event.text;
     }
-    if (session.pendingApprovals.length)
+    if (
+      session.pendingApprovals.length &&
+      !session.activity?.startsWith("Waiting for the owner's decision")
+    )
       session.activity = 'Waiting for your decision…';
     if (!active) return;
     active.persistTimer ??= setTimeout(

@@ -1703,6 +1703,72 @@ if (args.length === 1 && args[0] === '--version') {
       start(text);
       finish(text);
     }
+  } else if (command.startsWith('fixture:bash ')) {
+    const bash = command.slice('fixture:bash '.length);
+    const toolUse = `fixture-bash-${turn}`;
+    start('Fixture runs a command. ');
+    emit({
+      type: 'assistant',
+      message: {
+        id: `fixture-bash-${turn}`,
+        content: [
+          {
+            type: 'tool_use',
+            id: toolUse,
+            name: 'Bash',
+            input: { command: bash },
+          },
+        ],
+      },
+    });
+    const asks = (settings.permissions?.ask ?? []).some(rule => {
+      const match = /^Bash\((.*)\)$/.exec(rule);
+      if (!match) return false;
+      return match[1].endsWith(':*')
+        ? bash.startsWith(match[1].slice(0, -2))
+        : bash === match[1];
+    });
+    let decision = 'ran without asking';
+    if (asks) {
+      assert.ok(hostPrompts, 'An ask rule needs the host prompt channel');
+      const requestId = randomUUID();
+      if (process.env.NESVO_FIXTURE_PID_FILE)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_PID_FILE + '.bash',
+          JSON.stringify({ pid: process.pid, sessionId, requestId }),
+        );
+      emit({
+        type: 'control_request',
+        request_id: requestId,
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: 'Bash',
+          input: { command: bash },
+          tool_use_id: toolUse,
+        },
+      });
+      const frame = await nextFrame();
+      assert.ok(frame, 'The host closed input before answering the command');
+      assert.equal(frame.response.request_id, requestId);
+      decision =
+        frame.response.response.behavior === 'allow'
+          ? 'allowed'
+          : `denied: ${frame.response.response.message}`;
+    }
+    emit({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUse,
+            is_error: decision.startsWith('denied'),
+            content: decision,
+          },
+        ],
+      },
+    });
+    finish(`Fixture bash ${decision}.`);
   } else if (command.startsWith('fixture:say ')) {
     const text = command.slice('fixture:say '.length);
     start(text);

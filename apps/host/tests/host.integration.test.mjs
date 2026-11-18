@@ -395,6 +395,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         groupEvents.push(message.list);
       } else if (message.type === 'pull-request-review-changed') {
         draftEvents.push(message.draft);
+      } else if (message.type === 'inbox-item-changed') {
+        assert.ok(!message.id);
       } else if (message.type === 'sessions-removed') {
         assert.ok(!message.id);
       } else {
@@ -1386,6 +1388,8 @@ test(
         'merged-worktree-cleanup',
         'automation-rituals',
         'lessons',
+        'inbox-rules',
+        'decision-routing',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2392,7 +2396,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      26,
+      27,
     );
     migrated.close();
     const reopened = open();
@@ -4776,7 +4780,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 27');
+    database.exec('PRAGMA user_version = 28');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4793,7 +4797,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 27);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 28);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -6981,6 +6985,8 @@ test(
       'merged-worktree-cleanup',
       'automation-rituals',
       'lessons',
+      'inbox-rules',
+      'decision-routing',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7857,7 +7863,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            26,
+            27,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7940,11 +7946,11 @@ test(
       }
     });
 
-    await t.test('a version 27 database is refused', async () => {
+    await t.test('a version 28 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 27');
+      newer.exec('PRAGMA user_version = 28');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7956,7 +7962,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          27,
+          28,
         );
       } finally {
         check.close();
@@ -10997,7 +11003,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        26,
+        27,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11048,7 +11054,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        26,
+        27,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20604,7 +20610,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      26,
+      27,
     );
     database
       .prepare(
@@ -20967,7 +20973,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 27);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -20982,7 +20988,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        26,
+        27,
       );
       assert.deepEqual(
         migrated
@@ -21162,7 +21168,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 27);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -28323,3 +28329,590 @@ test(
     );
   },
 );
+
+const inboxRuleEnvironment = directory => ({
+  NESVO_TEST_MODE: '1',
+  NESVO_WORKFLOWS_HOME: join(directory, 'agents', 'workflows'),
+});
+
+const inboxItems = async host => {
+  const response = await host.request('list-inbox-items');
+  assert.equal(response.type, 'inbox-items', JSON.stringify(response));
+  return response.items;
+};
+
+const inboxItem = async (host, match, description = 'Inbox item') => {
+  const until = Date.now() + 10_000;
+  while (Date.now() < until) {
+    const found = (await inboxItems(host)).find(match);
+    if (found) return found;
+    await delay(100);
+  }
+  throw new Error(
+    `${description} timed out: ${JSON.stringify(await inboxItems(host))}`,
+  );
+};
+
+const saveInboxRule = async (host, text, scope = 'global', extra = {}) => {
+  const saved = await host.request('save-inbox-rule', {
+    scope,
+    text,
+    expectedHash: null,
+    ...extra,
+  });
+  assert.equal(saved.type, 'inbox-rules', JSON.stringify(saved));
+  return saved.catalog;
+};
+
+const pushRule = (extra = '') => `---
+name: review-before-push
+description: Hold pushes until I looked at the diff.
+trigger: command
+pattern: "git push*"
+action: hold
+show: [command, diff]
+${extra}---
+{{ session.title }} wants to run \`{{ command }}\`.
+`;
+
+test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refuse what a provider cannot hold and keep holds over a restart', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-inbox-rules-'));
+  const project = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-inbox-project-')),
+  );
+  const pidFile = join(directory, 'fixture.pid');
+  const environment = inboxRuleEnvironment(directory);
+  const git = promisify(execFile);
+  await git('git', ['init', '--quiet'], { cwd: project });
+  await writeFile(join(project, 'notes.txt'), 'draft\n');
+  const hosts = [];
+  const open = () => {
+    const host = launch(directory, pidFile, environment);
+    hosts.push(host);
+    return host;
+  };
+  t.after(async () => {
+    for (const host of hosts) {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+    }
+    await rm(directory, { recursive: true, force: true });
+    await rm(project, { recursive: true, force: true });
+  });
+  let host = open();
+  const capabilities = (await host.request('health')).health.capabilities;
+  assert.ok(capabilities.includes('inbox-rules'));
+  assert.ok(capabilities.includes('decision-routing'));
+  assert.deepEqual(capabilities.slice(-2), ['inbox-rules', 'decision-routing']);
+
+  const invalid = await host.request('validate-inbox-rule', {
+    text: '---\nname: Bad Name\ntrigger: command\naction: ask\n---\n',
+  });
+  assert.equal(invalid.type, 'inbox-rule-validation');
+  assert.equal(invalid.validation.rule, null);
+  assert.ok(
+    invalid.validation.issues.some(issue => /pattern/.test(issue.message)),
+  );
+  assert.ok(
+    invalid.validation.issues.some(issue => /lowercase/.test(issue.message)),
+  );
+
+  await saveInboxRule(host, pushRule());
+  const catalog = await saveInboxRule(
+    host,
+    `---
+name: tell-me-when-done
+trigger: session-finished
+action: notify
+providers: [Claude Code]
+---
+{{ session.title }} finished.
+`,
+  );
+  assert.equal(catalog.roots.global, join(directory, 'agents', 'inbox-rules'));
+  const push = catalog.rules.find(rule => rule.name === 'review-before-push');
+  assert.equal(push.active, true);
+  assert.deepEqual(
+    push.enforcement.map(entry => [entry.provider, entry.modes, entry.status]),
+    [
+      ['Claude Code', ['read-only'], 'unreachable'],
+      ['Claude Code', ['accept-edits'], 'unreachable'],
+      ['Claude Code', ['auto'], 'enforced'],
+      ['Codex', ['read-only'], 'unsupported'],
+      ['Codex', ['supervised'], 'enforced'],
+    ],
+  );
+  assert.match(
+    await readFile(
+      join(directory, 'agents', 'inbox-rules', 'review-before-push.md'),
+      'utf8',
+    ),
+    /pattern: "git push\*"/,
+  );
+
+  const create = async (provider, mode, title) => {
+    const created = await host.request('create-session', {
+      title,
+      provider,
+      model: provider === 'Codex' ? 'fixture-codex' : 'sonnet',
+      mode,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    return created.session;
+  };
+  const send = async (session, text) => {
+    const sent = await host.request('send-message', {
+      sessionId: session.id,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    return sent.session;
+  };
+  const settled = run =>
+    host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  const held = async run => {
+    const waiting = await host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        session.pendingApprovals.length === 1 &&
+        /Waiting for the owner's decision in the Inbox \(Inbox rule review-before-push\)/.test(
+          session.activity ?? '',
+        ),
+    );
+    const item = await inboxItem(
+      host,
+      candidate =>
+        candidate.sessionId === run.id &&
+        candidate.status === 'pending' &&
+        candidate.action === 'hold',
+    );
+    return { waiting, item };
+  };
+
+  const claude = await create('Claude Code', 'auto', 'Release helper');
+  const declinedRun = await send(claude, 'fixture:bash git push origin main');
+  const first = await held(declinedRun);
+  assert.equal(first.item.rule.name, 'review-before-push');
+  assert.equal(first.item.binding, 'provider');
+  assert.equal(first.item.route, 'inbox');
+  assert.equal(first.item.presentation.command, 'git push origin main');
+  assert.equal(
+    first.item.presentation.text,
+    'Release helper wants to run `git push origin main`.',
+  );
+  const withDiff = await inboxItem(
+    host,
+    candidate =>
+      candidate.id === first.item.id && !!candidate.presentation.diff,
+    'Diff presentation',
+  );
+  assert.equal(withDiff.presentation.diff.scope, 'uncommitted');
+  assert.ok(
+    withDiff.presentation.diff.files.some(file => file.path === 'notes.txt'),
+    JSON.stringify(withDiff.presentation.diff),
+  );
+  await delay(300);
+  assert.equal(
+    (await host.request('get-session', { sessionId: claude.id })).session
+      .status,
+    'running',
+  );
+  const wrongDecision = await host.request('decide-inbox-item', {
+    itemId: first.item.id,
+    decision: 'answer',
+    option: 'x',
+  });
+  assert.equal(wrongDecision.code, 'invalid-request');
+  const declined = await host.request('decide-inbox-item', {
+    itemId: first.item.id,
+    decision: 'decline',
+    note: 'Not before the review.',
+  });
+  assert.equal(declined.type, 'inbox-item', JSON.stringify(declined));
+  assert.equal(declined.item.status, 'declined');
+  const refused = await settled(declinedRun);
+  assert.equal(refused.status, 'completed', refused.error);
+  assert.match(
+    agent(refused).body,
+    /^Fixture bash denied: The operator denied this action\. Their message: The owner declined this under the Inbox rule "review-before-push"\. Their note: Not before the review\.\.$/,
+  );
+  const again = await host.request('decide-inbox-item', {
+    itemId: first.item.id,
+    decision: 'approve',
+  });
+  assert.equal(again.item.status, 'declined');
+  const notified = await inboxItem(
+    host,
+    candidate =>
+      candidate.sessionId === claude.id &&
+      candidate.trigger === 'session-finished',
+  );
+  assert.equal(notified.action, 'notify');
+  assert.equal(notified.presentation.text, 'Release helper finished.');
+  const history = (await host.request('get-session', { sessionId: claude.id }))
+    .session.stageRecords;
+  assert.deepEqual(
+    history
+      .filter(record => record.kind === 'decision')
+      .map(record => [record.status, record.by?.via ?? null]),
+    [
+      ['needed', null],
+      ['decided', 'desktop'],
+    ],
+  );
+
+  const approvedRun = await send(claude, 'fixture:bash git push origin main');
+  const second = await held(approvedRun);
+  assert.equal(
+    (
+      await host.request('decide-inbox-item', {
+        itemId: second.item.id,
+        decision: 'approve',
+      })
+    ).item.status,
+    'approved',
+  );
+  const allowed = await settled(approvedRun);
+  assert.equal(agent(allowed).body, 'Fixture bash allowed.');
+
+  const untouched = await settled(
+    await send(claude, 'fixture:bash git status'),
+  );
+  assert.equal(agent(untouched).body, 'Fixture bash ran without asking.');
+
+  const codex = await create('Codex', 'supervised', 'Codex pusher');
+  const codexRun = await send(codex, 'fixture:run git push --force origin');
+  const codexHold = await held(codexRun);
+  assert.equal(codexHold.item.presentation.command, 'git push --force origin');
+  assert.equal(
+    (
+      await host.request('decide-inbox-item', {
+        itemId: codexHold.item.id,
+        decision: 'approve',
+      })
+    ).item.status,
+    'approved',
+  );
+  const codexDone = await settled(codexRun);
+  assert.equal(codexDone.status, 'completed', codexDone.error);
+  assert.equal(agent(codexDone).body, 'Codex fixture command accepted.');
+
+  const readOnly = await create('Codex', 'read-only', 'Codex reader');
+  const refusedTurn = await settled(await send(readOnly, 'hello'));
+  assert.equal(refusedTurn.status, 'failed');
+  assert.match(
+    refusedTurn.error,
+    /The Inbox rule "review-before-push" cannot hold this command here: Codex runs commands in its read-only sandbox without a request.* No provider turn was started\./,
+  );
+  const current = (
+    await host.request('list-inbox-rules', {})
+  ).catalog.rules.find(rule => rule.name === 'review-before-push');
+  await saveInboxRule(host, pushRule('on_unsupported: warn\n'), 'global', {
+    expectedHash: current.contentHash,
+  });
+  const warned = await settled(await send(readOnly, 'hello'));
+  assert.equal(warned.status, 'completed', warned.error);
+  assert.ok(
+    warned.activities.some(
+      activity =>
+        activity.title === 'Inbox rule cannot hold here' &&
+        /read-only sandbox/.test(activity.detail ?? ''),
+    ),
+  );
+
+  await mkdir(join(project, '.agents', 'inbox-rules'), { recursive: true });
+  await writeFile(
+    join(project, '.agents', 'inbox-rules', 'hold-publish.md'),
+    `---
+name: hold-publish
+trigger: command
+pattern: "npm publish*"
+action: hold
+---
+Publishing from {{ session.title }}.
+`,
+  );
+  const projectCatalog = (
+    await host.request('list-inbox-rules', { directory: project })
+  ).catalog;
+  assert.equal(projectCatalog.projectTrust, 'untrusted');
+  const projectRule = projectCatalog.rules.find(
+    rule => rule.name === 'hold-publish',
+  );
+  assert.equal(projectRule.scope, 'project');
+  assert.equal(projectRule.active, false);
+  assert.match(projectRule.inactiveReason, /Waiting for repository trust/);
+  const ignored = await settled(await send(claude, 'fixture:bash npm publish'));
+  assert.equal(agent(ignored).body, 'Fixture bash ran without asking.');
+  assert.ok(
+    ignored.activities.some(activity =>
+      /1 project Inbox rule is not applied/.test(activity.detail ?? ''),
+    ),
+  );
+  const servers = await host.request('list-mcp-servers', {
+    sessionId: claude.id,
+  });
+  assert.equal(servers.type, 'mcp-servers', JSON.stringify(servers));
+  assert.ok(
+    servers.list.repository.definitions.some(
+      definition => definition.name === 'Inbox rule hold-publish',
+    ),
+  );
+  const trusted = await host.request('trust-repository-mcp', {
+    sessionId: claude.id,
+    fingerprint: servers.list.repository.fingerprint,
+  });
+  assert.equal(trusted.list.repository.status, 'trusted');
+  assert.equal(
+    (await host.request('list-inbox-rules', { directory: project })).catalog
+      .projectTrust,
+    'trusted',
+  );
+  const publishRun = await send(claude, 'fixture:bash npm publish');
+  await host.event(
+    session =>
+      session.id === claude.id &&
+      session.runId === publishRun.runId &&
+      session.pendingApprovals.length === 1,
+  );
+  const publishHold = await inboxItem(
+    host,
+    candidate =>
+      candidate.rule.name === 'hold-publish' && candidate.status === 'pending',
+  );
+  assert.equal(publishHold.rule.scope, 'project');
+
+  await saveInboxRule(
+    host,
+    `---
+name: review-merges
+trigger: pull-request
+actions: [merge]
+action: hold
+show: [pull-request]
+---
+Merge {{ pr }}.
+`,
+  );
+  const actionId = randomUUID();
+  const merge = await host.request('act-on-pull-request', {
+    actionId,
+    reference: { repository: 'octo/project', number: 7 },
+    action: {
+      action: 'merge',
+      method: 'squash',
+      expectedHeadSha: 'a'.repeat(40),
+    },
+  });
+  assert.equal(merge.type, 'pull-request-action', JSON.stringify(merge));
+  assert.equal(merge.result.heldBy, 'review-merges');
+  const mergeHold = await inboxItem(
+    host,
+    candidate =>
+      candidate.binding === 'pull-request' && candidate.status === 'pending',
+  );
+  assert.equal(
+    mergeHold.presentation.text,
+    'Merge https://github.com/octo/project/pull/7.',
+  );
+
+  await host.stop();
+  host = open();
+  const restored = await inboxItems(host);
+  const interrupted = restored.find(item => item.id === publishHold.id);
+  assert.equal(interrupted.status, 'interrupted');
+  assert.match(interrupted.outcome, /did not run/);
+  assert.equal(
+    restored.find(item => item.id === mergeHold.id).status,
+    'pending',
+  );
+  const decisions = (await readFile(pidFile + '.bash', 'utf8').catch(() => ''))
+    .length;
+  assert.ok(decisions > 0);
+  const recovered = (
+    await host.request('get-session', { sessionId: claude.id })
+  ).session;
+  assert.notEqual(agent(recovered).body, 'Fixture bash allowed.');
+  assert.equal(
+    (
+      await host.request('decide-inbox-item', {
+        itemId: mergeHold.id,
+        decision: 'decline',
+      })
+    ).item.outcome,
+    'Declined. Nothing was sent to GitHub.',
+  );
+  assert.equal(
+    (
+      await host.request('decide-inbox-item', {
+        itemId: interrupted.id,
+        decision: 'approve',
+      })
+    ).item.status,
+    'interrupted',
+  );
+});
+
+test('Inbox rule decisions route to the parent conversation, inform the coordinator and resolve in one place', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-inbox-route-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const cwd = await realpath(directory);
+  const host = launch(directory, pidFile, inboxRuleEnvironment(directory));
+  t.after(async () => {
+    if (host.child.exitCode === null && host.child.signalCode === null)
+      await host.stop().catch(() => host.child.kill());
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const policy = (await host.request('read-session-control-policy')).policy;
+  await host.request('save-session-control-policy', {
+    ...policy,
+    enabled: true,
+    childModes: ['read-only', 'accept-edits', 'auto'],
+  });
+  await saveInboxRule(
+    host,
+    `---
+name: child-push
+trigger: command
+pattern: "git push*"
+action: hold
+route: parent
+kinds: [child]
+show: [command]
+---
+Push from {{ session.title }}.
+`,
+  );
+  const coordinator = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Claude Code',
+      model: 'default',
+      directory: cwd,
+    })
+  ).session;
+  const spawnChild = async title => {
+    const [created] = await controlTurn(host, coordinator.id, [
+      {
+        tool: 'session_create',
+        arguments: {
+          title,
+          prompt: 'fixture:bash git push origin',
+          mode: 'auto',
+        },
+      },
+    ]);
+    assert.equal(created.isError, false, JSON.stringify(created));
+    return created.result.sessionId;
+  };
+  const childId = await spawnChild('Child pusher');
+  const routed = await inboxItem(
+    host,
+    candidate =>
+      candidate.sessionId === childId && candidate.status === 'pending',
+  );
+  assert.equal(routed.route, 'parent');
+  assert.equal(routed.parentId, coordinator.id);
+  await host.event(
+    session =>
+      session.id === childId &&
+      session.pendingApprovals.length === 1 &&
+      /in Coordinator \(Inbox rule child-push\)/.test(session.activity ?? ''),
+  );
+  const parentNeeded = await host.event(
+    session =>
+      session.id === coordinator.id &&
+      session.stageRecords.some(
+        record =>
+          record.kind === 'decision' &&
+          record.childId === childId &&
+          record.status === 'needed',
+      ),
+  );
+  assert.equal(
+    parentNeeded.stageRecords.find(record => record.kind === 'decision')
+      .childTitle,
+    'Child pusher',
+  );
+  const decided = await host.request('decide-inbox-item', {
+    itemId: routed.id,
+    decision: 'approve',
+    via: 'parent',
+  });
+  assert.equal(decided.item.decidedVia, 'parent');
+  const resumed = await finishedChild(host, childId);
+  assert.equal(agent(resumed).body, 'Fixture bash allowed.');
+  const childRecord = resumed.stageRecords.findLast(
+    record => record.kind === 'decision',
+  );
+  assert.equal(childRecord.status, 'decided');
+  assert.deepEqual(childRecord.by, {
+    kind: 'owner',
+    via: 'parent',
+    sessionId: null,
+  });
+  const [events] = await controlTurn(host, coordinator.id, [
+    { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 5 } },
+  ]);
+  const types = events.result.events
+    .filter(event => event.sessionId === childId)
+    .map(event => event.type);
+  assert.ok(types.includes('decision-needed'), JSON.stringify(types));
+  assert.ok(types.includes('decision-made'), JSON.stringify(types));
+  assert.ok(
+    events.result.events.some(event =>
+      /Only the owner can decide it/.test(event.summary),
+    ),
+  );
+
+  const current = (await host.request('list-inbox-rules', {})).catalog.rules[0];
+  await saveInboxRule(
+    host,
+    current.text.replace('route: parent', 'route: both'),
+    'global',
+    { expectedHash: current.contentHash },
+  );
+  const secondChild = await spawnChild('Second pusher');
+  const both = await inboxItem(
+    host,
+    candidate =>
+      candidate.sessionId === secondChild && candidate.status === 'pending',
+  );
+  assert.equal(both.route, 'both');
+  const inInbox = await host.request('decide-inbox-item', {
+    itemId: both.id,
+    decision: 'decline',
+    note: 'Wait for CI.',
+  });
+  assert.equal(inInbox.item.status, 'declined');
+  const fromParent = await host.request('decide-inbox-item', {
+    itemId: both.id,
+    decision: 'approve',
+    via: 'parent',
+  });
+  assert.equal(fromParent.item.status, 'declined');
+  const parentDecided = await host.event(
+    session =>
+      session.id === coordinator.id &&
+      session.stageRecords.some(
+        record =>
+          record.kind === 'decision' &&
+          record.childId === secondChild &&
+          record.status === 'decided' &&
+          record.outcome === 'declined',
+      ),
+  );
+  assert.ok(parentDecided);
+  const refusedChild = await finishedChild(host, secondChild);
+  assert.match(agent(refusedChild).body, /Their note: Wait for CI\./);
+});

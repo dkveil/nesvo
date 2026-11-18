@@ -62,7 +62,6 @@ import {
 } from './turn-gate';
 
 const DEFAULT_ROUTE_KEY = 'default-route';
-const RULE_CACHE_MS = 2_000;
 const CI_SWEEP_MS = 60_000;
 const CI_SESSIONS_PER_SWEEP = 20;
 const WORKFLOW_HOLD_POLL_MS = 500;
@@ -170,10 +169,6 @@ export class InboxRules {
   private readonly turns = new Map<
     string,
     { runId: string | null; rules: ApplicableRule[] }
-  >();
-  private readonly cache = new Map<
-    string,
-    { at: number; rules: Promise<ApplicableRule[]> }
   >();
   private readonly ciSeen = new Map<string, string>();
   private readonly skippedProject = new Map<string, number>();
@@ -296,7 +291,6 @@ export class InboxRules {
       input.previousName,
       signal,
     );
-    this.cache.clear();
     return this.catalog(input.directory, signal);
   }
 
@@ -306,7 +300,6 @@ export class InboxRules {
   ) {
     const root = await this.rootFor(input.scope, input.directory, signal);
     await deleteRuleFile(root, input.name, input.expectedHash, signal);
-    this.cache.clear();
     return this.catalog(input.directory, signal);
   }
 
@@ -361,8 +354,6 @@ export class InboxRules {
 
   private loadRules(session: Session, signal: AbortSignal) {
     const key = `${session.provider}\u0000${session.directory}`;
-    const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.at < RULE_CACHE_MS) return cached.rules;
     const rules = (async (): Promise<ApplicableRule[]> => {
       const issues: InboxRuleIssue[] = [];
       const global = await readRuleRoot(
@@ -399,8 +390,6 @@ export class InboxRules {
         file.rule?.enabled ? [{ rule: file.rule, scope: file.scope }] : [],
       );
     })();
-    this.cache.set(key, { at: Date.now(), rules });
-    void rules.catch(() => this.cache.delete(key));
     return rules;
   }
 

@@ -969,6 +969,8 @@ try {
     'merged-worktree-cleanup',
     'automation-rituals',
     'lessons',
+    'inbox-rules',
+    'decision-routing',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

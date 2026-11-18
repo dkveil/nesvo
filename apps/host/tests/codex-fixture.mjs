@@ -386,7 +386,9 @@ if (args.length === 1 && args[0] === '--version') {
                     command:
                       variant === 'oversize'
                         ? 'x'.repeat(100_001)
-                        : 'fixture write approved marker',
+                        : variant?.startsWith('run:')
+                          ? variant.slice('run:'.length)
+                          : 'fixture write approved marker',
                   }),
               cwd: thread.cwd,
               environmentId:
@@ -1231,6 +1233,11 @@ if (args.length === 1 && args[0] === '--version') {
         complete('Codex fixture bounded activities.');
       } else if (command === 'fixture:approve' || command === 'fixture:file') {
         requestApproval(command === 'fixture:file' ? 'file' : 'command');
+      } else if (command.startsWith('fixture:run ')) {
+        requestApproval(
+          'command',
+          `run:${command.slice('fixture:run '.length)}`,
+        );
       } else if (command === 'fixture:missing-command') {
         requestApproval('command', 'missing-command');
       } else if (command === 'fixture:missing-changes') {
