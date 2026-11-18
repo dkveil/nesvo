@@ -9,6 +9,7 @@ import { Skeleton, SkeletonList } from '@/shared/ui/skeleton';
 import { Spinner } from '@/shared/ui/spinner';
 import { StatusDot, type StatusDotTone } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Toast } from '@/shared/ui/toast';
 import {
   CatalogSection,
   Specimen,
@@ -217,6 +218,25 @@ export function FeedbackSection() {
               Sample error: the pull request could not be loaded.
             </InlineNotice>
           </div>
+        </div>
+      </Specimen>
+      <Specimen title="Toast" source="shared/ui/toast.tsx · ToastRegion">
+        <div className="flex flex-col items-start gap-2">
+          <Toast
+            preview
+            title="Deleted “Sample session”"
+            description="Undo within 30 seconds"
+            action={{ label: 'Undo', onClick: () => {} }}
+            onDismiss={() => {}}
+          />
+          <Toast preview tone="success" title="Restored “Sample session”" />
+          <Toast preview tone="loading" title="Restoring the session…" />
+          <Toast
+            preview
+            tone="error"
+            title="Sample error: the session could not be restored."
+            onDismiss={() => {}}
+          />
         </div>
       </Specimen>
       <Specimen title="EmptyState" source="shared/ui/empty-state.tsx">
