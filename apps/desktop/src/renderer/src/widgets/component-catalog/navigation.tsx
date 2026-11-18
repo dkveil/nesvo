@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { DiffStat, FileGlyph } from '@/entities/file-change';
 import { StatusIcon } from '@/entities/status';
-import { ProjectChip } from '@/shared/ui/project-chip';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Disclosure, NativeDisclosure } from '@/shared/ui/disclosure';
@@ -273,19 +273,34 @@ function RowSpecimens() {
           />
           {(
             [
-              ['one', 'Sample session one', 'now'],
-              ['two', 'Sample session two', '2h'],
+              ['one', 'Sample session one', 'now', 'info', 'spinner'],
+              ['two', 'Sample session two', '2h', 'success', 'solid'],
+              [
+                'three',
+                'Sample session three',
+                'Needs you',
+                'warning',
+                'solid',
+              ],
             ] as const
-          ).map(([id, title, time]) => (
+          ).map(([id, title, time, tone, variant]) => (
             <ListRow
               key={id}
               tone="sidebar"
               density="two-line"
               size="sm"
               level={1}
-              leading={<ProjectChip label={id} />}
+              leading={<StatusDot size="md" tone={tone} variant={variant} />}
               title={title}
-              meta={time}
+              meta={
+                tone === 'warning' ? (
+                  <span className="font-medium text-warning-foreground">
+                    {time}
+                  </span>
+                ) : (
+                  time
+                )
+              }
               description="sample-folder · main"
               actionsPlacement="overlay"
               actions={

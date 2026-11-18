@@ -4,7 +4,6 @@ import {
   ChevronDown,
   CircleAlert,
   Cloud,
-  CornerDownRight,
   FolderPlus,
   GitBranch,
   GitPullRequest,
@@ -31,19 +30,11 @@ import {
   ProviderGlyph,
   sessionFilterLabels,
   sessionFilters,
-  sessionStatusLabel,
-  statusTones,
   type Session,
   type SessionFilter,
   type SessionFilterKeys,
 } from '@/entities/session';
-import { StatusIcon, toneText } from '@/entities/status';
-import {
-  runStatusLabel,
-  runStatusTones,
-  showsRunStatus,
-  type WorkflowRun,
-} from '@/entities/workflow';
+import type { WorkflowRun } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
 import { CountBadge } from '@/shared/ui/badge';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
@@ -52,7 +43,6 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { NavItem } from '@/shared/ui/nav-list';
-import { ProjectChip } from '@/shared/ui/project-chip';
 import { SearchField } from '@/shared/ui/search-field';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
@@ -63,6 +53,8 @@ import { Hint } from '@/shared/ui/tooltip';
 import { toDropIndicator } from './drop-indicator';
 import { GroupedSessions } from './grouped-sessions';
 import { RowActionsMenu, type RowAction } from './row-actions-menu';
+import { SessionIndicatorDot } from './session-indicator-dot';
+import { sessionIndicator, type SessionIndicator } from './session-indicator';
 import type { RowDecoration, SidebarHousekeeping } from './housekeeping';
 import { useCollapsedGroups } from './use-collapsed-groups';
 import { useSessionBranches, type ReadBranch } from './use-session-branches';
@@ -117,49 +109,23 @@ const filterIcons: Record<Exclude<SessionFilter, 'all'>, ReactNode> = {
   failed: <CircleAlert aria-hidden="true" />,
 };
 
-function SessionStatus({
+function SessionMeta({
   session,
-  run,
-  offline,
+  indicator,
   now,
 }: {
   session: Session;
-  run: WorkflowRun | undefined;
-  offline: boolean;
+  indicator: SessionIndicator;
   now: number;
 }) {
-  if (offline) return <span>Offline</span>;
-  if (showsRunStatus(session, run))
+  if (indicator.needsYou)
     return (
-      <span
-        className={cn(
-          'inline-flex items-center gap-1 font-medium',
-          toneText[runStatusTones[run.status]],
-        )}
-      >
-        <Workflow className="size-3" aria-hidden="true" />
-        {runStatusLabel(run.status)}
-      </span>
+      <span className="font-medium text-warning-foreground">Needs you</span>
     );
-  if (session.status === 'ready')
-    return (
-      <time dateTime={session.updatedAt}>
-        {formatRelativeTime(session.updatedAt, now)}
-      </time>
-    );
-  const label = sessionStatusLabel(session);
-  const tone =
-    label === 'Needs approval' ? 'warning' : statusTones[session.status];
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 font-medium',
-        tone && toneText[tone],
-      )}
-    >
-      {session.status === 'completed' && <StatusIcon status="success" />}
-      {label}
-    </span>
+    <time dateTime={session.updatedAt}>
+      {formatRelativeTime(session.updatedAt, now)}
+    </time>
   );
 }
 
@@ -248,12 +214,6 @@ export function SessionSidebar({
   const parentIdOf = (session: Session) =>
     session.parentId ??
     (session.workflowStepId ? (runOf(session)?.sessionId ?? null) : null);
-  const statusText = (session: Session) => {
-    const run = runOf(session);
-    return showsRunStatus(session, run)
-      ? `Workflow ${runStatusLabel(run.status)}`
-      : sessionStatusLabel(session);
-  };
   const childrenOf = (root: Session) =>
     sessions
       .filter(
@@ -355,13 +315,15 @@ export function SessionSidebar({
           : null;
     const machine = computer?.name ?? session.hostId;
     const renamingField = decoration?.title;
+    const indicator = sessionIndicator({
+      session,
+      run: runOf(session),
+      offline,
+      awaitsReview: !!filterKeys?.['needs-me'].has(entityKey(session)),
+      now,
+    });
     const status = (
-      <SessionStatus
-        session={session}
-        run={runOf(session)}
-        offline={offline}
-        now={now}
-      />
+      <SessionMeta session={session} indicator={indicator} now={now} />
     );
     const profile = accountLabel?.(session);
     const title = renamingField ?? (
@@ -438,9 +400,7 @@ export function SessionSidebar({
     const actions: RowAction[] = removal
       ? [...thread, ...(thread.length ? ['separator' as const] : []), removal]
       : thread;
-    const leading = child ? (
-      <CornerDownRight className="size-3" aria-hidden="true" />
-    ) : (
+    const leading = (
       <span className="relative flex">
         {unread && (
           <StatusDot
@@ -448,7 +408,7 @@ export function SessionSidebar({
             className="absolute top-1/2 -left-2 -translate-y-1/2"
           />
         )}
-        <ProjectChip label={directory} />
+        <SessionIndicatorDot indicator={indicator} />
       </span>
     );
     return (
@@ -488,7 +448,7 @@ export function SessionSidebar({
               'data-session-id': session.id,
             },
             'aria-current': selected ? 'page' : undefined,
-            'aria-label': `${session.title} · ${directory} · ${offline ? 'Offline' : statusText(session)}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}`,
+            'aria-label': `${session.title} · ${directory} · ${indicator.label}${indicator.needsYou ? ' · Needs you' : ''}${unread ? ' · Unread' : ''}${profile ? ` · Account: ${profile}` : ''}`,
           }}
           {...decoration?.item}
         />

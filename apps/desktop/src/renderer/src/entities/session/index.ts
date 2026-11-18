@@ -4,7 +4,6 @@ import type {
   DesktopSession as Session,
   SessionMode,
 } from '@nesvo/contracts';
-import type { Tone } from '@/entities/status';
 
 export type { DesktopSession as Session } from '@nesvo/contracts';
 export { ProviderGlyph } from './provider-glyph';
@@ -39,13 +38,6 @@ export const approvalKindLabels: Record<
   command: 'Command approval',
   'file-change': 'File approval',
   tool: 'Tool approval',
-};
-
-export const statusTones: Partial<Record<Session['status'], Tone>> = {
-  running: 'info',
-  stopping: 'info',
-  completed: 'success',
-  failed: 'error',
 };
 
 export const statusLabels: Record<Session['status'], string> = {
