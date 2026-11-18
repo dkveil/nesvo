@@ -41,6 +41,10 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  attachmentContentSchema,
+  attachmentUploadSchema,
+  readAttachmentSchema,
+  stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
   conversationImportCatalogSchema,
@@ -914,6 +918,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-workspace-file',
         readWorkspaceFileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  stageAttachment: async (input, hostId) =>
+    attachmentUploadSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:stage-attachment',
+        stageAttachmentSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readAttachment: async (input, hostId) =>
+    attachmentContentSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-attachment',
+        readAttachmentSchema.parse(input),
         route(hostId),
       ),
     ),

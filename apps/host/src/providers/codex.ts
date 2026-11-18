@@ -540,6 +540,17 @@ async function initialize(
 
 const codexEffortSupport = { status: 'per-model' } as const;
 const codexModes = ['read-only', 'supervised'] as const;
+const codexImagesUnavailable = {
+  status: 'unsupported',
+  reason: 'Codex is not ready on this computer.',
+} as const;
+
+function acceptsImages(model: RecordValue): boolean {
+  return (
+    !Array.isArray(model.inputModalities) ||
+    model.inputModalities.includes('image')
+  );
+}
 
 function modelEfforts(model: RecordValue): ModelEfforts | null {
   const supported = model.supportedReasoningEfforts;
@@ -583,9 +594,13 @@ async function readAccountAndModels(
   )
     throw new Error('Codex authentication could not be verified.');
   const models = new Map<string, CodexStatus['models'][number]>([
-    ['default', { id: 'default', label: 'Codex default', efforts: null }],
+    [
+      'default',
+      { id: 'default', label: 'Codex default', efforts: null, images: false },
+    ],
   ]);
   let cursor: string | null = null;
+  let defaultImages: boolean | null = null;
   const cursors = new Set<string>();
   for (let page = 0; page < 20; page++) {
     const result = await peer.request('model/list', {
@@ -605,20 +620,27 @@ async function readAccountAndModels(
         typeof model.displayName !== 'string'
       )
         throw new Error('Codex returned an invalid model entry.');
+      if (model.isDefault === true) defaultImages = acceptsImages(model);
       if (model.hidden !== true)
         models.set(model.model, {
           id: model.model,
           label: model.displayName.slice(0, 200),
           efforts: modelEfforts(model),
+          images: acceptsImages(model),
         });
     }
-    if (result.nextCursor === null)
+    if (result.nextCursor === null) {
+      models.set('default', {
+        ...models.get('default')!,
+        images: defaultImages ?? false,
+      });
       return {
         status: 'ready',
         detail: null,
         models: [...models.values()],
         effort: codexEffortSupport,
       };
+    }
     if (
       typeof result.nextCursor !== 'string' ||
       !result.nextCursor ||
@@ -649,6 +671,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
         models: [],
         effort: codexEffortSupport,
         modes: [],
+        images: codexImagesUnavailable,
       };
     if (signal?.aborted) throw new Error('Stopped.');
     peer = rpcPeer(executable, undefined, message =>
@@ -662,6 +685,10 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
       ...status,
       version,
       modes: status.status === 'ready' ? [...codexModes] : [],
+      images:
+        status.status === 'ready'
+          ? { status: 'per-model' }
+          : codexImagesUnavailable,
     };
   } catch (error) {
     return {
@@ -673,6 +700,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
       models: [],
       effort: codexEffortSupport,
       modes: [],
+      images: codexImagesUnavailable,
     };
   } finally {
     signal?.removeEventListener('abort', cancel);
@@ -1250,6 +1278,7 @@ type CodexRunOptions = {
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   instructionsOnly?: boolean;
+  images?: readonly string[];
   mcp?: {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
@@ -2086,6 +2115,7 @@ export function startCodex(options: CodexRunOptions): {
           ...(skill
             ? [{ type: 'skill', name: skill.name, path: skill.path }]
             : []),
+          ...(options.images ?? []).map(path => ({ type: 'localImage', path })),
         ],
         cwd: options.directory,
         approvalPolicy: turnApprovalPolicy,

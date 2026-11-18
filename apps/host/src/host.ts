@@ -23,6 +23,7 @@ import { CostStore } from './cost-store';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
+import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
 import { ConversationImport } from './sessions/conversation-import';
 import { HistorySearch } from './sessions/history-search';
@@ -1405,6 +1406,43 @@ export const serveHost = ({
             .catch(() => undefined)
             .finally(() => {
               workspaceRequests--;
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'stage-attachment' ||
+          request.method === 'read-attachment'
+        ) {
+          const operation = async (): Promise<HostReply> =>
+            request.method === 'stage-attachment'
+              ? {
+                  type: 'attachment-upload',
+                  id: request.id,
+                  upload: await sessions.attachments.stage(request.input),
+                }
+              : {
+                  type: 'attachment-content',
+                  id: request.id,
+                  content: await sessions.attachments.read(request.input.id),
+                };
+          const pending = operation()
+            .then(send)
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof AttachmentError ? error.code : 'unavailable',
+                message:
+                  error instanceof AttachmentError
+                    ? error.message
+                    : 'The image could not be stored or read on this computer.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
               probes.pending.delete(pending);
             });
           probes.pending.add(pending);

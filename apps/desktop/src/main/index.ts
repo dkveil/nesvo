@@ -61,6 +61,8 @@ import {
   listWorkspaceDirectorySchema,
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
+  readAttachmentSchema,
+  stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
   adoptConversationSchema,
@@ -821,6 +823,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'read-workspace-file',
         readWorkspaceFileSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:stage-attachment',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'stage-attachment',
+        stageAttachmentSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:read-attachment',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'read-attachment',
+        readAttachmentSchema.parse(input),
         route(hostId),
       );
     },

@@ -130,6 +130,16 @@ import {
   type UpdateSessionGroupInput,
 } from './session-groups';
 import {
+  attachmentContentSchema,
+  attachmentUploadSchema,
+  readAttachmentSchema,
+  stageAttachmentSchema,
+  type AttachmentContent,
+  type AttachmentUpload,
+  type ReadAttachmentInput,
+  type StageAttachmentInput,
+} from './attachments';
+import {
   reviewSchema,
   decideReviewSchema,
   type DecideReviewInput,
@@ -264,6 +274,7 @@ import {
 
 export * from './sessions';
 export * from './session-history';
+export * from './attachments';
 export * from './session-groups';
 export * from './pull-requests';
 export * from './reasoning-effort';
@@ -414,6 +425,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('read-workspace-file'),
     input: readWorkspaceFileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('stage-attachment'),
+    input: stageAttachmentSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-attachment'),
+    input: readAttachmentSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -808,6 +829,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('workspace-file'),
     id: z.uuid(),
     file: workspaceFileSchema,
+  }),
+  z.strictObject({
+    type: z.literal('attachment-upload'),
+    id: z.uuid(),
+    upload: attachmentUploadSchema,
+  }),
+  z.strictObject({
+    type: z.literal('attachment-content'),
+    id: z.uuid(),
+    content: attachmentContentSchema,
   }),
   z.strictObject({
     type: z.literal('history-search'),
@@ -1250,6 +1281,14 @@ export type DesktopApi = {
     input: ReadWorkspaceFileInput,
     hostId?: HostId,
   ) => Promise<WorkspaceFile>;
+  stageAttachment: (
+    input: StageAttachmentInput,
+    hostId?: HostId,
+  ) => Promise<AttachmentUpload>;
+  readAttachment: (
+    input: ReadAttachmentInput,
+    hostId?: HostId,
+  ) => Promise<AttachmentContent>;
   decideReview: (
     input: DecideReviewInput,
     hostId?: HostId,

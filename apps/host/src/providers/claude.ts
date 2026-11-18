@@ -8,6 +8,7 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
   type Approval,
+  type AttachmentMediaType,
   type ClaudeStatus,
   type ProviderUsage,
   type SessionMode,
@@ -51,6 +52,8 @@ export type ClaudeResult = {
   structured?: unknown;
   modeUnavailable?: true;
 };
+
+export type ClaudeImage = { mediaType: AttachmentMediaType; data: string };
 
 type Executable = { command: string; prefix: string[] };
 type ClaudeMode = Exclude<SessionMode, 'supervised'>;
@@ -153,6 +156,52 @@ function permissionChoices(help: string, flag = '--permission-mode'): string[] {
   const segment = end < 0 ? rest : rest.slice(0, end);
   const choices = /\(choices:([^)]*)\)/.exec(segment)?.[1] ?? '';
   return [...choices.matchAll(/"([^"]+)"/g)].map(match => match[1]!);
+}
+
+function acceptsStreamInput(help: string): boolean {
+  const start = help.indexOf('--input-format');
+  if (start < 0) return false;
+  const rest = help.slice(start);
+  const end = rest.slice(1).search(/\n\s*--/);
+  const segment = end < 0 ? rest : rest.slice(0, end + 1);
+  return /\(choices:[^)]*"stream-json"/.test(segment);
+}
+
+function claudeUserContent(
+  prompt: string,
+  images: readonly ClaudeImage[],
+): string | Record<string, unknown>[] {
+  if (!images.length) return prompt;
+  return [
+    { type: 'text', text: prompt },
+    ...images.map(image => ({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: image.mediaType,
+        data: image.data,
+      },
+    })),
+  ];
+}
+
+function claudeTurnInput(
+  prompt: string,
+  images: readonly ClaudeImage[],
+): {
+  format: 'text' | 'stream-json';
+  payload: string;
+  content: string | Record<string, unknown>[];
+} {
+  const content = claudeUserContent(prompt, images);
+  if (typeof content === 'string')
+    return { format: 'text', payload: prompt, content };
+  const message = { type: 'user', message: { role: 'user', content } };
+  return {
+    format: 'stream-json',
+    payload: JSON.stringify(message) + '\n',
+    content,
+  };
 }
 
 function supportedModes(choices: string[]): ClaudeMode[] {
@@ -375,6 +424,7 @@ async function inspect(cancelled: () => boolean): Promise<{
 }> {
   let version: string | null = null;
   let permissionModes: string[] = [];
+  let imageInput = false;
   const status = (
     state: ClaudeStatus['status'],
     detail: string | null,
@@ -389,6 +439,16 @@ async function inspect(cancelled: () => boolean): Promise<{
         'Nesvo runs Claude Code without a reasoning effort setting, so the CLI default applies.',
     },
     modes: state === 'ready' ? supportedModes(permissionModes) : [],
+    images:
+      state === 'ready' && imageInput
+        ? { status: 'supported' }
+        : {
+            status: 'unsupported',
+            reason:
+              state === 'ready'
+                ? 'This Claude Code version cannot receive images. Update the CLI to attach images.'
+                : 'Claude Code is not ready on this computer.',
+          },
   });
   try {
     const executable = await executablePath();
@@ -427,6 +487,7 @@ async function inspect(cancelled: () => boolean): Promise<{
       /\b\d+\.\d+\.\d+(?:[-+][\w.-]+)?\b/.exec(versionResult.stdout)?.[0] ??
       null;
     permissionModes = permissionChoices(help.stdout);
+    imageInput = acceptsStreamInput(help.stdout);
     const missing = requiredFlags.filter(flag => !help.stdout.includes(flag));
     if (help.code !== 0 || missing.length > 0 || !version) {
       return {
@@ -729,6 +790,7 @@ export function startClaude(options: {
   instructionsOnly?: boolean;
   assistantPrompt?: string;
   mode: SessionMode;
+  images?: readonly ClaudeImage[];
   mcp?: {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
@@ -781,6 +843,16 @@ export function startClaude(options: {
             'This Claude Code version does not offer the selected permission mode. Update the CLI or choose Plan.',
           modeUnavailable: true,
         };
+      if (
+        options.images?.length &&
+        inspection.status.images.status !== 'supported'
+      )
+        return {
+          status: 'failed',
+          error:
+            'This Claude Code version cannot receive images. Update the CLI or send the message without images.',
+        };
+      const input = claudeTurnInput(options.prompt, options.images ?? []);
       if (options.forkFrom && !inspection.supportsFork)
         throw new Error(
           'This Claude Code version does not support native session forking.',
@@ -806,7 +878,7 @@ export function startClaude(options: {
       const args = [
         '--print',
         '--input-format',
-        hostPrompts ? 'stream-json' : 'text',
+        hostPrompts || input.format === 'stream-json' ? 'stream-json' : 'text',
         '--output-format',
         'stream-json',
         '--verbose',
@@ -1400,13 +1472,13 @@ export function startClaude(options: {
           });
           writeFrame({
             type: 'user',
-            message: { role: 'user', content: options.prompt },
+            message: { role: 'user', content: input.content },
             parent_tool_use_id: null,
           });
         } catch {
           fail('Claude Code did not accept the prompt.');
         }
-      } else running.child.stdin.end(options.prompt);
+      } else running.child.stdin.end(input.payload);
       let exit: ProcessExit;
       try {
         exit = await Promise.race([

@@ -12,6 +12,10 @@ import {
   messageMcpSchema,
   sessionMcpSchema,
 } from './mcp-selection';
+import {
+  imageInputSupportSchema,
+  messageAttachmentsSchema,
+} from './attachments';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -237,6 +241,7 @@ export const sendMessageSchema = z.strictObject({
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
+  attachments: messageAttachmentsSchema.optional(),
 });
 export const assignSessionWorkflowSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -260,6 +265,7 @@ export const queuedMessageSchema = z.strictObject({
   model: modelSchema.optional(),
   effort: reasoningEffortSchema.nullable().optional(),
   mode: sessionModeSchema.optional(),
+  attachments: messageAttachmentsSchema.optional(),
   createdAt: z.iso.datetime(),
   held: z.boolean().default(false),
 });
@@ -330,6 +336,7 @@ export const sessionMessageSchema = z.strictObject({
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.nullable().default(null),
   mcp: messageMcpSchema.nullable().default(null),
+  attachments: messageAttachmentsSchema.optional(),
 });
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
@@ -408,6 +415,11 @@ export const claudeStatusSchema = z.strictObject({
       'This computer runs an older Nesvo host that does not report reasoning effort support. Update the host to choose an effort.',
   }),
   modes: z.array(sessionModeSchema).default([]),
+  images: imageInputSupportSchema.default({
+    status: 'unsupported',
+    reason:
+      'This computer runs an older Nesvo host that cannot send images. Update the host to attach images.',
+  }),
 });
 export const codexStatusSchema = claudeStatusSchema.extend({
   models: z.array(
@@ -415,6 +427,7 @@ export const codexStatusSchema = claudeStatusSchema.extend({
       id: modelSchema,
       label: z.string(),
       efforts: modelEffortsSchema.nullable().default(null),
+      images: z.boolean().default(false),
     }),
   ),
 });

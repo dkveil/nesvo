@@ -19674,3 +19674,207 @@ test('Claude Code asks the operator once through the host prompt channel', async
     false,
   );
 });
+
+test('image attachments reach both providers, reject invalid uploads and survive host restart', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-attachments-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const claudeImages = join(directory, 'claude-images.jsonl');
+  const codexImages = join(directory, 'codex-images.jsonl');
+  await mkdir(project);
+  const open = () =>
+    launch(directory, pidFile, {
+      NESVO_FIXTURE_IMAGE_LOG: claudeImages,
+      NESVO_CODEX_FIXTURE_IMAGE_LOG: codexImages,
+    });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(700 * 1024, 7),
+  ]);
+  const jpeg = Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+    Buffer.from('fixture jpeg'),
+  ]);
+  const chunkBytes = 512 * 1024;
+  const stage = async (bytes, name) => {
+    const uploadId = randomUUID();
+    let response;
+    for (let offset = 0; offset === 0 || offset < bytes.length;) {
+      const chunk = bytes.subarray(offset, offset + chunkBytes);
+      response = await host.request('stage-attachment', {
+        uploadId,
+        name,
+        offset,
+        data: chunk.toString('base64'),
+        final: offset + chunk.length >= bytes.length,
+      });
+      if (response.type !== 'attachment-upload') return response;
+      offset += chunk.length;
+    }
+    return response;
+  };
+
+  const claudeStatus = await host.request('claude-status');
+  assert.deepEqual(claudeStatus.status.images, { status: 'supported' });
+  const codexStatus = await host.request('codex-status');
+  assert.deepEqual(codexStatus.status.images, { status: 'per-model' });
+  assert.ok(codexStatus.status.models.every(model => model.images));
+  assert.ok(
+    (await host.request('health')).health.capabilities.includes(
+      'message-attachments',
+    ),
+  );
+
+  const stagedPng = await stage(png, 'screenshot.png');
+  assert.equal(stagedPng.type, 'attachment-upload', JSON.stringify(stagedPng));
+  assert.deepEqual(stagedPng.upload.attachment, {
+    id: sha256(png),
+    mediaType: 'image/png',
+    size: png.length,
+    name: 'screenshot.png',
+  });
+  const stagedJpeg = await stage(jpeg, 'renamed.png');
+  assert.equal(stagedJpeg.upload.attachment.mediaType, 'image/jpeg');
+
+  const text = await stage(Buffer.from('not an image'), 'notes.png');
+  assert.equal(text.type, 'error');
+  assert.equal(text.code, 'invalid-request');
+  assert.match(text.message, /PNG, JPEG, WebP or GIF/);
+  const oversized = await stage(
+    Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024)]),
+    'large.png',
+  );
+  assert.equal(oversized.type, 'error');
+  assert.match(oversized.message, /5 MB or smaller/);
+
+  const sessions = {};
+  for (const [provider, model] of [
+    ['Claude Code', 'sonnet'],
+    ['Codex', 'fixture-codex'],
+  ]) {
+    const created = await host.request('create-session', {
+      title: `${provider} images`,
+      provider,
+      model,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    sessions[provider] = created.session;
+  }
+  const missing = await host.request('send-message', {
+    sessionId: sessions['Claude Code'].id,
+    messageId: randomUUID(),
+    text: 'Missing image',
+    attachments: [{ ...stagedPng.upload.attachment, id: 'a'.repeat(64) }],
+  });
+  assert.equal(missing.type, 'error');
+  assert.equal(missing.code, 'invalid-request');
+  assert.match(missing.message, /no longer available/);
+
+  const attachments = {
+    'Claude Code': [stagedPng.upload.attachment, stagedJpeg.upload.attachment],
+    Codex: [stagedPng.upload.attachment],
+  };
+  for (const provider of ['Claude Code', 'Codex']) {
+    const sent = await host.request('send-message', {
+      sessionId: sessions[provider].id,
+      messageId: randomUUID(),
+      text: 'Describe the attached screenshot',
+      attachments: attachments[provider],
+    });
+    assert.equal(sent.type, 'session', JSON.stringify(sent));
+    const finished = await host.event(
+      session =>
+        session.id === sent.session.id &&
+        session.runId === sent.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+    assert.equal(finished.status, 'completed', finished.error);
+  }
+
+  const claudeLog = (await readFile(claudeImages, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  assert.deepEqual(claudeLog, [
+    {
+      provider: 'Claude Code',
+      text: 'Describe the attached screenshot',
+      images: [
+        { mediaType: 'image/png', size: png.length, sha256: sha256(png) },
+        { mediaType: 'image/jpeg', size: jpeg.length, sha256: sha256(jpeg) },
+      ],
+    },
+  ]);
+  const codexLog = (await readFile(codexImages, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  assert.equal(codexLog.length, 1);
+  assert.equal(codexLog[0].text, 'Describe the attached screenshot');
+  assert.deepEqual(
+    codexLog[0].images.map(({ size, sha256: hash }) => ({ size, hash })),
+    [{ size: png.length, hash: sha256(png) }],
+  );
+  assert.equal(
+    codexLog[0].images[0].path,
+    join(directory, 'attachments', `${sha256(png)}.png`),
+  );
+
+  await host.stop();
+  host = open();
+  const restored = (await host.request('list-sessions')).sessions;
+  for (const provider of ['Claude Code', 'Codex']) {
+    const operator = restored
+      .find(session => session.id === sessions[provider].id)
+      .messages.find(message => message.author === 'operator');
+    assert.deepEqual(operator.attachments, attachments[provider]);
+  }
+  const content = await host.request('read-attachment', {
+    id: stagedJpeg.upload.attachment.id,
+  });
+  assert.equal(content.type, 'attachment-content', JSON.stringify(content));
+  assert.equal(content.content.mediaType, 'image/jpeg');
+  assert.equal(
+    sha256(Buffer.from(content.content.data, 'base64')),
+    sha256(jpeg),
+  );
+  const absent = await host.request('read-attachment', { id: 'b'.repeat(64) });
+  assert.equal(absent.type, 'error');
+  assert.equal(absent.code, 'not-found');
+
+  await host.stop();
+  host = launch(directory, pidFile, {
+    NESVO_FIXTURE_IMAGE_LOG: claudeImages,
+    NESVO_FIXTURE_TEXT_INPUT: '1',
+  });
+  const textOnly = await host.request('claude-status');
+  assert.equal(textOnly.status.images.status, 'unsupported');
+  const refused = await host.request('send-message', {
+    sessionId: sessions['Claude Code'].id,
+    messageId: randomUUID(),
+    text: 'Describe it again',
+    attachments: [stagedPng.upload.attachment],
+  });
+  assert.equal(refused.type, 'session', JSON.stringify(refused));
+  const failed = await host.event(
+    session =>
+      session.id === refused.session.id &&
+      session.runId === refused.session.runId &&
+      !['running', 'stopping'].includes(session.status),
+  );
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.error, /cannot receive images/);
+  assert.equal(
+    (await readFile(claudeImages, 'utf8')).trim().split('\n').length,
+    1,
+  );
+});

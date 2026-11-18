@@ -201,6 +201,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without MCP servers and hooks. Update the host, then reconnect.',
   'claude-approvals':
     'This computer runs an older Nesvo host that cannot answer Claude Code approvals. Update the host, then reconnect.',
+  'message-attachments':
+    'This computer runs an older Nesvo host that cannot receive images. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -251,6 +253,16 @@ function requiredCapability(
   if (method === 'fork-session' || method === 'restart-session')
     return 'session-fork';
   if (method === 'backup-database') return 'database-backup';
+  if (
+    method === 'stage-attachment' ||
+    method === 'read-attachment' ||
+    ((method === 'send-message' || method === 'queue-message') &&
+      typeof input === 'object' &&
+      input !== null &&
+      'attachments' in input &&
+      input.attachments)
+  )
+    return 'message-attachments';
   if (method === 'list-mcp-servers' || method === 'set-session-mcp')
     return 'mcp-servers';
   if (
@@ -932,6 +944,8 @@ export class ComputerManager {
       'list-workspace-directory': 'workspace-directory',
       'search-workspace-files': 'workspace-search',
       'read-workspace-file': 'workspace-file',
+      'stage-attachment': 'attachment-upload',
+      'read-attachment': 'attachment-content',
       'read-git-branch': 'git-branch',
       'search-history': 'history-search',
       'list-conversations': 'conversation-import-catalog',
@@ -971,6 +985,10 @@ export class ComputerManager {
         return response.search;
       case 'workspace-file':
         return response.file;
+      case 'attachment-upload':
+        return response.upload;
+      case 'attachment-content':
+        return response.content;
       case 'pull-request-list':
         return response.list;
       case 'pull-request':

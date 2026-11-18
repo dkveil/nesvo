@@ -44,6 +44,7 @@ import {
   type SkillReference,
   type SessionInterruption,
   type McpServerList,
+  type MessageAttachment,
   type SetSessionMcpInput,
   type TurnUsage,
 } from '@nesvo/contracts';
@@ -60,6 +61,7 @@ import {
   reportedClaudeModes,
   startClaude,
   type ClaudeEvent,
+  type ClaudeImage,
   type ClaudeResult,
 } from '../providers/claude';
 import {
@@ -69,6 +71,7 @@ import {
   type CodexResult,
 } from '../providers/codex';
 import { SessionStore, type SessionOrigin } from './store';
+import { AttachmentError, AttachmentStore } from './attachments';
 import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
 import { resolveSessionSkill } from '../skills/service';
@@ -308,9 +311,19 @@ const GATE_REVIEW_STATUS = {
   'request-changes': 'changes-requested',
 } as const satisfies Record<GateReviewDecision['decision'], Review['status']>;
 
+type TurnImages = { paths: string[]; inline: ClaudeImage[] };
+
+const sameAttachments = (
+  left: readonly MessageAttachment[] | undefined,
+  right: readonly MessageAttachment[] | undefined,
+) =>
+  (left ?? []).map(attachment => attachment.id).join() ===
+  (right ?? []).map(attachment => attachment.id).join();
+
 type LaunchTurn = {
   skillId?: string;
   skillHash?: string;
+  attachments?: readonly MessageAttachment[];
   readOnly?: boolean;
   outputSchema?: Record<string, unknown>;
   ephemeral?: boolean;
@@ -359,6 +372,7 @@ export class SessionService {
   private forking = false;
   private reviewDecision?: AbortController;
   private lastOperatorActivityAt?: number;
+  readonly attachments: AttachmentStore;
 
   constructor(
     private readonly store: SessionStore,
@@ -371,7 +385,21 @@ export class SessionService {
     recoverRelated?: () => void,
     private readonly options: SessionServiceOptions = {},
   ) {
+    this.attachments = new AttachmentStore(directory);
     store.recover(recoverRelated);
+  }
+
+  private confirmAttachments(
+    attachments: readonly MessageAttachment[] | undefined,
+  ): void {
+    if (!attachments?.length) return;
+    try {
+      this.attachments.confirm(attachments);
+    } catch (error) {
+      if (error instanceof AttachmentError)
+        throw new SessionError('invalid-request', error.message);
+      throw error;
+    }
   }
 
   onRunFinished(listener: (run: RunFinished) => void): () => void {
@@ -1507,7 +1535,8 @@ export class SessionService {
         existing.author !== 'operator' ||
         existing.body !== input.text ||
         existing.skillId !== input.skillId ||
-        existing.skillHash !== input.skillHash
+        existing.skillHash !== input.skillHash ||
+        !sameAttachments(existing.attachments, input.attachments)
       )
         throw new SessionError(
           'invalid-request',
@@ -1527,6 +1556,7 @@ export class SessionService {
         'A skill snapshot requires a selected skill.',
       );
     const selection = resolveTurnSelection(session, input);
+    this.confirmAttachments(input.attachments);
     this.confirmForkPoint(session);
     this.resolveDirectory(session.directory);
     this.ensureConversationCapacity(session);
@@ -1545,6 +1575,8 @@ export class SessionService {
       input.text,
       input.skillId,
       input.skillHash,
+      null,
+      input.attachments,
     );
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
@@ -1554,6 +1586,7 @@ export class SessionService {
     this.launch(session, prompt, {
       skillId: input.skillId,
       skillHash: input.skillHash,
+      ...(input.attachments ? { attachments: input.attachments } : {}),
       previousSelection,
     });
     return structuredClone(session);
@@ -1712,6 +1745,7 @@ export class SessionService {
         'A skill snapshot requires a selected skill.',
       );
     resolveTurnSelection(session, input);
+    this.confirmAttachments(input.attachments);
     if (
       session.queue.some(item => item.id === input.messageId) ||
       session.messages.some(message => message.id === input.messageId)
@@ -1731,6 +1765,7 @@ export class SessionService {
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort === undefined ? {} : { effort: input.effort }),
       ...(input.mode ? { mode: input.mode } : {}),
+      ...(input.attachments ? { attachments: input.attachments } : {}),
       createdAt: new Date().toISOString(),
       held: false,
     });
@@ -1783,6 +1818,7 @@ export class SessionService {
       model: entry.model,
       effort: entry.effort,
       mode: entry.mode,
+      attachments: entry.attachments,
     });
   }
 
@@ -1818,6 +1854,7 @@ export class SessionService {
         model: next.model,
         effort: next.effort,
         mode: next.mode,
+        attachments: next.attachments,
       });
     } catch (error) {
       if (error instanceof BudgetRefusal) holdQueue(session);
@@ -2134,6 +2171,7 @@ export class SessionService {
     skillId?: string,
     skillHash?: string,
     origin: 'workflow' | null = null,
+    attachments?: readonly MessageAttachment[],
   ): void {
     this.ensureWorktreeOpen(session);
     const now = new Date();
@@ -2180,6 +2218,7 @@ export class SessionService {
         },
         ...(skillId ? { skillId } : {}),
         ...(skillHash ? { skillHash } : {}),
+        ...(attachments?.length ? { attachments: [...attachments] } : {}),
       },
       {
         id: randomUUID(),
@@ -2206,6 +2245,7 @@ export class SessionService {
     {
       skillId,
       skillHash,
+      attachments = [],
       readOnly,
       outputSchema,
       ephemeral,
@@ -2370,6 +2410,20 @@ export class SessionService {
           );
         if (controller.signal.aborted)
           return { status: 'stopped', error: null };
+        let images: TurnImages;
+        try {
+          images = await this.turnImages(session.provider, attachments);
+        } catch (error) {
+          return {
+            status: 'failed',
+            error:
+              error instanceof AttachmentError
+                ? `${error.message} No provider turn was started.`
+                : 'An attached image could not be read. No provider turn was started.',
+          };
+        }
+        if (controller.signal.aborted)
+          return { status: 'stopped', error: null };
         provider =
           session.provider === 'Codex'
             ? startCodex({
@@ -2378,6 +2432,7 @@ export class SessionService {
                 mode:
                   session.mode === 'supervised' ? 'supervised' : 'read-only',
                 effort: session.effort,
+                ...(images.paths.length ? { images: images.paths } : {}),
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(turnMcp
@@ -2446,6 +2501,7 @@ export class SessionService {
                     }
                   : {}),
                 ...(ephemeral ? { ephemeral } : {}),
+                ...(images.inline.length ? { images: images.inline } : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
                 ...(turnMcp
@@ -2587,6 +2643,28 @@ export class SessionService {
         this.notifyFinished(session);
         if (!this.unsaved.has(session.id)) this.startNextQueued(session);
       });
+  }
+
+  private async turnImages(
+    provider: Session['provider'],
+    attachments: readonly MessageAttachment[],
+  ): Promise<TurnImages> {
+    if (!attachments.length) return { paths: [], inline: [] };
+    this.attachments.confirm(attachments);
+    if (provider === 'Codex')
+      return {
+        paths: attachments.map(attachment => this.attachments.path(attachment)),
+        inline: [],
+      };
+    return {
+      paths: [],
+      inline: await Promise.all(
+        attachments.map(async attachment => ({
+          mediaType: attachment.mediaType,
+          data: (await this.attachments.load(attachment)).toString('base64'),
+        })),
+      ),
+    };
   }
 
   private notifyFinished(session: Session): void {

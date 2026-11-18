@@ -41,6 +41,10 @@ const PROMPTS_HELP = [
   '                               --permission-prompt-tool) or "none"',
   '                               (choices: "host", "none")',
 ].join('\n');
+const INPUT_HELP = [
+  '--input-format <format>  Input format (only works with --print)',
+  '                          (choices: "text", "stream-json")',
+].join('\n');
 const READ_TOOLS = 'Read,Glob,Grep';
 const EDIT_TOOLS = `${READ_TOOLS},Edit,Write,MultiEdit,NotebookEdit`;
 const MODE_TOOLS = new Map([
@@ -53,6 +57,34 @@ const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
 const REPAIR_NOTE = 'The verdict did not match the required shape';
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const readUserContent = content => {
+  if (typeof content === 'string') return content;
+  assert.equal(content[0].type, 'text');
+  const images = content.slice(1);
+  assert.ok(images.length > 0, 'Content blocks are used only for images');
+  for (const image of images) {
+    assert.equal(image.type, 'image');
+    assert.equal(image.source.type, 'base64');
+  }
+  if (process.env.NESVO_FIXTURE_IMAGE_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_IMAGE_LOG,
+      JSON.stringify({
+        provider: 'Claude Code',
+        text: content[0].text,
+        images: images.map(image => {
+          const bytes = Buffer.from(image.source.data, 'base64');
+          return {
+            mediaType: image.source.media_type,
+            size: bytes.length,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          };
+        }),
+      }) + '\n',
+      { flag: 'a' },
+    );
+  return content[0].text;
+};
 const runEnvironment = () => ({
   NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,
   NESVO_PROJECT_ROOT: process.env.NESVO_PROJECT_ROOT ?? null,
@@ -68,7 +100,9 @@ if (args.length === 1 && args[0] === '--version') {
           ? PERMISSION_HELP
           : flag === '--permission-prompts'
             ? PROMPTS_HELP
-            : flag,
+            : flag === '--input-format' && !process.env.NESVO_FIXTURE_TEXT_INPUT
+              ? INPUT_HELP
+              : flag,
       )
       .join('\n'),
   );
@@ -77,7 +111,8 @@ if (args.length === 1 && args[0] === '--version') {
 } else if (
   args[args.indexOf('--input-format') + 1] === 'stream-json' &&
   !args.includes('--session-id') &&
-  !args.includes('--resume')
+  !args.includes('--resume') &&
+  !args.includes('--include-partial-messages')
 ) {
   const switches = new Set([
     '--print',
@@ -200,17 +235,19 @@ if (args.length === 1 && args[0] === '--version') {
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
   if (values.has('--append-system-prompt'))
     assert.equal(permissionMode, 'dontAsk');
-  const streamInput = values.get('--input-format') === 'stream-json';
-  if (streamInput) {
+  const hostPrompts = values.get('--permission-prompt-tool') === 'stdio';
+  const inputFormat = values.get('--input-format');
+  assert.ok(['text', 'stream-json'].includes(inputFormat), inputFormat);
+  const streamInput = inputFormat === 'stream-json';
+  if (hostPrompts) {
+    assert.ok(streamInput);
     assert.ok(['acceptEdits', 'auto'].includes(permissionMode));
-    assert.equal(values.get('--permission-prompt-tool'), 'stdio');
     assert.equal(values.has('--json-schema'), false);
     assert.equal(values.has('--append-system-prompt'), false);
   } else assert.equal(values.has('--permission-prompt-tool'), false);
   for (const [flag, expected] of [
-    ['--input-format', streamInput ? 'stream-json' : 'text'],
     ['--output-format', 'stream-json'],
-    ['--permission-prompts', streamInput ? 'host' : 'none'],
+    ['--permission-prompts', hostPrompts ? 'host' : 'none'],
     ['--tools', MODE_TOOLS.get(permissionMode)],
     ['--allowedTools', READ_TOOLS],
   ])
@@ -267,7 +304,7 @@ if (args.length === 1 && args[0] === '--version') {
       : inputEnded
         ? Promise.resolve(null)
         : new Promise(resolve => readers.push(resolve));
-  if (streamInput) {
+  if (hostPrompts) {
     createInterface({ input: process.stdin })
       .on('line', line => {
         const frame = JSON.parse(line);
@@ -294,8 +331,22 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(user.type, 'user');
     assert.equal(user.parent_tool_use_id, null);
     assert.equal(user.message.role, 'user');
-    prompt = user.message.content;
-  } else for await (const chunk of process.stdin) prompt += chunk;
+    prompt = readUserContent(user.message.content);
+  } else {
+    for await (const chunk of process.stdin) prompt += chunk;
+    if (streamInput) {
+      const lines = prompt.split('\n').filter(Boolean);
+      assert.equal(lines.length, 1, 'Exactly one user message must arrive');
+      const frame = JSON.parse(lines[0]);
+      assert.equal(frame.type, 'user');
+      assert.equal(frame.message.role, 'user');
+      assert.ok(
+        Array.isArray(frame.message.content),
+        'Streaming input without host prompts is used only for images',
+      );
+      prompt = readUserContent(frame.message.content);
+    }
+  }
   assert.ok(prompt.trim(), 'Prompt must arrive through stdin');
   if (
     prompt.startsWith(
@@ -668,7 +719,7 @@ if (args.length === 1 && args[0] === '--version') {
       content_block: { type: 'tool_use', id: toolUse, name: toolName, input },
     });
     const requestId = randomUUID();
-    if (!streamInput) {
+    if (!hostPrompts) {
       emit({
         type: 'user',
         message: {

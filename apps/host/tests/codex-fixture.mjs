@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -606,6 +606,7 @@ if (args.length === 1 && args[0] === '--version') {
             displayName: 'Codex fixture',
             hidden: false,
             isDefault: true,
+            inputModalities: ['text', 'image'],
             supportedReasoningEfforts: [
               { reasoningEffort: 'low', description: 'Fixture low effort' },
               {
@@ -748,8 +749,30 @@ if (args.length === 1 && args[0] === '--version') {
         readOnlyTurn ? { type: 'readOnly', networkAccess: false } : policy(),
       );
       assert.equal(params.effort ?? null, thread.effort);
-      assert.equal(params.input.length, selectedSkills ? 2 : 1);
+      const images = params.input.filter(item => item.type === 'localImage');
+      assert.equal(
+        params.input.length,
+        (selectedSkills ? 2 : 1) + images.length,
+      );
       assert.equal(params.input[0].type, 'text');
+      if (images.length && process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG)
+        writeFileSync(
+          process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG,
+          JSON.stringify({
+            provider: 'Codex',
+            text: params.input[0].text,
+            images: images.map(image => {
+              assert.ok(isAbsolute(image.path), 'Image paths must be absolute');
+              const bytes = readFileSync(image.path);
+              return {
+                path: image.path,
+                size: bytes.length,
+                sha256: createHash('sha256').update(bytes).digest('hex'),
+              };
+            }),
+          }) + '\n',
+          { flag: 'a' },
+        );
       assert.ok(params.input[0].text.trim());
       if (selectedSkills) {
         const selectedSkill = selectedSkills.find(
