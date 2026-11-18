@@ -35,6 +35,8 @@ const executablePath = requireDesktop('electron');
 const env = {
   ...process.env,
   NESVO_SMOKE_TEST: '1',
+  NESVO_TEST_MODE: '1',
+  NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
   NESVO_DATA_DIR: directory,
   NESVO_TEST_PID_FILE: pidFile,
   NESVO_CLAUDE_EXECUTABLE: resolve('apps/host/tests/claude-fixture.mjs'),
@@ -251,7 +253,10 @@ try {
     );
   };
   const screenshot = async suffix => {
-    if (!process.env.NESVO_SCREENSHOT) return;
+    const target = suffix.startsWith('-mcp-')
+      ? process.env.NESVO_MCP_TRUST_SCREENSHOT
+      : process.env.NESVO_SCREENSHOT;
+    if (!target) return;
     await page.evaluate(
       () =>
         new Promise(resolve =>
@@ -267,7 +272,7 @@ try {
       return image.toPNG().toString('base64');
     });
     await writeFile(
-      process.env.NESVO_SCREENSHOT.replace(/\.png$/, suffix + '.png'),
+      target.replace(/\.png$/, suffix.replace(/^-mcp/, '') + '.png'),
       Buffer.from(encoded, 'base64'),
     );
   };
@@ -913,11 +918,52 @@ try {
   await mcpChip.click();
   await mcpPopover.getByText('fixture', { exact: true }).waitFor();
   await mcpPopover.getByText('User · stdio', { exact: true }).waitFor();
-  await mcpPopover.getByText('Inactive', { exact: true }).waitFor();
+  await mcpPopover.getByText('Disabled', { exact: true }).waitFor();
+  await screenshot('-mcp-plan');
   assert.equal(await mcpPopover.getByRole('switch').count(), 0);
   await page.keyboard.press('Escape');
   await mcpPopover.waitFor({ state: 'hidden' });
   await waitForFocus(mcpChip);
+  const repoMcp = join(first.directory, '.mcp.json');
+  const writeRepositoryMcp = command =>
+    writeFile(
+      repoMcp,
+      JSON.stringify({ mcpServers: { repository: { command } } }),
+    );
+  await writeRepositoryMcp('fixture-repository-mcp');
+  await mcpChip.click();
+  await mcpPopover
+    .getByText('Repository MCP servers and hooks are paused.', { exact: true })
+    .waitFor();
+  await page.keyboard.press('Escape');
+  const trustNotice = conversation.getByText(
+    'Trust this repository’s MCP servers and hooks?',
+    { exact: true },
+  );
+  await trustNotice.waitFor();
+  await screenshot('-mcp-prompt');
+  await conversation
+    .getByRole('button', { name: 'Trust', exact: true })
+    .click();
+  await trustNotice.waitFor({ state: 'hidden' });
+  await writeRepositoryMcp('fixture-repository-mcp-v2');
+  await mcpChip.click();
+  await mcpPopover
+    .getByText('Repository MCP servers and hooks are paused.', { exact: true })
+    .waitFor();
+  await page.keyboard.press('Escape');
+  await trustNotice.waitFor();
+  await conversation
+    .getByText(
+      'Repository definitions changed and are paused until you trust them again.',
+    )
+    .waitFor();
+  await screenshot('-mcp-changed');
+  await conversation
+    .getByRole('button', { name: 'Not now', exact: true })
+    .click();
+  await trustNotice.waitFor({ state: 'hidden' });
+  await rm(repoMcp);
   const projectSkillPath = join(
     first.directory,
     '.claude',
@@ -4042,7 +4088,15 @@ try {
         ),
       }))
       .catch(() => null);
-    console.error(JSON.stringify({ desktopFailure: state }));
+    const log = await readFile(
+      join(directory, 'logs', 'main.log'),
+      'utf8',
+    ).catch(() => '');
+    const rendererErrors = log
+      .split('\n')
+      .filter(line => / ERROR Window /.test(line))
+      .slice(-5);
+    console.error(JSON.stringify({ desktopFailure: state, rendererErrors }));
   }
   throw error;
 } finally {

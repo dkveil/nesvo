@@ -1,8 +1,7 @@
-import { useRef, useState } from 'react';
-import { Plug, RefreshCw } from 'lucide-react';
-import type { McpServerList } from '@nesvo/contracts';
-import { errorDetail, modeLabel, type Provider } from '@/entities/session';
+﻿import { Plug, RefreshCw } from 'lucide-react';
+import { modeLabel, type Provider } from '@/entities/session';
 import { ComposerChip } from '@/features/new-thread/composer-chip';
+import { Button } from '@/shared/ui/button';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
@@ -10,55 +9,38 @@ import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { scopeLabels, transportLabels } from './mcp-labels';
+import type { McpConfiguration } from './use-mcp-configuration';
 
 type Props = {
-  hostId: string;
-  sessionId: string;
+  configuration: McpConfiguration;
   provider: Provider;
   readOnly: boolean;
+  isolated: boolean;
   disabled: boolean;
   unsupported: boolean;
+  supportsTrust: boolean;
 };
 
-type ListState =
-  | { status: 'idle' | 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'loaded'; list: McpServerList };
-
 export function McpChip({
-  hostId,
-  sessionId,
+  configuration,
   provider,
   readOnly,
+  isolated,
   disabled,
   unsupported,
+  supportsTrust,
 }: Props) {
-  const [state, setState] = useState<ListState>({ status: 'idle' });
-  const request = useRef(0);
-  const load = () => {
-    const current = ++request.current;
-    setState({ status: 'loading' });
-    window.nesvo.listMcpServers({ sessionId }, hostId).then(
-      list => {
-        if (current === request.current) setState({ status: 'loaded', list });
-      },
-      failure => {
-        if (current === request.current)
-          setState({
-            status: 'error',
-            message:
-              'Could not read MCP configuration. ' + errorDetail(failure),
-          });
-      },
-    );
-  };
   const hint = unsupported
     ? 'Update the host to view MCP configuration'
     : 'MCP servers and hooks';
-  const list = state.status === 'loaded' ? state.list : null;
-  const native = list?.configuration === 'native';
+  const { list, loading, error } = configuration;
+  const repository = list?.repository;
+  const paused =
+    repository?.status === 'needs-trust' ||
+    repository?.status === 'unavailable';
+  const readOnlyIsolation = readOnly && list?.readOnlyMcp !== 'approval';
   return (
-    <Popover onOpenChange={open => open && load()}>
+    <Popover onOpenChange={open => open && void configuration.refresh()}>
       <Hint label={hint}>
         <PopoverTrigger asChild>
           <ComposerChip
@@ -67,7 +49,11 @@ export function McpChip({
             data-session-mcp=""
             icon={<Plug aria-hidden="true" />}
           >
-            MCP
+            {isolated || readOnlyIsolation
+              ? 'MCP paused'
+              : paused
+                ? 'MCP · Repository paused'
+                : 'MCP'}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>
@@ -88,38 +74,55 @@ export function McpChip({
           <IconButton
             label="Refresh MCP configuration"
             size={24}
-            disabled={state.status === 'loading'}
-            onClick={load}
+            disabled={loading}
+            onClick={() => void configuration.refresh()}
           >
             <RefreshCw />
           </IconButton>
         </div>
-        {state.status === 'error' && (
-          <StatusMessage tone="error">{state.message}</StatusMessage>
-        )}
-        {state.status === 'loading' && (
+        {error && <StatusMessage tone="error">{error}</StatusMessage>}
+        {loading && (
           <StatusMessage tone="loading">
             Reading MCP configuration…
           </StatusMessage>
         )}
+        {!supportsTrust && (
+          <StatusMessage tone="warning">
+            Update this host to review repository MCP servers and hooks.
+          </StatusMessage>
+        )}
+        {isolated ? (
+          <StatusMessage>
+            Workers and unattended turns run with MCP servers and hooks
+            disabled.
+          </StatusMessage>
+        ) : readOnly && list ? (
+          <StatusMessage>
+            {readOnlyIsolation
+              ? `MCP is isolated in ${modeLabel(provider, 'read-only')} because a one-time tool approval channel is unavailable.`
+              : `Each MCP tool call in ${modeLabel(provider, 'read-only')} requires a one-time approval.`}
+          </StatusMessage>
+        ) : null}
+        {paused && (
+          <StatusMessage tone="warning">
+            Repository MCP servers and hooks are paused.
+          </StatusMessage>
+        )}
+        {!isolated && repository?.status === 'needs-trust' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={configuration.reopen}
+          >
+            Review repository configuration
+          </Button>
+        )}
         {list && (
           <>
-            {!native && (
-              <StatusMessage tone="warning">
-                Update this host to inherit provider configuration.
-              </StatusMessage>
-            )}
-            {native && readOnly && (
-              <StatusMessage role="note">
-                MCP servers and hooks are paused in{' '}
-                {modeLabel(provider, 'read-only')} mode.
-              </StatusMessage>
-            )}
             <div role="group" aria-label="Configured MCP servers">
               {list.servers.length === 0 && (
-                <StatusMessage>
-                  No MCP servers found in the inspected configuration.
-                </StatusMessage>
+                <StatusMessage>No MCP servers found.</StatusMessage>
               )}
               {list.servers.map(server => (
                 <ListRow
@@ -143,16 +146,14 @@ export function McpChip({
                 </StatusMessage>
               ))}
             </div>
-            {native && (
-              <>
-                <Separator />
-                <ListRow
-                  size="sm"
-                  title="User hooks"
-                  trailing={readOnly ? 'Inactive' : 'Follow provider settings'}
-                />
-              </>
-            )}
+            <Separator />
+            <ListRow
+              size="sm"
+              title="User hooks"
+              trailing={
+                isolated || readOnly ? 'Disabled' : 'Follow provider settings'
+              }
+            />
           </>
         )}
       </PopoverContent>

@@ -146,6 +146,7 @@ type Props = {
   canChangeMode: boolean;
   workflowChip?: ReactNode;
   mcpChip?: ReactNode;
+  mcpNotice?: ReactNode;
   contextMeter?: ReactNode;
   onLoadEarlier: () => Promise<boolean>;
   attachments: ConversationAttachments;
@@ -193,6 +194,7 @@ export function Conversation({
   canChangeMode,
   workflowChip,
   mcpChip,
+  mcpNotice,
   contextMeter,
   onLoadEarlier,
   attachments,
@@ -530,6 +532,7 @@ export function Conversation({
             });
           }}
         >
+          {mcpNotice}
           {anchor(
             <Composer
               className={cn(

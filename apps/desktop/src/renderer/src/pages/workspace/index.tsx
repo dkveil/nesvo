@@ -197,6 +197,8 @@ import {
   withoutPlacement,
 } from '@/features/attach-files/placement';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
+import { McpRepositoryNotice } from '@/features/session-mcp/mcp-repository-notice';
+import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
 import { conversationActions } from '@/features/conversation-context/conversation-actions';
@@ -1017,6 +1019,24 @@ export function Workspace() {
         selectedComputer?.status === 'syncing'
       ? 'connecting'
       : 'unavailable';
+  const supportsMcpTrust = !!selectedComputer?.capabilities.includes(
+    'repository-mcp-trust',
+  );
+  const isolatedMcp = !!(
+    selected?.parentId ||
+    selected?.role === 'worker' ||
+    selected?.workflowRunId ||
+    selected?.workflowStepId ||
+    selected?.scheduledJobId
+  );
+  const mcpConfiguration = useMcpConfiguration(
+    selectedHostId,
+    selected?.id,
+    supportsMcpTrust && !isolatedMcp && selected
+      ? selected.runId + ':' + selected.status
+      : null,
+    connection === 'ready' && supportsMcp(selectedHostId),
+  );
   const parentSession = store.sessions.find(
     session =>
       session.id === selected?.parentId && session.hostId === selected?.hostId,
@@ -4319,29 +4339,23 @@ ${text}`
                     )}
                   />
                 }
+                mcpNotice={
+                  supportsMcpTrust &&
+                  !isolatedMcp && (
+                    <McpRepositoryNotice configuration={mcpConfiguration} />
+                  )
+                }
                 mcpChip={
                   <McpChip
-                    key={entityKey(selected)}
-                    hostId={selected.hostId}
-                    sessionId={selected.id}
+                    configuration={mcpConfiguration}
                     provider={selected.provider}
                     readOnly={
-                      (pendingModeOf(selected) ?? selected.mode) ===
-                        'read-only' ||
-                      store.sessions.some(
-                        parent =>
-                          parent.hostId === selected.hostId &&
-                          parent.id === selected.parentId &&
-                          parent.delegations.some(
-                            worker =>
-                              worker.childSessionId === selected.id &&
-                              (worker.status === 'planning' ||
-                                worker.status === 'plan-ready'),
-                          ),
-                      )
+                      (pendingModeOf(selected) ?? selected.mode) === 'read-only'
                     }
+                    isolated={isolatedMcp}
                     disabled={connection !== 'ready'}
                     unsupported={!supportsMcp(selectedHostId)}
+                    supportsTrust={supportsMcpTrust}
                   />
                 }
               />

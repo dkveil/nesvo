@@ -219,7 +219,7 @@ Hovering the dot, or focusing its row from the keyboard, shows the full status i
 
 **SettingsSection / SettingsRow** — `shared/ui/settings-section.tsx`. Settings pages. SettingsSection heads a bordered card with a SectionLabel (`action` sits on its right); the page title lives in the settings header. SettingsRow is a title, a `text-xs` description and trailing controls; put status lines in the description as StatusMessage.
 
-The composer MCP chip opens a read-only Popover. Use ListRow for a server name with its scope and transport. Use StatusMessage for configuration errors and read-only availability, and show the hook policy in a separate row. The new-session form omits the MCP field.
+The composer MCP chip opens an inventory Popover with ListRow for server names, scopes and transports, and StatusMessage for availability and configuration errors. Show the hook policy in a separate row. Place the repository trust InlineNotice above the session composer with the definition summary and Trust and Not now actions. The MCP popover can reopen a dismissed notice. The new-session form omits the MCP field.
 
 ### Domain glyphs
 
