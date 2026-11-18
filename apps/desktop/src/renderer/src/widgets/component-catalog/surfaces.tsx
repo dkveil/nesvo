@@ -13,6 +13,7 @@ import {
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { CodeBlock } from '@/shared/ui/code-block';
+import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import {
   Composer,
   ComposerInput,
@@ -366,6 +367,19 @@ export function SurfacesSection() {
         <Specimen title="CodeBlock" source="shared/ui/code-block.tsx">
           <CodeBlock code={SAMPLE_CODE} label="greet.ts" />
           <CodeBlock code="bun run check" />
+          <CodeBlock code="nesvo --help" label="Shell" variant="flat" />
+        </Specimen>
+        <Specimen
+          title="SettingsSection"
+          source="shared/ui/settings-section.tsx"
+        >
+          <SettingsSection title="Appearance">
+            <SettingsRow title="Color scheme" description="System" />
+          </SettingsSection>
+          <SettingsSection title="Devices">
+            <SettingsRow title="Release runner" />
+            <SettingsRow title="Build server" />
+          </SettingsSection>
         </Specimen>
         <Specimen title="Separator" source="shared/ui/separator.tsx">
           <Separator />

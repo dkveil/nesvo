@@ -148,23 +148,19 @@ The review uses the installed provider CLI and the GitHub CLI with their existin
 
 Open **Settings → Devices**, select a computer and create an Inbox device token. The token grants post, status and cancel for that device. Copy it into a secret environment variable named `NESVO_INBOX_TOKEN`, or point `NESVO_INBOX_CONFIG` at an owner-only JSON file with a `token` property. Use mode `0600` on Unix and a user-only ACL on Windows. The token identifies the host instance. Revoke it from the same settings page.
 
-Build the repository bin with `bun install --frozen-lockfile` and `bun run --cwd apps/host build`, then run from the repository:
+Nesvo includes the CLI in its desktop app. In **Settings → Devices**, copy **Add to PATH** and run it in PowerShell on Windows or in your shell on macOS or Linux. The command applies to the current terminal. Then run:
 
 ```bash
-node apps/host/dist/cli.js inbox post --title "Publish next build?" --source "Release CI" --body-file release-notes.md --idempotency-key release-12 --wait --timeout 120 --json
-node apps/host/dist/cli.js inbox status <item-id> --json
-node apps/host/dist/cli.js inbox cancel <item-id> --json
+nesvo inbox post --title "Publish next build?" --source "Release CI" --body-file release-notes.md --idempotency-key release-12 --wait --timeout 120 --json
+nesvo inbox status <item-id> --json
+nesvo inbox cancel <item-id> --json
 ```
 
 Use `--body` for inline Markdown, `--actions approve,reject` to override the offered labels and `--session <id>` to link a session. Use the same explicit key and payload to recover the same item after a lost response. Without a key the client generates one for that call. For SSH targets, copy the selected computer's SSH settings from the MCP snippet into `NESVO_INBOX_SSH` or the config file's `ssh` object. `--computer <instance-id>` pins the destination to the selected token's host. SSH uses the same known host and identity settings as the desktop.
 
-Bun can also run the built entry point directly with `bun apps/host/dist/cli.js --help`.
-
 An ordinary post prints the item ID. With `--wait`, exit status is **0** for the first declared action, **1** for another declared action, **2** for timeout and **3** for withdrawal or error. The default wait is five minutes and timeout leaves the item pending. `--json` writes one object with the status, action, zero-based action index and optional operator comment. During a JSON wait the CLI prints the ID on stderr as soon as the host accepts the post.
 
-Run `node apps/host/dist/cli.js mcp` for the stdio server. **Settings → Devices** has copyable Claude Code JSON and Codex TOML. Set the token in the client's launch environment or use a private CLI config file. The tools are `inbox_post`, `inbox_status` and `inbox_cancel`; waiting through MCP returns the equivalent exit code in the result. Provider settings are configured by the operator.
-
-The private `@nesvo/host` package declares the built `nesvo` bin. For future installer packaging, ship the bundled `dist/cli.js` with a Node launcher and expose it as `nesvo` on PATH. The current repository build defines the CLI without publishing a package.
+Run `nesvo mcp` for the stdio server. **Settings → Devices** has copyable Claude Code JSON and Codex TOML with the installed paths. Set the token in the client's launch environment or use a private CLI config file. The tools are `inbox_post`, `inbox_status` and `inbox_cancel`. Waiting through MCP returns the equivalent exit code in the result. The operator applies the PATH command and edits provider configuration.
 
 ## Working agreement
 

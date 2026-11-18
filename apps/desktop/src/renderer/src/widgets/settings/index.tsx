@@ -129,6 +129,7 @@ export function Settings({
                   .map(entry => (
                     <NavItem
                       key={entry.id}
+                      tone="flat"
                       icon={<entry.icon aria-hidden="true" />}
                       selected={entry.id === page}
                       disabled={busy && entry.id !== page}

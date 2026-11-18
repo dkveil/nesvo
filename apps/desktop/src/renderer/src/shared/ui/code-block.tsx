@@ -11,6 +11,7 @@ type CodeBlockProps = Omit<ComponentProps<'pre'>, 'children'> & {
   copyable?: boolean;
   wrap?: boolean;
   maxHeightClassName?: string;
+  variant?: 'panel' | 'flat';
 };
 
 export function CodeBlock({
@@ -19,6 +20,7 @@ export function CodeBlock({
   copyable = true,
   wrap = false,
   maxHeightClassName = 'max-h-80',
+  variant = 'panel',
   className,
   ...props
 }: CodeBlockProps) {
@@ -53,11 +55,24 @@ export function CodeBlock({
   return (
     <div
       data-slot="code-block"
-      className="group/code relative min-w-0 overflow-hidden rounded-surface border bg-code-background"
+      className={cn(
+        'group/code relative min-w-0 overflow-hidden bg-code-background',
+        variant === 'panel' ? 'rounded-surface border' : 'rounded-control',
+      )}
     >
       {label && (
-        <div className="flex h-8 items-center justify-between gap-2 border-b pr-1 pl-3">
-          <span className="truncate font-mono text-2xs text-muted-foreground">
+        <div
+          className={cn(
+            'flex h-8 items-center justify-between gap-2 pr-1 pl-3',
+            variant === 'panel' && 'border-b',
+          )}
+        >
+          <span
+            className={cn(
+              'truncate text-2xs text-muted-foreground',
+              variant === 'panel' ? 'font-mono' : 'font-medium',
+            )}
+          >
             {label}
           </span>
           {copyButton}

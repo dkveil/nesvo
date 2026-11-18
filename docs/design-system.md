@@ -161,7 +161,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Tabs** — `shared/ui/tabs.tsx`. `variant="underline"` with a sliding indicator for panel sections; `variant="editor"` for open documents with `closable` tabs (`onClose`, middle click, Delete). Render content in `TabPanel` with the same `idPrefix` so ARIA wiring matches.
 
-**NavList / NavItem** — `shared/ui/nav-list.tsx`. Vertical navigation (settings sections, sidebar destinations). `selected` sets `aria-current="page"`; `trailing` holds a CountBadge; tones `default` and `sidebar`; sizes `sm` (28) and `md` (32).
+**NavList / NavItem** — `shared/ui/nav-list.tsx`. Vertical navigation (settings sections, sidebar destinations). `selected` sets `aria-current="page"`; `trailing` holds a CountBadge; tones `default`, `sidebar` and `flat`; sizes `sm` (28) and `md` (32).
 
 **Tooltip / Hint** — `shared/ui/tooltip.tsx`. `TooltipContent` variants `label` (single line, optional `shortcut`) and `panel` (short explanation). `Hint` wraps any trigger in one line. Do not use for essential information.
 
@@ -230,7 +230,7 @@ Hovering the dot or, after a short delay, the row, or focusing the row from the 
 
 **KeyValueList** — `shared/ui/key-value-list.tsx`. Two-column `dl` for details and metadata.
 
-**CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`.
+**CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`. Use the `flat` variant for setup snippets in Settings.
 
 **Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, muted `description` lines under the title (a string clamps to two lines; a node renders its own lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. `triggerTone="muted"` uses the helper text scale for secondary details. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions.
 
@@ -270,7 +270,7 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | Raw `<button>` toggles with `aria-pressed:bg-highlight`                       | `<IconButton pressed>` or `<SegmentedControl mode="toggle">`       |
 | `widgets/workflow-graph-editor/inspector/fields.tsx` `Segmented`              | `<SegmentedControl fullWidth mode="single" | "toggle">`            |
 | `PanelTabs` and other `role="tablist"` rows                                   | `<Tabs variant="underline">` + `<TabPanel>`                        |
-| Settings nav buttons, sidebar nav buttons                                     | `<NavList>` + `<NavItem tone="default" | "sidebar">`               |
+| Settings nav buttons, sidebar nav buttons                                     | `<NavList>` + `<NavItem tone="default" | "sidebar" | "flat">`               |
 | `panelRow`, `cardRow`, `cardRowAction`, tree rows, session rows               | `<ListRow density="compact" | "tree" | "two-line">`                |
 | `<p role="status" className="text-[11px] …">`                                 | `<StatusMessage tone="info" | "loading">`                          |
 | `<p role="alert" className="text-destructive …">`                             | `<StatusMessage tone="error">`                                     |

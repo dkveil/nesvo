@@ -149,6 +149,16 @@ function NavSpecimens() {
           </NavItem>
         </NavList>
       </StateCaption>
+      <StateCaption label="flat tone · sm">
+        <NavList label="Flat settings navigation" className="w-52 p-2">
+          <NavItem tone="flat" icon={<Settings2 />}>
+            General
+          </NavItem>
+          <NavItem tone="flat" icon={<Folder />} selected>
+            Folders
+          </NavItem>
+        </NavList>
+      </StateCaption>
     </div>
   );
 }

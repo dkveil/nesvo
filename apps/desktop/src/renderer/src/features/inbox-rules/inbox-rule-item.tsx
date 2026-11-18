@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { Input } from '@/shared/ui/input';
+import { cn } from '@/shared/lib/cn';
 import { StatusMessage } from '@/shared/ui/status-message';
 import type { HostedInboxItem, InboxItemDecision } from './use-inbox-items';
 
@@ -164,22 +165,34 @@ export function InboxRuleDecisions({
   const disabled = !enabled || deciding;
   const withNote = note.trim() ? { note: note.trim() } : {};
   return (
-    <div className="col-start-2 row-start-1 flex max-w-72 flex-col items-end gap-1.5 self-center">
-      {(item.action === 'hold' || external) && (
+    <div
+      className={cn(
+        'col-start-2 row-start-1 flex flex-col items-end gap-1.5 self-center',
+        external ? 'max-w-[min(50vw,26rem)]' : 'max-w-72',
+      )}
+    >
+      {item.action === 'hold' && (
         <Input
-          aria-label={
-            external ? 'Operator comment' : `Note for ${item.rule?.name}`
-          }
-          placeholder={
-            external ? 'Comment (optional)' : 'Note for the agent (optional)'
-          }
+          aria-label={`Note for ${item.rule?.name}`}
+          placeholder="Note for the agent (optional)"
           maxLength={inboxRuleLimits.note}
           value={note}
           disabled={disabled}
           onChange={event => setNote(event.target.value)}
         />
       )}
-      <div className="flex flex-wrap justify-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {external && (
+          <Input
+            aria-label="Operator comment"
+            placeholder="Comment"
+            className="w-24 transition-[width] focus:w-44 motion-reduce:transition-none"
+            maxLength={inboxRuleLimits.note}
+            value={note}
+            disabled={disabled}
+            onChange={event => setNote(event.target.value)}
+          />
+        )}
         {item.action === 'hold' && (
           <>
             <Button

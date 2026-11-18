@@ -74,6 +74,19 @@ Download the latest installers from the [Nesvo releases page](https://github.com
 - **Windows.** Microsoft Defender SmartScreen may warn that the installer is unrecognized. Verify the download source before continuing if Windows offers that choice. [Microsoft guidance](https://support.microsoft.com/en-us/windows/security/windows-security/app-browser-control-in-the-windows-security-app)
 - **macOS.** Move Nesvo from the disk image to Applications. Gatekeeper may block the first launch because the developer cannot be verified. If you trust the download, use **System Settings → Privacy & Security → Open Anyway** after the first attempt if the option is available. [Apple guidance](https://support.apple.com/en-us/102445)
 
+## External Inbox CLI from source
+
+The desktop build bundles the CLI into its resources. Settings shows the local bundle and runtime paths and the command to add its launcher to the current shell's PATH. Dev builds also include the launcher and set its runtime path in the copyable command.
+
+To use the private host package's bin independently from a repository checkout:
+
+```bash
+bun install --frozen-lockfile
+bun run --cwd apps/host build
+node apps/host/dist/cli.js --help
+bun apps/host/dist/cli.js --help
+```
+
 ## Standalone host
 
 Build first. Then set NESVO_DATA_DIR to a dedicated directory and run bun run host.

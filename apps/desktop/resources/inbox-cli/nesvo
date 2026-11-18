@@ -1,0 +1,15 @@
+#!/bin/sh
+cli_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 3
+if [ "$(uname -s)" = Darwin ]; then
+  runtime="$cli_dir/../../MacOS/Nesvo"
+else
+  runtime="$cli_dir/../../nesvo"
+fi
+if [ ! -x "$runtime" ]; then
+  runtime=${NESVO_INBOX_CLI_RUNTIME:-$runtime}
+fi
+if [ ! -x "$runtime" ]; then
+  printf '%s\n' 'The bundled Nesvo runtime could not be found.' >&2
+  exit 3
+fi
+ELECTRON_RUN_AS_NODE=1 exec "$runtime" "$cli_dir/cli.mjs" "$@"

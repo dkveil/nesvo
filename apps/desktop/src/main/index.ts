@@ -41,6 +41,7 @@ import { mobileAccess } from './mobile-access';
 import { launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { openAttachmentFile } from './attachment-files';
+import { inboxCliInstallation } from './external-inbox-cli';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import { findImportLink, SHARE_PROTOCOL } from './share-link';
 import { createWorkflowSharing } from './workflow-sharing';
@@ -1180,6 +1181,10 @@ void app.whenReady().then(async () => {
       undefined,
       route(hostId),
     );
+  });
+  handle('nesvo:read-inbox-cli-installation', event => {
+    authorize(event);
+    return inboxCliInstallation();
   });
   handle('nesvo:read-inbox-settings', (event, hostId: unknown) => {
     authorize(event);

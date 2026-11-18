@@ -19,7 +19,7 @@ type NavItemProps = ComponentProps<'button'> & {
   trailing?: ReactNode;
   selected?: boolean;
   size?: 'sm' | 'md';
-  tone?: 'default' | 'sidebar';
+  tone?: 'default' | 'sidebar' | 'flat';
 };
 
 export function NavItem({
@@ -47,6 +47,10 @@ export function NavItem({
           'text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground data-selected:bg-highlight data-selected:font-medium data-selected:text-foreground',
         tone === 'sidebar' &&
           'text-sidebar-muted-foreground enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground data-selected:bg-sidebar-row-selected data-selected:text-sidebar-foreground data-selected:shadow-(--sidebar-row-selected-shadow)',
+        tone === 'flat' &&
+          (selected
+            ? 'bg-highlight font-medium text-foreground'
+            : 'text-muted-foreground enabled:hover:text-foreground'),
         className,
       )}
       {...props}

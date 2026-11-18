@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+export const inboxCliInstallationSchema = z.strictObject({
+  runtimePath: z.string().min(1).max(4096),
+  entryPath: z.string().min(1).max(4096),
+  addToPathCommand: z.string().min(1).max(16_384),
+});
+export type InboxCliInstallation = z.infer<typeof inboxCliInstallationSchema>;
+
 export const externalInboxLimits = {
   title: 160,
   body: 4000,

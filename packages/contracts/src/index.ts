@@ -408,6 +408,7 @@ import {
   externalInboxReplySchema,
   externalInboxRequestSchema,
   type ExternalInboxDevice,
+  type InboxCliInstallation,
 } from './external-inbox';
 export * from './external-inbox';
 import {
@@ -2328,6 +2329,7 @@ export type DesktopApi = {
   ) => Promise<InboxRuleProposal>;
   listInboxItems: (hostId?: HostId) => Promise<InboxItem[]>;
   listExternalInboxDevices: (hostId?: HostId) => Promise<ExternalInboxDevice[]>;
+  readInboxCliInstallation: () => Promise<InboxCliInstallation | null>;
   enrollExternalInboxDevice: (
     input: z.input<typeof externalInboxDeviceNameSchema>,
     hostId?: HostId,

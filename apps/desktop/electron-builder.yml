@@ -5,6 +5,7 @@ directories:
   buildResources: build
 files:
   - dist/**/*
+  - '!dist/inbox-cli/**/*'
   - package.json
   - '!node_modules/**/*'
 asar: true
@@ -20,6 +21,9 @@ protocols:
   - name: Nesvo
     schemes: [nesvo]
 publish: null
+extraResources:
+  - from: dist/inbox-cli
+    to: inbox-cli
 extraFiles:
   - from: ../../LICENSE
     to: LICENSE.nesvo

@@ -4,9 +4,11 @@ import {
   type Computer,
   type DesktopApi,
   type ExternalInboxDevice,
+  type InboxCliInstallation,
 } from '@nesvo/contracts';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
+import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -16,12 +18,11 @@ type Props = {
   api: Pick<
     DesktopApi,
     | 'listExternalInboxDevices'
+    | 'readInboxCliInstallation'
     | 'enrollExternalInboxDevice'
     | 'revokeExternalInboxDevice'
   >;
 };
-
-const entry = '/absolute/path/to/nesvo/apps/host/dist/cli.js';
 
 export function DevicesSettings({ computer, api }: Props) {
   const [devices, setDevices] = useState<ExternalInboxDevice[]>([]);
@@ -33,6 +34,7 @@ export function DevicesSettings({ computer, api }: Props) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  const [cli, setCli] = useState<InboxCliInstallation | null>();
   const available =
     computer?.status === 'connected' &&
     computer.capabilities.includes('external-inbox');
@@ -40,6 +42,7 @@ export function DevicesSettings({ computer, api }: Props) {
   const instanceId = computer?.instanceId;
   const {
     listExternalInboxDevices,
+    readInboxCliInstallation,
     enrollExternalInboxDevice,
     revokeExternalInboxDevice,
   } = api;
@@ -58,6 +61,20 @@ export function DevicesSettings({ computer, api }: Props) {
       active = false;
     };
   }, [available, hostId, listExternalInboxDevices]);
+  useEffect(() => {
+    let active = true;
+    void readInboxCliInstallation().then(
+      result => {
+        if (active) setCli(result);
+      },
+      () => {
+        if (active) setCli(null);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [readInboxCliInstallation]);
 
   async function enroll() {
     setBusy(true);
@@ -92,13 +109,18 @@ export function DevicesSettings({ computer, api }: Props) {
   }
 
   const environment = {
+    ELECTRON_RUN_AS_NODE: '1',
     NESVO_INBOX_COMPUTER: instanceId ?? 'local',
     ...(computer?.ssh ? { NESVO_INBOX_SSH: JSON.stringify(computer.ssh) } : {}),
   };
   const claude = JSON.stringify(
     {
       mcpServers: {
-        nesvo: { command: 'node', args: [entry, 'mcp'], env: environment },
+        nesvo: {
+          command: cli?.runtimePath,
+          args: [cli?.entryPath, 'mcp'],
+          env: environment,
+        },
       },
     },
     null,
@@ -106,8 +128,8 @@ export function DevicesSettings({ computer, api }: Props) {
   );
   const codex = [
     '[mcp_servers.nesvo]',
-    'command = "node"',
-    `args = [${JSON.stringify(entry)}, "mcp"]`,
+    `command = ${JSON.stringify(cli?.runtimePath)}`,
+    `args = [${JSON.stringify(cli?.entryPath)}, "mcp"]`,
     'env_vars = ["NESVO_INBOX_TOKEN", "NESVO_INBOX_CONFIG"]',
     '',
     '[mcp_servers.nesvo.env]',
@@ -118,46 +140,50 @@ export function DevicesSettings({ computer, api }: Props) {
   return (
     <>
       <SettingsSection title="External Inbox devices">
-        <SettingsRow
-          title="Device token"
-          description="Each token can post, read and withdraw its own Inbox items."
+        <form
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2"
+          onSubmit={event => {
+            event.preventDefault();
+            void enroll();
+          }}
         >
-          <form
-            className="flex flex-wrap justify-end gap-1.5"
-            onSubmit={event => {
-              event.preventDefault();
-              void enroll();
-            }}
+          <Field
+            id="inbox-device-name"
+            label="Device name"
+            layout="inline"
+            className="min-w-44 flex-1"
           >
             <Input
-              aria-label="Device name"
-              placeholder="Device name"
+              id="inbox-device-name"
+              variant="ghost"
+              className="focus-ring rounded-control px-2"
+              placeholder="e.g. Release runner"
               value={name}
               onChange={event => setName(event.target.value)}
               maxLength={externalInboxLimits.source}
               disabled={!available || busy}
             />
-            <Button
-              type="submit"
-              variant="secondary"
-              disabled={
-                !available ||
-                busy ||
-                !name.trim() ||
-                devices.length >= externalInboxLimits.devices
-              }
-            >
-              Create token
-            </Button>
-          </form>
-        </SettingsRow>
+          </Field>
+          <Button
+            type="submit"
+            variant="ghost"
+            disabled={
+              !available ||
+              busy ||
+              !name.trim() ||
+              devices.length >= externalInboxLimits.devices
+            }
+          >
+            Create token
+          </Button>
+        </form>
         {available && enrollment && (
           <SettingsRow
             title="Token created"
             description="Copy it now and store it as a secret. The host can only verify it after this."
           >
             <Button
-              variant="secondary"
+              variant="ghost"
               onClick={() =>
                 void navigator.clipboard.writeText(enrollment.token).then(
                   () => setCopied(true),
@@ -176,7 +202,7 @@ export function DevicesSettings({ computer, api }: Props) {
           devices.map(device => (
             <SettingsRow key={device.id} title={device.name}>
               <Button
-                variant="outline"
+                variant="ghost"
                 disabled={busy}
                 aria-label={`Revoke ${device.name}`}
                 onClick={() => void revoke(device.id)}
@@ -200,33 +226,63 @@ export function DevicesSettings({ computer, api }: Props) {
         )}
       </SettingsSection>
       <SettingsSection title="Install the Nesvo CLI">
-        <div className="space-y-2 px-3 py-3">
-          <p className="text-xs leading-5 text-muted-foreground">
-            Run these commands from the Nesvo repository with Bun and Node
-            installed.
-          </p>
-          <CodeBlock
-            label="Repository setup"
-            code={
-              'bun install --frozen-lockfile\nbun run --cwd apps/host build\nnode apps/host/dist/cli.js --help'
-            }
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            Supply the token through <code>NESVO_INBOX_TOKEN</code> or an
-            owner-only file selected by <code>NESVO_INBOX_CONFIG</code>.
-          </p>
-        </div>
+        {cli ? (
+          <div className="space-y-2 px-2 py-2">
+            <Field
+              id="bundled-inbox-cli"
+              label="Bundled CLI"
+              as="span"
+              layout="inline"
+            >
+              <code className="block py-1.5 font-mono text-2xs break-all">
+                {cli.entryPath}
+              </code>
+            </Field>
+            <CodeBlock
+              variant="flat"
+              label="Add to PATH"
+              code={cli.addToPathCommand}
+              wrap
+            />
+            <p className="text-2xs leading-4 text-muted-foreground">
+              Run this in your terminal to use <code>nesvo</code> in that shell.
+            </p>
+          </div>
+        ) : (
+          <div className="px-2 py-2">
+            <StatusMessage tone={cli === null ? 'error' : 'loading'}>
+              {cli === null
+                ? 'The bundled CLI is unavailable.'
+                : 'Finding the bundled CLI…'}
+            </StatusMessage>
+          </div>
+        )}
       </SettingsSection>
-      <SettingsSection title="Connect an MCP client">
-        <div className="space-y-2 px-3 py-3">
-          <p className="text-xs leading-5 text-muted-foreground">
-            Replace the example path with the built CLI’s absolute path and add
-            the snippet to your client configuration.
-          </p>
-          <CodeBlock label="Claude Code · JSON" code={claude} />
-          <CodeBlock label="Codex · TOML" code={codex} />
-        </div>
-      </SettingsSection>
+      {cli && (
+        <SettingsSection title="Connect an MCP client">
+          <div className="space-y-2 px-2 py-2">
+            <p className="text-2xs leading-4 text-muted-foreground">
+              Add the snippet to your client configuration. Supply the token
+              through <code>NESVO_INBOX_TOKEN</code> or an owner-only file
+              selected by <code>NESVO_INBOX_CONFIG</code>.
+            </p>
+            <CodeBlock
+              variant="flat"
+              label="Claude Code · JSON"
+              code={claude}
+              maxHeightClassName="max-h-36"
+              wrap
+            />
+            <CodeBlock
+              variant="flat"
+              label="Codex · TOML"
+              code={codex}
+              maxHeightClassName="max-h-36"
+              wrap
+            />
+          </div>
+        </SettingsSection>
+      )}
     </>
   );
 }

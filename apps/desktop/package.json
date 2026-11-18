@@ -7,10 +7,11 @@
   "description": "Nesvo desktop prototype",
   "author": "Damian Kądziela",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "bun run build:inbox-cli && electron-vite dev",
+    "build": "bun run build:inbox-cli && electron-vite build",
+    "build:inbox-cli": "bun build ../host/src/cli.ts --target=node --outfile=dist/inbox-cli/cli.mjs && node scripts/copy-inbox-launchers.mjs",
     "typecheck": "tsc --noEmit",
-    "package:dir": "electron-vite build && electron-builder --dir"
+    "package:dir": "bun run build && electron-builder --dir"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

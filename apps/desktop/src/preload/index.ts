@@ -40,6 +40,7 @@ import {
   externalInboxDeviceNameSchema,
   externalInboxDevicesSchema,
   externalInboxEnrollmentSchema,
+  inboxCliInstallationSchema,
   deleteInboxRuleSchema,
   inboxItemSchema,
   inboxRuleCatalogSchema,
@@ -1402,6 +1403,10 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
+  readInboxCliInstallation: async () =>
+    inboxCliInstallationSchema
+      .nullable()
+      .parse(await ipcRenderer.invoke('nesvo:read-inbox-cli-installation')),
   revokeExternalInboxDevice: async (input, hostId) =>
     externalInboxDevicesSchema.parse(
       await ipcRenderer.invoke(
