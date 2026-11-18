@@ -62,7 +62,7 @@ Anyone with Nesvo can share a workflow without an account. A share is a bundle o
   "steps": [
     { "fileName": "lint.md", "content": "---\nname: lint\ntype: command\n..." }
   ],
-  "createdWith": { "app": "nesvo", "version": "0.1.0" }
+  "createdWith": { "app": "nesvo", "version": "0.0.1" }
 }
 ```
 

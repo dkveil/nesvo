@@ -550,7 +550,7 @@ async function initialize(
   experimentalApi = false,
 ): Promise<string> {
   const result = await peer.request('initialize', {
-    clientInfo: { name: 'nesvo', title: 'Nesvo', version: '0.1.0' },
+    clientInfo: { name: 'nesvo', title: 'Nesvo', version: '0.0.1' },
     capabilities: { experimentalApi, requestAttestation: false },
   });
   const version =

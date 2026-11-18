@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.0.1 (alpha)
 
 - Desktop sessions with streaming chat, per-turn permissions, reusable skills, and native MCP servers and hooks in writable sessions.
 - Plan-first workers, a review inbox with revision-bound decisions, saved diffs, and history restored on restart.
