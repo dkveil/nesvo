@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   AssistantChange,
   AssistantChangeRefusal,
@@ -56,6 +56,7 @@ type UseAssistantParams = {
   changes: AssistantChange[];
   refusals: AssistantChangeRefusal[];
   pick: AssistantPick;
+  loadSession: (sessionKey: string) => void;
 };
 
 const assistantSendView = {
@@ -118,6 +119,7 @@ export function useAssistant({
   changes,
   refusals,
   pick,
+  loadSession,
 }: UseAssistantParams) {
   const scope = conversationScope(
     hostId,
@@ -146,6 +148,10 @@ export function useAssistant({
     sessions.find(item => item.id === sessionId && item.hostId === hostId) ??
     null;
   const sessionKey = sessionId ? hostKey(sessionId, hostId) : '';
+  const sessionLoaded = !!session;
+  useEffect(() => {
+    if (sessionKey) loadSession(sessionKey);
+  }, [loadSession, sessionKey, sessionLoaded]);
   const storedTurns = useMemo(
     () => (sessionKey ? readTurns(sessionKey) : []),
     [sessionKey],

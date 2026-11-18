@@ -92,6 +92,7 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   onApplied: () => void;
   onOpenSession: (sessionId: string) => void;
+  onLoadSession: (sessionKey: string) => void;
   onStop: (sessionId: string) => Promise<void>;
   onUndo: (change: AssistantChange) => Promise<AssistantUndoResult>;
   onOpenChange?: (change: AssistantChange) => void;
@@ -177,6 +178,7 @@ export default function WorkflowAssistantDock({
   onRefreshProvider,
   onApplied,
   onOpenSession,
+  onLoadSession,
   onStop,
   onUndo,
   onOpenChange,
@@ -223,6 +225,7 @@ export default function WorkflowAssistantDock({
     changes,
     refusals,
     pick,
+    loadSession: onLoadSession,
   });
   const proposalKeys = assistant.entries
     .filter(entry => entry.status === 'proposal')

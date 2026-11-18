@@ -540,6 +540,7 @@ export function Workspace() {
           }
           onApplied={onApplied}
           onOpenSession={sessionId => select(hostKey(sessionId, hostId))}
+          onLoadSession={openSession}
           onStop={sessionId => stopAssistantSession(hostId, sessionId)}
           onUndo={change => undoAssistantChange(hostId, change)}
           onOpenChange={change => openAssistantChange(hostId, change)}
@@ -2951,6 +2952,7 @@ ${text}`
                         context.onApplied();
                         void automations.reload(workflowsEditor.hostId);
                       }}
+                      onLoadSession={openSession}
                       onOpenSession={sessionId =>
                         select(hostKey(sessionId, workflowsEditor.hostId))
                       }
