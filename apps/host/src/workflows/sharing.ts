@@ -46,8 +46,10 @@ function lineLabels(fileName: string, content: string) {
     for (const label of detectedLabels(text, secretPatterns))
       add(index + 1, label);
   });
+  const probed = new Set(labels.keys());
   for (const finding of findWorkflowShareFileSecrets({ fileName, content }))
-    add(finding.line, workflowShareSecretLabels[finding.kind]);
+    if (!probed.has(finding.line))
+      add(finding.line, workflowShareSecretLabels[finding.kind]);
   return labels;
 }
 
