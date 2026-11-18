@@ -404,6 +404,39 @@ export function StepInspectorForm({
               onChange={on_fail => update({ on_fail })}
             />
           </Field>
+          {!human && step.retries > 0 && (
+            <>
+              <Field
+                id={fieldId('retry_backoff')}
+                label="Retry backoff"
+                hint="Optional delay between attempts, such as 10s."
+                messages={notesOf('retry_backoff')}
+              >
+                <Input
+                  size="sm"
+                  id={fieldId('retry_backoff')}
+                  value={step.retry_backoff ?? ''}
+                  onChange={event =>
+                    update({
+                      retry_backoff: event.target.value.trim() || undefined,
+                    })
+                  }
+                />
+              </Field>
+              <Field
+                id={fieldId('idempotent')}
+                label="Safe to repeat"
+                hint="Enable only if repeating the step cannot duplicate its effects."
+                messages={notesOf('idempotent')}
+              >
+                <Switch
+                  id={fieldId('idempotent')}
+                  checked={step.idempotent ?? false}
+                  onCheckedChange={idempotent => update({ idempotent })}
+                />
+              </Field>
+            </>
+          )}
           {human && (
             <p className="col-span-2 text-2xs leading-4 text-muted-foreground">
               Human steps do not retry; the reviewer accepts, rejects or asks

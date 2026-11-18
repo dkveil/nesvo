@@ -129,7 +129,6 @@ export function StepResult({
   const { definition } = view;
   const result = record?.result ?? null;
   const state = record?.state ?? 'pending';
-  const maxAttempts = definition.retries + 1;
   const duration = result
     ? formatDuration(result.durationMs)
     : state === 'running' && record?.startedAt
@@ -196,7 +195,7 @@ export function StepResult({
           )}
           {record && record.attempt > 0 && (
             <span className="text-muted-foreground">
-              Attempt {record.attempt} of {maxAttempts}
+              Attempt {record.attempt}
             </span>
           )}
         </div>

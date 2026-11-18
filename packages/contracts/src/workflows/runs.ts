@@ -122,6 +122,13 @@ export const workflowStepRecordSchema = z.strictObject({
   phase: stepPhaseSchema,
   state: workflowStepStateSchema,
   attempt: z.number().int().nonnegative(),
+  retry: z
+    .number()
+    .int()
+    .min(0)
+    .max(workflowDefinitionLimits.retries)
+    .optional(),
+  retryAt: z.iso.datetime().optional(),
   result: stepResultSchema.nullable(),
   sessionId: idSchema.nullable(),
   reviewId: idSchema.nullable(),
@@ -148,7 +155,7 @@ export const workflowRunPageSchema = z.strictObject({
 
 export const workflowRunDetailSchema = z.strictObject({
   run: workflowRunSchema,
-  steps: z.array(workflowStepRecordSchema).max(workflowLimits.stepsPerRun),
+  steps: z.array(workflowStepRecordSchema),
 });
 
 export type WorkflowRunStatus = z.infer<typeof workflowRunStatusSchema>;

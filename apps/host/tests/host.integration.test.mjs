@@ -8773,6 +8773,66 @@ test(
       },
     );
 
+    await t.test(
+      'automatic retries respect backoff, effect safety and final failure',
+      async () => {
+        const retriesProject = await createProject(
+          'retries',
+          [
+            {
+              name: 'retry-local',
+              type: 'command',
+              retries: 2,
+              retry_backoff: '1s',
+              body: 'exit 1',
+            },
+            {
+              name: 'retry-unsafe',
+              type: 'action',
+              retries: 2,
+              body: 'exit 1',
+            },
+            {
+              name: 'retry-safe',
+              type: 'action',
+              retries: 2,
+              idempotent: true,
+              on_fail: 'fix',
+              body: 'exit 1',
+            },
+          ],
+          {
+            'retry-local': ['retry-local'],
+            'retry-unsafe': ['retry-unsafe'],
+            'retry-safe': ['retry-safe'],
+          },
+        );
+        for (const [name, count, status] of [
+          ['retry-local', 3, 'failed'],
+          ['retry-unsafe', 1, 'failed'],
+          ['retry-safe', 3, 'needs-attention'],
+        ]) {
+          const run = await start(retriesProject, name);
+          const current = await settled(run.id);
+          assert.equal(current.run.status, status);
+          assert.deepEqual(
+            current.steps.map(step => step.attempt),
+            Array.from({ length: count }, (_, index) => index + 1),
+          );
+          if (name === 'retry-local') {
+            for (const [index, step] of current.steps.entries()) {
+              if (index === 0) continue;
+              assert.ok(
+                Date.parse(step.startedAt) -
+                  Date.parse(current.steps[index - 1].result.finishedAt) >=
+                  1000,
+              );
+            }
+          }
+        }
+      },
+    );
+
     await t.test('a missing environment variable blocks the step', async () => {
       const run = await start(project, 'missing');
       const current = await settled(run.id);

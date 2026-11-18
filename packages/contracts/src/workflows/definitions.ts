@@ -85,6 +85,8 @@ const stepDefinitionShape = {
   phase: stepPhaseSchema,
   skill: stepSkillSchema.nullable().default(null),
   timeout: durationSchema.default('15m'),
+  retry_backoff: durationSchema.optional(),
+  idempotent: z.boolean().optional(),
   retries: z
     .number()
     .int()
@@ -105,12 +107,17 @@ type StepRuleSubject = {
   type: z.infer<typeof stepTypeSchema>;
   skill: string | null;
   retries: number;
+  retry_backoff?: string;
+  idempotent?: boolean;
   effect: z.infer<typeof stepEffectSchema>;
   body: string;
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
-  if (value.type === 'human' && value.retries !== 0)
+  if (
+    value.type === 'human' &&
+    (value.retries !== 0 || value.retry_backoff || value.idempotent)
+  )
     context.addIssue({
       code: 'custom',
       path: ['retries'],

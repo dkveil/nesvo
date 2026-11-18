@@ -213,6 +213,8 @@ export const stepDefinitionOf = (
   skill: step.skill,
   timeout: step.timeout,
   retries: step.retries,
+  retry_backoff: step.retry_backoff,
+  idempotent: step.idempotent,
   on_fail: step.on_fail,
   effect: step.effect,
   needs: [...step.needs],
@@ -519,6 +521,8 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.skill) lines.push(`skill: ${yamlName(step.skill)}`);
   lines.push(`timeout: ${step.timeout}`);
   if (step.retries) lines.push(`retries: ${step.retries}`);
+  if (step.retry_backoff) lines.push(`retry_backoff: ${step.retry_backoff}`);
+  if (step.idempotent) lines.push('idempotent: true');
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);

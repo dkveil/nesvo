@@ -65,6 +65,7 @@ const phases = (Object.keys(phaseRank) as StepPhase[]).sort(
   (left, right) => phaseRank[left] - phaseRank[right],
 );
 const externalEffectPattern = /\bgit\s+push\b|\bgh\s+pr\b|\bcurl\b|\bwget\b/;
+export const looksExternal = (body: string) => externalEffectPattern.test(body);
 const externalHeuristic = 'git push, gh pr, curl or wget';
 
 const quoted = (value: string) => `"${value}"`;
@@ -428,7 +429,7 @@ const externalWarnings = (
       );
     else if (
       (step.type === 'action' || step.type === 'command') &&
-      externalEffectPattern.test(step.body)
+      looksExternal(step.body)
     )
       report.add(
         'W2',

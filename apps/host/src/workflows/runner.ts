@@ -1,5 +1,7 @@
 import {
   ancestors,
+  parseDurationMs,
+  looksExternal,
   incoming,
   workflowLimits,
   stepResultSchema,
@@ -256,6 +258,7 @@ export type Move =
 export type MoveContext = {
   turnState: (messageId: string) => TurnState;
   hasAuthor: boolean;
+  now?: number;
 };
 
 const TURN_LABELS = {
@@ -528,6 +531,7 @@ const checkingMove = (
     ? []
     : pending.filter(
         step =>
+          (!step.retryAt || Date.parse(step.retryAt) <= (context.now ?? Date.now())) &&
           edgesInto(step).every(edge => edge.state === 'fired') &&
           ancestors(run.workflow.graph, step.name).every(name =>
             Boolean(outcomeOf(named.get(name))),
@@ -554,6 +558,7 @@ const checkingMove = (
   }
   if (
     ready.length > 0 ||
+    pending.some(step => step.retryAt && Date.parse(step.retryAt) > (context.now ?? Date.now())) ||
     rows.some(step => ACTIVE_STEP_STATES.includes(step.state))
   )
     return WAIT;
@@ -620,6 +625,7 @@ export class WorkflowRunner {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly busy = new Map<string, BusyTurn>();
   private readonly pending = new Set<Promise<unknown>>();
   private closed = false;
@@ -862,6 +868,8 @@ export class WorkflowRunner {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
     for (const runId of [...this.busy.keys()]) this.clearBusy(runId);
     for (const step of this.active.values()) step.controller.abort('shutdown');
     while (this.pending.size > 0 || this.active.size > 0)
@@ -876,6 +884,9 @@ export class WorkflowRunner {
     for (let iteration = 0; iteration < limit; iteration++) {
       const run = this.store.getRun(runId);
       if (!run) return;
+      const timer = this.retryTimers.get(runId);
+      if (timer) clearTimeout(timer);
+      this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
       const steps = this.store.stepsForRun(runId);
       const author = this.author;
@@ -883,10 +894,28 @@ export class WorkflowRunner {
         turnState: messageId =>
           run.sessionId && author ? author.turnState(run, messageId) : 'none',
         hasAuthor: Boolean(author),
+        now: this.clock.now().getTime(),
       });
-      if (move.kind === 'wait' || this.closed) return;
+      if (this.closed) return;
+      if (move.kind === 'wait') {
+        if (run.status === 'checking') this.scheduleRetry(runId, steps);
+        return;
+      }
       if (!this.perform(run, steps, move)) return;
     }
+  }
+
+  private scheduleRetry(runId: string, steps: readonly WorkflowStepRecord[]): void {
+    const now = this.clock.now().getTime();
+    const due = Math.min(...[...latestAttempts(steps).values()].flatMap(step => {
+      const time = step.state === 'pending' && step.retryAt ? Date.parse(step.retryAt) : 0;
+      return time > now ? [time] : [];
+    }));
+    if (!Number.isFinite(due)) return;
+    this.retryTimers.set(runId, setTimeout(() => {
+      this.retryTimers.delete(runId);
+      this.track(this.advanceRun(runId));
+    }, due - now));
   }
 
   private perform(
@@ -1088,7 +1117,8 @@ export class WorkflowRunner {
       )
       .then(outcome => {
         if (controller.signal.reason === 'shutdown') return;
-        this.finishStep(running, outcome);
+        if (!controller.signal.aborted) this.finishStep(running, outcome);
+        else this.finishStep(running, { kind: 'interrupted' });
       })
       .finally(() => {
         this.active.delete(running.id);
@@ -1144,7 +1174,37 @@ export class WorkflowRunner {
           current.startedAt ?? this.timestamp(),
           this.timestamp(),
         );
-    this.writeStep(current, { state: VERDICT_STATES[result.status], result });
+    const state = VERDICT_STATES[result.status];
+    const run = this.store.getRun(current.runId);
+    const definition = run?.workflow.steps[current.index];
+    const retry = current.retry ?? 0;
+    if (
+      run?.status === 'checking' &&
+      definition &&
+      retry < definition.retries &&
+      FAILED_STEP_STATES.includes(state) &&
+      mayRetry(run, definition)
+    ) {
+      const now = this.clock.now();
+      const backoff = definition.retry_backoff ? parseDurationMs(definition.retry_backoff) ?? 0 : 0;
+      const next = {
+        ...nextAttempt(current, now.toISOString()),
+        retry: retry + 1,
+        ...(backoff > 0 ? { retryAt: new Date(now.getTime() + backoff).toISOString() } : {}),
+      };
+      const finished = { ...current, state, result, revision: current.revision + 1, updatedAt: now.toISOString() };
+      const written = this.store.transact(() => {
+        if (!this.store.replaceStep(finished, current.revision)) return false;
+        if (!this.store.insertStep(next)) throw new Error('Step row exists.');
+        return true;
+      });
+      if (written) {
+        this.emit({ type: 'workflow-step-changed', step: finished });
+        this.emit({ type: 'workflow-step-changed', step: next });
+      }
+      return;
+    }
+    this.writeStep(current, { state, result });
   }
 
   private awaitHuman(
@@ -1348,6 +1408,8 @@ function resumeStatus(
 function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord {
   return {
     ...step,
+    retry: undefined,
+    retryAt: undefined,
     id: randomUUID(),
     revision: 1,
     state: 'pending',
@@ -1362,6 +1424,15 @@ function nextAttempt(step: WorkflowStepRecord, now: string): WorkflowStepRecord 
     decision: null,
     definitionChanges: [],
   };
+}
+
+function mayRetry(run: WorkflowRun, step: ResolvedStep): boolean {
+  if (step.type === 'human') return false;
+  if (step.idempotent) return true;
+  if (step.type !== 'command' || step.effect === 'external' || looksExternal(step.body)) return false;
+  const before = new Set(ancestors(run.workflow.graph, step.name));
+  return !run.workflow.steps.some(other => other.type === 'human' &&
+    (before.has(other.name) || PHASE_RANK[other.phase] < PHASE_RANK[step.phase]));
 }
 
 function ancestorOutputs(
