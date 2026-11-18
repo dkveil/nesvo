@@ -729,6 +729,12 @@ Session events reach the runner in one place: the session service notifies run-f
 
 The author session's provider process inherits the host environment plus `NESVO_RUN_ID` and `NESVO_PROJECT_ROOT` (the operator's project, which differs from the session directory in a worktree), so a tool started inside the session can tell it belongs to a run. Command and action steps receive the same variables from the runner.
 
+### Child workflows
+
+The `session` and `fan-out` executors use the ordinary session creation API, including effort validation, worktree creation and the repository's recipe. The child has its own folder claim and is linked to the parent by `parentId`. Its run record points back to the parent run, step attempt and item position. A manual check run creates a parent session for navigation when it contains child steps. Its phase still runs as a manual check.
+
+The runner persists the queue and completed item reports in the step document. A child run ID and its session creation request ID derive from the parent run, step attempt ID and item index. The host inserts the child run and links the session in one transaction before allowing the first turn. When the host restarts, it reads existing children by those IDs. A session created just before an interrupted link is visible in the tree with an interrupted item. Pending items in a recovered queue require a deliberate new attempt. Within each fan-out, only the workflow policy admits new children. Independent fan-outs do not share a slot counter.
+
 ### Workflow view
 
 The renderer keeps workflow runs and step records next to sessions in `use-sessions.ts`, keyed by host and ID and merged by revision from `workflow-run-changed` and `workflow-step-changed`. A connected computer with the `workflows` capability loads its first run page on connection, and every session with `workflowRunId` loads its run detail once per synchronization; a host snapshot clears that memory so a reconnect reloads it. Workflow methods take the host ID explicitly, so they need no host-bound wrapper.

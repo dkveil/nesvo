@@ -41,7 +41,7 @@ bun run lint
 | Field | Values | Meaning |
 | -- | -- | -- |
 | `name` | lowercase letters, digits and inner hyphens | Must match the file name. |
-| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until`, `probe` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
+| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until`, `probe`, `session`, `fan-out` | Use `session` to run one child workflow and `fan-out` to run a child workflow for each item in a list. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
 | `retries` | 0 to 5 | Default 0. `retries: 2` allows up to three attempts. The run records each attempt, then applies the normal failure route and `on_fail`. Human decisions never retry. |
@@ -86,6 +86,81 @@ A `probe` step reads the current Git diff in the task directory without opening 
 Set `probe` to `all` (default), `secrets`, `personal-data`, `test-integrity` or `change-size`. Findings include common credential assignments, tokens and private keys, email and phone patterns, checksum-validated IBAN and national IDs (PESEL, DNI/NIE and labeled NIF), removed assertions, skipped or focused tests, and signs that lint, type or CI enforcement changed. A diff above 20 files or 500 changed lines includes a split suggestion. Findings are signals for review. The run records the finding and changed-file counts and a bounded set of locations with masked values.
 
 Connect the probe to an agent in the graph. The next downstream agent sees the upstream findings and must justify each one or identify the fix required. Separate phases can also pass findings forward. The agent remains read-only and can report a required correction, which fails its step. The probe itself passes even when it reports findings. View the findings on the probe result and the assessments in the agent result. For large sets the agent also receives a grouped item for the overflow. Probe-review turns send masked context and display the reviewed findings and sanitized assessments in the workflow result.
+
+### Running a child workflow
+
+A `session` step starts a child of the run's session and waits for its workflow. The `session` mapping names the `workflow`, `provider`, `model`, `mode` and `title`. Set `effort` when you want a provider-specific effort. Set `directory` to an absolute path or a path relative to the parent run folder. The default is the parent run folder. With `worktree: true`, the host creates a session worktree from that checkout and uses its configured worktree recipe and existing approval flow.
+
+The body is the first prompt. In the body or title, `{{ steps.prepare.outputs.task }}` expands to the named value from an upstream step. A missing value fails that item. A child runs the named workflow with its own provider session and permission mode. A workflow with a planning gate uses the prompt as the task for that gate. The default nesting depth is two child levels. Set `max_depth` on a child step to choose a limit from one to eight. A descendant can lower an inherited limit.
+
+A child report records the workflow status, a summary from the author reply or failure, pull request links, recent step notes and outputs. The parent stores the report in `result.items` and exposes its status, summary, session ID, first pull request (`pr`) and bounded output values as step outputs. The sidebar and Subsessions show the children, including children in separate worktrees.
+
+### Running child workflows for a list
+
+A `fan-out` step uses the same session mapping and body for each item. Specify one `items` source.
+
+| Source | Fields | Input |
+| -- | -- | -- |
+| Inline | `kind: inline`, `values` | A list of strings or flat objects. |
+| File | `kind: file`, `path` | A UTF-8 Markdown table or JSON list up to 64 KiB inside the run folder. The first Markdown table supplies the column names and rows. |
+| Output | `kind: output`, `reference` | An upstream `steps.<step>.outputs.<key>` value containing a JSON list. |
+
+The list has up to 32 items. Use `{{ item }}` for a string or JSON object, `{{ item.id }}` for a field or table column, and `{{ index }}` for the one-based position. The `policy` mapping requires `max_parallel`, `min_free_ram_mb`, `min_plan_remaining_percent` and `on_fail`. The host checks free RAM in MiB, provider sign-in and the lowest reported remaining plan window before starting each item. Set `max_cpu_load_percent` to also check CPU usage across all cores. With `soft_limit`, slots beyond that threshold require 25% more free RAM, an additional 10 percentage points of plan allowance up to 100%, and at most 80% of the configured CPU cap when present.
+
+The run lists queued items and the reason they are waiting. Items start as capacity and gates allow. Running children keep their slots until their workflows settle. Folder locks still apply to child turns. On failure, `continue` finishes the batch and reports individual failures, `stop-remaining` skips queued items and fails after active children finish, and `fail-run` stops active children, skips further launches and fails immediately. An item object or table row can override the policy using its `on_fail` field. The result contains every item and its report in input order, plus `total` and `passed` outputs. The `items` text output is available when its JSON fits the normal output limit.
+
+The step timeout includes queued time and time while the host is down. Stop on the parent run stops its children and clears the queue. On restart, a running step reconnects to recorded children, keeps completed reports, and marks items that never started as interrupted. An interrupted provider turn stays interrupted. A child already waiting for human input can still receive that decision. Child steps have no automatic retries.
+
+#### Example orchestrator
+
+Save this as `.agents/workflows/workflows/orchestrate-stages.md`.
+
+```yaml
+---
+name: orchestrate-stages
+steps: [dispatch-stages]
+---
+```
+
+Save the following step as `.agents/workflows/steps/dispatch-stages.md`. The prompt starts with each stage's ID and task.
+
+```markdown
+---
+name: dispatch-stages
+type: fan-out
+phase: pre-done
+timeout: 2h
+session:
+  workflow: worker-gates
+  provider: Codex
+  model: default
+  mode: supervised
+  worktree: true
+  title: "Stage {{ item.id }}"
+items:
+  kind: file
+  path: stages.md
+policy:
+  max_parallel: 4
+  soft_limit: 2
+  min_free_ram_mb: 2048
+  min_plan_remaining_percent: 20
+  max_cpu_load_percent: 75
+  on_fail: stop-remaining
+---
+Implement stage {{ item.id }}. {{ item.task }}
+```
+
+Put `stages.md` in the run folder.
+
+```markdown
+| id | task |
+| --- | --- |
+| W1 | Add the parser and run its integration check. |
+| W2 | Wire the inspector and verify its empty state. |
+```
+
+Save `.agents/workflows/workflows/worker-gates.md` with `name: worker-gates` and `steps: [inspect-diff, approve-result]` in its frontmatter. Define `inspect-diff` as a `probe` and `approve-result` as a `human` step, both in `pre-done`. The human step's body explains what to review. Add a task spec with `workflow: orchestrate-stages` and run it from the editor. Keep the steps and stage table in the checkout when running the orchestrator in a worktree.
 
 ## The workflow file
 

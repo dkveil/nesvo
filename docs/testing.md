@@ -8,6 +8,8 @@ Damian explicitly chose limited testing for prototype delivery. Protect meaningf
 
 ## Required checks
 
+Child workflow coverage uses an isolated host and provider fixtures. It checks nested reports and worktree placement, a Markdown-table fan-out, RAM and plan gates, soft and hard slot limits, parent Stop, and restart reconciliation with the same child session and message IDs. Resource overrides are read only when `NESVO_TEST_MODE=1`.
+
 Workflow primitives extend the spawned-host runner case. It observes bounded retries and backoff, checks the external-action guard and final failure handling, restarts a pinned check wait against a CLI fixture, exercises loop convergence and exhaustion, and scans staged, unstaged and untracked changes in a temporary repository. The probe case also checks masked findings and assessments in the run and the linked verification session.
 
 Session history windows add one spawned-host case. It builds a 62-message history with large operator messages, streams a reply and checks the raw event sequence: every streaming update is a metadata-plus-one-message upsert whose `baseRevision` matches the previously emitted revision, snapshots carry at most two messages, and the largest upsert stays far below the full session. It then pages the whole history newest first by cursor and rejects an unknown cursor and session. The spawned-host harness reconstructs whole sessions from windows the same way a client does, so older cases keep asserting complete histories.
