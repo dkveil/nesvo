@@ -97,6 +97,11 @@
   --duration-slow: 200ms;
   --shell-topbar-height: 2.5rem;
   --rail-width: 2.75rem;
+  --brand-wordmark-width: calc(0.75rem * 372 / 64);
+  --shell-brand-start: calc(0.75rem + var(--titlebar-inset-left));
+  --shell-brand-end: calc(
+    var(--shell-brand-start) + var(--brand-wordmark-width) + 0.875rem
+  );
   --shell-gutter: 0.75rem;
   --sidebar-inset: 0.5rem;
   --sidebar-row-inset: 0.625rem;

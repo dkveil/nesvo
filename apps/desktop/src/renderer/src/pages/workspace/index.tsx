@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
 import type {
   ConversationIdentity,
@@ -3085,7 +3086,14 @@ ${text}`
       ? selectedProviderState
       : null;
   return (
-    <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background">
+    <div
+      className="relative flex h-dvh min-h-0 overflow-hidden bg-background"
+      style={
+        {
+          '--sidebar-extent': sidebarOpen ? `${visibleSidebarWidth}px` : '0px',
+        } as CSSProperties
+      }
+    >
       {palette && (
         <CommandPalette
           initialMode={palette.mode}
@@ -3294,11 +3302,13 @@ ${text}`
           </>
         )}
       </aside>
+      <div className="pointer-events-none absolute top-0 left-(--rail-width) hidden h-(--shell-topbar-height) items-center pl-(--shell-brand-start) select-none md:flex">
+        <BrandWordmark />
+      </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <header
           className={cn(
-            'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))]',
-            sidebarOpen && 'md:pl-2',
+            'drag-region flex h-(--shell-topbar-height) shrink-0 items-center gap-1.5 pr-[calc(var(--shell-gutter)+var(--titlebar-inset-right))] pl-[calc(0.5rem+var(--titlebar-inset-left))] md:pl-[max(0.5rem,calc(var(--shell-brand-end)-var(--sidebar-extent)))]',
             visiblePanel && 'min-[1200px]:pr-(--shell-gutter)',
           )}
         >
@@ -3329,9 +3339,6 @@ ${text}`
               <SessionSidebar {...sidebarProps} />
             </SheetContent>
           </Sheet>
-          {!sidebarOpen && (
-            <BrandWordmark className="hidden pr-2 select-none md:block" />
-          )}
           {parentSession && !browsing && !creating && (
             <IconButton
               size={32}

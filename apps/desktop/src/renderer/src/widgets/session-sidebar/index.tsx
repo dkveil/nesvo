@@ -525,9 +525,9 @@ export function SessionSidebar({
             <PanelLeft />
           </IconButton>
         )}
-        <BrandWordmark
-          className={cn('select-none', !(inline && onCollapse) && 'ml-1')}
-        />
+        {inline && (
+          <BrandWordmark className={cn('select-none', !onCollapse && 'ml-1')} />
+        )}
       </div>
       <div className="space-y-0.5 px-(--sidebar-inset) pb-2">
         <div className="flex items-center gap-0.5">
