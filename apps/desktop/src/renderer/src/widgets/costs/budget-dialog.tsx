@@ -152,7 +152,7 @@ export function BudgetDialog({
           <DialogDescription>
             {removing && budget
               ? `Remove the ${budget.scope} budget ${budget.id.slice(0, 8)} of ${formatSpend(budget.limitUsd)} per ${budget.period}.`
-              : `Periods follow ${timeZone}. The host checks reported spend before each new turn.`}
+              : `Periods follow ${timeZone}. The host checks known transcript costs before each new turn.`}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={event => void submit(event)}>

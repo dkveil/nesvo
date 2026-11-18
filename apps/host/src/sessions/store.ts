@@ -15,7 +15,6 @@ import {
   type Session,
   type Delegation,
 } from '@nesvo/contracts';
-import { saveCostTurn } from '../cost-store';
 import { startingPlan } from './stages';
 
 export type WorkflowSessionOrigin = {
@@ -461,7 +460,6 @@ export class SessionStore {
           session.scheduledJobId,
           session.scheduledJobRunId,
         );
-        saveCostTurn(this.database, session);
       }
       writeRelated?.();
       this.database.exec('COMMIT');

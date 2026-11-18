@@ -3,7 +3,7 @@ import { cn } from '@/shared/lib/cn';
 import { formatCost } from '@/shared/lib/format-cost';
 import { Hint } from '@/shared/ui/tooltip';
 import { formatSpend } from './format-spend';
-import { unknownCost } from './labels';
+import { costCoverage } from './labels';
 
 type Bucket = CostReport['buckets'][number];
 type Slot = { date: string; bucket?: Bucket };
@@ -49,8 +49,8 @@ function axisLabel(range: CostPeriod, date: Date, index: number) {
 function describe(date: string, bucket: Bucket) {
   const day = dayLabel.format(new Date(date));
   return bucket.turnCount
-    ? `${day} · ${formatCost(bucket.reportedCostUsd)} · ${unknownCost(bucket.unknownCostTurns)}`
-    : `${day} · No turns`;
+    ? `${day} · ${formatCost(bucket.costUsd)} · ${costCoverage(bucket)}`
+    : `${day} · No usage`;
 }
 
 function BarMark({ bucket, max }: { bucket?: Bucket; max: number }) {
@@ -59,7 +59,7 @@ function BarMark({ bucket, max }: { bucket?: Bucket; max: number }) {
     return (
       <span className={cn(mark, 'h-0.5 rounded-full bg-track opacity-50')} />
     );
-  const cost = bucket.reportedCostUsd;
+  const cost = bucket.costUsd;
   if (cost === null && bucket.turnCount)
     return (
       <span
@@ -75,7 +75,7 @@ function BarMark({ bucket, max }: { bucket?: Bucket; max: number }) {
     <span
       className={cn(
         mark,
-        'rounded-t-sm bg-primary transition-colors duration-fast group-hover/bar:bg-primary/80',
+        'rounded-t-sm bg-muted-foreground transition-colors duration-fast group-hover/bar:bg-foreground',
       )}
       style={{ height: `max(2px, ${(cost / max) * 100}%)` }}
     />
@@ -89,20 +89,17 @@ export function CostChart({
   range: CostPeriod;
   buckets: CostReport['buckets'];
 }) {
-  const max = Math.max(
-    0,
-    ...buckets.map(bucket => bucket.reportedCostUsd ?? 0),
-  );
+  const max = Math.max(0, ...buckets.map(bucket => bucket.costUsd ?? 0));
   const slots = periodSlots(range, buckets);
   const first = dayLabel.format(new Date(slots[0]!.date));
   const last = dayLabel.format(new Date(slots.at(-1)!.date));
   return (
-    <figure aria-label="Reported spend by date" className="space-y-1.5">
+    <figure aria-label="Transcript cost by date" className="space-y-1.5">
       <div
         aria-hidden="true"
         className="flex justify-between text-micro text-muted-foreground"
       >
-        <span>Daily reported cost</span>
+        <span>Daily cost</span>
         {max > 0 && (
           <span className="tabular-nums">Peak {formatSpend(max)}</span>
         )}

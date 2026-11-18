@@ -424,6 +424,7 @@ export type SessionServiceOptions = {
   control?: SessionControlBridge;
   profiles?: ProviderProfiles;
   mcp?: McpPolicy;
+  refreshCostBudgets?: () => Promise<void>;
   checkCostBudgets?: (
     session: Session,
     now: Date,
@@ -3760,6 +3761,20 @@ export class SessionService {
     };
     const handle: ReturnType<typeof startCodex> = {
       done: Promise.resolve().then(async (): Promise<CodexResult> => {
+        await this.options.refreshCostBudgets?.();
+        if (controller.signal.aborted)
+          return { status: 'stopped', error: null };
+        const budget = this.options.checkCostBudgets?.(session, new Date());
+        if (budget?.refusal) return { status: 'failed', error: budget.refusal };
+        const message = session.messages.at(-1);
+        if (
+          message &&
+          budget?.warning &&
+          message.costWarning !== budget.warning
+        ) {
+          message.costWarning = budget.warning;
+          this.publish(session);
+        }
         let profileDirectory: string | undefined;
         try {
           profileDirectory = await this.options.profiles?.directory(

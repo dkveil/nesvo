@@ -340,7 +340,12 @@ export const serveHost = ({
       const store = new SessionStore(database);
       const groupStore = new SessionGroupStore(database);
       const defaultFolder = new DefaultSessionFolder(database);
-      const costs = new CostStore(database);
+      const costs = yield* Effect.acquireRelease(
+        Effect.sync(
+          () => new CostStore(database, directory, () => profiles.list()),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
       const scheduledJobStore = new ScheduledJobStore(database);
       const workflowRunStore = new WorkflowRunStore(database);
       const reviewStore = new ReviewStore(database);
@@ -420,6 +425,7 @@ export const serveHost = ({
                     inbox.current?.heldReason(sessionId) ?? null,
                 },
                 checkCostBudgets: (session, now) => costs.check(session, now),
+                refreshCostBudgets: () => costs.refreshBudgets(),
                 environment: session => {
                   const run = session.workflowRunId
                     ? workflowRunStore.getRun(session.workflowRunId)
@@ -1038,7 +1044,9 @@ export const serveHost = ({
         }
         if (request.method === 'shutdown') {
           yield* Effect.promise(closeUsageAndConsumers);
-          yield* Effect.promise(() => sessions.close());
+          yield* Effect.promise(() =>
+            Promise.all([sessions.close(), costs.close()]),
+          );
           probes.controller.abort();
           yield* Effect.promise(() => Promise.all(probes.pending));
           yield* Effect.promise(() => outgoing);
@@ -2794,20 +2802,49 @@ export const serveHost = ({
           yield* Effect.tryPromise(() => send(response));
           continue;
         }
+        if (
+          request.method === 'read-costs' ||
+          request.method === 'list-cost-budgets'
+        ) {
+          const pending = costs
+            .refresh()
+            .then(() =>
+              send(
+                request.method === 'read-costs'
+                  ? {
+                      type: 'costs',
+                      id: request.id,
+                      report: costs.read(request.input),
+                    }
+                  : {
+                      type: 'cost-budgets',
+                      id: request.id,
+                      list: costs.list(),
+                    },
+              ),
+            )
+            .catch(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message: 'The host could not read transcript costs. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(pending);
+          void pending.finally(() => probes.pending.delete(pending));
+          continue;
+        }
+        if (
+          request.method === 'send-message' ||
+          request.method === 'compact-session' ||
+          request.method === 'resume-session' ||
+          request.method === 'run-scheduled-job-now'
+        )
+          yield* Effect.promise(() => costs.refreshBudgets());
         const response = yield* Effect.sync((): HostReply => {
           try {
-            if (request.method === 'read-costs')
-              return {
-                type: 'costs',
-                id: request.id,
-                report: costs.read(request.input),
-              };
-            if (request.method === 'list-cost-budgets')
-              return {
-                type: 'cost-budgets',
-                id: request.id,
-                list: costs.list(),
-              };
             if (request.method === 'create-cost-budget') {
               const budget = costs.create(request.input);
               if (!budget)

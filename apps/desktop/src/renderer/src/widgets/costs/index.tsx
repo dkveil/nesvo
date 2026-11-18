@@ -15,7 +15,6 @@ import { errorDetail } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
 import { hostKey } from '@/shared/lib/host-key';
 import { Button } from '@/shared/ui/button';
-import { Disclosure } from '@/shared/ui/disclosure';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { InlineNotice } from '@/shared/ui/inline-notice';
@@ -38,7 +37,7 @@ import {
   countFormat,
   periodLabels,
   scopeLabels,
-  unknownCost,
+  costCoverage,
 } from './labels';
 
 type Props = {
@@ -54,6 +53,19 @@ const periods = (Object.keys(periodLabels) as CostPeriod[]).map(value => ({
   label: periodLabels[value],
 }));
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const groupingLabels = {
+  provider: 'Provider',
+  model: 'Model',
+  directory: 'Project folder',
+  group: 'Session group',
+} as const;
+const groupingOptions = (
+  Object.keys(groupingLabels) as (keyof typeof groupingLabels)[]
+).map(value => ({ value, label: groupingLabels[value] }));
+
+function TokenCount({ count }: { count: number | null }) {
+  return count === null ? 'Unavailable' : countFormat.format(count);
+}
 
 function budgetTone(percent: number | null, action: CostBudget['action']) {
   if (percent === null) return 'neutral';
@@ -79,13 +91,16 @@ function CostTable({
               {label}
             </th>
             <th className={heading} scope="col">
-              Reported cost
+              Cost (USD)
             </th>
             <th className={heading} scope="col">
-              Turns
+              Input
+            </th>
+            <th className={heading} scope="col">
+              Cached
             </th>
             <th className={cn(heading, 'pr-0')} scope="col">
-              Without cost
+              Output
             </th>
           </tr>
         </thead>
@@ -106,14 +121,20 @@ function CostTable({
                   row.label
                 )}
               </td>
-              <td className="w-28 px-2 text-right">
-                <CostAmount cost={row.reportedCostUsd} />
+              <td className="w-28 py-1.5 px-2 text-right">
+                <CostAmount cost={row.costUsd} />
+                <div className="text-2xs text-muted-foreground">
+                  {costCoverage(row)}
+                </div>
               </td>
               <td className="w-20 px-2 text-right text-muted-foreground">
-                {countFormat.format(row.turnCount)}
+                <TokenCount count={row.inputTokens} />
               </td>
-              <td className="w-28 pl-2 text-right text-muted-foreground">
-                {countFormat.format(row.unknownCostTurns)}
+              <td className="w-20 px-2 text-right text-muted-foreground">
+                <TokenCount count={row.cachedInputTokens} />
+              </td>
+              <td className="w-20 pl-2 text-right text-muted-foreground">
+                <TokenCount count={row.outputTokens} />
               </td>
             </tr>
           ))}
@@ -210,7 +231,8 @@ function ComputerCosts({
   hostId: string;
   range: CostPeriod;
 }) {
-  const [groupBy, setGroupBy] = useState<ReadCostsInput['groupBy']>('provider');
+  const [groupBy, setGroupBy] =
+    useState<Exclude<ReadCostsInput['groupBy'], 'session'>>('model');
   const [refresh, setRefresh] = useState(0);
   const [modal, setModal] = useState<Modal | null>(null);
   const [result, setResult] = useState<{
@@ -264,7 +286,7 @@ function ComputerCosts({
 
   return (
     <>
-      <section aria-label="Reported cost" className="space-y-3">
+      <section aria-label="Transcript costs" className="space-y-3">
         <div>
           <SectionLabel
             as="h2"
@@ -279,26 +301,77 @@ function ComputerCosts({
               </IconButton>
             }
           >
-            Reported cost · {timeZone}
+            Cost (USD) · {timeZone}
           </SectionLabel>
           {report && (
-            <CostAmount
-              cost={report.totals.reportedCostUsd}
-              className="text-display font-semibold tracking-tight"
-            />
+            <div className="flex flex-wrap items-baseline gap-x-3">
+              <CostAmount
+                cost={report.totals.costUsd}
+                className="text-display font-semibold tracking-tight"
+              />
+              <span className="text-xs text-muted-foreground">
+                {costCoverage(report.totals)}
+              </span>
+            </div>
           )}
         </div>
         {error ? (
           <InlineNotice tone="error">{error}</InlineNotice>
         ) : report ? (
           <>
-            <p className="text-xs text-muted-foreground">
-              {report.totals.turnCount
-                ? `${countFormat.format(report.totals.turnCount)} ${report.totals.turnCount === 1 ? 'turn' : 'turns'} · ${unknownCost(report.totals.unknownCostTurns)}`
-                : 'No turns in this period'}
-            </p>
-            {report.buckets.length > 0 && (
-              <CostChart range={range} buckets={report.buckets} />
+            {report.totals.turnCount ? (
+              <>
+                <dl className="grid grid-cols-2 gap-3 border-y py-3 sm:grid-cols-4">
+                  {[
+                    { label: 'Input tokens', count: report.totals.inputTokens },
+                    {
+                      label: 'Cached input',
+                      count: report.totals.cachedInputTokens,
+                    },
+                    {
+                      label: 'Output tokens',
+                      count: report.totals.outputTokens,
+                    },
+                  ].map(({ label, count }) => (
+                    <div key={label}>
+                      <dt className="text-2xs text-muted-foreground">
+                        {label}
+                      </dt>
+                      <dd className="text-ui font-medium tabular-nums">
+                        <TokenCount count={count} />
+                      </dd>
+                    </div>
+                  ))}
+                  <div>
+                    <dt className="text-2xs text-muted-foreground">
+                      Cache savings
+                    </dt>
+                    <dd className="text-ui font-medium">
+                      <CostAmount cost={report.totals.cacheSavingsUsd} />
+                      {report.totals.partialCacheSavings &&
+                        report.totals.cacheSavingsUsd !== null && (
+                          <span className="ml-1 text-2xs text-muted-foreground">
+                            partial
+                          </span>
+                        )}
+                    </dd>
+                  </div>
+                </dl>
+                <CostChart range={range} buckets={report.buckets} />
+              </>
+            ) : Object.values(report.transcripts).includes('available') ? (
+              <p className="text-xs text-muted-foreground">
+                No transcript usage found in this period.
+              </p>
+            ) : null}
+            {Object.entries(report.transcripts).map(([provider, status]) =>
+              status === 'available' ? null : (
+                <p key={provider} className="text-xs text-muted-foreground">
+                  {status === 'missing'
+                    ? `${provider} transcript folder is missing.`
+                    : `Some ${provider} transcripts could not be read. Totals may be incomplete.`}
+                </p>
+              ),
             )}
           </>
         ) : (
@@ -319,29 +392,24 @@ function ComputerCosts({
               open: () => onSession(hostKey(row.sessionId, hostId)),
             }))}
           />
-          <Disclosure
-            title="Cost breakdown"
-            className="-mx-2 pt-2"
-            contentClassName="space-y-2 px-2 pt-2 text-foreground"
-          >
-            <SegmentedControl
-              label="Group costs by"
-              value={groupBy}
-              options={[
-                { value: 'provider', label: 'Provider' },
-                { value: 'directory', label: 'Directory' },
-              ]}
-              onChange={setGroupBy}
-            />
-            {result?.key === key ? (
-              <CostTable
-                label={groupBy === 'directory' ? 'Directory' : 'Provider'}
-                rows={report.groups.map(row => ({ ...row, label: row.key }))}
-              />
-            ) : (
-              <InlineNotice tone="loading">Loading breakdown…</InlineNotice>
-            )}
-          </Disclosure>
+        </section>
+      )}
+      {report && report.totals.turnCount > 0 && (
+        <section aria-label="Cost breakdown" className="space-y-2">
+          <SectionLabel as="h2" className="px-0">
+            Cost breakdown
+          </SectionLabel>
+          <SegmentedControl
+            label="Group costs by"
+            value={groupBy}
+            options={groupingOptions}
+            onChange={setGroupBy}
+          />
+          {result?.key === key ? (
+            <CostTable label={groupingLabels[groupBy]} rows={report.groups} />
+          ) : (
+            <InlineNotice tone="loading">Loading breakdown…</InlineNotice>
+          )}
         </section>
       )}
       {budgets && (
@@ -363,15 +431,14 @@ function ComputerCosts({
             Budgets
           </SectionLabel>
           <p className="text-xs text-muted-foreground">
-            Periods use {budgets.timeZone}. Spend excludes turns without
-            reported cost.
+            Periods use {budgets.timeZone}. Limits use known transcript costs.
           </p>
           {budgets.budgets.length === 0 ? (
             <EmptyState
               size="sm"
               icon={Wallet}
               title="No budgets on this computer"
-              description="A budget warns, or refuses new turns, once reported spend reaches its limit."
+              description="A budget warns, or refuses new turns, once transcript costs reach its limit."
             />
           ) : (
             <ul className="divide-y divide-border">
@@ -384,7 +451,7 @@ function ComputerCosts({
                       ? budget.target
                       : null;
                 const label = `${scopeLabels[budget.scope]} budget ${budget.id.slice(0, 8)}`;
-                const spend = totals.reportedCostUsd;
+                const spend = totals.costUsd;
                 const limit = budget.limitUsd;
                 const percent =
                   spend === null ? null : Math.min(100, (spend / limit) * 100);
@@ -434,9 +501,7 @@ function ComputerCosts({
                     <p className="text-xs text-muted-foreground">
                       {periodLabels[budget.period]} ·{' '}
                       {actionLabels[budget.action]}
-                      {totals.unknownCostTurns > 0
-                        ? ` · ${unknownCost(totals.unknownCostTurns)}`
-                        : ''}
+                      {costCoverage(totals) && ` · ${costCoverage(totals)}`}
                     </p>
                   </li>
                 );

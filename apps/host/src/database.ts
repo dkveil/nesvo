@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
 import { migrateCosts } from './cost-store';
+import { migrateTranscriptCosts } from './cost-transcripts';
 import { installHistoryIndex } from './sessions/history-index';
 import { installTranscriptIndex } from './sessions/transcript-index';
 import { installCodeReviewTables } from './code-review/store';
@@ -14,7 +15,7 @@ import { installWorktreeRecipeTables } from './worktree-recipes/store';
 import { installSessionControlTables } from './session-control/store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 27;
+const DATABASE_VERSION = 28;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -410,6 +411,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installLessonTables(database);
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
+      if (version < 28) migrateTranscriptCosts(database);
       installTranscriptIndex(database);
       installInboxTables(database);
       database.exec(

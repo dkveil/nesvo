@@ -233,7 +233,6 @@ export class SessionDeletions {
       const statements = [
         'DELETE FROM history_entries WHERE session_id = ?',
         'DELETE FROM reviews WHERE session_id = ?',
-        'DELETE FROM cost_turns WHERE session_id = ?',
         'DELETE FROM session_quarantine WHERE session_id = ?',
         "UPDATE sessions SET document = 'null', create_request_id = NULL WHERE id = ?",
       ].map(sql => this.database.prepare(sql));

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
+import { join, normalize } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import {
   costBudgetSchema,
   type CostBudget,
@@ -8,59 +9,20 @@ import {
   type CostReport,
   type CostTotals,
   type CreateCostBudgetInput,
+  type Provider,
   type ReadCostsInput,
   type Session,
 } from '@nesvo/contracts';
+import { CostPrices, resolveRates } from './cost-prices';
+import { CostTranscripts } from './cost-transcripts';
 
 export function migrateCosts(database: DatabaseSync): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS cost_turns (
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      run_id TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      directory TEXT NOT NULL,
-      cost_usd REAL,
-      PRIMARY KEY (session_id, run_id)
-    ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS cost_turns_started ON cost_turns(started_at);
     CREATE TABLE IF NOT EXISTS cost_budgets (
       id TEXT PRIMARY KEY,
       document TEXT NOT NULL CHECK (json_valid(document))
     );
-    INSERT OR IGNORE INTO cost_turns
-      SELECT sessions.id, message.value ->> '$.runId',
-        message.value ->> '$.createdAt', document ->> '$.provider',
-        document ->> '$.directory',
-        CASE WHEN message.value ->> '$.usage.source' = 'provider-report'
-          THEN message.value ->> '$.usage.costUsd' END
-      FROM sessions, json_each(CASE WHEN json_valid(document) THEN document END, '$.messages') AS message
-      WHERE CASE WHEN message.type = 'object' THEN message.value ->> '$.author' = 'agent' ELSE 0 END;
   `);
-}
-
-export function saveCostTurn(database: DatabaseSync, session: Session): void {
-  const message = session.messages.at(-1);
-  if (message?.author !== 'agent') return;
-  const cost =
-    message.usage?.source === 'provider-report' ? message.usage.costUsd : null;
-  database
-    .prepare(
-      `
-      INSERT INTO cost_turns (session_id, run_id, started_at, provider, directory, cost_usd)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (session_id, run_id) DO UPDATE SET cost_usd = excluded.cost_usd
-      WHERE cost_turns.cost_usd IS NOT excluded.cost_usd
-    `,
-    )
-    .run(
-      session.id,
-      message.runId,
-      message.createdAt,
-      session.provider,
-      session.directory,
-      cost,
-    );
 }
 
 const dayMs = 86_400_000;
@@ -75,112 +37,317 @@ function dateFormatter(timeZone: string): Intl.DateTimeFormat {
   });
 }
 
-function periodBounds(
-  period: CostPeriod,
-  now: Date,
-  formatter: Intl.DateTimeFormat,
-) {
-  const today = formatter.format(now);
-  const start = new Date(`${today}T00:00:00.000Z`);
+function firstDay(period: CostPeriod, today: string) {
+  const start = new Date(today + 'T00:00:00.000Z');
   if (period === 'week')
     start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
   if (period === 'month') start.setUTCDate(1);
+  return start.getTime();
+}
+
+function emptyTotals(): CostTotals {
   return {
-    start,
-    end: Date.parse(`${today}T00:00:00.000Z`),
-    today,
-    lowerBound: new Date(start.getTime() - dayMs).toISOString(),
-    firstDate: start.toISOString().slice(0, 10),
-    now: now.toISOString(),
+    costUsd: null,
+    estimatedCostTurns: 0,
+    unknownCostTurns: 0,
+    turnCount: 0,
+    inputTokens: null,
+    cachedInputTokens: null,
+    outputTokens: null,
+    cacheSavingsUsd: null,
+    partialCacheSavings: false,
   };
 }
 
-const sumColumns = `
-  SUM(cost_usd) AS cost, COUNT(*) AS turns, COUNT(*) - COUNT(cost_usd) AS unknown
-`;
+type RecordCost = {
+  source: 'provider-reported' | 'estimated' | 'unpriced';
+  costUsd: number | null;
+  cacheSavingsUsd: number | null;
+};
 
-function totals(row?: Record<string, SQLOutputValue>): CostTotals {
+function price(
+  row: UsageRow,
+  rates: ReturnType<typeof resolveRates>,
+): RecordCost {
+  const { uncached, cache_read: cached, cache_write: written, output } = row;
+  const savings =
+    rates && (rates.read !== undefined || !cached)
+      ? cached * Math.max(0, rates.input - (rates.read ?? rates.input))
+      : null;
+  if (row.reported !== null)
+    return {
+      source: 'provider-reported',
+      costUsd: row.reported,
+      cacheSavingsUsd: savings,
+    };
+  if (
+    !rates ||
+    (cached && rates.read === undefined) ||
+    (written && rates.write === undefined)
+  )
+    return { source: 'unpriced', costUsd: null, cacheSavingsUsd: savings };
   return {
-    reportedCostUsd: typeof row?.cost === 'number' ? row.cost : null,
-    turnCount: Number(row?.turns ?? 0),
-    unknownCostTurns: Number(row?.unknown ?? 0),
+    source: 'estimated',
+    costUsd:
+      uncached * rates.input +
+      cached * (rates.read ?? 0) +
+      written * (rates.write ?? 0) +
+      output * rates.output,
+    cacheSavingsUsd: savings,
   };
 }
 
-const groupColumns = {
-  session: 'session_id',
-  directory: 'directory',
-  provider: 'provider',
-} as const;
+function accumulate(totals: CostTotals, row: UsageRow, cost: RecordCost) {
+  totals.turnCount++;
+  totals.inputTokens =
+    (totals.inputTokens ?? 0) + row.uncached + row.cache_read + row.cache_write;
+  totals.cachedInputTokens = (totals.cachedInputTokens ?? 0) + row.cache_read;
+  totals.outputTokens = (totals.outputTokens ?? 0) + row.output;
+  if (cost.source === 'estimated') totals.estimatedCostTurns++;
+  if (cost.source === 'unpriced') totals.unknownCostTurns++;
+  if (cost.costUsd !== null)
+    totals.costUsd = (totals.costUsd ?? 0) + cost.costUsd;
+  if (cost.cacheSavingsUsd !== null)
+    totals.cacheSavingsUsd =
+      (totals.cacheSavingsUsd ?? 0) + cost.cacheSavingsUsd;
+  else if (row.cache_read) totals.partialCacheSavings = true;
+}
+
+type UsageRow = {
+  provider: Provider;
+  started_at: string;
+  directory: string | null;
+  model: string | null;
+  fast: number;
+  uncached: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+  reported: number | null;
+  session_id: string | null;
+  session_title: string | null;
+  group_id: string | null;
+  group_name: string | null;
+};
+
+type RatedRow = { date: string; row: UsageRow; cost: RecordCost };
+type Group = CostReport['groups'][number];
+type TopSession = CostReport['topSessions'][number];
+
+function grouping(
+  row: UsageRow,
+  by: ReadCostsInput['groupBy'],
+): Pick<Group, 'key' | 'label'> {
+  switch (by) {
+    case 'provider':
+      return { key: row.provider, label: row.provider };
+    case 'model':
+      return {
+        key: JSON.stringify([row.provider, row.model]),
+        label: `${row.provider} · ${row.model ?? 'Model unavailable'}`,
+      };
+    case 'directory':
+      return {
+        key: row.directory ? folderKey(row.directory) : '',
+        label: row.directory ?? 'Folder unavailable',
+      };
+    case 'session':
+      return {
+        key: row.session_id ?? '',
+        label: row.session_title ?? 'Outside Nesvo',
+      };
+    case 'group':
+      return { key: row.group_id ?? '', label: row.group_name ?? 'Ungrouped' };
+  }
+}
+
+function bySpend(left: CostTotals, right: CostTotals) {
+  return (
+    (right.costUsd ?? -1) - (left.costUsd ?? -1) ||
+    right.turnCount - left.turnCount
+  );
+}
+
+function folderKey(path: string) {
+  const folder = normalize(path);
+  return process.platform === 'win32' ? folder.toLowerCase() : folder;
+}
 
 function atLimit(spend: number | null, limit: number): boolean {
-  if (spend === null || spend === 0) return false;
-  return spend >= limit || limit - spend <= Number.EPSILON * limit;
+  return (
+    spend !== null &&
+    spend > 0 &&
+    (spend >= limit || limit - spend <= Number.EPSILON * limit)
+  );
 }
 
 function budgetLabel(budget: CostBudget): string {
   return `${budget.scope} budget ${budget.id.slice(0, 8)} (USD ${budget.limitUsd} per ${budget.period})`;
 }
 
+function budgetDetails(totals: CostTotals) {
+  return [
+    totals.estimatedCostTurns ? 'includes estimated cost' : '',
+    totals.unknownCostTurns ? 'includes usage with unavailable cost' : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
 export class CostStore {
   private readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   private readonly budgetFormatter = dateFormatter(this.timeZone);
-  private formatter = this.budgetFormatter;
+  private readonly transcripts: CostTranscripts;
+  private readonly prices: CostPrices;
+  private statuses: CostReport['transcripts'] = {
+    'Claude Code': 'incomplete',
+    Codex: 'incomplete',
+  };
+  private pending: Promise<void> | undefined;
+  private readonly controller = new AbortController();
 
-  constructor(private readonly database: DatabaseSync) {
-    database.function('cost_local_date', value =>
-      this.formatter.format(new Date(String(value))),
-    );
+  constructor(
+    private readonly database: DatabaseSync,
+    directory: string,
+    private readonly profiles: () => ReadonlyArray<{
+      provider: Provider;
+      configDirectory: string;
+    }>,
+  ) {
+    this.transcripts = new CostTranscripts(database);
+    this.prices = new CostPrices(join(directory, 'cost-prices.json'));
+  }
+
+  refresh(): Promise<void> {
+    if (this.controller.signal.aborted) return Promise.resolve();
+    this.pending ??= Promise.all([
+      this.transcripts.scan(this.profiles(), this.controller.signal).then(
+        statuses => {
+          this.statuses = statuses;
+        },
+        () => {
+          this.statuses = { 'Claude Code': 'incomplete', Codex: 'incomplete' };
+        },
+      ),
+      this.prices.refresh(this.controller.signal),
+    ])
+      .then(() => undefined)
+      .finally(() => {
+        this.pending = undefined;
+      });
+    return this.pending;
+  }
+
+  async refreshBudgets() {
+    if (this.database.prepare('SELECT 1 FROM cost_budgets LIMIT 1').get())
+      await this.refresh();
+  }
+
+  async close() {
+    this.controller.abort();
+    await this.pending;
+  }
+
+  private *usage(
+    period: CostPeriod,
+    now: Date,
+    formatter: Intl.DateTimeFormat,
+  ): Iterable<RatedRow> {
+    const first = firstDay(period, formatter.format(now));
+    const firstDate = new Date(first).toISOString().slice(0, 10);
+    const cache = new Map<string, ReturnType<typeof resolveRates>>();
+    const records = this.database.prepare(`
+      WITH ranked AS (
+        SELECT usage.*, file.provider,
+          row_number() OVER (
+            PARTITION BY file.provider, usage.record_key
+            ORDER BY usage.reported IS NULL, usage.output DESC, usage.started_at, usage.path
+          ) AS rank
+        FROM cost_transcript_usage AS usage
+        JOIN cost_transcript_files AS file USING (path)
+        WHERE usage.started_at >= ? AND usage.started_at <= ?
+      ), mapped AS (
+        SELECT id,
+          document ->> '$.provider' AS provider,
+          document ->> '$.providerSessionId' AS provider_session,
+          document ->> '$.title' AS title,
+          document ->> '$.groupId' AS group_id,
+          row_number() OVER (
+            PARTITION BY document ->> '$.provider', document ->> '$.providerSessionId'
+            ORDER BY updated_at DESC, id
+          ) AS rank
+        FROM sessions
+        WHERE document ->> '$.providerSessionId' IS NOT NULL AND
+          id NOT IN (SELECT session_id FROM session_tombstones)
+      )
+      SELECT ranked.*, mapped.id AS session_id, mapped.title AS session_title,
+        groups.id AS group_id, groups.name AS group_name
+      FROM ranked
+      LEFT JOIN mapped ON mapped.rank = 1 AND mapped.provider = ranked.provider
+        AND mapped.provider_session = ranked.provider_session
+      LEFT JOIN session_groups AS groups ON groups.id = mapped.group_id
+      WHERE ranked.rank = 1
+    `);
+    for (const entry of records.iterate(
+      new Date(first - dayMs).toISOString(),
+      now.toISOString(),
+    )) {
+      const row = entry as UsageRow;
+      const date = formatter.format(new Date(row.started_at));
+      if (date < firstDate) continue;
+      const key = JSON.stringify([row.model, row.fast]);
+      if (!cache.has(key))
+        cache.set(
+          key,
+          row.model
+            ? resolveRates(this.prices.table, row.model, !!row.fast)
+            : undefined,
+        );
+      yield { row, date, cost: price(row, cache.get(key)) };
+    }
   }
 
   read(input: ReadCostsInput, now = new Date()): CostReport {
-    this.formatter = dateFormatter(input.timeZone);
-    const period = periodBounds(input.range, now, this.formatter);
-    const source = `
-      FROM cost_turns
-      WHERE started_at >= ? AND started_at <= ? AND cost_local_date(started_at) BETWEEN ? AND ?
-    `;
-    const params = [
-      period.lowerBound,
-      period.now,
-      period.firstDate,
-      period.today,
-    ];
-    const read = (sql: string) => this.database.prepare(sql).all(...params);
-    const rows = read(`
-      SELECT cost_local_date(started_at) AS date, ${sumColumns}
-      ${source} GROUP BY date
-    `);
-    const dates = new Map(rows.map(row => [row.date, totals(row)]));
-    const buckets: CostReport['buckets'] = [];
+    const formatter = dateFormatter(input.timeZone);
+    const today = formatter.format(now);
+    const dates = new Map<string, CostReport['buckets'][number]>();
     for (
-      let instant = period.start.getTime();
-      instant <= period.end;
-      instant += dayMs
+      let day = firstDay(input.range, today);
+      day <= Date.parse(today + 'T00:00:00.000Z');
+      day += dayMs
     ) {
-      const date = new Date(instant).toISOString().slice(0, 10);
-      buckets.push({ date, ...(dates.get(date) ?? totals()) });
+      const date = new Date(day).toISOString().slice(0, 10);
+      dates.set(date, { date, ...emptyTotals() });
     }
-    const group = groupColumns[input.groupBy];
-    const groups = read(`
-      SELECT ${group} AS key, ${sumColumns}
-      ${source} GROUP BY ${group} ORDER BY cost DESC, turns DESC, key
-    `).map(row => ({ key: String(row.key), ...totals(row) }));
-    const topSessions = read(`
-      WITH ranked AS (
-        SELECT session_id, ${sumColumns}
-        ${source} GROUP BY session_id ORDER BY cost DESC, turns DESC, session_id LIMIT 10
-      )
-      SELECT ranked.*, CASE WHEN EXISTS (SELECT 1 FROM session_tombstones WHERE session_id = ranked.session_id) THEN 'Deleted session' ELSE coalesce(sessions.document ->> '$.title', '') END AS title
-      FROM ranked JOIN sessions ON sessions.id = ranked.session_id
-      ORDER BY cost DESC, turns DESC, session_id
-    `).map(row => ({
-      sessionId: String(row.session_id),
-      title: String(row.title),
-      ...totals(row),
-    }));
-    const [overall] = read(`SELECT ${sumColumns} ${source}`);
-    return { totals: totals(overall), buckets, groups, topSessions };
+    const groups = new Map<string, Group>();
+    const sessions = new Map<string, TopSession>();
+    const totals = emptyTotals();
+    for (const { date, row, cost } of this.usage(input.range, now, formatter)) {
+      accumulate(totals, row, cost);
+      const bucket = dates.get(date);
+      if (bucket) accumulate(bucket, row, cost);
+      const group = grouping(row, input.groupBy);
+      const item = groups.get(group.key) ?? { ...group, ...emptyTotals() };
+      accumulate(item, row, cost);
+      groups.set(group.key, item);
+      if (!row.session_id) continue;
+      const session = sessions.get(row.session_id) ?? {
+        sessionId: row.session_id,
+        title: row.session_title ?? '',
+        ...emptyTotals(),
+      };
+      accumulate(session, row, cost);
+      sessions.set(session.sessionId, session);
+    }
+    return {
+      transcripts: this.statuses,
+      totals,
+      buckets: [...dates.values()],
+      groups: [...groups.values()].sort(
+        (a, b) => bySpend(a, b) || a.label.localeCompare(b.label),
+      ),
+      topSessions: [...sessions.values()].sort(bySpend).slice(0, 10),
+    };
   }
 
   private budgets(): CostBudget[] {
@@ -191,13 +358,9 @@ export class CostStore {
   }
 
   list(now = new Date()): CostBudgetList {
-    this.formatter = this.budgetFormatter;
     return {
       timeZone: this.timeZone,
-      budgets: this.budgets().map(budget => ({
-        budget,
-        totals: this.spend(budget, now),
-      })),
+      budgets: this.spend(this.budgets(), now),
     };
   }
 
@@ -229,15 +392,18 @@ export class CostStore {
   }
 
   check(session: Pick<Session, 'id' | 'directory'>, now: Date) {
-    this.formatter = this.budgetFormatter;
+    const budgets = this.budgets().filter(
+      budget =>
+        budget.scope === 'computer' ||
+        (budget.scope === 'directory' &&
+          folderKey(budget.target) === folderKey(session.directory)) ||
+        (budget.scope === 'session' && budget.target === session.id),
+    );
     const warnings: string[] = [];
-    for (const budget of this.budgets()) {
-      if (budget.scope === 'directory' && budget.target !== session.directory)
-        continue;
-      if (budget.scope === 'session' && budget.target !== session.id) continue;
-      if (!atLimit(this.spend(budget, now).reportedCostUsd, budget.limitUsd))
-        continue;
-      const label = budgetLabel(budget);
+    for (const { budget, totals } of this.spend(budgets, now)) {
+      if (!atLimit(totals.costUsd, budget.limitUsd)) continue;
+      const details = budgetDetails(totals);
+      const label = budgetLabel(budget) + (details ? ` [${details}]` : '');
       if (budget.action === 'refuse-new-turns')
         return {
           refusal: `New turn refused. The ${label} has reached its limit.`,
@@ -251,28 +417,28 @@ export class CostStore {
     return { warning: `Budget limit reached for ${shown}${others}.` };
   }
 
-  private spend(budget: CostBudget, now: Date): CostTotals {
-    const period = periodBounds(budget.period, now, this.budgetFormatter);
-    const scope =
-      budget.scope === 'computer'
-        ? ''
-        : `AND ${groupColumns[budget.scope]} = ?`;
-    return totals(
-      this.database
-        .prepare(
-          `
-      SELECT ${sumColumns}
-      FROM cost_turns
-      WHERE started_at >= ? AND started_at <= ? AND cost_local_date(started_at) BETWEEN ? AND ? ${scope}
-    `,
-        )
-        .get(
-          period.lowerBound,
-          period.now,
-          period.firstDate,
-          period.today,
-          ...('target' in budget ? [budget.target] : []),
-        ),
-    );
+  private spend(budgets: CostBudget[], now: Date): CostBudgetList['budgets'] {
+    const views = budgets.map(budget => ({ budget, totals: emptyTotals() }));
+    const periods = new Set(budgets.map(budget => budget.period));
+    for (const period of periods) {
+      const inPeriod = views.filter(view => view.budget.period === period);
+      for (const { row, cost } of this.usage(
+        period,
+        now,
+        this.budgetFormatter,
+      )) {
+        for (const { budget, totals } of inPeriod) {
+          if (
+            budget.scope === 'computer' ||
+            (budget.scope === 'session' && row.session_id === budget.target) ||
+            (budget.scope === 'directory' &&
+              row.directory !== null &&
+              folderKey(row.directory) === folderKey(budget.target))
+          )
+            accumulate(totals, row, cost);
+        }
+      }
+    }
+    return views;
   }
 }

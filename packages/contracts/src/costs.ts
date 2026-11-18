@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { scheduledJobTimeZoneSchema } from './scheduled-jobs';
 
 export const costPeriodSchema = z.enum(['day', 'week', 'month']);
-export const costGroupSchema = z.enum(['session', 'provider', 'directory']);
+export const costGroupSchema = z.enum([
+  'session',
+  'provider',
+  'directory',
+  'model',
+  'group',
+]);
 
 export const readCostsSchema = z.strictObject({
   range: costPeriodSchema,
@@ -11,15 +17,27 @@ export const readCostsSchema = z.strictObject({
 });
 
 const costTotalsSchema = z.strictObject({
-  reportedCostUsd: z.number().nonnegative().nullable(),
+  costUsd: z.number().nonnegative().nullable(),
+  estimatedCostTurns: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative().nullable(),
+  cachedInputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  cacheSavingsUsd: z.number().nonnegative().nullable(),
+  partialCacheSavings: z.boolean(),
   turnCount: z.number().int().nonnegative(),
   unknownCostTurns: z.number().int().nonnegative(),
 });
 
 export const costReportSchema = z.strictObject({
+  transcripts: z.strictObject({
+    'Claude Code': z.enum(['available', 'missing', 'incomplete']),
+    Codex: z.enum(['available', 'missing', 'incomplete']),
+  }),
   totals: costTotalsSchema,
   buckets: z.array(costTotalsSchema.extend({ date: z.iso.date() })).max(31),
-  groups: z.array(costTotalsSchema.extend({ key: z.string() })),
+  groups: z.array(
+    costTotalsSchema.extend({ key: z.string(), label: z.string() }),
+  ),
   topSessions: z
     .array(costTotalsSchema.extend({ sessionId: z.uuid(), title: z.string() }))
     .max(10),

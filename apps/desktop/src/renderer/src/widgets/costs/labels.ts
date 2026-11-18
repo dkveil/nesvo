@@ -1,3 +1,4 @@
+import type { CostTotals } from '@nesvo/contracts';
 export const periodLabels = {
   day: 'Day',
   week: 'Week',
@@ -15,6 +16,15 @@ export const actionLabels = {
 
 export const countFormat = new Intl.NumberFormat('en');
 
-export function unknownCost(count: number): string {
-  return `${countFormat.format(count)} ${count === 1 ? 'turn' : 'turns'} without reported cost`;
+export function costCoverage(totals: CostTotals): string {
+  if (!totals.turnCount) return '';
+  const unpriced = totals.unknownCostTurns
+    ? `${countFormat.format(totals.unknownCostTurns)} unpriced`
+    : '';
+  const source = totals.estimatedCostTurns
+    ? 'Estimated'
+    : totals.costUsd === null
+      ? ''
+      : 'Provider-reported';
+  return [source, unpriced].filter(Boolean).join(' · ');
 }

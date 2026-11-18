@@ -3,6 +3,7 @@ import { type HostRequest } from '@nesvo/contracts';
 const WORKTREE_REQUEST_TIMEOUT_MS = 120_000;
 const WORKTREE_FORK_TIMEOUT_MS = 180_000;
 const LONG_REQUEST_TIMEOUT_MS = 60_000;
+const TRANSCRIPT_COST_REQUEST_TIMEOUT_MS = 180_000;
 const USAGE_REQUEST_TIMEOUT_MS = 40_000;
 const PROVIDER_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -76,6 +77,8 @@ export const requestTimeoutMs = (
     createsWorktree(method, input)
   )
     return WORKTREE_REQUEST_TIMEOUT_MS;
+  if (method === 'read-costs' || method === 'list-cost-budgets')
+    return TRANSCRIPT_COST_REQUEST_TIMEOUT_MS;
   if (longRequests.has(method)) return LONG_REQUEST_TIMEOUT_MS;
   if (method === 'provider-usage') return USAGE_REQUEST_TIMEOUT_MS;
   if (providerRequests.has(method)) return PROVIDER_REQUEST_TIMEOUT_MS;
