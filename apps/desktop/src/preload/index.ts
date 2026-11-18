@@ -350,6 +350,12 @@ const api: DesktopApi = {
   openExternal: async url => {
     await ipcRenderer.invoke('nesvo:open-external', url);
   },
+  focusWindow: async () => {
+    await ipcRenderer.invoke('nesvo:focus-window');
+  },
+  requestAttention: async () => {
+    await ipcRenderer.invoke('nesvo:request-attention');
+  },
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),

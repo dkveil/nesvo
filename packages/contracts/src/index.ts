@@ -1024,6 +1024,8 @@ export type DesktopApi = {
     listener: (scheme: AppliedColorScheme) => void,
   ) => () => void;
   openExternal: (url: string) => Promise<void>;
+  focusWindow: () => Promise<void>;
+  requestAttention: () => Promise<void>;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;

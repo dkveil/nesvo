@@ -25,10 +25,12 @@ function notify(
       tag: key,
     });
     notification.onclick = () => {
-      window.focus();
+      void window.nesvo.focusWindow().catch(() => window.focus());
       onOpen(key);
     };
   };
+  if (title === 'Approval needed')
+    void window.nesvo.requestAttention().catch(() => undefined);
   if (Notification.permission === 'granted') show();
   else if (Notification.permission === 'default')
     void Notification.requestPermission().then(permission => {

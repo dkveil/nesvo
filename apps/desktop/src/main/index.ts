@@ -332,6 +332,7 @@ void app.whenReady().then(async () => {
     next.webContents.on('preload-error', (_event, path, error) =>
       log.error(`The preload script failed: ${path}.`, error),
     );
+    next.on('focus', () => next.flashFrame(false));
     next.on('close', () => saveWindowState(userData, next));
     const applyColors = () => {
       if (next.isDestroyed()) return;
@@ -416,6 +417,19 @@ void app.whenReady().then(async () => {
       throw new Error('Unsupported link protocol');
     }
     await shell.openExternal(target.href);
+  });
+  handle('nesvo:focus-window', event => {
+    authorize(event);
+    if (!window || window.isDestroyed() || smokeTest) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    if (process.platform === 'darwin') app.focus({ steal: true });
+    window.focus();
+  });
+  handle('nesvo:request-attention', event => {
+    authorize(event);
+    if (!window || window.isDestroyed() || window.isFocused()) return;
+    window.flashFrame(true);
   });
   handle('nesvo:mobile-status', event => {
     authorize(event);
