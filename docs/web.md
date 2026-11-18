@@ -20,21 +20,23 @@ The site is not indexed for now. Every page renders `<meta name="robots" content
 
 ## Download page
 
-The page shows the wordmark, one line about Nesvo, a primary download for the visitor's system and every other platform below it. Linux is listed as not available yet.
+The page is deliberately small: the wordmark, one line about Nesvo, a primary download for the visitor's system, its version and size on one line and, on a Mac, the Terminal install command as one copyable line. Three quiet toggles open one panel at a time below: **Other platforms** (the remaining installers, Linux as not available yet and the Terminal command when the visitor is not on a Mac), **Checksums** (version, publish date, release notes, `SHA256SUMS.txt` and each installer's size and SHA-256) and **First launch** (what the unsigned builds ask on Windows and macOS). The panels are in the server-rendered HTML and hidden until opened.
 
-The system is detected twice. The server reads User-Agent Client Hints (`Sec-CH-UA-Platform`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Mobile`) and falls back to the User-Agent string; every response sends `Accept-CH` so supporting browsers include the architecture on later requests. After hydration the page asks `navigator.userAgentData.getHighEntropyValues` for the architecture and corrects the choice, which is how an Intel Mac on a Chromium browser gets the Intel disk image on the first visit. Browsers without Client Hints report every Mac as Intel, so a Mac with an unknown architecture gets the Apple silicon build with an "Intel Mac?" link under the button. Phones and tablets get no primary button, only the list.
+The wordmark carries a static scanline texture and a short slice glitch, CSS only: it plays once after load and once per mouse hover, uses only `transform`, `clip-path` and `opacity` on absolutely positioned copies (no layout shift) and is removed entirely under `prefers-reduced-motion: reduce`.
 
-Release data comes from the GitHub API (`/repos/<repo>/releases/latest`) and the release's `SHA256SUMS.txt`. The page shows the version, the publish date, the size and SHA-256 of each installer and the first-launch steps for unsigned builds. The result is cached in D1 for ten minutes per repository, so the unauthenticated API limit is not a concern; when GitHub cannot be reached the last cached result is used. Three states are handled:
+The system is detected twice. The server reads User-Agent Client Hints (`Sec-CH-UA-Platform`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Mobile`) and falls back to the User-Agent string; every response sends `Accept-CH` so supporting browsers include the architecture on later requests. After hydration the page asks `navigator.userAgentData.getHighEntropyValues` for the architecture and corrects the choice, which is how an Intel Mac on a Chromium browser gets the Intel disk image on the first visit. Browsers without Client Hints report every Mac as Intel, so a Mac with an unknown architecture gets the Apple silicon build with an "Intel Mac?" link under the button. Phones, tablets and Linux get no primary button; the platform list is shown directly instead.
 
-- **Published**: buttons, sizes and checksums.
-- **No release yet** (the API answers 404): "Downloads coming soon", rows marked "Not published yet" and no install command.
-- **Unavailable** (no cache and GitHub fails): download buttons still point at the latest release and the release section says details cannot be loaded.
+Release data comes from the GitHub API (`/repos/<repo>/releases/latest`) and the release's `SHA256SUMS.txt`. The result is cached in D1 for ten minutes per repository, so the unauthenticated API limit is not a concern; when GitHub cannot be reached the last cached result is used. Three states are handled:
+
+- **Published**: the download button, version, sizes and checksums.
+- **No release yet** (the API answers 404): the download button stays visible but inactive, with the single line "The first build is on its way." and nothing else.
+- **Unavailable** (no cache and GitHub fails): the download button still points at the latest release and one line says the release details cannot be loaded, with a link to all releases.
 
 The download buttons always use the short `/download/*` paths, which redirect to the stable file names the release workflow publishes (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so a new release needs no change to the site.
 
 ### macOS install script
 
-On a Mac the page also offers `curl -fsSL https://nesvo.dev/install.sh | sh` with a copy button. The script:
+On a Mac the page also offers `curl -fsSL https://nesvo.dev/install.sh | sh` as one copyable line; other systems find it under Other platforms. The script:
 
 1. refuses anything but macOS and picks the disk image by processor, treating a shell running under Rosetta as Apple silicon;
 2. stops when `/Applications` is not writable or Nesvo is running;
@@ -94,7 +96,7 @@ Every error body matches `workflowShareErrorSchema`: `{ error, message, issues?,
 
 ### Share page and opening in Nesvo
 
-`/w/<id>` shows the workflow name and description, the expiry, a warning that shared workflows run commands on your computer, and every step in the order of the workflow's `steps:` list with its type. Steps show their full file content (escaped, monospace) unless their frontmatter has exactly one `type` that is known not to run shell commands (`agent`, `human`, `wait-ci`, `probe`); only those steps and the workflow file are behind a disclosure. The page reads the frontmatter with a small line reader, so anything it cannot read unambiguously, such as a repeated, nested or unknown `type`, is treated as able to run commands. **Open in Nesvo** links to
+`/w/<id>` uses the same minimal styling as the home page and shows the workflow name and description, the expiry, a warning that shared workflows run commands on your computer (kept prominent with a warning-coloured rule and title), and every step in the order of the workflow's `steps:` list with its type. Steps show their full file content (escaped, monospace) unless their frontmatter has exactly one `type` that is known not to run shell commands (`agent`, `human`, `wait-ci`, `probe`); only those steps and the workflow file are behind a disclosure. The page reads the frontmatter with a small line reader, so anything it cannot read unambiguously, such as a repeated, nested or unknown `type`, is treated as able to run commands. **Open in Nesvo** links to
 
 ```text
 nesvo://import-workflow?share=<id>&origin=<site origin, URL-encoded>
