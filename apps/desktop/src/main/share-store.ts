@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import {
   sharedWorkflowLinkSchema,
-  workflowShareLimits,
+  workflowShareCreatedSchema,
+  workflowSharingLimits,
   type SharedWorkflowLink,
 } from '@nesvo/contracts';
 
@@ -11,12 +12,12 @@ const SHARING_FILE = 'sharing.json';
 const PRIVATE_FILE_MODE = 0o600;
 
 const storedLinkSchema = sharedWorkflowLinkSchema.extend({
-  revokeToken: z.string().min(1).max(workflowShareLimits.revokeToken),
+  revokeToken: workflowShareCreatedSchema.shape.revokeToken,
 });
 
 const storedSharingSchema = z.object({
-  origin: z.string().max(workflowShareLimits.url).nullable().default(null),
-  links: z.array(storedLinkSchema).max(workflowShareLimits.links).default([]),
+  origin: z.string().max(workflowSharingLimits.url).nullable().default(null),
+  links: z.array(storedLinkSchema).max(workflowSharingLimits.links).default([]),
 });
 
 export type StoredShareLink = z.infer<typeof storedLinkSchema>;
@@ -40,7 +41,7 @@ export const saveSharing = (directory: string, sharing: StoredSharing) => {
     temporary,
     JSON.stringify({
       origin: sharing.origin,
-      links: sharing.links.slice(-workflowShareLimits.links),
+      links: sharing.links.slice(-workflowSharingLimits.links),
     }),
     { mode: PRIVATE_FILE_MODE },
   );

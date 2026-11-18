@@ -8,7 +8,7 @@ import {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CREATED_RESPONSE_BYTES = 16_384;
-const MAX_BUNDLE_RESPONSE_BYTES = workflowShareLimits.totalBytes * 2;
+const MAX_BUNDLE_RESPONSE_BYTES = workflowShareLimits.requestBytes;
 
 export class ShareRequestError extends Error {
   readonly status: number | null;

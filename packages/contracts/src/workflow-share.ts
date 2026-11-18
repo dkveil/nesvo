@@ -202,7 +202,20 @@ const secretPatterns: readonly {
   },
 ];
 
-const scanFile = (file: WorkflowShareFile): WorkflowShareSecretFinding[] =>
+export const workflowShareSecretLabels: Record<
+  WorkflowShareSecretKind,
+  string
+> = {
+  'private-key': 'Private key',
+  'access-token': 'Access token',
+  'credential-assignment': 'Credential assignment',
+  'bearer-credential': 'Bearer credential',
+  'url-credential': 'Credentials in a URL',
+};
+
+export const findWorkflowShareFileSecrets = (
+  file: WorkflowShareFile,
+): WorkflowShareSecretFinding[] =>
   file.content.split(/\r?\n/).flatMap((text, index) =>
     secretPatterns
       .filter(pattern => pattern.value.test(text))
@@ -221,9 +234,9 @@ export const findWorkflowShareSecrets = (
   bundle: WorkflowShareBundle,
 ): WorkflowShareSecretFinding[] => [
   ...[bundle.name, bundle.description ?? ''].flatMap(text =>
-    scanFile({ fileName: 'bundle', content: text }),
+    findWorkflowShareFileSecrets({ fileName: 'bundle', content: text }),
   ),
-  ...[bundle.workflow, ...bundle.steps].flatMap(scanFile),
+  ...[bundle.workflow, ...bundle.steps].flatMap(findWorkflowShareFileSecrets),
 ];
 
 export const buildWorkflowShareDeepLink = ({

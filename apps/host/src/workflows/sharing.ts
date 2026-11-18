@@ -1,5 +1,5 @@
 import {
-  workflowShareLimits,
+  workflowSharingLimits,
   type DefinitionIssue,
   type DefinitionKind,
   type ImportWorkflowBundleInput,
@@ -40,14 +40,14 @@ export function scanShareFiles(files: readonly ShareFile[]): {
     file.content.split(/\r?\n/).forEach((line, index) => {
       for (const label of detectedLabels(line, secretPatterns)) {
         count++;
-        if (findings.length < workflowShareLimits.findings)
+        if (findings.length < workflowSharingLimits.findings)
           findings.push({
             fileName: file.fileName,
             line: index + 1,
             label,
             excerpt: maskProbeText(line.trim()).slice(
               0,
-              workflowShareLimits.excerpt,
+              workflowSharingLimits.excerpt,
             ),
           });
       }
