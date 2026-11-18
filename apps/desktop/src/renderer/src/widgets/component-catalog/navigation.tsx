@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Pin,
   Settings2,
+  Square,
   Workflow,
 } from 'lucide-react';
 import { DiffStat, FileGlyph } from '@/entities/file-change';
@@ -21,6 +22,7 @@ import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { NavItem, NavList } from '@/shared/ui/nav-list';
 import { SectionLabel } from '@/shared/ui/section-label';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { CatalogSection, Specimen, StateCaption } from './specimen';
 
@@ -250,6 +252,30 @@ function RowSpecimens() {
             description="sample/repository #41 · draft"
             trailing={<DiffStat additions={6} deletions={2} />}
             selected
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="two-line · meta · visible actions">
+        <div className="w-full rounded-control border bg-card p-1">
+          <ListRow
+            density="two-line"
+            leading={<StatusDot tone="info" size="md" />}
+            title="Sample worker"
+            meta={
+              <>
+                <span className="text-info-foreground">Working</span>
+                <span>4m 12s</span>
+              </>
+            }
+            description="Sample model · sample/branch"
+            trailing={<ChevronRight className="size-3.5" />}
+            actionsPlacement="visible"
+            actions={
+              <IconButton size={24} tone="danger" label="Stop sample worker">
+                <Square className="fill-current" />
+              </IconButton>
+            }
             onClick={() => undefined}
           />
         </div>

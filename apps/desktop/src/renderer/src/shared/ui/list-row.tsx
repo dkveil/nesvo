@@ -19,7 +19,7 @@ type ListRowProps = Omit<ComponentProps<'div'>, 'title' | 'onClick'> & {
   description?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
-  actionsPlacement?: 'inline' | 'overlay';
+  actionsPlacement?: 'inline' | 'overlay' | 'visible';
   selected?: boolean;
   disabled?: boolean;
   level?: number;
@@ -226,7 +226,8 @@ export function ListRow({
                   sidebar &&
                     'bg-sidebar-row-hover group-data-selected/row:bg-sidebar-row-selected',
                 ]
-              : 'opacity-0 transition-opacity duration-fast group-focus-within/row:opacity-100 group-hover/row:opacity-100 group-data-selected/row:opacity-100',
+              : actionsPlacement === 'inline' &&
+                  'opacity-0 transition-opacity duration-fast group-focus-within/row:opacity-100 group-hover/row:opacity-100 group-data-selected/row:opacity-100',
           )}
         >
           {actions}
