@@ -870,13 +870,24 @@ try {
     exact: true,
   });
   await claudeReasoning
-    .getByText(/without a reasoning effort setting/)
+    .getByRole('button', { name: 'Default', exact: true })
     .waitFor();
   assert.equal(
     await claudeReasoning.getAttribute('data-effort-support'),
-    'unsupported',
+    'per-model',
   );
-  assert.equal(await claudeReasoning.getByRole('button').count(), 0);
+  assert.deepEqual(
+    await claudeReasoning
+      .locator('[data-effort]')
+      .evaluateAll(rows => rows.map(row => row.getAttribute('data-effort'))),
+    ['default', 'low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  assert.equal(
+    await claudeReasoning
+      .getByRole('button', { name: 'Default', exact: true })
+      .getAttribute('aria-pressed'),
+    'true',
+  );
   await modelSearch.press('Escape');
   await modelPicker.waitFor({ state: 'hidden' });
   await waitForFocus(modelChip);

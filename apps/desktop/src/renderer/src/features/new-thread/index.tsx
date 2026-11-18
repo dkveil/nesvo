@@ -51,7 +51,7 @@ import {
   type WorkflowChoice,
 } from './workflow-choice';
 import { WorkflowPicker } from './workflow-picker';
-import { modelEfforts, resolveEffort } from './reasoning-effort';
+import { resolveProviderEffort } from './reasoning-effort';
 import { deriveThreadTitle } from './thread-title';
 import {
   defaultProfileKey,
@@ -199,8 +199,10 @@ export function NewThread({
   const model = models.some(option => option.id === setup.model)
     ? setup.model
     : (models[0]?.id ?? '');
-  const effort = resolveEffort(
-    modelEfforts(providerState, model),
+  const effort = resolveProviderEffort(
+    setup.provider,
+    providerState,
+    model,
     setup.effort,
   );
   const project = setup.directory.trim()
@@ -460,6 +462,7 @@ export function NewThread({
                           provider={setup.provider}
                           model={model}
                           effort={effort}
+                          claudeEffort
                           statuses={statuses}
                           disabled={pending}
                           onChange={(provider, nextModel, nextEffort) => {

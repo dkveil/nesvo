@@ -39,10 +39,7 @@ import { ModelPicker } from '@/features/new-thread/model-picker';
 import { ModeSwitch } from '@/features/session-mode/mode-switch';
 import { cycleMode } from '@/features/session-mode/cycle-mode';
 import { mcpChangeLabel } from '@/features/session-mcp/mcp-labels';
-import {
-  modelEfforts,
-  resolveEffort,
-} from '@/features/new-thread/reasoning-effort';
+import { resolveProviderEffort } from '@/features/new-thread/reasoning-effort';
 import { entityKey } from '@/shared/lib/host-key';
 import { AttachButton } from '@/features/attach-files/attach-button';
 import { AttachmentPreviewProvider } from '@/features/attach-files/attachment-preview';
@@ -376,7 +373,12 @@ export function Conversation({
       return;
     }
     const effort =
-      resolveEffort(modelEfforts(providerState, nextModel), nextEffort) || null;
+      resolveProviderEffort(
+        session.provider,
+        providerState,
+        nextModel,
+        nextEffort,
+      ) || null;
     onSelectModel(
       nextModel === session.model && effort === session.effort
         ? null
@@ -726,6 +728,7 @@ export function Conversation({
                       statuses={statuses}
                       disabled={!connected}
                       lockedProvider
+                      claudeEffort
                       triggerLabel="Change model"
                       displayLabel={
                         pendingSelection

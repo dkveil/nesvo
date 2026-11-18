@@ -27,6 +27,7 @@ type Props = {
   statuses: ProviderStates;
   disabled?: boolean;
   lockedProvider?: boolean;
+  claudeEffort?: boolean;
   triggerLabel?: string;
   displayLabel?: string;
   hint?: string;
@@ -42,6 +43,7 @@ export function ModelPicker({
   statuses,
   disabled = false,
   lockedProvider = false,
+  claudeEffort = false,
   triggerLabel = 'Choose model',
   displayLabel,
   hint,
@@ -187,6 +189,8 @@ export function ModelPicker({
           </div>
         </div>
         <ReasoningColumn
+          provider={provider}
+          claudeEffort={claudeEffort}
           state={state}
           model={previewModel}
           modelLabel={labelOf(previewModel)}
