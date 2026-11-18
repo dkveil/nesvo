@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import {
   app,
   BrowserWindow,
@@ -98,6 +98,8 @@ import {
   startWorkflowTaskSchema,
   stopWorkflowRunSchema,
   validateWorkflowDefinitionsSchema,
+  MAX_RENDERER_ERROR_REPORT_BYTES,
+  rendererErrorReportSchema,
   type AppliedColorScheme,
   type DesktopSession,
   type WorkspaceEvent,
@@ -153,6 +155,8 @@ const workflowInputs = {
 const MAX_EXTERNAL_URL_LENGTH = 2048;
 const RENDERER_CRASH_WINDOW_MS = 60_000;
 const MAX_RENDERER_RELOADS_PER_WINDOW = 3;
+const ERROR_REPORT_WINDOW_MS = 60_000;
+const MAX_ERROR_REPORTS_PER_WINDOW = 30;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
 if (process.env.NESVO_DATA_DIR) {
   app.setPath('userData', process.env.NESVO_DATA_DIR);
@@ -348,7 +352,9 @@ void app.whenReady().then(async () => {
     });
     loadRenderer(next);
   };
-  const authorize = (event: Electron.IpcMainInvokeEvent) => {
+  const authorize = (
+    event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
+  ) => {
     if (
       !window ||
       event.sender !== window.webContents ||
@@ -418,6 +424,12 @@ void app.whenReady().then(async () => {
     }
     await shell.openExternal(target.href);
   });
+  handle('nesvo:open-logs', async event => {
+    authorize(event);
+    mkdirSync(logsDirectory(), { recursive: true });
+    const failure = await shell.openPath(logsDirectory());
+    if (failure) throw new Error('The logs folder could not be opened.');
+  });
   handle('nesvo:focus-window', event => {
     authorize(event);
     if (!window || window.isDestroyed() || smokeTest) return;
@@ -430,6 +442,40 @@ void app.whenReady().then(async () => {
     authorize(event);
     if (!window || window.isDestroyed() || window.isFocused()) return;
     window.flashFrame(true);
+  });
+  let errorReports: number[] = [];
+  ipcMain.on('nesvo:report-error', (event, payload: unknown) => {
+    try {
+      authorize(event);
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    errorReports = errorReports.filter(
+      time => now - time < ERROR_REPORT_WINDOW_MS,
+    );
+    if (errorReports.length >= MAX_ERROR_REPORTS_PER_WINDOW) return;
+    errorReports.push(now);
+    let size = Number.POSITIVE_INFINITY;
+    try {
+      size = Buffer.byteLength(JSON.stringify(payload) ?? '');
+    } catch {
+      size = Number.POSITIVE_INFINITY;
+    }
+    if (size > MAX_RENDERER_ERROR_REPORT_BYTES) {
+      log.warn('The window sent an oversized error report.');
+      return;
+    }
+    const report = rendererErrorReportSchema.safeParse(payload);
+    if (!report.success) {
+      log.warn('The window sent an invalid error report.');
+      return;
+    }
+    const { kind, message, stack, componentStack } = report.data;
+    log.error(
+      `Window ${kind}: ${message}`,
+      [stack, componentStack].filter(Boolean).join('\n'),
+    );
   });
   handle('nesvo:mobile-status', event => {
     authorize(event);

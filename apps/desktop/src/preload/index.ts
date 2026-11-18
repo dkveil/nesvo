@@ -109,6 +109,7 @@ import {
   stopWorkflowRunSchema,
   validateWorkflowDefinitionsSchema,
   type DesktopApi,
+  type RendererErrorReport,
 } from '@nesvo/contracts';
 
 const launchColorScheme = appliedColorSchemeSchema.safeParse(
@@ -116,6 +117,21 @@ const launchColorScheme = appliedColorSchemeSchema.safeParse(
     .find(argument => argument.startsWith('--nesvo-color-scheme='))
     ?.split('=')[1],
 );
+const reportError = (report: RendererErrorReport) =>
+  ipcRenderer.send('nesvo:report-error', report);
+let droppedEvents = 0;
+const reportDroppedEvent = (payload: unknown, issues: string) => {
+  droppedEvents += 1;
+  const type =
+    payload && typeof payload === 'object' && 'type' in payload
+      ? String(payload.type).slice(0, 80)
+      : 'unknown';
+  reportError({
+    kind: 'dropped-event',
+    message: `Dropped an invalid ${type} event (${droppedEvents} so far).`,
+    stack: issues.slice(0, 16_000),
+  });
+};
 const route = (hostId: string | undefined) =>
   hostIdSchema.parse(hostId ?? 'local');
 const scheduledJobs: DesktopApi['scheduledJobs'] = {
@@ -350,12 +366,16 @@ const api: DesktopApi = {
   openExternal: async url => {
     await ipcRenderer.invoke('nesvo:open-external', url);
   },
+  openLogs: async () => {
+    await ipcRenderer.invoke('nesvo:open-logs');
+  },
   focusWindow: async () => {
     await ipcRenderer.invoke('nesvo:focus-window');
   },
   requestAttention: async () => {
     await ipcRenderer.invoke('nesvo:request-attention');
   },
+  reportError,
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(
       await ipcRenderer.invoke('nesvo:mobile-status'),
@@ -792,6 +812,7 @@ const api: DesktopApi = {
     const receive = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       const parsed = workspaceEventSchema.safeParse(payload);
       if (parsed.success) listener(parsed.data);
+      else reportDroppedEvent(payload, parsed.error.message);
     };
     ipcRenderer.on('nesvo:event', receive);
     return () => ipcRenderer.removeListener('nesvo:event', receive);

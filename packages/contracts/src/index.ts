@@ -20,6 +20,7 @@ import {
 } from './costs';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import type { AppliedColorScheme, ColorScheme } from './appearance';
+import type { RendererErrorReport } from './diagnostics';
 import {
   historySearchInputSchema,
   historySearchPageSchema,
@@ -1024,8 +1025,10 @@ export type DesktopApi = {
     listener: (scheme: AppliedColorScheme) => void,
   ) => () => void;
   openExternal: (url: string) => Promise<void>;
+  openLogs: () => Promise<void>;
   focusWindow: () => Promise<void>;
   requestAttention: () => Promise<void>;
+  reportError: (report: RendererErrorReport) => void;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;
   disableMobile: () => Promise<MobileGatewayStatus>;

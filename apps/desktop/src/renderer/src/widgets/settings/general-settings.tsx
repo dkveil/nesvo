@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { Computer } from '@nesvo/contracts';
 import {
@@ -8,6 +9,7 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import { HostStatus } from '@/features/host-status';
+import { Button } from '@/shared/ui/button';
 import { IconButton } from '@/shared/ui/icon-button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
@@ -41,6 +43,13 @@ export function GeneralSettings({
   onRefreshProvider,
 }: Props) {
   const name = computer?.name ?? 'Local';
+  const [logsError, setLogsError] = useState('');
+  const openLogs = () => {
+    setLogsError('');
+    void window.nesvo.openLogs().catch(() => {
+      setLogsError('The logs folder could not be opened.');
+    });
+  };
   return (
     <div className="space-y-8">
       <SettingsSection title="Connection">
@@ -110,6 +119,23 @@ export function GeneralSettings({
             </SettingsRow>
           );
         })}
+      </SettingsSection>
+      <SettingsSection title="Diagnostics">
+        <SettingsRow
+          title="Logs"
+          description={
+            <div className="space-y-1">
+              <p>Recent app and local host logs stay on this device.</p>
+              {logsError && (
+                <StatusMessage tone="error">{logsError}</StatusMessage>
+              )}
+            </div>
+          }
+        >
+          <Button variant="outline" onClick={openLogs}>
+            Open logs
+          </Button>
+        </SettingsRow>
       </SettingsSection>
     </div>
   );
