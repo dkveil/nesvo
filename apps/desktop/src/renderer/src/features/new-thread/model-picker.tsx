@@ -33,7 +33,8 @@ type Props = {
   surface?: 'solid' | 'panel';
   triggerLabel?: string;
   displayLabel?: string;
-  hint?: string;
+  pending?: boolean;
+  compact?: boolean;
   triggerClassName?: string;
   onChange: (provider: Provider, model: string, effort: string) => void;
   onRefreshProvider: (provider: Provider) => void;
@@ -52,7 +53,8 @@ export function ModelPicker({
   surface = 'solid',
   triggerLabel = 'Choose model',
   displayLabel,
-  hint,
+  pending = false,
+  compact = false,
   triggerClassName,
   onChange,
   onRefreshProvider,
@@ -95,23 +97,30 @@ export function ModelPicker({
         if (next) setActiveId(null);
       }}
     >
-      <Hint label={`${provider} · ${chipLabel}${hint ? ` · ${hint}` : ''}`}>
+      <Hint
+        label={`${provider} · ${chipLabel}${pending ? ' · next turn' : ''}`}
+      >
         <PopoverTrigger asChild>
           <ComposerChip
             disabled={disabled}
             aria-label={triggerLabel}
             icon={<ProviderGlyph provider={provider} />}
-            className={cn('text-ui text-foreground', triggerClassName)}
+            size={compact ? 'sm' : 'md'}
+            data-pending={pending || undefined}
+            className={cn(
+              !compact && 'text-ui text-foreground',
+              triggerClassName,
+            )}
           >
-            <span className="font-semibold">{shownLabel}</span>
-            {effort && (
+            <span className={cn(!compact && 'font-semibold')}>
+              {shownLabel}
+            </span>
+            {effort && !compact && (
               <span className="shrink-0 text-muted-foreground">
                 {effortLabel(effort)}
               </span>
             )}
-            {hint && (
-              <span className="shrink-0 text-muted-foreground">· {hint}</span>
-            )}
+            {pending && <StatusDot tone="info" label="Applies next turn" />}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>

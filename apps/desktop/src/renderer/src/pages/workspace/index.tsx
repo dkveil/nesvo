@@ -183,7 +183,6 @@ import {
   isRecipeHolding,
   supportsWorktreeRecipes,
 } from '@/entities/worktree-recipe';
-import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { NavigationRail } from '@/widgets/navigation-rail';
 import { CostsView } from '@/widgets/costs';
@@ -798,6 +797,8 @@ export function Workspace({
   const sidebarToggle = useRef<HTMLButtonElement | null>(null);
   const navigationToggle = useRef<HTMLButtonElement | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const resultsTrigger = useRef<HTMLButtonElement>(null);
   const [cardOpen, setCardOpen] = useState(false);
   const [creating, setCreating] = useState(
     initialSessionProvider !== undefined,
@@ -1127,6 +1128,16 @@ export function Workspace({
   );
   const [fullAccessTarget, setFullAccessTarget] = useState<Session | null>(
     null,
+  );
+  const selectedIdForReviews = selected?.id;
+  const hostReviews = useMemo(
+    () => store.reviews.filter(review => review.hostId === selectedHostId),
+    [store.reviews, selectedHostId],
+  );
+  const selectedReviews = useMemo(
+    () =>
+      hostReviews.filter(review => review.sessionId === selectedIdForReviews),
+    [hostReviews, selectedIdForReviews],
   );
   const profileCatalog = useProviderProfiles(store.computers);
   const profilesFor = (hostId: string) =>
@@ -1474,6 +1485,7 @@ export function Workspace({
     setCreating(false);
     setSelectedId(id);
     setSessionTarget(targetId);
+    setResultsOpen(targetId.startsWith('review-'));
     setMessageTarget(null);
     setInbox(false);
     setCostsView(false);
@@ -4164,6 +4176,32 @@ ${text}`
               <SquareTerminal />
             </IconButton>
           )}
+          {!browsing && !creating && selected && selectedReviews.length > 0 && (
+            <SessionReviews
+              key={selectedKey}
+              {...reviewDecisionProps}
+              open={resultsOpen}
+              onOpenChange={open => {
+                setResultsOpen(open);
+                if (!open && sessionTarget.startsWith('review-'))
+                  setSessionTarget('');
+              }}
+              triggerRef={resultsTrigger}
+              reviews={selectedReviews}
+              allReviews={hostReviews}
+              focusedId={
+                sessionTarget.startsWith('review-')
+                  ? sessionTarget.slice(7)
+                  : ''
+              }
+              onSession={select}
+              onOpenDiff={(reviewId, path) => {
+                openDiff(reviewId, path);
+                diffTrigger.current = resultsTrigger.current;
+                setResultsOpen(false);
+              }}
+            />
+          )}
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
@@ -4216,6 +4254,29 @@ ${text}`
                       owner={portOwner}
                       local={selected.hostId === 'local'}
                     />
+                    {selected.pullRequest && (
+                      <PullRequestCard
+                        hostId={selectedHostId}
+                        reference={selected.pullRequest}
+                        api={pullRequestApi(selectedHostId)}
+                        unavailableReason={pullRequestBlockedReason(
+                          selectedHostId,
+                        )}
+                        onReview={next =>
+                          reviewPullRequest({
+                            hostId: selectedHostId,
+                            reference: next,
+                          })
+                        }
+                        onOpen={next =>
+                          openPullRequestSurface({
+                            hostId: selectedHostId,
+                            reference: next,
+                          })
+                        }
+                      />
+                    )}
+
                     {sessionRecipe.run && (
                       <WorktreeRecipeResources
                         run={sessionRecipe.run}
@@ -4762,21 +4823,9 @@ ${text}`
                     actions={stages}
                   />
                 )}
-                activity={(runId, startedAt, completedAt, status, live) => (
-                  <SessionActivity
-                    runId={runId}
-                    items={selected.activities.filter(
-                      item => item.runId === runId,
-                    )}
-                    startedAt={startedAt}
-                    completedAt={completedAt}
-                    status={status}
-                    live={live && store.hostReady(selectedHostId)}
-                    offline={live && !store.hostReady(selectedHostId)}
-                    truncated={selected.activityTruncatedRunIds.includes(runId)}
-                  />
-                )}
-                focusTarget={sessionTarget}
+                focusTarget={
+                  sessionTarget.startsWith('review-') ? '' : sessionTarget
+                }
                 messageTarget={messageTarget}
                 workers={workers}
                 renderPullRequest={reference => (
@@ -4844,50 +4893,6 @@ ${text}`
                       onOpenPullRequest={openRulePullRequest}
                     />
                   </>
-                }
-                results={
-                  <SessionReviews
-                    {...reviewDecisionProps}
-                    pullRequest={
-                      selected.pullRequest && (
-                        <PullRequestCard
-                          hostId={selectedHostId}
-                          reference={selected.pullRequest}
-                          api={pullRequestApi(selectedHostId)}
-                          unavailableReason={pullRequestBlockedReason(
-                            selectedHostId,
-                          )}
-                          onReview={next =>
-                            reviewPullRequest({
-                              hostId: selectedHostId,
-                              reference: next,
-                            })
-                          }
-                          onOpen={next =>
-                            openPullRequestSurface({
-                              hostId: selectedHostId,
-                              reference: next,
-                            })
-                          }
-                        />
-                      )
-                    }
-                    reviews={store.reviews.filter(
-                      review =>
-                        review.sessionId === selected.id &&
-                        review.hostId === selectedHostId,
-                    )}
-                    allReviews={store.reviews.filter(
-                      review => review.hostId === selectedHostId,
-                    )}
-                    focusedId={
-                      sessionTarget.startsWith('review-')
-                        ? sessionTarget.slice(7)
-                        : ''
-                    }
-                    onSession={select}
-                    onOpenDiff={openDiff}
-                  />
                 }
                 delegations={
                   <Delegations

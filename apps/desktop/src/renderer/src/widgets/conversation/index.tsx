@@ -84,6 +84,7 @@ const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
 const ANNOUNCED_REPLY_LENGTH = 280;
 const EAGER_TAIL_MESSAGES = 8;
+const noActivities: Session['activities'] = [];
 
 export type ConversationAttachments = {
   items: ComposerAttachment[];
@@ -113,15 +114,7 @@ type Props = {
   activityBar?: ReactNode;
   delegations: ReactNode;
   preparation?: ReactNode;
-  results: ReactNode;
   renderPullRequest?: PullRequestMentionRenderer;
-  activity: (
-    runId: string,
-    startedAt: string | null,
-    completedAt: string | null,
-    status: Session['status'],
-    live: boolean,
-  ) => ReactNode;
   draft: string;
   selectedSkill: SelectedSkill | null;
   connected: boolean;
@@ -174,9 +167,7 @@ export function Conversation({
   activityBar,
   delegations,
   preparation,
-  results,
   renderPullRequest,
-  activity,
   draft,
   selectedSkill,
   connected,
@@ -218,6 +209,7 @@ export function Conversation({
   renderStageRecord,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
+  const feed = useRef<HTMLDivElement>(null);
   const sessionKey = entityKey(session);
   const codeComments = useCodeComments(sessionKey);
   const messageInput = useRef<ComposerEditorHandle>(null);
@@ -240,7 +232,6 @@ export function Conversation({
   const [modeNotice, setModeNotice] = useState('');
   const modeNoticeTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
-  const visibleSession = useRef('');
   const firstIndex = windowOffset(session);
   const earlierAvailable = hasEarlierMessages(session);
   const earlierMarker = useRef<HTMLDivElement>(null);
@@ -329,7 +320,8 @@ export function Conversation({
   const labelFor = (id: string) =>
     providerState.status?.models.find(option => option.id === id)?.label ??
     modelLabel(id);
-  const model = labelFor(session.actualModel ?? session.model);
+  const shownModel =
+    pendingSelection?.model ?? session.actualModel ?? session.model;
   const selectionChanges = new Map<string, string>();
   let recorded: Session['messages'][number] | undefined;
   let recordedMode: SessionMode | null = null;
@@ -431,13 +423,29 @@ export function Conversation({
       .filter(message => message.author === 'operator')
       .map(message => [message.runId, message.createdAt]),
   );
-  const activityRunIds = useMemo(
-    () =>
-      new Set([
-        ...session.activityTruncatedRunIds,
-        ...session.activities.map(item => item.runId),
-      ]),
-    [session.activities, session.activityTruncatedRunIds],
+  const activitiesByRun = useMemo(() => {
+    const grouped = new Map<string, Session['activities']>();
+    for (const item of session.activities) {
+      const items = grouped.get(item.runId);
+      if (items) items.push(item);
+      else grouped.set(item.runId, [item]);
+    }
+    return grouped;
+  }, [session.activities]);
+  const delegatedRuns = useMemo(() => {
+    const runs = new Set(session.delegations.map(proposal => proposal.runId));
+    const createWorker = sessionControlToolTitle('session_create');
+    for (const activity of session.activities)
+      if (
+        activity.title === delegationActivityTitle ||
+        activity.title === createWorker
+      )
+        runs.add(activity.runId);
+    return runs;
+  }, [session.activities, session.delegations]);
+  const truncatedRuns = useMemo(
+    () => new Set(session.activityTruncatedRunIds),
+    [session.activityTruncatedRunIds],
   );
   const lastAgent = session.messages.findLast(
     message => message.author === 'agent',
@@ -599,7 +607,7 @@ export function Conversation({
           {anchor(
             <Composer
               className={cn(
-                'z-10',
+                'z-10 px-2.5 pt-2 pb-1.5',
                 dragging &&
                   attachments.support.enabled &&
                   'border-input bg-accent/40',
@@ -736,6 +744,7 @@ export function Conversation({
                 maxLength={MESSAGE_MAX_LENGTH}
               />
               <ComposerToolbar
+                className="gap-0.5"
                 start={
                   <>
                     <AttachButton
@@ -792,12 +801,13 @@ export function Conversation({
                       claudeEffort
                       triggerLabel="Change model"
                       displayLabel={
-                        pendingSelection
-                          ? labelFor(pendingSelection.model)
-                          : model
+                        shownModel === 'default'
+                          ? 'Default'
+                          : labelFor(shownModel)
                       }
-                      hint={pendingSelection ? 'next turn' : undefined}
-                      triggerClassName="min-w-0 px-1.5 text-xs"
+                      compact
+                      pending={!!pendingSelection}
+                      triggerClassName="min-w-0 max-w-36 shrink px-1.5"
                       onChange={(_provider, nextModel, nextEffort) =>
                         chooseModel(nextModel, nextEffort)
                       }
@@ -868,35 +878,46 @@ export function Conversation({
     </SelectSkill>
   );
   useEffect(() => {
-    const viewport = bottom.current?.closest<HTMLElement>(
+    const content = feed.current;
+    const viewport = content?.closest<HTMLElement>(
       '[data-slot="scroll-area-viewport"]',
     );
-    if (!viewport) return;
+    if (!content || !viewport) return;
+    let frame = 0;
+    const follow = () => {
+      if (frame || !followOutput.current || jumping.current) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (followOutput.current && !jumping.current)
+          viewport.scrollTop = viewport.scrollHeight;
+      });
+    };
     const trackPosition = () => {
       const near =
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
         NEAR_BOTTOM_PX;
-      if (jumping.current) {
-        if (!near) return;
-        jumping.current = false;
-      }
+      if (jumping.current && !near) return;
+      jumping.current = false;
+      if (near === followOutput.current) return;
       followOutput.current = near;
-      setJumpSessionId(
-        !near && viewport.scrollHeight > viewport.clientHeight
-          ? session.id
-          : '',
-      );
+      setJumpSessionId(near ? '' : session.id);
     };
+    const interruptJump = () => {
+      jumping.current = false;
+    };
+    const resize = new ResizeObserver(follow);
+    resize.observe(content);
+    resize.observe(viewport);
     viewport.addEventListener('scroll', trackPosition, { passive: true });
-    return () => viewport.removeEventListener('scroll', trackPosition);
+    viewport.addEventListener('wheel', interruptJump, { passive: true });
+    viewport.scrollTop = viewport.scrollHeight;
+    return () => {
+      resize.disconnect();
+      cancelAnimationFrame(frame);
+      viewport.removeEventListener('scroll', trackPosition);
+      viewport.removeEventListener('wheel', interruptJump);
+    };
   }, [session.id]);
-  useEffect(() => {
-    if (visibleSession.current !== session.id || followOutput.current) {
-      bottom.current?.scrollIntoView({ block: 'end' });
-      followOutput.current = true;
-    }
-    visibleSession.current = session.id;
-  }, [session.id, session.revision]);
   useEffect(() => {
     if (!focusTarget) return;
     const target = document.getElementById(focusTarget);
@@ -952,7 +973,10 @@ export function Conversation({
             empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
           }
         >
-          <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
+          <div
+            ref={feed}
+            className="mx-auto w-full max-w-[calc(var(--composer-max-width)+2.5rem)] space-y-8 px-5 py-10"
+          >
             {earlierAvailable && (
               <div
                 ref={earlierMarker}
@@ -1000,19 +1024,11 @@ export function Conversation({
                     firstAgents.get(message.runId) === message.id &&
                     (live ||
                       !!message.completedAt ||
-                      activityRunIds.has(message.runId));
+                      activitiesByRun.has(message.runId) ||
+                      truncatedRuns.has(message.runId));
                   const delegated =
                     message.author === 'agent' &&
-                    (session.delegations.some(
-                      proposal => proposal.runId === message.runId,
-                    ) ||
-                      session.activities.some(
-                        item =>
-                          item.runId === message.runId &&
-                          (item.title === delegationActivityTitle ||
-                            item.title ===
-                              sessionControlToolTitle('session_create')),
-                      ));
+                    delegatedRuns.has(message.runId);
                   return (
                     <Fragment key={message.id}>
                       <MessageArticle
@@ -1023,21 +1039,26 @@ export function Conversation({
                           !live &&
                           index < session.messages.length - EAGER_TAIL_MESSAGES
                         }
-                        showActivity={showActivity}
                         suppressBody={
                           message.author === 'agent' &&
                           ((delegated && !message.body.trim()) ||
                             isDelegationReply(message.body, live && delegated))
                         }
                         activity={
-                          showActivity &&
-                          activity(
-                            message.runId,
-                            runStarts.get(message.runId) ?? null,
-                            message.completedAt,
-                            live ? session.status : message.state,
-                            live,
-                          )
+                          showActivity
+                            ? {
+                                runId: message.runId,
+                                items:
+                                  activitiesByRun.get(message.runId) ??
+                                  noActivities,
+                                startedAt: runStarts.get(message.runId) ?? null,
+                                completedAt: message.completedAt,
+                                status: live ? session.status : message.state,
+                                live: live && connected,
+                                offline: live && !connected,
+                                truncated: truncatedRuns.has(message.runId),
+                              }
+                            : null
                         }
                         showInterruption={message.runId !== session.runId}
                         selectionChange={selectionChanges.get(message.id)}
@@ -1260,7 +1281,6 @@ export function Conversation({
               );
             })}
             {preparation}
-            {results}
             {error && (
               <StatusMessage
                 tone="error"
@@ -1286,7 +1306,7 @@ export function Conversation({
         <div
           className={cn(
             'relative shrink-0 px-5',
-            empty ? 'mb-auto pb-16' : 'pt-2 pb-4',
+            empty ? 'mb-auto pb-16' : 'pt-1.5 pb-3',
           )}
         >
           {jumpSessionId === session.id && !empty && (

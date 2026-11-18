@@ -26,6 +26,7 @@ type NativeDisclosureProps = Omit<
   DisclosureRowProps & {
     open?: boolean;
     defaultOpen?: boolean;
+    lazyContent?: boolean;
     onOpenChange?: (open: boolean) => void;
     triggerLabel?: string;
     triggerTone?: DisclosureTone;
@@ -136,6 +137,7 @@ export function NativeDisclosure({
   triggerTone = 'default',
   open,
   defaultOpen = false,
+  lazyContent = false,
   onOpenChange,
   className,
   contentClassName,
@@ -173,7 +175,9 @@ export function NativeDisclosure({
           description={description}
         />
       </summary>
-      <div className={cn(contentClass, contentClassName)}>{children}</div>
+      {(!lazyContent || expanded) && (
+        <div className={cn(contentClass, contentClassName)}>{children}</div>
+      )}
     </details>
   );
 }

@@ -3,8 +3,8 @@ import {
   isValidElement,
   memo,
   useContext,
-  useMemo,
   useDeferredValue,
+  useMemo,
   useEffect,
   useRef,
   useState,
@@ -301,18 +301,18 @@ export const MessageBody = memo(function MessageBody({
   className,
   attachments,
   renderAttachment,
+  streaming = false,
 }: {
   body: string;
   className?: string;
   attachments?: readonly MessageAttachment[];
   renderAttachment?: (attachment: MessageAttachment) => ReactNode;
+  streaming?: boolean;
 }) {
-  const deferredBody = useDeferredValue(body);
+  const readyForMarkdown = useDeferredValue(!streaming);
   const inline = !!renderAttachment && hasPlacedAttachments(attachments);
   const markdown =
-    inline && attachments
-      ? withAttachmentMarkers(deferredBody, attachments)
-      : deferredBody;
+    inline && attachments ? withAttachmentMarkers(body, attachments) : body;
   const renderIndex = useMemo<InlineAttachmentRenderer | null>(
     () =>
       inline && attachments && renderAttachment
@@ -327,15 +327,19 @@ export const MessageBody = memo(function MessageBody({
     <div
       className={cn('min-w-0 space-y-3 [overflow-wrap:anywhere]', className)}
     >
-      <InlineAttachmentContext.Provider value={renderIndex}>
-        <Markdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={components}
-        >
-          {markdown}
-        </Markdown>
-      </InlineAttachmentContext.Provider>
+      {streaming || !readyForMarkdown ? (
+        <p className="whitespace-pre-wrap">{body}</p>
+      ) : (
+        <InlineAttachmentContext.Provider value={renderIndex}>
+          <Markdown
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+            components={components}
+          >
+            {markdown}
+          </Markdown>
+        </InlineAttachmentContext.Provider>
+      )}
     </div>
   );
 });

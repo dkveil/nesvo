@@ -476,6 +476,19 @@ export function useSessions() {
     let active = true;
     let initial = true;
     const events: WorkspaceEvent[] = [];
+    let frame = 0;
+    let deltas: SessionChange<DesktopSession>[] = [];
+    const flushDeltas = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (!deltas.length) return;
+      const changes = deltas;
+      deltas = [];
+      applyChanges(changes);
+    };
+    const onVisibility = () => {
+      if (document.hidden) flushDeltas();
+    };
     let unsubscribe = () => {};
     const updateComputers = (updates: Computer[], inspect = false) => {
       const previous = computersRef.current;
@@ -532,9 +545,14 @@ export function useSessions() {
       }
     };
     const apply = (event: WorkspaceEvent) => {
+      if (event.type === 'session-message-upserted') {
+        deltas.push(upsertChange(event));
+        if (document.hidden || deltas.length >= 128) flushDeltas();
+        else if (!frame) frame = requestAnimationFrame(flushDeltas);
+        return;
+      }
+      flushDeltas();
       if (event.type === 'session-changed') merge([event.session]);
-      else if (event.type === 'session-message-upserted')
-        applyChanges([upsertChange(event)]);
       else if (event.type === 'review-changed') mergeReviews([event.review]);
       else if (event.type === 'sessions-removed')
         remove(event.hostId, event.sessionIds);
@@ -608,6 +626,7 @@ export function useSessions() {
           ),
         );
     };
+    document.addEventListener('visibilitychange', onVisibility);
     try {
       const api = window.nesvo;
       if (!api)
@@ -655,6 +674,8 @@ export function useSessions() {
       for (const key of Object.keys(counters))
         counters[key] = (counters[key] ?? 0) + 1;
       unsubscribe();
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (frame) cancelAnimationFrame(frame);
     };
   }, [
     attempt,

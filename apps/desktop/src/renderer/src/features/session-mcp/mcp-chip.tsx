@@ -56,9 +56,15 @@ export function McpChip({
             aria-label={label}
             data-session-mcp=""
             icon={<Plug aria-hidden="true" />}
+            size="sm"
+            className="relative w-6 justify-center px-0"
           >
-            MCP
-            {pausedLabel && <StatusDot tone="warning" size="sm" />}
+            {pausedLabel && (
+              <StatusDot
+                tone="warning"
+                className="absolute top-0.5 right-0.5"
+              />
+            )}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>

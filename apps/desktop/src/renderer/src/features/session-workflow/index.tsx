@@ -9,6 +9,7 @@ import { Button } from '@/shared/ui/button';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Listbox, type ListboxOption } from '@/shared/ui/listbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import {
@@ -112,11 +113,7 @@ export function SessionWorkflowChip({
       }}
     >
       <Hint
-        label={
-          unsupported
-            ? 'Update the host to assign a workflow'
-            : 'Applies to the next run'
-        }
+        label={unsupported ? 'Update the host to assign a workflow' : label}
       >
         <PopoverTrigger asChild>
           <ComposerChip
@@ -124,9 +121,12 @@ export function SessionWorkflowChip({
             aria-label={label}
             data-session-workflow={assigned?.name ?? ''}
             icon={<Workflow aria-hidden="true" />}
-            className={cn(assigned && 'text-foreground')}
+            size="sm"
+            className="relative w-6 justify-center px-0"
           >
-            <span>{label}</span>
+            {assigned && (
+              <StatusDot tone="info" className="absolute top-0.5 right-0.5" />
+            )}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>

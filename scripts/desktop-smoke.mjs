@@ -1754,7 +1754,7 @@ try {
       .getByRole('radio', { name: 'Accept edits', exact: true })
       .click();
     await modeDialog.waitFor({ state: 'hidden' });
-    await modeSwitch.filter({ hasText: 'next turn' }).waitFor();
+    await modeSwitch.getByLabel('Applies next turn').waitFor();
     await send('Mode switch check');
     await conversation
       .getByText('Mode changed to Accept edits', { exact: true })
@@ -1762,7 +1762,9 @@ try {
     const modeSwitched = await waitState(modeTarget.id, 'completed');
     assert.equal(modeSwitched.mode, 'accept-edits');
     assert.equal(modeSwitched.messages.at(-2).mode, 'accept-edits');
-    await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
+    await modeSwitch
+      .getByLabel('Applies next turn')
+      .waitFor({ state: 'hidden' });
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
     await mcpChip.click();
     await mcpPopover
@@ -1771,10 +1773,12 @@ try {
     await page.keyboard.press('Escape');
     await mcpPopover.waitFor({ state: 'hidden' });
     await messageEditor.press('Shift+Tab');
-    await modeSwitch.filter({ hasText: 'next turn' }).waitFor();
+    await modeSwitch.getByLabel('Applies next turn').waitFor();
     for (let step = 1; step < claudeModes.length; step += 1)
       await messageEditor.press('Shift+Tab');
-    await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
+    await modeSwitch
+      .getByLabel('Applies next turn')
+      .waitFor({ state: 'hidden' });
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
     const claudeApproval = page.getByRole('region', {
       name: 'Operation approval',
@@ -2703,9 +2707,20 @@ try {
       name: `Review result: Review changes, version ${review.version}`,
       exact: true,
     });
-  const reviewPanel = review => conversation.locator(`#review-${review.id}`);
+  const savedResultsTrigger = page.getByRole('button', {
+    name: 'Saved results',
+    exact: true,
+  });
+  const savedResults = page.getByRole('dialog', {
+    name: 'Saved results',
+    exact: true,
+  });
+  const reviewPanel = review => savedResults.locator(`#review-${review.id}`);
+  const reviewDetails = review =>
+    reviewPanel(review).locator(':scope > details');
   const revealEarlierVersions = async () => {
-    const earlier = conversation.getByLabel(/^\d+ earlier versions?$/);
+    if (!(await savedResults.isVisible())) await savedResultsTrigger.click();
+    const earlier = savedResults.getByLabel(/^\d+ earlier versions?$/);
     if (!(await earlier.count())) return;
     const disclosure = earlier.locator('..');
     if ((await disclosure.getAttribute('open')) === null) await earlier.click();
@@ -2759,17 +2774,23 @@ try {
     return patch;
   };
   const openSavedDiff = async (review, before, after) => {
+    await revealEarlierVersions();
+    const details = reviewDetails(review);
+    if ((await details.getAttribute('open')) === null)
+      await details
+        .getByLabel(`Open version ${review.version}`, { exact: true })
+        .click();
     const opener = reviewPanel(review).getByRole('button', {
       name: `View diff for version ${review.version}`,
       exact: true,
     });
     await opener.click();
-    return { opener, patch: await checkSavedDiff(review, before, after) };
+    return { patch: await checkSavedDiff(review, before, after) };
   };
-  const closeSavedDiff = async opener => {
+  const closeSavedDiff = async () => {
     await page.keyboard.press('Escape');
     await diffPanel.waitFor({ state: 'hidden' });
-    await waitForFocus(opener);
+    await waitForFocus(savedResultsTrigger);
   };
   const filesOpener = page.getByRole('button', {
     name: 'Open files',
@@ -2814,8 +2835,8 @@ try {
     await page
       .getByRole('heading', { name: 'Review changes', exact: true, level: 1 })
       .waitFor();
-    await conversation.locator(`#review-${review.id}[open]`).waitFor();
-    assert.notEqual(await reviewPanel(review).getAttribute('open'), null);
+    await reviewDetails(review).and(page.locator('details[open]')).waitFor();
+    assert.notEqual(await reviewDetails(review).getAttribute('open'), null);
     assert.equal(
       await navigation
         .getByRole('button', { name: /^Review changes/ })
@@ -2841,7 +2862,7 @@ try {
     /dirty\.txt|unrelated operator edits|\.nesvo-codex/,
   );
   await screenshot('-review');
-  await closeSavedDiff(initialDiff.opener);
+  await closeSavedDiff();
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
@@ -2881,11 +2902,13 @@ try {
   await openInbox();
   await openReviewSession(correctedReview);
   await revealEarlierVersions();
-  if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
+  if ((await reviewDetails(initialReview).getAttribute('open')) === null) {
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
       .click();
-    await conversation.locator(`#review-${initialReview.id}[open]`).waitFor();
+    await reviewDetails(initialReview)
+      .and(page.locator('details[open]'))
+      .waitFor();
   }
   const staleAccept = reviewPanel(initialReview).getByRole('button', {
     name: 'Accept result',
@@ -2897,20 +2920,20 @@ try {
     .getByRole('paragraph')
     .filter({ hasText: feedback })
     .waitFor();
-  const historicalDiff = await openSavedDiff(
+  await openSavedDiff(
     initialReview,
     'user dirty baseline',
     'initial agent text',
   );
   assert.doesNotMatch(historicalDiff.patch, /corrected agent text/);
-  await closeSavedDiff(historicalDiff.opener);
+  await closeSavedDiff();
   const correctedDiff = await openSavedDiff(
     correctedReview,
     'initial agent text',
     'corrected agent text',
   );
   await screenshot('-correction');
-  await closeSavedDiff(correctedDiff.opener);
+  await closeSavedDiff();
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await page
     .getByRole('heading', { name: 'Prototype analysis', exact: true, level: 1 })
@@ -2976,7 +2999,7 @@ try {
   await screenshot('-files');
   await closeWorkspaceFiles();
   await revealEarlierVersions();
-  if ((await reviewPanel(initialReview).getAttribute('open')) === null) {
+  if ((await reviewDetails(initialReview).getAttribute('open')) === null) {
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
       .click();
@@ -3102,12 +3125,12 @@ try {
   await sidebar.getByRole('button', { name: /^Review changes/ }).click();
   await sidebar.waitFor({ state: 'hidden' });
   await revealEarlierVersions();
-  if ((await reviewPanel(correctedReview).getAttribute('open')) === null) {
+  if ((await reviewDetails(correctedReview).getAttribute('open')) === null) {
     await reviewPanel(correctedReview)
       .getByLabel(`Open version ${correctedReview.version}`, { exact: true })
       .click();
   }
-  const compactDiff = await openSavedDiff(
+  await openSavedDiff(
     correctedReview,
     'initial agent text',
     'corrected agent text',
@@ -3122,7 +3145,7 @@ try {
     true,
   );
   await screenshot('-compact');
-  await closeSavedDiff(compactDiff.opener);
+  await closeSavedDiff();
   await filesOpener.click();
   await checkWorkspaceFiles();
   await filesPanel
@@ -3156,7 +3179,7 @@ try {
   await navigation.waitFor({ state: 'visible' });
   await navigation.getByRole('button', { name: /^Review changes/ }).click();
   await revealEarlierVersions();
-  if ((await reviewPanel(initialReview).getAttribute('open')) === null)
+  if ((await reviewDetails(initialReview).getAttribute('open')) === null)
     await reviewPanel(initialReview)
       .getByLabel(`Open version ${initialReview.version}`, { exact: true })
       .click();

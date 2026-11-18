@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { ArrowUpRight } from 'lucide-react';
+import { useEffect, useRef, useState, type Ref } from 'react';
+import { ArrowUpRight, ClipboardCheck } from 'lucide-react';
 import {
   fileKindLabels,
   reviewDate,
@@ -15,11 +15,16 @@ import {
 } from '@/features/review-decision';
 import { Button } from '@/shared/ui/button';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
+import { IconButton } from '@/shared/ui/icon-button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { ListRow } from '@/shared/ui/list-row';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 
 type Props = ReviewDecisionProps & {
-  pullRequest?: ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  triggerRef: Ref<HTMLButtonElement>;
   reviews: Review[];
   allReviews: Review[];
   focusedId: string;
@@ -31,6 +36,7 @@ type VersionProps = ReviewDecisionProps & {
   review: Review;
   allReviews: Review[];
   focused: boolean;
+  latest: boolean;
   onSession: (sessionId: string, targetId?: string) => void;
   onOpenDiff: (reviewId: string, path?: string) => void;
 };
@@ -49,25 +55,23 @@ function ReviewVersion({
   review,
   allReviews,
   focused,
+  latest,
   onSession,
   onOpenDiff,
   ...decisionProps
 }: VersionProps) {
   const [open, setOpen] = useOpenWhenFocused(focused);
-  return (
-    <NativeDisclosure
-      id={`review-${review.id}`}
-      role="region"
-      aria-label={`Session result: version ${review.version}`}
-      triggerLabel={`Open version ${review.version}`}
-      title={`Version ${review.version}`}
-      meta={reviewStatusLabels[review.status]}
-      description={reviewPreview(review)}
-      open={open}
-      onOpenChange={setOpen}
-      className="border-b py-1.5 last:border-b-0"
-      contentClassName="space-y-5 pt-3 pr-2 pb-4 text-foreground"
-    >
+  const status =
+    review.status === 'changes-requested'
+      ? 'Corrections'
+      : reviewStatusLabels[review.status];
+  const decision = (review.status === 'pending' ||
+    decisionProps.feedbacks[entityKey(review)] ||
+    decisionProps.decisionErrors[entityKey(review)]) && (
+    <ReviewDecision review={review} {...decisionProps} size="xs" />
+  );
+  const details = (
+    <div className="space-y-3">
       <header className="space-y-1">
         <h3 className="text-sm font-medium [overflow-wrap:anywhere]">
           {review.title}
@@ -222,17 +226,48 @@ function ReviewVersion({
           )}
         </section>
       )}
-      {(review.status === 'pending' ||
-        decisionProps.feedbacks[entityKey(review)] ||
-        decisionProps.decisionErrors[entityKey(review)]) && (
-        <ReviewDecision review={review} {...decisionProps} />
+    </div>
+  );
+  return (
+    <section
+      id={`review-${review.id}`}
+      aria-label={`Session result: version ${review.version}`}
+      className="space-y-2"
+    >
+      {latest && (
+        <>
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="font-medium">Version {review.version}</span>
+            <span className="text-muted-foreground">{status}</span>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+            {reviewPreview(review)}
+          </p>
+          {decision}
+        </>
       )}
-    </NativeDisclosure>
+      <NativeDisclosure
+        lazyContent
+        triggerLabel={`Open version ${review.version}`}
+        title={latest ? 'Result details' : `Version ${review.version}`}
+        meta={latest ? undefined : status}
+        description={latest ? undefined : reviewPreview(review)}
+        open={open}
+        onOpenChange={setOpen}
+        className="border-b py-1 last:border-b-0"
+        contentClassName="space-y-3 px-2 pt-2 pb-3 text-foreground"
+      >
+        {details}
+        {!latest && decision}
+      </NativeDisclosure>
+    </section>
   );
 }
 
 export function SessionReviews({
-  pullRequest,
+  open,
+  onOpenChange,
+  triggerRef,
   reviews,
   allReviews,
   focusedId,
@@ -246,9 +281,19 @@ export function SessionReviews({
       right.createdAt.localeCompare(left.createdAt),
   );
   const [latest, ...earlier] = versions;
+  const title = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!open || !focusedId) return;
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById('review-' + focusedId)
+        ?.scrollIntoView({ block: 'nearest' }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [focusedId, open]);
   const focusedEarlier = earlier.some(review => review.id === focusedId);
   const [earlierOpen, setEarlierOpen] = useOpenWhenFocused(focusedEarlier);
-  if (reviews.length === 0 && !pullRequest) return null;
+  if (!latest) return null;
   const earlierLabel = `${earlier.length} earlier ${earlier.length === 1 ? 'version' : 'versions'}`;
   const renderVersion = (review: Review) => (
     <ReviewVersion
@@ -256,30 +301,63 @@ export function SessionReviews({
       review={review}
       allReviews={allReviews}
       focused={review.id === focusedId}
+      latest={review.id === latest.id}
       onSession={onSession}
       onOpenDiff={onOpenDiff}
       {...decisionProps}
     />
   );
   return (
-    <section aria-label="Session results" className="space-y-2 border-t pt-5">
-      <h2 className="text-sm font-medium">Session results</h2>
-      {pullRequest}
-      <div className="-mx-2 empty:hidden">
-        {latest && renderVersion(latest)}
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <IconButton
+          ref={triggerRef}
+          size={32}
+          label="Saved results"
+          pressed={open}
+          className="relative"
+        >
+          <ClipboardCheck />
+          {latest.status === 'pending' && (
+            <StatusDot tone="warning" className="absolute top-1 right-1" />
+          )}
+        </IconButton>
+      </PopoverTrigger>
+      <PopoverContent
+        onOpenAutoFocus={event => {
+          event.preventDefault();
+          title.current?.focus();
+        }}
+        side="bottom"
+        align="end"
+        size="lg"
+        surface="solid"
+        scroll
+        aria-label="Saved results"
+        className="space-y-3"
+      >
+        <h2
+          ref={title}
+          tabIndex={-1}
+          className="border-b pb-2 text-xs font-medium outline-none"
+        >
+          Saved results
+        </h2>
+        {renderVersion(latest)}
         {earlier.length > 0 && (
           <NativeDisclosure
+            lazyContent
             triggerLabel={earlierLabel}
             title={earlierLabel}
             open={earlierOpen}
             onOpenChange={setEarlierOpen}
-            className="pt-1.5"
-            contentClassName="pl-0"
+            className="border-t pt-1"
+            contentClassName="space-y-2 pt-1"
           >
             {earlier.map(renderVersion)}
           </NativeDisclosure>
         )}
-      </div>
-    </section>
+      </PopoverContent>
+    </Popover>
   );
 }

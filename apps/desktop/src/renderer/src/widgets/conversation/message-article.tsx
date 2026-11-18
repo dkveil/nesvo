@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { attachmentKind, type MessageAttachment } from '@nesvo/contracts';
 import { BookOpen } from 'lucide-react';
 import { statusLabels, type Provider, type Session } from '@/entities/session';
@@ -16,6 +16,10 @@ import { CopyMessageButton } from './copy-message-button';
 import { interruptionLabels } from './interruption-labels';
 import { isLongPrompt } from './long-prompt';
 import { MessageBody } from './message-body';
+import {
+  SessionActivity,
+  type SessionActivityProps,
+} from '@/widgets/session-activity';
 import { MessagePullRequests } from './message-pull-requests';
 
 type Message = Session['messages'][number];
@@ -35,9 +39,8 @@ type MessageArticleProps = {
   provider: Provider;
   live: boolean;
   deferred: boolean;
-  showActivity: boolean;
   suppressBody: boolean;
-  activity: ReactNode;
+  activity: SessionActivityProps | null;
   showInterruption: boolean;
   selectionChange: string | undefined;
   threadStart: boolean;
@@ -63,10 +66,48 @@ function sameRenderedMessage(previous: Message, next: Message) {
   );
 }
 
+function sameActivity(
+  left: SessionActivityProps | null,
+  right: SessionActivityProps | null,
+) {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.runId === right.runId &&
+      left.startedAt === right.startedAt &&
+      left.completedAt === right.completedAt &&
+      left.status === right.status &&
+      left.live === right.live &&
+      left.offline === right.offline &&
+      left.truncated === right.truncated &&
+      (left.items === right.items ||
+        (left.items.length === right.items.length &&
+          left.items.every((item, index) => {
+            const next = right.items[index]!;
+            return (
+              item === next ||
+              (item.id === next.id &&
+                item.status === next.status &&
+                item.title === next.title &&
+                item.kind === next.kind &&
+                item.startedAt === next.startedAt &&
+                item.completedAt === next.completedAt &&
+                item.detail === next.detail &&
+                item.output === next.output &&
+                item.truncated === next.truncated &&
+                item.paths.length === next.paths.length &&
+                item.paths.every(
+                  (path, pathIndex) => path === next.paths[pathIndex],
+                ))
+            );
+          }))))
+  );
+}
+
 function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
   return (
-    !previous.showActivity &&
-    !next.showActivity &&
+    sameActivity(previous.activity, next.activity) &&
     previous.provider === next.provider &&
     previous.live === next.live &&
     previous.suppressBody === next.suppressBody &&
@@ -84,7 +125,6 @@ export const MessageArticle = memo(function MessageArticle({
   provider,
   live,
   deferred,
-  showActivity,
   suppressBody,
   activity,
   showInterruption,
@@ -92,6 +132,26 @@ export const MessageArticle = memo(function MessageArticle({
   threadStart,
   compacted,
 }: MessageArticleProps) {
+  const article = useRef<HTMLElement>(null);
+  const [visited, setVisited] = useState(!deferred);
+  useEffect(() => {
+    if (!deferred || visited || !article.current) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          setVisited(true);
+          observer.disconnect();
+        }
+      },
+      {
+        root: article.current.closest('[data-slot="scroll-area-viewport"]'),
+        rootMargin: '300px 0px',
+      },
+    );
+    observer.observe(article.current);
+    return () => observer.disconnect();
+  }, [deferred, visited]);
+  const visibleContent = !deferred || visited;
   const stripAttachments = (message.attachments ?? []).filter(
     attachment =>
       attachmentKind(attachment.mediaType) === 'image' ||
@@ -103,6 +163,7 @@ export const MessageArticle = memo(function MessageArticle({
       {threadStart && <Separator label="Session restarted" />}
       {selectionChange && <Separator label={selectionChange} />}
       <article
+        ref={article}
         id={`message-${message.id}`}
         data-message-id={message.id}
         aria-label={message.author === 'operator' ? 'You' : provider}
@@ -114,113 +175,121 @@ export const MessageArticle = memo(function MessageArticle({
           deferred && 'content-visibility-auto',
         )}
       >
-        <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
-          {message.origin === 'imported' && (
-            <Chip interactive={false} size="sm">
-              Imported
-            </Chip>
-          )}
-          {message.author === 'operator' &&
-            (message.skill || message.skillId) && (
-              <Chip
-                interactive={false}
-                size="sm"
-                icon={<BookOpen aria-hidden="true" />}
-                aria-label={
-                  message.skill
-                    ? `Requested skill: ${message.skill.name}`
-                    : 'Unresolved skill request'
-                }
-                title={
-                  message.skill
-                    ? [
-                        `${message.skill.source} · ${message.skill.path}`,
-                        message.skill.origins?.join(', '),
-                        message.skill.delivery === 'instructions'
-                          ? 'Shared instructions · static snapshot for this message'
-                          : message.skill.delivery === 'native'
-                            ? 'Native skill'
-                            : '',
-                        message.skill.contentHash
-                          ? `SHA-256: ${message.skill.contentHash}`
-                          : message.skillHash
-                            ? `SHA-256: ${message.skillHash}`
-                            : '',
-                      ]
-                        .filter(Boolean)
-                        .join('\n')
-                    : 'A skill was requested, but its source was not resolved.'
-                }
-                className="max-w-[70%] bg-highlight"
-              >
-                <span>{message.skill?.name ?? 'Requested skill'}</span>
-                {message.skill?.delivery === 'instructions' && (
-                  <span>Shared instructions</span>
+        {visibleContent ? (
+          <>
+            <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
+              {message.origin === 'imported' && (
+                <Chip interactive={false} size="sm">
+                  Imported
+                </Chip>
+              )}
+              {message.author === 'operator' &&
+                (message.skill || message.skillId) && (
+                  <Chip
+                    interactive={false}
+                    size="sm"
+                    icon={<BookOpen aria-hidden="true" />}
+                    aria-label={
+                      message.skill
+                        ? `Requested skill: ${message.skill.name}`
+                        : 'Unresolved skill request'
+                    }
+                    title={
+                      message.skill
+                        ? [
+                            `${message.skill.source} · ${message.skill.path}`,
+                            message.skill.origins?.join(', '),
+                            message.skill.delivery === 'instructions'
+                              ? 'Shared instructions · static snapshot for this message'
+                              : message.skill.delivery === 'native'
+                                ? 'Native skill'
+                                : '',
+                            message.skill.contentHash
+                              ? `SHA-256: ${message.skill.contentHash}`
+                              : message.skillHash
+                                ? `SHA-256: ${message.skillHash}`
+                                : '',
+                          ]
+                            .filter(Boolean)
+                            .join('\n')
+                        : 'A skill was requested, but its source was not resolved.'
+                    }
+                    className="max-w-[70%] bg-highlight"
+                  >
+                    <span>{message.skill?.name ?? 'Requested skill'}</span>
+                    {message.skill?.delivery === 'instructions' && (
+                      <span>Shared instructions</span>
+                    )}
+                  </Chip>
                 )}
-              </Chip>
-            )}
-          {message.author === 'agent' &&
-            message.state !== 'completed' &&
-            !showActivity && (
-              <Chip interactive={false} size="sm">
-                <span>{statusLabels[message.state]}</span>
-              </Chip>
-            )}
-        </div>
-        {message.costWarning && (
-          <InlineNotice className="bg-accent">
-            {message.costWarning}
-          </InlineNotice>
-        )}
-        {showActivity && activity}
-        {message.author === 'operator' && !!stripAttachments.length && (
-          <MessageAttachments attachments={stripAttachments} />
-        )}
-        {!suppressBody &&
-          (message.body || !live) &&
-          (message.author === 'operator' ? (
-            isLongPrompt(message.body) ? (
-              <ClampedPrompt>
-                <MessageBody
-                  body={message.body}
-                  attachments={message.attachments}
-                  renderAttachment={renderInlineAttachment}
-                  className="rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
-                />
-              </ClampedPrompt>
-            ) : (
-              <MessageBody
-                body={message.body || 'No response text.'}
-                attachments={message.attachments}
-                renderAttachment={renderInlineAttachment}
-                className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
-              />
-            )
-          ) : (
-            <MessageBody
-              body={message.body || 'No response text.'}
-              className="w-full text-ui leading-relaxed"
-            />
-          ))}
-        {message.author === 'operator' && !!message.codeComments?.length && (
-          <CodeCommentCards comments={message.codeComments} />
-        )}
-        {!suppressBody &&
-          message.author === 'agent' &&
-          !live &&
-          message.body && <MessagePullRequests body={message.body} />}
-        {!suppressBody &&
-          message.author === 'agent' &&
-          !live &&
-          message.body && (
-            <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
-              <CopyMessageButton body={message.body} />
+              {message.author === 'agent' &&
+                message.state !== 'completed' &&
+                !activity && (
+                  <Chip interactive={false} size="sm">
+                    <span>{statusLabels[message.state]}</span>
+                  </Chip>
+                )}
             </div>
-          )}
-        {message.interruption && showInterruption && (
-          <StatusMessage tone="warning">
-            {interruptionLabels[message.interruption.reason]}
-          </StatusMessage>
+            {message.costWarning && (
+              <InlineNotice className="bg-accent">
+                {message.costWarning}
+              </InlineNotice>
+            )}
+            {activity && <SessionActivity {...activity} />}
+            {message.author === 'operator' && !!stripAttachments.length && (
+              <MessageAttachments attachments={stripAttachments} />
+            )}
+            {!suppressBody &&
+              (message.body || !live) &&
+              (message.author === 'operator' ? (
+                isLongPrompt(message.body) ? (
+                  <ClampedPrompt>
+                    <MessageBody
+                      body={message.body}
+                      attachments={message.attachments}
+                      renderAttachment={renderInlineAttachment}
+                      className="rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
+                    />
+                  </ClampedPrompt>
+                ) : (
+                  <MessageBody
+                    body={message.body || 'No response text.'}
+                    attachments={message.attachments}
+                    renderAttachment={renderInlineAttachment}
+                    className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
+                  />
+                )
+              ) : (
+                <MessageBody
+                  body={message.body || 'No response text.'}
+                  streaming={live}
+                  className="w-full text-ui leading-relaxed"
+                />
+              ))}
+            {message.author === 'operator' &&
+              !!message.codeComments?.length && (
+                <CodeCommentCards comments={message.codeComments} />
+              )}
+            {!suppressBody &&
+              message.author === 'agent' &&
+              !live &&
+              message.body && <MessagePullRequests body={message.body} />}
+            {!suppressBody &&
+              message.author === 'agent' &&
+              !live &&
+              message.body && (
+                <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
+                  <CopyMessageButton body={message.body} />
+                </div>
+              )}
+            {message.interruption && showInterruption && (
+              <StatusMessage tone="warning">
+                {interruptionLabels[message.interruption.reason]}
+              </StatusMessage>
+            )}
+          </>
+        ) : (
+          <div aria-hidden="true" className="h-32" />
         )}
       </article>
     </>

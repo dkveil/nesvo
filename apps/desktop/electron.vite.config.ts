@@ -30,7 +30,14 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(directory, 'src/renderer'),
-    resolve: { alias: { '@': resolve(directory, 'src/renderer/src') } },
+    resolve: {
+      alias: {
+        '@': resolve(directory, 'src/renderer/src'),
+        ...(process.env.NESVO_PROFILE_RENDERER === '1'
+          ? { 'react-dom/client': 'react-dom/profiling' }
+          : {}),
+      },
+    },
     plugins: [
       react(),
       tailwindcss(),

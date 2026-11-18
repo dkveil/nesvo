@@ -21,7 +21,7 @@ import {
 import { CodeBlock } from '@/shared/ui/code-block';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 
-type Props = {
+export type SessionActivityProps = {
   runId: string;
   items: Activity[];
   startedAt: string | null;
@@ -46,6 +46,7 @@ function ActivityItem({ item }: { item: Activity }) {
   const Icon = failed ? CircleAlert : icons[item.kind];
   return (
     <NativeDisclosure
+      lazyContent
       data-activity-id={item.id}
       data-activity-kind={item.kind}
       data-activity-status={item.status}
@@ -55,6 +56,14 @@ function ActivityItem({ item }: { item: Activity }) {
       meta={activityStatusLabels[item.status]}
       contentClassName="ml-3.5 space-y-2 border-l pt-1 pb-3 pl-3"
     >
+      <ActivityDetails item={item} />
+    </NativeDisclosure>
+  );
+}
+
+function ActivityDetails({ item }: { item: Activity }) {
+  return (
+    <>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs">
         <time dateTime={item.startedAt}>
           Started {new Date(item.startedAt).toLocaleTimeString('en')}
@@ -104,7 +113,7 @@ function ActivityItem({ item }: { item: Activity }) {
           Only a bounded part of this activity was saved.
         </p>
       )}
-    </NativeDisclosure>
+    </>
   );
 }
 
@@ -117,11 +126,12 @@ export function SessionActivity({
   live,
   truncated,
   offline = false,
-}: Props) {
+}: SessionActivityProps) {
   const region = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!live) return;
     const element = region.current;
     if (!element) return;
     let intersecting = false;
@@ -137,7 +147,7 @@ export function SessionActivity({
       observer.disconnect();
       document.removeEventListener('visibilitychange', updateVisibility);
     };
-  }, []);
+  }, [live]);
   useEffect(() => {
     if (!live || !visible) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -162,7 +172,7 @@ export function SessionActivity({
     : undefined;
   const failures = items.filter(item => item.status === 'failed').length;
   const summary = live ? '' : activitySummary(items);
-  const batches = activityBatches(items);
+
   return (
     <section
       ref={region}
@@ -171,6 +181,7 @@ export function SessionActivity({
       className="min-w-0 text-muted-foreground"
     >
       <NativeDisclosure
+        lazyContent
         triggerLabel="Toggle activity"
         className="-mx-2"
         title={
@@ -204,33 +215,46 @@ export function SessionActivity({
         }
         contentClassName="ml-3.5 max-h-80 space-y-px overflow-y-auto border-l pt-1 pl-2"
       >
-        {batches.map(batch => {
-          if (batch.items.length === 1)
-            return <ActivityItem key={batch.id} item={batch.items[0]!} />;
-          const Icon = icons[batch.kind];
-          return (
-            <NativeDisclosure
-              key={batch.id}
-              triggerLabel={`Toggle ${batch.kind} activity`}
-              icon={<Icon />}
-              title={batchLabel(batch)}
-              contentClassName="ml-3.5 space-y-px border-l pt-0 pb-0 pl-2"
-            >
-              {batch.items.map(item => (
-                <ActivityItem key={item.id} item={item} />
-              ))}
-            </NativeDisclosure>
-          );
-        })}
-        {items.length === 0 && (
-          <p className="px-2 py-1">No saved tool activity for this turn.</p>
-        )}
-        {truncated && (
-          <p className="px-2 py-1 text-2xs">
-            Some session activity was omitted by the saved-history limit.
-          </p>
-        )}
+        <ActivityRows items={items} truncated={truncated} />
       </NativeDisclosure>
     </section>
+  );
+}
+
+function ActivityRows({
+  items,
+  truncated,
+}: Pick<SessionActivityProps, 'items' | 'truncated'>) {
+  const batches = activityBatches(items);
+  return (
+    <>
+      {batches.map(batch => {
+        if (batch.items.length === 1)
+          return <ActivityItem key={batch.id} item={batch.items[0]!} />;
+        const Icon = icons[batch.kind];
+        return (
+          <NativeDisclosure
+            lazyContent
+            key={batch.id}
+            triggerLabel={`Toggle ${batch.kind} activity`}
+            icon={<Icon />}
+            title={batchLabel(batch)}
+            contentClassName="ml-3.5 space-y-px border-l pt-0 pb-0 pl-2"
+          >
+            {batch.items.map(item => (
+              <ActivityItem key={item.id} item={item} />
+            ))}
+          </NativeDisclosure>
+        );
+      })}
+      {items.length === 0 && (
+        <p className="px-2 py-1">No saved tool activity for this turn.</p>
+      )}
+      {truncated && (
+        <p className="px-2 py-1 text-2xs">
+          Some session activity was omitted by the saved-history limit.
+        </p>
+      )}
+    </>
   );
 }

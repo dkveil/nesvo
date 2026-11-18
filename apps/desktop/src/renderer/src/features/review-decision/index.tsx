@@ -25,11 +25,16 @@ export type ReviewDecisionProps = {
   ) => void;
 };
 
-type Props = ReviewDecisionProps & { review: Review; compact?: boolean };
+type Props = ReviewDecisionProps & {
+  review: Review;
+  compact?: boolean;
+  size?: 'xs';
+};
 
 export function ReviewDecision({
   review,
   compact = false,
+  size,
   blockedReason,
   getBlockedReason,
   pending,
@@ -61,6 +66,7 @@ export function ReviewDecision({
       >
         <Button
           type="button"
+          size={size}
           variant={compact ? 'secondary' : 'default'}
           disabled={disabled || unavailable}
           onClick={() => onDecision(review, 'accept', '')}
@@ -69,6 +75,7 @@ export function ReviewDecision({
         </Button>
         <Button
           type="button"
+          size={size}
           variant="ghost"
           disabled={disabled}
           aria-expanded={expanded}

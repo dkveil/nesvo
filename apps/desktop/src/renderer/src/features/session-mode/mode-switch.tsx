@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
@@ -55,6 +56,8 @@ export function ModeSwitch({
           <ComposerChip
             disabled={disabled}
             aria-label="Permission mode"
+            size="sm"
+            data-pending={pending || undefined}
             icon={<ModeIcon mode={chosen} aria-hidden="true" />}
             className="min-w-0"
           >
@@ -65,11 +68,7 @@ export function ModeSwitch({
             ) : (
               <span>{label}</span>
             )}
-            {pending && (
-              <span className="shrink-0 text-muted-foreground">
-                · next turn
-              </span>
-            )}
+            {pending && <StatusDot tone="info" label="Applies next turn" />}
           </ComposerChip>
         </PopoverTrigger>
       </Hint>
