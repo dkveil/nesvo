@@ -71,6 +71,7 @@ import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -2062,8 +2063,10 @@ ${text}`
       setModelSelections(previous => ({ ...previous, [key]: null }));
       setRestartTarget(null);
       select(key);
+      return true;
     } catch (error) {
       setRestartError(errorDetail(error));
+      return false;
     } finally {
       setThreadActionPending(false);
     }
@@ -2350,43 +2353,22 @@ ${text}`
           onClose={() => setPalette(null)}
         />
       )}
-      <Dialog
+      <ConfirmDialog
         open={!!restartTarget}
         onOpenChange={open => {
-          if (!open && !threadActionPending) setRestartTarget(null);
+          if (!open) setRestartTarget(null);
         }}
+        title="Restart session?"
+        description={`The next message in “${restartTarget?.title ?? ''}” will start a new provider thread. Your history, folder and permission mode will stay in this session.`}
+        confirmLabel="Restart session"
+        pendingLabel="Restarting…"
+        tone="default"
+        onConfirm={() => (restartTarget ? restartSession(restartTarget) : true)}
       >
-        {restartTarget && (
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Restart session?</DialogTitle>
-              <DialogDescription>
-                The next message in “{restartTarget.title}” will start a new
-                provider thread. Your history, folder and permission mode will
-                stay in this session.
-              </DialogDescription>
-            </DialogHeader>
-            {restartError && (
-              <StatusMessage tone="error">{restartError}</StatusMessage>
-            )}
-            <DialogFooter>
-              <Button
-                variant="outline"
-                disabled={threadActionPending}
-                onClick={() => setRestartTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={threadActionPending}
-                onClick={() => void restartSession(restartTarget)}
-              >
-                Restart session
-              </Button>
-            </DialogFooter>
-          </DialogContent>
+        {restartError && (
+          <StatusMessage tone="error">{restartError}</StatusMessage>
         )}
-      </Dialog>
+      </ConfirmDialog>
       {historySearch && (
         <HistorySearchDialog
           computers={store.computers}

@@ -44,12 +44,13 @@ export function ConfirmDialog({
   }, []);
   const confirm = async () => {
     setPending(true);
+    let keepOpen = false;
     try {
-      await onConfirm();
+      keepOpen = (await onConfirm()) === false;
     } finally {
       if (mounted.current) {
         setPending(false);
-        onOpenChange(false);
+        if (!keepOpen) onOpenChange(false);
       }
     }
   };
