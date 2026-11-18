@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { pullRequestReferenceSchema } from './pull-requests';
+import { decisionRouteSchema } from './decision-route';
 import { activityLimits, sessionActivitySchema } from './activities';
 import {
   effortSupportSchema,
@@ -127,7 +128,7 @@ export const sessionPlanLimits = { text: 12_000, rounds: 5 } as const;
 export const stageRecordLimit = 50;
 export const stageActorSchema = z.strictObject({
   kind: z.enum(['owner', 'coordinator']),
-  via: z.enum(['desktop', 'mobile', 'session-control']),
+  via: z.enum(['desktop', 'mobile', 'session-control', 'parent']),
   sessionId: z.uuid().nullable().default(null),
 });
 export type StageActor = z.infer<typeof stageActorSchema>;
@@ -198,6 +199,18 @@ export const sessionStageRecordSchema = z.discriminatedUnion('kind', [
     kind: z.literal('progress'),
     runId: z.uuid(),
     text: z.string().max(stageLimits.progress),
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('decision'),
+    subject: z.enum(['rule', 'plan', 'question', 'approval']),
+    itemId: z.string().min(1).max(200),
+    childId: z.uuid().nullable(),
+    childTitle: z.string().max(200).nullable(),
+    title: z.string().max(500),
+    route: decisionRouteSchema,
+    status: z.enum(['needed', 'decided']),
+    outcome: z.string().max(stageLimits.answer).nullable(),
+    by: stageActorSchema.nullable(),
   }),
 ]);
 export type SessionStageRecord = z.infer<typeof sessionStageRecordSchema>;
@@ -559,6 +572,7 @@ export const sessionSchema = z.strictObject({
     .default([]),
   stageTools: z.boolean().default(false),
   browser: z.boolean().optional(),
+  decisionRoute: decisionRouteSchema.optional(),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([

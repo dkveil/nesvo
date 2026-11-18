@@ -64,7 +64,9 @@ export type DecideSessionParentInput = z.infer<
 >;
 
 const decisionTextSchema = z.string().trim().min(1).max(stageLimits.answer);
-const decisionChannelSchema = z.enum(['desktop', 'mobile']).default('desktop');
+const decisionChannelSchema = z
+  .enum(['desktop', 'mobile', 'parent'])
+  .default('desktop');
 
 export const decideSessionPlanSchema = z
   .strictObject({
@@ -393,6 +395,8 @@ export const sessionControlEventTypeSchema = z.enum([
   'question',
   'question-answered',
   'progress',
+  'decision-needed',
+  'decision-made',
 ]);
 export const sessionControlEventSchema = z.strictObject({
   seq: z.number().int().positive(),

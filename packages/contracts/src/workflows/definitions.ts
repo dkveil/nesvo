@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { promptSkillSchema, type PromptSkill } from '../skills';
+import { decisionRouteSchema } from '../decision-route';
 import { parsePullRequestUrl } from '../pull-requests';
 import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 import {
@@ -321,6 +322,7 @@ const workflowDefinitionShape = {
   name: stepNameSchema,
   description: z.string().max(workflowDefinitionLimits.description).default(''),
   body: z.string().max(workflowDefinitionLimits.body).default(''),
+  decisions: decisionRouteSchema.optional(),
 };
 
 export const workflowEdgeConditionSchema = z.enum(WORKFLOW_EDGE_CONDITIONS);

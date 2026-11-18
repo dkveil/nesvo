@@ -19,6 +19,8 @@ import {
   assistantChangeRefusedEventSchema,
 } from './workflows';
 
+import { inboxItemSchema } from './inbox-rules';
+
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
 
@@ -67,6 +69,8 @@ export const hostCapabilitySchema = z.enum([
   'merged-worktree-cleanup',
   'automation-rituals',
   'lessons',
+  'inbox-rules',
+  'decision-routing',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -285,6 +289,11 @@ export const workspaceEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('pull-request-review-changed'),
     draft: desktopReviewDraftSchema,
+  }),
+  z.strictObject({
+    type: z.literal('inbox-item-changed'),
+    hostId: hostIdSchema,
+    item: inboxItemSchema,
   }),
   z.strictObject({
     type: z.literal('computers-changed'),

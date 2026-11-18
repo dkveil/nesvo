@@ -387,6 +387,32 @@ import {
 } from './tracked-repositories';
 import { runningAppListSchema, type RunningAppList } from './running-apps';
 import {
+  decideInboxItemSchema,
+  deleteInboxRuleSchema,
+  inboxItemSchema,
+  inboxRuleCatalogSchema,
+  inboxRuleProposalSchema,
+  inboxRuleValidationSchema,
+  inboxSettingsSchema,
+  listInboxRulesSchema,
+  proposeInboxRuleSchema,
+  saveInboxRuleSchema,
+  setInboxRuleEnabledSchema,
+  validateInboxRuleSchema,
+  type DecideInboxItemInput,
+  type DeleteInboxRuleInput,
+  type InboxItem,
+  type InboxRuleCatalog,
+  type InboxRuleProposal,
+  type InboxRuleValidation,
+  type InboxSettings,
+  type ListInboxRulesInput,
+  type ProposeInboxRuleInput,
+  type SaveInboxRuleInput,
+  type SetInboxRuleEnabledInput,
+  type ValidateInboxRuleInput,
+} from './inbox-rules';
+import {
   defaultSessionFolderSchema,
   setDefaultSessionFolderSchema,
   type DefaultSessionFolder,
@@ -455,6 +481,8 @@ export * from './pull-requests';
 export * from './code-review';
 export * from './tracked-repositories';
 export * from './running-apps';
+export * from './inbox-rules';
+export * from './decision-route';
 export * from './default-session-folder';
 export * from './worktree-recipes';
 export * from './workflow-share';
@@ -539,6 +567,10 @@ export const desktopEventSchema = z.discriminatedUnion('type', [
   }),
   reviewDraftEventSchema.extend({
     type: z.literal('pull-request-review-changed'),
+  }),
+  z.strictObject({
+    type: z.literal('inbox-item-changed'),
+    item: inboxItemSchema,
   }),
 ]);
 export type DesktopEvent = z.infer<typeof desktopEventSchema>;
@@ -889,6 +921,48 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({
     id: z.uuid(),
     method: z.literal('list-tracked-repositories'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-inbox-rules'),
+    input: listInboxRulesSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('validate-inbox-rule'),
+    input: validateInboxRuleSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-inbox-rule'),
+    input: saveInboxRuleSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('delete-inbox-rule'),
+    input: deleteInboxRuleSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-inbox-rule-enabled'),
+    input: setInboxRuleEnabledSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('propose-inbox-rule'),
+    input: proposeInboxRuleSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-inbox-items') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-inbox-item'),
+    input: decideInboxItemSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('read-inbox-settings') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-inbox-settings'),
+    input: inboxSettingsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1523,6 +1597,36 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     list: runningAppListSchema,
   }),
   z.strictObject({
+    type: z.literal('inbox-rules'),
+    id: z.uuid(),
+    catalog: inboxRuleCatalogSchema,
+  }),
+  z.strictObject({
+    type: z.literal('inbox-rule-validation'),
+    id: z.uuid(),
+    validation: inboxRuleValidationSchema,
+  }),
+  z.strictObject({
+    type: z.literal('inbox-rule-proposal'),
+    id: z.uuid(),
+    proposal: inboxRuleProposalSchema,
+  }),
+  z.strictObject({
+    type: z.literal('inbox-items'),
+    id: z.uuid(),
+    items: z.array(inboxItemSchema).max(500),
+  }),
+  z.strictObject({
+    type: z.literal('inbox-item'),
+    id: z.uuid(),
+    item: inboxItemSchema,
+  }),
+  z.strictObject({
+    type: z.literal('inbox-settings'),
+    id: z.uuid(),
+    settings: inboxSettingsSchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2092,6 +2196,40 @@ export type DesktopApi = {
   ) => Promise<PullRequestReference | null>;
   listTrackedRepositories: (hostId?: HostId) => Promise<TrackedRepository[]>;
   listRunningApps: (hostId?: HostId) => Promise<RunningAppList>;
+  listInboxRules: (
+    input: ListInboxRulesInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleCatalog>;
+  validateInboxRule: (
+    input: ValidateInboxRuleInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleValidation>;
+  saveInboxRule: (
+    input: SaveInboxRuleInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleCatalog>;
+  deleteInboxRule: (
+    input: DeleteInboxRuleInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleCatalog>;
+  setInboxRuleEnabled: (
+    input: SetInboxRuleEnabledInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleCatalog>;
+  proposeInboxRule: (
+    input: ProposeInboxRuleInput,
+    hostId?: HostId,
+  ) => Promise<InboxRuleProposal>;
+  listInboxItems: (hostId?: HostId) => Promise<InboxItem[]>;
+  decideInboxItem: (
+    input: DecideInboxItemInput,
+    hostId?: HostId,
+  ) => Promise<InboxItem>;
+  readInboxSettings: (hostId?: HostId) => Promise<InboxSettings>;
+  saveInboxSettings: (
+    settings: InboxSettings,
+    hostId?: HostId,
+  ) => Promise<InboxSettings>;
   readDefaultSessionFolder: (hostId?: HostId) => Promise<DefaultSessionFolder>;
   setDefaultSessionFolder: (
     directory: string | null,
