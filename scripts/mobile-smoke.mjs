@@ -883,6 +883,10 @@ try {
   await access
     .getByRole('button', { name: `Revoke ${device.name}`, exact: true })
     .click();
+  await page
+    .getByRole('alertdialog', { name: `Revoke ${device.name}?` })
+    .getByRole('button', { name: 'Revoke device', exact: true })
+    .click();
   await node('Revoked');
   const revoked = await page.evaluate(() => window.nesvo.mobileStatus());
   assert.deepEqual(revoked.devices, []);
