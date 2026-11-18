@@ -1784,7 +1784,9 @@ export function startCodex(options: CodexRunOptions): {
         });
         if (delegationController.signal.aborted) controller.abort();
         pendingControls.set(rpcId, controller);
-        const title = sessionControlToolTitle(tool);
+        const title = sessionControlToolTitle(
+          tool === 'nesvo_delegate' ? 'session_delegate' : tool,
+        );
         const detail =
           typeof object(params.arguments)?.title === 'string'
             ? String(object(params.arguments)?.title)

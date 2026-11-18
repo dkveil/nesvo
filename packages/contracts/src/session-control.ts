@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { pullRequestReferenceSchema } from './pull-requests';
 import { reasoningEffortSchema } from './reasoning-effort';
+import { delegationActivityTitle } from './session-subsessions';
 import {
   providerSchema,
   coordinatorGroupCap,
@@ -219,7 +220,7 @@ const eventsWaitInputSchema = z.strictObject({
 
 export const sessionControlTools = {
   session_delegate: {
-    title: 'Delegate to workers',
+    title: delegationActivityTitle,
     description:
       'Propose visible workers with an explicit task and scope. Each worker needs an operator decision. The tool waits for the worker outcomes.',
     input: delegationPlanSchema,
