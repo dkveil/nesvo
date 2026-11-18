@@ -112,9 +112,8 @@ export function NewThread({
   const [workflow, setWorkflow] = useState<WorkflowChoice | null>(null);
   const [issues, setIssues] = useState<DefinitionIssue[]>([]);
   const [startNotice, setStartNotice] = useState('');
-  const [useWorktree, setUseWorktree] = useState(
-    () => readNewSessionDefaults().worktree,
-  );
+  const [worktreeDefault] = useState(() => readNewSessionDefaults().worktree);
+  const [worktreeChoice, setWorktreeChoice] = useState<boolean | null>(null);
   const [worktreeBranch, setWorktreeBranch] = useState('');
   const [mcpChoice, setMcpChoice] = useState({
     target: '',
@@ -140,6 +139,7 @@ export function NewThread({
     !piped &&
     gitRepository &&
     !!computer?.capabilities.includes('session-worktrees');
+  const useWorktree = worktreeChoice ?? (worktreeDefault && worktreeAvailable);
   const isolation = sessionIsolationSchema.safeParse({
     kind: 'worktree',
     branch: worktreeBranch.trim() || undefined,
@@ -464,7 +464,7 @@ export function NewThread({
                     if (hostId !== setup.hostId) {
                       setSkill(null);
                       changeWorkflow(null);
-                      setUseWorktree(false);
+                      setWorktreeChoice(null);
                       setWorktreeBranch('');
                     }
                     onSetupChange({ ...setup, hostId });
@@ -481,7 +481,7 @@ export function NewThread({
                     if (directory !== setup.directory) {
                       setSkill(null);
                       changeWorkflow(null);
-                      setUseWorktree(false);
+                      setWorktreeChoice(null);
                       setWorktreeBranch('');
                     }
                     onSetupChange({ ...setup, directory });
@@ -494,7 +494,7 @@ export function NewThread({
                     selected={useWorktree}
                     aria-pressed={useWorktree}
                     disabled={pending}
-                    onClick={() => setUseWorktree(value => !value)}
+                    onClick={() => setWorktreeChoice(!useWorktree)}
                   >
                     <span>Worktree</span>
                   </Chip>
