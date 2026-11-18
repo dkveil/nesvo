@@ -20,11 +20,6 @@ type ReviewedFolder = {
   entryName: (parts: string[], name: string) => string;
 };
 
-const instructionFiles = [
-  { path: 'CLAUDE.md', detail: 'Project instructions' },
-  { path: join('.claude', 'CLAUDE.md'), detail: 'Project instructions' },
-  { path: 'CLAUDE.local.md', detail: 'Local instructions' },
-];
 const markdownName = (parts: string[], name: string) =>
   [...parts, name.slice(0, -3)].join(':');
 const reviewedFolders: ReviewedFolder[] = [
@@ -73,31 +68,6 @@ const insideRepository = async (path: string, repositoryRoot: string) => {
     location.startsWith('..' + sep) ||
     isAbsolute(location)
   );
-};
-
-const instructionDefinitions = async (
-  folder: string,
-  repositoryRoot: string,
-  issues: string[],
-): Promise<ProjectFileDefinition[]> => {
-  const found: ProjectFileDefinition[] = [];
-  for (const file of instructionFiles) {
-    const path = join(folder, file.path);
-    const info = await stat(path).catch(() => null);
-    if (!info) continue;
-    const name = file.path.replaceAll('\\', '/');
-    if (!info.isFile() || !(await insideRepository(path, repositoryRoot))) {
-      issues.push(`The repository ${name} resolves outside the repository.`);
-      continue;
-    }
-    found.push({
-      id: `instructions:${name}`,
-      name,
-      detail: file.detail,
-      config: name,
-    });
-  }
-  return found;
 };
 
 const folderHashes = async (
@@ -170,9 +140,8 @@ export const readClaudeProjectFiles = async (
   issues: string[],
   signal?: AbortSignal,
 ) => {
-  const [instructions, ...folders] = await Promise.all([
-    instructionDefinitions(folder, repositoryRoot, issues),
-    ...reviewedFolders.map(async reviewed => {
+  const folders = await Promise.all(
+    reviewedFolders.map(async reviewed => {
       const path = join(folder, reviewed.path);
       const hashes = await folderHashes(
         reviewed,
@@ -183,8 +152,8 @@ export const readClaudeProjectFiles = async (
       );
       return { reviewed, path, hashes };
     }),
-  ]);
-  const definitions: ProjectFileDefinition[] = [...instructions];
+  );
+  const definitions: ProjectFileDefinition[] = [];
   const sources: { path: string; sections: ConfigTable }[] = [];
   for (const { reviewed, path, hashes } of folders) {
     const names = Object.keys(hashes);

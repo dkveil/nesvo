@@ -2,6 +2,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { MCP_SERVER_NAME_PATTERN, type McpScope } from '@nesvo/contracts';
+import { readClaudeInstructions } from './claude-instructions';
 import { readClaudeProjectFiles, settingsRest } from './claude-project-files';
 import { describeServer } from './server-summary';
 import {
@@ -72,9 +73,11 @@ export async function readClaudeConfiguration(
   if (issues.length)
     projectIssues.push('Claude Code local MCP settings could not be verified.');
 
-  const repositoryRoot = folders.at(-1);
-  const layers = await Promise.all(
-    [...folders].reverse().map(async folder => {
+  const repositoryRoot = folders.at(-1)!;
+  const instructionIssues: string[] = [];
+  const [instructions, ...layers] = await Promise.all([
+    readClaudeInstructions(repositoryRoot, folders, instructionIssues, signal),
+    ...[...folders].reverse().map(async folder => {
       const mcpPath = join(folder, '.mcp.json');
       const settingsPath = join(folder, '.claude', 'settings.json');
       const localPath = join(folder, '.claude', 'settings.local.json');
@@ -108,7 +111,7 @@ export async function readClaudeConfiguration(
       const localHooks = section(localFile, 'hooks', projectIssues);
       const projectFiles = await readClaudeProjectFiles(
         folder,
-        repositoryRoot!,
+        repositoryRoot,
         { project: settings, local: localFile },
         projectIssues,
         signal,
@@ -155,7 +158,8 @@ export async function readClaudeConfiguration(
         ],
       };
     }),
-  );
+  ]);
+  projectIssues.unshift(...instructionIssues);
   const localProjects = Object.fromEntries(
     layers.flatMap(({ localFolder, localServers }) =>
       localFolder && Object.keys(localServers).length
@@ -167,5 +171,5 @@ export async function readClaudeConfiguration(
     ...layers.flatMap(layer => layer.sources),
     { path: globalPath, sections: { projects: localProjects } },
   ];
-  return { userServers, userHooks, layers, sources };
+  return { userServers, userHooks, layers, sources, instructions };
 }

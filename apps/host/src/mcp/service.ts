@@ -139,13 +139,14 @@ export class McpPolicy {
     const claude = provider === 'Claude Code';
     const read = claude ? readClaudeConfiguration : readCodexConfiguration;
     const describe = claude ? claudeServer : codexServer;
-    const { userServers, userHooks, layers, sources } = await read(
+    const configuration = await read(
       folders,
       issues,
       projectIssues,
       signal,
       profileDirectory,
     );
+    const { userServers, userHooks, layers, sources } = configuration;
     const userEntries = Object.entries(userServers).map(([name, config]) =>
       describe(name, config, 'user'),
     );
@@ -191,6 +192,14 @@ export class McpPolicy {
     const projectServers: ConfigTable = Object.create(null);
     const hookSources: ConfigTable[] = [];
     let projectDisablesHooks = false;
+    if ('instructions' in configuration)
+      for (const instruction of configuration.instructions)
+        addDefinition(
+          instruction.id,
+          instruction.name,
+          instruction.detail,
+          instruction.config,
+        );
     for (const [index, layer] of layers.entries()) {
       for (const [scope, servers] of [
         ['project', layer.servers],
@@ -284,10 +293,13 @@ export class McpPolicy {
         0,
         mcpLimits.listed,
       ),
-      issues: [...new Set([...issues, ...projectIssues])].slice(
-        0,
-        mcpLimits.issues,
-      ),
+      issues: [
+        ...new Set(
+          [...projectIssues, ...issues].map(issue =>
+            reviewText(issue).slice(0, mcpLimits.problem),
+          ),
+        ),
+      ].slice(0, mcpLimits.issues),
       repository: {
         name: reviewText(basename(folders.at(-1)!) || folders.at(-1)!).slice(
           0,
@@ -350,7 +362,7 @@ export class McpPolicy {
     )
       throw new SessionError(
         'invalid-request',
-        'Repository MCP servers or hooks changed. Review the current definitions.',
+        'Repository definitions changed or are unavailable. Review the current configuration.',
       );
     const files = reviewRepositorySources(snapshot.sources);
     if (!files)

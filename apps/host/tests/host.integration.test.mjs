@@ -24230,10 +24230,25 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   const commandsLog = join(directory, 'commands.jsonl');
   await mkdir(join(project, '.git'), { recursive: true });
   await mkdir(join(project, '.claude', 'commands'), { recursive: true });
+  await mkdir(join(project, '.claude', 'rules', 'nested'), { recursive: true });
+  await mkdir(join(project, 'src'));
+  await mkdir(join(project, 'node_modules'));
+  await mkdir(join(project, 'ignored'));
+  await writeFile(join(project, '.gitignore'), 'ignored/\n');
+  for (const folder of ['node_modules', 'ignored'])
+    await writeFile(join(project, folder, 'CLAUDE.md'), '@~/unreviewed.md\n');
+  const instructions = 'Answer with the word BLUEFIN.\n@./guide.md\n';
+  await writeFile(join(project, 'CLAUDE.md'), instructions);
+  await writeFile(join(project, 'CLAUDE.local.md'), 'Local guidance.\n');
+  await writeFile(join(project, '.claude', 'CLAUDE.md'), 'Project notes.\n');
+  await writeFile(join(project, 'src', 'CLAUDE.md'), 'Source guidance.\n');
   await writeFile(
-    join(project, 'CLAUDE.md'),
-    'Answer with the word BLUEFIN.\n',
+    join(project, '.claude', 'rules', 'nested', 'rule.md'),
+    'Project rule.\n',
   );
+  await writeFile(join(project, 'guide.md'), '@./src/details.txt\n');
+  await writeFile(join(project, 'src', 'details.txt'), 'Imported twice.\n');
+  await writeFile(join(directory, 'outside.md'), 'Outside the checkout.\n');
   await writeFile(
     join(project, '.claude', 'commands', 'ship.md'),
     'Prepare the release notes.\n',
@@ -24335,9 +24350,18 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   assert.deepEqual(
     repository.definitions.map(item => [item.name, item.detail]).sort(),
     [
+      ['.claude/CLAUDE.md', 'Project instructions · 15 bytes'],
       ['.claude/agents', 'Project subagents: helper'],
       ['.claude/commands', 'Project commands: /ship'],
-      ['CLAUDE.md', 'Project instructions'],
+      ['.claude/rules/nested/rule.md', 'Project rule · 14 bytes'],
+      ['CLAUDE.local.md', 'Local instructions · 16 bytes'],
+      [
+        'CLAUDE.md',
+        `Project instructions · ${Buffer.byteLength(instructions)} bytes`,
+      ],
+      ['guide.md', 'Imported instructions · 19 bytes'],
+      ['src/CLAUDE.md', 'Project instructions · 17 bytes'],
+      ['src/details.txt', 'Imported instructions · 16 bytes'],
     ],
   );
   const trusted = await host.request('trust-repository-mcp', {
@@ -24360,6 +24384,28 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   assert.equal(applied.settingSources, 'user,project,local');
   assert.deepEqual(applied.hooks, {});
 
+  const revisedInstructions = instructions.replace('BLUEFIN', 'REDPOLL');
+  await writeFile(join(project, 'CLAUDE.md'), revisedInstructions);
+  const instructionDrift = await turn(
+    'Continue with project instructions paused.',
+  );
+  assert.equal(instructionDrift.status, 'completed', instructionDrift.error);
+  assert.equal((await logged(mcpLog)).at(-1).settingSources, 'user');
+  const revised = await host.request('list-mcp-servers', { sessionId });
+  assert.equal(revised.list.repository.status, 'needs-trust');
+  assert.notEqual(revised.list.repository.fingerprint, repository.fingerprint);
+  assert.deepEqual(
+    revised.list.repository.definitions
+      .filter(definition => definition.change)
+      .map(({ name, change }) => [name, change]),
+    [['CLAUDE.md', 'changed']],
+  );
+  const approvedRevision = await host.request('trust-repository-mcp', {
+    sessionId,
+    fingerprint: revised.list.repository.fingerprint,
+  });
+  assert.equal(approvedRevision.list.repository.status, 'trusted');
+
   await writeFile(
     join(project, '.claude', 'commands', 'ship.md'),
     'Prepare the release notes and tag the release.\n',
@@ -24370,6 +24416,56 @@ test('Claude Code native commands are listed from the CLI, passed through and re
   const after = await turn('Plain text again.');
   assert.equal(after.status, 'completed', after.error);
   assert.equal((await logged(mcpLog)).at(-1).settingSources, 'user');
+
+  const approveCurrent = async () => {
+    const current = await host.request('list-mcp-servers', { sessionId });
+    const approval = await host.request('trust-repository-mcp', {
+      sessionId,
+      fingerprint: current.list.repository.fingerprint,
+    });
+    assert.equal(approval.list.repository.status, 'trusted');
+  };
+  const blocked = async reason => {
+    const response = await host.request('list-mcp-servers', { sessionId });
+    assert.equal(response.list.repository.status, 'unavailable');
+    assert.match(response.list.issues.join('\n'), reason);
+    const refused = await host.request('trust-repository-mcp', {
+      sessionId,
+      fingerprint: response.list.repository.fingerprint,
+    });
+    assert.equal(refused.code, 'invalid-request');
+    assert.equal((await commands()).projectCommands, false);
+    const fallback = await turn('Continue with user settings.');
+    assert.equal(fallback.status, 'completed', fallback.error);
+    assert.equal((await logged(mcpLog)).at(-1).settingSources, 'user');
+  };
+  await approveCurrent();
+  await writeFile(join(project, 'guide.md'), '@../outside.md\n@~/private.md\n');
+  await blocked(/import points outside the repository.*guide\.md/);
+  const importLink = join(project, 'node_modules', 'linked-source');
+  await symlink(join(project, 'src'), importLink, 'junction');
+  await writeFile(
+    join(project, 'guide.md'),
+    '@./node_modules/linked-source/details.txt\n',
+  );
+  await blocked(/Symbolic links are refused.*linked-source\/details\.txt/);
+  await writeFile(join(project, 'guide.md'), '@./src/details.txt\n');
+  await approveCurrent();
+  await writeFile(
+    join(project, 'src', 'details.txt'),
+    Buffer.alloc(256 * 1024 + 1),
+  );
+  await blocked(/exceeds 256 KiB.*src\/details\.txt/);
+
+  await writeFile(join(project, 'src', 'details.txt'), 'Imported twice.\n');
+  await approveCurrent();
+  const ruleDirectory = join(project, '.claude', 'rules');
+  await Promise.all(
+    Array.from({ length: 180 }, (_, index) =>
+      writeFile(join(ruleDirectory, `rule-${index}.md`), 'Rule.\n'),
+    ),
+  );
+  await blocked(/instruction file limit of 180 was exceeded/);
 
   const codex = await host.request('create-session', {
     title: 'Codex commands',
