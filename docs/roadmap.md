@@ -131,3 +131,11 @@ Approved on November 18, 2026. This supersedes the D72 rule that counted only pr
 Provider-reported cost takes precedence. The host downloads the public [LiteLLM price table](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) at most once per 24 hours, reuses the cached table offline and labels each cost as provider-reported, estimated or unpriced. The request for the price table contains no session or usage data. Token counts remain available for unpriced models. Budgets use known costs from the same index and disclose estimated and unpriced usage.
 
 Day, week and month use the desktop's time zone in Costs and the host's time zone for budgets. The view includes project, provider, model and session-group breakdowns and links transcripts to current Nesvo sessions by provider session ID. Cache savings estimate the difference between standard input and cache read prices on cached input.
+
+## D82: Claude autonomy controls
+
+The owner authorized fewer repeat approvals and an embedded Claude terminal on November 18, 2026. From a reviewable tool call, the operator can allow once or save a narrow rule for this session or its project on the current computer. Unsafe shell forms, network tools and paths outside the session folder are excluded. Rules apply from the next matching call and can be removed in Context or Settings. History records the approved pattern and scope.
+
+Full access is available only when the installed provider reports support and the computer-wide setting is enabled. The setting starts off. The operator confirms the folder and risk for each session. Messages record the selected mode and a history divider marks mode changes. New sessions, group defaults, workers and automations never inherit Full access. Disabling the setting revokes confirmations and stops active Full access turns.
+
+The Claude terminal opens from the session header and renders read-only tool activity, emitted command output and available edit hunks. The Claude adapter uses JSON streams over pipes. The panel updates as events arrive and shows command output when Claude reports it.
