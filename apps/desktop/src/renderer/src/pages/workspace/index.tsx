@@ -99,6 +99,7 @@ import {
   type PaletteCommand,
   type PaletteMode,
 } from '@/features/command-palette';
+import { SessionCleanup } from '@/features/clean-up-sessions';
 import { SessionDeletion } from '@/features/delete-session';
 import { RenameSessionDialog } from '@/features/rename-session';
 import { MoveToGroupDialog } from '@/widgets/session-sidebar/move-to-group-dialog';
@@ -854,6 +855,7 @@ export function Workspace() {
   const [finishingWorktree, setFinishingWorktree] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [moveTarget, setMoveTarget] = useState<Session | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
   const [threadActionPending, setThreadActionPending] = useState(false);
   const [sending, setSending] = useState(false);
@@ -2378,6 +2380,17 @@ ${text}`
     );
   };
   const housekeeping = useHousekeeping(store, openCreateInGroup);
+  const cleanupAvailable = store.computers.some(computer =>
+    housekeeping.supports(computer.id),
+  );
+  const openCleanup = () => {
+    setNavigationOpen(false);
+    setCleanupOpen(true);
+  };
+  const cleanupBusyKeys = useMemo(
+    () => new Set([...filterKeys['needs-me'], ...filterKeys.running]),
+    [filterKeys],
+  );
   const forkSession = async (
     target: Session,
     worktree?: ForkSessionInput['worktree'],
@@ -2850,6 +2863,7 @@ ${text}`
     threadActions,
     deleteAction,
     housekeeping,
+    onCleanUp: cleanupAvailable ? openCleanup : undefined,
     loading: store.loading,
     currentHostId: creating ? threadSetup.hostId : selectedHostId,
     sessions: store.sessions,
@@ -3045,6 +3059,7 @@ ${text}`
       skills: sessionPanels ? openSkills : undefined,
       reviewPullRequest: reviewSessionPullRequest,
       searchHistory: () => openHistorySearch(),
+      cleanUp: cleanupAvailable ? openCleanup : undefined,
       openInTerminal:
         !browsing && !creating && selected && canOpenInTerminal(selected)
           ? () => void openInTerminal(selected)
@@ -3210,6 +3225,17 @@ ${text}`
               if (groupId) void housekeeping.moveSession(target, groupId, 0);
             });
         }}
+      />
+      <SessionCleanup
+        open={cleanupOpen}
+        onOpenChange={setCleanupOpen}
+        sessions={store.sessions}
+        computers={store.computers}
+        busyKeys={cleanupBusyKeys}
+        isEligibleHost={hostId =>
+          housekeeping.supports(hostId) && store.hostReady(hostId)
+        }
+        setArchived={housekeeping.setArchived}
       />
       {window.nesvo && (
         <SessionDeletion

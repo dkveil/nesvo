@@ -1730,6 +1730,40 @@ try {
   await navigation
     .getByRole('button', { name: /^Prototype analysis/ })
     .waitFor();
+  const lifecycleDescription = await navigation
+    .getByRole('button', { name: /^Prototype analysis/ })
+    .evaluate(
+      node =>
+        document.getElementById(node.getAttribute('aria-describedby') ?? '')
+          ?.textContent ?? '',
+    );
+  assert.match(
+    lifecycleDescription,
+    /^Created [A-Z][a-z]{2} \d{1,2}, \d{4}, .+ \((just now|\d+[mhd] ago)\)\. Last activity (just now|\d+[mhd] ago)$/,
+  );
+  await page
+    .getByRole('button', { name: 'Session list options', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: 'Clean up…', exact: true }).click();
+  const cleanup = page.getByRole('dialog', {
+    name: 'Clean up sessions',
+    exact: true,
+  });
+  await cleanup
+    .getByText('No sessions inactive for 14 days or more.', { exact: true })
+    .waitFor();
+  await cleanup.getByRole('radio', { name: '7 days', exact: true }).click();
+  await cleanup
+    .getByText('No sessions inactive for 7 days or more.', { exact: true })
+    .waitFor();
+  assert.equal(
+    await cleanup
+      .getByRole('button', { name: 'Archive selected', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await page.keyboard.press('Escape');
+  await cleanup.waitFor({ state: 'hidden' });
   await page.keyboard.press('Control+Shift+P');
   const palette = page.getByRole('combobox', {
     name: 'Command palette',

@@ -30,7 +30,7 @@ export type SidebarHousekeeping = {
   ) => Promise<void>;
   renameSession: (session: Session, title: string) => Promise<void>;
   setPinned: (session: Session, pinned: boolean) => Promise<void>;
-  setArchived: (session: Session, archived: boolean) => Promise<void>;
+  setArchived: (session: Session, archived: boolean) => Promise<boolean>;
   createInGroup: (hostId: string, group: SessionGroup) => void;
   error: string;
   clearError: () => void;

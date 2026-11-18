@@ -1,5 +1,6 @@
 import type { Computer, SessionGroup } from '@nesvo/contracts';
 import {
+  Archive,
   BookOpen,
   CalendarClock,
   ChartNoAxesColumn,
@@ -48,6 +49,7 @@ export type WorkspaceCommandActions = {
   skills: Action;
   reviewPullRequest: Action;
   searchHistory: () => void;
+  cleanUp: Action;
   openInTerminal: Action;
   nextNeedsMe: () => void;
   needsMeCount: number;
@@ -166,6 +168,13 @@ export function workspaceCommands(
       shortcut: shortcutKeys('searchHistory'),
       keywords: 'messages find full text',
       run: actions.searchHistory,
+    },
+    {
+      id: 'clean-up-sessions',
+      label: 'Clean up sessions…',
+      icon: <Archive />,
+      keywords: 'archive inactive old stale housekeeping tidy',
+      run: actions.cleanUp,
     },
     {
       id: 'open-in-terminal',

@@ -1,5 +1,6 @@
 import { useState, type ReactNode, type RefObject } from 'react';
 import {
+  Archive,
   CalendarClock,
   ChevronDown,
   CircleAlert,
@@ -11,6 +12,7 @@ import {
   Inbox,
   LoaderCircle,
   Monitor,
+  MoreHorizontal,
   PanelLeft,
   Pin,
   RadioTower,
@@ -42,6 +44,12 @@ import {
 import type { WorkflowRun } from '@/entities/workflow';
 import type { ScheduledJob } from '@/entities/scheduled-job';
 import { CountBadge } from '@/shared/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 import { BrandWordmark } from '@/shared/ui/brand-wordmark';
 import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
@@ -105,6 +113,7 @@ type Props = {
   onFilterChange?: (filter: SessionFilter) => void;
   threadActions?: (session: Session) => RowAction[];
   deleteAction?: (session: Session) => RowAction | null;
+  onCleanUp?: () => void;
 };
 
 const TREE_INDENT_PX = 12;
@@ -182,6 +191,7 @@ export function SessionSidebar({
   filter = 'all',
   filterKeys,
   onFilterChange,
+  onCleanUp,
 }: Props) {
   const [search, setSearch] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -599,6 +609,25 @@ export function SessionSidebar({
           >
             <SquarePen />
           </IconButton>
+          {onCleanUp && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <IconButton
+                  label="Session list options"
+                  tone="sidebar"
+                  tooltipSide="bottom"
+                >
+                  <MoreHorizontal />
+                </IconButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuItem onSelect={onCleanUp}>
+                  <Archive />
+                  Clean up…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
         {filterKeys && onFilterChange && (
           <SegmentedControl

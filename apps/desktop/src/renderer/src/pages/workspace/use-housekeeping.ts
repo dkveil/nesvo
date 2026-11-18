@@ -47,13 +47,21 @@ export function useHousekeeping(
     if (list) store.mergeGroups(hostId, list);
     return !!list;
   };
-  const sessionChange = async (
+  const sessionResult = async (
     session: DesktopSession,
     action: string,
     run: () => Promise<DesktopSession>,
   ) => {
     const updated = await attempt(session.hostId, action, run);
     if (updated) store.merge([updated]);
+    return !!updated;
+  };
+  const sessionChange = async (
+    session: DesktopSession,
+    action: string,
+    run: () => Promise<DesktopSession>,
+  ) => {
+    await sessionResult(session, action, run);
   };
   return {
     supports: store.supportsGroups,
@@ -119,7 +127,7 @@ export function useHousekeeping(
           }),
       ),
     setArchived: (session, archived) =>
-      sessionChange(
+      sessionResult(
         session,
         archived ? 'archive the session' : 'restore the session',
         () =>
