@@ -1853,7 +1853,9 @@ export function startCodex(options: CodexRunOptions): {
             success: false,
           },
         });
-        return;
+        throw new Error(
+          'Codex returned an unsupported or stale Nesvo tool call.',
+        );
       }
       if (message.method === 'mcpServer/elicitation/request') {
         const meta = object(params?.meta);

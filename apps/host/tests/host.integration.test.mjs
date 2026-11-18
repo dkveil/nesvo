@@ -11680,6 +11680,15 @@ test(
       event => events.push(event),
       new modules.ReviewStore(database),
       () => jobs.interruptActiveRuns(clock.now().toISOString()),
+      {
+        control: {
+          available: () => false,
+          call: async () => ({
+            ok: false,
+            text: 'Unexpected coordinator call in the scheduler scenario.',
+          }),
+        },
+      },
     );
     const heldDeadlines = new Set();
     const deadlines = {
@@ -22279,6 +22288,29 @@ test(
     assert.deepEqual(resumedConfig.repo.args, ['changed-argument']);
 
     await writeFile(join(project, 'deleted.txt'), 'Worker fixture baseline.');
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        {
+          cwd: project,
+          env: {
+            ...process.env,
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_GLOBAL: join(directory, 'gitconfig'),
+          },
+        },
+      );
+    await git('add', '--', 'deleted.txt');
+    await git('commit', '-qm', 'Worker fixture baseline');
     const workerRun = await sendTurn(
       codex,
       'read-only',
@@ -27521,6 +27553,7 @@ test('child sessions report stages and ask blocking questions that reach the coo
     await host.request('save-session-control-policy', {
       ...policy.policy,
       enabled: true,
+      groupSize: 5,
     });
     const coordinator = (
       await host.request('create-session', {

@@ -40,6 +40,7 @@ import {
   QUESTION_RECORDED_MESSAGE,
 } from '../sessions/stages';
 import type { SessionControlStore } from './store';
+import { WorkspaceIsolationError } from '../workspace/isolation';
 import type {
   SessionControlBridge,
   SessionControlCall,
@@ -86,6 +87,8 @@ class ChildRefusal extends SessionError {
 }
 
 const refusalFor = (error: unknown): SessionControlReply => {
+  if (error instanceof WorkspaceIsolationError)
+    return refusal('invalid', error.message);
   if (error instanceof ChildRefusal)
     return refusal(error.refusal, error.message);
   if (!(error instanceof SessionError))

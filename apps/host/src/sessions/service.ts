@@ -1811,8 +1811,9 @@ export class SessionService {
   }
 
   async workerBase(parent: Session, signal: AbortSignal) {
+    let root: string;
     try {
-      await repositoryRoot(parent.directory, signal);
+      root = await repositoryRoot(parent.directory, signal);
     } catch (error) {
       if (
         error instanceof WorkspaceIsolationError &&
@@ -1821,6 +1822,11 @@ export class SessionService {
         return undefined;
       throw error;
     }
+    if (relative(root, canonicalDirectory(parent.directory)) !== '')
+      throw new SessionError(
+        'invalid-directory',
+        'Choose the repository root for the coordinator before starting a writable worker.',
+      );
     const [branch, commit] = await Promise.all([
       currentGitBranch(parent.directory, signal),
       readHeadCommit(parent.directory, signal),
@@ -2172,6 +2178,11 @@ export class SessionService {
       input.sessionId,
     );
     if (metadata.state === 'removed') return session;
+    if (metadata.workerTargetBranch)
+      throw new SessionError(
+        'invalid-request',
+        'Review the worker branch from the coordinator to merge or discard this worktree.',
+      );
     if (this.creatingWorktrees)
       throw new SessionError(
         'busy',
