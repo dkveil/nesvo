@@ -56,6 +56,13 @@ export function recentPullRequestRepositories(hostId: string): string[] {
   return [...repositories.values()];
 }
 
+export function cachedPullRequest(
+  hostId: string,
+  reference: PullRequestReference,
+): PullRequest | null {
+  return cache.get(detailsKey(hostId, reference))?.data ?? null;
+}
+
 export function primePullRequestDetails(
   hostId: string,
   pullRequest: PullRequest,

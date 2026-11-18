@@ -60,6 +60,10 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     createSession: input => api.createSession(input, hostId),
     readSessionWorktree: input => api.readSessionWorktree(input, hostId),
     finishSessionWorktree: input => api.finishSessionWorktree(input, hostId),
+    resumeSession: input => api.resumeSession(input, hostId),
+    readMergedWorktreeCleanup: input =>
+      api.readMergedWorktreeCleanup(input, hostId),
+    finishMergedWorktree: input => api.finishMergedWorktree(input, hostId),
     readSessionWorktreeSetup: input =>
       api.readSessionWorktreeSetup(input, hostId),
     runSessionWorktreeSetup: input =>

@@ -32,6 +32,7 @@ type SessionPullRequestProps = {
   reviewing?: boolean;
   onOpen: (reference: PullRequestReference) => void;
   onLinked: (session: Session) => void;
+  onFinishAfterMerge?: () => void;
 };
 
 type FindState =
@@ -48,6 +49,7 @@ export function SessionPullRequest({
   reviewing = false,
   onOpen,
   onLinked,
+  onFinishAfterMerge,
 }: SessionPullRequestProps) {
   const linked = session.pullRequest;
   const { data } = usePullRequestDetails({
@@ -64,42 +66,54 @@ export function SessionPullRequest({
   const [error, setError] = useState('');
   if (linked)
     return (
-      <Hint
-        label={
-          data ? `${linked.repository} · ${data.title}` : linked.repository
-        }
-        side="bottom"
-      >
-        <Chip
-          size="sm"
-          selected={reviewing}
-          data-session-pull-request={`${linked.repository}#${linked.number}`}
-          aria-label={[
-            `Review pull request #${linked.number}`,
-            state && visualStateLabels[state],
-            data && data.checks !== 'none' && checksLabels[data.checks],
-          ]
-            .filter(Boolean)
-            .join(', ')}
-          onClick={() => onOpen(linked)}
-          icon={
-            state ? (
-              <PullRequestStateIcon state={state} className="size-3" />
-            ) : (
-              <GitPullRequest aria-hidden="true" className="size-3" />
-            )
+      <>
+        <Hint
+          label={
+            data ? `${linked.repository} · ${data.title}` : linked.repository
           }
-          className="tabular-nums"
+          side="bottom"
         >
-          <span>#{linked.number}</span>
-          {state && (
-            <span className="text-2xs">{visualStateLabels[state]}</span>
-          )}
-          {data && data.checks !== 'none' && (
-            <StatusDot tone={checksDotTones[data.checks]} />
-          )}
-        </Chip>
-      </Hint>
+          <Chip
+            size="sm"
+            selected={reviewing}
+            data-session-pull-request={`${linked.repository}#${linked.number}`}
+            aria-label={[
+              `Review pull request #${linked.number}`,
+              state && visualStateLabels[state],
+              data && data.checks !== 'none' && checksLabels[data.checks],
+            ]
+              .filter(Boolean)
+              .join(', ')}
+            onClick={() => onOpen(linked)}
+            icon={
+              state ? (
+                <PullRequestStateIcon state={state} className="size-3" />
+              ) : (
+                <GitPullRequest aria-hidden="true" className="size-3" />
+              )
+            }
+            className="tabular-nums"
+          >
+            <span>#{linked.number}</span>
+            {state && (
+              <span className="text-2xs">{visualStateLabels[state]}</span>
+            )}
+            {data && data.checks !== 'none' && (
+              <StatusDot tone={checksDotTones[data.checks]} />
+            )}
+          </Chip>
+        </Hint>
+        {data?.state === 'merged' && onFinishAfterMerge && (
+          <Button
+            variant="ghost"
+            size="xs"
+            data-finish-after-merge-trigger=""
+            onClick={onFinishAfterMerge}
+          >
+            Finish after merge…
+          </Button>
+        )}
+      </>
     );
   if (unavailableReason) return null;
   const link = async (reference: PullRequestReference) => {

@@ -36,26 +36,27 @@ import {
   ArchiveRestore,
   ArrowLeft,
   BookOpen,
+  FileCode2,
+  FileDown,
+  FolderCheck,
   FolderInput,
+  FolderOpen,
+  Gauge,
+  GitCompareArrows,
+  GitFork,
+  GitMerge,
+  GitPullRequest,
+  History,
+  Menu,
+  PanelRight,
   Pencil,
   Pin,
   PinOff,
   Plug,
-  Trash2,
-  FileCode2,
-  FolderCheck,
-  FolderOpen,
-  Gauge,
-  FileDown,
-  GitFork,
-  GitPullRequest,
-  GitCompareArrows,
-  History,
-  Menu,
-  PanelRight,
   Plus,
   SquareDashed,
   SquareTerminal,
+  Trash2,
   WifiOff,
 } from 'lucide-react';
 import {
@@ -247,6 +248,12 @@ import { conversationActions } from '@/features/conversation-context/conversatio
 import { ResumeSessionDialog } from '@/features/resume-session/resume-session-dialog';
 import { ResumeSessionsDialog } from '@/features/resume-session/resume-sessions-dialog';
 import { resumeCandidates } from '@/features/resume-session/resume-candidates';
+import { FinishAfterMergeDialog } from '@/features/merged-worktree-cleanup/finish-after-merge-dialog';
+import {
+  canFinishAfterMerge,
+  mergedCleanupCandidates,
+} from '@/features/merged-worktree-cleanup/merged-candidates';
+import { cachedPullRequest } from '@/entities/pull-request';
 import { SessionPullRequest } from '@/features/session-pull-request';
 import { PullRequestCard } from '@/features/session-pull-request/pull-request-card';
 import {
@@ -878,6 +885,10 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('session-resume');
+  const supportsMergedCleanup = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('merged-worktree-cleanup');
   const supportsCompaction = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -928,6 +939,7 @@ export function Workspace() {
   } | null>(null);
   const [resumeError, setResumeError] = useState('');
   const [bulkResumeOpen, setBulkResumeOpen] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState<Session | null>(null);
   const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
   const [compactTarget, setCompactTarget] = useState<Session | null>(null);
@@ -2669,6 +2681,30 @@ ${text}`
     ),
     supportsResume,
   });
+  const latestSession = (target: Session) =>
+    store.sessions.find(session => entityKey(session) === entityKey(target)) ??
+    target;
+  const offersFinishAfterMerge = (session: Session) =>
+    supportsMergedCleanup(session.hostId) &&
+    store.hostReady(session.hostId) &&
+    canFinishAfterMerge(session) &&
+    !!session.pullRequest &&
+    cachedPullRequest(session.hostId, session.pullRequest)?.state === 'merged';
+  const mergedCleanup = {
+    candidates: mergedCleanupCandidates(
+      store.sessions,
+      hostId => supportsMergedCleanup(hostId) && store.hostReady(hostId),
+    ),
+    read: (session: Session) =>
+      desktopApi(session.hostId).readMergedWorktreeCleanup({
+        sessionId: session.id,
+      }),
+    finish: (session: Session) =>
+      desktopApi(session.hostId).finishMergedWorktree({
+        sessionId: session.id,
+        revision: latestSession(session).revision,
+      }),
+  };
   const openResume = (session: Session) => {
     setResumeError('');
     setResumeTarget({ session, messageId: crypto.randomUUID() });
@@ -2745,6 +2781,16 @@ ${text}`
           ]
         : []),
       ...conversation,
+      ...(offersFinishAfterMerge(session)
+        ? [
+            {
+              label: 'Finish after merge…',
+              icon: <GitMerge />,
+              disabled: threadActionBusy(session),
+              onSelect: () => setMergeTarget(session),
+            },
+          ]
+        : []),
     ];
   };
   const terminalResumeOf = (session: Session) =>
@@ -3493,7 +3539,16 @@ ${text}`
           housekeeping.supports(hostId) && store.hostReady(hostId)
         }
         setArchived={housekeeping.setArchived}
+        merged={mergedCleanup.candidates.length > 0 ? mergedCleanup : undefined}
       />
+      {mergeTarget && (
+        <FinishAfterMergeDialog
+          key={entityKey(mergeTarget)}
+          session={latestSession(mergeTarget)}
+          api={desktopApi(mergeTarget.hostId)}
+          onClose={() => setMergeTarget(null)}
+        />
+      )}
       {window.nesvo && (
         <SessionDeletion
           target={deleteTarget}
@@ -3827,6 +3882,11 @@ ${text}`
                           })
                     }
                     onLinked={session => store.merge([session])}
+                    onFinishAfterMerge={
+                      offersFinishAfterMerge(selected)
+                        ? () => setMergeTarget(selected)
+                        : undefined
+                    }
                   />
                 )}
               </li>
