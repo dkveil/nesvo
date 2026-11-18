@@ -123,6 +123,13 @@ Reloading the window leaves the host running. Quitting the app closes its local 
 
 The review uses the installed provider CLI and the GitHub CLI with their existing sign-ins. Nesvo stores no GitHub token.
 
+## Tracked repositories
+
+1. Open Pull requests. When the current session folder is not a GitHub checkout, choose **Track a repository**; otherwise open the repository picker and choose **Track a repository…**. You can also manage the list in Settings › Tracked repositories.
+2. Enter `owner/name` or a GitHub link, and optionally the folder of a local clone. Suggestions come from session folders and recently opened pull requests. The computer checks the repository with its GitHub CLI login; nothing else is stored.
+3. With two or more tracked repositories, choose **All tracked** to see their pull requests in one list. The Open, Authored and Review requested filters and the search apply to every repository, and the repository filter shows each repository's count and lets you leave some out. A repository that cannot be loaded is reported on its own line while the others stay visible.
+4. Nesvo remembers the chosen source and the repository filter for each computer.
+
 ## Working agreement
 
 Small conventional commits go directly to master during the prototype. Each stage ends with Damian's acceptance. See [roadmap](docs/roadmap.md), [contributing](CONTRIBUTING.md), [testing](docs/testing.md) and [platform evidence](docs/platforms.md).
