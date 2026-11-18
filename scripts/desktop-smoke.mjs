@@ -950,6 +950,10 @@ try {
                 type: 'command',
                 command: 'tools/refresh-index --token fixture-hook-value',
               },
+              {
+                type: 'command',
+                command: 'tools/refresh-index --token "$(fixture-marker)"',
+              },
             ],
           },
         ],
@@ -999,12 +1003,27 @@ try {
     })
     .waitFor();
   await detailRegion.getByText('--api-token=••••', { exact: true }).waitFor();
-  await detailRegion.getByText('DOCUMENTS_TOKEN', { exact: true }).waitFor();
+  await detailRegion
+    .getByText('DOCUMENTS_TOKEN=••••', { exact: true })
+    .waitFor();
   await detailRegion
     .getByText('tools/refresh-index --token ••••', { exact: true })
     .waitFor();
   await detailRegion
-    .getByText('https://index.example.test/api/mcp', { exact: true })
+    .getByText('Contains shell expansion', { exact: true })
+    .waitFor();
+  await detailRegion
+    .getByText('Review the raw definition', { exact: true })
+    .waitFor();
+  await detailRegion
+    .getByText('tools/refresh-index --token "$(fixture-marker)"', {
+      exact: true,
+    })
+    .waitFor();
+  await detailRegion
+    .getByText('https://fixture:••••@index.example.test/api/mcp?token=••••', {
+      exact: true,
+    })
     .waitFor();
   assert.doesNotMatch(
     await detailRegion.innerText(),
@@ -1014,9 +1033,30 @@ try {
   await detailRegion.getByRole('button', { name: 'Expand argument' }).click();
   await detailRegion.getByText(longArgument, { exact: true }).waitFor();
   await detailRegion.getByRole('button', { name: 'Collapse argument' }).click();
+  const trustRepository = conversation.getByRole('button', {
+    name: 'Trust',
+    exact: true,
+  });
+  assert.equal(await trustRepository.isDisabled(), true);
   await conversation
-    .getByRole('button', { name: 'Trust', exact: true })
+    .getByRole('button', { name: 'View raw definitions' })
     .click();
+  const rawDefinitions = page.getByRole('dialog', {
+    name: 'Raw repository definitions',
+  });
+  const sources = rawDefinitions.getByRole('region', { name: 'Source files' });
+  await sources.waitFor();
+  assert.match(await sources.innerText(), /\.mcp\.json/);
+  assert.match(await sources.innerText(), /settings\.json/);
+  assert.match(await sources.innerText(), /\$\(fixture-marker\)/);
+  assert.doesNotMatch(
+    await sources.innerText(),
+    /fixture-(?:value|env-value|hook-value|query)|password/,
+  );
+  await screenshot('-mcp-definitions');
+  await page.keyboard.press('Escape');
+  await rawDefinitions.waitFor({ state: 'hidden' });
+  await trustRepository.click();
   await trustNotice.waitFor({ state: 'hidden' });
   await writeRepositoryMcp(mcpCommand + '-v2');
   await mcpChip.click();
@@ -1032,6 +1072,7 @@ try {
     .waitFor();
   await detailRegion.getByText(mcpCommand + '-v2', { exact: true }).waitFor();
   await detailRegion.getByText('Changed', { exact: false }).waitFor();
+  assert.equal(await trustRepository.isDisabled(), true);
   await screenshot('-mcp-changed');
   await conversation
     .getByRole('button', { name: 'Not now', exact: true })

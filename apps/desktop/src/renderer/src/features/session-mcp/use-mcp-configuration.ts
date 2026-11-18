@@ -56,13 +56,27 @@ export function useMcpConfiguration(
   const visible = state?.key === key && enabled ? state : null;
   const repository = visible?.list?.repository;
   const decisionKey = repository ? key + ':' + repository.fingerprint : null;
-  const trust = async () => {
+  const readRaw = async () => {
+    if (!repository || !enabled || !sessionId)
+      throw new Error('The repository is no longer available.');
+    const list = await window.nesvo.listMcpServers(
+      { sessionId, rawFor: repository.fingerprint },
+      hostId,
+    );
+    if (
+      list.repository?.fingerprint !== repository.fingerprint ||
+      !list.repository.rawReview
+    )
+      throw new Error('Could not read the raw repository definitions.');
+    return list.repository.rawReview;
+  };
+  const trust = async (rawReviewToken?: string) => {
     if (!repository || !enabled || !sessionId || !decisionKey) return;
     const current = ++generation.current;
     setPending(decisionKey);
     try {
       const list = await window.nesvo.trustRepositoryMcp(
-        { sessionId, fingerprint: repository.fingerprint },
+        { sessionId, fingerprint: repository.fingerprint, rawReviewToken },
         hostId,
       );
       if (current === generation.current) setState({ key, list });
@@ -80,7 +94,9 @@ export function useMcpConfiguration(
   };
   return {
     ...visible,
+    decisionKey,
     refresh,
+    readRaw,
     trust,
     pending: !!decisionKey && pending === decisionKey,
     showDecision:
