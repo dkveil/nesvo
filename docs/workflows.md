@@ -225,6 +225,28 @@ The first successful check records a baseline. The host normalizes line endings 
 
 The cap defaults to three starts per UTC day and accepts values from 1 to 24. Run now is an explicit start and counts toward the same cap. Reaching the cap consumes the observed change, so a new change is required for another scheduled start. A pending request can be started on a later day with capacity. Editing or pausing the automation clears its pending request. Changing the folder or command resets the baseline.
 
+## Sharing a workflow
+
+A workflow can be shared as a link that anyone can open without an account. The link stays valid for 7 days. The share site stores the files; Nesvo keeps only the link and the token that revokes it.
+
+- **Share.** **Share…** in the graph editor toolbar, or the share button on a row of the Workflows list, collects the workflow file and every step file it lists, from the root each one resolves to (a project step that overrides a global one is shared, not the global one). The editor must be saved and without errors.
+- **Secret check.** Before anything is uploaded, every line of every file goes through the same credential patterns as the `secrets` probe: private keys, provider and GitHub tokens, Bearer values and credential assignments. A match blocks the share and lists the file, the line and a masked excerpt. Fix the file, for example by naming the variable in `needs` instead of writing its value, and choose **Scan again**. The patterns are signals, not a guarantee that a file holds no secret; read what the dialog shows.
+- **Review and upload.** A clean scan shows exactly the files that will be uploaded, the share site and the size. **Upload and create link** sends them from the Nesvo app, not from the window, and shows the link with **Copy** and its expiry. A shared workflow is at most 256 KiB in total and 64 KiB per file.
+- **Shared links.** Settings › Sharing lists every link this device created, with its expiry. **Revoke** asks the share site to delete the workflow at once; an expired link can be removed from the list. The revoke token is stored in the desktop's data folder, never in the project.
+- **Share site.** Settings › Sharing sets the site address, `https://nesvo.dev` by default. It must be an `https://` address without a path; `http://` is accepted only for `localhost` and `127.0.0.1`. A development build started with `NESVO_SHARE_ORIGIN` uses that address instead and shows it as fixed.
+
+### Importing a shared workflow
+
+Opening a shared link opens Nesvo with an import dialog. Nothing runs and nothing is saved until you choose **Save workflow**.
+
+- The dialog shows the name and description, every step with its type, and the full text of every command, action and agent step, followed by the workflow file. Lines that look like secrets are listed as warnings. Commands and actions run on your computer with your account when you run the workflow, and agent steps send their instructions to your provider; read them before saving.
+- **Save to** offers the project folders Nesvo knows on this computer, **Global workflows** and **Choose a folder…**. The dialog checks the location as soon as you choose it and marks each file **New**, **Already there** (identical, left unchanged) or **Different file exists**.
+- When a different workflow with the same name exists, the dialog suggests a free name such as `release-2`; renaming changes only the workflow's `name` field and file name. Steps keep their names. Files that differ are written only when you tick **Overwrite** and confirm the list of files; a file that changed again after the check is not overwritten.
+- The files go through the same checks as a save from the editor: every step must parse, the workflow must list exactly the shared steps, and the graph rules apply. A bundle that fails any rule saves nothing.
+- After saving, the workflow opens in the graph editor. Running it is a separate, explicit step.
+
+Only links of the form `nesvo://import-workflow?share=<id>&origin=<site>` are accepted, and only from the configured share site or `https://nesvo.dev`. Any other link is refused with a message and nothing is fetched. Imports are saved on this computer (Local).
+
 ## Command line
 
 The host bundle edits the same files as the editor, with no running host and no database:
