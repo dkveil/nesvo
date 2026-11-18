@@ -8,9 +8,22 @@ const typed = [
   'apps/host/src/**/*.ts',
   'apps/mobile-client/src/**/*.{ts,tsx}',
   'packages/contracts/src/**/*.ts',
+  'apps/web/src/**/*.{ts,tsx}',
+  'apps/web/tests/**/*.{ts,tsx}',
+  'apps/web/*.ts',
 ];
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/release/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/release/**',
+      'apps/web/.next/**',
+      'apps/web/.open-next/**',
+      'apps/web/.wrangler/**',
+      'apps/web/next-env.d.ts',
+    ],
+  },
   ...tseslint.configs.recommended.map(config => ({ ...config, files: typed })),
   {
     files: ['apps/desktop/src/renderer/**/*.{ts,tsx}'],
@@ -79,6 +92,26 @@ export default tseslint.config(
             'electron',
             'react',
             '@nesvo/host',
+            '@nesvo/desktop',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}', 'apps/web/tests/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': hooks },
+    rules: {
+      ...hooks.configs.recommended.rules,
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            'effect',
+            'effect/*',
+            'electron',
+            '@nesvo/host',
+            '@nesvo/host/*',
             '@nesvo/desktop',
           ],
         },

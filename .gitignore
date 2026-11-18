@@ -16,12 +16,12 @@
 !/LICENSE
 !/THIRD_PARTY_NOTICES.md
 !/brand/
-!/site/
 !/apps/
 /apps/*
 !/apps/desktop/
 !/apps/host/
 !/apps/mobile-client/
+!/apps/web/
 /apps/host/*
 !/apps/host/package.json
 !/apps/host/tsconfig.json
@@ -77,6 +77,7 @@
 !/docs/workflows.md
 !/docs/brand.md
 !/docs/design-system.md
+!/docs/web.md
 !/.github/
 /.github/*
 !/.github/dependabot.yml
@@ -98,3 +99,10 @@
 **/.expo/
 /apps/mobile-client/android/
 /apps/mobile-client/ios/
+/apps/web/.next/
+/apps/web/.open-next/
+/apps/web/.wrangler/
+/apps/web/.dev.vars
+/apps/web/next-env.d.ts
+/apps/web/*.tsbuildinfo
+/apps/web/AGENTS.md

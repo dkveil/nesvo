@@ -13,6 +13,8 @@
 !apps/desktop/**
 !apps/mobile-client/
 !apps/mobile-client/**
+!apps/web/
+!apps/web/**
 !apps/host/
 !apps/host/package.json
 !apps/host/tsconfig.json
@@ -42,8 +44,6 @@
 !packages/
 !packages/contracts/
 !packages/contracts/**
-!site/
-!site/**
 !scripts/
 !scripts/desktop-smoke.mjs
 !scripts/desktop-package-smoke.mjs
@@ -63,6 +63,7 @@
 !docs/ssh-host.md
 !docs/mobile.md
 !docs/brand.md
+!docs/web.md
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
@@ -77,3 +78,7 @@ bun.lock
 apps/mobile-client/android/
 apps/mobile-client/ios/
 apps/mobile-client/expo-env.d.ts
+apps/web/.next/
+apps/web/.open-next/
+apps/web/.wrangler/
+apps/web/next-env.d.ts

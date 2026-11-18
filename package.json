@@ -12,17 +12,18 @@
     "apps/desktop",
     "apps/host",
     "apps/mobile-client",
+    "apps/web",
     "packages/contracts"
   ],
   "scripts": {
     "dev": "bun run --cwd apps/desktop dev",
     "host": "bun run --cwd apps/host start",
-    "build": "bun run --cwd apps/host build && bun run --cwd apps/desktop build",
+    "build": "bun run --cwd apps/host build && bun run --cwd apps/desktop build && bun run --cwd apps/web build",
     "typecheck": "bun run --filter '@nesvo/*' typecheck",
-    "lint": "eslint apps/desktop/src apps/desktop/tests apps/host/src apps/mobile-client/src packages/contracts/src scripts/desktop-smoke.mjs scripts/desktop-package-smoke.mjs scripts/remote-smoke.mjs scripts/mobile-smoke.mjs scripts/generate-brand-assets.mjs apps/host/tests/*.mjs eslint.config.mjs",
+    "lint": "eslint apps/desktop/src apps/desktop/tests apps/host/src apps/mobile-client/src packages/contracts/src apps/web/src apps/web/tests apps/web/next.config.ts apps/web/open-next.config.ts apps/web/worker.ts scripts/desktop-smoke.mjs scripts/desktop-package-smoke.mjs scripts/remote-smoke.mjs scripts/mobile-smoke.mjs scripts/generate-brand-assets.mjs apps/host/tests/*.mjs eslint.config.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "bun run --cwd apps/host build && node --test apps/desktop/tests/cn.test.mjs apps/host/tests/host.integration.test.mjs apps/host/tests/daemon.integration.test.mjs apps/host/tests/mobile.integration.test.mjs",
+    "test": "bun run --cwd apps/host build && node --test apps/desktop/tests/cn.test.mjs apps/host/tests/host.integration.test.mjs apps/host/tests/daemon.integration.test.mjs apps/host/tests/mobile.integration.test.mjs && bun run --cwd apps/web test",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
     "smoke:desktop": "node scripts/desktop-smoke.mjs",
     "smoke:desktop:package": "node scripts/desktop-package-smoke.mjs",
@@ -33,7 +34,8 @@
     "mobile": "bun run --cwd apps/mobile-client start",
     "mobile:android": "bun run --cwd apps/mobile-client android",
     "mobile:go": "bun run --cwd apps/mobile-client start:go",
-    "mobile:typecheck": "bun run --cwd apps/mobile-client typecheck"
+    "mobile:typecheck": "bun run --cwd apps/mobile-client typecheck",
+    "web": "bun run --cwd apps/web dev"
   },
   "trustedDependencies": [
     "electron",
