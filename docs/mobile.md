@@ -16,6 +16,8 @@ Opt-in gateway inside Nesvo Desktop
   +--> connected SSH computer --> independent Linux host --> provider CLI
 ```
 
+A conversation that waits on workers or running commands shows a bar above the composer with the same label, Stop and `running/total` counter as the desktop. Tapping it opens an Agents bottom sheet with one row per subsession: status dot, title, state, live elapsed time, provider and model, branch or folder, an open chevron and a Stop button for that subsession only. Every stop uses the existing `stop-run` mutation for the displayed session and run; it is never sent again on reconnect. See [Subsession activity](architecture.md#subsession-activity).
+
 Keep the desktop running and the required SSH computer connected. Closing the phone or disabling Phone access closes the mobile transport without stopping host work. Closing the desktop retains the existing desktop lifecycle: Local work stops; independent remote work can continue. A standalone mobile gateway on the VPS is outside this delivery.
 
 On desktop, open **Phone access**, enable access and create a pairing link. In the mobile app choose **Pair computer**, paste that link and name the device. The link expires after two minutes and works once. The desktop lists paired devices and can revoke each one. After restarting desktop, enable Phone access again; saved devices remain paired if the address and gateway identity remain the same.
