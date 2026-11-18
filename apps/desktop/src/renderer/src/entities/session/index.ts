@@ -10,6 +10,7 @@ export type { DesktopSession as Session } from '@nesvo/contracts';
 export { ProviderGlyph } from './provider-glyph';
 export { effortLabel } from './effort-label';
 export { ModeIcon } from './mode-icon';
+export { sessionMarkdown, sessionMarkdownFileName } from './session-markdown';
 export {
   sessionFilterKeys,
   sessionFilterLabels,

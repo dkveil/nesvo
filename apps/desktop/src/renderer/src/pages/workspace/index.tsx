@@ -26,6 +26,7 @@ import {
   FileCode2,
   FolderOpen,
   Gauge,
+  FileDown,
   GitFork,
   GitPullRequest,
   History,
@@ -42,6 +43,8 @@ import {
   providerModes,
   providerStatusLabel,
   sessionFilterKeys,
+  sessionMarkdown,
+  sessionMarkdownFileName,
   sessionRoleLabel,
   sessionStatusLabel,
 } from '@/entities/session';
@@ -2119,8 +2122,28 @@ ${text}`
         .groups(creationGroup.hostId)
         .find(group => group.id === creationGroup.groupId)?.name
     : undefined;
+  const exportAction = (session: Session): RowAction => ({
+    label: 'Export as Markdown…',
+    icon: <FileDown />,
+    disabled: !window.nesvo,
+    onSelect: () =>
+      void window.nesvo
+        .saveTextFile({
+          defaultName: sessionMarkdownFileName(session),
+          content: sessionMarkdown(session),
+        })
+        .catch((error: unknown) =>
+          setErrors(previous => ({
+            ...previous,
+            [entityKey(session)]:
+              `The session could not be exported. ${errorDetail(error)}`,
+          })),
+        ),
+  });
   const headerThreadActions =
-    !browsing && !creating && selected ? threadActions(selected) : [];
+    !browsing && !creating && selected
+      ? [...threadActions(selected), exportAction(selected)]
+      : [];
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const sidebarProps = {
     threadActions,
