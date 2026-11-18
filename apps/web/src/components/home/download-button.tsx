@@ -2,65 +2,58 @@
 
 import { useDownloadFeedback } from './use-download-feedback';
 
-const FEEDBACK_TEXT = {
-  downloading: { label: 'Starting download…', detail: 'From GitHub Releases' },
-  started: { label: 'Download started', detail: 'Check your downloads folder' },
+const FEEDBACK_LABEL = {
+  downloading: 'Starting download…',
+  started: 'Download started',
 } as const;
+
+const DownloadArrow = () => (
+  <svg
+    className="download-arrow"
+    viewBox="0 0 16 16"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path
+      d="M8 2.5v9M3.75 7.5 8 11.75l4.25-4.25M3 14h10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="square"
+    />
+  </svg>
+);
 
 type DownloadButtonProps = {
   href: string;
   label: string;
-  detail: string;
 };
 
-export const DownloadButton = ({
-  href,
-  label,
-  detail,
-}: DownloadButtonProps) => {
-  const {
-    state,
-    buttonRef,
-    handleClick,
-    handlePointerMove,
-    handlePointerLeave,
-  } = useDownloadFeedback();
-  const text = state === 'idle' ? { label, detail } : FEEDBACK_TEXT[state];
+export const DownloadButton = ({ href, label }: DownloadButtonProps) => {
+  const { state, handleClick } = useDownloadFeedback();
 
   return (
     <a
-      ref={buttonRef}
       className="download-button"
       href={href}
       data-state={state}
       onClick={handleClick}
-      onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
     >
-      <span className="download-glow" aria-hidden="true" />
-      <span className="download-tile" aria-hidden="true">
-        <svg className="glyph" viewBox="0 0 64 64" focusable="false">
-          <g className="glyph-mark" fill="currentColor">
-            <path className="glyph-stem" d="M0 0H20V64H0Z" />
-            <path className="glyph-arch" d="M20 0H40L64 24V32H44L32 20H20Z" />
-            <path className="glyph-leg" d="M44 32H64V64H44Z" />
-          </g>
-          <path
-            className="glyph-arrow"
-            fill="currentColor"
-            d="M22 4H42V34H56L32 58L8 34H22Z"
-          />
-        </svg>
-      </span>
-      <span
-        key={state}
-        className="download-text"
-        data-swapping={state !== 'idle'}
-      >
-        <span className="download-label">{text.label}</span>
-        <span className="download-detail">{text.detail}</span>
-      </span>
-      <span className="download-sweep" aria-hidden="true" />
+      <DownloadArrow />
+      <span>{state === 'idle' ? label : FEEDBACK_LABEL[state]}</span>
     </a>
   );
 };
+
+type InactiveDownloadButtonProps = {
+  label: string;
+};
+
+export const InactiveDownloadButton = ({
+  label,
+}: InactiveDownloadButtonProps) => (
+  <span className="download-button" aria-disabled="true">
+    <DownloadArrow />
+    <span>{label}</span>
+  </span>
+);

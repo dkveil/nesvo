@@ -11,25 +11,38 @@ const LETTERS = [
 
 type WordmarkProps = {
   className?: string;
+  isDecorative?: boolean;
 };
 
-export const Wordmark = ({ className }: WordmarkProps) => (
+export const Wordmark = ({
+  className,
+  isDecorative = false,
+}: WordmarkProps) => (
   <svg
     className={className}
     viewBox="18 18 372 64"
-    role="img"
-    aria-label="Nesvo"
     focusable="false"
+    {...(isDecorative
+      ? { 'aria-hidden': true }
+      : { role: 'img', 'aria-label': 'Nesvo' })}
   >
     <g fill="currentColor" fillRule="evenodd">
       {LETTERS.map(letter => (
         <path
           key={letter.x}
-          className="letter"
           transform={`translate(${letter.x} 18)`}
           d={letter.path}
         />
       ))}
     </g>
   </svg>
+);
+
+export const GlitchWordmark = () => (
+  <span className="glitch">
+    <Wordmark className="glitch-base" />
+    <Wordmark className="glitch-ghost glitch-ghost-tear" isDecorative />
+    <Wordmark className="glitch-ghost glitch-ghost-tint" isDecorative />
+    <span className="glitch-scan" aria-hidden="true" />
+  </span>
 );

@@ -1,11 +1,9 @@
 import { SiteFooter } from '@/components/site-footer';
-import { Wordmark } from '@/components/wordmark';
+import { GlitchWordmark } from '@/components/wordmark';
 import type { DetectedSystem } from '@/releases/detect-system';
 import type { ReleaseState } from '@/releases/release-state';
 
 import { DownloadPanel } from './download-panel';
-import { ReleaseDetails } from './release-details';
-import { UnsignedNotes } from './unsigned-notes';
 
 type HomeViewProps = {
   release: ReleaseState;
@@ -19,25 +17,18 @@ export const HomeView = ({
   installCommand,
 }: HomeViewProps) => (
   <>
-    <main className="page">
-      <div className="hero">
-        <h1 className="wordmark">
-          <Wordmark />
-        </h1>
-        <p className="tagline">
-          A desktop app to run and supervise AI coding sessions with the Claude
-          Code and Codex CLIs you already use.
-        </p>
-        <DownloadPanel
-          release={release}
-          initialSystem={system}
-          installCommand={installCommand}
-        />
-      </div>
-      <div className="sections">
-        <ReleaseDetails release={release} />
-        <UnsignedNotes />
-      </div>
+    <main className="home">
+      <h1 className="home-title">
+        <GlitchWordmark />
+      </h1>
+      <p className="tagline">
+        Run and supervise Claude Code and Codex sessions from one desktop app.
+      </p>
+      <DownloadPanel
+        release={release}
+        initialSystem={system}
+        installCommand={installCommand}
+      />
     </main>
     <SiteFooter />
   </>

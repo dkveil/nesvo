@@ -68,8 +68,9 @@ describe('Home page', () => {
 
     expect(primaryHref(html)).toBe('/download/windows');
     expect(html).toContain('Download for Windows');
-    expect(html).toContain('Windows 10 and 11 · x64 · v0.2.0');
-    expect(html).toContain('More info, then Run anyway');
+    expect(html).toContain('v0.2.0 · Windows 10 and 11 · x64 · 100.0 MB');
+    expect(html).toContain('Other platforms');
+    expect(html).toContain('Run anyway');
   });
 
   it('puts the matching disk image and the Terminal command first on a Mac', () => {
@@ -78,13 +79,13 @@ describe('Home page', () => {
     const unknown = renderHome({ os: 'macos', architecture: null });
 
     expect(primaryHref(arm)).toBe('/download/mac');
-    expect(arm).toContain('Apple silicon · .dmg · v0.2.0');
+    expect(arm).toContain('v0.2.0 · Apple silicon · .dmg');
     expect(arm).toContain(INSTALL_COMMAND);
-    expect(arm).toContain('Or install from Terminal');
-    expect(arm).not.toContain('Get the Intel build');
+    expect(arm).not.toContain('macOS from Terminal');
+    expect(arm).not.toContain('Intel Mac?');
     expect(primaryHref(intel)).toBe('/download/mac-intel');
-    expect(intel).toContain('Intel · .dmg · v0.2.0');
-    expect(unknown).toContain('Get the Intel build');
+    expect(intel).toContain('v0.2.0 · Intel · .dmg');
+    expect(unknown).toContain('Intel Mac?');
   });
 
   it('lists every platform with Linux as not available on Linux', () => {
@@ -97,15 +98,17 @@ describe('Home page', () => {
     expect(html).toContain('Not available yet');
   });
 
-  it('shows the version and checksums of the release', () => {
+  it('keeps the version and checksums of the release behind a disclosure', () => {
     const html = renderHome({ os: 'windows', architecture: 'x86' });
 
+    expect(html).toContain('Checksums');
+    expect(html).toContain('macOS from Terminal');
     expect(html).toContain(CHECKSUM);
     expect(html).toContain('SHA256SUMS.txt');
     expect(html).toContain('Nesvo-macOS-x64.dmg');
   });
 
-  it('explains that nothing is published before the first release', () => {
+  it('keeps an inactive download and one line before the first release', () => {
     const html = renderHome(
       { os: 'windows', architecture: 'x86' },
       {
@@ -114,10 +117,11 @@ describe('Home page', () => {
     );
 
     expect(primaryHref(html)).toBeNull();
-    expect(html).toContain('Downloads coming soon');
-    expect(html).toContain('No release is published yet');
-    expect(html).toContain('All platforms');
-    expect(html).toContain('>Windows<');
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('Download for Windows');
+    expect(html).toContain('The first build is on its way.');
+    expect(html).not.toContain('Other platforms');
+    expect(html).not.toContain('Checksums');
     expect(html).not.toContain(INSTALL_COMMAND);
   });
 
