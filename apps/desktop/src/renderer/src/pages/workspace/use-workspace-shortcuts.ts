@@ -9,6 +9,7 @@ export type WorkspaceShortcutHandlers = {
   newSession: () => void;
   openSettings: () => void;
   openFiles: () => void;
+  reviewPullRequest: () => void;
   stepSession: (direction: 1 | -1) => void;
   nextNeedsMe: () => void;
   lastSession: () => void;
@@ -43,6 +44,7 @@ function primaryShortcut(
   if (event.shiftKey) {
     if (key === 'f') return run.openHistorySearch;
     if (key === 'e') return run.openFiles;
+    if (key === 'g') return run.reviewPullRequest;
     return null;
   }
   if (key === 'k') return run.openHistorySearch;

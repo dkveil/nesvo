@@ -46,6 +46,7 @@ export type WorkspaceCommandActions = {
   files: Action;
   diff: Action;
   skills: Action;
+  reviewPullRequest: Action;
   searchHistory: () => void;
   openInTerminal: Action;
   nextNeedsMe: () => void;
@@ -148,6 +149,14 @@ export function workspaceCommands(
       icon: <BookOpen />,
       keywords: 'shared library current session',
       run: actions.skills,
+    },
+    {
+      id: 'review-pull-request',
+      label: 'Review pull request',
+      icon: <GitPullRequest />,
+      shortcut: shortcutKeys('reviewPullRequest'),
+      keywords: 'github pr code threads approve current session',
+      run: actions.reviewPullRequest,
     },
     ...actions.conversation,
     {

@@ -64,6 +64,11 @@ export const shortcuts = {
     label: 'Open files for the current session',
     group: 'Panels',
   },
+  reviewPullRequest: {
+    keys: 'Ctrl Shift G',
+    label: 'Review the pull request of the current session',
+    group: 'Panels',
+  },
   focusComposer: {
     keys: 'Esc',
     label: 'Close a panel, or return focus from it to the composer',

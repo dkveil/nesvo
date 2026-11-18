@@ -147,6 +147,7 @@ import {
   SessionCard,
   UsageSection,
   WorkersSection,
+  PullRequestSection,
 } from '@/widgets/session-card';
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
@@ -190,6 +191,7 @@ import { CompactInstructionsDialog } from '@/features/conversation-context/compa
 import { ContextMeter } from '@/features/conversation-context/context-meter';
 import { conversationActions } from '@/features/conversation-context/conversation-actions';
 import { SessionPullRequest } from '@/features/session-pull-request';
+import { PullRequestCard } from '@/features/session-pull-request/pull-request-card';
 import {
   pullRequestsUnavailableReason,
   referenceKey,
@@ -197,6 +199,7 @@ import {
   type PullRequestTarget,
 } from '@/entities/pull-request';
 import { PullRequestsView } from '@/widgets/pull-requests';
+import type { PullRequestPanelLayout } from '@/widgets/pull-request';
 import { readSeen, writeSeen } from './seen-store';
 import { useAttention } from './use-attention';
 import { useBackgroundAttention } from './use-background-attention';
@@ -330,6 +333,8 @@ export function Workspace() {
   );
   const [pullRequestTarget, setPullRequestTarget] =
     useState<PullRequestTarget | null>(null);
+  const [pullRequestLayout, setPullRequestLayout] =
+    useState<PullRequestPanelLayout>('surface');
   const [workflowsView, setWorkflowsView] = useState(false);
   const [workflowsSource, setWorkflowsSource] = useState({
     hostId: 'local',
@@ -1237,10 +1242,22 @@ export function Workspace() {
     setNavigationOpen(false);
     setDetailsOpen(false);
   };
-  const openPullRequest = (target: PullRequestTarget) => {
+  const openPullRequest = (
+    target: PullRequestTarget,
+    layout: PullRequestPanelLayout = 'surface',
+  ) => {
     diffTrigger.current = panelTrigger();
     setCardOpen(false);
     setPullRequestTarget(target);
+    setPullRequestLayout(layout);
+    setPanel('pull-request');
+  };
+  const reviewPullRequest = (target: PullRequestTarget) =>
+    openPullRequest(target, 'session');
+  const openPullRequestSurface = (target: PullRequestTarget) => {
+    openPullRequestsNow(selected ?? null);
+    setPullRequestTarget(target);
+    setPullRequestLayout('surface');
     setPanel('pull-request');
   };
   const openAutomations = (target = 'list') =>
@@ -2834,6 +2851,20 @@ ${text}`
     requestAnimationFrame(() => requestAnimationFrame(jump));
   };
   const sessionPanels = !browsing && !creating && !!selected;
+  const sessionPullRequest =
+    sessionPanels && selected?.pullRequest
+      ? { hostId: selected.hostId, reference: selected.pullRequest }
+      : null;
+  const reviewingSessionPullRequest =
+    !!sessionPullRequest &&
+    panel === 'pull-request' &&
+    pullRequestLayout === 'session' &&
+    !pullRequestsView &&
+    pullRequestTarget?.hostId === sessionPullRequest.hostId &&
+    sameReference(pullRequestTarget.reference, sessionPullRequest.reference);
+  const reviewSessionPullRequest = sessionPullRequest
+    ? () => reviewPullRequest(sessionPullRequest)
+    : undefined;
   const openSkills = () => {
     diffTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -2852,6 +2883,10 @@ ${text}`
     openSettings: () => setSettingsPage('general'),
     openFiles: () => {
       if (sessionPanels) openFiles();
+    },
+    reviewPullRequest: () => {
+      if (reviewingSessionPullRequest) closeDiff();
+      else reviewSessionPullRequest?.();
     },
     stepSession,
     nextNeedsMe,
@@ -2891,6 +2926,7 @@ ${text}`
           ? () => openDiff(latestReview.id)
           : undefined,
       skills: sessionPanels ? openSkills : undefined,
+      reviewPullRequest: reviewSessionPullRequest,
       searchHistory: () => openHistorySearch(),
       openInTerminal:
         !browsing && !creating && selected && canOpenInTerminal(selected)
@@ -3334,8 +3370,14 @@ ${text}`
                       selected.hostId,
                     )}
                     api={desktopApi(selected.hostId)}
+                    reviewing={reviewingSessionPullRequest}
                     onOpen={reference =>
-                      openPullRequest({ hostId: selected.hostId, reference })
+                      reviewingSessionPullRequest
+                        ? closeDiff()
+                        : reviewPullRequest({
+                            hostId: selected.hostId,
+                            reference,
+                          })
                     }
                     onLinked={session => store.merge([session])}
                   />
@@ -3506,6 +3548,25 @@ ${text}`
               session={cardSession}
               run={cardRun}
               gitBranch={branch}
+              pullRequest={
+                cardSession?.pullRequest && (
+                  <PullRequestSection
+                    hostId={cardSession.hostId}
+                    reference={cardSession.pullRequest}
+                    api={pullRequestApi(cardSession.hostId)}
+                    unavailableReason={pullRequestBlockedReason(
+                      cardSession.hostId,
+                    )}
+                    onReview={() => {
+                      if (cardSession.pullRequest)
+                        reviewPullRequest({
+                          hostId: cardSession.hostId,
+                          reference: cardSession.pullRequest,
+                        });
+                    }}
+                  />
+                )
+              }
               onComputers={() => setSettingsPage('computers')}
               onFiles={openFiles}
               onRunWorkflow={() =>
@@ -3916,9 +3977,53 @@ ${text}`
                 focusTarget={sessionTarget}
                 messageTarget={messageTarget}
                 workers={workers}
+                renderPullRequest={reference => (
+                  <PullRequestCard
+                    hostId={selectedHostId}
+                    reference={reference}
+                    api={pullRequestApi(selectedHostId)}
+                    unavailableReason={pullRequestBlockedReason(selectedHostId)}
+                    onReview={next =>
+                      reviewPullRequest({
+                        hostId: selectedHostId,
+                        reference: next,
+                      })
+                    }
+                    onOpen={next =>
+                      openPullRequestSurface({
+                        hostId: selectedHostId,
+                        reference: next,
+                      })
+                    }
+                  />
+                )}
                 results={
                   <SessionReviews
                     {...reviewDecisionProps}
+                    pullRequest={
+                      selected.pullRequest && (
+                        <PullRequestCard
+                          hostId={selectedHostId}
+                          reference={selected.pullRequest}
+                          api={pullRequestApi(selectedHostId)}
+                          unavailableReason={pullRequestBlockedReason(
+                            selectedHostId,
+                          )}
+                          onReview={next =>
+                            reviewPullRequest({
+                              hostId: selectedHostId,
+                              reference: next,
+                            })
+                          }
+                          onOpen={next =>
+                            openPullRequestSurface({
+                              hostId: selectedHostId,
+                              reference: next,
+                            })
+                          }
+                        />
+                      )
+                    }
                     reviews={store.reviews.filter(
                       review =>
                         review.sessionId === selected.id &&
@@ -4265,7 +4370,11 @@ ${text}`
           <Suspense
             fallback={
               <PanelPlaceholder
-                kind="pull-request"
+                kind={
+                  !pullRequestsView && pullRequestLayout === 'session'
+                    ? 'pull-request-review'
+                    : 'pull-request'
+                }
                 icon={GitPullRequest}
                 title="Pull request"
               >
@@ -4276,7 +4385,9 @@ ${text}`
             }
           >
             <PullRequestPanel
-              key={referenceKey(pullRequestTarget)}
+              key={`${referenceKey(pullRequestTarget)}:${pullRequestsView ? 'surface' : pullRequestLayout}`}
+              layout={pullRequestsView ? 'surface' : pullRequestLayout}
+              onExpand={() => openPullRequestSurface(pullRequestTarget)}
               target={pullRequestTarget}
               api={desktopApi(pullRequestTarget.hostId)}
               blockedReason={pullRequestBlockedReason(pullRequestTarget.hostId)}
