@@ -24,6 +24,7 @@ const providerRequests = new Set<HostRequest['method']>([
   'claude-status',
   'codex-status',
   'create-session',
+  'create-provider-profile',
   'list-conversations',
   'adopt-conversation',
   'list-mcp-servers',

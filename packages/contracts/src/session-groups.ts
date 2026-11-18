@@ -17,6 +17,7 @@ export const sessionGroupDefaultsSchema = z
   .strictObject({
     directory: z.string().trim().min(1).max(4096).optional(),
     provider: providerSchema.optional(),
+    profileId: z.uuid().nullable().optional(),
     model: z.string().trim().min(1).max(200).optional(),
     mode: sessionModeSchema.optional(),
     workflow: sessionWorkflowSchema.optional(),
@@ -32,11 +33,11 @@ export const sessionGroupDefaultsSchema = z
         path: ['mode'],
         message: `${value.provider} does not support the ${value.mode} permission mode`,
       });
-    if ((value.model || value.mode) && !value.provider)
+    if ((value.model || value.mode || value.profileId) && !value.provider)
       context.addIssue({
         code: 'custom',
         path: ['provider'],
-        message: 'Choose a provider for the default model or mode',
+        message: 'Choose a provider for the default account, model or mode',
       });
   });
 

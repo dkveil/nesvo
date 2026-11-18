@@ -6,6 +6,7 @@ import {
   skillLimits,
   type SkillDiscovery,
   type SkillEntry,
+  type Provider,
 } from '@nesvo/contracts';
 import { inspectClaudeSkills } from './claude';
 import { readSkillSnapshot, type SkillSnapshot } from './portable';
@@ -80,6 +81,8 @@ function metadata(
 export async function inspectLocalSkillLibrary(
   directory: string,
   signal: AbortSignal,
+  provider?: Provider,
+  profileDirectory?: string,
 ): Promise<Library> {
   const result: Library = { skills: [], issues: [], truncated: false };
   const entries = new Map<string, SkillEntry>();
@@ -262,6 +265,8 @@ export async function inspectLocalSkillLibrary(
       deadline,
       onVisit: consume,
       canonicalPaths: true,
+      configDirectory:
+        provider === 'Claude Code' ? profileDirectory : undefined,
     });
     result.truncated ||= inventory.truncated;
     for (const item of inventory.issues)
@@ -320,9 +325,10 @@ export async function inspectLocalSkillLibrary(
       },
       {
         path: join(
-          process.env.CODEX_HOME
-            ? resolve(directory, process.env.CODEX_HOME)
-            : join(home, '.codex'),
+          (provider === 'Codex' ? profileDirectory : undefined) ??
+            (process.env.CODEX_HOME
+              ? resolve(directory, process.env.CODEX_HOME)
+              : join(home, '.codex')),
           'skills',
         ),
         source: 'user',

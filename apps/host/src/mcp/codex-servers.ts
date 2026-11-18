@@ -83,9 +83,10 @@ const codexEntry = (key: Buffer, name: string, value: unknown): McpEntry => {
 export const discoverCodexServers = async (
   key: Buffer,
   signal?: AbortSignal,
+  profileDirectory?: string,
 ): Promise<{ entries: McpEntry[]; issues: string[] }> => {
   const file = await readConfigFile(
-    join(codexHome(), 'config.toml'),
+    join(profileDirectory ?? codexHome(), 'config.toml'),
     MAX_CONFIG_BYTES,
     signal,
   );

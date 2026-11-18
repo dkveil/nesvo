@@ -82,6 +82,10 @@ import {
   terminalResume,
   transcriptSearchInputSchema,
   adoptConversationSchema,
+  createProviderProfileSchema,
+  renameProviderProfileSchema,
+  removeProviderProfileSchema,
+  providerProfileSelectionSchema,
   listConversationsSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
@@ -642,6 +646,31 @@ void app.whenReady().then(async () => {
       );
     });
   }
+  handle('nesvo:list-provider-profiles', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'list-provider-profiles',
+      undefined,
+      route(hostId),
+    );
+  });
+  const profileCommands = {
+    'create-provider-profile': createProviderProfileSchema,
+    'rename-provider-profile': renameProviderProfileSchema,
+    'remove-provider-profile': removeProviderProfileSchema,
+  } as const;
+  for (const method of Object.keys(
+    profileCommands,
+  ) as (keyof typeof profileCommands)[]) {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        method,
+        profileCommands[method].parse(input),
+        route(hostId),
+      );
+    });
+  }
   handle('nesvo:provider-usage', (event, input: unknown, hostId: unknown) => {
     authorize(event);
     return computers.execute(
@@ -654,14 +683,28 @@ void app.whenReady().then(async () => {
     authorize(event);
     return computers.execute('health', undefined, route(hostId));
   });
-  handle('nesvo:claude-status', async (event, hostId: unknown) => {
-    authorize(event);
-    return computers.execute('claude-status', undefined, route(hostId));
-  });
-  handle('nesvo:codex-status', async (event, hostId: unknown) => {
-    authorize(event);
-    return computers.execute('codex-status', undefined, route(hostId));
-  });
+  handle(
+    'nesvo:claude-status',
+    async (event, hostId: unknown, input: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'claude-status',
+        providerProfileSelectionSchema.optional().parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:codex-status',
+    async (event, hostId: unknown, input: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'codex-status',
+        providerProfileSelectionSchema.optional().parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:decide-delegation',
     async (event, input: unknown, hostId: unknown) => {

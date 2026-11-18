@@ -228,16 +228,18 @@ export class SessionStore {
     provider: Session['provider'];
     providerSessionId: string;
     adopted: boolean;
+    profileId: string | null;
   }[] {
     return this.database
       .prepare(
-        "SELECT json_extract(document, '$.provider') AS provider, json_extract(document, '$.providerSessionId') AS providerSessionId, json_extract(document, '$.messages[0].origin') = 'imported' AS adopted FROM sessions WHERE providerSessionId IS NOT NULL",
+        "SELECT json_extract(document, '$.provider') AS provider, json_extract(document, '$.providerSessionId') AS providerSessionId, profile_id AS profileId, json_extract(document, '$.messages[0].origin') = 'imported' AS adopted FROM sessions WHERE providerSessionId IS NOT NULL",
       )
       .all()
       .map(row => ({
         provider: providerSchema.parse(row.provider),
         providerSessionId: String(row.providerSessionId),
         adopted: row.adopted === 1,
+        profileId: typeof row.profileId === 'string' ? row.profileId : null,
       }));
   }
 
@@ -330,6 +332,7 @@ export class SessionStore {
       {
         title: `Fork of ${source.title}`,
         provider: source.provider,
+        profileId: source.profileId,
         model: source.model,
         mode: source.mode,
         directory,
@@ -366,6 +369,7 @@ export class SessionStore {
     const now = new Date().toISOString();
     const session: Session = {
       ...settings,
+      profileId: input.profileId ?? null,
       mcp,
       effort: input.effort ?? null,
       id:
@@ -436,13 +440,14 @@ export class SessionStore {
     this.database.exec('BEGIN IMMEDIATE');
     try {
       const statement = this.database.prepare(
-        'INSERT INTO sessions (id, document, updated_at, workflow_run_id, workflow_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, (SELECT id FROM workflow_runs WHERE id = ?), (SELECT id FROM workflow_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, workflow_run_id = excluded.workflow_run_id, workflow_step_id = excluded.workflow_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
+        'INSERT INTO sessions (id, document, updated_at, profile_id, workflow_run_id, workflow_step_id, scheduled_job_id, scheduled_job_run_id) VALUES (?, ?, ?, ?, (SELECT id FROM workflow_runs WHERE id = ?), (SELECT id FROM workflow_steps WHERE id = ?), (SELECT id FROM scheduled_jobs WHERE id = ?), (SELECT id FROM scheduled_job_runs WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at, profile_id = excluded.profile_id, workflow_run_id = excluded.workflow_run_id, workflow_step_id = excluded.workflow_step_id, scheduled_job_id = excluded.scheduled_job_id, scheduled_job_run_id = excluded.scheduled_job_run_id',
       );
       for (const session of next) {
         statement.run(
           session.id,
           JSON.stringify(session),
           session.updatedAt,
+          session.profileId ?? null,
           session.workflowRunId,
           session.workflowStepId,
           session.scheduledJobId,
@@ -465,6 +470,10 @@ export class SessionStore {
       id: randomUUID(),
       title: proposal.title,
       provider: proposal.provider,
+      profileId:
+        proposal.provider === parent.provider
+          ? (parent.profileId ?? null)
+          : null,
       model: proposal.model,
       effort: null,
       mode: proposal.mode,

@@ -23,6 +23,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { createProfileDirectory } from './provider-profile-directory.mjs';
 
 const fixturePath = fileURLToPath(
   new URL('./claude-fixture.mjs', import.meta.url),
@@ -1132,6 +1133,7 @@ test(
         'transcript-search',
         'session-delete',
         'conversation-compaction',
+        'provider-profiles',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2133,7 +2135,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      17,
+      18,
     );
     migrated.close();
     const reopened = open();
@@ -4511,7 +4513,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 99');
+    database.exec('PRAGMA user_version = 19');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4528,7 +4530,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 99);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.ok(host.error().includes(backup));
     } finally {
@@ -6136,6 +6138,7 @@ test(
       'transcript-search',
       'session-delete',
       'conversation-compaction',
+      'provider-profiles',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7028,7 +7031,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            17,
+            18,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7111,11 +7114,11 @@ test(
       }
     });
 
-    await t.test('a version 18 database is refused', async () => {
+    await t.test('a version 19 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 18');
+      newer.exec('PRAGMA user_version = 19');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7127,7 +7130,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          18,
+          19,
         );
       } finally {
         check.close();
@@ -9808,7 +9811,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        17,
+        18,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -9859,7 +9862,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        17,
+        18,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -18590,7 +18593,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      17,
+      18,
     );
     database
       .prepare(
@@ -18953,7 +18956,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 17);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 18);
     } finally {
       check.close();
     }
@@ -19118,7 +19121,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 17);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 18);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -20640,4 +20643,249 @@ test('an older Codex without thread compaction fails the action visibly', async 
   assert.match(failed.error, /cannot compact the conversation/);
   assert.deepEqual(failed.compactions, []);
   assert.equal(failed.runId, ready.runId);
+});
+
+test('provider profiles scope probes, turns and forks to the recorded account', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-provider-profiles-'));
+  const log = join(directory, 'providers.jsonl');
+  await writeFile(join(directory, 'usage-control.json'), '{}');
+  const start = () =>
+    launch(directory, join(directory, 'pids.json'), {
+      NESVO_FIXTURE_PROFILE_LOG: log,
+    });
+  let host = start();
+  t.after(async () => {
+    try {
+      await host.stop();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  assert.equal((await host.request('health')).type, 'health');
+  await host.stop();
+  const legacy = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+  try {
+    legacy.exec(
+      'DROP TRIGGER session_profile_immutable; DROP INDEX sessions_profile; ALTER TABLE sessions DROP COLUMN profile_id; DROP TABLE provider_profiles; PRAGMA user_version = 17',
+    );
+  } finally {
+    legacy.close();
+  }
+  host = start();
+  assert.ok(
+    (await host.request('health')).health.capabilities.includes(
+      'provider-profiles',
+    ),
+  );
+  const complete = async sessionId => {
+    const run = await host.request('send-message', {
+      sessionId,
+      text: 'fixture:continue',
+      messageId: randomUUID(),
+    });
+    assert.equal(run.type, 'session', JSON.stringify(run));
+    const session = await host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === run.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+    assert.equal(session.status, 'completed', session.error);
+    return session;
+  };
+  assert.equal(
+    (
+      await host.request('create-provider-profile', {
+        provider: 'Codex',
+        label: 'Missing',
+        configDirectory: join(directory, 'missing'),
+      })
+    ).code,
+    'invalid-directory',
+  );
+  for (const [provider, statusMethod, folder] of [
+    ['Claude Code', 'claude-status', 'claude-work'],
+    ['Codex', 'codex-status', 'codex-work'],
+  ]) {
+    const configDirectory = await createProfileDirectory(
+      join(directory, folder),
+    );
+    const added = await host.request('create-provider-profile', {
+      provider,
+      label: 'Work',
+      configDirectory,
+    });
+    assert.equal(added.type, 'provider-profiles', JSON.stringify(added));
+    const profile = added.profiles.find(
+      profile => profile.provider === provider,
+    );
+    assert.ok(profile);
+    const profileId = profile.id;
+    assert.equal(
+      (await host.request(statusMethod, { profileId })).status.status,
+      'ready',
+    );
+    assert.equal(
+      (await host.request('provider-usage', { provider, profileId })).usage
+        .status,
+      'ready',
+    );
+    const transcriptId = randomUUID();
+    const timestamp = new Date().toISOString();
+    const transcriptFolder =
+      provider === 'Claude Code'
+        ? join(configDirectory, 'projects', 'fixture')
+        : join(configDirectory, 'sessions', '2026', '11', '17');
+    await mkdir(transcriptFolder, { recursive: true });
+    const name =
+      provider === 'Claude Code'
+        ? transcriptId
+        : 'rollout-2026-11-17T15-00-00-' + transcriptId;
+    const prompt = 'Profile-specific transcript';
+    const transcript =
+      provider === 'Claude Code'
+        ? [
+            {
+              type: 'user',
+              sessionId: transcriptId,
+              cwd: configDirectory,
+              timestamp,
+              message: { role: 'user', content: prompt },
+            },
+          ]
+        : [
+            {
+              type: 'session_meta',
+              timestamp,
+              payload: { id: transcriptId, cwd: configDirectory },
+            },
+            {
+              type: 'response_item',
+              timestamp,
+              payload: {
+                type: 'message',
+                role: 'user',
+                content: [{ type: 'input_text', text: prompt }],
+              },
+            },
+          ];
+    await writeFile(
+      join(transcriptFolder, name + '.jsonl'),
+      transcript.map(row => JSON.stringify(row)).join('\n') + '\n',
+    );
+    const scoped = await host.request('list-conversations', {
+      provider,
+      profileId,
+      include: { provider, providerSessionId: transcriptId },
+    });
+    assert.equal(
+      scoped.type,
+      'conversation-import-catalog',
+      JSON.stringify(scoped),
+    );
+    assert.deepEqual(
+      scoped.catalog.conversations.map(item => item.providerSessionId),
+      [transcriptId],
+    );
+    const defaults = await host.request('list-conversations');
+    assert.ok(
+      defaults.catalog.conversations.every(
+        item => item.providerSessionId !== transcriptId,
+      ),
+    );
+    const adopted = await host.request('adopt-conversation', {
+      provider,
+      profileId,
+      providerSessionId: transcriptId,
+      requestId: randomUUID(),
+    });
+    assert.equal(adopted.type, 'session', JSON.stringify(adopted));
+    assert.equal(adopted.session.profileId, profileId);
+    assert.equal(adopted.session.mode, 'read-only');
+    const created = await host.request('create-session', {
+      title: 'Profile session',
+      provider,
+      profileId,
+      model: 'default',
+      mode: 'read-only',
+      directory,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    const first = await complete(created.session.id);
+    const resumed = await complete(first.id);
+    assert.equal(resumed.providerSessionId, first.providerSessionId);
+    const compact = await host.request('compact-session', {
+      sessionId: resumed.id,
+      revision: resumed.revision,
+    });
+    assert.equal(compact.type, 'session', JSON.stringify(compact));
+    const session = await host.event(
+      item =>
+        item.id === resumed.id &&
+        item.revision > resumed.revision &&
+        !['running', 'stopping'].includes(item.status),
+    );
+    assert.equal(session.compactions.length, 1, session.error);
+    assert.equal(session.profileId, profileId);
+    assert.equal(
+      (
+        await host.request('fork-session', {
+          sessionId: session.id,
+          profileId: null,
+        })
+      ).code,
+      'invalid-request',
+    );
+    assert.equal(
+      (
+        await host.request('restart-session', {
+          sessionId: session.id,
+          revision: session.revision,
+          profileId: null,
+        })
+      ).code,
+      'invalid-request',
+    );
+    const fork = await host.request('fork-session', { sessionId: session.id });
+    assert.equal(fork.type, 'session', JSON.stringify(fork));
+    assert.equal((await complete(fork.session.id)).profileId, profileId);
+    const renamed = await host.request('rename-provider-profile', {
+      profileId,
+      label: 'Work account',
+    });
+    assert.equal(
+      renamed.profiles.find(item => item.id === profileId)?.label,
+      'Work account',
+    );
+    assert.equal(
+      (await host.request('remove-provider-profile', { profileId })).code,
+      'invalid-request',
+    );
+  }
+  await host.stop();
+  host = start();
+  assert.deepEqual(
+    (await host.request('list-provider-profiles')).profiles.map(
+      profile => profile.label,
+    ),
+    ['Work account', 'Work account'],
+  );
+  assert.ok(
+    (await host.request('list-sessions')).sessions.every(
+      session => session.profileId,
+    ),
+  );
+  const launches = (await readFile(log, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+  for (const [provider, folder] of [
+    ['Claude Code', 'claude-work'],
+    ['Codex', 'codex-work'],
+  ]) {
+    const processes = launches.filter(launch => launch.provider === provider);
+    assert.ok(processes.length >= 5);
+    const expected = await realpath(join(directory, folder));
+    assert.ok(processes.every(launch => launch.directory === expected));
+  }
 });

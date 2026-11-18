@@ -77,6 +77,11 @@ import { SessionStore, type SessionOrigin } from './store';
 import { AttachmentError, AttachmentStore } from './attachments';
 import { finishActivities, updateActivity } from './activities';
 import { ReviewStore } from '../review/store';
+import {
+  profileEnvironment,
+  type ProviderProfiles,
+} from '../providers/profiles';
+import { SessionError } from './session-error';
 import { resolveSessionSkill } from '../skills/service';
 import {
   readSkillSnapshot,
@@ -110,8 +115,9 @@ export async function confirmCodexEffort(
   model: string,
   effort: string,
   signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<void> {
-  const status = await inspectCodex(signal);
+  const status = await inspectCodex(signal, environment);
   if (status.status !== 'ready')
     throw new SessionError(
       'unavailable',
@@ -229,19 +235,7 @@ function holdQueue(session: Session): void {
   session.queue = session.queue.map(item => ({ ...item, held: true }));
 }
 
-export class SessionError extends Error {
-  constructor(
-    readonly code:
-      | 'busy'
-      | 'not-found'
-      | 'invalid-directory'
-      | 'invalid-request'
-      | 'unavailable',
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { SessionError } from './session-error';
 
 export class BudgetRefusal extends SessionError {
   constructor(message: string) {
@@ -286,6 +280,7 @@ export type WorkflowTurn = {
 };
 
 export type SessionServiceOptions = {
+  profiles?: ProviderProfiles;
   checkCostBudgets?: (
     session: Session,
     now: Date,
@@ -864,6 +859,7 @@ export class SessionService {
         'busy',
         'Wait for the worktree operation to finish.',
       );
+    this.options.profiles?.require(input.provider, input.profileId);
     const session = this.store.create(input, directory, origin);
     this.emitSession(session);
     return session;
@@ -879,7 +875,10 @@ export class SessionService {
     } = {},
   ): Session {
     const existing = this.sessionForCreateRequest(input.requestId);
-    if (existing) return existing;
+    if (existing) {
+      this.confirmUnchangedProfile(existing, input.profileId ?? null);
+      return existing;
+    }
     if (this.removingWorktree)
       throw new SessionError(
         'busy',
@@ -900,6 +899,7 @@ export class SessionService {
         'invalid-request',
         'MCP servers and hooks must be confirmed by the host before the session is created.',
       );
+    this.options.profiles?.require(input.provider, input.profileId);
     let directory = options.isolatedDirectory ?? input.directory;
     if (!directory) {
       const name = input.requestId
@@ -922,6 +922,7 @@ export class SessionService {
 
   async fork(input: ForkSessionInput, signal: AbortSignal): Promise<Session> {
     const source = this.threadActionSession(input.sessionId);
+    this.confirmUnchangedProfile(source, input.profileId);
     if (!source.providerInitialized || !source.providerSessionId)
       throw new SessionError(
         'invalid-request',
@@ -945,6 +946,12 @@ export class SessionService {
     };
     this.forking = true;
     try {
+      const profileDirectory = await this.options.profiles?.directory(
+        source.provider,
+        source.profileId,
+        signal,
+      );
+      const environment = profileEnvironment(source.provider, profileDirectory);
       let worktree:
         { id: string; metadata: NonNullable<Session['worktree']> } | undefined;
       if (input.worktree) {
@@ -966,13 +973,14 @@ export class SessionService {
       }
       let native: { sessionId: string; model: string } | null = null;
       if (source.provider === 'Claude Code') {
-        await confirmClaudeFork(source.mode, signal);
+        await confirmClaudeFork(source.mode, signal, environment);
       } else {
         const operation = startCodex({
           directory,
           sessionId: source.providerSessionId,
           resume: false,
           fork: true,
+          environment,
           model: source.model,
           effort: source.effort,
           mode: source.mode === 'supervised' ? 'supervised' : 'read-only',
@@ -1019,6 +1027,7 @@ export class SessionService {
 
   restart(input: RestartSessionInput): Session {
     const session = this.threadActionSession(input.sessionId);
+    this.confirmUnchangedProfile(session, input.profileId);
     if (session.revision !== input.revision)
       throw new SessionError(
         'invalid-request',
@@ -1090,32 +1099,70 @@ export class SessionService {
       session.activity = event.text;
       this.publish(session);
     };
-    const environment = this.options.environment?.(session);
-    const handle =
-      session.provider === 'Codex'
-        ? startCodex({
-            directory: session.directory,
-            sessionId: session.providerSessionId,
-            resume: true,
-            model: session.model,
-            mode: 'read-only',
-            prompt: '',
-            compact: true,
-            experimentalApi: delegatesThroughCodex(session),
-            ...(environment ? { environment } : {}),
-            onEvent,
-          })
-        : startClaude({
-            directory: session.directory,
-            sessionId: session.providerSessionId,
-            resume: true,
-            model: session.model,
-            prompt: '',
-            mode: 'read-only',
-            compact: { instructions: input.instructions ?? null },
-            ...(environment ? { environment } : {}),
-            onEvent,
-          });
+    const controller = new AbortController();
+    const providerSessionId = session.providerSessionId;
+    let provider: ActiveRun['handle'] | undefined;
+    const handle: ActiveRun['handle'] = {
+      done: Promise.resolve().then(async (): Promise<CodexResult> => {
+        let profileDirectory: string | undefined;
+        try {
+          profileDirectory = await this.options.profiles?.directory(
+            session.provider,
+            session.profileId,
+            controller.signal,
+          );
+        } catch (error) {
+          if (controller.signal.aborted)
+            return { status: 'stopped', error: null };
+          return {
+            status: 'failed',
+            error:
+              error instanceof SessionError
+                ? error.message
+                : 'The session account directory could not be verified.',
+          };
+        }
+        if (controller.signal.aborted)
+          return { status: 'stopped', error: null };
+        const environment = {
+          ...this.options.environment?.(session),
+          ...profileEnvironment(session.provider, profileDirectory),
+        };
+        provider =
+          session.provider === 'Codex'
+            ? startCodex({
+                directory: session.directory,
+                sessionId: providerSessionId,
+                resume: true,
+                model: session.model,
+                mode: 'read-only',
+                prompt: '',
+                compact: true,
+                experimentalApi: delegatesThroughCodex(session),
+                environment,
+                onEvent,
+              })
+            : startClaude({
+                directory: session.directory,
+                sessionId: providerSessionId,
+                resume: true,
+                model: session.model,
+                prompt: '',
+                mode: 'read-only',
+                compact: { instructions: input.instructions ?? null },
+                environment,
+                onEvent,
+              });
+        return provider.done;
+      }),
+      stop: async () => {
+        controller.abort();
+        await provider?.stop();
+      },
+      respondApproval: () => {
+        throw new Error('Provider is not awaiting approval');
+      },
+    };
     const active: ActiveRun = {
       session,
       handle,
@@ -1179,6 +1226,17 @@ export class SessionService {
           this.active.delete(session.id);
       });
     return structuredClone(session);
+  }
+
+  private confirmUnchangedProfile(
+    session: Session,
+    profileId: string | null | undefined,
+  ) {
+    if (profileId !== undefined && profileId !== (session.profileId ?? null))
+      throw new SessionError(
+        'invalid-request',
+        'A session account cannot be changed.',
+      );
   }
 
   private threadActionSession(sessionId: string): Session {
@@ -1276,7 +1334,11 @@ export class SessionService {
     const { requestId } = input;
     if (!requestId) return this.createConfirmed(input, signal);
     const pending = this.pendingCreates.get(requestId);
-    if (pending) return pending;
+    if (pending)
+      return pending.then(session => {
+        this.confirmUnchangedProfile(session, input.profileId ?? null);
+        return session;
+      });
     const created = this.createConfirmed(input, signal).finally(() =>
       this.pendingCreates.delete(requestId),
     );
@@ -1289,15 +1351,29 @@ export class SessionService {
     signal: AbortSignal,
   ): Promise<Session> {
     const existing = this.sessionForCreateRequest(input.requestId);
-    if (existing) return existing;
+    if (existing) {
+      this.confirmUnchangedProfile(existing, input.profileId ?? null);
+      return existing;
+    }
+    const profileDirectory = await this.options.profiles?.directory(
+      input.provider,
+      input.profileId,
+      signal,
+    );
     if (input.effort)
-      await confirmCodexEffort(input.model, input.effort, signal);
+      await confirmCodexEffort(
+        input.model,
+        input.effort,
+        signal,
+        profileEnvironment(input.provider, profileDirectory),
+      );
     const mcp = input.mcp
       ? await this.confirmMcp(
           input.provider,
           this.draftDirectory(input.directory),
           input.mcp,
           signal,
+          profileDirectory,
         )
       : undefined;
     if (!input.isolation) return this.create(input, mcp ? { mcp } : {});
@@ -1600,6 +1676,11 @@ export class SessionService {
       this.resolveDirectory(session.directory),
       input,
       signal,
+      await this.options.profiles?.directory(
+        session.provider,
+        session.profileId,
+        signal,
+      ),
     );
     const current = this.acceptingSession(input.sessionId);
     const previous = current.mcp;
@@ -1617,8 +1698,20 @@ export class SessionService {
     provider: Session['provider'],
     directory: string,
     signal: AbortSignal,
+    profileId?: string | null,
   ): Promise<McpServerList> {
-    return listMcpServers(this.fingerprintKey(), provider, directory, signal);
+    const profileDirectory = await this.options.profiles?.directory(
+      provider,
+      profileId,
+      signal,
+    );
+    return listMcpServers(
+      this.fingerprintKey(),
+      provider,
+      directory,
+      signal,
+      profileDirectory,
+    );
   }
 
   private fingerprintKey(): Buffer {
@@ -1631,6 +1724,7 @@ export class SessionService {
     directory: string,
     selection: { servers: string[]; hooks: boolean },
     signal: AbortSignal,
+    profileDirectory?: string,
   ): Promise<Session['mcp']> {
     try {
       return await resolveMcpSelection(
@@ -1639,6 +1733,7 @@ export class SessionService {
         directory,
         { servers: selection.servers, hooks: selection.hooks },
         signal,
+        profileDirectory,
       );
     } catch (error) {
       if (error instanceof McpError)
@@ -2490,6 +2585,28 @@ export class SessionService {
     };
     const handle: ReturnType<typeof startCodex> = {
       done: Promise.resolve().then(async (): Promise<CodexResult> => {
+        let profileDirectory: string | undefined;
+        try {
+          profileDirectory = await this.options.profiles?.directory(
+            session.provider,
+            session.profileId,
+            controller.signal,
+          );
+        } catch (error) {
+          return controller.signal.aborted
+            ? { status: 'stopped', error: null }
+            : {
+                status: 'failed',
+                error:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The session account directory could not be verified.',
+              };
+        }
+        const turnEnvironment = {
+          ...options.environment,
+          ...profileEnvironment(session.provider, profileDirectory),
+        };
         if (session.provider === 'Codex' && session.effort) {
           try {
             this.update(session, {
@@ -2500,6 +2617,7 @@ export class SessionService {
               session.model,
               session.effort,
               controller.signal,
+              turnEnvironment,
             );
           } catch (error) {
             if (
@@ -2537,6 +2655,7 @@ export class SessionService {
               skillId,
               skillHash,
               controller.signal,
+              profileDirectory,
             );
             if (selected.reference.delivery === 'instructions')
               recordSkill(selected.reference);
@@ -2570,6 +2689,7 @@ export class SessionService {
               session.directory,
               session.mcp,
               controller.signal,
+              profileDirectory,
             );
           } catch (error) {
             return controller.signal.aborted
@@ -2608,6 +2728,7 @@ export class SessionService {
           session.provider === 'Codex'
             ? startCodex({
                 ...options,
+                environment: turnEnvironment,
                 sessionId: session.providerSessionId,
                 mode:
                   session.mode === 'supervised' ? 'supervised' : 'read-only',
@@ -2672,6 +2793,7 @@ export class SessionService {
               })
             : startClaude({
                 ...options,
+                environment: turnEnvironment,
                 ...(selected?.snapshot
                   ? {
                       prompt: sharedSkillPrompt(

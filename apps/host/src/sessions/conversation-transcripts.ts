@@ -203,18 +203,22 @@ function parseTranscript(
   };
 }
 
-function roots(provider: Provider) {
+function roots(provider: Provider, configDirectory?: string) {
   return provider === 'Claude Code'
     ? {
         root: resolve(
-          process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude'),
+          configDirectory ||
+            process.env.CLAUDE_CONFIG_DIR?.trim() ||
+            join(homedir(), '.claude'),
           'projects',
         ),
         depth: 1,
       }
     : {
         root: resolve(
-          process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'),
+          configDirectory ||
+            process.env.CODEX_HOME?.trim() ||
+            join(homedir(), '.codex'),
           'sessions',
         ),
         depth: 3,
@@ -225,8 +229,9 @@ export async function inventory(
   provider: Provider,
   signal: AbortSignal,
   targetId?: string,
+  configDirectory?: string,
 ): Promise<Inventory> {
-  const { root, depth } = roots(provider);
+  const { root, depth } = roots(provider, configDirectory);
   const files: File[] = [];
   let skippedFiles = 0;
   let entries = 0;
@@ -236,6 +241,10 @@ export async function inventory(
     signal.throwIfAborted();
     let handle;
     try {
+      if (configDirectory && !(await lstat(folder)).isDirectory()) {
+        skippedFiles++;
+        return;
+      }
       handle = await opendir(folder);
     } catch (error) {
       if (level !== 0 || (error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -331,11 +340,13 @@ export async function scanConversations(
   provider: Provider,
   signal: AbortSignal,
   targetId?: string,
+  configDirectory?: string,
 ) {
   const { files, skippedFiles, truncated } = await inventory(
     provider,
     signal,
     targetId,
+    configDirectory,
   );
   const transcripts: Transcript[] = [];
   let skipped = skippedFiles;

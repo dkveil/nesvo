@@ -28,6 +28,7 @@ export const listMcpServersSchema = z.union([
   z.strictObject({ sessionId: z.uuid() }),
   z.strictObject({
     provider: providerSchema,
+    profileId: z.uuid().nullable().optional(),
     directory: z.string().trim().max(4096),
   }),
 ]);

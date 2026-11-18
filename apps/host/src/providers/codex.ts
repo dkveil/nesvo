@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { providerEnvironment } from './profiles';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -132,8 +133,7 @@ function ownProcess(
   const child = spawn(executable.command, [...executable.prefix, ...args], {
     cwd,
     env: {
-      ...process.env,
-      ...environment,
+      ...providerEnvironment(environment),
       ...(executable.prefix.length > 0 ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     },
     shell: false,
@@ -657,7 +657,10 @@ async function readAccountAndModels(
   throw new Error('Codex model catalog exceeded the supported size.');
 }
 
-export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
+export async function inspectCodex(
+  signal?: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
+): Promise<CodexStatus> {
   let peer: RpcPeer | null = null;
   let version: string | null = null;
   const cancel = () => {
@@ -678,8 +681,12 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
         images: codexImagesUnavailable,
       };
     if (signal?.aborted) throw new Error('Stopped.');
-    peer = rpcPeer(executable, undefined, message =>
-      rejectRequest(peer!, message),
+    peer = rpcPeer(
+      executable,
+      undefined,
+      message => rejectRequest(peer!, message),
+      [],
+      environment,
     );
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) throw new Error('Stopped.');
@@ -714,6 +721,7 @@ export async function inspectCodex(signal?: AbortSignal): Promise<CodexStatus> {
 
 export async function inspectCodexUsage(
   signal?: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<ProviderUsage> {
   const scoped = AbortSignal.any([
     ...(signal ? [signal] : []),
@@ -743,8 +751,12 @@ export async function inspectCodexUsage(
         detail: 'Install Codex on this computer to read its account limits.',
       };
     scoped.throwIfAborted();
-    peer = rpcPeer(executable, undefined, message =>
-      rejectRequest(peer!, message),
+    peer = rpcPeer(
+      executable,
+      undefined,
+      message => rejectRequest(peer!, message),
+      [],
+      environment,
     );
     scoped.addEventListener('abort', cancel, { once: true });
     scoped.throwIfAborted();
@@ -1030,6 +1042,7 @@ export async function inspectCodexSkills(
   directory: string,
   signal?: AbortSignal,
   extraRoots: string[] = [],
+  environment?: Readonly<Record<string, string>>,
 ): Promise<SkillDiscovery & { extraRootsSupported: boolean }> {
   const discovery: SkillDiscovery & { extraRootsSupported: boolean } = {
     provider: 'Codex',
@@ -1080,7 +1093,13 @@ export async function inspectCodexSkills(
     if (!executable)
       throw new Error('Install the native Codex CLI to discover its skills.');
     checkCancelled();
-    peer = rpcPeer(executable, cwd, message => rejectRequest(peer!, message));
+    peer = rpcPeer(
+      executable,
+      cwd,
+      message => rejectRequest(peer!, message),
+      [],
+      environment,
+    );
     await initialize(peer);
     const loaded = await peer.request('config/read', {
       includeLayers: false,
@@ -1106,6 +1125,7 @@ export async function inspectCodexSkills(
       cwd,
       message => rejectRequest(peer!, message),
       disabledServers,
+      environment,
     );
     await initialize(peer);
     await verifyCodexSkillIsolation(peer, cwd);

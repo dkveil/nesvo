@@ -216,12 +216,19 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to delete sessions.',
   'conversation-compaction':
     'This computer runs an older Nesvo host that cannot compact conversations. Update the host, then reconnect.',
+  'provider-profiles':
+    'Update this computer’s Nesvo host and reconnect to use provider accounts.',
 };
 
 function requiredCapability(
   method: HostRequest['method'],
   input: unknown,
 ): HostCapability | null {
+  if (
+    method.endsWith('-provider-profiles') ||
+    method.endsWith('-provider-profile')
+  )
+    return 'provider-profiles';
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
@@ -783,6 +790,27 @@ export class ComputerManager {
       throw new Error(
         'This computer is offline or still synchronizing. Connect before sending a command.',
       );
+    if (
+      method === 'list-conversations' &&
+      input &&
+      typeof input === 'object' &&
+      'provider' in input &&
+      input.provider !== undefined &&
+      !entry.computer.capabilities.includes('provider-profiles')
+    )
+      throw new Error(capabilityUpdates['provider-profiles']);
+    if (
+      input &&
+      typeof input === 'object' &&
+      (('profileId' in input && typeof input.profileId === 'string') ||
+        ('defaults' in input &&
+          input.defaults &&
+          typeof input.defaults === 'object' &&
+          'profileId' in input.defaults &&
+          input.defaults.profileId !== undefined)) &&
+      !entry.computer.capabilities.includes('provider-profiles')
+    )
+      throw new Error(capabilityUpdates['provider-profiles']);
     const capability = requires ?? requiredCapability(method, input);
     if (capability && !entry.computer.capabilities.includes(capability))
       throw new Error(capabilityUpdates[capability]);
@@ -936,6 +964,10 @@ export class ComputerManager {
       'claude-status': 'claude-status',
       'codex-status': 'codex-status',
       'provider-usage': 'provider-usage',
+      'list-provider-profiles': 'provider-profiles',
+      'create-provider-profile': 'provider-profiles',
+      'rename-provider-profile': 'provider-profiles',
+      'remove-provider-profile': 'provider-profiles',
       'create-session': 'session',
       'read-session-worktree': 'session-worktree-status',
       'finish-session-worktree': 'session',
@@ -987,6 +1019,8 @@ export class ComputerManager {
         return response.budget;
       case 'cost-budget-deleted':
         return response.deleted;
+      case 'provider-profiles':
+        return response.profiles;
       case 'provider-usage':
         return response.usage;
       case 'health':

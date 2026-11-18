@@ -45,6 +45,7 @@ export const hostCapabilitySchema = z.enum([
   'transcript-search',
   'session-delete',
   'conversation-compaction',
+  'provider-profiles',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

@@ -7,6 +7,16 @@ import { createInterface } from 'node:readline';
 import { setTimeout } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
+if (process.env.NESVO_FIXTURE_PROFILE_LOG) {
+  const { appendFileSync } = await import('node:fs');
+  appendFileSync(
+    process.env.NESVO_FIXTURE_PROFILE_LOG,
+    JSON.stringify({
+      provider: 'Claude Code',
+      directory: process.env.CLAUDE_CONFIG_DIR,
+    }) + '\n',
+  );
+}
 const flags = [
   '--print',
   '--input-format',

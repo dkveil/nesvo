@@ -61,6 +61,11 @@ import {
   transcriptSearchPageSchema,
   conversationImportCatalogSchema,
   adoptConversationSchema,
+  providerProfileListSchema,
+  createProviderProfileSchema,
+  renameProviderProfileSchema,
+  removeProviderProfileSchema,
+  providerProfileSelectionSchema,
   listConversationsSchema,
   historySearchPageSchema,
   gitBranchSchema,
@@ -485,6 +490,34 @@ const api: DesktopApi = {
         mobileDeviceSchema.shape.id.parse(deviceId),
       ),
     ),
+  listProviderProfiles: async hostId =>
+    providerProfileListSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-provider-profiles', route(hostId)),
+    ),
+  createProviderProfile: async (input, hostId) =>
+    providerProfileListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:create-provider-profile',
+        createProviderProfileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  renameProviderProfile: async (input, hostId) =>
+    providerProfileListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:rename-provider-profile',
+        renameProviderProfileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  removeProviderProfile: async (input, hostId) =>
+    providerProfileListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:remove-provider-profile',
+        removeProviderProfileSchema.parse(input),
+        route(hostId),
+      ),
+    ),
   providerUsage: async (input, hostId) =>
     providerUsageSchema.parse(
       await ipcRenderer.invoke(
@@ -564,13 +597,21 @@ const api: DesktopApi = {
     hostHealthSchema.parse(
       await ipcRenderer.invoke('nesvo:health', route(hostId)),
     ),
-  claudeStatus: async hostId =>
+  claudeStatus: async (hostId, input) =>
     claudeStatusSchema.parse(
-      await ipcRenderer.invoke('nesvo:claude-status', route(hostId)),
+      await ipcRenderer.invoke(
+        'nesvo:claude-status',
+        route(hostId),
+        providerProfileSelectionSchema.optional().parse(input),
+      ),
     ),
-  codexStatus: async hostId =>
+  codexStatus: async (hostId, input) =>
     codexStatusSchema.parse(
-      await ipcRenderer.invoke('nesvo:codex-status', route(hostId)),
+      await ipcRenderer.invoke(
+        'nesvo:codex-status',
+        route(hostId),
+        providerProfileSelectionSchema.optional().parse(input),
+      ),
     ),
   listSessions: async hostId =>
     desktopSessionSchema

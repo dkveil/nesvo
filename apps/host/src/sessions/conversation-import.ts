@@ -6,6 +6,7 @@ import type {
   Provider,
   Session,
 } from '@nesvo/contracts';
+import type { ProviderProfiles } from '../providers/profiles';
 import { resolveFolder } from '../workspace/folder';
 import { scanConversations } from './conversation-transcripts';
 import { SessionError, type SessionService } from './service';
@@ -16,14 +17,23 @@ export class ConversationImport {
     private readonly store: SessionStore,
     private readonly sessions: SessionService,
     private readonly signal: AbortSignal,
+    private readonly profiles: ProviderProfiles,
   ) {}
 
   async list(
     input?: ListConversationsInput,
   ): Promise<ConversationImportCatalog> {
-    const providers: Provider[] = ['Claude Code', 'Codex'];
+    const profileId = input?.profileId;
+    const configDirectory =
+      input?.provider &&
+      (await this.profiles.directory(input.provider, profileId, this.signal));
+    const providers: Provider[] = input?.provider
+      ? [input.provider]
+      : ['Claude Code', 'Codex'];
     const scans = await Promise.all(
-      providers.map(provider => scanConversations(provider, this.signal)),
+      providers.map(provider =>
+        scanConversations(provider, this.signal, undefined, configDirectory),
+      ),
     );
     const include = input?.include;
     if (
@@ -40,6 +50,7 @@ export class ConversationImport {
         include.provider,
         this.signal,
         include.providerSessionId,
+        configDirectory,
       );
       scans.push({
         ...target,
@@ -53,6 +64,7 @@ export class ConversationImport {
     const recorded = new Map(
       this.store
         .providerConversations()
+        .filter(row => row.profileId === (profileId ?? null))
         .map(row => [this.key(row.provider, row.providerSessionId), row]),
     );
     const conversations = scans
@@ -86,10 +98,16 @@ export class ConversationImport {
   async adopt(input: AdoptConversationInput): Promise<Session> {
     const existing = this.previousAdoption(input);
     if (existing) return existing;
+    const configDirectory = await this.profiles.directory(
+      input.provider,
+      input.profileId,
+      this.signal,
+    );
     const { transcripts } = await scanConversations(
       input.provider,
       this.signal,
       input.providerSessionId,
+      configDirectory,
     );
     const transcript = transcripts[0];
     if (!transcript)
@@ -106,6 +124,7 @@ export class ConversationImport {
     return this.sessions.adoptConversation(
       {
         provider: input.provider,
+        profileId: input.profileId,
         title: conversation.title,
         model: 'default',
         mode: 'read-only',
@@ -143,6 +162,7 @@ export class ConversationImport {
     if (previous) {
       if (
         previous.provider === input.provider &&
+        (previous.profileId ?? null) === (input.profileId ?? null) &&
         previous.providerSessionId === input.providerSessionId &&
         previous.messages[0]?.origin === 'imported'
       )
@@ -157,6 +177,7 @@ export class ConversationImport {
       .find(
         row =>
           row.provider === input.provider &&
+          row.profileId === (input.profileId ?? null) &&
           row.providerSessionId === input.providerSessionId,
       );
     if (recorded)

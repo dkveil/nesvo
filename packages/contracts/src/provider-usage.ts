@@ -3,6 +3,7 @@ import { providerSchema } from './sessions';
 
 export const providerUsageInputSchema = z.strictObject({
   provider: providerSchema,
+  profileId: z.uuid().nullable().optional(),
 });
 export type ProviderUsageInput = z.infer<typeof providerUsageInputSchema>;
 

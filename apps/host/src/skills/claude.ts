@@ -139,6 +139,7 @@ export async function inspectClaudeSkills(
     deadline: number;
     onVisit: () => boolean;
     canonicalPaths?: boolean;
+    configDirectory?: string;
   },
 ): Promise<SkillDiscovery> {
   const result: SkillDiscovery = {
@@ -533,9 +534,11 @@ export async function inspectClaudeSkills(
       }
       cursor = parent;
     }
-    const config = process.env.CLAUDE_CONFIG_DIR
-      ? resolve(directory, process.env.CLAUDE_CONFIG_DIR)
-      : join(homedir(), '.claude');
+    const config =
+      budget?.configDirectory ??
+      (process.env.CLAUDE_CONFIG_DIR
+        ? resolve(directory, process.env.CLAUDE_CONFIG_DIR)
+        : join(homedir(), '.claude'));
     const managed = managedDirectory();
     await settings(join(config, 'settings.json'), false);
     await settings(join(cwd, '.claude', 'settings.json'), false);

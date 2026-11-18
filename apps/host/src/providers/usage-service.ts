@@ -9,13 +9,10 @@ import { inspectCodexUsage } from './codex';
 export class ProviderUsageService {
   private readonly controller = new AbortController();
   private readonly cached = new Map<
-    ProviderUsageInput['provider'],
+    string,
     { value: ProviderUsage; expiresAt: number; failures: number }
   >();
-  private readonly pending = new Map<
-    ProviderUsageInput['provider'],
-    Promise<ProviderUsage>
-  >();
+  private readonly pending = new Map<string, Promise<ProviderUsage>>();
 
   async close(): Promise<void> {
     this.controller.abort();
@@ -23,18 +20,22 @@ export class ProviderUsageService {
     await Promise.allSettled(this.pending.values());
   }
 
-  read({ provider }: ProviderUsageInput): Promise<ProviderUsage> {
+  read(
+    { provider, profileId }: ProviderUsageInput,
+    environment?: Readonly<Record<string, string>>,
+  ): Promise<ProviderUsage> {
+    const key = `${provider}:${profileId ?? ''}`;
     const { signal } = this.controller;
     if (signal.aborted) return Promise.reject(new Error('Host is closing.'));
-    const active = this.pending.get(provider);
+    const active = this.pending.get(key);
     if (active) return active;
-    const previous = this.cached.get(provider);
+    const previous = this.cached.get(key);
     if (previous && Date.now() < previous.expiresAt)
       return Promise.resolve(previous.value);
     const operation = (
       provider === 'Codex'
-        ? inspectCodexUsage(signal)
-        : inspectClaudeUsage(signal)
+        ? inspectCodexUsage(signal, environment)
+        : inspectClaudeUsage(signal, environment)
     )
       .then(value => providerUsageSchema.parse(value))
       .catch((): ProviderUsage => ({
@@ -65,11 +66,11 @@ export class ProviderUsageService {
               detail: `${(value.detail ?? 'Account limits are unavailable.').slice(0, 800)} Next provider check after ${new Date(expiresAt).toISOString()}.`,
             }
           : value;
-        this.cached.set(provider, { value: observation, expiresAt, failures });
+        this.cached.set(key, { value: observation, expiresAt, failures });
         return observation;
       })
-      .finally(() => this.pending.delete(provider));
-    this.pending.set(provider, operation);
+      .finally(() => this.pending.delete(key));
+    this.pending.set(key, operation);
     return operation;
   }
 }

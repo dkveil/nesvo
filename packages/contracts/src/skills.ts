@@ -14,6 +14,7 @@ export const discoverSkillsSchema = z.union([
   z.strictObject({ sessionId: z.uuid() }),
   z.strictObject({
     provider: skillProviderSchema,
+    profileId: z.uuid().nullable().optional(),
     directory: z.string().trim().max(skillLimits.path),
   }),
 ]);

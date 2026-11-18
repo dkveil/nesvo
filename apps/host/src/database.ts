@@ -7,7 +7,7 @@ import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
 import { installTranscriptIndex } from './sessions/transcript-index';
 
-const DATABASE_VERSION = 17;
+const DATABASE_VERSION = 18;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
@@ -281,6 +281,16 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           .prepare('PRAGMA table_info(sessions)')
           .all()
           .map(column => column.name),
+      );
+      database.exec(
+        "CREATE TABLE IF NOT EXISTS provider_profiles (id TEXT PRIMARY KEY, provider TEXT NOT NULL CHECK (provider IN ('Claude Code', 'Codex')), label TEXT NOT NULL, config_directory TEXT NOT NULL, directory_key TEXT NOT NULL, UNIQUE (provider, directory_key))",
+      );
+      if (!sessionColumns.has('profile_id'))
+        database.exec(
+          'ALTER TABLE sessions ADD COLUMN profile_id TEXT REFERENCES provider_profiles(id)',
+        );
+      database.exec(
+        "CREATE INDEX IF NOT EXISTS sessions_profile ON sessions (profile_id); CREATE TRIGGER IF NOT EXISTS session_profile_immutable BEFORE UPDATE OF profile_id ON sessions WHEN OLD.profile_id IS NOT NEW.profile_id BEGIN SELECT RAISE(ABORT, 'A session account cannot be changed.'); END",
       );
       if (!sessionColumns.has('create_request_id'))
         database.exec('ALTER TABLE sessions ADD COLUMN create_request_id TEXT');

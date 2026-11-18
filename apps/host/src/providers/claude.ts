@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { providerEnvironment } from './profiles';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -271,8 +272,7 @@ function ownProcess(
   const child = spawn(executable.command, [...executable.prefix, ...args], {
     cwd,
     env: {
-      ...process.env,
-      ...environment,
+      ...providerEnvironment(environment),
       ...(executable.prefix.length > 0 ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     },
     shell: false,
@@ -391,9 +391,10 @@ async function probe(
   executable: Executable,
   args: string[],
   cancelled: () => boolean,
+  environment?: Readonly<Record<string, string>>,
 ) {
   if (cancelled()) throw new Error('Stopped.');
-  const owned = ownProcess(executable, args);
+  const owned = ownProcess(executable, args, undefined, environment);
   let stdout = '';
   let bytes = 0;
   let failure: string | null = null;
@@ -437,7 +438,10 @@ async function probe(
   }
 }
 
-async function inspect(cancelled: () => boolean): Promise<{
+async function inspect(
+  cancelled: () => boolean,
+  environment?: Readonly<Record<string, string>>,
+): Promise<{
   status: ClaudeStatus;
   executable: Executable | null;
   permissionModes: string[];
@@ -486,9 +490,9 @@ async function inspect(cancelled: () => boolean): Promise<{
       };
     }
     const probes = await Promise.allSettled([
-      probe(executable, ['--version'], cancelled),
-      probe(executable, ['--help'], cancelled),
-      probe(executable, ['auth', 'status', '--json'], cancelled),
+      probe(executable, ['--version'], cancelled, environment),
+      probe(executable, ['--help'], cancelled, environment),
+      probe(executable, ['auth', 'status', '--json'], cancelled, environment),
     ]);
     const outputs = probes.map(result => {
       if (result.status === 'rejected') throw result.reason;
@@ -588,12 +592,14 @@ async function inspect(cancelled: () => boolean): Promise<{
 
 export async function inspectClaude(
   signal?: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<ClaudeStatus> {
-  return (await inspect(() => signal?.aborted ?? false)).status;
+  return (await inspect(() => signal?.aborted ?? false, environment)).status;
 }
 
 export async function inspectClaudeUsage(
   signal?: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<ProviderUsage> {
   let owned: OwnedProcess | null = null;
   let result = claudeUsageResult(null, null);
@@ -622,26 +628,31 @@ export async function inspectClaudeUsage(
       return result;
     }
     if (signal?.aborted) throw new Error('Stopped.');
-    owned = ownProcess(executable, [
-      '--print',
-      '--input-format',
-      'stream-json',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--no-session-persistence',
-      '--permission-mode',
-      'plan',
-      '--permission-prompts',
-      'none',
-      '--tools',
-      '',
-      '--strict-mcp-config',
-      '--mcp-config',
-      '{"mcpServers":{}}',
-      '--settings',
-      '{"disableAllHooks":true}',
-    ]);
+    owned = ownProcess(
+      executable,
+      [
+        '--print',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--no-session-persistence',
+        '--permission-mode',
+        'plan',
+        '--permission-prompts',
+        'none',
+        '--tools',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        '{"mcpServers":{}}',
+        '--settings',
+        '{"disableAllHooks":true}',
+      ],
+      undefined,
+      environment,
+    );
     const running = owned;
     let finished = false;
     let account: unknown;
@@ -786,8 +797,9 @@ export async function inspectClaudeUsage(
 export async function confirmClaudeFork(
   mode: SessionMode,
   signal: AbortSignal,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<void> {
-  const inspection = await inspect(() => signal.aborted);
+  const inspection = await inspect(() => signal.aborted, environment);
   if (signal.aborted) throw new Error('Claude Code fork inspection stopped.');
   if (inspection.status.status !== 'ready')
     throw new Error(inspection.status.detail ?? 'Claude Code is unavailable.');
@@ -855,7 +867,7 @@ export function startClaude(options: {
         throw new Error(
           'Claude Code does not support this permission mode. Choose Plan, Accept edits or Auto.',
         );
-      const inspection = await inspect(() => stopped);
+      const inspection = await inspect(() => stopped, options.environment);
       if (stopped) return { status: 'stopped', error: null };
       if (inspection.status.status !== 'ready' || !inspection.executable)
         throw new Error(

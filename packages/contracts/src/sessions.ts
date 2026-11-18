@@ -200,6 +200,7 @@ export const createSessionSchema = z
     requestId: z.uuid().toLowerCase().optional(),
     title: z.string().trim().min(1).max(100),
     provider: providerSchema.default('Claude Code'),
+    profileId: z.uuid().nullable().optional(),
     model: modelSchema,
     mode: sessionModeSchema.default('read-only'),
     role: z.enum(['orchestrator', 'standalone']).optional(),
@@ -249,12 +250,14 @@ export const assignSessionWorkflowSchema = z.strictObject({
 });
 export const forkSessionSchema = z.strictObject({
   sessionId: z.uuid(),
+  profileId: z.uuid().nullable().optional(),
   worktree: z
     .strictObject({ carryChanges: z.boolean().default(false) })
     .optional(),
 });
 export const restartSessionSchema = z.strictObject({
   sessionId: z.uuid(),
+  profileId: z.uuid().nullable().optional(),
   revision: z.number().int().nonnegative(),
 });
 export const compactInstructionsMaxLength = 4000;
@@ -365,6 +368,7 @@ export const sessionMessageSchema = z.strictObject({
 export const sessionSchema = z.strictObject({
   id: z.uuid(),
   provider: providerSchema,
+  profileId: z.uuid().nullable().optional(),
   providerSessionId: z.string().min(1).max(200).nullable(),
   providerInitialized: z.boolean(),
   title: z.string(),

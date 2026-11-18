@@ -1,5 +1,16 @@
 import { z } from 'zod';
 import {
+  createProviderProfileSchema,
+  providerProfileListSchema,
+  providerProfileSelectionSchema,
+  removeProviderProfileSchema,
+  renameProviderProfileSchema,
+  type CreateProviderProfileInput,
+  type ProviderProfile,
+  type ProviderProfileSelection,
+  type RenameProviderProfileInput,
+} from './provider-profiles';
+import {
   adoptConversationSchema,
   conversationImportCatalogSchema,
   listConversationsSchema,
@@ -317,6 +328,7 @@ export * from './mcp';
 export * from './mcp-selection';
 export * from './computers';
 export * from './provider-usage';
+export * from './provider-profiles';
 export * from './costs';
 export * from './mobile';
 export * from './scheduled-jobs';
@@ -400,8 +412,32 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('health') }),
   z.strictObject({ id: z.uuid(), method: z.literal('shutdown') }),
-  z.strictObject({ id: z.uuid(), method: z.literal('claude-status') }),
-  z.strictObject({ id: z.uuid(), method: z.literal('codex-status') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('claude-status'),
+    input: providerProfileSelectionSchema.optional(),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('codex-status'),
+    input: providerProfileSelectionSchema.optional(),
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-provider-profiles') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('create-provider-profile'),
+    input: createProviderProfileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('rename-provider-profile'),
+    input: renameProviderProfileSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('remove-provider-profile'),
+    input: removeProviderProfileSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('provider-usage'),
@@ -864,6 +900,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     deleted: deleteCostBudgetSchema,
   }),
   z.strictObject({
+    type: z.literal('provider-profiles'),
+    id: z.uuid(),
+    profiles: providerProfileListSchema,
+  }),
+  z.strictObject({
     type: z.literal('provider-usage'),
     id: z.uuid(),
     usage: providerUsageSchema,
@@ -1265,6 +1306,19 @@ export type DesktopApi = {
   disableMobile: () => Promise<MobileGatewayStatus>;
   pairMobile: () => Promise<MobilePairing>;
   revokeMobile: (deviceId: string) => Promise<MobileGatewayStatus>;
+  listProviderProfiles: (hostId?: HostId) => Promise<ProviderProfile[]>;
+  createProviderProfile: (
+    input: CreateProviderProfileInput,
+    hostId?: HostId,
+  ) => Promise<ProviderProfile[]>;
+  renameProviderProfile: (
+    input: RenameProviderProfileInput,
+    hostId?: HostId,
+  ) => Promise<ProviderProfile[]>;
+  removeProviderProfile: (
+    input: { profileId: string },
+    hostId?: HostId,
+  ) => Promise<ProviderProfile[]>;
   providerUsage: (
     input: ProviderUsageInput,
     hostId?: HostId,
@@ -1286,8 +1340,14 @@ export type DesktopApi = {
   disconnectComputer: (hostId: HostId) => Promise<Computer>;
   removeComputer: (hostId: HostId) => Promise<void>;
   health: (hostId?: HostId) => Promise<HostHealth>;
-  claudeStatus: (hostId?: HostId) => Promise<ClaudeStatus>;
-  codexStatus: (hostId?: HostId) => Promise<CodexStatus>;
+  claudeStatus: (
+    hostId?: HostId,
+    input?: ProviderProfileSelection,
+  ) => Promise<ClaudeStatus>;
+  codexStatus: (
+    hostId?: HostId,
+    input?: ProviderProfileSelection,
+  ) => Promise<CodexStatus>;
   listSessions: (hostId?: HostId) => Promise<DesktopSession[]>;
   getSession: (
     input: GetSessionInput,

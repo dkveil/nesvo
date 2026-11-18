@@ -22,6 +22,7 @@ import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
 import { CostStore } from './cost-store';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
+import { ProviderProfiles, profileEnvironment } from './providers/profiles';
 import { SessionService, SessionError } from './sessions/service';
 import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
@@ -224,6 +225,7 @@ export const serveHost = ({
         }),
         index => Effect.sync(() => index.close()),
       );
+      const profiles = new ProviderProfiles(database);
       const store = new SessionStore(database);
       const groupStore = new SessionGroupStore(database);
       const costs = new CostStore(database);
@@ -260,6 +262,7 @@ export const serveHost = ({
                 workflowRunStore.interruptActiveRuns(at);
               },
               {
+                profiles,
                 checkCostBudgets: (session, now) => costs.check(session, now),
                 environment: session => {
                   const run = session.workflowRunId
@@ -471,6 +474,7 @@ export const serveHost = ({
         store,
         sessions,
         probes.controller.signal,
+        profiles,
       );
       const transcriptIndex = new TranscriptIndex(
         database,
@@ -544,11 +548,17 @@ export const serveHost = ({
           request.method === 'claude-status' ||
           request.method === 'codex-status'
         ) {
-          const inspection = (
-            request.method === 'claude-status'
-              ? inspectClaude(probes.controller.signal)
-              : inspectCodex(probes.controller.signal)
-          )
+          const signal = probes.controller.signal;
+          const provider =
+            request.method === 'claude-status' ? 'Claude Code' : 'Codex';
+          const inspection = profiles
+            .directory(provider, request.input?.profileId, signal)
+            .then(async directory => {
+              const environment = profileEnvironment(provider, directory);
+              return request.method === 'claude-status'
+                ? inspectClaude(signal, environment)
+                : inspectCodex(signal, environment);
+            })
             .then(status =>
               send(
                 request.method === 'claude-status'
@@ -564,12 +574,16 @@ export const serveHost = ({
                     },
               ),
             )
-            .catch(() =>
+            .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
-                code: 'unavailable',
-                message: 'The provider could not be checked. Try again.',
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The provider could not be checked. Try again.',
               }),
             )
             .catch(() => undefined);
@@ -577,18 +591,52 @@ export const serveHost = ({
           void inspection.finally(() => probes.pending.delete(inspection));
           continue;
         }
-        if (request.method === 'provider-usage') {
-          const inspection = usage
-            .read(request.input)
-            .then(usage =>
-              send({ type: 'provider-usage', id: request.id, usage }),
+        if (request.method === 'create-provider-profile') {
+          const pending = profiles
+            .create(request.input, probes.controller.signal)
+            .then(profiles =>
+              send({ type: 'provider-profiles', id: request.id, profiles }),
             )
-            .catch(() =>
+            .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
-                code: 'unavailable',
-                message: 'Account limits could not be read.',
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'The account could not be added.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(pending);
+          void pending.finally(() => probes.pending.delete(pending));
+          continue;
+        }
+        if (request.method === 'provider-usage') {
+          const { provider, profileId } = request.input;
+          const inspection = profiles
+            .directory(provider, profileId, probes.controller.signal)
+            .then(directory =>
+              usage.read(
+                request.input,
+                profileEnvironment(provider, directory),
+              ),
+            )
+            .then(usage =>
+              send({ type: 'provider-usage', id: request.id, usage }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Account limits could not be read.',
               }),
             )
             .catch(() => undefined);
@@ -598,7 +646,8 @@ export const serveHost = ({
         }
         if (
           (request.method === 'create-session' &&
-            (request.input.effort ||
+            (request.input.profileId ||
+              request.input.effort ||
               request.input.mcp ||
               request.input.isolation)) ||
           request.method === 'read-session-worktree' ||
@@ -793,16 +842,22 @@ export const serveHost = ({
             );
             continue;
           }
-          let target: { provider: Session['provider']; directory: string };
+          let target: {
+            provider: Session['provider'];
+            directory: string;
+            profileId?: string | null;
+          };
           try {
             target = session
               ? {
                   provider: session.provider,
+                  profileId: session.profileId,
                   directory: session.directory,
                 }
               : {
                   provider:
                     'provider' in input ? input.provider : 'Claude Code',
+                  profileId: 'profileId' in input ? input.profileId : undefined,
                   directory: sessions.draftDirectory(
                     'directory' in input ? input.directory : '',
                   ),
@@ -830,6 +885,7 @@ export const serveHost = ({
               target.provider,
               target.directory,
               probes.controller.signal,
+              target.profileId,
             )
             .then(list => send({ type: 'mcp-servers', id: request.id, list }))
             .catch(() =>
@@ -1249,18 +1305,26 @@ export const serveHost = ({
             continue;
           }
           let discovery: Promise<SkillCatalog>;
+          const signal = probes.controller.signal;
           if (session)
-            discovery = discoverSessionSkills(
-              session,
-              probes.controller.signal,
-            );
+            discovery = profiles
+              .directory(session.provider, session.profileId, signal)
+              .then(directory =>
+                discoverSessionSkills(session, signal, directory),
+              );
           else if ('provider' in input) {
             try {
-              discovery = discoverDirectorySkills(
-                input.provider,
-                sessions.draftDirectory(input.directory),
-                probes.controller.signal,
-              );
+              const target = sessions.draftDirectory(input.directory);
+              discovery = profiles
+                .directory(input.provider, input.profileId, signal)
+                .then(directory =>
+                  discoverDirectorySkills(
+                    input.provider,
+                    target,
+                    signal,
+                    directory,
+                  ),
+                );
             } catch (error) {
               yield* Effect.tryPromise(() =>
                 send({
@@ -1606,6 +1670,33 @@ export const serveHost = ({
                 id: request.id,
                 backup: backupDatabase(),
               };
+            if (
+              request.method === 'list-provider-profiles' ||
+              request.method === 'rename-provider-profile' ||
+              request.method === 'remove-provider-profile'
+            ) {
+              const list =
+                request.method === 'list-provider-profiles'
+                  ? profiles.list()
+                  : request.method === 'rename-provider-profile'
+                    ? profiles.rename(request.input)
+                    : profiles.remove(request.input.profileId);
+              return {
+                type: 'provider-profiles',
+                id: request.id,
+                profiles: list,
+              };
+            }
+            if (
+              (request.method === 'create-session-group' ||
+                request.method === 'update-session-group') &&
+              request.input.defaults?.profileId &&
+              request.input.defaults.provider
+            )
+              profiles.require(
+                request.input.defaults.provider,
+                request.input.defaults.profileId,
+              );
             if (request.method === 'list-session-groups')
               return {
                 type: 'session-groups',

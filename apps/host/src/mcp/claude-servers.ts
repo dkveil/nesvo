@@ -120,9 +120,10 @@ const readGlobal = async (
   directory: string,
   issues: string[],
   signal?: AbortSignal,
+  profileDirectory?: string,
 ): Promise<McpEntry[]> => {
   const file = await readConfigFile(
-    join(claudeConfigDirectory(), '.claude.json'),
+    join(profileDirectory ?? claudeConfigDirectory(), '.claude.json'),
     MAX_GLOBAL_CONFIG_BYTES,
     signal,
   );
@@ -187,10 +188,11 @@ export const discoverClaudeServers = async (
   key: Buffer,
   directory: string,
   signal?: AbortSignal,
+  profileDirectory?: string,
 ): Promise<{ entries: McpEntry[]; issues: string[] }> => {
   const issues: string[] = [];
   const [global, project] = await Promise.all([
-    readGlobal(key, directory, issues, signal),
+    readGlobal(key, directory, issues, signal, profileDirectory),
     readProject(key, directory, issues, signal),
   ]);
   return {

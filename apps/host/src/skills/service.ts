@@ -7,6 +7,7 @@ import {
   type SkillEntry,
   type SkillReference,
 } from '@nesvo/contracts';
+import { profileEnvironment } from '../providers/profiles';
 import { inspectCodexSkills } from '../providers/codex';
 import { inspectLocalSkillLibrary } from './library';
 import {
@@ -46,7 +47,11 @@ async function parallel<T>(items: T[], inspect: (item: T) => Promise<void>) {
 
 type SkillTarget = Pick<Session, 'provider' | 'directory'> & { id?: string };
 
-async function loadLibrary(session: SkillTarget, signal: AbortSignal) {
+async function loadLibrary(
+  session: SkillTarget,
+  signal: AbortSignal,
+  profileDirectory?: string,
+) {
   signal.throwIfAborted();
   const directory = resolve(session.directory);
   const info = await withSignal(lstat(directory), signal);
@@ -57,7 +62,12 @@ async function loadLibrary(session: SkillTarget, signal: AbortSignal) {
     pathKey(directory) !== pathKey(canonical)
   )
     throw new Error('The session directory changed or is unavailable.');
-  const local = await inspectLocalSkillLibrary(directory, signal);
+  const local = await inspectLocalSkillLibrary(
+    directory,
+    signal,
+    session.provider,
+    profileDirectory,
+  );
   signal.throwIfAborted();
   const roots = [
     ...new Set(
@@ -69,7 +79,12 @@ async function loadLibrary(session: SkillTarget, signal: AbortSignal) {
         .map(skill => dirname(skill.path!)),
     ),
   ];
-  const native = await inspectCodexSkills(directory, signal, roots);
+  const native = await inspectCodexSkills(
+    directory,
+    signal,
+    roots,
+    profileEnvironment(session.provider, profileDirectory),
+  );
   signal.throwIfAborted();
   const issues = [...local.issues, ...native.issues];
   const entries = new Map(
@@ -192,16 +207,19 @@ async function loadLibrary(session: SkillTarget, signal: AbortSignal) {
 export async function discoverSessionSkills(
   session: Session,
   signal: AbortSignal,
+  profileDirectory?: string,
 ) {
-  return (await loadLibrary(session, signal)).catalog;
+  return (await loadLibrary(session, signal, profileDirectory)).catalog;
 }
 
 export async function discoverDirectorySkills(
   provider: Session['provider'],
   directory: string,
   signal: AbortSignal,
+  profileDirectory?: string,
 ) {
-  return (await loadLibrary({ provider, directory }, signal)).catalog;
+  return (await loadLibrary({ provider, directory }, signal, profileDirectory))
+    .catalog;
 }
 
 export async function resolveSessionSkill(
@@ -209,10 +227,12 @@ export async function resolveSessionSkill(
   skillId: string,
   expectedHash: string | undefined,
   signal: AbortSignal,
+  profileDirectory?: string,
 ) {
   const { catalog, nativeById, snapshots, rootsSupported } = await loadLibrary(
     session,
     signal,
+    profileDirectory,
   );
   const entry = catalog.skills.find(skill => skill.id === skillId);
   if (!entry)

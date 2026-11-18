@@ -8,13 +8,32 @@ export const conversationIdentitySchema = z.strictObject({
   providerSessionId: z.uuid(),
 });
 
-export const listConversationsSchema = z.strictObject({
-  include: conversationIdentitySchema,
-});
-
 export const adoptConversationSchema = conversationIdentitySchema.extend({
   requestId: z.uuid(),
+  profileId: z.uuid().nullable().optional(),
 });
+
+export const listConversationsSchema = z
+  .strictObject({
+    include: conversationIdentitySchema.optional(),
+    provider: providerSchema.optional(),
+    profileId: z.uuid().nullable().optional(),
+  })
+  .refine(input => !input.profileId || input.provider !== undefined, {
+    message: 'Choose a provider for the account.',
+    path: ['provider'],
+  })
+  .refine(
+    input =>
+      !input.include ||
+      !input.provider ||
+      input.include.provider === input.provider,
+    {
+      message:
+        'The included conversation must belong to the selected provider.',
+      path: ['include'],
+    },
+  );
 
 export const conversationImportCatalogSchema = z.strictObject({
   conversations: z

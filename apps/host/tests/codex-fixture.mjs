@@ -15,6 +15,14 @@ import { createInterface } from 'node:readline';
 import { parse as parseToml } from 'smol-toml';
 
 const args = process.argv.slice(2);
+if (process.env.NESVO_FIXTURE_PROFILE_LOG) {
+  const { appendFileSync } = await import('node:fs');
+  appendFileSync(
+    process.env.NESVO_FIXTURE_PROFILE_LOG,
+    JSON.stringify({ provider: 'Codex', directory: process.env.CODEX_HOME }) +
+      '\n',
+  );
+}
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 const runEnvironment = () => ({
   NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,

@@ -134,6 +134,7 @@ export class TranscriptIndex {
     const recorded = new Set(
       this.store
         .providerConversations()
+        .filter(row => row.profileId === null)
         .map(row => row.provider + ':' + row.providerSessionId),
     );
     const seen = new Set<string>();
