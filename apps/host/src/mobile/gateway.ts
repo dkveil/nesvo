@@ -25,6 +25,7 @@ import {
   type WorkspaceEvent,
 } from '@nesvo/contracts';
 import { MobilePairingStore } from './pairing';
+import { createMobileRateLimiter } from './rate-limit';
 
 export type MobileGatewayWorkspace = Pick<
   DesktopApi,
@@ -167,10 +168,7 @@ export class MobileGateway {
   private readonly sockets = new Set<Socket>();
   private readonly clients = new Set<Client>();
   private readonly requests = new Set<HttpRequest>();
-  private readonly rates = new Map<
-    string,
-    { expiresAt: number; count: number }
-  >();
+  private readonly rate = createMobileRateLimiter();
   private unsubscribe: (() => void) | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private transition: Promise<unknown> = Promise.resolve();
@@ -394,19 +392,6 @@ export class MobileGateway {
     this.websockets = undefined;
     this.server = undefined;
     this.url = null;
-  }
-
-  private rate(key: string, limit: number) {
-    const now = Date.now();
-    for (const [id, entry] of this.rates)
-      if (entry.expiresAt <= now) this.rates.delete(id);
-    let state = this.rates.get(key);
-    if (!state) {
-      if (this.rates.size >= 128) return false;
-      state = { expiresAt: now + 60000, count: 0 };
-      this.rates.set(key, state);
-    }
-    return ++state.count <= limit;
   }
 
   private checkRequest(request: IncomingMessage) {

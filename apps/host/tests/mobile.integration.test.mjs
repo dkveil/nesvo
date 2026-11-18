@@ -5,6 +5,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createMobileGateway } from '../dist/mobile.js';
+import { createMobileRateLimiter } from '../src/mobile/rate-limit.ts';
+
+test('mobile rate limits evict the least recently used bucket at capacity', t => {
+  t.mock.timers.enable({ apis: ['Date'] });
+  const allow = createMobileRateLimiter();
+
+  for (let index = 0; index < 128; index++) {
+    assert.equal(allow(`client-${index}`, 1), true);
+  }
+  assert.equal(allow('client-0', 1), false);
+  assert.equal(allow('new-client', 1), true);
+  assert.equal(allow('client-0', 1), false);
+  assert.equal(allow('client-2', 1), false);
+  assert.equal(allow('client-1', 1), true);
+
+  t.mock.timers.tick(60_000);
+  assert.equal(allow('client-0', 1), true);
+});
 
 function bounded(operation, description, milliseconds = 7000) {
   let timer;
