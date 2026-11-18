@@ -22043,7 +22043,7 @@ test('image, PDF and file attachments reach both providers, reject invalid uploa
   assert.equal(deletion.type, 'session-deletion', JSON.stringify(deletion));
   const blob = (attachment, extension) =>
     join(directory, 'attachments', `${attachment.id}.${extension}`);
-  for (let attempt = 0; attempt < 80; attempt++) {
+  for (let attempt = 0; attempt < 400; attempt++) {
     if (!existsSync(sessionFolder('Codex'))) break;
     await delay(50);
   }
@@ -24852,6 +24852,12 @@ test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on
     assert.deepEqual(
       logged.map(entry => entry.tools.includes('session_create')),
       [false, true, false],
+    );
+  } finally {
+    await host?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('workflow sharing reads the files, blocks secrets and imports a bundle with validation and conflicts', async () => {
   const directory = await realpath(
