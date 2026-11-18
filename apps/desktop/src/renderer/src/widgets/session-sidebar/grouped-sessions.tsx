@@ -54,6 +54,7 @@ type Props = {
   allRoots: Session[];
   housekeeping: SidebarHousekeeping;
   searching: boolean;
+  byTopic?: boolean;
   renaming: string | null;
   onRenamingChange: (key: string | null) => void;
   archivedOpen: boolean;
@@ -73,6 +74,7 @@ export function GroupedSessions({
   allRoots,
   housekeeping,
   searching,
+  byTopic = false,
   renaming,
   onRenamingChange,
   archivedOpen,
@@ -91,7 +93,7 @@ export function GroupedSessions({
   const groups = housekeeping.groups(hostId);
   const drag = useSidebarDrag(!searching);
   const full = buildHostTree(allRoots, groups);
-  const shown = buildHostTree(roots, groups);
+  const shown = buildHostTree(roots, groups, byTopic);
   const visibleGroups = searching ? pruneEmpty(shown.groups) : shown.groups;
   const groupById = (id: string | null) =>
     id ? groups.find(group => group.id === id) : undefined;
@@ -404,7 +406,9 @@ export function GroupedSessions({
               group.name
             )
           }
-          trailing={!expanded && node.count > 0 ? node.count : undefined}
+          trailing={
+            (byTopic || !expanded) && node.count > 0 ? node.count : undefined
+          }
           actionsPlacement="overlay"
           actions={
             <>

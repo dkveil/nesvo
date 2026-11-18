@@ -47,13 +47,15 @@ const buildNodes = (
 export function buildHostTree(
   roots: Session[],
   groups: SessionGroup[],
+  byTopic = false,
 ): HostTree {
   const known = new Set(groups.map(group => group.id));
   const active = roots.filter(session => !session.archivedAt);
   const members = new Map<string, Session[]>();
   const ungrouped: Session[] = [];
+  const pinned = byTopic ? [] : active.filter(session => session.pinned);
   for (const session of active) {
-    if (session.pinned) continue;
+    if (pinned.includes(session)) continue;
     if (session.groupId && known.has(session.groupId))
       members.set(session.groupId, [
         ...(members.get(session.groupId) ?? []),
@@ -62,7 +64,7 @@ export function buildHostTree(
     else ungrouped.push(session);
   }
   return {
-    pinned: active.filter(session => session.pinned).sort(compareSessionOrder),
+    pinned: pinned.sort(compareSessionOrder),
     groups: buildNodes(null, 1, groups, members),
     ungrouped: ungrouped.sort(compareSessionOrder),
     archived: roots
