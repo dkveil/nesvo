@@ -1,0 +1,339 @@
+import { useId, useState } from 'react';
+import type {
+  DecideGateRuleInput,
+  GateRuleEdit,
+  GateRuleProposal,
+} from '@nesvo/contracts';
+import { gateRuleEditSchema } from '@nesvo/contracts';
+import { ArrowUpRight } from 'lucide-react';
+import { errorDetail } from '@/entities/session';
+import { hostKey } from '@/shared/lib/host-key';
+import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
+import { Field } from '@/shared/ui/field';
+import { Input } from '@/shared/ui/input';
+import { ListRow } from '@/shared/ui/list-row';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { Textarea } from '@/shared/ui/textarea';
+
+type Props = {
+  row: GateRuleProposal;
+  hostId: string;
+  location: string;
+  title: string;
+  onSession: (key: string) => void;
+  onSaved: (row: GateRuleProposal, hostId: string) => void;
+};
+
+export function GateRuleRow({
+  row,
+  hostId,
+  location,
+  title,
+  onSession,
+  onSaved,
+}: Props) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const { proposal } = row;
+
+  const decide = async (
+    decisionFields:
+      { action: 'accept' | 'dismiss' } | { action: 'edit'; edit: GateRuleEdit },
+  ) => {
+    const decision: DecideGateRuleInput = {
+      proposalId: row.id,
+      revision: row.revision,
+      decisionId: crypto.randomUUID(),
+      ...decisionFields,
+    };
+    setBusy(true);
+    setError('');
+    try {
+      const overview = await window.nesvo.gateRules(
+        { action: 'decide', decision },
+        hostId,
+      );
+      const saved = overview.proposals.find(item => item.id === row.id);
+      if (saved?.status === 'accepted') onSaved(saved, hostId);
+      if (saved?.status === 'stale') setEditing(false);
+    } catch (reason) {
+      setError(errorDetail(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(proposal.body.check);
+    } catch (reason) {
+      setError(errorDetail(reason));
+    }
+  };
+
+  return (
+    <article aria-label="Gate rule proposal" data-host-id={hostId}>
+      <ListRow density="block" columns="minmax(0, 1fr) auto">
+        <div className="min-w-0 space-y-1">
+          <Button
+            variant="link"
+            size="inline"
+            className="max-w-full text-foreground"
+            onClick={() =>
+              onSession(hostKey(row.taskSessionId ?? row.sessionId, hostId))
+            }
+          >
+            <span className="truncate">{title}</span>
+            <ArrowUpRight className="size-3 text-muted-foreground" />
+          </Button>
+          {location && (
+            <p className="text-2xs text-muted-foreground">{location}</p>
+          )}
+          <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+            <span>
+              Gate rule for {proposal.steps.join(', ')} · {row.workflow}
+            </span>
+            <Badge size="xs">
+              {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}
+            </Badge>
+            <span>{row.scope === 'project' ? 'Project' : 'Global'}</span>
+          </div>
+          {row.current && (
+            <p className="text-xs text-muted-foreground line-through [overflow-wrap:anywhere]">
+              {row.current.rule}
+            </p>
+          )}
+          <p className="text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {proposal.body.rule}
+          </p>
+          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            From your {row.decisionKind === 'fix' ? 'Fix' : 'Reject'} comment: “
+            {proposal.quote}”
+          </p>
+          {proposal.kind === 'check' && (
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <p className="font-mono [overflow-wrap:anywhere]">
+                {proposal.body.check}
+              </p>
+              <p>Apply the check in your project when ready.</p>
+              {/\b(?:curl|wget|gh\s+pr|git\s+push|rm\s+-rf)\b/i.test(
+                proposal.body.check,
+              ) && (
+                <StatusMessage tone="warning">
+                  Review this suggestion for network access or changes before
+                  using it.
+                </StatusMessage>
+              )}
+              <Button variant="link" size="inline" onClick={() => void copy()}>
+                Copy suggestion
+              </Button>
+            </div>
+          )}
+          <NativeDisclosure title="Proposal details">
+            <p className="mb-1 [overflow-wrap:anywhere]">
+              {proposal.justification}
+            </p>
+            <Button
+              variant="link"
+              size="inline"
+              onClick={() => onSession(hostKey(row.sessionId, hostId))}
+            >
+              Open proposal session
+            </Button>
+          </NativeDisclosure>
+        </div>
+        <div className="flex flex-wrap justify-end gap-1 self-start">
+          {row.status === 'pending' && (
+            <Button
+              size="sm"
+              disabled={busy || editing}
+              onClick={() => void decide({ action: 'accept' })}
+            >
+              Accept
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setEditing(open => !open)}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => void decide({ action: 'dismiss' })}
+          >
+            Dismiss
+          </Button>
+        </div>
+        {(error || row.error) && (
+          <StatusMessage className="col-span-full" tone="error">
+            {error || row.error}
+          </StatusMessage>
+        )}
+        {editing && (
+          <GateRuleEditor
+            key={row.revision}
+            row={row}
+            busy={busy}
+            onSave={edit => void decide({ action: 'edit', edit })}
+            onCancel={() => setEditing(false)}
+          />
+        )}
+      </ListRow>
+    </article>
+  );
+}
+
+function GateRuleEditor({
+  row,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  row: GateRuleProposal;
+  busy: boolean;
+  onSave: (edit: GateRuleEdit) => void;
+  onCancel: () => void;
+}) {
+  const id = useId();
+  const { proposal } = row;
+  const [edit, setEdit] = useState({
+    description: proposal.description,
+    steps: proposal.steps.join(', '),
+    body: proposal.body,
+    kind: proposal.kind,
+    scope: row.scope,
+  });
+  const parsed = gateRuleEditSchema.safeParse({
+    ...edit,
+    steps: edit.steps
+      .split(',')
+      .map(step => step.trim())
+      .filter(Boolean),
+  });
+  return (
+    <form
+      className="col-span-full space-y-2 rounded-surface border bg-card p-3"
+      aria-label="Edit gate rule"
+      onSubmit={event => {
+        event.preventDefault();
+        if (parsed.success && !busy) onSave(parsed.data);
+      }}
+    >
+      <Field label="Description" id={`${id}-description`}>
+        <Input
+          id={`${id}-description`}
+          value={edit.description}
+          onChange={event =>
+            setEdit({ ...edit, description: event.target.value })
+          }
+        />
+      </Field>
+      <Field label="Rule" id={`${id}-rule`}>
+        <Textarea
+          id={`${id}-rule`}
+          value={edit.body.rule}
+          onChange={event =>
+            setEdit({
+              ...edit,
+              body: { ...edit.body, rule: event.target.value },
+            })
+          }
+        />
+      </Field>
+      <Field label="Why" id={`${id}-why`}>
+        <Input
+          id={`${id}-why`}
+          value={edit.body.why}
+          onChange={event =>
+            setEdit({
+              ...edit,
+              body: { ...edit.body, why: event.target.value },
+            })
+          }
+        />
+      </Field>
+      <Field label="Check" id={`${id}-check`}>
+        <Input
+          id={`${id}-check`}
+          value={edit.body.check}
+          onChange={event =>
+            setEdit({
+              ...edit,
+              body: { ...edit.body, check: event.target.value },
+            })
+          }
+        />
+      </Field>
+      <Field label="Target steps (comma-separated)" id={`${id}-steps`}>
+        <Input
+          id={`${id}-steps`}
+          value={edit.steps}
+          onChange={event => setEdit({ ...edit, steps: event.target.value })}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-3">
+        <Field label="Kind" id={`${id}-kind`}>
+          <Select
+            value={edit.kind}
+            onValueChange={kind => {
+              if (kind === 'instruction' || kind === 'check')
+                setEdit({ ...edit, kind });
+            }}
+          >
+            <SelectTrigger id={`${id}-kind`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="instruction">Instruction</SelectItem>
+              <SelectItem value="check">Check suggestion</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="Scope" id={`${id}-scope`}>
+          <Select
+            value={edit.scope}
+            onValueChange={scope => {
+              if (scope === 'global' || scope === 'project')
+                setEdit({ ...edit, scope });
+            }}
+          >
+            <SelectTrigger id={`${id}-scope`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="global">Global</SelectItem>
+              <SelectItem value="project">Project</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+      {!parsed.success && (
+        <StatusMessage tone="error">
+          {parsed.error.issues[0]?.message}
+        </StatusMessage>
+      )}
+      <div className="flex justify-end gap-1">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={busy || !parsed.success}>
+          Save rule
+        </Button>
+      </div>
+    </form>
+  );
+}

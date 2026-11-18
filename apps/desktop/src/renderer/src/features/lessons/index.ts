@@ -10,7 +10,6 @@ export {
   lessonRoleLabels,
   lessonScopeText,
   lessonStatusText,
-  lessonUsageText,
   matchesScopeFilter,
   scopeFilterLabels,
   scopeFilters,

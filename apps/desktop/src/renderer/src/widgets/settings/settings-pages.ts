@@ -31,6 +31,7 @@ export type SettingsPage =
   | 'session-control'
   | 'lessons'
   | 'inbox-rules'
+  | 'workflows'
   | 'computers'
   | 'phone'
   | 'repositories'
@@ -109,6 +110,13 @@ export const settingsPages: SettingsPageEntry[] = [
     group: '',
     keywords:
       'coordinator orchestrator agents child sessions tools policy plans worktrees modes',
+  },
+  {
+    id: 'workflows',
+    label: 'Workflows',
+    icon: Blocks,
+    group: '',
+    keywords: 'gate rules learning propose fix reject verification',
   },
   {
     id: 'lessons',

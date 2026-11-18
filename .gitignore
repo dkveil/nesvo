@@ -62,6 +62,7 @@
 !/scripts/
 /scripts/*
 !/scripts/desktop-smoke.mjs
+!/scripts/gate-rule-flow-smoke.mjs
 !/scripts/share-server-fixture.mjs
 !/scripts/desktop-package-smoke.mjs
 !/scripts/remote-smoke.mjs

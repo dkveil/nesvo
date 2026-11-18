@@ -19,6 +19,7 @@ import {
   type WorkflowStepRecord,
   type StepPhase,
 } from '@/entities/workflow';
+import { GateRuleRunDetails } from '@/features/gate-rules/gate-rule-run-details';
 import { StepStateIcon } from '@/entities/workflow/step-state-icon';
 import { useNow } from '@/shared/lib/use-now';
 import type { InboxTarget } from '@/widgets/workflow-step-result';
@@ -34,6 +35,8 @@ type Props = {
   run: WorkflowRun;
   steps: WorkflowStepRecord[];
   connected: boolean;
+  hostId: string;
+  gateRulesEnabled: boolean;
   pending: boolean;
   error: string;
   api: Pick<WorkflowsApi, 'readEvidence'>;
@@ -58,6 +61,8 @@ export function WorkflowSection({
   run,
   steps,
   connected,
+  hostId,
+  gateRulesEnabled,
   pending,
   error,
   api,
@@ -133,6 +138,17 @@ export function WorkflowSection({
           {error}
         </StatusMessage>
       )}
+      {gateRulesEnabled &&
+        (run.status === 'passed' ||
+          run.status === 'failed' ||
+          run.status === 'rejected') && (
+          <GateRuleRunDetails
+            run={run}
+            hostId={hostId}
+            enabled={connected}
+            onSession={onSession}
+          />
+        )}
       <ul role="list" aria-label="Workflow phases" className="space-y-px">
         {phases.map(group => {
           const open = expanded.includes(group.phase);

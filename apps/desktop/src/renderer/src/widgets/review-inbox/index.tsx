@@ -5,6 +5,7 @@ import {
   routesToInbox,
   type DecisionRoute,
   type PullRequestReference,
+  type GateRuleProposal,
   type DecideDelegationInput,
   type DecideSessionParentInput,
   type RespondApprovalInput,
@@ -48,6 +49,11 @@ import {
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
+import { Toast, ToastRegion } from '@/shared/ui/toast';
+import { undoGateRule } from '@/features/gate-rules/undo-gate-rule';
+import { errorDetail } from '@/entities/session';
+import { GateRuleRow } from './gate-rule-row';
+import { useInboxGateRules } from './use-inbox-gate-rules';
 import {
   PlanDecision,
   QuestionAnswer,
@@ -103,6 +109,13 @@ type Props = ReviewDecisionProps & {
 type Filter = 'pending' | 'history' | 'all';
 
 type ActionRow =
+  | {
+      type: 'gate-rule-proposal';
+      row: GateRuleProposal;
+      hostId: string;
+      at: string;
+      id: string;
+    }
   | { type: 'review'; review: Review; at: string; id: string }
   | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
   | { type: 'automation'; job: ScheduledJob; at: string; id: string }
@@ -365,6 +378,29 @@ export function ReviewInbox({
       .map(item => `${item.hostId}/${item.sessionId}`),
   );
   const inInbox = (session: Session) => routesToInbox(routeOf(session));
+  const gateRules = useInboxGateRules(computers);
+  const [gateToast, setGateToast] = useState<{
+    row: GateRuleProposal;
+    hostId: string;
+  } | null>(null);
+  const [undoError, setUndoError] = useState('');
+  const [undoPending, setUndoPending] = useState(false);
+  const undoSaved = async () => {
+    if (!gateToast?.row.changeId) return;
+    setUndoPending(true);
+    setUndoError('');
+    try {
+      await undoGateRule(gateToast.hostId, {
+        conversationId: gateToast.row.sessionId,
+        changeId: gateToast.row.changeId,
+      });
+      setGateToast(null);
+    } catch (reason) {
+      setUndoError(errorDetail(reason));
+    } finally {
+      setUndoPending(false);
+    }
+  };
   const rows: ActionRow[] = reviews
     .filter(
       review =>
@@ -474,6 +510,15 @@ export function ReviewInbox({
           at: job.pendingStart.at,
           id: `${entityKey(job)}/${job.pendingStart.id}`,
         });
+  if (filter !== 'history')
+    for (const { hostId, proposal } of gateRules.rows)
+      rows.push({
+        type: 'gate-rule-proposal',
+        row: proposal,
+        hostId,
+        at: proposal.createdAt,
+        id: hostKey(proposal.id, hostId),
+      });
   rows.sort(
     (left, right) =>
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
@@ -521,6 +566,31 @@ export function ReviewInbox({
         </div>
         {notice}
         {filter !== 'history' && lessons}
+        {filter !== 'history' &&
+          gateRules.errors.map(message => (
+            <StatusMessage key={message} className="mb-2 px-2" tone="error">
+              {message}
+            </StatusMessage>
+          ))}
+        {gateToast && (
+          <ToastRegion>
+            <Toast
+              tone={undoError ? 'error' : 'success'}
+              title={undoError || 'Gate rule saved'}
+              description={gateToast.row.error}
+              action={
+                gateToast.row.changeId
+                  ? {
+                      label: 'Undo',
+                      onClick: () => void undoSaved(),
+                      disabled: undoPending,
+                    }
+                  : undefined
+              }
+              onDismiss={() => setGateToast(null)}
+            />
+          </ToastRegion>
+        )}
         {error && (
           <div className="mb-4 flex flex-wrap items-center gap-3 px-2">
             <StatusMessage tone="error">{error}</StatusMessage>
@@ -559,6 +629,28 @@ export function ReviewInbox({
         {rows.length > 0 ? (
           <div className="space-y-px">
             {rows.map(row => {
+              if (row.type === 'gate-rule-proposal') {
+                const title =
+                  sessions.find(
+                    session =>
+                      session.hostId === row.hostId &&
+                      session.id === row.row.taskSessionId,
+                  )?.title ?? row.row.workflow;
+                return (
+                  <GateRuleRow
+                    key={row.id}
+                    row={row.row}
+                    hostId={row.hostId}
+                    title={title}
+                    location={location(row.hostId)}
+                    onSession={onSession}
+                    onSaved={(saved, hostId) => {
+                      setUndoError('');
+                      setGateToast({ row: saved, hostId });
+                    }}
+                  />
+                );
+              }
               if (row.type === 'review') {
                 const { review } = row;
                 const origin = originLabel?.(review) ?? '';

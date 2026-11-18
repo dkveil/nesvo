@@ -1,3 +1,4 @@
+import { RuleUsage } from '@/features/gate-rules/rule-usage';
 import { useState } from 'react';
 import {
   lessonIsDue,
@@ -15,7 +16,6 @@ import {
   lessonDate,
   lessonScopeText,
   lessonStatusText,
-  lessonUsageText,
   matchesScopeFilter,
   scopeFilterLabels,
   scopeFilters,
@@ -249,7 +249,6 @@ export function LessonsSettings({
         )}
         {visible.map(lesson => {
           const due = lessonIsDue(lesson, today);
-          const usage = lessonUsageText(lesson, now);
           return (
             <SettingsRow
               key={lesson.key}
@@ -290,10 +289,17 @@ export function LessonsSettings({
                     {lesson.review && ` · Review ${lessonDate(lesson.review)}`}
                     {lesson.enforcedBy !== 'none' &&
                       ` · Enforced by ${lesson.enforcedBy}`}
-                    {usage && ` · ${usage}`}
                     {lesson.evidence.length > 0 &&
                       ` · ${lesson.evidence.map(item => incidentKindLabels[item.kind]).join(', ')}`}
                   </span>
+                  {lesson.id && (
+                    <RuleUsage
+                      metrics={lesson.metrics}
+                      kind={lesson.kind}
+                      since={lesson.createdAt}
+                      now={now.getTime()}
+                    />
+                  )}
                 </>
               }
             >

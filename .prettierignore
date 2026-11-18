@@ -26,7 +26,11 @@
 !apps/host/src/providers/**
 !apps/host/src/sessions/
 !apps/host/src/sessions/**
+!apps/host/src/workflows/
+!apps/host/src/workflows/gate-rule-*.ts
 !apps/host/src/review/
+!apps/host/src/workflows/
+!apps/host/src/workflows/gate-rule-*.ts
 !apps/host/src/review/**
 !apps/host/src/workspace/
 !apps/host/src/workspace/**
@@ -49,6 +53,7 @@
 !packages/contracts/**
 !scripts/
 !scripts/desktop-smoke.mjs
+!scripts/gate-rule-flow-smoke.mjs
 !scripts/desktop-package-smoke.mjs
 !scripts/remote-smoke.mjs
 !scripts/mobile-smoke.mjs

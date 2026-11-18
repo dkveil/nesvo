@@ -1,6 +1,5 @@
 import {
   lessonIsDue,
-  lessonLimits,
   type Lesson,
   type LessonIncidentKind,
   type RuleEntryRole,
@@ -91,15 +90,4 @@ export const lessonStatusText = (lesson: Lesson, today: string) => {
   return { proposed: 'Proposed', active: 'Active', retired: 'Retired' }[
     lesson.state
   ];
-};
-
-export const lessonUsageText = (lesson: Lesson, now: Date) => {
-  const { metrics } = lesson;
-  if (!metrics || lesson.state !== 'active') return '';
-  if (lesson.kind === 'instruction' && metrics.cited >= 2)
-    return 'Keeps failing, consider a check';
-  const unusedSince = now.getTime() - lessonLimits.unusedDays * 86_400_000;
-  if (!metrics.lastDelivered || Date.parse(metrics.lastDelivered) < unusedSince)
-    return 'Unused';
-  return `Delivered ${metrics.delivered}×`;
 };

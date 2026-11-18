@@ -200,6 +200,7 @@ import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profil
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
 import { SessionControlSettings } from '@/widgets/session-control-settings';
+import { GateRuleSettings } from '@/features/gate-rules/gate-rule-settings';
 import { LessonsSettings } from '@/widgets/lessons-settings';
 import { LessonInbox } from '@/widgets/lesson-inbox';
 import { InboxRulesSettings } from '@/widgets/inbox-rules-settings';
@@ -4168,6 +4169,12 @@ ${text}`
                   <WorkflowSection
                     key={entityKey(cardRun)}
                     run={cardRun}
+                    hostId={cardRun.hostId}
+                    gateRulesEnabled={store.computers.some(
+                      computer =>
+                        computer.id === cardRun.hostId &&
+                        computer.capabilities.includes('gate-rules'),
+                    )}
                     steps={selectedRunSteps}
                     connected={store.hostReady(selectedHostId)}
                     pending={!!workflowPending[entityKey(cardRun)]}
@@ -5387,6 +5394,14 @@ ${text}`
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'workflows' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <GateRuleSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
                 />
               </div>
             ) : page === 'lessons' ? (

@@ -39,6 +39,7 @@ import {
   type AutomationInput,
   type InspectorIssue,
 } from './inspector';
+import { InspectorGateRules } from './inspector/gate-rules';
 import type { EditorState } from './use-editor-state';
 
 type Props = {
@@ -141,6 +142,16 @@ export function InspectorPanel({
             onChange={state.updateDraft}
             onSave={state.commitDraft}
             onDelete={state.cancelDraft}
+          />
+        )}
+        {node?.step.type === 'agent' && (
+          <InspectorGateRules
+            key={node.id}
+            initial={state.catalog.gateRules ?? []}
+            directory={directory}
+            hostId={hostId}
+            step={node.id}
+            workflow={document.name}
           />
         )}
         {node && showResult && overlay && runStep && (

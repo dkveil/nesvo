@@ -330,6 +330,11 @@ export function StepResult({
                     >
                       {item.label}
                     </span>
+                    {item.rule && (
+                      <span className="font-mono text-2xs text-muted-foreground">
+                        {item.rule}
+                      </span>
+                    )}
                     {previewable && (
                       <Button
                         type="button"

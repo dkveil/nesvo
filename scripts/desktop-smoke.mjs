@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
+import { smokeGateRuleFlow } from './gate-rule-flow-smoke.mjs';
 import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
 
 const directory = await realpath(
@@ -1064,6 +1065,7 @@ try {
     'inbox-rules',
     'decision-routing',
     'running-apps-web',
+    'gate-rules',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
@@ -5211,6 +5213,12 @@ try {
       automationChangeTrigger: 'approved and delivered to Inbox',
     }),
   );
+  await smokeGateRuleFlow({
+    application,
+    page: changePage,
+    directory,
+    shots: process.env.NESVO_GATE_RULE_SCREENSHOT_DIR,
+  });
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
