@@ -10,6 +10,7 @@ import {
   SquarePen,
   Workflow,
 } from 'lucide-react';
+import { cn } from '@/shared/lib/cn';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { CountBadge } from '@/shared/ui/badge';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -95,15 +96,23 @@ export function NavigationRail({
         </RailButton>
       </div>
       <div className="flex flex-col items-center gap-1">
-        {!sidebarOpen && (
-          <RailButton
-            label="New session"
-            shortcut={shortcutKeys('newSession')}
-            onClick={onCreate}
-          >
-            <SquarePen />
-          </RailButton>
-        )}
+        <div
+          inert={sidebarOpen}
+          className={cn(
+            'grid transition-[grid-template-rows,margin,opacity] duration-slow ease-out',
+            sidebarOpen ? '-mb-1 grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr]',
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <RailButton
+              label="New session"
+              shortcut={shortcutKeys('newSession')}
+              onClick={onCreate}
+            >
+              <SquarePen />
+            </RailButton>
+          </div>
+        </div>
         <RailButton label="Inbox" active={inbox} onClick={onInbox}>
           <Inbox />
           {pendingActions > 0 && (
