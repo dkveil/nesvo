@@ -21,7 +21,7 @@ export const HomeView = ({
       <h1 className="home-title">
         <GlitchWordmark />
       </h1>
-      <p className="slogan">Vibe with full control.</p>
+      <p className="slogan">vibe with full control</p>
       <p className="tagline">
         Run Claude Code and Codex sessions in parallel, on your rules.
       </p>
