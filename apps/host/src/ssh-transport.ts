@@ -16,6 +16,7 @@ function configurationArgument(value: string) {
 export function spawnSshBridge(
   input: SshComputerInput,
   expectedInstanceId?: string,
+  env = process.env,
 ): ChildProcessWithoutNullStreams {
   const target = sshComputerInputSchema.parse(input);
   const handshake = hostConnectSchema.parse({
@@ -82,7 +83,7 @@ export function spawnSshBridge(
       shell: false,
       windowsHide: true,
       stdio: 'pipe',
-      env: { ...process.env, SSH_ASKPASS_REQUIRE: 'never' },
+      env: { ...env, SSH_ASKPASS_REQUIRE: 'never' },
     },
   );
 }

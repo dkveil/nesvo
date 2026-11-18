@@ -401,6 +401,16 @@ import {
   type RunningAppQuery,
 } from './running-apps';
 import {
+  externalInboxDeviceIdSchema,
+  externalInboxDeviceNameSchema,
+  externalInboxDevicesSchema,
+  externalInboxEnrollmentSchema,
+  externalInboxReplySchema,
+  externalInboxRequestSchema,
+  type ExternalInboxDevice,
+} from './external-inbox';
+export * from './external-inbox';
+import {
   decideInboxItemSchema,
   deleteInboxRuleSchema,
   inboxItemSchema,
@@ -989,6 +999,25 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: proposeInboxRuleSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-inbox-items') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-external-inbox-devices'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('enroll-external-inbox-device'),
+    input: externalInboxDeviceNameSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('revoke-external-inbox-device'),
+    input: externalInboxDeviceIdSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('external-inbox'),
+    input: externalInboxRequestSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('decide-inbox-item'),
@@ -1669,6 +1698,21 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     items: z.array(inboxItemSchema).max(500),
   }),
   z.strictObject({
+    type: z.literal('external-inbox-devices'),
+    id: z.uuid(),
+    devices: externalInboxDevicesSchema,
+  }),
+  z.strictObject({
+    type: z.literal('external-inbox-enrollment'),
+    id: z.uuid(),
+    enrollment: externalInboxEnrollmentSchema,
+  }),
+  z.strictObject({
+    type: z.literal('external-inbox-result'),
+    id: z.uuid(),
+    result: externalInboxReplySchema,
+  }),
+  z.strictObject({
     type: z.literal('inbox-item'),
     id: z.uuid(),
     item: inboxItemSchema,
@@ -2283,6 +2327,15 @@ export type DesktopApi = {
     hostId?: HostId,
   ) => Promise<InboxRuleProposal>;
   listInboxItems: (hostId?: HostId) => Promise<InboxItem[]>;
+  listExternalInboxDevices: (hostId?: HostId) => Promise<ExternalInboxDevice[]>;
+  enrollExternalInboxDevice: (
+    input: z.input<typeof externalInboxDeviceNameSchema>,
+    hostId?: HostId,
+  ) => Promise<z.infer<typeof externalInboxEnrollmentSchema>>;
+  revokeExternalInboxDevice: (
+    input: z.input<typeof externalInboxDeviceIdSchema>,
+    hostId?: HostId,
+  ) => Promise<ExternalInboxDevice[]>;
   decideInboxItem: (
     input: DecideInboxItemInput,
     hostId?: HostId,

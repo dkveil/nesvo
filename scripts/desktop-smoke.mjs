@@ -1066,6 +1066,7 @@ try {
     'decision-routing',
     'running-apps-web',
     'gate-rules',
+    'external-inbox',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

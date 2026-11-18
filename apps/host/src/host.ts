@@ -127,6 +127,7 @@ import { InboxRuleError, InboxRules } from './inbox-rules/service';
 import { InboxRuleFileError } from './inbox-rules/files';
 import { proposeInboxRule } from './inbox-rules/proposal';
 import { InboxItemStore } from './inbox-rules/store';
+import { ExternalInbox, listenForExternalInbox } from './external-inbox';
 import type { PreparedTurnRules } from './inbox-rules/turn-gate';
 import type { StepExecutor } from './workflows/runner';
 
@@ -610,6 +611,21 @@ export const serveHost = ({
         service => Effect.sync(() => service.close()),
       );
       inbox.current = inboxRules;
+      const computerId = String(
+        database
+          .prepare('SELECT value FROM metadata WHERE key = ?')
+          .get('instance_id')?.value,
+      );
+      const externalInbox = new ExternalInbox(database, inboxRules, computerId);
+      yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          listenForExternalInbox(externalInbox).catch(() => null),
+        ),
+        close =>
+          Effect.promise(async () => {
+            await close?.();
+          }),
+      );
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           sessions.onStageRecords((session, records) =>
@@ -1293,7 +1309,11 @@ export const serveHost = ({
           request.method === 'list-inbox-items' ||
           request.method === 'decide-inbox-item' ||
           request.method === 'read-inbox-settings' ||
-          request.method === 'save-inbox-settings'
+          request.method === 'save-inbox-settings' ||
+          request.method === 'list-external-inbox-devices' ||
+          request.method === 'enroll-external-inbox-device' ||
+          request.method === 'revoke-external-inbox-device' ||
+          request.method === 'external-inbox'
         ) {
           const { id } = request;
           const signal = probes.controller.signal;
@@ -1362,6 +1382,30 @@ export const serveHost = ({
                   type: 'inbox-settings',
                   id,
                   settings: inboxRules.saveSettings(request.input),
+                };
+              case 'list-external-inbox-devices':
+                return {
+                  type: 'external-inbox-devices',
+                  id,
+                  devices: externalInbox.list(),
+                };
+              case 'enroll-external-inbox-device':
+                return {
+                  type: 'external-inbox-enrollment',
+                  id,
+                  enrollment: externalInbox.enroll(request.input.name),
+                };
+              case 'revoke-external-inbox-device':
+                return {
+                  type: 'external-inbox-devices',
+                  id,
+                  devices: externalInbox.revoke(request.input.deviceId),
+                };
+              case 'external-inbox':
+                return {
+                  type: 'external-inbox-result',
+                  id,
+                  result: await externalInbox.execute(request.input, signal),
                 };
             }
           };

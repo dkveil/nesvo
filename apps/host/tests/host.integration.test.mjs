@@ -58,6 +58,262 @@ test('Nesvo sources do not register persistence or automate other apps', async (
     assert.match(command, automaticPersistence);
 });
 
+test(
+  'external Inbox CLI and MCP share durable decisions and device limits',
+  { timeout: 60000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-inbox-cli-')),
+    );
+    const pidFile = join(directory, 'pids.json');
+    const environment = {
+      NESVO_WORKFLOWS_HOME: join(directory, 'agents', 'workflows'),
+    };
+    const hosts = [];
+    const openHost = () => {
+      const host = launch(directory, pidFile, environment);
+      hosts.push(host);
+      return host;
+    };
+    let host = openHost();
+    t.after(async () => {
+      for (const entry of hosts) {
+        if (entry.child.exitCode === null && entry.child.signalCode === null)
+          await entry.stop().catch(() => entry.child.kill());
+        await entry.exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const health = await host.request('health');
+    const device = await host.request('enroll-external-inbox-device', {
+      name: 'Release runner',
+    });
+    assert.equal(device.type, 'external-inbox-enrollment');
+    const other = await host.request('enroll-external-inbox-device', {
+      name: 'Other runner',
+    });
+    assert.equal(other.type, 'external-inbox-enrollment');
+    const env = token => ({
+      ...process.env,
+      NESVO_INBOX_TOKEN: token,
+      NESVO_INBOX_CONFIG: '',
+      NESVO_INBOX_SSH: '',
+      NESVO_INBOX_COMPUTER: health.health.instanceId,
+    });
+    const cli = async (args, token = device.enrollment.token) => {
+      const output = await promisify(execFile)(
+        process.execPath,
+        ['apps/host/dist/cli.js', 'inbox', ...args, '--json'],
+        { env: env(token), windowsHide: true, timeout: 12000 },
+      ).then(
+        result => ({ ...result, code: 0 }),
+        error => {
+          assert.equal(typeof error.code, 'number');
+          return error;
+        },
+      );
+      assert.ok(
+        !output.stdout.includes(token) && !output.stderr.includes(token),
+      );
+      return { code: output.code, result: JSON.parse(output.stdout) };
+    };
+    const post = [
+      'post',
+      '--title',
+      'Publish next build?',
+      '--body',
+      '**Checks passed**',
+      '--source',
+      'Release CI',
+      '--idempotency-key',
+      'release-12',
+    ];
+    const waiting = cli([...post, '--wait', '--timeout', '10']);
+    const existing = await cli(post);
+    assert.equal(existing.code, 0);
+    const { id } = existing.result;
+    const listed = await host.request('list-inbox-items');
+    assert.equal(listed.items.filter(item => item.id === id).length, 1);
+    const item = listed.items.find(item => item.id === id);
+    assert.equal(item.binding, 'external');
+    assert.equal(item.source, 'Release CI');
+    assert.equal(item.presentation.text, '**Checks passed**');
+    assert.equal(item.route, 'inbox');
+    assert.equal(
+      (await cli(['status', id], other.enrollment.token)).result.error.code,
+      'not-found',
+    );
+    const refused = await host.request('decide-inbox-item', {
+      itemId: id,
+      decision: 'dismiss',
+    });
+    assert.equal(refused.code, 'invalid-request');
+    const decided = await host.request('decide-inbox-item', {
+      itemId: id,
+      decision: 'answer',
+      option: 'reject',
+      note: 'Wait for verification.',
+    });
+    assert.equal(decided.item.status, 'answered');
+    const waited = await waiting;
+    assert.equal(waited.code, 1);
+    assert.deepEqual(waited.result, {
+      id,
+      status: 'answered',
+      action: 'reject',
+      actionIndex: 1,
+      comment: 'Wait for verification.',
+    });
+    assert.deepEqual((await cli(post)).result, waited.result);
+    const conflict = await cli([
+      ...post.slice(0, 3),
+      '--idempotency-key',
+      'release-12',
+    ]);
+    assert.equal(conflict.result.error.code, 'conflict');
+    const timeout = await cli([
+      'post',
+      '--title',
+      'Waiting for review',
+      '--wait',
+      '--timeout',
+      '1',
+    ]);
+    assert.equal(timeout.code, 2);
+    assert.equal(timeout.result.status, 'pending');
+    assert.equal(
+      (await cli(['cancel', timeout.result.id])).result.status,
+      'cancelled',
+    );
+
+    const mcp = spawn(process.execPath, ['apps/host/dist/cli.js', 'mcp'], {
+      env: env(other.enrollment.token),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    t.after(() => mcp.kill());
+    const mcpReplies = createInterface({ input: mcp.stdout })[
+      Symbol.asyncIterator
+    ]();
+    const rpc = async (method, params, rpcId) => {
+      mcp.stdin.write(
+        JSON.stringify({ jsonrpc: '2.0', method, params, id: rpcId }) + '\n',
+      );
+      if (rpcId === undefined) return;
+      const reply = JSON.parse(
+        (await bounded(mcpReplies.next(), 'MCP reply timed out')).value,
+      );
+      assert.equal(reply.id, rpcId);
+      return reply.result;
+    };
+    const initialized = await rpc(
+      'initialize',
+      {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'fixtures', version: '1' },
+      },
+      1,
+    );
+    assert.equal(initialized.serverInfo.name, 'nesvo');
+    await rpc('notifications/initialized');
+    const catalog = await rpc('tools/list', {}, 2);
+    assert.deepEqual(
+      catalog.tools.map(tool => tool.name),
+      ['inbox_post', 'inbox_status', 'inbox_cancel'],
+    );
+    const posted = await rpc(
+      'tools/call',
+      {
+        name: 'inbox_post',
+        arguments: { title: 'One more review', idempotencyKey: 'mcp-approved' },
+      },
+      3,
+    );
+    assert.equal(posted.structuredContent.status, 'pending');
+    const mcpId = posted.structuredContent.id;
+    await host.request('decide-inbox-item', {
+      itemId: mcpId,
+      decision: 'answer',
+      option: 'approve',
+    });
+    const observed = await rpc(
+      'tools/call',
+      { name: 'inbox_status', arguments: { id: mcpId } },
+      4,
+    );
+    assert.equal(observed.structuredContent.actionIndex, 0);
+    const approved = await cli(
+      [
+        'post',
+        '--title',
+        'One more review',
+        '--idempotency-key',
+        'mcp-approved',
+        '--wait',
+      ],
+      other.enrollment.token,
+    );
+    assert.equal(approved.code, 0);
+    assert.equal(approved.result.id, mcpId);
+    assert.equal(
+      (
+        await rpc(
+          'tools/call',
+          { name: 'inbox_cancel', arguments: { id: mcpId } },
+          5,
+        )
+      ).structuredContent.status,
+      'answered',
+    );
+
+    for (let index = 0; index < 5; index++) {
+      assert.equal(
+        (await cli(['post', '--title', `Pending ${index}`])).code,
+        0,
+      );
+    }
+    assert.equal(
+      (await cli(['post', '--title', 'Pending overflow'])).result.error.code,
+      'pending-limit',
+    );
+    const outstanding = (await host.request('list-inbox-items')).items.filter(
+      entry =>
+        entry.status === 'pending' && entry.deviceName === 'Release runner',
+    );
+    for (const entry of outstanding) await cli(['cancel', entry.id]);
+    for (let index = 0; index < 3; index++) {
+      const next = await cli(['post', '--title', `Extra ${index}`]);
+      assert.equal(next.code, 0);
+      await cli(['cancel', next.result.id]);
+    }
+    assert.equal(
+      (await cli(['post', '--title', 'Rate overflow'])).result.error.code,
+      'rate-limit',
+    );
+    await host.stop();
+    host = openHost();
+    await host.request('health');
+    assert.deepEqual((await cli(['status', id])).result, waited.result);
+    assert.deepEqual((await cli(post)).result, waited.result);
+    assert.equal(
+      (await cli(['post', '--title', 'Rate overflow'])).result.error.code,
+      'rate-limit',
+    );
+    const revoked = await host.request('revoke-external-inbox-device', {
+      deviceId: device.enrollment.device.id,
+    });
+    assert.ok(
+      !revoked.devices.some(entry => entry.id === device.enrollment.device.id),
+    );
+    const denied = await cli(['status', id]);
+    assert.equal(denied.code, 3);
+    assert.equal(denied.result.error.code, 'unauthorized');
+    assert.ok(!host.error().includes(device.enrollment.token));
+    mcp.stdin.end();
+  },
+);
+
 test('host diagnostics redact secret patterns and secret environment values', () => {
   const secretValues = [
     'ghp_synthetictoken123456',
@@ -1452,6 +1708,7 @@ test(
         'decision-routing',
         'running-apps-web',
         'gate-rules',
+        'external-inbox',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2458,7 +2715,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      29,
+      30,
     );
     migrated.close();
     const reopened = open();
@@ -4842,7 +5099,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 30');
+    database.exec('PRAGMA user_version = 31');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4859,7 +5116,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -7051,6 +7308,7 @@ test(
       'decision-routing',
       'running-apps-web',
       'gate-rules',
+      'external-inbox',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7927,7 +8185,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            29,
+            30,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -8010,11 +8268,11 @@ test(
       }
     });
 
-    await t.test('a version 30 database is refused', async () => {
+    await t.test('a version 31 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 30');
+      newer.exec('PRAGMA user_version = 31');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -8026,7 +8284,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          30,
+          31,
         );
       } finally {
         check.close();
@@ -11067,7 +11325,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        29,
+        30,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11118,7 +11376,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        29,
+        30,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20674,7 +20932,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      29,
+      30,
     );
     database
       .prepare(
@@ -21037,7 +21295,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 29);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -21052,7 +21310,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        29,
+        30,
       );
       assert.deepEqual(
         migrated
@@ -21232,7 +21490,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 29);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -28561,6 +28819,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
+  assert.equal(capabilities.at(-1), 'external-inbox');
 
   const invalid = await host.request('validate-inbox-rule', {
     text: '---\nname: Bad Name\ntrigger: command\naction: ask\n---\n',

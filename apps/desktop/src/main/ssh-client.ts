@@ -12,7 +12,7 @@ import {
 import { PermanentConnectionError } from './connection-errors';
 import { log } from './logging';
 import { requestTimeoutMs } from './request-timeouts';
-import { spawnSshBridge } from './ssh-transport';
+import { spawnSshBridge } from '@nesvo/host/ssh-transport';
 
 export function connectSshHost(
   target: SshComputerInput,

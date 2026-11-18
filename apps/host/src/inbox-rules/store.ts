@@ -25,6 +25,11 @@ export const inboxBindingSchema = z.discriminatedUnion('kind', [
     kind: z.literal('session'),
     runId: z.uuid().nullable(),
   }),
+  z.strictObject({
+    kind: z.literal('external'),
+    deviceId: z.uuid(),
+    payloadHash: z.string().length(64),
+  }),
 ]);
 export type InboxBinding = z.infer<typeof inboxBindingSchema>;
 
@@ -40,6 +45,17 @@ export const installInboxTables = (database: DatabaseSync) => {
   database.exec(
     "CREATE TABLE IF NOT EXISTS inbox_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
   );
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS external_inbox_devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS inbox_items_external_device
+      ON inbox_items (json_extract(binding, '$.deviceId'), created_at)
+      WHERE json_extract(binding, '$.kind') = 'external';
+  `);
 };
 
 const parse = (row: Record<string, unknown>): StoredInboxItem | null => {
@@ -97,6 +113,33 @@ export class InboxItemStore {
     return row ? parse(row) : null;
   }
 
+  findByDedupe(dedupe: string): StoredInboxItem | null {
+    const row = this.database
+      .prepare('SELECT document, binding FROM inbox_items WHERE dedupe = ?')
+      .get(dedupe);
+    return row ? parse(row) : null;
+  }
+
+  externalCounts(deviceId: string, since: string) {
+    const device = this.database.prepare(`
+      SELECT COUNT(CASE WHEN created_at >= ? THEN 1 END) AS recent,
+             COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending
+      FROM inbox_items
+      WHERE json_extract(binding, '$.kind') = 'external'
+        AND json_extract(binding, '$.deviceId') = ?
+        AND (created_at >= ? OR status = 'pending')
+    `).get(since, deviceId, since);
+    const host = this.database.prepare(`
+      SELECT COUNT(*) AS pending FROM inbox_items
+      WHERE status = 'pending' AND json_extract(binding, '$.kind') = 'external'
+    `).get();
+    return {
+      recent: Number(device?.recent),
+      pending: Number(device?.pending),
+      hostPending: Number(host?.pending),
+    };
+  }
+
   list(): StoredInboxItem[] {
     return this.database
       .prepare(
@@ -135,7 +178,7 @@ export class InboxItemStore {
   private prune(): void {
     this.database
       .prepare(
-        "DELETE FROM inbox_items WHERE status != 'pending' AND id NOT IN (SELECT id FROM inbox_items WHERE status != 'pending' ORDER BY updated_at DESC LIMIT ?)",
+        "DELETE FROM inbox_items WHERE status != 'pending' AND json_extract(binding, '$.kind') != 'external' AND id NOT IN (SELECT id FROM inbox_items WHERE status != 'pending' AND json_extract(binding, '$.kind') != 'external' ORDER BY updated_at DESC LIMIT ?)",
       )
       .run(KEPT_DECIDED_ITEMS);
   }

@@ -23,6 +23,7 @@ Triggers and their fields:
 - ci-checks: status red or green
 - files-changed: glob, such as "src/**/*.sql"
 - run-cost: above_usd, a number
+- external: optional pattern matching a source label. Use action route and set route. Omit show and the template body.
 
 Actions: hold blocks until the owner approves or declines and only fits command, pull-request, mcp-tool, workflow-step or a pause after an event; notify adds an Inbox item without blocking; ask offers options (a list of at least two labels) and sends the answer to the session, and never fits command, pull-request, mcp-tool or workflow-step.
 

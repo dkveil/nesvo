@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { decisionRouteSchema } from './decision-route';
+import {
+  externalInboxActionsSchema,
+  externalInboxLimits,
+} from './external-inbox';
 import { pullRequestReferenceSchema } from './pull-requests';
 import { providerSchema, sessionModeSchema } from './sessions';
 import { stageReportSchema } from './stage-report';
@@ -35,6 +39,7 @@ export const inboxRuleTriggerSchema = z.enum([
   'ci-checks',
   'files-changed',
   'run-cost',
+  'external',
 ]);
 export type InboxRuleTrigger = z.infer<typeof inboxRuleTriggerSchema>;
 
@@ -48,7 +53,7 @@ export const gatingInboxRuleTriggers = [
 export const isGatingTrigger = (trigger: InboxRuleTrigger) =>
   (gatingInboxRuleTriggers as readonly InboxRuleTrigger[]).includes(trigger);
 
-export const inboxRuleActionSchema = z.enum(['hold', 'notify', 'ask']);
+export const inboxRuleActionSchema = z.enum(['hold', 'notify', 'ask', 'route']);
 export type InboxRuleAction = z.infer<typeof inboxRuleActionSchema>;
 
 export const inboxRulePresentationSchema = z.enum([
@@ -134,7 +139,26 @@ export const inboxRuleFieldsSchema = z
     };
     if (rule.trigger === 'command' || rule.trigger === 'mcp-tool')
       need('pattern', `A ${rule.trigger} rule needs a pattern.`);
-    else forbid('pattern', 'Only command and mcp-tool rules use a pattern.');
+    else if (rule.trigger !== 'external')
+      forbid(
+        'pattern',
+        'Only command, mcp-tool and external rules use a pattern.',
+      );
+    if (rule.trigger === 'external') {
+      need('route', 'An external rule selects a decision route.');
+      if (rule.action !== 'route' || rule.show.length || rule.body)
+        context.addIssue({
+          code: 'custom',
+          path: ['action'],
+          message:
+            'External rules only route the posted item and preserve its body and actions.',
+        });
+    } else if (rule.action === 'route')
+      context.addIssue({
+        code: 'custom',
+        path: ['action'],
+        message: 'Only external rules use the route action.',
+      });
     if (rule.trigger === 'pull-request')
       need('actions', 'A pull-request rule lists its actions.');
     else forbid('actions', 'Only pull-request rules list actions.');
@@ -317,17 +341,11 @@ export const inboxDecisionChannelSchema = z.enum([
   'parent',
 ]);
 
-export const inboxItemSchema = z.strictObject({
+const inboxItemBaseSchema = z.strictObject({
   id: z.uuid(),
-  rule: z.strictObject({
-    name: z.string().max(inboxRuleLimits.name),
-    scope: inboxRuleScopeSchema,
-    description: z.string().max(inboxRuleLimits.description),
-  }),
   action: inboxRuleActionSchema,
   trigger: inboxRuleTriggerSchema,
   subject: z.string().max(500),
-  binding: z.enum(['provider', 'pull-request', 'workflow-step', 'session']),
   sessionId: z.uuid().nullable(),
   sessionTitle: z.string().max(200),
   parentId: z.uuid().nullable(),
@@ -342,6 +360,31 @@ export const inboxItemSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   decidedAt: z.iso.datetime().nullable(),
 });
+const inboxItemRuleSchema = z.strictObject({
+  name: z.string().max(inboxRuleLimits.name),
+  scope: inboxRuleScopeSchema,
+  description: z.string().max(inboxRuleLimits.description),
+});
+export const ruleInboxItemSchema = inboxItemBaseSchema.extend({
+  binding: z.enum(['provider', 'pull-request', 'workflow-step', 'session']),
+  rule: inboxItemRuleSchema,
+});
+export type RuleInboxItem = z.infer<typeof ruleInboxItemSchema>;
+export const externalInboxItemSchema = inboxItemBaseSchema.extend({
+  binding: z.literal('external'),
+  rule: inboxItemRuleSchema.nullable(),
+  action: z.literal('ask'),
+  trigger: z.literal('external'),
+  source: z.string().min(1).max(externalInboxLimits.source),
+  deviceName: z.string().min(1).max(externalInboxLimits.source),
+  options: externalInboxActionsSchema,
+  status: z.enum(['pending', 'answered', 'cancelled']),
+});
+export type ExternalInboxItem = z.infer<typeof externalInboxItemSchema>;
+export const inboxItemSchema = z.discriminatedUnion('binding', [
+  ruleInboxItemSchema,
+  externalInboxItemSchema,
+]);
 export type InboxItem = z.infer<typeof inboxItemSchema>;
 
 export const decideInboxItemSchema = z

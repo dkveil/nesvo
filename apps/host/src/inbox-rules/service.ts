@@ -1,6 +1,7 @@
 import {
   actOnPullRequestSchema,
   decideInboxItemSchema,
+  externalInboxLimits,
   inboxRuleLimits,
   isGatingTrigger,
   matchesCommandPattern,
@@ -13,6 +14,8 @@ import {
   type Approval,
   type DecisionRoute,
   type DesktopEvent,
+  type ExternalInboxItem,
+  type ExternalInboxPost,
   type InboxItem,
   type InboxItemDiff,
   type InboxRule,
@@ -23,6 +26,7 @@ import {
   type InboxRuleSessionKind,
   type InboxRuleTrigger,
   type InboxSettings,
+  type RuleInboxItem,
   type PullRequestActionResult,
   type PullRequestReference,
   type RespondApprovalInput,
@@ -36,7 +40,7 @@ import {
   type StageReport,
   type WorkflowRun,
 } from '@nesvo/contracts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { basename } from 'node:path';
 import type { z } from 'zod';
@@ -179,7 +183,7 @@ export class InboxRules {
   start(): void {
     const at = new Date().toISOString();
     for (const { item, binding } of this.ports.store.pending())
-      if (binding.kind === 'provider')
+      if (binding.kind === 'provider' && item.binding !== 'external')
         this.settle(item, 'pending', {
           status: 'interrupted',
           outcome:
@@ -211,6 +215,129 @@ export class InboxRules {
 
   items(): InboxItem[] {
     return this.ports.store.list().map(entry => entry.item);
+  }
+
+  externalItem(deviceId: string, itemId: string): ExternalInboxItem | null {
+    const stored = this.ports.store.get(itemId);
+    if (
+      stored?.binding.kind !== 'external' ||
+      stored.binding.deviceId !== deviceId ||
+      stored.item.binding !== 'external'
+    )
+      return null;
+    return stored.item;
+  }
+
+  cancelExternal(item: ExternalInboxItem): ExternalInboxItem {
+    if (item.status !== 'pending') return item;
+    return this.settle(item, 'pending', {
+      status: 'cancelled',
+      outcome: 'Withdrawn by the sender.',
+      decidedAt: new Date().toISOString(),
+    }) ?? item;
+  }
+
+  async postExternal(
+    deviceId: string,
+    deviceName: string,
+    input: ExternalInboxPost,
+    active: () => boolean,
+  ) {
+    const digest = (value: string) =>
+      createHash('sha256').update(value).digest('hex');
+    const dedupe = `external:${deviceId}:${digest(input.idempotencyKey)}`;
+    const payloadHash = digest(JSON.stringify(input));
+    const existing = () => {
+      const stored = this.ports.store.findByDedupe(dedupe);
+      if (!stored) return null;
+      if (
+        stored.binding.kind !== 'external' ||
+        stored.item.binding !== 'external' ||
+        stored.binding.payloadHash !== payloadHash
+      )
+        return 'conflict' as const;
+      return stored.item;
+    };
+    const before = existing();
+    if (before) return before;
+    const initialSession = input.sessionId
+      ? this.ports.sessions.snapshot(input.sessionId)
+      : undefined;
+    if (input.sessionId && !initialSession) return 'not-found' as const;
+    const source = input.source ?? deviceName;
+    const rules = initialSession
+      ? await this.rulesFor(initialSession, this.ports.signal)
+      : [];
+    const entry = rules.find(
+      ({ rule }) =>
+        rule.trigger === 'external' &&
+        (!rule.pattern || matchesNameFilter(rule.pattern, source)),
+    );
+    if (!active()) return 'unauthorized' as const;
+    const after = existing();
+    if (after) return after;
+    const session = initialSession
+      ? this.ports.sessions.snapshot(initialSession.id)
+      : undefined;
+    if (initialSession && !session) return 'not-found' as const;
+    const now = Date.now();
+    const counts = this.ports.store.externalCounts(
+      deviceId,
+      new Date(now - 60_000).toISOString(),
+    );
+    if (counts.recent >= externalInboxLimits.perMinute)
+      return 'rate-limit' as const;
+    if (
+      counts.pending >= externalInboxLimits.pending ||
+      counts.hostPending >= externalInboxLimits.hostPending
+    )
+      return 'pending-limit' as const;
+    const item: ExternalInboxItem = {
+      id: randomUUID(),
+      rule: entry
+        ? {
+            name: entry.rule.name,
+            scope: entry.scope,
+            description: entry.rule.description,
+          }
+        : null,
+      action: 'ask',
+      trigger: 'external',
+      subject: input.title,
+      binding: 'external',
+      source,
+      deviceName,
+      sessionId: session?.id ?? null,
+      sessionTitle: session?.title.slice(0, 200) ?? '',
+      parentId: session?.parentId ?? null,
+      route: this.routeFor(entry?.rule ?? null, session ?? null),
+      status: 'pending',
+      options: input.actions,
+      presentation: {
+        text: input.body,
+        show: [],
+        command: null,
+        diff: null,
+        pullRequest: null,
+        plan: null,
+        report: null,
+      },
+      note: null,
+      answer: null,
+      outcome: null,
+      decidedVia: null,
+      createdAt: new Date(now).toISOString(),
+      decidedAt: null,
+    };
+    if (
+      !this.ports.store.insert(
+        { item, binding: { kind: 'external', deviceId, payloadHash } },
+        dedupe,
+      )
+    )
+      return 'conflict' as const;
+    this.ports.emit({ type: 'inbox-item-changed', item });
+    return item;
   }
 
   async catalog(
@@ -587,7 +714,7 @@ export class InboxRules {
     return item ? this.waitingText(item, session) : null;
   }
 
-  private waitingText(item: InboxItem, session: Session) {
+  private waitingText(item: RuleInboxItem, session: Session) {
     const parent = session.parentId
       ? this.ports.sessions.snapshot(session.parentId)
       : undefined;
@@ -726,7 +853,7 @@ export class InboxRules {
           item.action === 'hold' &&
           binding.kind === 'session',
       );
-    return pending
+    return pending && pending.item.binding !== 'external'
       ? `This session waits for the owner's decision on the Inbox rule "${pending.item.rule.name}". Decide it in the Inbox first.`
       : null;
   }
@@ -734,7 +861,7 @@ export class InboxRules {
   async beforePullRequestAction(
     input: ActOnPullRequestInput,
     signal: AbortSignal,
-  ): Promise<InboxItem | null> {
+  ): Promise<RuleInboxItem | null> {
     const action = surfaceAction(input);
     if (!action) return null;
     const session =
@@ -766,15 +893,18 @@ export class InboxRules {
       });
     const hold = matching.find(({ rule }) => rule.action === 'hold');
     if (!hold) return null;
+    const dedupe = `pull-request-hold:${input.actionId}`;
+    const existing = this.ports.store.findByDedupe(dedupe);
+    if (existing?.item.binding === 'pull-request') return existing.item;
     return this.create(hold, session, {
       trigger: 'pull-request',
       subject: `${action} ${url}`,
       binding: { kind: 'pull-request', input },
-      dedupe: `pull-request-hold:${input.actionId}`,
+      dedupe,
       pullRequest: input.reference,
       values: { pr: url, action },
       command: `${action} ${url}`,
-    }) ?? this.ports.store.list().find(entry => entry.binding.kind === 'pull-request' && (entry.binding.input as ActOnPullRequestInput).actionId === input.actionId)?.item ?? null;
+    });
   }
 
   private async globalRules(signal: AbortSignal): Promise<ApplicableRule[]> {
@@ -858,7 +988,7 @@ export class InboxRules {
         return hostResult(
           execution,
           'fail',
-          `The owner declined this step under the Inbox rule "${current.rule.name}".${current.note ? ` Their note: ${current.note}` : ''}`,
+          `The owner declined this step under the Inbox rule "${current.rule?.name}".${current.note ? ` Their note: ${current.note}` : ''}`,
         );
       await new Promise(resolve => {
         const timer = setTimeout(resolve, WORKFLOW_HOLD_POLL_MS);
@@ -923,7 +1053,7 @@ export class InboxRules {
     entry: ApplicableRule,
     session: Session | null,
     input: CreateInput,
-  ): InboxItem | null {
+  ): RuleInboxItem | null {
     const { rule } = entry;
     const route = this.routeFor(rule, session);
     const values: Record<string, string> = {
@@ -937,7 +1067,7 @@ export class InboxRules {
       ...input.values,
     };
     const show = rule.show;
-    const item: InboxItem = {
+    const item: RuleInboxItem = {
       id: randomUUID(),
       rule: { name: rule.name, scope: entry.scope, description: rule.description },
       action: rule.action,
@@ -1017,7 +1147,7 @@ export class InboxRules {
       this.ports.emit({ type: 'inbox-item-changed', item: next });
   }
 
-  private announce(item: InboxItem, session: Session, status: 'needed' | 'decided') {
+  private announce(item: RuleInboxItem, session: Session, status: 'needed' | 'decided') {
     const title = `${item.rule.name}: ${item.subject}`.slice(0, 500);
     const by = status === 'decided' ? ownerActor(item.decidedVia) : null;
     const base = {
@@ -1076,12 +1206,12 @@ export class InboxRules {
     }
   }
 
-  private settle(
-    item: InboxItem,
-    expected: InboxItem['status'],
-    changes: Partial<InboxItem>,
-  ): InboxItem | null {
-    const next: InboxItem = { ...item, ...changes };
+  private settle<T extends InboxItem>(
+    item: T,
+    expected: T['status'],
+    changes: Partial<NoInfer<T>>,
+  ): T | null {
+    const next = { ...item, ...changes };
     if (!this.ports.store.update(next, expected)) return null;
     this.ports.emit({ type: 'inbox-item-changed', item: next });
     return next;
@@ -1096,6 +1226,21 @@ export class InboxRules {
       throw new InboxRuleError('not-found', 'This Inbox item no longer exists.');
     const { item, binding } = stored;
     if (item.status !== 'pending') return item;
+    if (item.binding === 'external') {
+      const answer = item.options.find(option => option === input.option);
+      if (input.decision !== 'answer' || !answer)
+        throw new InboxRuleError(
+          'invalid-request',
+          'Choose one of the offered actions.',
+        );
+      return this.settle(item, 'pending', {
+        status: 'answered',
+        answer,
+        note: input.note ?? null,
+        decidedVia: input.via,
+        decidedAt: new Date().toISOString(),
+      }) ?? item;
+    }
     const allowed =
       item.action === 'hold'
         ? ['approve', 'decline']
@@ -1138,8 +1283,9 @@ export class InboxRules {
       throw new InboxRuleError('not-found', 'This Inbox item no longer exists.');
     }
     const outcome = await this.apply(claimed, binding, input.note ?? null);
-    const finished = this.ports.store.get(item.id)?.item ?? claimed;
-    const result: InboxItem = { ...finished, ...outcome };
+    const current = this.ports.store.get(item.id)?.item;
+    const finished = current && current.binding !== 'external' ? current : claimed;
+    const result: RuleInboxItem = { ...finished, ...outcome };
     this.ports.store.update(result, finished.status);
     this.ports.emit({ type: 'inbox-item-changed', item: result });
     const session = result.sessionId
@@ -1150,10 +1296,10 @@ export class InboxRules {
   }
 
   private async apply(
-    item: InboxItem,
+    item: RuleInboxItem,
     binding: InboxBinding,
     note: string | null,
-  ): Promise<Partial<InboxItem>> {
+  ): Promise<Partial<RuleInboxItem>> {
     const declined = `The owner declined this under the Inbox rule "${item.rule.name}".${note ? ` Their note: ${note}` : ''}`;
     if (binding.kind === 'provider') {
       const session = item.sessionId
@@ -1236,7 +1382,7 @@ export class InboxRules {
 type CreateInput = {
   trigger: InboxRuleTrigger;
   subject: string;
-  binding: InboxBinding;
+  binding: Exclude<InboxBinding, { kind: 'external' }>;
   dedupe?: string;
   values?: Record<string, string>;
   command?: string | null;

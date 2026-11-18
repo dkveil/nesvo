@@ -16,7 +16,7 @@ import { installSessionControlTables } from './session-control/store';
 import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 29;
+const DATABASE_VERSION = 30;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;

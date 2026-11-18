@@ -5,10 +5,14 @@
   "type": "module",
   "exports": {
     ".": "./src/host.ts",
-    "./mobile": "./src/mobile/gateway.ts"
+    "./mobile": "./src/mobile/gateway.ts",
+    "./ssh-transport": "./src/ssh-transport.ts"
+  },
+  "bin": {
+    "nesvo": "./dist/cli.js"
   },
   "scripts": {
-    "build": "bun build src/main.ts --target=node --outfile=dist/main.js && bun build src/mobile/gateway.ts --target=node --outfile=dist/mobile.js",
+    "build": "bun build src/main.ts --target=node --outfile=dist/main.js && bun build src/mobile/gateway.ts --target=node --outfile=dist/mobile.js && bun build src/cli.ts --target=node --outfile=dist/cli.js",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
