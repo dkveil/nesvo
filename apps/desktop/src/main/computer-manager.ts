@@ -19,10 +19,17 @@ import {
   type WorkflowMethod,
   type SshComputerInput,
   type WorkspaceEvent,
+  HOST_CONTRACT_REVISION,
   isWorkflowMethod,
   sshComputerInputSchema,
 } from '@nesvo/contracts';
+import {
+  IncompatibleHostError,
+  isPermanentConnectionError,
+} from './connection-errors';
+import { EventBuffer } from './event-buffer';
 import { type startHost } from './host-client';
+import { log } from './logging';
 import { connectSshHost } from './ssh-client';
 import {
   ComputerStore,
@@ -67,8 +74,37 @@ type Entry = {
   connection?: Connection;
   unsubscribe?: () => void;
   connecting?: Promise<Computer>;
-  buffered?: DesktopEvent[];
+  buffered?: EventBuffer;
   removing?: boolean;
+  manualDisconnect?: boolean;
+  recoveryAttempts: number;
+  recoveryTimer?: ReturnType<typeof setTimeout>;
+  connectedAt?: number;
+};
+
+type LocalHost = ReturnType<typeof startHost>;
+
+const LOCAL_RESTART_DELAYS_MS = [1000, 2000, 5000, 15_000];
+const REMOTE_RECONNECT_DELAYS_MS = [2000, 5000, 15_000, 30_000, 60_000];
+const STABLE_CONNECTION_MS = 60_000;
+
+const newEntry = (computer: Computer): Entry => ({
+  computer,
+  sessions: new Map(),
+  reviews: new Map(),
+  scheduledJobRevisions: new Map(),
+  workflowRunRevisions: new Map(),
+  workflowStepRevisions: new Map(),
+  generation: 0,
+  recoveryAttempts: 0,
+});
+
+const contractMismatch = (health: HostHealth) => {
+  const revision = health.contractRevision ?? 0;
+  if (revision === HOST_CONTRACT_REVISION) return null;
+  return revision < HOST_CONTRACT_REVISION
+    ? 'This computer runs an older Nesvo host. Update its host, then reconnect.'
+    : 'This computer runs a newer Nesvo host. Update Nesvo on this device, then reconnect.';
 };
 
 const pullRequestResponses = {
@@ -197,14 +233,20 @@ export class ComputerManager {
   private configurationError = '';
   private cacheTimer: ReturnType<typeof setTimeout> | undefined;
   private closing = false;
+  private readonly loaded: Promise<void>;
+  private resolveLoaded!: () => void;
 
   constructor(
     directory: string,
-    private readonly local: ReturnType<typeof startHost>,
+    private readonly startLocal: () => LocalHost,
   ) {
     this.store = new ComputerStore(directory);
-    this.entries.set('local', {
-      computer: {
+    this.loaded = new Promise(resolve => {
+      this.resolveLoaded = resolve;
+    });
+    this.entries.set(
+      'local',
+      newEntry({
         id: 'local',
         name: 'Local',
         kind: 'local',
@@ -213,17 +255,64 @@ export class ComputerManager {
         lastSyncedAt: null,
         error: null,
         capabilities: [],
-      },
-      sessions: new Map(),
-      reviews: new Map(),
-      scheduledJobRevisions: new Map(),
-      workflowRunRevisions: new Map(),
-      workflowStepRevisions: new Map(),
-      generation: 0,
-    });
+      }),
+    );
   }
 
   async initialize() {
+    try {
+      await this.loadSavedComputers();
+    } finally {
+      this.resolveLoaded();
+    }
+    this.publishComputers();
+    for (const entry of this.entries.values())
+      if (entry.computer.kind === 'ssh') {
+        if (entry.sessions.size > 0 || entry.reviews.size > 0)
+          this.publish({
+            type: 'host-snapshot',
+            hostId: entry.computer.id,
+            sessions: this.listSessions(entry.computer.id),
+            reviews: this.listReviews(entry.computer.id),
+          });
+        void this.recover(entry);
+      }
+    await this.recover(this.get('local'));
+  }
+
+  resume() {
+    if (this.closing) return;
+    log.info('The system resumed; refreshing computer connections.');
+    for (const entry of this.entries.values()) {
+      if (entry.removing || entry.manualDisconnect) continue;
+      clearTimeout(entry.recoveryTimer);
+      entry.recoveryTimer = undefined;
+      entry.recoveryAttempts = 0;
+      const { status } = entry.computer;
+      if (status === 'connected') {
+        if (entry.computer.kind === 'ssh') void this.probe(entry);
+      } else if (status === 'error' || status === 'disconnected')
+        void this.recover(entry);
+    }
+  }
+
+  private async probe(entry: Entry) {
+    const connection = entry.connection;
+    const generation = entry.generation;
+    try {
+      await connection?.request('health');
+    } catch (error) {
+      if (!this.current(entry, generation) || entry.connection !== connection)
+        return;
+      log.warn(
+        `${entry.computer.name} did not answer after the system resumed.`,
+        error,
+      );
+      await connection?.close().catch(() => undefined);
+    }
+  }
+
+  private async loadSavedComputers() {
     try {
       const raw = await this.store.read('computers.json', 512 * 1024);
       const saved =
@@ -231,8 +320,9 @@ export class ComputerManager {
           ? []
           : computerConfigurationSchema.parse(raw).computers;
       for (const computer of saved)
-        this.entries.set(computer.id, {
-          computer: {
+        this.entries.set(
+          computer.id,
+          newEntry({
             id: computer.id,
             name: computer.input.name,
             kind: 'ssh',
@@ -242,15 +332,10 @@ export class ComputerManager {
             lastSyncedAt: null,
             error: null,
             capabilities: [],
-          },
-          sessions: new Map(),
-          reviews: new Map(),
-          scheduledJobRevisions: new Map(),
-          workflowRunRevisions: new Map(),
-          workflowStepRevisions: new Map(),
-          generation: 0,
-        });
-    } catch {
+          }),
+        );
+    } catch (error) {
+      log.error('Saved computers could not be read.', error);
       this.configurationError =
         'Saved computers could not be read. Restore computers.json before changing the list.';
     }
@@ -272,28 +357,124 @@ export class ComputerManager {
         );
         entry.computer.lastSyncedAt = cache.lastSyncedAt;
       }
-    } catch {
+    } catch (error) {
+      log.error('Offline history could not be read.', error);
       for (const entry of this.entries.values())
         if (entry.computer.kind === 'ssh')
           entry.computer.error =
             'Offline history could not be read. Connect to load it from this computer.';
     }
-    const entry = this.get('local');
-    entry.connection = {
-      request: this.local.request,
-      subscribe: this.local.subscribe,
-      close: this.local.stop,
-    };
+  }
+
+  private connectEntry(entry: Entry): Promise<Computer> {
+    if (entry.removing)
+      return Promise.reject(new Error('This computer is being removed.'));
+    if (this.closing) return Promise.reject(new Error('Nesvo is closing.'));
+    if (entry.computer.status === 'connected')
+      return Promise.resolve({ ...entry.computer });
+    if (entry.connecting) return entry.connecting;
     const generation = ++entry.generation;
+    const operation = entry.computer.ssh
+      ? this.openRemote(entry, generation)
+      : this.openLocal(entry, generation);
+    entry.connecting = operation;
+    void operation
+      .finally(() => {
+        if (entry.connecting === operation) entry.connecting = undefined;
+      })
+      .catch(() => undefined);
+    return operation;
+  }
+
+  private async recover(entry: Entry) {
+    if (
+      this.closing ||
+      entry.removing ||
+      entry.manualDisconnect ||
+      this.entries.get(entry.computer.id) !== entry
+    )
+      return;
+    try {
+      await this.connectEntry(entry);
+    } catch (error) {
+      if (isPermanentConnectionError(error)) {
+        log.warn(`${entry.computer.name} needs attention.`, error);
+        return;
+      }
+      this.scheduleRecovery(entry);
+    }
+  }
+
+  private scheduleRecovery(entry: Entry) {
+    if (
+      this.closing ||
+      entry.removing ||
+      entry.manualDisconnect ||
+      entry.recoveryTimer ||
+      entry.computer.status === 'incompatible' ||
+      this.entries.get(entry.computer.id) !== entry
+    )
+      return;
+    if (
+      entry.connectedAt &&
+      Date.now() - entry.connectedAt >= STABLE_CONNECTION_MS
+    )
+      entry.recoveryAttempts = 0;
+    entry.connectedAt = undefined;
+    const local = entry.computer.kind === 'local';
+    const delays = local ? LOCAL_RESTART_DELAYS_MS : REMOTE_RECONNECT_DELAYS_MS;
+    const delay = delays[entry.recoveryAttempts];
+    if (delay === undefined) {
+      entry.computer.status = 'error';
+      entry.computer.error = local
+        ? 'The local host stopped and could not be restarted. Select Retry, or open the logs from Settings.'
+        : 'Nesvo could not reconnect to this computer and stopped retrying. Select Connect to try again.';
+      log.error(
+        `Gave up reconnecting ${entry.computer.name} after ${delays.length} attempts.`,
+      );
+      this.publishComputers();
+      return;
+    }
+    entry.recoveryAttempts += 1;
+    log.warn(
+      `Reconnecting ${entry.computer.name} in ${delay} ms (attempt ${entry.recoveryAttempts} of ${delays.length}).`,
+    );
+    entry.recoveryTimer = setTimeout(() => {
+      entry.recoveryTimer = undefined;
+      void this.recover(entry);
+    }, delay);
+  }
+
+  private async openLocal(entry: Entry, generation: number) {
+    entry.computer.status = 'connecting';
+    this.publishComputers();
+    this.detach(entry);
+    const previous = entry.connection;
+    entry.connection = undefined;
+    await previous?.close().catch(() => undefined);
+    if (!this.current(entry, generation))
+      throw new Error('Connection cancelled.');
+    const host = this.startLocal();
+    entry.connection = {
+      request: host.request,
+      subscribe: host.subscribe,
+      close: host.stop,
+    };
     this.listen(entry, generation);
     try {
-      const health = await this.local.health();
+      const health = await host.health();
       await this.synchronize(entry, generation, health);
       if (this.configurationError)
         entry.computer.error = this.configurationError;
+      return { ...entry.computer };
     } catch (error) {
-      entry.computer.status = 'error';
-      entry.computer.error = this.describe(error);
+      if (this.current(entry, generation)) {
+        this.detach(entry);
+        entry.connection = undefined;
+        this.fail(entry, error);
+      }
+      await host.stop().catch(() => undefined);
+      throw error;
     }
   }
 
@@ -327,30 +508,23 @@ export class ComputerManager {
   }
 
   async addComputer(input: SshComputerInput) {
+    await this.loaded;
     if (this.closing) throw new Error('Nesvo is closing.');
     if (this.entries.size >= 9)
       throw new Error('This prototype supports up to eight remote computers.');
     const target = sshComputerInputSchema.parse(input);
     const id = randomUUID();
-    const entry: Entry = {
-      computer: {
-        id,
-        name: target.name,
-        kind: 'ssh',
-        ssh: target,
-        status: 'disconnected',
-        instanceId: null,
-        lastSyncedAt: null,
-        error: null,
-        capabilities: [],
-      },
-      sessions: new Map(),
-      reviews: new Map(),
-      scheduledJobRevisions: new Map(),
-      workflowRunRevisions: new Map(),
-      workflowStepRevisions: new Map(),
-      generation: 0,
-    };
+    const entry = newEntry({
+      id,
+      name: target.name,
+      kind: 'ssh',
+      ssh: target,
+      status: 'disconnected',
+      instanceId: null,
+      lastSyncedAt: null,
+      error: null,
+      capabilities: [],
+    });
     this.entries.set(id, entry);
     try {
       await this.persistConfiguration();
@@ -362,27 +536,14 @@ export class ComputerManager {
     return { ...entry.computer };
   }
 
-  connectComputer(hostId: string): Promise<Computer> {
+  async connectComputer(hostId: string): Promise<Computer> {
+    await this.loaded;
     const entry = this.get(hostId);
-    if (entry.removing)
-      return Promise.reject(new Error('This computer is being removed.'));
-    if (this.closing) return Promise.reject(new Error('Nesvo is closing.'));
-    if (entry.computer.status === 'connected')
-      return Promise.resolve({ ...entry.computer });
-    if (entry.connecting) return entry.connecting;
-    if (!entry.computer.ssh)
-      return Promise.reject(
-        new Error('Reopen Nesvo to reconnect its local host.'),
-      );
-    const generation = ++entry.generation;
-    const operation = this.openRemote(entry, generation);
-    entry.connecting = operation;
-    void operation
-      .finally(() => {
-        if (entry.connecting === operation) entry.connecting = undefined;
-      })
-      .catch(() => undefined);
-    return operation;
+    entry.manualDisconnect = false;
+    clearTimeout(entry.recoveryTimer);
+    entry.recoveryTimer = undefined;
+    entry.recoveryAttempts = 0;
+    return this.connectEntry(entry);
   }
 
   private async openRemote(entry: Entry, generation: number) {
@@ -412,9 +573,7 @@ export class ComputerManager {
         entry.computer.instanceId ?? undefined,
       );
     } catch (error) {
-      entry.computer.status = 'error';
-      entry.computer.error = this.describe(error);
-      this.publishComputers();
+      this.fail(entry, error);
       throw error;
     }
     const connection: Connection = {
@@ -428,6 +587,7 @@ export class ComputerManager {
       const health = await client.ready;
       if (!this.current(entry, generation))
         throw new Error('Connection cancelled.');
+      this.verifyContract(health);
       const previousPin = entry.computer.instanceId;
       entry.computer.instanceId = health.instanceId;
       try {
@@ -441,16 +601,27 @@ export class ComputerManager {
       return { ...entry.computer };
     } catch (error) {
       if (this.current(entry, generation)) {
-        entry.computer.status = 'error';
-        entry.computer.error = this.describe(error);
-        entry.buffered = undefined;
         this.detach(entry);
         entry.connection = undefined;
-        this.publishComputers();
+        this.fail(entry, error);
       }
       await client.disconnect().catch(() => undefined);
       throw error;
     }
+  }
+
+  private verifyContract(health: HostHealth) {
+    const mismatch = contractMismatch(health);
+    if (mismatch) throw new IncompatibleHostError(mismatch);
+  }
+
+  private fail(entry: Entry, error: unknown) {
+    entry.computer.status =
+      error instanceof IncompatibleHostError ? 'incompatible' : 'error';
+    entry.computer.error = this.describe(error);
+    entry.buffered = undefined;
+    log.warn(`${entry.computer.name} connection failed.`, error);
+    this.publishComputers();
   }
 
   async disconnectComputer(hostId: string) {
@@ -458,6 +629,9 @@ export class ComputerManager {
     if (hostId === 'local')
       throw new Error('The local host is managed by Nesvo.');
     ++entry.generation;
+    entry.manualDisconnect = true;
+    clearTimeout(entry.recoveryTimer);
+    entry.recoveryTimer = undefined;
     entry.connecting = undefined;
     entry.unsubscribe?.();
     entry.unsubscribe = undefined;
@@ -473,6 +647,7 @@ export class ComputerManager {
   }
 
   async removeComputer(hostId: string) {
+    await this.loaded;
     const entry = this.get(hostId);
     if (hostId === 'local')
       throw new Error('The local computer cannot be removed.');
@@ -748,6 +923,8 @@ export class ComputerManager {
   async close() {
     this.closing = true;
     clearTimeout(this.cacheTimer);
+    for (const entry of this.entries.values())
+      clearTimeout(entry.recoveryTimer);
     await this.persistCache().catch(() => undefined);
     await Promise.allSettled(
       [...this.entries.values()].map(async entry => {
@@ -798,30 +975,35 @@ export class ComputerManager {
   }
 
   private listen(entry: Entry, generation: number) {
-    entry.buffered = [];
+    entry.buffered = new EventBuffer();
     entry.unsubscribe = entry.connection!.subscribe(event => {
       if (!this.current(entry, generation)) return;
       if (event.type === 'host-disconnected') {
+        const dropped = entry.computer.status === 'connected';
         entry.computer.status = 'error';
         entry.computer.error =
           entry.computer.kind === 'local'
-            ? 'The local host stopped. Reopen Nesvo.'
-            : 'Connection lost. Work on this computer may still be running. Reconnect to refresh its state.';
+            ? 'The local host stopped. Nesvo is restarting it.'
+            : 'Connection lost. Work on this computer may still be running. Nesvo is reconnecting.';
         entry.buffered = undefined;
+        log.warn(`${entry.computer.name} disconnected.`);
         this.publish({ type: 'host-disconnected', hostId: entry.computer.id });
         this.publishComputers();
+        if (dropped) this.scheduleRecovery(entry);
         return;
       }
-      if (entry.buffered) {
-        if (entry.buffered.length >= 256) {
-          entry.computer.status = 'error';
-          entry.computer.error =
-            'Too many changes arrived while synchronizing. Reconnect to refresh.';
-          entry.buffered = undefined;
-          void entry.connection?.close().catch(() => undefined);
-          this.publishComputers();
-        } else entry.buffered.push(event);
-      } else this.apply(entry, event);
+      if (!entry.buffered) {
+        this.apply(entry, event);
+        return;
+      }
+      if (entry.buffered.add(event)) return;
+      entry.computer.status = 'error';
+      entry.computer.error =
+        'Too many changes arrived while synchronizing. Nesvo is reconnecting.';
+      entry.buffered = undefined;
+      log.warn(`${entry.computer.name} exceeded the synchronization buffer.`);
+      void entry.connection?.close().catch(() => undefined);
+      this.publishComputers();
     });
   }
 
@@ -832,6 +1014,7 @@ export class ComputerManager {
   ) {
     if (!this.current(entry, generation) || this.failed(entry))
       throw new Error('Connection lost while synchronizing.');
+    this.verifyContract(health);
     entry.computer.status = 'syncing';
     this.publishComputers();
     const [sessions, reviews] = await Promise.all([
@@ -849,7 +1032,8 @@ export class ComputerManager {
     entry.scheduledJobRevisions = new Map();
     entry.workflowRunRevisions = new Map();
     entry.workflowStepRevisions = new Map();
-    for (const event of entry.buffered ?? []) this.apply(entry, event, false);
+    for (const event of entry.buffered?.drain() ?? [])
+      this.apply(entry, event, false);
     entry.buffered = undefined;
     entry.computer.instanceId = health.instanceId;
     entry.computer.capabilities = health.capabilities ?? [];
@@ -862,6 +1046,10 @@ export class ComputerManager {
       reviews: this.listReviews(entry.computer.id),
     });
     entry.computer.status = 'connected';
+    entry.connectedAt = Date.now();
+    clearTimeout(entry.recoveryTimer);
+    entry.recoveryTimer = undefined;
+    log.info(`${entry.computer.name} is connected.`);
     this.publishComputers();
     this.scheduleCache();
   }

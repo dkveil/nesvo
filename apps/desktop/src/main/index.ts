@@ -1,8 +1,16 @@
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  nativeTheme,
+  powerMonitor,
+  shell,
+} from 'electron';
 import appIcon from '../../build/icons/256x256.png?asset';
 import { startHost } from './host-client';
+import { log } from './logging';
 import {
   ComputerManager,
   type CatalogWorkflowMethod,
@@ -145,17 +153,23 @@ void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   app.setAppUserModelId('app.nesvo.desktop');
   nativeTheme.themeSource = readColorScheme(app.getPath('userData'));
-  const host = startHost(join(app.getPath('userData'), 'host'));
-  const computers = new ComputerManager(app.getPath('userData'), host);
+  const hostDirectory = join(app.getPath('userData'), 'host');
+  const startLocalHost = () => {
+    const host = startHost(hostDirectory);
+    if (smokeTest && process.env.NESVO_TEST_PID_FILE)
+      host.child.once('spawn', () => {
+        writeFileSync(
+          process.env.NESVO_TEST_PID_FILE!,
+          JSON.stringify({ host: host.child.pid }),
+        );
+      });
+    return host;
+  };
+  const computers = new ComputerManager(
+    app.getPath('userData'),
+    startLocalHost,
+  );
   const mobile = mobileAccess(app.getPath('userData'), computers);
-  if (smokeTest && process.env.NESVO_TEST_PID_FILE) {
-    host.child.once('spawn', () => {
-      writeFileSync(
-        process.env.NESVO_TEST_PID_FILE!,
-        JSON.stringify({ host: host.child.pid }),
-      );
-    });
-  }
   let window: BrowserWindow | null = null;
   const createWindow = () => {
     const next = new BrowserWindow({
@@ -800,8 +814,11 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  await computers.initialize();
   createWindow();
+  void computers
+    .initialize()
+    .catch(error => log.error('Computers could not be initialized.', error));
+  powerMonitor.on('resume', () => computers.resume());
   app.on('second-instance', () => {
     if (!window) createWindow();
     if (window && !smokeTest) {

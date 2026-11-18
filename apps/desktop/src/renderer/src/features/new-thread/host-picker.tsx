@@ -26,6 +26,7 @@ const statusLabels: Record<Computer['status'], string> = {
   connecting: 'Connecting…',
   syncing: 'Syncing…',
   disconnected: 'Offline',
+  incompatible: 'Update required',
   error: 'Connection failed',
 };
 

@@ -948,13 +948,14 @@ try {
   const turnsBeforeClose = await remoteTurns();
   await application.close();
   application = undefined;
+  await writeFile(knownHostsFile, `[127.0.0.1]:${port} ${wrongPublicKey}\n`);
   assert.deepEqual(
     await remoteActors([persistentPids.pid, persistentPids.childPid]),
     [true, true],
   );
   await launchApplication();
   const cachedComputer = await computer(remoteId);
-  assert.equal(cachedComputer.status, 'disconnected');
+  assert.notEqual(cachedComputer.status, 'connected');
   assert.equal(cachedComputer.instanceId, remoteHealth.instanceId);
   assert.deepEqual(cachedComputer.ssh, target);
   const cachedPending = await session(remoteId, operation.id);
@@ -963,11 +964,12 @@ try {
     cachedPending.pendingApprovals,
     pendingBeforeClose.pendingApprovals,
   );
-  assert.equal((await computer(remoteId)).status, 'disconnected');
+  assert.notEqual((await computer(remoteId)).status, 'connected');
   assert.deepEqual(await remoteTurns(), turnsBeforeClose);
   assert.deepEqual(await review(remoteId, parentReview.id), acceptedRemote);
   assert.equal((await review('local', localReview.id)).status, 'pending');
   await screenshot('03-reopened-offline-cache.png');
+  await writeFile(knownHostsFile, correctHostRecord);
   await connectRemote();
   const resumedPending = await session(remoteId, operation.id);
   assert.equal(

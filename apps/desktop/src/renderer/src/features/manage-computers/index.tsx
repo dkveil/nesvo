@@ -34,6 +34,7 @@ const statusTones: Record<Computer['status'], StatusTone> = {
   connecting: 'loading',
   syncing: 'loading',
   disconnected: 'info',
+  incompatible: 'warning',
   error: 'warning',
 };
 
@@ -58,6 +59,7 @@ const statusLabels: Record<Computer['status'], string> = {
   connecting: 'Connecting…',
   syncing: 'Syncing…',
   disconnected: 'Offline',
+  incompatible: 'Update required',
   error: 'Connection failed',
 };
 
@@ -219,7 +221,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                         )
                       }
                     >
-                      Connect
+                      {computer.kind === 'local' ? 'Retry' : 'Connect'}
                     </Button>
                   ) : null}
                   {computer.kind === 'ssh' && (

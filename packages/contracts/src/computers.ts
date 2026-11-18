@@ -96,6 +96,7 @@ export const computerSchema = z.strictObject({
     'syncing',
     'connected',
     'disconnected',
+    'incompatible',
     'error',
   ]),
   instanceId: z.uuid().nullable(),
