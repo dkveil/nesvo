@@ -94,7 +94,7 @@ Every error body matches `workflowShareErrorSchema`: `{ error, message, issues?,
 
 ### Share page and opening in Nesvo
 
-`/w/<id>` shows the workflow name and description, the expiry, a warning that shared workflows run commands on your computer, and every step in the order of the workflow's `steps:` list with its type. Command and action steps show their full file content (escaped, monospace); other steps and the workflow file are behind a disclosure. **Open in Nesvo** links to
+`/w/<id>` shows the workflow name and description, the expiry, a warning that shared workflows run commands on your computer, and every step in the order of the workflow's `steps:` list with its type. Steps show their full file content (escaped, monospace) unless their frontmatter has exactly one `type` that is known not to run shell commands (`agent`, `human`, `wait-ci`, `probe`); only those steps and the workflow file are behind a disclosure. The page reads the frontmatter with a small line reader, so anything it cannot read unambiguously, such as a repeated, nested or unknown `type`, is treated as able to run commands. **Open in Nesvo** links to
 
 ```text
 nesvo://import-workflow?share=<id>&origin=<site origin, URL-encoded>

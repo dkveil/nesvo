@@ -57,7 +57,7 @@ export const ShareView = ({
           Command and action steps run shell scripts in your project with your
           permissions.{' '}
           {outline.shellStepCount > 0
-            ? `This workflow has ${outline.shellStepCount} of them. `
+            ? `${outline.shellStepCount} ${outline.shellStepCount === 1 ? 'step here is shown' : 'steps here are shown'} in full because ${outline.shellStepCount === 1 ? 'it' : 'they'} can run commands. `
             : ''}
           Read every step below and import it only if you trust the person who
           shared it.

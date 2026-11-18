@@ -5,6 +5,7 @@ import { parseWorkflowShareDeepLink } from '@nesvo/contracts/workflow-share';
 
 import { ShareUnavailable } from '@/components/share/share-unavailable';
 import { ShareView } from '@/components/share/share-view';
+import { outlineWorkflow } from '@/shares/workflow-outline';
 
 import { createBundle } from './support/bundles';
 
@@ -66,5 +67,42 @@ describe('Share page', () => {
 
     expect(html).toContain('This shared workflow has expired');
     expect(html).toContain('Shared links last 7 days');
+  });
+});
+
+describe('Step outline', () => {
+  const outlineOf = (stepContent: string) =>
+    outlineWorkflow(
+      createBundle({
+        steps: [{ fileName: 'check.md', content: stepContent }],
+      }),
+    ).steps[0];
+
+  it('treats only a single known non-shell type as safe to collapse', () => {
+    expect(outlineOf('---\ntype: agent\n---\nReview.\n')?.runsShell).toBe(
+      false,
+    );
+    expect(outlineOf('---\ntype: "human"\n---\nApprove?\n')?.runsShell).toBe(
+      false,
+    );
+  });
+
+  it('shows steps in full when the type is ambiguous or unknown', () => {
+    expect(outlineOf('---\ntype : command\n---\nrm -rf x\n')?.runsShell).toBe(
+      true,
+    );
+    expect(
+      outlineOf('---\ntype: agent\ntype: command\n---\nrm -rf x\n')?.runsShell,
+    ).toBe(true);
+    expect(
+      outlineOf('---\ntype: agent # reviewer\nmeta:\n  type: agent\n---\nx\n')
+        ?.runsShell,
+    ).toBe(true);
+    expect(outlineOf('﻿---\ntype: agent\n---\nrm -rf x\n')?.runsShell).toBe(
+      true,
+    );
+    expect(outlineOf('---\ntype: shell\n---\nrm -rf x\n')?.runsShell).toBe(
+      true,
+    );
   });
 });

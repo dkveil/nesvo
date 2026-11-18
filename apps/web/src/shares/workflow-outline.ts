@@ -1,6 +1,11 @@
 import type { WorkflowShareBundle } from '@nesvo/contracts/workflow-share';
 
-export const SHELL_STEP_TYPES = ['command', 'action'] as const;
+export const NON_SHELL_STEP_TYPES = [
+  'agent',
+  'human',
+  'wait-ci',
+  'probe',
+] as const;
 
 export type OutlinedStep = {
   fileName: string;
@@ -24,13 +29,25 @@ const unquote = (value: string): string =>
 export const readFrontmatter = (content: string): string[] =>
   FRONTMATTER_PATTERN.exec(content)?.[1]?.split(/\r?\n/) ?? [];
 
-export const readField = (lines: string[], field: string): string | null => {
-  const prefix = `${field}:`;
-  const line = lines.find(candidate => candidate.startsWith(prefix));
-  if (!line) return null;
-  const value = unquote(line.slice(prefix.length));
-  return value || null;
+const fieldPattern = (field: string): RegExp =>
+  new RegExp(`^\\s*['"]?${field}['"]?\\s*:(.*)$`);
+
+export const readFieldValues = (lines: string[], field: string): string[] => {
+  const pattern = fieldPattern(field);
+  return lines.flatMap(line => {
+    const value = pattern.exec(line)?.[1];
+    return value == null ? [] : [unquote(value.replace(/\s+#.*$/, ''))];
+  });
 };
+
+export const readField = (lines: string[], field: string): string | null =>
+  readFieldValues(lines, field).at(-1) || null;
+
+const isNonShellType = (type: string): boolean =>
+  (NON_SHELL_STEP_TYPES as readonly string[]).includes(type);
+
+export const mayRunShell = (types: string[]): boolean =>
+  types.length !== 1 || !types.every(isNonShellType);
 
 export const readListField = (lines: string[], field: string): string[] => {
   const prefix = `${field}:`;
@@ -64,7 +81,8 @@ export const outlineWorkflow = (
   );
   const steps = bundle.steps.map(step => {
     const frontmatter = readFrontmatter(step.content);
-    const type = readField(frontmatter, 'type') ?? 'unknown';
+    const types = readFieldValues(frontmatter, 'type');
+    const type = types.at(-1) || 'unknown';
     const name = stepNameOf(step.fileName);
     return {
       fileName: step.fileName,
@@ -72,7 +90,7 @@ export const outlineWorkflow = (
       type,
       content: step.content,
       isListed: order.includes(name),
-      runsShell: (SHELL_STEP_TYPES as readonly string[]).includes(type),
+      runsShell: mayRunShell(types),
     };
   });
   const position = (step: OutlinedStep) => {
