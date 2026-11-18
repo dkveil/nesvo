@@ -52,9 +52,8 @@ export function WorkerItem({
 }: WorkerItemProps) {
   const status = workerStatus(delegation, child);
   const pending = current && delegation?.status === 'pending';
-  const [expanded, setExpanded] = useState(
-    pending || (status.attention && status.tone === 'error'),
-  );
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const expanded = toggled ?? (pending || status.tone === 'error');
   const detailsId = useId();
   const finished = !status.attention && status.variant !== 'spinner';
   return (
@@ -87,7 +86,7 @@ export function WorkerItem({
             .filter(Boolean)
             .join(', '),
         }}
-        onClick={delegation ? () => setExpanded(value => !value) : onOpen}
+        onClick={delegation ? () => setToggled(!expanded) : onOpen}
         actionsPlacement="visible"
         actions={
           child && (
