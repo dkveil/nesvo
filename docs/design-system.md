@@ -181,7 +181,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **SectionLabel** — `shared/ui/section-label.tsx`. 24 px group heading with optional `count` and `action`.
 
-**Field / FieldMessages** — `shared/ui/field.tsx`. Label, control, hint and error or warning messages (`${id}-messages` for `aria-describedby`); `layout` `stacked` or `inline`. A Select inside a form renders Radix's hidden native `<select>` after its trigger; Field drops the trigger's trailing spacing in that case, so put the Select directly in the Field without a wrapper `<div>`.
+**Field / FieldMessages** — `shared/ui/field.tsx`. Label, control, hint and error or warning messages (`${id}-messages` for `aria-describedby`); `layout` `stacked`, `inline` or `switch` (label on the left, a Switch on the right edge, hint and messages below across the row). A Select inside a form renders Radix's hidden native `<select>` after its trigger; Field drops the trigger's trailing spacing in that case, so put the Select directly in the Field without a wrapper `<div>`.
 
 **KeyValueList** — `shared/ui/key-value-list.tsx`. Two-column `dl` for details and metadata.
 
@@ -243,5 +243,7 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | `title="…"` on icon-only buttons                                              | IconButton `label` (tooltip included)                              |
 | Hand-written `role="separator"` drag strips, resize corner `<button>`s         | `<ResizeHandle variant="edge" | "corner">`                       |
 | Hand-built Cancel + destructive Dialog footers                                | `<ConfirmDialog>`                                                  |
+| `flex items-center justify-between` rows with a Label and a Switch            | `<Field layout="switch">`                                          |
+| `title=` on SegmentedControl icon or count segments                           | Option `tooltip`                                                   |
 | `StatusMessage tone="loading"` as the only content of a list that loads      | `<SkeletonList label="Loading …">`                                 |
 | Dashed `border-dashed` "add" buttons                                         | `<AddTile>`                                                        |

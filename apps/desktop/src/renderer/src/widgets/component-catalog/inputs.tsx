@@ -407,6 +407,19 @@ export function InputsSection() {
           >
             <Input id="catalog-field-inline" defaultValue="sample value" />
           </Field>
+          <Field
+            id="catalog-field-switch"
+            label="Switch layout"
+            hint="The label and hint on the left, the switch on the right."
+            layout="switch"
+            className="md:col-span-2"
+          >
+            <Switch
+              id="catalog-field-switch"
+              aria-describedby="catalog-field-switch-hint"
+              defaultChecked
+            />
+          </Field>
         </div>
         <SpecimenRow label="select in a form · bottom aligned">
           <form

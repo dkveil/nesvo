@@ -19,7 +19,6 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import {
   Sheet,
@@ -383,10 +382,12 @@ export function AutomationEditor({
                 <Field
                   id="automation-check"
                   label="Run only when this changes"
-                  layout="inline"
+                  hint="Runs a check command before each scheduled run and starts only when its output changed."
+                  layout="switch"
                 >
                   <Switch
                     id="automation-check"
+                    aria-describedby="automation-check-hint"
                     checked={values.checkEnabled}
                     disabled={
                       pending || (!supportsCheck && !values.checkEnabled)
@@ -399,12 +400,14 @@ export function AutomationEditor({
                     <Field
                       id="automation-check-command"
                       label="Check command"
-                      hint='Enter the executable and arguments as a JSON array, such as ["git", "rev-parse", "HEAD"]. Runs in the selected folder with the host account.'
+                      hint="The program and its arguments as a JSON array. Runs in the selected folder."
                       messages={errorMessages(visible('checkCommand'))}
                     >
-                      <Textarea
+                      <Input
+                        size="md"
                         id="automation-check-command"
                         data-field="checkCommand"
+                        placeholder='["git", "rev-parse", "HEAD"]'
                         value={values.checkCommand}
                         spellCheck={false}
                         aria-invalid={!!visible('checkCommand')}
@@ -430,6 +433,7 @@ export function AutomationEditor({
                       messages={errorMessages(visible('dailyRunCap'))}
                     >
                       <Input
+                        size="md"
                         id="automation-daily-cap"
                         data-field="dailyRunCap"
                         inputMode="numeric"
@@ -453,7 +457,7 @@ export function AutomationEditor({
                     <Field
                       id="automation-ask-first"
                       label="Ask before starting"
-                      layout="inline"
+                      layout="switch"
                     >
                       <Switch
                         id="automation-ask-first"
@@ -489,20 +493,18 @@ export function AutomationEditor({
                   className="w-24"
                 />
               </Field>
-              <div className="flex items-center justify-between gap-3">
-                <Label
-                  htmlFor="automation-editor-active"
-                  className="text-2xs text-muted-foreground"
-                >
-                  Active
-                </Label>
+              <Field
+                id="automation-editor-active"
+                label="Active"
+                layout="switch"
+              >
                 <Switch
                   id="automation-editor-active"
                   checked={values.active}
                   disabled={pending}
                   onCheckedChange={active => change({ active })}
                 />
-              </div>
+              </Field>
             </div>
           </ScrollArea>
           <SheetFooter className="flex-wrap">

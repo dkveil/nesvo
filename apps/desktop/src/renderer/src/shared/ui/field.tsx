@@ -42,7 +42,7 @@ type FieldProps = {
   messages?: FieldMessage[];
   aside?: ReactNode;
   as?: 'label' | 'span';
-  layout?: 'stacked' | 'inline';
+  layout?: 'stacked' | 'inline' | 'switch';
   className?: string;
   children: ReactNode;
 };
@@ -71,6 +71,39 @@ export function Field({
         {label}
       </span>
     );
+  const notes = (
+    <>
+      {hint && (
+        <p
+          id={`${id}-hint`}
+          className="text-2xs leading-4 text-muted-foreground"
+        >
+          {hint}
+        </p>
+      )}
+      <FieldMessages id={`${id}-messages`} messages={messages} />
+    </>
+  );
+  if (layout === 'switch')
+    return (
+      <div
+        data-slot="field"
+        data-field={id}
+        className={cn(
+          'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1',
+          className,
+        )}
+      >
+        <div className="flex min-h-7 min-w-0 items-center gap-2">
+          {caption}
+          {aside}
+        </div>
+        <div className="flex justify-end">{children}</div>
+        {(hint || messages.length > 0) && (
+          <div className="col-span-2 min-w-0 space-y-1">{notes}</div>
+        )}
+      </div>
+    );
   return (
     <div
       data-slot="field"
@@ -93,15 +126,7 @@ export function Field({
       </div>
       <div className="min-w-0 space-y-1 [&>:has(+select[aria-hidden]:last-child)]:mb-0">
         {children}
-        {hint && (
-          <p
-            id={`${id}-hint`}
-            className="text-2xs leading-4 text-muted-foreground"
-          >
-            {hint}
-          </p>
-        )}
-        <FieldMessages id={`${id}-messages`} messages={messages} />
+        {notes}
       </div>
     </div>
   );
