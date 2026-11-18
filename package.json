@@ -23,7 +23,7 @@
     "lint": "eslint apps/desktop/src apps/desktop/tests apps/host/src apps/mobile-client/src packages/contracts/src apps/web/src apps/web/tests apps/web/next.config.ts apps/web/open-next.config.ts apps/web/worker.ts scripts/desktop-smoke.mjs scripts/share-server-fixture.mjs scripts/desktop-package-smoke.mjs scripts/remote-smoke.mjs scripts/mobile-smoke.mjs scripts/generate-brand-assets.mjs apps/host/tests/*.mjs eslint.config.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "bun run --cwd apps/host build && node --test apps/desktop/tests/cn.test.mjs apps/desktop/tests/share-link.test.mjs apps/host/tests/host.integration.test.mjs apps/host/tests/daemon.integration.test.mjs apps/host/tests/mobile.integration.test.mjs && bun run --cwd apps/web test",
+    "test": "bun run --cwd apps/host build && node --test apps/desktop/tests/cn.test.mjs apps/desktop/tests/share-link.test.mjs apps/host/tests/host.integration.test.mjs apps/host/tests/daemon.integration.test.mjs apps/host/tests/mobile.integration.test.mjs apps/host/tests/running-apps.test.mjs && bun run --cwd apps/web test",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
     "smoke:desktop": "node scripts/desktop-smoke.mjs",
     "smoke:desktop:package": "node scripts/desktop-package-smoke.mjs",

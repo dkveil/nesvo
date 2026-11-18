@@ -1,14 +1,26 @@
-import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
+import { readFileSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { runOwnedProcess } from '../process/owned-process';
 import { PROVIDER_SESSION_VARIABLE } from '../process/provider-processes';
+import { LinuxSockets } from './linux-sockets';
+import {
+  loopbackHost,
+  parseNetstat,
+  parseSocketAddress,
+  parseTasklist,
+  type ListeningSocket,
+} from './listeners';
+import { WINDOWS_PROCESS_SNAPSHOT } from './windows-processes';
+
+export type { ListeningSocket } from './listeners';
 
 const SCAN_TIMEOUT_MS = 10_000;
 const MAX_SCAN_OUTPUT_BYTES = 4 * 1024 * 1024;
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
-export type ListeningSocket = { address: string; port: number; pid: number };
+const linuxSockets = new LinuxSockets();
 
 export type ProcessEntry = {
   pid: number;
@@ -58,6 +70,7 @@ async function runScan(
   args: readonly string[],
   signal: AbortSignal,
   acceptedCodes: readonly number[] = [0],
+  stdin?: string,
 ): Promise<string> {
   const result = await runOwnedProcess({
     command,
@@ -66,6 +79,7 @@ async function runScan(
     env: scanEnvironment(),
     timeoutMs: SCAN_TIMEOUT_MS,
     maxOutputBytes: MAX_SCAN_OUTPUT_BYTES,
+    stdin,
     signal,
   }).catch(() => {
     throw new RunningAppsError(
@@ -86,96 +100,51 @@ async function runScan(
   return result.stdout;
 }
 
-const WINDOWS_SCRIPT = [
-  "$ErrorActionPreference = 'Stop'",
-  '$sockets = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ address = [string]$_.LocalAddress; port = [int]$_.LocalPort; pid = [int]$_.OwningProcess } })',
-  '$processes = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; parent = [int]$_.ParentProcessId; name = [string]$_.Name; startedAt = $(if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { $null }) } })',
-  '[pscustomobject]@{ sockets = $sockets; processes = $processes } | ConvertTo-Json -Compress -Depth 3',
-].join('; ');
-
-const windowsScanSchema = z.object({
-  sockets: z
-    .array(
-      z.object({
-        address: z.string(),
-        port: z.number().int(),
-        pid: z.number().int(),
-      }),
-    )
-    .nullable()
-    .optional(),
-  processes: z
-    .array(
-      z.object({
-        pid: z.number().int(),
-        parent: z.number().int(),
-        name: z.string().nullable(),
-        startedAt: z.number().nullable(),
-      }),
-    )
-    .nullable()
-    .optional(),
-});
+const windowsProcessesSchema = z.array(
+  z.object({
+    pid: z.number().int(),
+    parent: z.number().int(),
+    name: z.string(),
+    startedAt: z.number().nullable(),
+  }),
+);
 
 async function scanWindows(signal: AbortSignal): Promise<ScanResult> {
-  const output = await runScan(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_SCRIPT],
-    signal,
+  const system = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+  const sockets = parseNetstat(
+    await runScan(join(system, 'netstat.exe'), ['-ano'], signal),
   );
-  let parsed: z.infer<typeof windowsScanSchema>;
-  try {
-    parsed = windowsScanSchema.parse(JSON.parse(output));
-  } catch {
-    throw new RunningAppsError(
-      'unavailable',
-      'Running apps could not be read on this computer.',
-    );
-  }
+  if (sockets.length === 0) return { sockets, processes: new Map() };
+  const listeners = [...new Set(sockets.map(socket => socket.pid))];
+  const [snapshot, tasks] = await Promise.all([
+    runScan(
+      join(system, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        Buffer.from(WINDOWS_PROCESS_SNAPSHOT, 'utf16le').toString('base64'),
+      ],
+      signal,
+      [0],
+      listeners.join(',') + '\n',
+    ),
+    runScan(join(system, 'tasklist.exe'), ['/FO', 'CSV', '/NH'], signal).catch(
+      () => '',
+    ),
+  ]);
+  const names = parseTasklist(tasks);
+  const entries = windowsProcessesSchema.parse(JSON.parse(snapshot));
   return {
-    sockets: (parsed.sockets ?? []).filter(socket => socket.pid > 0),
+    sockets,
     processes: new Map(
-      (parsed.processes ?? []).map(entry => [
+      entries.map(entry => [
         entry.pid,
-        {
-          pid: entry.pid,
-          parent: entry.parent,
-          name: entry.name ?? '',
-          startedAt: entry.startedAt,
-          directory: null,
-        },
+        { ...entry, name: names.get(entry.pid) ?? entry.name, directory: null },
       ]),
     ),
   };
 }
-
-export function parseSocketAddress(
-  value: string,
-): { address: string; port: number } | null {
-  const separator = value.lastIndexOf(':');
-  if (separator <= 0) return null;
-  const port = Number(value.slice(separator + 1));
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
-  const address = value
-    .slice(0, separator)
-    .replace(/^\[|\]$/g, '')
-    .replace(/%.*$/, '');
-  return { address, port };
-}
-
-export function parseSsListening(output: string): ListeningSocket[] {
-  const sockets: ListeningSocket[] = [];
-  for (const line of output.split('\n')) {
-    const columns = line.trim().split(/\s+/);
-    if (columns[0] !== 'LISTEN' || !columns[3]) continue;
-    const local = parseSocketAddress(columns[3]);
-    if (!local) continue;
-    for (const match of line.matchAll(/pid=(\d+)/g))
-      sockets.push({ ...local, pid: Number(match[1]) });
-  }
-  return sockets;
-}
-
 function readLinuxBootTime(): number | null {
   try {
     const match = /^btime (\d+)$/m.exec(readFileSync('/proc/stat', 'utf8'));
@@ -200,6 +169,7 @@ function readLinuxSessionVariable(pid: number): string | null {
 function readLinuxProcess(
   pid: number,
   bootTime: number | null,
+  listening: boolean,
 ): ProcessEntry | null {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -209,12 +179,14 @@ function readLinuxProcess(
     const parent = Number(fields[1]);
     const ticks = Number(fields[19]);
     let directory: string | null = null;
-    try {
-      directory = readlinkSync(`/proc/${pid}/cwd`);
-    } catch {
-      directory = null;
+    if (listening) {
+      try {
+        directory = readlinkSync(`/proc/${pid}/cwd`);
+      } catch {
+        directory = null;
+      }
     }
-    const sessionVariable = readLinuxSessionVariable(pid);
+    const sessionVariable = listening ? readLinuxSessionVariable(pid) : null;
     return {
       pid,
       parent: Number.isInteger(parent) ? parent : 0,
@@ -232,19 +204,24 @@ function readLinuxProcess(
 }
 
 async function scanLinux(signal: AbortSignal): Promise<ScanResult> {
-  const sockets = parseSsListening(await runScan('ss', ['-ltnpH'], signal));
+  const sockets = await linuxSockets.read(signal);
   const bootTime = readLinuxBootTime();
   const processes = new Map<number, ProcessEntry>();
-  let entries: string[] = [];
-  try {
-    entries = readdirSync('/proc');
-  } catch {
-    entries = [];
-  }
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-    const found = readLinuxProcess(Number(entry), bootTime);
-    if (found) processes.set(found.pid, found);
+  const listeners = new Set(
+    sockets.map(socket => socket.pid).filter(pid => pid > 0),
+  );
+  for (const pid of listeners) {
+    let current = pid;
+    for (
+      let depth = 0;
+      depth < 32 && current > 0 && !processes.has(current);
+      depth++
+    ) {
+      const entry = readLinuxProcess(current, bootTime, listeners.has(current));
+      if (!entry) break;
+      processes.set(current, entry);
+      current = entry.parent;
+    }
   }
   return { sockets, processes };
 }
@@ -253,8 +230,14 @@ export function parseLsofFields(output: string): {
   pid: number;
   name: string;
   values: string[];
+  family?: string;
 }[] {
-  const groups: { pid: number; name: string; values: string[] }[] = [];
+  const groups: {
+    pid: number;
+    name: string;
+    values: string[];
+    family?: string;
+  }[] = [];
   for (const line of output.split('\n')) {
     const field = line.slice(0, 1);
     const value = line.slice(1).trim();
@@ -263,19 +246,13 @@ export function parseLsofFields(output: string): {
     const current = groups.at(-1);
     if (!current) continue;
     if (field === 'c') current.name = value;
-    if (field === 'n') current.values.push(value);
+    if (field === 't') current.family = value;
+    if (field === 'n') {
+      const address = current.family === 'IPv6' ? '[::]' : '0.0.0.0';
+      current.values.push(value.replace(/^\*(?=:)/, address));
+    }
   }
   return groups.filter(group => Number.isInteger(group.pid) && group.pid > 0);
-}
-
-export function parseElapsed(value: string): number | null {
-  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(value.trim());
-  if (!match) return null;
-  const [, days = '0', hours = '0', minutes = '0', seconds = '0'] = match;
-  return (
-    ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60_000 +
-    Number(seconds) * 1000
-  );
 }
 
 const macSessionVariable = new RegExp(
@@ -286,8 +263,8 @@ const macSessionVariable = new RegExp(
 async function scanMac(signal: AbortSignal): Promise<ScanResult> {
   const listening = parseLsofFields(
     await runScan(
-      'lsof',
-      ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'],
+      '/usr/sbin/lsof',
+      ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pctn'],
       signal,
       [0, 1],
     ),
@@ -295,30 +272,35 @@ async function scanMac(signal: AbortSignal): Promise<ScanResult> {
   const sockets = listening.flatMap(group =>
     group.values.flatMap(value => {
       const local = parseSocketAddress(value);
-      return local ? [{ ...local, pid: group.pid }] : [];
+      return local && loopbackHost(local.address)
+        ? [{ ...local, pid: group.pid }]
+        : [];
     }),
   );
-  const now = Date.now();
+  if (sockets.length === 0) return { sockets, processes: new Map() };
   const processes = new Map<number, ProcessEntry>();
   for (const line of (
-    await runScan('ps', ['-axo', 'pid=,ppid=,etime=,comm='], signal)
+    await runScan('/bin/ps', ['-axo', 'pid=,ppid=,lstart=,comm='], signal)
   ).split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    const match =
+      /^\s*(\d+)\s+(\d+)\s+(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/.exec(
+        line,
+      );
     if (!match) continue;
-    const elapsed = parseElapsed(match[3] ?? '');
+    const start = Date.parse(match[3] ?? '');
     const pid = Number(match[1]);
     processes.set(pid, {
       pid,
       parent: Number(match[2]),
       name: (match[4] ?? '').split('/').at(-1) ?? '',
-      startedAt: elapsed === null ? null : now - elapsed,
+      startedAt: Number.isFinite(start) ? start : null,
       directory: null,
     });
   }
   const listeningPids = [...new Set(sockets.map(socket => socket.pid))];
   if (listeningPids.length > 0) {
     const directories = await runScan(
-      'lsof',
+      '/usr/sbin/lsof',
       ['-a', '-d', 'cwd', '-F', 'pn', '-p', listeningPids.join(',')],
       signal,
       [0, 1],
@@ -328,7 +310,7 @@ async function scanMac(signal: AbortSignal): Promise<ScanResult> {
       if (entry && group.values[0]) entry.directory = group.values[0];
     }
     const environments = await runScan(
-      'ps',
+      '/bin/ps',
       ['-wwE', '-o', 'pid=,command=', '-p', listeningPids.join(',')],
       signal,
       [0, 1],
