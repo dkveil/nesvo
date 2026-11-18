@@ -408,10 +408,14 @@ import {
   type WorktreeRecipeTrialRefInput,
 } from './worktree-recipes';
 import {
+  answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideSessionParentSchema,
+  decideSessionPlanSchema,
+  type AnswerSessionQuestionInput,
   type CoordinatorPolicy,
   type DecideSessionParentInput,
+  type DecideSessionPlanInput,
 } from './session-control';
 
 export * from './sessions';
@@ -428,6 +432,7 @@ export * from './default-session-folder';
 export * from './worktree-recipes';
 export * from './workflow-share';
 export * from './session-control';
+export * from './stage-report';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -1006,6 +1011,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('decide-session-parent'),
     input: decideSessionParentSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-session-plan'),
+    input: decideSessionPlanSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('answer-session-question'),
+    input: answerSessionQuestionSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -2091,6 +2106,14 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   decideSessionParent: (
     input: DecideSessionParentInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  decideSessionPlan: (
+    input: DecideSessionPlanInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  answerSessionQuestion: (
+    input: AnswerSessionQuestionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   readSessionControlPolicy: (hostId?: HostId) => Promise<CoordinatorPolicy>;

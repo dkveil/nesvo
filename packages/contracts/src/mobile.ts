@@ -10,6 +10,10 @@ import {
   sendMessageSchema,
   stopRunSchema,
 } from './sessions';
+import {
+  answerSessionQuestionSchema,
+  decideSessionPlanSchema,
+} from './session-control';
 
 export const mobileLimits = {
   protocolVersion: 1,
@@ -137,6 +141,18 @@ export const mobileCommandSchema = z.discriminatedUnion('method', [
     hostId: hostIdSchema,
     method: z.literal('decide-delegation'),
     input: decideDelegationSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    hostId: hostIdSchema,
+    method: z.literal('decide-session-plan'),
+    input: decideSessionPlanSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    hostId: hostIdSchema,
+    method: z.literal('answer-session-question'),
+    input: answerSessionQuestionSchema,
   }),
 ]);
 export type MobileCommand = z.infer<typeof mobileCommandSchema>;

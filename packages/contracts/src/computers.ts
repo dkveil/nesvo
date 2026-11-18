@@ -60,6 +60,7 @@ export const hostCapabilitySchema = z.enum([
   'session-control',
   'workflow-sharing',
   'workflow-child-sessions',
+  'session-stages',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

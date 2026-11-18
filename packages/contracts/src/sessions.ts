@@ -18,6 +18,11 @@ import {
   messageAttachmentsSchema,
 } from './attachments';
 import { messageCodeCommentsSchema } from './code-comments';
+import {
+  stageLimits,
+  stageQuestionSchema,
+  stageReportSchema,
+} from './stage-report';
 
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
@@ -111,6 +116,102 @@ export const sessionParentRequestSchema = z.strictObject({
   requestedAt: z.iso.datetime(),
 });
 export type SessionParentRequest = z.infer<typeof sessionParentRequestSchema>;
+export const sessionPlanLimits = { text: 12_000, rounds: 5 } as const;
+export const stageRecordLimit = 50;
+export const stageActorSchema = z.strictObject({
+  kind: z.enum(['owner', 'coordinator']),
+  via: z.enum(['desktop', 'mobile', 'session-control']),
+  sessionId: z.uuid().nullable().default(null),
+});
+export type StageActor = z.infer<typeof stageActorSchema>;
+export const sessionPlanSchema = z.strictObject({
+  id: z.uuid(),
+  status: z.enum(['planning', 'plan-ready', 'accepted', 'declined']),
+  round: z.number().int().nonnegative(),
+  targetMode: sessionModeSchema,
+  text: z.string().max(sessionPlanLimits.text).nullable(),
+  runId: z.uuid().nullable(),
+  readyAt: z.iso.datetime().nullable(),
+});
+export type SessionPlan = z.infer<typeof sessionPlanSchema>;
+const recordBaseSchema = z.strictObject({
+  id: z.uuid(),
+  at: z.iso.datetime(),
+});
+export const stageAnswerSchema = z.strictObject({
+  at: z.iso.datetime(),
+  by: stageActorSchema,
+  option: z.string().max(stageLimits.optionLabel).nullable(),
+  text: z.string().max(stageLimits.answer).nullable(),
+  messageId: z.uuid(),
+});
+export const sessionStageRecordSchema = z.discriminatedUnion('kind', [
+  recordBaseSchema.extend({
+    kind: z.literal('plan'),
+    planId: z.uuid(),
+    runId: z.uuid(),
+    round: z.number().int().nonnegative(),
+    text: z.string().max(sessionPlanLimits.text),
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('plan-decision'),
+    planId: z.uuid(),
+    decision: z.enum(['accept', 'correct', 'decline']),
+    by: stageActorSchema,
+    mode: sessionModeSchema.nullable(),
+    text: z.string().max(stageLimits.answer).nullable(),
+    messageId: z.uuid().nullable(),
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('mode-change'),
+    from: sessionModeSchema,
+    to: sessionModeSchema,
+    by: stageActorSchema,
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('report'),
+    runId: z.uuid(),
+    source: z.enum(['tool', 'answer']),
+    report: stageReportSchema,
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('report-invalid'),
+    runId: z.uuid(),
+    source: z.enum(['tool', 'answer']),
+    error: z.string().max(stageLimits.error),
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('question'),
+    runId: z.uuid(),
+    question: stageQuestionSchema,
+    status: z.enum(['pending', 'answered']),
+    answer: stageAnswerSchema.nullable(),
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('progress'),
+    runId: z.uuid(),
+    text: z.string().max(stageLimits.progress),
+  }),
+]);
+export type SessionStageRecord = z.infer<typeof sessionStageRecordSchema>;
+export type StageQuestionRecord = Extract<
+  SessionStageRecord,
+  { kind: 'question' }
+>;
+export type StageReportRecord = Extract<SessionStageRecord, { kind: 'report' }>;
+export const pendingStageQuestion = (
+  session: Pick<Session, 'stageRecords'>,
+): StageQuestionRecord | undefined =>
+  session.stageRecords.findLast(
+    (record): record is StageQuestionRecord =>
+      record.kind === 'question' && record.status === 'pending',
+  );
+export const latestStageReport = (
+  session: Pick<Session, 'stageRecords'>,
+): StageReportRecord | undefined =>
+  session.stageRecords.findLast(
+    (record): record is StageReportRecord => record.kind === 'report',
+  );
 export const sessionStateSchema = z.enum([
   'ready',
   'running',
@@ -218,6 +319,7 @@ export const createSessionSchema = z
     isolation: sessionIsolationSchema.optional(),
     groupId: z.uuid().optional(),
     mcp: mcpSelectionSchema.optional(),
+    planFirst: z.boolean().optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -442,6 +544,12 @@ export const sessionSchema = z.strictObject({
     .nullable()
     .default(null),
   parentRequest: sessionParentRequestSchema.nullable().default(null),
+  plan: sessionPlanSchema.nullable().default(null),
+  stageRecords: z
+    .array(sessionStageRecordSchema)
+    .max(stageRecordLimit)
+    .default([]),
+  stageTools: z.boolean().default(false),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([

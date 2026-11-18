@@ -7,6 +7,12 @@ import {
   sessionModeSchema,
   sessionStateSchema,
 } from './sessions';
+import {
+  stageLimits,
+  stageProgressSchema,
+  stageQuestionSchema,
+  stageReportSchema,
+} from './stage-report';
 
 export const SESSION_CONTROL_NAMESPACE = 'nesvo';
 export const sessionControlLimits = {
@@ -54,6 +60,42 @@ export const decideSessionParentSchema = z.strictObject({
 });
 export type DecideSessionParentInput = z.infer<
   typeof decideSessionParentSchema
+>;
+
+const decisionTextSchema = z.string().trim().min(1).max(stageLimits.answer);
+const decisionChannelSchema = z.enum(['desktop', 'mobile']).default('desktop');
+
+export const decideSessionPlanSchema = z
+  .strictObject({
+    sessionId: z.uuid(),
+    planId: z.uuid(),
+    decisionId: z.uuid(),
+    decision: z.enum(['accept', 'correct', 'decline']),
+    mode: sessionModeSchema.optional(),
+    text: decisionTextSchema.optional(),
+    via: decisionChannelSchema,
+  })
+  .refine(value => value.decision !== 'correct' || !!value.text, {
+    message: 'A correction needs text',
+    path: ['text'],
+  });
+export type DecideSessionPlanInput = z.input<typeof decideSessionPlanSchema>;
+
+export const answerSessionQuestionSchema = z
+  .strictObject({
+    sessionId: z.uuid(),
+    questionId: z.uuid(),
+    decisionId: z.uuid(),
+    option: z.string().trim().min(1).max(stageLimits.optionLabel).optional(),
+    text: decisionTextSchema.optional(),
+    via: decisionChannelSchema,
+  })
+  .refine(value => !!value.option || !!value.text, {
+    message: 'Choose an option or write an answer',
+    path: ['text'],
+  });
+export type AnswerSessionQuestionInput = z.input<
+  typeof answerSessionQuestionSchema
 >;
 
 const sessionCreateInputSchema = z.strictObject({
@@ -206,7 +248,28 @@ export const sessionControlTools = {
     mutation: false,
     input: eventsWaitInputSchema,
     description:
-      'Wait until one of your child sessions finishes, fails, returns a plan or waits for an approval, or until the timeout. Pass the cursor from the previous result to receive only newer events; events can repeat when you pass an older cursor.',
+      'Wait until one of your child sessions finishes, fails, returns a plan, reports, asks a question or waits for an approval, or until the timeout. Pass the cursor from the previous result to receive only newer events; events can repeat when you pass an older cursor.',
+  },
+  session_answer: {
+    title: 'Answer session question',
+    mutation: true,
+    input: z
+      .strictObject({
+        sessionId: sessionIdSchema,
+        option: z
+          .string()
+          .trim()
+          .min(1)
+          .max(stageLimits.optionLabel)
+          .optional(),
+        text: decisionTextSchema.optional(),
+      })
+      .refine(value => !!value.option || !!value.text, {
+        message: 'Choose an option or write an answer',
+        path: ['text'],
+      }),
+    description:
+      'Answer the open technical question of one of your child sessions with one of its option labels, free text, or both. The child continues with your answer as its next message. Product questions belong to the computer owner and are refused.',
   },
 } as const;
 export type SessionControlToolName = keyof typeof sessionControlTools;
@@ -221,7 +284,9 @@ export type SessionControlToolInput<T extends SessionControlToolName> =
 export const sessionControlToolTitle = (name: string): string =>
   isSessionControlToolName(name)
     ? sessionControlTools[name].title
-    : 'Use Nesvo tool';
+    : isStageToolName(name)
+      ? stageTools[name].title
+      : 'Use Nesvo tool';
 export const sessionControlToolDefinitions = () =>
   sessionControlToolNames.map(name => ({
     name,
@@ -230,6 +295,46 @@ export const sessionControlToolDefinitions = () =>
       io: 'input',
     }) as Record<string, unknown>,
     mutation: sessionControlTools[name].mutation,
+  }));
+
+export const stageTools = {
+  stage_report: {
+    title: 'Report stage',
+    mutation: true,
+    input: stageReportSchema,
+    description:
+      'Finish your stage with a structured report for whoever started this session: status ok or fail, a short summary, links such as pull requests, and notes (dead ends, assumptions, things for later, remarks about the system). Call it once at the end of the stage, then end your turn.',
+  },
+  stage_question: {
+    title: 'Ask a blocking question',
+    mutation: true,
+    input: stageQuestionSchema,
+    description:
+      'Ask a question that blocks your work. Give the options with their consequences, your recommendation and whether it is a technical or product question. The question goes to the owner (or your coordinator for technical questions). End your turn right after this call; the answer arrives as your next message.',
+  },
+  stage_progress: {
+    title: 'Report progress',
+    mutation: true,
+    input: stageProgressSchema,
+    description:
+      'Share a short progress update without stopping. It never waits for anyone; keep working after the call.',
+  },
+} as const;
+export type StageToolName = keyof typeof stageTools;
+export const stageToolNames = Object.keys(stageTools) as StageToolName[];
+export const isStageToolName = (name: string): name is StageToolName =>
+  Object.hasOwn(stageTools, name);
+export type StageToolInput<T extends StageToolName> = z.output<
+  (typeof stageTools)[T]['input']
+>;
+export const stageToolDefinitions = () =>
+  stageToolNames.map(name => ({
+    name,
+    description: stageTools[name].description,
+    inputSchema: z.toJSONSchema(stageTools[name].input, {
+      io: 'input',
+    }) as Record<string, unknown>,
+    mutation: stageTools[name].mutation,
   }));
 
 export const sessionControlRefusalCodeSchema = z.enum([
@@ -252,6 +357,7 @@ export const sessionControlWaitSchema = z.enum([
   'folder',
   'queue',
   'parent-confirmation',
+  'question',
 ]);
 export const sessionControlChildSchema = z.strictObject({
   sessionId: z.uuid(),
@@ -278,6 +384,11 @@ export const sessionControlEventTypeSchema = z.enum([
   'approval-pending',
   'parent-accepted',
   'parent-declined',
+  'plan-decided',
+  'reported',
+  'question',
+  'question-answered',
+  'progress',
 ]);
 export const sessionControlEventSchema = z.strictObject({
   seq: z.number().int().positive(),
