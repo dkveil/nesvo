@@ -278,6 +278,11 @@ export function parseElapsed(value: string): number | null {
   );
 }
 
+const macSessionVariable = new RegExp(
+  `(?:^|\\s)${PROVIDER_SESSION_VARIABLE}=([0-9a-f-]{36})(?=\\s|$)`,
+  'i',
+);
+
 async function scanMac(signal: AbortSignal): Promise<ScanResult> {
   const listening = parseLsofFields(
     await runScan(
@@ -321,6 +326,18 @@ async function scanMac(signal: AbortSignal): Promise<ScanResult> {
     for (const group of parseLsofFields(directories)) {
       const entry = processes.get(group.pid);
       if (entry && group.values[0]) entry.directory = group.values[0];
+    }
+    const environments = await runScan(
+      'ps',
+      ['-wwE', '-o', 'pid=,command=', '-p', listeningPids.join(',')],
+      signal,
+      [0, 1],
+    ).catch(() => '');
+    for (const line of environments.split('\n')) {
+      const pid = /^\s*(\d+)\s/.exec(line)?.[1];
+      const value = macSessionVariable.exec(line)?.[1];
+      const entry = pid ? processes.get(Number(pid)) : undefined;
+      if (entry && value) entry.sessionVariable = value;
     }
   }
   return { sockets, processes };
