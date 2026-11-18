@@ -195,7 +195,10 @@ export function StartReviewDialog({
           </ul>
         )}
         <DialogFooter>
-          <DialogCancel disabled={pending} />
+          <DialogCancel
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+          />
           {profiles.length === 0 && onOpenSettings ? (
             <Button
               size="lg"

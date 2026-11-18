@@ -150,7 +150,7 @@ export function SaveRuleDialog({
           {error && <StatusMessage tone="error">{error}</StatusMessage>}
         </div>
         <DialogFooter>
-          <DialogCancel disabled={pending} />
+          <DialogCancel disabled={pending} onClick={onClose} />
           <Button
             size="lg"
             disabled={pending || !text.trim() || !scopeValid}
