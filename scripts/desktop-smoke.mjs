@@ -2920,7 +2920,7 @@ try {
     .getByRole('paragraph')
     .filter({ hasText: feedback })
     .waitFor();
-  await openSavedDiff(
+  const historicalDiff = await openSavedDiff(
     initialReview,
     'user dirty baseline',
     'initial agent text',
