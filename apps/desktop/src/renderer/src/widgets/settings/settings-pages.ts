@@ -45,7 +45,8 @@ export const settingsPages: SettingsPageEntry[] = [
     label: 'General',
     icon: Settings2,
     group: '',
-    keywords: 'connection host providers claude codex status sign in refresh',
+    keywords:
+      'connection host providers claude codex status sign in refresh running apps ports',
   },
   {
     id: 'appearance',

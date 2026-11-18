@@ -10,10 +10,12 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import { HostStatus } from '@/features/host-status';
+import { useRunningAppsEnabled } from '@/features/running-apps/use-running-apps-enabled';
 import { Button } from '@/shared/ui/button';
 import { IconButton } from '@/shared/ui/icon-button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
+import { Switch } from '@/shared/ui/switch';
 
 type Props = {
   connection: 'connecting' | 'ready' | 'unavailable';
@@ -45,6 +47,7 @@ export function GeneralSettings({
 }: Props) {
   const name = computer?.name ?? 'Local';
   const [logsError, setLogsError] = useState('');
+  const [runningApps, setRunningApps] = useRunningAppsEnabled();
   const openLogs = () => {
     setLogsError('');
     void window.nesvo.openLogs().catch(() => {
@@ -125,6 +128,20 @@ export function GeneralSettings({
             </SettingsRow>
           );
         })}
+      </SettingsSection>
+      <SettingsSection title="Running apps">
+        <SettingsRow
+          title={
+            <label htmlFor="settings-running-apps">Show running apps</label>
+          }
+          description="Shows the ports of apps that sessions started, such as development servers, next to each session. Every connected computer reads its own listening ports every few seconds; Nesvo never stops or restarts them."
+        >
+          <Switch
+            id="settings-running-apps"
+            checked={runningApps}
+            onCheckedChange={setRunningApps}
+          />
+        </SettingsRow>
       </SettingsSection>
       <SettingsSection title="Diagnostics">
         <SettingsRow

@@ -13,6 +13,7 @@ import {
   Monitor,
   PanelLeft,
   Pin,
+  RadioTower,
   Search,
   Settings,
   SquarePen,
@@ -22,6 +23,8 @@ import {
 import type { Computer } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import { entityKey } from '@/shared/lib/host-key';
+import { runningAppsSummary } from '@/features/running-apps/running-apps-summary';
+import type { RunningAppsBySession } from '@/features/running-apps/use-running-apps';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
@@ -91,6 +94,7 @@ type Props = {
   onPullRequests?: () => void;
   navigation?: 'inline' | 'rail';
   readBranch?: ReadBranch;
+  runningApps?: RunningAppsBySession;
   housekeeping?: SidebarHousekeeping;
   currentHostId?: string;
   loading?: boolean;
@@ -169,6 +173,7 @@ export function SessionSidebar({
   onPullRequests,
   navigation = 'inline',
   readBranch,
+  runningApps,
   loading = false,
   housekeeping,
   currentHostId = 'local',
@@ -314,6 +319,7 @@ export function SessionSidebar({
           ? branch.sha
           : null;
     const machine = computer?.name ?? session.hostId;
+    const apps = runningApps?.get(entityKey(session)) ?? [];
     const renamingField = decoration?.title;
     const indicator = sessionIndicator({
       session,
@@ -360,6 +366,19 @@ export function SessionSidebar({
               {branchLabel}
             </span>
           </>
+        )}
+        {apps.length > 0 && (
+          <span
+            data-running-apps=""
+            className="flex shrink-0 items-center gap-0.5 font-mono tabular-nums"
+          >
+            <RadioTower
+              className="size-2.5 shrink-0 text-sidebar-icon"
+              aria-hidden="true"
+            />
+            <span className="sr-only">Running apps </span>
+            {runningAppsSummary(apps)}
+          </span>
         )}
         {session.pullRequest && (
           <span className="flex shrink-0 items-center gap-0.5 tabular-nums">

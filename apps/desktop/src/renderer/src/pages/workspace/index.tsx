@@ -118,6 +118,9 @@ import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
+import { RunningAppsChip } from '@/features/running-apps/running-apps-chip';
+import { useRunningApps } from '@/features/running-apps/use-running-apps';
+import { useRunningAppsEnabled } from '@/features/running-apps/use-running-apps-enabled';
 import { useGitBranch } from '@/features/git-branch/use-git-branch';
 import { FinishWorktreeDialog } from '@/features/session-worktree/finish-worktree';
 import { ForkWorktreeDialog } from '@/features/session-worktree/fork-worktree';
@@ -719,6 +722,7 @@ export function Workspace() {
   const reviewRequests = useRef(new Set<string>());
   const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [runningAppsEnabled] = useRunningAppsEnabled();
   const [sidebar, setSidebar] = useState(() => ({
     open: readSidebarOpen(),
     moving: false,
@@ -2840,7 +2844,9 @@ ${text}`
     return session ? sessionCommands(session) : [];
   };
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
+  const runningApps = useRunningApps(store.computers, runningAppsEnabled);
   const sidebarProps = {
+    runningApps,
     profilesFor,
     accountLabel,
     threadActions,
@@ -3409,6 +3415,13 @@ ${text}`
                         : 'No project'}
                     </span>
                     <BranchChip branch={branch} worktree={headerWorktree} />
+                    {sessionPanels && selected && (
+                      <RunningAppsChip
+                        apps={runningApps.get(entityKey(selected)) ?? []}
+                        computerName={selectedComputer?.name ?? 'Local'}
+                        local={selected.hostId === 'local'}
+                      />
+                    )}
                   </li>
                   <li
                     aria-hidden="true"
