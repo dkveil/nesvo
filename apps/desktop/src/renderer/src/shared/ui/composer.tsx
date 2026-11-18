@@ -49,7 +49,7 @@ export function ComposerInput({
       rows={rows}
       className={cn(
         'block field-sizing-content w-full resize-none bg-transparent text-foreground outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-50',
-        variant === 'default' && 'max-h-48 min-h-11 px-1 text-sm leading-5',
+        variant === 'default' && 'max-h-48 min-h-11 px-1 text-ui leading-5',
         variant === 'compact' && 'max-h-60 min-h-10 px-0.5 text-ui',
         className,
       )}

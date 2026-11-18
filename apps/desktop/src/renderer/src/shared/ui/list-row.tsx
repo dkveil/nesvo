@@ -44,7 +44,7 @@ const densityClasses: Record<ListRowSize, Record<ListRowDensity, string>> = {
   sm: {
     tree: 'h-5.5 gap-1.5 text-xs',
     compact: 'h-7 gap-1.5 text-xs',
-    'two-line': 'min-h-10 items-start gap-1.5 py-1 text-xs',
+    'two-line': 'min-h-10 items-start gap-1.5 py-1 text-ui',
     grid: 'grid h-7 items-center gap-3 text-xs',
     block: 'grid items-start gap-x-5 gap-y-1 py-2.5 text-xs',
   },

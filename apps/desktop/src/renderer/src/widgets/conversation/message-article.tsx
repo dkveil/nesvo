@@ -159,19 +159,19 @@ export const MessageArticle = memo(function MessageArticle({
               <ClampedPrompt>
                 <MessageBody
                   body={message.body}
-                  className="rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
+                  className="rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
                 />
               </ClampedPrompt>
             ) : (
               <MessageBody
                 body={message.body || 'No response text.'}
-                className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
+                className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
               />
             )
           ) : (
             <MessageBody
               body={message.body || 'No response text.'}
-              className="w-full text-sm leading-7"
+              className="w-full text-ui leading-relaxed"
             />
           ))}
         {message.author === 'agent' && !live && message.body && (

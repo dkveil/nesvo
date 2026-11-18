@@ -1034,7 +1034,7 @@ export function Conversation({
                     </Hint>
                     <MessageBody
                       body={entry.text}
-                      className="max-w-[85%] rounded-composer border border-dashed px-3.5 py-2 text-sm leading-6"
+                      className="max-w-[85%] rounded-composer border border-dashed px-3.5 py-2 text-ui leading-relaxed"
                     />
                     <div className="flex items-center gap-1">
                       <Button

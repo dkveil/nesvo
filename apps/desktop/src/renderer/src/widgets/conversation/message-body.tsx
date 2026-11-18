@@ -161,19 +161,17 @@ function MarkdownLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
 
 const components: Components = {
   h1: ({ children }) => (
-    <h1 className="mt-5 text-xl leading-7 font-semibold first:mt-0">
+    <h1 className="mt-5 text-lg leading-7 font-semibold first:mt-0">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="mt-5 text-lg leading-7 font-semibold first:mt-0">
+    <h2 className="mt-5 text-base leading-6 font-semibold first:mt-0">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="mt-4 text-base leading-6 font-semibold first:mt-0">
-      {children}
-    </h3>
+    <h3 className="mt-4 text-title font-semibold first:mt-0">{children}</h3>
   ),
   h4: ({ children }) => (
     <h4 className="mt-4 leading-6 font-semibold first:mt-0">{children}</h4>
