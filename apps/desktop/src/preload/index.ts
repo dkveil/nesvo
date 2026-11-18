@@ -193,6 +193,14 @@ import {
   validateWorkflowDefinitionsSchema,
   type DesktopApi,
   type RendererErrorReport,
+  prepareWorkflowShareSchema,
+  saveWorkflowImportSchema,
+  sharedWorkflowLinkSchema,
+  workflowImportOfferSchema,
+  workflowImportResultSchema,
+  workflowShareIdSchema,
+  workflowSharePreparedSchema,
+  workflowShareSettingsSchema,
 } from '@nesvo/contracts';
 
 const launchColorScheme = appliedColorSchemeSchema.safeParse(
@@ -282,6 +290,82 @@ const scheduledJobs: DesktopApi['scheduledJobs'] = {
         hostIdSchema.parse(hostId),
       ),
     ),
+};
+const sharedLinksSchema = sharedWorkflowLinkSchema.array();
+const sharing: DesktopApi['sharing'] = {
+  settings: async () =>
+    workflowShareSettingsSchema.parse(
+      await ipcRenderer.invoke('nesvo:share-settings'),
+    ),
+  setOrigin: async origin =>
+    workflowShareSettingsSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-share-origin',
+        workflowShareSettingsSchema.shape.origin.nullable().parse(origin),
+      ),
+    ),
+  prepare: async (hostId, input) =>
+    workflowSharePreparedSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:prepare-workflow-share',
+        hostIdSchema.parse(hostId),
+        prepareWorkflowShareSchema.parse(input),
+      ),
+    ),
+  upload: async draftId =>
+    sharedWorkflowLinkSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:upload-workflow-share',
+        workflowSharePreparedSchema.shape.draftId.parse(draftId),
+      ),
+    ),
+  links: async () =>
+    sharedLinksSchema.parse(
+      await ipcRenderer.invoke('nesvo:shared-workflow-links'),
+    ),
+  revoke: async id =>
+    sharedLinksSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:revoke-workflow-share',
+        workflowShareIdSchema.parse(id),
+      ),
+    ),
+  forget: async id =>
+    sharedLinksSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:forget-workflow-share',
+        workflowShareIdSchema.parse(id),
+      ),
+    ),
+  takeImports: async () =>
+    workflowImportOfferSchema
+      .array()
+      .parse(await ipcRenderer.invoke('nesvo:take-workflow-imports')),
+  onImportAvailable: listener => {
+    const receive = () => listener();
+    ipcRenderer.on('nesvo:workflow-import-available', receive);
+    return () =>
+      ipcRenderer.removeListener('nesvo:workflow-import-available', receive);
+  },
+  importWorkflow: async input =>
+    workflowImportResultSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:import-workflow',
+        saveWorkflowImportSchema.parse(input),
+      ),
+    ),
+  dismissImport: async importId => {
+    await ipcRenderer.invoke(
+      'nesvo:dismiss-workflow-import',
+      saveWorkflowImportSchema.shape.importId.parse(importId),
+    );
+  },
+  pickFolder: async () => {
+    const folder: unknown = await ipcRenderer.invoke(
+      'nesvo:pick-import-folder',
+    );
+    return typeof folder === 'string' ? folder : null;
+  },
 };
 const workflows: DesktopApi['workflows'] = {
   listDefinitions: async (hostId, input) =>
@@ -440,6 +524,7 @@ const workflows: DesktopApi['workflows'] = {
 const api: DesktopApi = {
   scheduledJobs,
   workflows,
+  sharing,
   colorScheme: async () =>
     colorSchemeSchema.parse(await ipcRenderer.invoke('nesvo:color-scheme')),
   showsOnboardingOnLaunch: () => onboardingOnLaunch,

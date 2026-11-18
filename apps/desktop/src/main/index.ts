@@ -38,6 +38,8 @@ import { launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { openAttachmentFile } from './attachment-files';
 import { readColorScheme, saveColorScheme } from './appearance-store';
+import { findImportLink, SHARE_PROTOCOL } from './share-link';
+import { createWorkflowSharing } from './workflow-sharing';
 import {
   createWorkflowDemo,
   isWorkflowDemoEnabled,
@@ -164,6 +166,7 @@ import {
   validateWorkflowDefinitionsSchema,
   MAX_RENDERER_ERROR_REPORT_BYTES,
   rendererErrorReportSchema,
+  workflowShareSettingsSchema,
   type AppliedColorScheme,
   type DesktopSession,
   type WorkspaceEvent,
@@ -281,6 +284,18 @@ const handle = (
 
 const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
+const pendingImportLinks: string[] = [];
+let deliverImportLink = (link: string) => {
+  pendingImportLinks.push(link);
+};
+const launchLink = findImportLink(process.argv);
+if (launchLink) pendingImportLinks.push(launchLink);
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deliverImportLink(url);
+});
+if (ownsInstance && app.isPackaged && !smokeTest)
+  app.setAsDefaultProtocolClient(SHARE_PROTOCOL);
 void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   app.setAppUserModelId('app.nesvo.desktop');
@@ -660,6 +675,70 @@ void app.whenReady().then(async () => {
     if (typeof enabled !== 'boolean')
       throw new Error('Invalid work laptop mode.');
     return policy.set(enabled);
+  });
+  const sharing = createWorkflowSharing({
+    userData: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    computers,
+    onImportAvailable: () => {
+      if (window && !window.isDestroyed())
+        window.webContents.send('nesvo:workflow-import-available');
+    },
+  });
+  handle('nesvo:share-settings', event => {
+    authorize(event);
+    return sharing.settings();
+  });
+  handle('nesvo:set-share-origin', (event, origin: unknown) => {
+    authorize(event);
+    return sharing.setOrigin(
+      workflowShareSettingsSchema.shape.origin.nullable().parse(origin),
+    );
+  });
+  handle(
+    'nesvo:prepare-workflow-share',
+    (event, hostId: unknown, input: unknown) => {
+      authorize(event);
+      return sharing.prepare(hostIdSchema.parse(hostId), input);
+    },
+  );
+  handle('nesvo:upload-workflow-share', (event, draftId: unknown) => {
+    authorize(event);
+    return sharing.upload(draftId);
+  });
+  handle('nesvo:shared-workflow-links', event => {
+    authorize(event);
+    return sharing.links();
+  });
+  handle('nesvo:revoke-workflow-share', (event, id: unknown) => {
+    authorize(event);
+    return sharing.revoke(id);
+  });
+  handle('nesvo:forget-workflow-share', (event, id: unknown) => {
+    authorize(event);
+    return sharing.forget(id);
+  });
+  handle('nesvo:take-workflow-imports', event => {
+    authorize(event);
+    return sharing.takeImports();
+  });
+  handle('nesvo:import-workflow', (event, input: unknown) => {
+    authorize(event);
+    return sharing.importWorkflow(input);
+  });
+  handle('nesvo:dismiss-workflow-import', (event, importId: unknown) => {
+    authorize(event);
+    sharing.dismissImport(importId);
+  });
+  handle('nesvo:pick-import-folder', async event => {
+    authorize(event);
+    if (!window || window.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(window, {
+      title: 'Choose a project folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
   });
   handle('nesvo:mobile-status', event => {
     authorize(event);
@@ -1638,7 +1717,12 @@ void app.whenReady().then(async () => {
     .initialize()
     .catch(() => log.error('Computers could not be initialized.'));
   powerMonitor.on('resume', () => computers.resume());
-  app.on('second-instance', () => {
+  deliverImportLink = link => {
+    if (!smokeTest) showWindow();
+    void sharing.deliverLink(link);
+  };
+  for (const link of pendingImportLinks.splice(0)) deliverImportLink(link);
+  app.on('second-instance', (_event, argv) => {
     if (erasing) return;
     if (!window) createWindow();
     if (window && !smokeTest) {
@@ -1646,6 +1730,8 @@ void app.whenReady().then(async () => {
       window.show();
       window.focus();
     }
+    const link = findImportLink(argv);
+    if (link) deliverImportLink(link);
   });
   app.on('activate', () => {
     if (erasing) return;

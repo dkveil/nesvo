@@ -16,6 +16,9 @@ electronFuses:
   onlyLoadAppFromAsar: true
   resetAdHocDarwinSignature: true
 npmRebuild: false
+protocols:
+  - name: Nesvo
+    schemes: [nesvo]
 publish: null
 extraFiles:
   - from: ../../LICENSE

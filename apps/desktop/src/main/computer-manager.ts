@@ -55,9 +55,11 @@ type ScheduledJobMethod = Extract<
 >;
 type SessionWorkflowMethod = 'assign-session-workflow';
 type SessionHistoryMethod = 'get-session' | 'read-session-messages';
+export type SharingWorkflowMethod =
+  'prepare-workflow-share' | 'import-workflow-bundle';
 export type CatalogWorkflowMethod = Exclude<
   WorkflowMethod,
-  SessionWorkflowMethod
+  SessionWorkflowMethod | SharingWorkflowMethod
 >;
 type ExecutableMethod = Exclude<
   HostRequest['method'],
@@ -67,6 +69,7 @@ type ExecutableMethod = Exclude<
   | 'list-reviews'
   | ScheduledJobMethod
   | CatalogWorkflowMethod
+  | SharingWorkflowMethod
 >;
 type Connection = {
   request: (
@@ -276,6 +279,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use worktree recipes.',
   'session-control':
     'Update this computer’s Nesvo host and reconnect to let sessions coordinate other sessions.',
+  'workflow-sharing':
+    'Update this computer’s Nesvo host and reconnect to share or import workflows.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -331,6 +336,10 @@ function requiredCapability(
     method === 'decide-session-parent'
   )
     return 'session-control';
+    method === 'prepare-workflow-share' ||
+    method === 'import-workflow-bundle'
+  )
+    return 'workflow-sharing';
   if (
     method === 'read-session-changes' ||
     method === 'read-session-change-patch'
@@ -1089,6 +1098,25 @@ export class ComputerManager {
       default:
         throw new Error('Unexpected host response.');
     }
+  }
+
+  async executeSharing(
+    method: SharingWorkflowMethod,
+    input: unknown,
+    hostId: string,
+  ) {
+    const { response } = await this.dispatch(method, input, hostId);
+    if (
+      method === 'prepare-workflow-share' &&
+      response.type === 'workflow-share-draft'
+    )
+      return response.draft;
+    if (
+      method === 'import-workflow-bundle' &&
+      response.type === 'workflow-import'
+    )
+      return response.result;
+    throw new Error('Unexpected host response.');
   }
 
   async execute(method: ExecutableMethod, input: unknown, hostId = 'local') {
