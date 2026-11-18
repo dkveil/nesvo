@@ -61,6 +61,7 @@ type Props = {
   renderRoot: (session: Session, decoration: RowDecoration) => ReactNode[];
   automations?: ReactNode;
   threadActions?: (session: Session) => RowAction[];
+  deleteAction?: (session: Session) => RowAction | null;
 };
 
 export function GroupedSessions({
@@ -78,6 +79,7 @@ export function GroupedSessions({
   renderRoot,
   automations,
   threadActions,
+  deleteAction,
 }: Props) {
   const [menu, setMenu] = useState<string | null>(null);
   const [moveTarget, setMoveTarget] = useState<MoveTarget | null>(null);
@@ -160,6 +162,7 @@ export function GroupedSessions({
   });
   const sessionActions = (session: Session): RowAction[] => {
     const thread = threadActions?.(session) ?? [];
+    const removal = deleteAction?.(session);
     const archived = !!session.archivedAt;
     const siblings = sessionSiblings(session.groupId);
     const index = siblings.findIndex(item => item.id === session.id);
@@ -227,6 +230,7 @@ export function GroupedSessions({
               session.status === 'running' || session.status === 'stopping',
             onSelect: () => void housekeeping.setArchived(session, true),
           },
+      ...(removal ? ['separator' as const, removal] : []),
     ];
   };
   const decorate = (

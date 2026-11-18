@@ -103,6 +103,7 @@ type Props = {
   filterKeys?: SessionFilterKeys;
   onFilterChange?: (filter: SessionFilter) => void;
   threadActions?: (session: Session) => RowAction[];
+  deleteAction?: (session: Session) => RowAction | null;
 };
 
 const TREE_INDENT_PX = 12;
@@ -181,6 +182,7 @@ export function SessionSidebar({
   workflows,
   onSelect,
   threadActions,
+  deleteAction,
   onSearchHistory,
   onInbox,
   onWorkflows,
@@ -423,7 +425,11 @@ export function SessionSidebar({
         />
       </span>
     );
-    const actions = decoration?.menu ? [] : (threadActions?.(session) ?? []);
+    const removal = decoration?.menu ? null : (deleteAction?.(session) ?? null);
+    const thread = decoration?.menu ? [] : (threadActions?.(session) ?? []);
+    const actions: RowAction[] = removal
+      ? [...thread, ...(thread.length ? ['separator' as const] : []), removal]
+      : thread;
     const leading = child ? (
       <CornerDownRight className="size-3" aria-hidden="true" />
     ) : (
@@ -827,6 +833,7 @@ export function SessionSidebar({
                           renderRoot={rootWithChildren}
                           automations={automationRows}
                           threadActions={threadActions}
+                          deleteAction={deleteAction}
                         />
                       ) : (
                         automationRows

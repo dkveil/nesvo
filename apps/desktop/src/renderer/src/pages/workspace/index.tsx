@@ -23,9 +23,18 @@ import type {
   SessionMode,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
+import { isGroupableSession } from '@nesvo/contracts';
 import {
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   BookOpen,
+  FolderInput,
+  Pencil,
+  Pin,
+  PinOff,
+  Plug,
+  Trash2,
   FileCode2,
   FolderCheck,
   FolderOpen,
@@ -75,7 +84,14 @@ import {
 import { ManageComputers } from '@/features/manage-computers';
 import { HistorySearchDialog } from '@/features/search-history';
 import { ImportConversation } from '@/features/import-conversation';
-import { CommandPalette, type PaletteMode } from '@/features/command-palette';
+import {
+  CommandPalette,
+  type PaletteCommand,
+  type PaletteMode,
+} from '@/features/command-palette';
+import { SessionDeletion } from '@/features/delete-session';
+import { RenameSessionDialog } from '@/features/rename-session';
+import { MoveToGroupDialog } from '@/widgets/session-sidebar/move-to-group-dialog';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
@@ -743,6 +759,9 @@ export function Workspace() {
   const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
   const [finishingWorktree, setFinishingWorktree] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Session | null>(null);
+  const [moveTarget, setMoveTarget] = useState<Session | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
   const [threadActionPending, setThreadActionPending] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -2334,6 +2353,26 @@ ${text}`
           })),
         ),
   });
+  const supportsDelete = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-delete');
+  const deleteAction = (session: Session): RowAction | null =>
+    window.nesvo &&
+    supportsDelete(session.hostId) &&
+    isGroupableSession(session) &&
+    !session.workflowRunId
+      ? {
+          label: 'Delete…',
+          icon: <Trash2 />,
+          destructive: true,
+          disabled:
+            !store.hostReady(session.hostId) ||
+            session.status === 'running' ||
+            session.status === 'stopping',
+          onSelect: () => setDeleteTarget(session),
+        }
+      : null;
   const headerThreadActions =
     !browsing && !creating && selected
       ? [
@@ -2344,7 +2383,7 @@ ${text}`
       : [];
   const finishWorktreeAvailable =
     !browsing && !creating && !!selected?.worktree && !!window.nesvo;
-  const headerActions: RowAction[] = [
+  const headerOwnActions: RowAction[] = [
     ...headerThreadActions,
     ...(finishWorktreeAvailable
       ? [
@@ -2357,9 +2396,151 @@ ${text}`
         ]
       : []),
   ];
+  const headerDelete =
+    !browsing && !creating && selected ? deleteAction(selected) : null;
+  const headerActions: RowAction[] = headerDelete
+    ? [
+        ...headerOwnActions,
+        ...(headerOwnActions.length ? ['separator' as const] : []),
+        headerDelete,
+      ]
+    : headerOwnActions;
+  const showSession = (session: Session, then: () => void) => {
+    const key = entityKey(session);
+    if (key === selectedKey && !browsing && !creating) {
+      then();
+      return;
+    }
+    guardEditor(() => {
+      selectNow(key);
+      then();
+    });
+  };
+  const openSessionFiles = (session: Session) =>
+    showSession(session, () => {
+      diffTrigger.current = panelTrigger();
+      setCardOpen(false);
+      const latest = store.reviews
+        .filter(
+          review =>
+            review.sessionId === session.id && review.hostId === session.hostId,
+        )
+        .sort((a, b) => b.version - a.version)[0];
+      setDiffTarget(latest ? { reviewId: latest.id } : null);
+      setPanel('files');
+    });
+  const openSessionMcp = (session: Session) =>
+    showSession(session, () =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() =>
+          document.querySelector<HTMLElement>('[data-session-mcp]')?.click(),
+        ),
+      ),
+    );
+  const rowCommand = (id: string, action: RowAction): PaletteCommand[] =>
+    action === 'separator'
+      ? []
+      : [
+          {
+            id,
+            label: action.label,
+            icon: action.icon,
+            disabled: action.disabled,
+            run: action.onSelect,
+          },
+        ];
+  const sessionCommands = (session: Session): PaletteCommand[] => {
+    const groupable = isGroupableSession(session);
+    const archived = !!session.archivedAt;
+    const ready = store.hostReady(session.hostId);
+    const busy = session.status === 'running' || session.status === 'stopping';
+    const housekept = groupable && housekeeping.supports(session.hostId);
+    const removal = deleteAction(session);
+    const commands: PaletteCommand[] = [
+      {
+        id: 'rename',
+        label: 'Rename…',
+        icon: <Pencil />,
+        keywords: 'title name',
+        disabled: !ready || !housekeeping.supports(session.hostId),
+        run: () => setRenameTarget(session),
+      },
+    ];
+    if (housekept && !archived)
+      commands.push(
+        {
+          id: 'pin',
+          label: session.pinned ? 'Unpin' : 'Pin',
+          icon: session.pinned ? <PinOff /> : <Pin />,
+          keywords: 'favorite top',
+          disabled: !ready,
+          run: () => void housekeeping.setPinned(session, !session.pinned),
+        },
+        {
+          id: 'move',
+          label: 'Move to group…',
+          icon: <FolderInput />,
+          keywords: 'group folder organize',
+          disabled: !ready,
+          run: () => setMoveTarget(session),
+        },
+      );
+    threadActions(session).forEach((action, index) =>
+      commands.push(...rowCommand(`thread-${index}`, action)),
+    );
+    commands.push(...rowCommand('export', exportAction(session)));
+    if (session.worktree && window.nesvo)
+      commands.push({
+        id: 'finish-worktree',
+        label: 'Finish worktree…',
+        icon: <FolderCheck />,
+        keywords: 'branch checkout keep remove',
+        run: () => showSession(session, () => setFinishingWorktree(true)),
+      });
+    commands.push({
+      id: 'files',
+      label: 'Open files',
+      icon: <FolderOpen />,
+      shortcut: shortcutKeys('files'),
+      keywords: 'explorer tree panel',
+      run: () => openSessionFiles(session),
+    });
+    if (
+      supportsMcp(session.hostId) &&
+      session.role !== 'worker' &&
+      !session.workflowRunId
+    )
+      commands.push({
+        id: 'mcp',
+        label: 'MCP servers…',
+        icon: <Plug />,
+        keywords: 'tools hooks servers',
+        disabled: !ready,
+        run: () => openSessionMcp(session),
+      });
+    if (housekept)
+      commands.push({
+        id: 'archive',
+        label: archived ? 'Unarchive' : 'Archive',
+        icon: archived ? <ArchiveRestore /> : <Archive />,
+        keywords: 'hide restore',
+        disabled: !ready || (!archived && busy),
+        run: () => void housekeeping.setArchived(session, !archived),
+      });
+    if (removal) commands.push(...rowCommand('delete', removal));
+    return commands.map(command => ({
+      ...command,
+      id: `session-${command.id}`,
+    }));
+  };
+  const paletteSessionActions = (key: string) => {
+    const session = store.sessions.find(item => entityKey(item) === key);
+    return session ? sessionCommands(session) : [];
+  };
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const sidebarProps = {
     threadActions,
+    deleteAction,
     housekeeping,
     loading: store.loading,
     currentHostId: creating ? threadSetup.hostId : selectedHostId,
@@ -2544,7 +2725,17 @@ ${text}`
       nextNeedsMe,
       needsMeCount: filterKeys['needs-me'].size,
       lastSession,
-    });
+    }).concat(
+      sessionPanels && selected
+        ? sessionCommands(selected)
+            .filter(command => command.id !== 'session-files')
+            .map(command => ({
+              ...command,
+              group: 'Current session',
+              keywords: [command.keywords, 'session current'].join(' '),
+            }))
+        : [],
+    );
   };
   const readBranch = window.nesvo
     ? (hostId: string, directory: string) =>
@@ -2598,6 +2789,7 @@ ${text}`
             store.groups,
             filterKeys,
           )}
+          sessionActions={paletteSessionActions}
           onOpenSession={goToSession}
           onClose={() => setPalette(null)}
         />
@@ -2640,6 +2832,46 @@ ${text}`
         error={terminalCommandError}
         onConfirm={handOffToTerminal}
       />
+      <RenameSessionDialog
+        session={renameTarget}
+        onClose={() => setRenameTarget(null)}
+        onRename={housekeeping.renameSession}
+      />
+      <MoveToGroupDialog
+        key={moveTarget ? entityKey(moveTarget) : 'closed'}
+        open={!!moveTarget}
+        onOpenChange={open => {
+          if (!open) setMoveTarget(null);
+        }}
+        title={`Move “${moveTarget?.title ?? ''}” to`}
+        groups={moveTarget ? store.groups(moveTarget.hostId) : []}
+        currentId={moveTarget?.groupId ?? null}
+        rootLabel="Ungrouped"
+        isAllowed={() => true}
+        onMove={groupId => {
+          if (moveTarget) void housekeeping.moveSession(moveTarget, groupId, 0);
+        }}
+        onCreate={name => {
+          const target = moveTarget;
+          if (!target) return;
+          void housekeeping
+            .createGroup(target.hostId, null, name)
+            .then(groupId => {
+              if (groupId) void housekeeping.moveSession(target, groupId, 0);
+            });
+        }}
+      />
+      {window.nesvo && (
+        <SessionDeletion
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          api={desktopApi}
+          onDeleted={deletion =>
+            store.remove(deletion.hostId, deletion.sessionIds)
+          }
+          onRestored={session => store.merge([session])}
+        />
+      )}
       {historySearch && (
         <HistorySearchDialog
           computers={store.computers}
