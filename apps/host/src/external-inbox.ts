@@ -1,8 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { lstat, mkdir, unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   externalInboxDeviceSchema,
@@ -132,7 +131,7 @@ export class ExternalInbox {
 export async function listenForExternalInbox(inbox: ExternalInbox) {
   const endpoint = externalInboxEndpoint(inbox.computerId);
   if (process.platform !== 'win32') {
-    const directory = join(tmpdir(), `nesvo-inbox-${process.getuid?.()}`);
+    const directory = dirname(endpoint);
     await mkdir(directory, { mode: 0o700, recursive: true });
     const info = await lstat(directory);
     if (
