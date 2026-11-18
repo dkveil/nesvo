@@ -15,6 +15,7 @@ import type {
   DecideReviewInput,
   DesktopReview as Review,
   DesktopSession as Session,
+  ForkSessionInput,
   McpSelection,
   RespondApprovalInput,
   SessionMode,
@@ -81,6 +82,7 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
 import { useGitBranch } from '@/features/git-branch/use-git-branch';
 import { FinishWorktreeDialog } from '@/features/session-worktree/finish-worktree';
+import { ForkWorktreeDialog } from '@/features/session-worktree/fork-worktree';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ProjectChip } from '@/shared/ui/project-chip';
@@ -715,6 +717,7 @@ export function Workspace() {
       : null;
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [restartTarget, setRestartTarget] = useState<Session | null>(null);
+  const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
   const [finishingWorktree, setFinishingWorktree] = useState(false);
   const [threadActionPending, setThreadActionPending] = useState(false);
@@ -2063,11 +2066,15 @@ ${text}`
     );
   };
   const housekeeping = useHousekeeping(store, openCreateInGroup);
-  const forkSession = async (target: Session) => {
+  const forkSession = async (
+    target: Session,
+    worktree?: ForkSessionInput['worktree'],
+  ) => {
     setThreadActionPending(true);
     try {
       const fork = await desktopApi(target.hostId).forkSession({
         sessionId: target.id,
+        ...(worktree ? { worktree } : {}),
       });
       store.merge([fork]);
       select(entityKey(fork));
@@ -2078,6 +2085,33 @@ ${text}`
     } finally {
       setThreadActionPending(false);
     }
+  };
+  const chooseFork = async (target: Session) => {
+    const supportsWorktree = store.computers
+      .find(computer => computer.id === target.hostId)
+      ?.capabilities.includes('session-worktree-tools');
+    if (supportsWorktree) {
+      setThreadActionPending(true);
+      try {
+        const git =
+          target.worktree ||
+          (
+            await desktopApi(target.hostId).readGitBranch({
+              directory: target.directory,
+            })
+          ).kind !== 'none';
+        if (git) {
+          setForkTarget(target);
+          return;
+        }
+      } catch {
+        await forkSession(target);
+        return;
+      } finally {
+        setThreadActionPending(false);
+      }
+    }
+    await forkSession(target);
   };
   const restartSession = async (target: Session) => {
     setThreadActionPending(true);
@@ -2123,7 +2157,7 @@ ${text}`
         label: 'Fork session',
         icon: <GitFork />,
         disabled: disabled || !session.providerInitialized,
-        onSelect: () => void forkSession(session),
+        onSelect: () => void chooseFork(session),
       },
       {
         label: 'Restart session…',
@@ -2419,6 +2453,14 @@ ${text}`
           onClose={() => setPalette(null)}
         />
       )}
+      {forkTarget && (
+        <ForkWorktreeDialog
+          key={entityKey(forkTarget)}
+          title={forkTarget.title}
+          onFork={worktree => forkSession(forkTarget, worktree)}
+          onClose={() => setForkTarget(null)}
+        />
+      )}
       <ConfirmDialog
         open={!!restartTarget}
         onOpenChange={open => {
@@ -2702,6 +2744,12 @@ ${text}`
               key={selectedKey}
               sessionId={selected.id}
               worktree={headerWorktree}
+              setupAvailable={
+                store.hostReady(selectedHostId) &&
+                !!selectedComputer?.capabilities.includes(
+                  'session-worktree-tools',
+                )
+              }
               api={desktopApi(selectedHostId)}
               blockedReason={
                 !store.hostReady(selectedHostId)

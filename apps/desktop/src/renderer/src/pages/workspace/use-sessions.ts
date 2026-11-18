@@ -53,6 +53,10 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     createSession: input => api.createSession(input, hostId),
     readSessionWorktree: input => api.readSessionWorktree(input, hostId),
     finishSessionWorktree: input => api.finishSessionWorktree(input, hostId),
+    readSessionWorktreeSetup: input =>
+      api.readSessionWorktreeSetup(input, hostId),
+    runSessionWorktreeSetup: input =>
+      api.runSessionWorktreeSetup(input, hostId),
     sendMessage: input => api.sendMessage(input, hostId),
     stopRun: input => api.stopRun(input, hostId),
     respondApproval: input => api.respondApproval(input, hostId),

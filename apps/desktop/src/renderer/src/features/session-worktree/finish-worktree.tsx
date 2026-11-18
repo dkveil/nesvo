@@ -20,13 +20,21 @@ import {
 import { Label } from '@/shared/ui/label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { WorktreeSetup } from './worktree-setup';
 
 type Choice = FinishSessionWorktreeInput['action']['kind'];
 
 type Props = {
   sessionId: string;
   worktree: SessionWorktree;
-  api: Pick<DesktopApi, 'readSessionWorktree' | 'finishSessionWorktree'>;
+  api: Pick<
+    DesktopApi,
+    | 'readSessionWorktree'
+    | 'finishSessionWorktree'
+    | 'readSessionWorktreeSetup'
+    | 'runSessionWorktreeSetup'
+  >;
+  setupAvailable: boolean;
   blockedReason: string;
   onFinished: (session: DesktopSession, choice: Choice) => void;
   onClose: () => void;
@@ -49,6 +57,7 @@ export function FinishWorktreeDialog({
   api,
   sessionId,
   worktree,
+  setupAvailable,
   blockedReason,
   onFinished,
   onClose,
@@ -144,6 +153,16 @@ export function FinishWorktreeDialog({
           }))}
         />
         <StatusMessage tone="info">{choiceDetails[choice]}</StatusMessage>
+        {worktree.includes && (
+          <StatusMessage
+            tone={worktree.includes.incomplete ? 'warning' : 'info'}
+          >
+            Worktree includes: {worktree.includes.copied} copied,{' '}
+            {worktree.includes.skipped} skipped.
+            {worktree.includes.incomplete &&
+              ' The include scan was incomplete.'}
+          </StatusMessage>
+        )}
         {blockedReason ? (
           <StatusMessage tone="warning">{blockedReason}</StatusMessage>
         ) : statusError ? (
@@ -168,6 +187,14 @@ export function FinishWorktreeDialog({
           </Label>
         )}
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
+        {setupAvailable && worktree.state !== 'removed' && (
+          <WorktreeSetup
+            api={api}
+            sessionId={sessionId}
+            disabled={!!blockedReason || pending || worktree.state !== 'active'}
+            onRun={() => setRefresh(value => value + 1)}
+          />
+        )}
         <DialogFooter>
           <DialogCancel onClick={onClose} disabled={pending} />
           <Button

@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import type { Computer, DatabaseBackup, DesktopApi } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
+import { OrphanedWorktrees } from '@/features/session-worktree/orphaned-worktrees';
 import { Button } from '@/shared/ui/button';
 import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { StatusMessage } from '@/shared/ui/status-message';
 
 type Props = {
-  api: Pick<DesktopApi, 'backupDatabase' | 'showBackup'>;
+  api: Pick<
+    DesktopApi,
+    | 'backupDatabase'
+    | 'showBackup'
+    | 'listOrphanedSessionWorktrees'
+    | 'removeOrphanedSessionWorktree'
+  >;
   computers: Computer[];
 };
 
@@ -116,6 +123,7 @@ export function DataSettings({ api, computers }: Props) {
         })}
       </SettingsSection>
       {showError && <StatusMessage tone="error">{showError}</StatusMessage>}
+      <OrphanedWorktrees api={api} computers={computers} />
       <SettingsSection title="Export">
         <SettingsRow
           title="Sessions"
