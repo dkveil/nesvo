@@ -29,6 +29,7 @@ type TurnPolicy = {
   projectServers: ConfigTable;
   projectHooks: ConfigTable;
   projectDisablesHooks: boolean;
+  projectSettings: boolean;
 };
 export type VerifyMcpTurn = () => Promise<TurnPolicy>;
 export type RawMcpReviewInput = { sessionId: string; rawFor: string };
@@ -230,6 +231,13 @@ export class McpPolicy {
           );
         }
       }
+      for (const extra of 'extras' in layer ? layer.extras : [])
+        addDefinition(
+          `${index}:${extra.id}`,
+          extra.name,
+          extra.detail,
+          extra.config,
+        );
       projectDisablesHooks ||= layer.hooksDisabled;
       if (layer.hooksDisabled)
         addDefinition(
@@ -306,6 +314,7 @@ export class McpPolicy {
       projectServers: trusted ? projectServers : {},
       projectHooks: trusted ? projectHooks : {},
       projectDisablesHooks: trusted && projectDisablesHooks,
+      projectSettings: claude && trusted,
     };
     const userFingerprint = this.fingerprint([userServers, userHooks, issues]);
     return {
@@ -460,6 +469,7 @@ export class McpPolicy {
             projectServers: {},
             projectHooks: {},
             projectDisablesHooks: false,
+            projectSettings: false,
           };
     };
   }

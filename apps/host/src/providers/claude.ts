@@ -1096,7 +1096,9 @@ export function startClaude(options: {
           {
             ...(readOnly || integrations.projectDisablesHooks
               ? { disableAllHooks: true }
-              : { hooks: integrations.projectHooks }),
+              : integrations.projectSettings
+                ? {}
+                : { hooks: integrations.projectHooks }),
             ...(readOnly ? { permissions: { ask: ['mcp__*'] } } : {}),
           },
         );
@@ -1108,7 +1110,7 @@ export function startClaude(options: {
             '--settings',
             runConfig.settingsPath,
             '--setting-sources',
-            'user',
+            integrations?.projectSettings ? 'user,project,local' : 'user',
           ]
         : [
             ...isolatedToolArgs,

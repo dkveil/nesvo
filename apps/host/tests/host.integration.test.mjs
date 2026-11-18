@@ -21092,7 +21092,13 @@ test(
     };
     const before = await listFor(claude);
     assert.equal(before.repository.status, 'needs-trust');
-    assert.equal(before.repository.definitions.length, 4);
+    assert.equal(before.repository.definitions.length, 5);
+    assert.equal(
+      before.repository.definitions.find(
+        item => item.name === '.claude/settings.json',
+      ).detail,
+      'Project settings: unrelated',
+    );
     assert.equal(before.repository.rawReview, undefined);
     const detailFields = (repository, name) =>
       repository.definitions
@@ -21180,7 +21186,11 @@ test(
     );
     assert.doesNotMatch(
       JSON.stringify(claudeRaw.files),
-      /literal-key|fixture-token|project-only-marker|"tracker"/,
+      /literal-key|fixture-token|"tracker"/,
+    );
+    assert.equal(
+      JSON.parse(hookSource.text).settings.unrelated,
+      'project-only-marker',
     );
     assert.equal(
       (await trust(claude, before.repository.fingerprint, claudeRaw.token)).list
@@ -21195,10 +21205,8 @@ test(
       'repo',
       'tracker',
     ]);
-    assert.deepEqual(trusted.hooks.SessionStart, [
-      ...projectHooks.SessionStart,
-      ...localHooks.SessionStart,
-    ]);
+    assert.deepEqual(trusted.hooks, {});
+    assert.equal(trusted.settingSources, 'user,project,local');
     await writeFile(
       join(project, '.mcp.json'),
       JSON.stringify({

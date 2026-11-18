@@ -349,7 +349,7 @@ if (args.length === 1 && args[0] === '--version') {
     JSON.parse(value.startsWith('{') ? value : readFileSync(value, 'utf8'));
   const settings = readConfig(values.get('--settings'));
   const config = readConfig(values.get('--mcp-config'));
-  assert.ok(['', 'user'].includes(settingSources));
+  assert.ok(['', 'user', 'user,project,local'].includes(settingSources));
   assert.equal(values.has('--strict-mcp-config'), true);
   if (permissionMode === 'plan' || permissionMode === 'dontAsk') {
     assert.equal(settings.disableAllHooks, true);
@@ -628,7 +628,9 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(values.get('--permission-mode'), 'plan');
   } else {
     assert.equal(values.has('--json-schema'), false);
-    assert.equal(values.get('--setting-sources'), 'user');
+    assert.ok(
+      ['user', 'user,project,local'].includes(values.get('--setting-sources')),
+    );
     assert.equal(values.has('--no-session-persistence'), false);
   }
   const statePath = join(process.cwd(), `.nesvo-fixture-${sessionId}.json`);

@@ -2,6 +2,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { MCP_SERVER_NAME_PATTERN, type McpScope } from '@nesvo/contracts';
+import { readClaudeProjectFiles, settingsRest } from './claude-project-files';
 import { describeServer } from './server-summary';
 import {
   configTable,
@@ -105,6 +106,15 @@ export async function readClaudeConfiguration(
       const servers = section(mcp, 'mcpServers', projectIssues);
       const hooks = section(settings, 'hooks', projectIssues);
       const localHooks = section(localFile, 'hooks', projectIssues);
+      const projectFiles = await readClaudeProjectFiles(
+        folder,
+        repositoryRoot!,
+        { project: settings, local: localFile },
+        projectIssues,
+        signal,
+      );
+      const projectSettings = settingsRest(settings);
+      const localProjectSettings = settingsRest(localFile);
       return {
         servers,
         localServers,
@@ -114,6 +124,7 @@ export async function readClaudeConfiguration(
           settings.disableAllHooks === true ||
           localFile.disableAllHooks === true,
         localFolder,
+        extras: projectFiles.definitions,
         sources: [
           { path: mcpPath, sections: { mcpServers: servers } },
           {
@@ -122,6 +133,9 @@ export async function readClaudeConfiguration(
               hooks,
               ...(settings.disableAllHooks === true
                 ? { disableAllHooks: true }
+                : {}),
+              ...(Object.keys(projectSettings).length
+                ? { settings: projectSettings }
                 : {}),
             },
           },
@@ -132,8 +146,12 @@ export async function readClaudeConfiguration(
               ...(localFile.disableAllHooks === true
                 ? { disableAllHooks: true }
                 : {}),
+              ...(Object.keys(localProjectSettings).length
+                ? { settings: localProjectSettings }
+                : {}),
             },
           },
+          ...(projectFiles.commandsSource ? [projectFiles.commandsSource] : []),
         ],
       };
     }),
