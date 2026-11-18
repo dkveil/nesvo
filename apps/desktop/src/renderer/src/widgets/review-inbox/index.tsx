@@ -650,8 +650,12 @@ export function ReviewInbox({
                       <NativeDisclosure
                         title={
                           <span className="text-ui text-foreground">
-                            {compactPreview(plan.text ?? '', 180) ||
-                              'Empty plan'}
+                            {compactPreview(
+                              (plan.text ?? '')
+                                .replace(/^#{1,6}\s.*$/gm, '')
+                                .replace(/[*_`]/g, ''),
+                              180,
+                            ) || 'Empty plan'}
                           </span>
                         }
                         triggerLabel="Show the full plan"

@@ -25,6 +25,12 @@ export function StageRecord({ session, record, actions }: Props) {
     const current =
       session.plan?.status === 'plan-ready' &&
       session.plan.id === record.planId;
+    const answered = session.messages.some(
+      message =>
+        message.runId === record.runId &&
+        message.author === 'agent' &&
+        message.body.trim() === record.text.trim(),
+    );
     return (
       <section
         id={`plan-${record.planId}`}
@@ -34,10 +40,16 @@ export function StageRecord({ session, record, actions }: Props) {
         <h2 className="text-sm font-medium">
           {record.round > 0 ? `Revised plan ${record.round + 1}` : 'Plan'}
         </h2>
-        <MessageBody
-          body={record.text || 'The session returned an empty plan.'}
-          className="text-ui"
-        />
+        {answered ? (
+          <p className="text-xs text-muted-foreground">
+            The plan is the answer above.
+          </p>
+        ) : (
+          <MessageBody
+            body={record.text || 'The session returned an empty plan.'}
+            className="text-ui"
+          />
+        )}
         {current && <PlanDecision session={session} actions={actions} />}
       </section>
     );
@@ -45,7 +57,7 @@ export function StageRecord({ session, record, actions }: Props) {
   if (record.kind === 'plan-decision')
     return (
       <Separator
-        label={`${decisionVerbs[record.decision]} ${actorText(record.by)}${record.mode ? ` · ${modeLabel(session.provider, record.mode)}` : ''}`}
+        label={`${decisionVerbs[record.decision]} ${actorText(record.by)}`}
       />
     );
   if (record.kind === 'mode-change')
