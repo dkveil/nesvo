@@ -58,15 +58,8 @@ export type AutomationField =
 
 export type AutomationErrors = Partial<Record<AutomationField, string>>;
 
-export const REVIEW_CHECK_COMMAND = JSON.stringify([
-  'gh',
-  'pr',
-  'list',
-  '--state',
-  'open',
-  '--json',
-  'number,headRefOid',
-]);
+export const REVIEW_CHECK_COMMAND =
+  '["gh", "pr", "list", "--state", "open", "--json", "number,headRefOid"]';
 
 export const SKILL_PROMPT_MESSAGE =
   'Automation prompts are plain text. Skills (/name) are not supported yet.';
