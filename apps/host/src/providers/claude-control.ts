@@ -57,7 +57,21 @@ export const isClaudeControlServer = (value: unknown): boolean =>
       !!server &&
       typeof server === 'object' &&
       (server as Record<string, unknown>).name === SESSION_CONTROL_NAMESPACE &&
-      (server as Record<string, unknown>).status === 'connected',
+      (server as Record<string, unknown>).status === 'connected' &&
+      (server as Record<string, unknown>).source === 'sdk',
+  );
+
+export const claudeControlToolNames = (
+  tools: readonly SessionControlToolDefinition[],
+) => new Set(tools.map(tool => `${claudeControlToolPrefix}${tool.name}`));
+
+export const withoutControlServer = <T>(
+  servers: Record<string, T>,
+): Record<string, T> =>
+  Object.fromEntries(
+    Object.entries(servers).filter(
+      ([name]) => name !== SESSION_CONTROL_NAMESPACE,
+    ),
   );
 
 export const isClaudeMcpMessage = (value: Record<string, unknown>) => {

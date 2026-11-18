@@ -50,10 +50,11 @@ import {
 import { recordProviderProcess } from '../process/provider-processes';
 import {
   claudeControlInitialize,
-  claudeControlToolPrefix,
+  claudeControlToolNames,
   createClaudeControlChannel,
   isClaudeControlServer,
   isClaudeMcpMessage,
+  withoutControlServer,
 } from './claude-control';
 import type { SessionControlTurn } from '../session-control/types';
 
@@ -1056,9 +1057,12 @@ export function startClaude(options: {
           : permission.cli;
       const readOnly = options.mode === 'read-only';
       const integrations = await options.mcpTurn?.verify();
-      const servers = integrations
+      const configured = integrations
         ? { ...integrations.servers, ...integrations.projectServers }
         : {};
+      const servers = options.control
+        ? withoutControlServer(configured)
+        : configured;
       const canAsk =
         options.approvals === true &&
         !options.compact &&
@@ -1213,6 +1217,9 @@ export function startClaude(options: {
           }),
         });
       if (options.control && !control) controlUnavailable();
+      const controlToolNames = options.control
+        ? claudeControlToolNames(options.control.tools)
+        : new Set<string>();
       const settleApproval = (id: string) => {
         const pending = approvals.get(id);
         if (!pending) return;
@@ -1301,10 +1308,7 @@ export function startClaude(options: {
           return;
         }
         const { request: ask } = parsed;
-        if (
-          control &&
-          String(request.tool_name).startsWith(claudeControlToolPrefix)
-        ) {
+        if (control && controlToolNames.has(String(request.tool_name))) {
           try {
             writeFrame(
               claudePermissionAnswer(ask.requestId, {
