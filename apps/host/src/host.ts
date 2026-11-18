@@ -1604,6 +1604,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             const row = database
               .prepare('SELECT value FROM metadata WHERE key = ?')
               .get('instance_id');
+            const quarantinedSessionCount = store.quarantinedCount();
             return {
               type: 'health',
               id: request.id,
@@ -1612,6 +1613,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 instanceId: row?.value,
                 protocolVersion: 1,
                 capabilities: [...ADVERTISED_CAPABILITIES],
+                ...(quarantinedSessionCount ? { quarantinedSessionCount } : {}),
               }),
             };
           } catch (error) {

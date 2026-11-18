@@ -12,6 +12,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1659,7 +1660,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      14,
+      15,
     );
     migrated.close();
     const reopened = open();
@@ -4039,6 +4040,8 @@ test(
     const database = new DatabaseSync(path);
     database.exec('PRAGMA user_version = 99');
     database.close();
+    const backup = 'nesvo.sqlite.v14.bak';
+    await writeFile(join(directory, backup), 'backup');
     const host = launch(directory, join(directory, 'unused-pids.json'));
     t.after(async () => {
       if (host.child.exitCode === null) host.child.kill();
@@ -4053,11 +4056,143 @@ test(
     const check = new DatabaseSync(path);
     try {
       assert.equal(check.prepare('PRAGMA user_version').get().user_version, 99);
+      assert.match(host.error(), /A newer Nesvo is needed/);
+      assert.ok(host.error().includes(backup));
     } finally {
       check.close();
     }
   },
 );
+
+test('host backs up the pre-migration database and keeps the three newest copies', async t => {
+  const directory = await mkdtemp(join(tmpdir(), "nesvo-migration-'"));
+  const path = join(directory, 'nesvo.sqlite');
+  const database = new DatabaseSync(path);
+  database.exec(`
+    CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO metadata VALUES ('backup-marker', 'before migration');
+    PRAGMA user_version = 14;
+  `);
+  database.close();
+  for (const version of [11, 12, 13]) {
+    const backup = `${path}.v${version}.bak`;
+    await writeFile(backup, 'older backup');
+    await utimes(backup, version, version);
+  }
+  const host = launch(directory, join(directory, 'unused-pids.json'));
+  t.after(async () => {
+    if (host.child.exitCode === null) host.child.kill();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  assert.equal((await host.request('health')).type, 'health');
+  await host.stop();
+  assert.deepEqual(
+    (await readdir(directory)).filter(name => name.endsWith('.bak')).sort(),
+    [12, 13, 14].map(version => `nesvo.sqlite.v${version}.bak`),
+  );
+  const backup = new DatabaseSync(`${path}.v14.bak`, { readOnly: true });
+  try {
+    assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 14);
+    assert.equal(
+      backup
+        .prepare("SELECT value FROM metadata WHERE key = 'backup-marker'")
+        .get().value,
+      'before migration',
+    );
+  } finally {
+    backup.close();
+  }
+});
+
+test('host names the database when the integrity check fails', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-corrupt-'));
+  const path = join(directory, 'nesvo.sqlite');
+  await writeFile(path, Buffer.alloc(4096, 0xff));
+  const host = launch(directory, join(directory, 'unused-pids.json'));
+  t.after(async () => {
+    if (host.child.exitCode === null) host.child.kill();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  assert.equal((await bounded(host.exited, 'Host startup timed out')).code, 1);
+  assert.match(host.error(), /SQLite integrity check failed/);
+  assert.ok(host.error().includes(path));
+});
+
+test('host quarantines incompatible session documents and recovers healthy sessions', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-quarantine-'));
+  const path = join(directory, 'nesvo.sqlite');
+  const pidFile = join(directory, 'unused-pids.json');
+  let host = launch(directory, pidFile);
+  t.after(async () => {
+    if (host.child.exitCode === null) host.child.kill();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const input = { title: 'Healthy session', directory, model: 'sonnet' };
+  const healthy = (await host.request('create-session', input)).session;
+  const incompatible = (
+    await host.request('create-session', { ...input, title: 'QuarantineShape' })
+  ).session;
+  const malformed = (
+    await host.request('create-session', { ...input, title: 'QuarantineJson' })
+  ).session;
+  await host.stop();
+
+  const documents = new Map([
+    [
+      incompatible.id,
+      JSON.stringify({ ...incompatible, addedByNewerHost: true }),
+    ],
+    [malformed.id, '{invalid'],
+  ]);
+  const database = new DatabaseSync(path);
+  try {
+    database.exec(
+      'PRAGMA ignore_check_constraints = ON; DROP TRIGGER history_session_update; PRAGMA user_version = 14',
+    );
+    for (const [id, document] of documents)
+      database
+        .prepare('UPDATE sessions SET document = ? WHERE id = ?')
+        .run(document, id);
+  } finally {
+    database.close();
+  }
+
+  host = launch(directory, pidFile);
+  const health = (await host.request('health')).health;
+  assert.equal(health.quarantinedSessionCount, 2);
+  const list = await host.request('list-sessions');
+  assert.deepEqual(
+    list.sessions.map(session => session.id),
+    [healthy.id],
+  );
+  const search = await host.request('search-history', {
+    query: 'QuarantineShape',
+  });
+  assert.deepEqual(search.search.results, []);
+  await host.stop();
+  assert.match(host.error(), /Invalid session documents quarantined: 2/);
+
+  const check = new DatabaseSync(path, { readOnly: true });
+  try {
+    for (const row of check.prepare('SELECT * FROM session_quarantine').all()) {
+      assert.equal(row.document, documents.get(row.session_id));
+      assert.match(row.error_summary, /unrecognized_keys|Invalid JSON/);
+      assert.ok(Number.isFinite(Date.parse(row.quarantined_at)));
+    }
+    assert.deepEqual(check.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    check.close();
+  }
+  host = launch(directory, pidFile);
+  assert.equal(
+    (await host.request('health')).health.quarantinedSessionCount,
+    2,
+  );
+  await host.stop();
+});
 
 const loadScheduledJobContracts = async directory => {
   const outfile = join(directory, 'contracts.mjs');
@@ -6118,7 +6253,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            14,
+            15,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -6201,11 +6336,11 @@ test(
       }
     });
 
-    await t.test('a version 13 database is refused', async () => {
+    await t.test('a version 16 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 15');
+      newer.exec('PRAGMA user_version = 16');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -6217,7 +6352,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          15,
+          16,
         );
       } finally {
         check.close();
@@ -8898,7 +9033,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        14,
+        15,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -8949,7 +9084,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        14,
+        15,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -17392,7 +17527,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      14,
+      15,
     );
     database
       .prepare(
@@ -17755,7 +17890,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 14);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 15);
     } finally {
       check.close();
     }

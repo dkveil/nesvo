@@ -80,26 +80,63 @@ const originLinks = (
 };
 
 const SESSION_COLUMNS =
-  'document, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId';
+  'id, document, scheduled_job_id AS scheduledJobId, scheduled_job_run_id AS scheduledJobRunId';
 
-const toSession = (row: Record<string, SQLOutputValue>): Session =>
-  sessionSchema.parse({
+const NOT_QUARANTINED =
+  'NOT EXISTS (SELECT 1 FROM session_quarantine WHERE session_id = sessions.id)';
+
+const decodeSession = (row: Record<string, SQLOutputValue>) => {
+  let document: unknown;
+  try {
+    document = JSON.parse(String(row.document));
+  } catch {
+    return { error: 'Invalid JSON' };
+  }
+  if (!document || typeof document !== 'object' || Array.isArray(document))
+    return { error: 'Expected a session object' };
+  const parsed = sessionSchema.safeParse({
     pullRequest: null,
-    ...JSON.parse(String(row.document)),
+    ...document,
     scheduledJobId: row.scheduledJobId ?? null,
     scheduledJobRunId: row.scheduledJobRunId ?? null,
   });
+  if (!parsed.success)
+    return {
+      error: parsed.error.issues
+        .slice(0, 10)
+        .map(issue => `${issue.path.join('.') || 'document'} (${issue.code})`)
+        .join('; '),
+    };
+  if (parsed.data.id !== row.id)
+    return { error: 'Session ID does not match its row' };
+  return { session: parsed.data };
+};
+
+type QuarantinedSession = { id: string; document: string; error: string };
 
 export class SessionStore {
   constructor(private readonly database: DatabaseSync) {}
 
   list(): Session[] {
-    return this.database
+    const rows = this.database
       .prepare(
-        `SELECT ${SESSION_COLUMNS} FROM sessions ORDER BY updated_at DESC, id`,
+        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${NOT_QUARANTINED} ORDER BY updated_at DESC, id`,
       )
-      .all()
-      .map(toSession);
+      .all();
+    const sessions: Session[] = [];
+    const invalid: QuarantinedSession[] = [];
+    for (const row of rows) {
+      const decoded = decodeSession(row);
+      if (decoded.session) sessions.push(decoded.session);
+      else
+        invalid.push({
+          id: String(row.id),
+          document: String(row.document),
+          error: decoded.error,
+        });
+    }
+    this.quarantine(invalid);
+    return sessions;
   }
 
   providerConversations(): {
@@ -121,9 +158,51 @@ export class SessionStore {
 
   get(id: string): Session | undefined {
     const row = this.database
-      .prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`)
+      .prepare(
+        `SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ? AND ${NOT_QUARANTINED}`,
+      )
       .get(id);
-    return row ? toSession(row) : undefined;
+    if (!row) return;
+    const decoded = decodeSession(row);
+    if (decoded.session) return decoded.session;
+    this.quarantine([
+      { id, document: String(row.document), error: decoded.error },
+    ]);
+  }
+
+  quarantinedCount(): number {
+    return Number(
+      this.database
+        .prepare('SELECT count(*) AS count FROM session_quarantine')
+        .get()?.count,
+    );
+  }
+
+  private quarantine(rows: QuarantinedSession[]): void {
+    if (!rows.length) return;
+    const at = new Date().toISOString();
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const record = this.database.prepare(
+        'INSERT INTO session_quarantine (session_id, document, error_summary, quarantined_at) VALUES (?, ?, ?, ?)',
+      );
+      const clear = this.database.prepare(
+        "UPDATE sessions SET document = 'null' WHERE id = ?",
+      );
+      const removeFromHistory = this.database.prepare(
+        'DELETE FROM history_entries WHERE session_id = ?',
+      );
+      for (const row of rows) {
+        record.run(row.id, row.document, row.error, at);
+        clear.run(row.id);
+        removeFromHistory.run(row.id);
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+    console.error(`Invalid session documents quarantined: ${rows.length}.`);
   }
 
   create(

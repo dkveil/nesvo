@@ -46,14 +46,20 @@ function supportsFts(database: DatabaseSync): boolean {
   return true;
 }
 
-export function installHistoryIndex(database: DatabaseSync, upgrade: boolean) {
+export function installHistoryIndex(
+  database: DatabaseSync,
+  upgrade: boolean,
+  replaceSessionUpdate: boolean,
+) {
   const mode = supportsFts(database) ? 'fts5' : 'like';
   const previous = database
     .prepare("SELECT value FROM metadata WHERE key = 'history_index_mode'")
     .get()?.value;
-  if (mode === previous && !upgrade) return;
+  const rebuild = mode !== previous || upgrade;
+  if (!rebuild && !replaceSessionUpdate) return;
 
-  database.exec(`
+  if (rebuild)
+    database.exec(`
     CREATE TABLE IF NOT EXISTS history_entries (
       id INTEGER PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -72,9 +78,13 @@ export function installHistoryIndex(database: DatabaseSync, upgrade: boolean) {
     CREATE TRIGGER IF NOT EXISTS history_session_insert AFTER INSERT ON sessions BEGIN
       ${indexSession}
     END;
+  `);
+  database.exec(`
     CREATE TRIGGER IF NOT EXISTS history_session_update AFTER UPDATE OF document ON sessions
-    WHEN (OLD.document -> '$.title', OLD.document -> '$.messages') IS NOT
-         (NEW.document -> '$.title', NEW.document -> '$.messages')
+    WHEN CASE WHEN NEW.document <> 'null' AND json_valid(OLD.document) THEN
+      (OLD.document -> '$.title', OLD.document -> '$.messages') IS NOT
+      (NEW.document -> '$.title', NEW.document -> '$.messages')
+    ELSE 0 END
     BEGIN
       DELETE FROM history_entries WHERE session_id = NEW.id AND message_id <> ''
         AND message_id NOT IN (
@@ -84,6 +94,8 @@ export function installHistoryIndex(database: DatabaseSync, upgrade: boolean) {
       ${indexSession}
     END;
   `);
+
+  if (!rebuild) return;
 
   if (mode === 'fts5') {
     database.exec(`

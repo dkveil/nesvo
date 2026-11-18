@@ -34,8 +34,8 @@ export function migrateCosts(database: DatabaseSync): void {
         document ->> '$.directory',
         CASE WHEN message.value ->> '$.usage.source' = 'provider-report'
           THEN message.value ->> '$.usage.costUsd' END
-      FROM sessions, json_each(document, '$.messages') AS message
-      WHERE message.value ->> '$.author' = 'agent';
+      FROM sessions, json_each(CASE WHEN json_valid(document) THEN document END, '$.messages') AS message
+      WHERE CASE WHEN message.type = 'object' THEN message.value ->> '$.author' = 'agent' ELSE 0 END;
   `);
 }
 

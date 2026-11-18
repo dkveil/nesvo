@@ -639,6 +639,7 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
 ]);
 
 export const hostHealthSchema = z.strictObject({
+  quarantinedSessionCount: z.number().int().nonnegative().optional(),
   status: z.literal('ready'),
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),

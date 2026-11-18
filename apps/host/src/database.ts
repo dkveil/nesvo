@@ -1,12 +1,62 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
 import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
 
-const DATABASE_VERSION = 14;
+const DATABASE_VERSION = 15;
+const BACKUP_LIMIT = 3;
+
+const migrationBackups = (path: string): string[] =>
+  readdirSync(dirname(path), { withFileTypes: true })
+    .filter(
+      entry => entry.isFile() && /^nesvo\.sqlite\.v\d+\.bak$/.test(entry.name),
+    )
+    .map(entry => {
+      const file = join(dirname(path), entry.name);
+      return { file, modified: statSync(file).mtimeMs };
+    })
+    .sort((first, second) => second.modified - first.modified)
+    .map(entry => entry.file);
+
+const backupBeforeMigration = (
+  database: DatabaseSync,
+  path: string,
+  version: number,
+) => {
+  const backup = `${path}.v${version}.bak`;
+  const temporary = `${backup}.${randomUUID()}.tmp`;
+  try {
+    database.prepare('VACUUM INTO ?').run(temporary);
+    renameSync(temporary, backup);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  for (const file of migrationBackups(path)
+    .filter(file => file !== backup)
+    .slice(BACKUP_LIMIT - 1))
+    rmSync(file);
+};
+
+const checkDatabase = (database: DatabaseSync, path: string) => {
+  try {
+    const problems = database
+      .prepare('PRAGMA quick_check')
+      .all()
+      .map(row => row.quick_check)
+      .filter(
+        problem =>
+          problem !== 'ok' && problem !== 'CHECK constraint failed in sessions',
+      );
+    if (problems.length) throw new Error(String(problems[0]));
+  } catch (error) {
+    throw new Error(
+      `SQLite integrity check failed for ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
 
 export const ownDataDirectory = (directory: string) =>
   Effect.acquireRelease(
@@ -98,7 +148,9 @@ const rewriteDocuments = (
   table: string,
   rewrite: (document: Record<string, unknown>) => void,
 ) => {
-  const rows = database.prepare(`SELECT id, document FROM ${table}`).all();
+  const rows = database
+    .prepare(`SELECT id, document FROM ${table} WHERE json_valid(document)`)
+    .all();
   const update = database.prepare(
     `UPDATE ${table} SET document = ? WHERE id = ?`,
   );
@@ -106,7 +158,9 @@ const rewriteDocuments = (
     const document = JSON.parse(String(row.document)) as Record<
       string,
       unknown
-    >;
+    > | null;
+    if (!document || typeof document !== 'object' || Array.isArray(document))
+      continue;
     rewrite(document);
     update.run(JSON.stringify(document), String(row.id));
   }
@@ -119,8 +173,11 @@ const renameWorkflowDocumentKeys = (database: DatabaseSync) => {
       pipelineStepId: 'workflowStepId',
     });
     if (Array.isArray(document.messages))
-      for (const message of document.messages as Record<string, unknown>[])
-        if (message.origin === 'pipeline') message.origin = 'workflow';
+      for (const message of document.messages as (Record<
+        string,
+        unknown
+      > | null)[])
+        if (message?.origin === 'pipeline') message.origin = 'workflow';
   });
   rewriteDocuments(database, 'workflow_runs', document =>
     renameKeys(document, { pipeline: 'workflow' }),
@@ -129,17 +186,29 @@ const renameWorkflowDocumentKeys = (database: DatabaseSync) => {
 
 export const openDatabaseSync = (directory: string): DatabaseSync => {
   mkdirSync(directory, { recursive: true });
-  const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+  const path = join(directory, 'nesvo.sqlite');
+  const existing = Boolean(statSync(path, { throwIfNoEntry: false })?.size);
+  const database = new DatabaseSync(path);
   try {
+    checkDatabase(database, path);
     const version = database.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version > DATABASE_VERSION) {
-      throw new Error('Unsupported database version');
+    if (typeof version !== 'number')
+      throw new Error(`Could not read the database version for ${path}.`);
+    if (version > DATABASE_VERSION) {
+      const backups = migrationBackups(path);
+      throw new Error(
+        `Database ${path} uses schema version ${version}. A newer Nesvo is needed.${backups.length ? ` Backups: ${backups.map(file => basename(file)).join(', ')}.` : ''}`,
+      );
     }
+    if (existing && version < DATABASE_VERSION)
+      backupBeforeMigration(database, path, version);
     database.exec(
       'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250;',
     );
     database.exec('BEGIN IMMEDIATE');
     try {
+      if (version < 15)
+        database.exec('DROP TRIGGER IF EXISTS history_session_update');
       if (version < 10) renameWorkflowTables(database);
       database.exec(
         'CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
@@ -150,20 +219,23 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL)',
       );
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS session_quarantine (session_id TEXT PRIMARY KEY REFERENCES sessions(id), document TEXT NOT NULL, error_summary TEXT NOT NULL, quarantined_at TEXT NOT NULL)',
+      );
       if (version < 3)
         database.exec(
-          "UPDATE sessions SET document = json_set(document, '$.mode', 'read-only', '$.pendingApprovals', json('[]'))",
+          "UPDATE sessions SET document = json_set(document, '$.mode', 'read-only', '$.pendingApprovals', json('[]')) WHERE json_valid(document)",
         );
       if (version < 4)
         database.exec(
-          "UPDATE sessions SET document = json_set(document, '$.parentId', NULL, '$.parentRunId', NULL, '$.scope', NULL, '$.delegationEnabled', json('false'), '$.delegations', json('[]'))",
+          "UPDATE sessions SET document = json_set(document, '$.parentId', NULL, '$.parentRunId', NULL, '$.scope', NULL, '$.delegationEnabled', json('false'), '$.delegations', json('[]')) WHERE json_valid(document)",
         );
       database.exec(
         'CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), run_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, document TEXT NOT NULL CHECK (json_valid(document)), updated_at TEXT NOT NULL, UNIQUE(session_id, version))',
       );
       if (version < 6)
         database.exec(
-          "UPDATE sessions SET document = json_set(document, '$.activities', json('[]'), '$.activitiesTruncated', json('false'), '$.activityTruncatedRunIds', json('[]'))",
+          "UPDATE sessions SET document = json_set(document, '$.activities', json('[]'), '$.activitiesTruncated', json('false'), '$.activityTruncatedRunIds', json('[]')) WHERE json_valid(document)",
         );
       database.exec(
         "CREATE TABLE IF NOT EXISTS scheduled_jobs (id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (revision > 0), name TEXT NOT NULL, prompt TEXT NOT NULL, directory TEXT NOT NULL, provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex')), model TEXT NOT NULL, effort TEXT, mode TEXT NOT NULL CHECK (mode = 'read-only'), schedule TEXT NOT NULL CHECK (json_valid(schedule)), time_zone TEXT NOT NULL, active INTEGER NOT NULL CHECK (active IN (0, 1)), timeout_minutes INTEGER NOT NULL, next_run_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK (active = 1 OR next_run_at IS NULL))",
@@ -245,7 +317,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE INDEX IF NOT EXISTS session_groups_parent ON session_groups (parent_id, sort_order)',
       );
-      installHistoryIndex(database, version < 12);
+      installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
     } catch (error) {
@@ -261,6 +333,13 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
 
 export const openDatabase = (directory: string) =>
   Effect.acquireRelease(
-    Effect.try(() => openDatabaseSync(directory)),
+    Effect.try(() => {
+      try {
+        return openDatabaseSync(directory);
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    }),
     database => Effect.sync(() => database.close()),
   );
