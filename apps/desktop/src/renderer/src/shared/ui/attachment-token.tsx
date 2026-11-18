@@ -15,6 +15,8 @@ type AttachmentTokenProps = Omit<ComponentProps<'span'>, 'children'> & {
   detail?: string;
   src?: string | null;
   status?: 'ready' | 'uploading' | 'failed';
+  icon?: ReactNode;
+  kind?: string;
   onOpen?: () => void;
   menu?: ReactNode;
 };
@@ -30,6 +32,8 @@ export function AttachmentToken({
   detail,
   src,
   status = 'ready',
+  icon,
+  kind = 'Image',
   onOpen,
   menu,
   className,
@@ -49,6 +53,13 @@ export function AttachmentToken({
           draggable={false}
           className="size-3.5 shrink-0 rounded-sm object-cover"
         />
+      ) : icon ? (
+        <span
+          aria-hidden="true"
+          className="flex shrink-0 text-muted-foreground [&_svg]:size-3.5"
+        >
+          {icon}
+        </span>
       ) : (
         <ImageIcon
           aria-hidden="true"

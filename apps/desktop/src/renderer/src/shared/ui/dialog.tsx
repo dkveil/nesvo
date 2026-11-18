@@ -54,7 +54,7 @@ function DialogContent({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
-  placement?: 'center' | 'top';
+  placement?: 'center' | 'top' | 'fullscreen';
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -66,6 +66,8 @@ function DialogContent({
           'fixed left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] gap-4 rounded-overlay border bg-card p-6 shadow-(--dialog-shadow) duration-slow ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.97] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97] sm:max-w-lg',
           placement === 'center' && 'top-[50%] translate-y-[-50%]',
           placement === 'top' && 'top-[12vh]',
+          placement === 'fullscreen' &&
+            'inset-3 flex w-auto max-w-none translate-x-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none',
           className,
         )}
         {...props}

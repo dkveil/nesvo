@@ -44,6 +44,7 @@ import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { Hint } from '@/shared/ui/tooltip';
 import { AgentReviewTab, type AgentReviewApi } from './agent-review-tab';
 import { CheckoutControl } from './checkout-control';
+import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
 import { CodeTab } from './code-tab';
 import { MergeControl } from './merge-control';
 import { mergeHint } from './merge-hint';
@@ -100,6 +101,7 @@ type PullRequestPanelProps = {
   linkedSession: Session | null;
   sendTargetTitle: string;
   onSendToSession: (text: string) => void;
+  agentComments: AgentCommentTarget;
   onLinked: (session: Session) => void;
   onClose: () => void;
 };
@@ -117,6 +119,7 @@ export default function PullRequestPanel({
   linkedSession,
   sendTargetTitle,
   onSendToSession,
+  agentComments,
   onLinked,
   onClose,
 }: PullRequestPanelProps) {
@@ -710,6 +713,7 @@ export default function PullRequestPanel({
                 commentReason={commentReason}
                 staleReason={staleReason}
                 lineCommentState={actions.states['line-comment']}
+                agentComments={agentComments}
                 onRefresh={refreshAll}
                 onLineCommentEdit={() => actions.clear('line-comment')}
                 onLineComment={async draft => {

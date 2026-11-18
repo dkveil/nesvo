@@ -1,19 +1,16 @@
-import {
-  Component,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs';
+import { FileCode2, FolderOpen, Maximize2, WrapText, X } from 'lucide-react';
+import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
+import { CodeCommentForm } from '@/features/diff-viewer/code-comment-form';
+import { DiffFileView } from '@/features/diff-viewer/diff-file-view';
+import { DiffFullscreen } from '@/features/diff-viewer/diff-fullscreen';
+import { lineRangeDescription } from '@/features/diff-viewer/line-range';
 import {
-  CodeView,
-  type CodeViewItem,
-  type CodeViewReactOptions,
-} from '@pierre/diffs/react';
-import { FileCode2, FolderOpen, WrapText, X } from 'lucide-react';
+  codeCommentOf,
+  useCommentDraft,
+} from '@/features/diff-viewer/use-comment-draft';
+import { useDiffWrap } from '@/features/diff-viewer/use-diff-wrap';
 import {
   fileKindLabels,
   reviewStatusLabels,
@@ -35,6 +32,7 @@ type Props = {
   onSelectPath: (path: string) => void;
   onClose: () => void;
   onFiles: () => void;
+  agentComments: AgentCommentTarget;
 };
 
 function parseReview(review: Review) {
@@ -74,21 +72,6 @@ function parseReview(review: Review) {
   }
 }
 
-class ViewerBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
-  { failed: boolean }
-> {
-  override state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  override render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
-}
-
 function PatchSource({
   patch,
   expanded = false,
@@ -112,39 +95,6 @@ function PatchSource({
   );
 }
 
-function FileViewer({ file, wrap }: { file: FileDiffMetadata; wrap: boolean }) {
-  const items = useMemo<CodeViewItem<undefined>[]>(
-    () => [{ id: file.cacheKey ?? file.name, type: 'diff', fileDiff: file }],
-    [file],
-  );
-  const options = useMemo<CodeViewReactOptions<undefined, undefined>>(
-    () => ({
-      theme: { dark: 'github-dark', light: 'github-light' },
-      themeType: 'system',
-      preferredHighlighter: 'shiki-js',
-      diffStyle: 'unified',
-      diffIndicators: 'classic',
-      overflow: wrap ? 'wrap' : 'scroll',
-      disableFileHeader: true,
-      hunkSeparators: 'line-info',
-      lineDiffType: 'word',
-      tokenizeMaxLength: 100000,
-      tokenizeMaxLineLength: 1000,
-      unsafeCSS:
-        ':host{--diffs-font-size:12px;--diffs-line-height:22px;--diffs-bg:var(--code-background);--diffs-fg:var(--foreground)} [data-diffs]{background:var(--code-background)} [data-code]{font-family:Consolas,monospace}',
-    }),
-    [wrap],
-  );
-  return (
-    <CodeView
-      items={items}
-      options={options}
-      disableWorkerPool
-      className="h-full min-h-0"
-    />
-  );
-}
-
 const DEFAULT_WIDTH_RATIO = 0.46;
 const DEFAULT_MAX_WIDTH_PX = 850;
 
@@ -157,6 +107,7 @@ export default function ReviewDiff({
   onSelectPath,
   onClose,
   onFiles,
+  agentComments,
 }: Props) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const close = useEffectEvent(onClose);
@@ -168,7 +119,10 @@ export default function ReviewDiff({
   const path = review.diff.files.some(file => file.path === selectedPath)
     ? selectedPath!
     : (review.diff.files[0]?.path ?? '');
-  const [wrap, setWrap] = useState(false);
+  const [wrap, setWrap] = useDiffWrap();
+  const [fullscreen, setFullscreen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const comments = useCommentDraft();
   const parsed = useMemo(() => parseReview(review), [review]);
   const selectedFile = parsed.files.get(path);
   const fileInfo = review.diff.files.find(file => file.path === path);
@@ -198,6 +152,46 @@ export default function ReviewDiff({
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
   }, []);
+  const renderViewer = (file: FileDiffMetadata) => (
+    <DiffFileView
+      key={`${review.id}:${path}`}
+      diff={file}
+      patch={review.diff.patch}
+      wrap={wrap}
+      commentable={!agentComments.blockedReason}
+      draft={comments.draft?.path === path ? comments.draft.range : null}
+      onDraftRange={range => {
+        comments.open(path, range);
+        setNotice('');
+      }}
+      renderDraft={() =>
+        comments.draft && (
+          <CodeCommentForm
+            location={`${comments.draft.path} ${lineRangeDescription(comments.draft.range)}`}
+            value={comments.draft.body}
+            targets={[
+              {
+                value: 'agent',
+                label: 'Send to agent',
+                blockedReason: agentComments.blockedReason,
+              },
+            ]}
+            target="agent"
+            onChange={comments.edit}
+            onTargetChange={() => undefined}
+            onSubmit={() => {
+              if (!comments.draft) return;
+              if (agentComments.add(codeCommentOf(comments.draft, file))) {
+                comments.close();
+                setNotice(`Added to the composer of ${agentComments.title}.`);
+              } else setNotice('The composer already holds 20 code comments.');
+            }}
+            onCancel={comments.close}
+          />
+        )
+      }
+    />
+  );
   const fallback = (
     <p className="p-4 text-xs leading-6 text-muted-foreground">
       This change cannot be displayed as numbered lines. Open the raw patch to
@@ -227,9 +221,16 @@ export default function ReviewDiff({
         <PanelAction
           label="Wrap diff lines"
           aria-pressed={wrap}
-          onClick={() => setWrap(value => !value)}
+          onClick={() => setWrap(!wrap)}
         >
           <WrapText />
+        </PanelAction>
+        <PanelAction
+          label="Open this file in fullscreen"
+          disabled={!selectedFile || selectedFile.unifiedLineCount === 0}
+          onClick={() => setFullscreen(true)}
+        >
+          <Maximize2 />
         </PanelAction>
         <PanelAction ref={closeButton} label="Close diff" onClick={onClose}>
           <X className="size-4" />
@@ -282,6 +283,15 @@ export default function ReviewDiff({
           );
         })}
       </nav>
+      {notice && (
+        <StatusMessage
+          tone="success"
+          role="status"
+          className="shrink-0 border-b px-3 py-1"
+        >
+          {notice}
+        </StatusMessage>
+      )}
       {parsed.metadata.has(path) && (
         <p
           className="shrink-0 border-b px-4 py-2 text-2xs text-muted-foreground"
@@ -293,12 +303,10 @@ export default function ReviewDiff({
       <div
         data-testid="saved-diff-content"
         data-file-path={path}
-        className="min-h-0 min-w-0 flex-1 overflow-hidden"
+        className="min-h-0 min-w-0 flex-1 overflow-auto bg-code-background"
       >
         {selectedFile && selectedFile.unifiedLineCount > 0 ? (
-          <ViewerBoundary key={`${review.id}:${path}`} fallback={fallback}>
-            <FileViewer file={selectedFile} wrap={wrap} />
-          </ViewerBoundary>
+          !fullscreen && renderViewer(selectedFile)
         ) : fileInfo && parsed.metadata.has(path) ? (
           <p className="p-4 text-xs leading-6 text-muted-foreground">
             File metadata changed. No text lines changed. The raw patch
@@ -312,6 +320,12 @@ export default function ReviewDiff({
           </p>
         )}
       </div>
+      <DiffFullscreen
+        path={fullscreen && selectedFile ? path : null}
+        onClose={() => setFullscreen(false)}
+      >
+        {selectedFile && renderViewer(selectedFile)}
+      </DiffFullscreen>
       {review.diff.patch && (
         <PatchSource
           key={review.id}

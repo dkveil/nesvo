@@ -5,6 +5,7 @@ import { statusLabels, type Provider, type Session } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
 import { MessageAttachments } from '@/features/attach-files/attachment-tray';
 import { InlineAttachment } from '@/features/attach-files/inline-attachment';
+import { CodeCommentCards } from '@/features/code-comments/code-comment-card';
 import { Chip } from '@/shared/ui/chip';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Separator } from '@/shared/ui/separator';
@@ -25,6 +26,9 @@ const renderInlineAttachment = (attachment: MessageAttachment) => (
 
 const attachmentsKey = (message: Message) =>
   message.attachments?.map(item => `${item.id}@${item.offset ?? ''}`).join();
+
+const codeCommentsKey = (message: Message) =>
+  message.codeComments?.map(item => item.id).join();
 
 type MessageArticleProps = {
   message: Message;
@@ -52,6 +56,7 @@ function sameRenderedMessage(previous: Message, next: Message) {
       previous.skillId === next.skillId &&
       previous.skillHash === next.skillHash &&
       attachmentsKey(previous) === attachmentsKey(next) &&
+      codeCommentsKey(previous) === codeCommentsKey(next) &&
       previous.interruption?.reason === next.interruption?.reason &&
       JSON.stringify(previous.skill) === JSON.stringify(next.skill))
   );
@@ -193,6 +198,9 @@ export const MessageArticle = memo(function MessageArticle({
               className="w-full text-ui leading-relaxed"
             />
           ))}
+        {message.author === 'operator' && !!message.codeComments?.length && (
+          <CodeCommentCards comments={message.codeComments} />
+        )}
         {message.author === 'agent' && !live && message.body && (
           <MessagePullRequests body={message.body} />
         )}

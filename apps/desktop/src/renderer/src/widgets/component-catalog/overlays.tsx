@@ -398,6 +398,20 @@ export function OverlaysSection() {
               </DialogDescription>
             </DialogContent>
           </Dialog>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline">Open fullscreen dialog</Button>
+            </DialogTrigger>
+            <DialogContent placement="fullscreen">
+              <DialogTitle className="border-b px-4 py-3 text-ui">
+                Sample fullscreen view
+              </DialogTitle>
+              <DialogDescription className="px-4 py-3">
+                placement=&quot;fullscreen&quot; gives one file the whole
+                window. Escape returns to the panel.
+              </DialogDescription>
+            </DialogContent>
+          </Dialog>
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="outline">Open sheet</Button>

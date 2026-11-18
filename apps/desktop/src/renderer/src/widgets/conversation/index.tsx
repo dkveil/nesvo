@@ -49,6 +49,12 @@ import { AttachmentPreviewProvider } from '@/features/attach-files/attachment-pr
 import { AttachmentTray } from '@/features/attach-files/attachment-tray';
 import { composerTokens } from '@/features/attach-files/composer-tokens';
 import type { AttachmentSupport } from '@/features/attach-files/attachment-support';
+import { codeCommentTokens } from '@/features/code-comments/composer-tokens';
+import {
+  placeCodeComments,
+  shiftCodeComments,
+  useCodeComments,
+} from '@/features/code-comments/store';
 import {
   type AttachmentPlacement,
   type ComposerAttachment,
@@ -192,6 +198,8 @@ export function Conversation({
   attachments,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
+  const sessionKey = entityKey(session);
+  const codeComments = useCodeComments(sessionKey);
   const messageInput = useRef<ComposerEditorHandle>(null);
   const latestDraft = useRef(draft);
   useEffect(() => {
@@ -455,6 +463,7 @@ export function Conversation({
         const next = draft.replace(/^\/[^\s]*\s?/, '');
         const removed = draft.length - next.length;
         onDraft(next);
+        shiftCodeComments(sessionKey, removed);
         attachments.onPlace({
           offsets: Object.fromEntries(
             attachments.items.flatMap(item =>
@@ -642,13 +651,21 @@ export function Conversation({
                   );
                 }}
                 onInput={onInput}
-                placeholder="Ask anything. / for skills"
+                placeholder={
+                  codeComments.length
+                    ? 'Describe what to do with the code comments'
+                    : 'Ask anything. / for skills'
+                }
                 value={draft}
-                tokens={composerTokens(attachments.items)}
+                tokens={[
+                  ...composerTokens(attachments.items),
+                  ...codeCommentTokens(codeComments, draft.length),
+                ]}
                 onChange={({ value, offsets, removed }) => {
                   setRecall(null);
                   onDraft(value);
                   attachments.onPlace({ offsets, removed });
+                  placeCodeComments(sessionKey, { offsets, removed });
                 }}
                 maxLength={MESSAGE_MAX_LENGTH}
               />

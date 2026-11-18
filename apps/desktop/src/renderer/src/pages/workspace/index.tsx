@@ -17,6 +17,7 @@ import type {
   DesktopReview as Review,
   DesktopSession as Session,
   ForkSessionInput,
+  CodeComment,
   MessageAttachment,
   RespondApprovalInput,
   SessionMode,
@@ -182,6 +183,13 @@ import { readDrafts, writeDrafts } from './draft-store';
 import { SessionWorkflowChip } from '@/features/session-workflow';
 import { attachmentSupport } from '@/features/attach-files/attachment-support';
 import { useComposerAttachments } from '@/features/attach-files/use-composer-attachments';
+import {
+  addCodeComment,
+  clearCodeComments,
+  readyCodeComments,
+  restoreCodeComments,
+} from '@/features/code-comments/store';
+import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
 import {
   placeInText,
   withoutPlacement,
@@ -778,6 +786,28 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('inline-attachments');
+  const codeCommentsBlockedReason = (target: Session | null) => {
+    if (!target) return 'Open a session to send comments to the agent.';
+    return store.computers
+      .find(computer => computer.id === target.hostId)
+      ?.capabilities.includes('code-comments')
+      ? ''
+      : 'Update this computer’s Nesvo host to send code comments to the agent.';
+  };
+  const agentCommentsFor = (
+    target: Session | null,
+    preferred: boolean,
+    onAdded: (target: Session) => void,
+  ): AgentCommentTarget => ({
+    title: target?.title ?? '',
+    blockedReason: codeCommentsBlockedReason(target),
+    preferred,
+    add: comment => {
+      if (!target || !addCodeComment(entityKey(target), comment)) return false;
+      onAdded(target);
+      return true;
+    },
+  });
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -1357,9 +1387,10 @@ export function Workspace() {
     selection: ModelSelection | null = null,
     mode: SessionMode | null = null,
     attachments: readonly MessageAttachment[] = [],
+    codeComments: readonly CodeComment[] = [],
   ) => {
     const sessionId = target.id;
-    const attachmentIds = attachments
+    const attachmentIds = [...attachments, ...codeComments]
       .map(item => `${item.id}@${item.offset ?? ''}`)
       .join();
     const sessionKey = entityKey(target);
@@ -1412,6 +1443,7 @@ export function Workspace() {
                 : attachments.map(withoutPlacement),
             }
           : {}),
+        ...(codeComments.length ? { codeComments: [...codeComments] } : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -1460,6 +1492,11 @@ export function Workspace() {
       Math.max(0, draft.indexOf(text)),
       text.length,
     );
+    const codeComments = readyCodeComments(
+      sessionKey,
+      Math.max(0, draft.indexOf(text)),
+      text.length,
+    );
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
@@ -1472,6 +1509,7 @@ export function Workspace() {
         clearModelSelection(sessionKey, selection);
         clearModeSelection(sessionKey, mode);
         composerAttachments.clear(sessionKey, attachments);
+        clearCodeComments(sessionKey, codeComments);
         if ((draftVersions.current[sessionKey] ?? 0) === version) {
           setDrafts(previous => ({ ...previous, [sessionKey]: '' }));
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
@@ -1481,6 +1519,7 @@ export function Workspace() {
       selection,
       mode,
       attachments,
+      codeComments,
     );
   };
   const resend = async () => {
@@ -1506,6 +1545,7 @@ export function Workspace() {
       selection,
       mode,
       last.attachments,
+      last.codeComments,
     );
   };
   const changeQueued = async (
@@ -1542,6 +1582,7 @@ export function Workspace() {
     const key = entityKey(target);
     changeDraft(key, text);
     if (entry?.attachments) composerAttachments.restore(key, entry.attachments);
+    if (entry?.codeComments) restoreCodeComments(key, entry.codeComments);
     const model = entry?.model;
     if (model)
       setModelSelections(previous => ({
@@ -4331,6 +4372,15 @@ ${text}`
             }
             onClose={closeDiff}
             onFiles={() => setPanel('files')}
+            agentComments={agentCommentsFor(
+              store.sessions.find(
+                session =>
+                  session.id === diffReview.sessionId &&
+                  session.hostId === diffReview.hostId,
+              ) ?? null,
+              true,
+              () => undefined,
+            )}
           />
         </Suspense>
       )}
@@ -4402,6 +4452,17 @@ ${text}`
               linkedSession={checkoutSession}
               sendTargetTitle={threadTarget?.title ?? ''}
               onSendToSession={sendToSession}
+              agentComments={agentCommentsFor(
+                threadTarget,
+                !!(checkoutSession ?? linkedSessions[0]),
+                target => {
+                  const key = entityKey(target);
+                  if (key !== selectedKey || browsing || creating) {
+                    selectNow(key);
+                    setPanel('pull-request');
+                  }
+                },
+              )}
               onLinked={session => store.merge([session])}
               onClose={closeDiff}
             />

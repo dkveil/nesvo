@@ -10,7 +10,6 @@ import {
   FileDiff,
   MessageSquareShare,
   PanelLeft,
-  WrapText,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { DiffStat, FileGlyph, StatusLetter } from '@/entities/file-change';
@@ -28,13 +27,65 @@ import { SectionLabel } from '@/shared/ui/section-label';
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
-import { CommentBox } from './comment-box';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
+import type { AgentCommentTarget } from '@/features/code-comments/agent-target';
+import {
+  CodeCommentForm,
+  type CodeCommentTarget,
+} from '@/features/diff-viewer/code-comment-form';
+import {
+  DiffFileView,
+  type DiffNote,
+} from '@/features/diff-viewer/diff-file-view';
+import { DiffFullscreen } from '@/features/diff-viewer/diff-fullscreen';
+import {
+  FullscreenButton,
+  WrapToggle,
+} from '@/features/diff-viewer/diff-view-toggles';
+import {
+  lineRangeDescription,
+  type DiffLineRange,
+} from '@/features/diff-viewer/line-range';
+import {
+  codeCommentOf,
+  useCommentDraft,
+} from '@/features/diff-viewer/use-comment-draft';
+import { useDiffWrap } from '@/features/diff-viewer/use-diff-wrap';
+import { ActionFeedback } from './action-feedback';
 import { readFileListOpen, saveFileListOpen } from './file-list-preference';
-import { PatchDiff } from './file-diff';
-import { lineRangeLabel, type LineDraft, type LineRange } from './line-comment';
 import { inlineThreadLines, parseFilePatch } from './patch';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
+
+export type ReviewLineComment = {
+  path: string;
+  side: 'left' | 'right';
+  line: number;
+  startLine: number | null;
+  body: string;
+};
+
+const reviewLineComment = (
+  path: string,
+  range: DiffLineRange,
+  body: string,
+): ReviewLineComment => ({
+  path,
+  side: range.side === 'old' ? 'left' : 'right',
+  line: range.endLine,
+  startLine: range.startLine === range.endLine ? null : range.startLine,
+  body,
+});
+
+const threadNotes = (
+  threads: PullRequestThread[],
+  render: (thread: PullRequestThread) => ReactNode,
+): DiffNote[] =>
+  threads.map(thread => ({
+    key: thread.id,
+    side: thread.side === 'left' ? 'old' : 'new',
+    line: thread.line ?? 0,
+    content: render(thread),
+  }));
 import type { Resource } from './use-resource';
 
 const DEFAULT_OPEN_FILES = 25;
@@ -51,11 +102,12 @@ type CodeTabProps = {
   commentReason: string;
   staleReason: string;
   lineCommentState: ActionState | undefined;
+  agentComments: AgentCommentTarget;
   onToggleViewed: (path: string) => void;
   onSendAll: (threads: PullRequestThread[]) => void;
   onRetry: () => void;
   onRefresh: () => void;
-  onLineComment: (draft: LineDraft) => Promise<boolean>;
+  onLineComment: (comment: ReviewLineComment) => Promise<boolean>;
   onLineCommentEdit: () => void;
   renderThread: (thread: PullRequestThread, showLocation: boolean) => ReactNode;
 };
@@ -68,6 +120,7 @@ export function CodeTab({
   commentReason,
   staleReason,
   lineCommentState,
+  agentComments,
   onToggleViewed,
   onSendAll,
   onRetry,
@@ -78,15 +131,26 @@ export function CodeTab({
 }: CodeTabProps) {
   const idPrefix = useId();
   const fileListId = `${idPrefix}-files`;
-  const [wrap, setWrap] = useState(false);
+  const [wrap] = useDiffWrap();
+  const [fullscreen, setFullscreen] = useState<string | null>(null);
+  const [agentNotice, setAgentNotice] = useState('');
   const [fileListOpen, setFileListOpen] = useState(readFileListOpen);
   const toggleFileList = () => {
     const next = !fileListOpen;
     setFileListOpen(next);
     saveFileListOpen(next);
   };
-  const [draft, setDraft] = useState<LineDraft | null>(null);
+  const comments = useCommentDraft();
+  const draft = comments.draft;
   const draftLocked = isActionLocked(lineCommentState);
+  const agentAvailable = !agentComments.blockedReason;
+  const [chosenTarget, setTarget] = useState<CodeCommentTarget | null>(null);
+  const target: CodeCommentTarget =
+    chosenTarget ??
+    (agentAvailable && (agentComments.preferred || commentReason)
+      ? 'agent'
+      : 'review');
+  const commentable = agentAvailable || !commentReason;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [focused, setFocused] = useState('');
   const sections = useRef(new Map<string, HTMLElement>());
@@ -129,41 +193,92 @@ export function CodeTab({
       }),
     );
   };
-  const openDraft = (path: string, range: LineRange) => {
+  const openDraft = (path: string, range: DiffLineRange) => {
     if (draftLocked) return;
-    setDraft(previous => ({
-      ...range,
-      path,
-      body: previous?.path === path ? previous.body : '',
-    }));
+    comments.open(path, range);
+    setAgentNotice('');
     onLineCommentEdit();
   };
   const submitDraft = async () => {
     if (!draft) return;
-    if (await onLineComment({ ...draft, body: draft.body.trim() }))
-      setDraft(null);
+    const diff = parsed.get(draft.path);
+    if (target === 'agent') {
+      if (!diff) return;
+      if (agentComments.add(codeCommentOf(draft, diff))) {
+        comments.close();
+        setAgentNotice(`Added to the composer of ${agentComments.title}.`);
+      } else setAgentNotice('The composer already holds 20 code comments.');
+      return;
+    }
+    if (
+      await onLineComment(
+        reviewLineComment(draft.path, draft.range, draft.body.trim()),
+      )
+    )
+      comments.close();
   };
   const renderDraft = () =>
     draft && (
-      <CommentBox
-        label={`Comment on ${lineRangeLabel(draft)}`}
-        placeholder={`Comment on ${lineRangeLabel(draft)}`}
+      <CodeCommentForm
+        location={`${draft.path} ${lineRangeDescription(draft.range)}`}
         value={draft.body}
+        targets={[
+          {
+            value: 'agent',
+            label: 'Send to agent',
+            blockedReason: agentComments.blockedReason,
+          },
+          {
+            value: 'review',
+            label: 'Add to review',
+            blockedReason: commentReason,
+          },
+        ]}
+        target={target}
+        pending={lineCommentState?.status === 'pending'}
+        feedback={
+          target === 'review' ? (
+            <ActionFeedback state={lineCommentState} />
+          ) : undefined
+        }
         onChange={body => {
-          setDraft(previous => previous && { ...previous, body });
+          comments.edit(body);
           onLineCommentEdit();
         }}
-        submitLabel="Comment"
-        canSubmit={!!draft.body.trim()}
-        state={lineCommentState}
-        blockedReason={commentReason}
+        onTargetChange={next => {
+          setTarget(next);
+          onLineCommentEdit();
+        }}
         onSubmit={() => void submitDraft()}
-        onCancel={() => setDraft(null)}
-        controls={<span>Shift-click a line to extend</span>}
-        autoFocus
-        className="my-1.5"
+        onCancel={comments.close}
       />
     );
+  const inlineThreadsOf = (file: PullRequestFile) => {
+    const diff = parsed.get(file.path);
+    const fileThreads = threadsByPath.get(file.path) ?? [];
+    return diff ? inlineThreadLines(diff, fileThreads).inline : [];
+  };
+  const renderFileDiff = (file: PullRequestFile, inFullscreen: boolean) => {
+    const diff = parsed.get(file.path) ?? null;
+    if (!diff || !file.patch) return null;
+    const showDraft =
+      draft?.path === file.path && (fullscreen === file.path) === inFullscreen;
+    return (
+      <DiffFileView
+        diff={diff}
+        patch={file.patch}
+        wrap={wrap}
+        commentable={commentable}
+        draft={showDraft ? draft.range : null}
+        notes={threadNotes(inlineThreadsOf(file), thread =>
+          renderThread(thread, false),
+        )}
+        onDraftRange={range => openDraft(file.path, range)}
+        renderDraft={renderDraft}
+      />
+    );
+  };
+  const fullscreenFile = list.find(file => file.path === fullscreen);
   const toggleViewed = (path: string) => {
     if (!viewed.has(path))
       setExpanded(previous => ({ ...previous, [path]: false }));
@@ -228,14 +343,17 @@ export function CodeTab({
             <CountBadge count={openThreads.length} tone="muted" />
           </Button>
         </DisabledHint>
-        <IconButton
-          label="Wrap diff lines"
-          pressed={wrap}
-          onClick={() => setWrap(value => !value)}
-        >
-          <WrapText />
-        </IconButton>
+        <WrapToggle />
       </Toolbar>
+      {agentNotice && (
+        <StatusMessage
+          tone="success"
+          role="status"
+          className="shrink-0 border-b py-1 pr-1.5 pl-3"
+        >
+          {agentNotice}
+        </StatusMessage>
+      )}
       {staleReason && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b py-1 pr-1.5 pl-3">
           <StatusMessage tone="warning" className="min-w-0 flex-1">
@@ -374,6 +492,12 @@ export function CodeTab({
                     }
                     className="min-w-0 flex-1"
                   />
+                  {diff && file.patch && (
+                    <FullscreenButton
+                      path={file.path}
+                      onOpen={() => setFullscreen(file.path)}
+                    />
+                  )}
                   <span className="flex shrink-0 items-center gap-1.5">
                     <Checkbox
                       id={viewedId}
@@ -397,17 +521,7 @@ export function CodeTab({
                       </InlineNotice>
                     )}
                     {diff && file.patch ? (
-                      <PatchDiff
-                        diff={diff}
-                        patch={file.patch}
-                        threads={placement.inline}
-                        wrap={wrap}
-                        draft={draft?.path === file.path ? draft : null}
-                        commentable={!commentReason}
-                        onDraftRange={range => openDraft(file.path, range)}
-                        renderThread={thread => renderThread(thread, false)}
-                        renderDraft={renderDraft}
-                      />
+                      renderFileDiff(file, false)
                     ) : (
                       <p className="px-4 py-3 text-xs text-muted-foreground">
                         {file.patch
@@ -439,6 +553,20 @@ export function CodeTab({
           {list.length === 0 && (
             <EmptyState size="sm" icon={FileDiff} title="No file changes." />
           )}
+          <DiffFullscreen
+            path={fullscreenFile ? fullscreenFile.path : null}
+            meta={
+              fullscreenFile && (
+                <DiffStat
+                  additions={fullscreenFile.additions}
+                  deletions={fullscreenFile.deletions}
+                />
+              )
+            }
+            onClose={() => setFullscreen(null)}
+          >
+            {fullscreenFile && renderFileDiff(fullscreenFile, true)}
+          </DiffFullscreen>
           {orphaned.length > 0 && (
             <section aria-label="Other review threads" className="px-2 py-2">
               <SectionLabel className="px-1">
