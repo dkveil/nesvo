@@ -269,13 +269,14 @@ export function PullRequestsView({
         )}
         {batch.pending > 0 && (
           <StatusMessage tone="loading" className="px-2">
-            Opening {batch.pending} pull requests…
+            Opening {batch.pending}{' '}
+            {batch.pending === 1 ? 'pull request' : 'pull requests'}…
           </StatusMessage>
         )}
         {batch.failures.length > 0 && (
           <ul aria-label="Pull requests that could not be opened">
-            {batch.failures.map(failure => (
-              <li key={failure.input}>
+            {batch.failures.map((failure, index) => (
+              <li key={`${index}:${failure.input}`}>
                 <StatusMessage tone="error" className="px-2">
                   <span className="font-mono">{failure.input}</span>:{' '}
                   {failure.reason}
