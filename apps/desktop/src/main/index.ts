@@ -57,6 +57,8 @@ import {
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideSessionParentSchema,
+  decideSessionPlanSchema,
+  answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideReviewSchema,
   respondApprovalSchema,
@@ -982,6 +984,28 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'decide-session-parent',
         decideSessionParentSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:decide-session-plan',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'decide-session-plan',
+        { ...decideSessionPlanSchema.parse(input), via: 'desktop' },
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:answer-session-question',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'answer-session-question',
+        { ...answerSessionQuestionSchema.parse(input), via: 'desktop' },
         route(hostId),
       );
     },

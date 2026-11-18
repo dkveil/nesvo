@@ -73,6 +73,14 @@ export function mobileAccess(
       desktopSessionSchema.parse(
         await computers.execute('decide-delegation', input, hostId),
       ),
+    decideSessionPlan: async (input, hostId) =>
+      desktopSessionSchema.parse(
+        await computers.execute('decide-session-plan', input, hostId),
+      ),
+    answerSessionQuestion: async (input, hostId) =>
+      desktopSessionSchema.parse(
+        await computers.execute('answer-session-question', input, hostId),
+      ),
     subscribe: listener => computers.subscribe(listener),
   };
   const get = () => {

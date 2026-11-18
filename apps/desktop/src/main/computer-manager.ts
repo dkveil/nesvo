@@ -283,6 +283,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to share or import workflows.',
   'workflow-child-sessions':
     'Update this computer’s Nesvo host and reconnect to run child workflow sessions.',
+  'session-stages':
+    'Update this computer’s Nesvo host and reconnect to plan sessions first and answer their questions.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -343,6 +345,16 @@ function requiredCapability(
     method === 'import-workflow-bundle'
   )
     return 'workflow-sharing';
+  if (
+    method === 'decide-session-plan' ||
+    method === 'answer-session-question' ||
+    (method === 'create-session' &&
+      typeof input === 'object' &&
+      input !== null &&
+      'planFirst' in input &&
+      input.planFirst)
+  )
+    return 'session-stages';
   if (
     method === 'read-session-changes' ||
     method === 'read-session-change-patch'
@@ -1156,6 +1168,8 @@ export class ComputerManager {
       'decide-delegation': 'session',
       'decide-worker-plan': 'session',
       'decide-session-parent': 'session',
+      'decide-session-plan': 'session',
+      'answer-session-question': 'session',
       'read-session-control-policy': 'session-control-policy',
       'save-session-control-policy': 'session-control-policy',
       'decide-review': 'review',

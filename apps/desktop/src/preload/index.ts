@@ -30,6 +30,8 @@ import {
   decideDelegationSchema,
   decideWorkerPlanSchema,
   decideSessionParentSchema,
+  decideSessionPlanSchema,
+  answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideReviewSchema,
   hostHealthSchema,
@@ -1157,6 +1159,22 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:decide-session-parent',
         decideSessionParentSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideSessionPlan: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-session-plan',
+        decideSessionPlanSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  answerSessionQuestion: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:answer-session-question',
+        answerSessionQuestionSchema.parse(input),
         route(hostId),
       ),
     ),
