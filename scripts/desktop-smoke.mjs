@@ -1765,11 +1765,36 @@ try {
   );
   await page.keyboard.press('Escape');
   await cleanup.waitFor({ state: 'hidden' });
+  assert.equal(
+    await page.getByRole('dialog', { name: 'Welcome to Nesvo' }).count(),
+    0,
+  );
   await page.keyboard.press('Control+Shift+P');
   const palette = page.getByRole('combobox', {
     name: 'Command palette',
     exact: true,
   });
+  await palette.waitFor();
+  await palette.fill('Getting started');
+  await palette.press('Enter');
+  const onboarding = page.getByRole('dialog', {
+    name: 'Welcome to Nesvo',
+    exact: true,
+  });
+  await onboarding.waitFor();
+  await onboarding.getByRole('button', { name: 'Get started' }).click();
+  await page
+    .getByRole('dialog', { name: 'Coding agents', exact: true })
+    .getByRole('button', { name: 'Skip', exact: true })
+    .click();
+  await page
+    .getByRole('dialog', { name: 'Coding agents', exact: true })
+    .waitFor({ state: 'hidden' });
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('nesvo.onboarding.v1')),
+    'completed',
+  );
+  await page.keyboard.press('Control+Shift+P');
   await palette.waitFor();
   await palette.fill('Prototype analysis');
   await page

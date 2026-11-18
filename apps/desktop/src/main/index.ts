@@ -347,7 +347,12 @@ void app.whenReady().then(async () => {
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: !smokeTest,
-        additionalArguments: [`--nesvo-color-scheme=${appliedColorScheme()}`],
+        additionalArguments: [
+          `--nesvo-color-scheme=${appliedColorScheme()}`,
+          ...(process.env.NESVO_TEST_MODE === '1'
+            ? ['--nesvo-onboarding=skip']
+            : []),
+        ],
       },
     });
     window = next;

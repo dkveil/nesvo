@@ -183,6 +183,7 @@ const launchColorScheme = appliedColorSchemeSchema.safeParse(
     .find(argument => argument.startsWith('--nesvo-color-scheme='))
     ?.split('=')[1],
 );
+const onboardingOnLaunch = !process.argv.includes('--nesvo-onboarding=skip');
 const reportError = (report: RendererErrorReport) =>
   ipcRenderer.send('nesvo:report-error', report);
 let droppedEvents = 0;
@@ -417,6 +418,7 @@ const api: DesktopApi = {
   workflows,
   colorScheme: async () =>
     colorSchemeSchema.parse(await ipcRenderer.invoke('nesvo:color-scheme')),
+  showsOnboardingOnLaunch: () => onboardingOnLaunch,
   setColorScheme: async scheme =>
     colorSchemeSchema.parse(
       await ipcRenderer.invoke(

@@ -2,6 +2,7 @@ import type { Computer, SessionGroup } from '@nesvo/contracts';
 import {
   Archive,
   BookOpen,
+  Compass,
   CalendarClock,
   ChartNoAxesColumn,
   FileCode2,
@@ -43,6 +44,7 @@ export type WorkspaceCommandActions = {
   costs: Action;
   settings: () => void;
   shortcuts: () => void;
+  gettingStarted: () => void;
   toggleSidebar: Action;
   files: Action;
   diff: Action;
@@ -198,6 +200,13 @@ export function workspaceCommands(
       shortcut: shortcutKeys('settings'),
       keywords: 'preferences configuration',
       run: actions.settings,
+    },
+    {
+      id: 'getting-started',
+      label: 'Getting started',
+      icon: <Compass />,
+      keywords: 'onboarding welcome guide setup tour introduction',
+      run: actions.gettingStarted,
     },
     {
       id: 'keyboard-shortcuts',

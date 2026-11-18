@@ -19,6 +19,7 @@ type Props = {
     'about' | 'showDataDirectory' | 'openLogs' | 'openLicenses'
   >;
   computers: Computer[];
+  onOpenGettingStarted?: () => void;
 };
 
 const COPIED_RESET_MS = 2000;
@@ -56,7 +57,7 @@ function diagnosticsSummary(about: AboutInfo, computers: Computer[]) {
   ].join('\n');
 }
 
-export function AboutSettings({ api, computers }: Props) {
+export function AboutSettings({ api, computers, onOpenGettingStarted }: Props) {
   const [about, setAbout] = useState<AboutInfo | null>(null);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -143,6 +144,18 @@ export function AboutSettings({ api, computers }: Props) {
           </Button>
         </SettingsRow>
       </SettingsSection>
+      {onOpenGettingStarted && (
+        <SettingsSection title="Help">
+          <SettingsRow
+            title="Getting started"
+            description="Providers, computers, your default folder and optional starter routines."
+          >
+            <Button variant="outline" onClick={onOpenGettingStarted}>
+              Open guide
+            </Button>
+          </SettingsRow>
+        </SettingsSection>
+      )}
       <SettingsSection title="Files">
         <SettingsRow
           title="Data folder"

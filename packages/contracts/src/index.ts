@@ -1527,6 +1527,7 @@ export type DesktopApi = {
   scheduledJobs: ScheduledJobsApi;
   workflows: WorkflowsApi;
   colorScheme: () => Promise<ColorScheme>;
+  showsOnboardingOnLaunch: () => boolean;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
   onAppliedColorScheme: (
     listener: (scheme: AppliedColorScheme) => void,

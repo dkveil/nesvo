@@ -61,6 +61,7 @@ import {
   errorDetail,
   folderBlocker,
   providerModes,
+  providers,
   providerStatusLabel,
   sessionFilterKeys,
   sessionMarkdown,
@@ -191,6 +192,11 @@ import {
   Settings,
   type SettingsPage,
 } from '@/widgets/settings';
+import { Onboarding } from '@/widgets/onboarding';
+import {
+  readOnboardingCompleted,
+  saveOnboardingCompleted,
+} from '@/widgets/onboarding/onboarding-preference';
 import { AutomationDetail, AutomationList } from '@/widgets/automations';
 import type { ScheduledJob, ScheduledJobRun } from '@/entities/scheduled-job';
 import { cn } from '@/shared/lib/cn';
@@ -771,6 +777,15 @@ export function Workspace() {
     setFilledFolderHost(threadSetup.hostId);
     setThreadSetup({ ...threadSetup, directory: threadFolder });
   }
+  const [onboardingOpen, setOnboardingOpen] = useState(
+    () =>
+      !readOnboardingCompleted() &&
+      window.nesvo?.showsOnboardingOnLaunch() !== false,
+  );
+  const closeOnboarding = () => {
+    saveOnboardingCompleted();
+    setOnboardingOpen(false);
+  };
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
@@ -3069,6 +3084,7 @@ ${text}`
       costs: window.nesvo ? openCosts : undefined,
       settings: () => setSettingsPage('general'),
       shortcuts: () => setSettingsPage('shortcuts'),
+      gettingStarted: () => setOnboardingOpen(true),
       toggleSidebar: isWide() ? () => toggleSidebar(!sidebarOpen) : undefined,
       files: sessionPanels ? openFiles : undefined,
       diff:
@@ -4836,7 +4852,14 @@ ${text}`
             ) : page === 'data' ? (
               <DataSettings api={desktopApi()} computers={store.computers} />
             ) : page === 'about' ? (
-              <AboutSettings api={desktopApi()} computers={store.computers} />
+              <AboutSettings
+                api={desktopApi()}
+                computers={store.computers}
+                onOpenGettingStarted={() => {
+                  setSettingsPage(null);
+                  setOnboardingOpen(true);
+                }}
+              />
             ) : page === 'computers' ? (
               <ManageComputers
                 computers={store.computers}
@@ -4878,6 +4901,29 @@ ${text}`
             )
           }
         </Settings>
+      )}
+      {onboardingOpen && (
+        <Onboarding
+          computer={store.computers.find(computer => computer.id === 'local')}
+          statuses={store.providerStates('local')}
+          defaultFolders={defaultFolders}
+          api={desktopApi('local')}
+          onCheckProviders={() => {
+            for (const provider of providers)
+              void store.refreshProvider(provider, 'local');
+          }}
+          onAddComputer={() => {
+            closeOnboarding();
+            setSettingsPage('computers');
+          }}
+          onJobAdded={job => automations.mergeJobs([job])}
+          onStartSession={() => {
+            closeOnboarding();
+            setThreadSetup(previous => ({ ...previous, hostId: 'local' }));
+            openCreate();
+          }}
+          onClose={closeOnboarding}
+        />
       )}
       <ConfirmDialog
         open={leaveEditor !== null}
