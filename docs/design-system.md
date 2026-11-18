@@ -162,7 +162,20 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Badge / CountBadge** — `shared/ui/badge.tsx`. Short status labels. `tone` `neutral | info | success | warning | error | accent`, `appearance` `soft | outline`, `size` `xs | sm`. CountBadge shows a number (`max` collapses to `99+`), `strong` or `muted`. Not for interactive filters (use Chip).
 
-**StatusDot** — `shared/ui/status-dot.tsx`. A 6 or 8 px dot with the same tones plus `strong`, `pulse`, and `ringClassName` to cut it out of a surface. Give it a `label` when the dot is the only signal.
+**StatusDot** — `shared/ui/status-dot.tsx`. A 6 or 8 px dot with the same tones plus `strong`, `pulse`, and `ringClassName` to cut it out of a surface. `variant` `solid` (default), `hollow` (a 1.5 px ring for a muted or unreachable state such as an offline computer) and `spinner` (a Spinner in the tone's colour that takes the same layout box as the dot, so rows keep their alignment; the global reduced-motion rule stops the rotation and leaves a static arc). Give it a `label` when the dot is the only signal. It accepts a `ref`, so it can be a tooltip trigger.
+
+Session rows use one StatusDot (`md`) as their only status glyph, mapped in `widgets/session-sidebar/session-indicator.ts`:
+
+| State | Look | When |
+| --- | --- | --- |
+| running | `info` spinner | Turn running or stopping, workflow queued, planning, implementing, checking or fixing |
+| needs you | `warning` dot | Approval, worker decision or worker plan waiting, workflow waiting for the operator or needing attention |
+| failed | `error` dot | Failed or interrupted turn, failed or rejected workflow |
+| done | `success` dot | Turn done, checks passed, result waiting for review |
+| idle | `neutral` dot | Ready, stopped |
+| offline | `neutral` hollow ring | The session's computer is offline |
+
+Hovering the dot, or focusing its row from the keyboard, shows the full status in a tooltip (`Running · 2m`, `Waiting for your approval`, `Checks passed`, `Failed: <first line of the error>`). The row's accessible name keeps the same words.
 
 **Kbd / KeyCombo** — `shared/ui/kbd.tsx`. Key hints; `KeyCombo keys="Ctrl K"` splits on spaces. Tone `tooltip` inside tooltips.
 
@@ -178,7 +191,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 ### Composites
 
-**ListRow** — `shared/ui/list-row.tsx`. Every list row. Densities `tree` (22), `compact` (28), `two-line` (title plus description), `grid` (cells laid out by `columns`), `block` (multi-line cells laid out by `columns` with auto height, for inbox items whose decisions sit beside a wrapped summary). Slots `leading`, `title`, `meta` (two-line: time or status at the end of the title line), `description`, `trailing`, `actions` (revealed on hover, focus within and selection). `selected`, `disabled`, `level` (12 px per tree level), `dropIndicator` `before | after | inside`, `tone` `default | sidebar`. `size="sm"` is the compact sidebar scale: 13 px titles like conversation text, 40 px two-line rows with the leading glyph on the title line. `heading` gives group and section rows a muted medium title that brightens on hover. `actionsPlacement="overlay"` floats the actions over the trailing edge instead of reserving their width; while they show, `meta` and `trailing` hide, and the sidebar tone paints the row colour behind them. Passing `onClick` makes the main area a button; `mainProps` reaches it for ARIA and drag handlers. Actions sit beside the button, never inside it. A row can be a Radix trigger (`<PopoverTrigger asChild><ListRow …/></PopoverTrigger>`): `aria-expanded`, `aria-haspopup` and `aria-controls` move to the main button and `data-state=open` shows the expanded `bg-accent`.
+**ListRow** — `shared/ui/list-row.tsx`. Every list row. Densities `tree` (22), `compact` (28), `two-line` (title plus description), `grid` (cells laid out by `columns`), `block` (multi-line cells laid out by `columns` with auto height, for inbox items whose decisions sit beside a wrapped summary). Slots `leading`, `title`, `meta` (two-line: the relative time at the end of the title line, or a short warning-toned call to act such as `Needs you`), `description`, `trailing`, `actions` (revealed on hover, focus within and selection). `selected`, `disabled`, `level` (12 px per tree level), `dropIndicator` `before | after | inside`, `tone` `default | sidebar`. `size="sm"` is the compact sidebar scale: 13 px titles like conversation text, 40 px two-line rows with the leading glyph on the title line. `heading` gives group and section rows a muted medium title that brightens on hover. `actionsPlacement="overlay"` floats the actions over the trailing edge instead of reserving their width; while they show, `meta` and `trailing` hide, and the sidebar tone paints the row colour behind them. Passing `onClick` makes the main area a button; `mainProps` reaches it for ARIA and drag handlers. Actions sit beside the button, never inside it. A row can be a Radix trigger (`<PopoverTrigger asChild><ListRow …/></PopoverTrigger>`): `aria-expanded`, `aria-haspopup` and `aria-controls` move to the main button and `data-state=open` shows the expanded `bg-accent`.
 
 **Panel / PanelHeader / PanelBody / Toolbar** — `shared/ui/panel.tsx`. Docked panels: PanelHeader is 40 px with an icon, title, meta and PanelAction buttons (28 px, 14 px glyphs; `label` sets the accessible name and a tooltip, like IconButton); `titleBar` aligns it with the window caption. `leading` takes a coloured domain glyph instead of `icon`, and `title` may be rich text (a muted prefix); without `meta` a long title truncates. Toolbar is a 36 px `role="toolbar"` row with ToolbarSeparator and ToolbarSpacer.
 
@@ -208,11 +221,11 @@ The composer MCP chip opens a read-only Popover. Use ListRow for a server name w
 
 ### Domain glyphs
 
-**StatusIcon** and the tone map — `entities/status`. `status` `success | error | warning | info | pending | running | idle`; `statusTones` maps each to a `Tone`, `toneText` maps a tone to its text class. Session statuses use `statusTones` from `entities/session`; workflow tones re-export the same map. ChecksIcon is built on StatusIcon.
+**StatusIcon** and the tone map — `entities/status`. `status` `success | error | warning | info | pending | running | idle`; `statusTones` maps each to a `Tone`, `toneText` maps a tone to its text class. Session rows use the StatusDot mapping above; workflow tones re-export the same map. ChecksIcon is built on StatusIcon.
 
 **DiffStat, StatusLetter, FileGlyph** — `entities/file-change`. `+N −N` counts, the A/M/D/R letter for a changed file and the coloured file-type glyph. `widgets/workspace-files/file-glyph.tsx` re-exports FileGlyph.
 
-**ProjectChip** — `shared/ui/project-chip.tsx`. Hash-coloured project swatch; it carries no domain type, so it stays in shared.
+**ProjectChip** — `shared/ui/project-chip.tsx`. Hash-coloured project swatch for the header breadcrumb and automation chips; it carries no domain type, so it stays in shared. Session rows do not use it: the leading slot holds the status dot and the directory label identifies the project.
 
 ## Migrating existing code
 
