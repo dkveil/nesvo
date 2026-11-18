@@ -1708,6 +1708,7 @@ try {
     .click();
   await skillsOpener.click();
   await waitSkillsTrace(slowSkillsDirectory, 'skills/list');
+  await closeSkills();
   await navigation.getByRole('button', { name: /^Prototype analysis/ }).click();
   await skillsOpener.click();
   await skillsPanel
