@@ -9,6 +9,7 @@ import {
   ChevronRight,
   FileDiff,
   MessageSquareShare,
+  PanelLeft,
   WrapText,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
@@ -29,6 +30,7 @@ import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { CommentBox } from './comment-box';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
+import { readFileListOpen, saveFileListOpen } from './file-list-preference';
 import { PatchDiff } from './file-diff';
 import { lineRangeLabel, type LineDraft, type LineRange } from './line-comment';
 import { inlineThreadLines, parseFilePatch } from './patch';
@@ -75,7 +77,14 @@ export function CodeTab({
   renderThread,
 }: CodeTabProps) {
   const idPrefix = useId();
+  const fileListId = `${idPrefix}-files`;
   const [wrap, setWrap] = useState(false);
+  const [fileListOpen, setFileListOpen] = useState(readFileListOpen);
+  const toggleFileList = () => {
+    const next = !fileListOpen;
+    setFileListOpen(next);
+    saveFileListOpen(next);
+  };
   const [draft, setDraft] = useState<LineDraft | null>(null);
   const draftLocked = isActionLocked(lineCommentState);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -104,7 +113,6 @@ export function CodeTab({
     thread => !list.some(file => file.path === thread.path),
   );
   const openThreads = allThreads.filter(thread => !thread.isResolved);
-  const viewedCount = list.filter(file => viewed.has(file.path)).length;
   const isOpen = (file: PullRequestFile, index: number) =>
     expanded[file.path] ??
     (!viewed.has(file.path) && index < DEFAULT_OPEN_FILES);
@@ -182,15 +190,17 @@ export function CodeTab({
     );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Toolbar
-        label="Changed files"
-        className="pl-3 text-2xs text-muted-foreground"
-      >
-        <span className="shrink-0 tabular-nums" aria-live="polite">
-          {viewedCount} / {list.length} viewed
-        </span>
+      <Toolbar label="Changed files" className="text-2xs text-muted-foreground">
+        <IconButton
+          label={fileListOpen ? 'Hide changed files' : 'Show changed files'}
+          pressed={fileListOpen}
+          aria-controls={fileListOpen ? fileListId : undefined}
+          onClick={toggleFileList}
+        >
+          <PanelLeft />
+        </IconButton>
         {files.data.truncated && (
-          <span className="shrink-0">· Some files are not listed</span>
+          <span className="shrink-0 pl-1">Some files are not listed</span>
         )}
         {threads.status === 'error' && (
           <StatusMessage tone="error" className="min-w-0 [&>span]:truncate">
@@ -237,59 +247,62 @@ export function CodeTab({
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <nav
-          aria-label="Changed files"
-          className="w-[32%] max-w-60 min-w-40 shrink-0 overflow-y-auto border-r p-1"
-        >
-          <ul className="space-y-px">
-            {list.map(file => {
-              const count = threadsByPath.get(file.path)?.length ?? 0;
-              const isViewed = viewed.has(file.path);
-              return (
-                <li key={file.path} className="flex items-center gap-1">
-                  <Checkbox
-                    aria-label={`Mark ${file.path} as viewed`}
-                    checked={isViewed}
-                    onCheckedChange={() => toggleViewed(file.path)}
-                    className="ml-1"
-                  />
-                  <Hint
-                    label={
-                      file.previousPath
-                        ? `${file.previousPath} → ${file.path}`
-                        : file.path
-                    }
-                    side="right"
-                  >
-                    <ListRow
-                      density="tree"
-                      selected={focused === file.path}
-                      onClick={() => reveal(file.path)}
-                      leading={
-                        <>
-                          <StatusLetter status={file.status} />
-                          <FileGlyph name={fileName(file.path)} />
-                        </>
-                      }
-                      title={fileName(file.path)}
-                      trailing={
-                        count > 0 && (
-                          <span aria-label={`${count} review threads`}>
-                            {count}
-                          </span>
-                        )
-                      }
-                      className={cn(
-                        'min-w-0 flex-1',
-                        isViewed && 'text-muted-foreground',
-                      )}
+        {fileListOpen && (
+          <nav
+            id={fileListId}
+            aria-label="Changed files"
+            className="w-[32%] max-w-60 min-w-40 shrink-0 animate-in overflow-y-auto border-r p-1 duration-base ease-out fade-in-0"
+          >
+            <ul className="space-y-px">
+              {list.map(file => {
+                const count = threadsByPath.get(file.path)?.length ?? 0;
+                const isViewed = viewed.has(file.path);
+                return (
+                  <li key={file.path} className="flex items-center gap-1">
+                    <Checkbox
+                      aria-label={`Mark ${file.path} as viewed`}
+                      checked={isViewed}
+                      onCheckedChange={() => toggleViewed(file.path)}
+                      className="ml-1"
                     />
-                  </Hint>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+                    <Hint
+                      label={
+                        file.previousPath
+                          ? `${file.previousPath} → ${file.path}`
+                          : file.path
+                      }
+                      side="right"
+                    >
+                      <ListRow
+                        density="tree"
+                        selected={focused === file.path}
+                        onClick={() => reveal(file.path)}
+                        leading={
+                          <>
+                            <StatusLetter status={file.status} />
+                            <FileGlyph name={fileName(file.path)} />
+                          </>
+                        }
+                        title={fileName(file.path)}
+                        trailing={
+                          count > 0 && (
+                            <span aria-label={`${count} review threads`}>
+                              {count}
+                            </span>
+                          )
+                        }
+                        className={cn(
+                          'min-w-0 flex-1',
+                          isViewed && 'text-muted-foreground',
+                        )}
+                      />
+                    </Hint>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        )}
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {list.map((file, index) => {
             const open = isOpen(file, index);
