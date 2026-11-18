@@ -925,6 +925,10 @@ void app.whenReady().then(async () => {
         throw new Error(
           'This session has no provider conversation to resume yet. Send a first message in Nesvo.',
         );
+      if (current.profileId)
+        throw new Error(
+          `This session uses a separate ${current.provider} account. Open a terminal, set ${current.provider === 'Claude Code' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME'} to that account's folder and run: ${resume.executable} ${resume.args.join(' ')}`,
+        );
       const session = await computers.execute(
         'set-session-terminal',
         { sessionId, attached: true },
