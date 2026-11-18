@@ -2959,6 +2959,9 @@ try {
   application = await launchApplication();
   const restartedPage = await application.firstWindow();
   restartedPage.setDefaultTimeout(20000);
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setSize(1280, 900),
+  );
   restartedPage.on('pageerror', error => errors.push(error.message));
   await restartedPage.emulateMedia({ reducedMotion: 'reduce' });
   await restartedPage
