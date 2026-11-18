@@ -562,7 +562,7 @@ export function GroupedSessions({
             ? moving.kind === 'session'
               ? moving.session.id
               : moving.group.id
-            : 'closed'
+            : 'move-closed'
         }
         open={!!moving}
         onOpenChange={open => {
@@ -613,7 +613,7 @@ export function GroupedSessions({
         }
       />
       <GroupDefaultsDialog
-        key={defaultsGroup?.id ?? 'closed'}
+        key={defaultsGroup?.id ?? 'defaults-closed'}
         group={defaultsGroup}
         onOpenChange={open => {
           if (!open) setDefaultsGroup(null);
