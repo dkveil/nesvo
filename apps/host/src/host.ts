@@ -92,6 +92,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'remove-orphaned-session-worktree',
   'fork-session',
   'restart-session',
+  'compact-session',
   'send-message',
   'queue-message',
   'assign-session-workflow',
@@ -1592,6 +1593,12 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessions.restart(request.input),
+              };
+            if (request.method === 'compact-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.compact(request.input),
               };
             if (request.method === 'backup-database')
               return {

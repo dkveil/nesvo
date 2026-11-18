@@ -9,6 +9,7 @@ import {
   isWritableSessionMode,
   sessionModeSchema,
   sessionHistoryLimits,
+  sessionCompactionLimit,
   sessionQueueLimit,
   toSessionMessagePage,
   toSessionMetadata,
@@ -29,6 +30,7 @@ import {
   type OrphanedSessionWorktrees,
   type ForkSessionInput,
   type RestartSessionInput,
+  type CompactSessionInput,
   type DecideDelegationInput,
   type DecideReviewInput,
   type DecideWorkerPlanInput,
@@ -356,6 +358,12 @@ type WorkerResult = {
   text: string;
   error: string | null;
 };
+
+const delegatesThroughCodex = (session: Session) =>
+  session.delegationEnabled &&
+  session.provider === 'Codex' &&
+  session.parentId === null &&
+  session.role !== 'worker';
 
 export class SessionService {
   private readonly active = new Map<string, ActiveRun>();
@@ -1027,11 +1035,150 @@ export class SessionService {
     session.interruption = null;
     session.pendingApprovals = [];
     session.externalAttachment = null;
+    session.context = null;
     if (session.providerThreadStarts.at(-1) !== session.messages.length)
       session.providerThreadStarts.push(session.messages.length);
     holdQueue(session);
     this.publish(session);
     return session;
+  }
+
+  compact(input: CompactSessionInput): Session {
+    const session = this.threadActionSession(input.sessionId);
+    if (session.revision !== input.revision)
+      throw new SessionError(
+        'invalid-request',
+        'The session changed. Choose Compact conversation again.',
+      );
+    if (
+      !session.providerInitialized ||
+      !session.providerSessionId ||
+      session.pendingClaudeFork
+    )
+      throw new SessionError(
+        'invalid-request',
+        'There is no provider conversation to compact yet. Send a message first.',
+      );
+    if (input.instructions && session.provider !== 'Claude Code')
+      throw new SessionError(
+        'invalid-request',
+        'Codex compacts the conversation without instructions.',
+      );
+    this.ensureWorktreeOpen(session);
+    this.resolveDirectory(session.directory);
+    const budget = this.options.checkCostBudgets?.(session, new Date());
+    if (budget?.refusal) throw new BudgetRefusal(budget.refusal);
+    const previous = {
+      runId: session.runId,
+      status: session.status,
+      error: session.error,
+      interruption: session.interruption ?? null,
+    };
+    session.runId = randomUUID();
+    session.status = 'running';
+    session.error = null;
+    session.interruption = null;
+    session.pendingApprovals = [];
+    session.activity = 'Compacting conversation…';
+    const onEvent = (event: ClaudeEvent | CodexEvent) => {
+      if (
+        event.type === 'init' &&
+        event.sessionId !== session.providerSessionId
+      )
+        throw new Error('Provider session mismatch');
+      if (event.type !== 'activity' || session.status !== 'running') return;
+      session.activity = event.text;
+      this.publish(session);
+    };
+    const environment = this.options.environment?.(session);
+    const handle =
+      session.provider === 'Codex'
+        ? startCodex({
+            directory: session.directory,
+            sessionId: session.providerSessionId,
+            resume: true,
+            model: session.model,
+            mode: 'read-only',
+            prompt: '',
+            compact: true,
+            experimentalApi: delegatesThroughCodex(session),
+            ...(environment ? { environment } : {}),
+            onEvent,
+          })
+        : startClaude({
+            directory: session.directory,
+            sessionId: session.providerSessionId,
+            resume: true,
+            model: session.model,
+            prompt: '',
+            mode: 'read-only',
+            compact: { instructions: input.instructions ?? null },
+            ...(environment ? { environment } : {}),
+            onEvent,
+          });
+    const active: ActiveRun = {
+      session,
+      handle,
+      finished: Promise.resolve(),
+      evictedActivities: new Set(),
+    };
+    this.active.set(session.id, active);
+    this.publish(session);
+    active.finished = handle.done
+      .then(result => {
+        active.finalizing = true;
+        const at = new Date().toISOString();
+        session.runId = previous.runId;
+        session.activity = null;
+        session.pendingApprovals = [];
+        session.interruption = previous.interruption;
+        if (result.status === 'completed' && result.compacted) {
+          session.status = previous.status;
+          session.error = previous.error;
+          session.compactions = [
+            ...session.compactions,
+            {
+              index: session.messages.length,
+              at,
+              instructions: !!input.instructions,
+            },
+          ].slice(-sessionCompactionLimit);
+          session.context = result.context
+            ? { ...result.context, reportedAt: at }
+            : null;
+        } else if (
+          result.status === 'stopped' ||
+          this.closing ||
+          active.persistenceError
+        ) {
+          session.status = previous.status;
+          session.error = previous.error;
+        } else {
+          session.status = 'failed';
+          session.error = `The conversation was not compacted. ${result.error ?? `${session.provider} did not confirm the compaction.`}`;
+        }
+        this.publish(session);
+      })
+      .catch(() => {
+        active.finalizing = true;
+        session.runId = previous.runId;
+        session.status = 'failed';
+        session.error =
+          'The compaction result could not be saved. Refresh the session before continuing.';
+        session.activity = null;
+        try {
+          this.publish(session);
+        } catch {
+          session.revision += 1;
+          this.unsaved.set(session.id, session);
+          this.emitSession(session);
+        }
+      })
+      .finally(() => {
+        if (this.active.get(session.id) === active)
+          this.active.delete(session.id);
+      });
+    return structuredClone(session);
   }
 
   private threadActionSession(sessionId: string): Session {
@@ -2316,11 +2463,7 @@ export class SessionService {
         : prompt,
       onEvent: (event: ClaudeEvent | CodexEvent) => this.update(session, event),
     };
-    const canDelegate =
-      session.delegationEnabled &&
-      session.provider === 'Codex' &&
-      session.parentId === null &&
-      session.role !== 'worker';
+    const canDelegate = delegatesThroughCodex(session);
     const controller = new AbortController();
     let baseline: WorkspaceSnapshot | null = null;
     let provider: ActiveRun['handle'] | undefined;
@@ -2626,6 +2769,11 @@ export class SessionService {
         session.messages.at(-1)!.state = session.status;
         session.messages.at(-1)!.completedAt = new Date().toISOString();
         session.messages.at(-1)!.usage = result.usage ?? null;
+        if (result.context && !active.persistenceError)
+          session.context = {
+            ...result.context,
+            reportedAt: session.messages.at(-1)!.completedAt!,
+          };
         finishActivities(session, session.status);
         const diff: ReviewDiff =
           baseline && session.status === 'completed'

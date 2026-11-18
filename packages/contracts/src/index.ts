@@ -103,6 +103,7 @@ import {
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
+  compactSessionSchema,
   queuedMessageRefSchema,
   stopRunSchema,
   respondApprovalSchema,
@@ -118,6 +119,7 @@ import {
   type AssignSessionWorkflowInput,
   type ForkSessionInput,
   type RestartSessionInput,
+  type CompactSessionInput,
   type QueuedMessageRefInput,
   type StopRunInput,
   type RespondApprovalInput,
@@ -540,6 +542,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('restart-session'),
     input: restartSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('compact-session'),
+    input: compactSessionSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-session-groups') }),
   z.strictObject({ id: z.uuid(), method: z.literal('backup-database') }),
@@ -1388,6 +1395,10 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   restartSession: (
     input: RestartSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  compactSession: (
+    input: CompactSessionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   listSessionGroups: (hostId?: HostId) => Promise<SessionGroupList>;

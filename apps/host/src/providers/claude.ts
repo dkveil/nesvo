@@ -33,7 +33,11 @@ import {
   parseClaudePermissionRequest,
 } from './claude-approvals';
 import { claudeUsageResult } from './claude-usage';
-import { claudeTurnUsage } from './turn-usage';
+import {
+  claudeContextFill,
+  claudeTurnUsage,
+  type ContextFill,
+} from './turn-usage';
 
 export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
@@ -51,6 +55,8 @@ export type ClaudeResult = {
   limit?: { resetsAt: string | null };
   structured?: unknown;
   modeUnavailable?: true;
+  context?: ContextFill;
+  compacted?: true;
 };
 
 export type ClaudeImage = { mediaType: AttachmentMediaType; data: string };
@@ -200,6 +206,22 @@ function claudeTurnInput(
   return {
     format: 'stream-json',
     payload: JSON.stringify(message) + '\n',
+    content,
+  };
+}
+
+function claudeCompactInput(instructions: string | null) {
+  const content = [
+    {
+      type: 'text',
+      text: instructions ? `/compact ${instructions}` : '/compact',
+    },
+  ];
+  return {
+    format: 'stream-json' as const,
+    payload:
+      JSON.stringify({ type: 'user', message: { role: 'user', content } }) +
+      '\n',
     content,
   };
 }
@@ -421,6 +443,7 @@ async function inspect(cancelled: () => boolean): Promise<{
   permissionModes: string[];
   supportsFork?: boolean;
   supportsHostPrompts?: boolean;
+  supportsStreamInput?: boolean;
 }> {
   let version: string | null = null;
   let permissionModes: string[] = [];
@@ -542,6 +565,7 @@ async function inspect(cancelled: () => boolean): Promise<{
       status: ready,
       permissionModes,
       supportsFork: /(?:^|\s)--fork-session(?:\s|$)/.test(help.stdout),
+      supportsStreamInput: imageInput,
       supportsHostPrompts:
         help.stdout.includes('--permission-prompt-tool') &&
         permissionChoices(help.stdout, '--permission-prompts').includes('host'),
@@ -796,6 +820,7 @@ export function startClaude(options: {
     hooks: boolean;
   };
   approvals?: boolean;
+  compact?: { instructions: string | null };
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -852,7 +877,19 @@ export function startClaude(options: {
           error:
             'This Claude Code version cannot receive images. Update the CLI or send the message without images.',
         };
-      const input = claudeTurnInput(options.prompt, options.images ?? []);
+      if (
+        options.compact &&
+        (!options.resume || !inspection.supportsStreamInput)
+      )
+        return {
+          status: 'failed',
+          error: options.resume
+            ? 'This Claude Code version cannot compact the conversation from Nesvo. Update the CLI.'
+            : 'There is no Claude Code conversation to compact yet.',
+        };
+      const input = options.compact
+        ? claudeCompactInput(options.compact.instructions)
+        : claudeTurnInput(options.prompt, options.images ?? []);
       if (options.forkFrom && !inspection.supportsFork)
         throw new Error(
           'This Claude Code version does not support native session forking.',
@@ -869,6 +906,7 @@ export function startClaude(options: {
           : permission.cli;
       const hostPrompts =
         options.approvals === true &&
+        !options.compact &&
         options.mode !== 'read-only' &&
         !options.assistantPrompt &&
         !options.outputSchema &&
@@ -934,6 +972,9 @@ export function startClaude(options: {
       let stderr = '';
       let resultSeen = false;
       let usage: TurnUsage | null = null;
+      let context: ContextFill | null = null;
+      let reportedModel: string | null = null;
+      let compactedTokens: { post: number | null } | null = null;
       const structured: { output?: { value: unknown } } = {};
       let successful = false;
       let initialized = false;
@@ -1249,12 +1290,32 @@ export function startClaude(options: {
             fail('Claude returned invalid session metadata.');
           } else {
             initialized = true;
+            reportedModel = value.model;
             emit({
               type: 'init',
               sessionId: value.session_id,
               model: value.model,
             });
           }
+        } else if (
+          value.type === 'system' &&
+          value.subtype === 'compact_boundary'
+        ) {
+          const post = object(value.compact_metadata)?.post_tokens;
+          compactedTokens = {
+            post:
+              typeof post === 'number' &&
+              Number.isSafeInteger(post) &&
+              post >= 0
+                ? post
+                : null,
+          };
+        } else if (
+          value.type === 'system' &&
+          value.subtype === 'status' &&
+          value.status === 'compacting'
+        ) {
+          emit({ type: 'activity', text: 'Compacting conversation…' });
         } else if (value.type === 'stream_event') {
           const event = object(value.event);
           if (event?.type === 'message_start') {
@@ -1373,6 +1434,11 @@ export function startClaude(options: {
             running.child.stdin.end();
           }
           usage = claudeTurnUsage(value);
+          context = claudeContextFill(
+            value,
+            reportedModel,
+            compactedTokens?.post ?? null,
+          );
           successful = value.is_error === false && value.subtype === 'success';
           if (options.outputSchema && 'structured_output' in value)
             structured.output = { value: value.structured_output };
@@ -1390,7 +1456,12 @@ export function startClaude(options: {
                     rateLimitFailure ||
                     'Claude did not complete the turn.',
             );
-          } else if (!lastText && !providerFailure && !rateLimitFailure) {
+          } else if (
+            !options.compact &&
+            !lastText &&
+            !providerFailure &&
+            !rateLimitFailure
+          ) {
             const fallback =
               typeof value.result === 'string' && value.result
                 ? value.result
@@ -1495,6 +1566,7 @@ export function startClaude(options: {
       }
       const reported = {
         ...(usage ? { usage } : {}),
+        ...(context ? { context } : {}),
         ...(structured.output ? { structured: structured.output.value } : {}),
       };
       if (failure) return { status: 'failed', error: failure };
@@ -1534,6 +1606,16 @@ export function startClaude(options: {
         );
       if (!resultSeen || !successful)
         throw new Error('Claude Code exited without a successful result.');
+      if (options.compact) {
+        if (!compactedTokens)
+          throw new Error('Claude Code did not compact the conversation.');
+        return {
+          status: 'completed',
+          error: null,
+          compacted: true,
+          ...reported,
+        };
+      }
       if (!lastText)
         throw new Error('Claude Code completed without an assistant response.');
       return { status: 'completed', error: null, ...reported };

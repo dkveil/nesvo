@@ -257,6 +257,17 @@ export const restartSessionSchema = z.strictObject({
   sessionId: z.uuid(),
   revision: z.number().int().nonnegative(),
 });
+export const compactInstructionsMaxLength = 4000;
+export const compactSessionSchema = z.strictObject({
+  sessionId: z.uuid(),
+  revision: z.number().int().nonnegative(),
+  instructions: z
+    .string()
+    .trim()
+    .min(1)
+    .max(compactInstructionsMaxLength)
+    .optional(),
+});
 export const queuedMessageSchema = z.strictObject({
   id: z.uuid(),
   text: z.string().trim().min(1).max(32000),
@@ -317,6 +328,19 @@ export const turnUsageSchema = z.strictObject({
   durationMs: tokenCountSchema,
 });
 export type TurnUsage = z.infer<typeof turnUsageSchema>;
+export const sessionContextSchema = z.strictObject({
+  usedTokens: z.number().int().nonnegative(),
+  windowTokens: z.number().int().positive(),
+  reportedAt: z.iso.datetime(),
+});
+export type SessionContext = z.infer<typeof sessionContextSchema>;
+export const sessionCompactionLimit = 200;
+export const sessionCompactionSchema = z.strictObject({
+  index: z.number().int().nonnegative(),
+  at: z.iso.datetime(),
+  instructions: z.boolean(),
+});
+export type SessionCompaction = z.infer<typeof sessionCompactionSchema>;
 export const sessionMessageSchema = z.strictObject({
   id: z.uuid(),
   runId: z.uuid(),
@@ -392,6 +416,11 @@ export const sessionSchema = z.strictObject({
     .default(null),
   pendingClaudeFork: z.uuid().nullable().default(null),
   providerThreadStarts: z.array(z.number().int().nonnegative()).default([]),
+  context: sessionContextSchema.nullable().default(null),
+  compactions: z
+    .array(sessionCompactionSchema)
+    .max(sessionCompactionLimit)
+    .default([]),
   queue: z.array(queuedMessageSchema).max(sessionQueueLimit).default([]),
   groupId: z.uuid().nullable().default(null),
   order: z.number().int().default(0),
@@ -466,6 +495,7 @@ export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type ForkSessionInput = z.infer<typeof forkSessionSchema>;
 export type RestartSessionInput = z.infer<typeof restartSessionSchema>;
+export type CompactSessionInput = z.infer<typeof compactSessionSchema>;
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;

@@ -44,7 +44,57 @@ export function claudeTurnUsage(frame: RecordValue): TurnUsage {
   });
 }
 
-export type CodexTokenSnapshot = { last: RecordValue; total: RecordValue };
+export type ContextFill = { usedTokens: number; windowTokens: number };
+
+function contextFill(
+  usedTokens: number | null,
+  windowTokens: number | null,
+): ContextFill | null {
+  return usedTokens !== null && windowTokens
+    ? { usedTokens, windowTokens }
+    : null;
+}
+
+function claudeContextWindow(
+  frame: RecordValue,
+  model: string | null,
+): number | null {
+  const models = object(frame.modelUsage);
+  if (!models || !model) return null;
+  const entry =
+    object(models[model]) ??
+    Object.values(models)
+      .map(object)
+      .find(value => value?.canonicalModel === model) ??
+    null;
+  return count(entry?.contextWindow);
+}
+
+export function claudeContextFill(
+  frame: RecordValue,
+  model: string | null,
+  compactedTokens: number | null,
+): ContextFill | null {
+  const iterations = object(frame.usage)?.iterations;
+  const last = Array.isArray(iterations) ? object(iterations.at(-1)) : null;
+  const used =
+    compactedTokens ??
+    (last
+      ? sum([
+          count(last.input_tokens),
+          count(last.cache_read_input_tokens),
+          count(last.cache_creation_input_tokens),
+          count(last.output_tokens),
+        ])
+      : null);
+  return contextFill(used, claudeContextWindow(frame, model));
+}
+
+export type CodexTokenSnapshot = {
+  last: RecordValue;
+  total: RecordValue;
+  window: number | null;
+};
 
 export function codexTokenSnapshot(
   params: RecordValue,
@@ -52,7 +102,17 @@ export function codexTokenSnapshot(
   const usage = object(params.tokenUsage);
   const last = object(usage?.last);
   const total = object(usage?.total);
-  return last && total ? { last, total } : null;
+  return last && total
+    ? { last, total, window: count(usage?.modelContextWindow) }
+    : null;
+}
+
+export function codexContextFill(
+  snapshot: CodexTokenSnapshot | null,
+): ContextFill | null {
+  return snapshot
+    ? contextFill(count(snapshot.last.totalTokens), snapshot.window)
+    : null;
 }
 
 function codexDelta(

@@ -25,9 +25,11 @@ import {
 import { makeActivity, type ProviderActivity } from './activity';
 import { readCodexUsage } from './codex-usage';
 import {
+  codexContextFill,
   codexTokenSnapshot,
   codexTurnUsage,
   type CodexTokenSnapshot,
+  type ContextFill,
 } from './turn-usage';
 
 export type CodexEvent =
@@ -53,6 +55,8 @@ export type CodexResult = {
   interruption?: 'provider-disconnected';
   usage?: TurnUsage;
   structured?: unknown;
+  context?: ContextFill;
+  compacted?: true;
 };
 
 type Executable = { command: string; prefix: string[] };
@@ -1283,6 +1287,8 @@ type CodexRunOptions = {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
   };
+  compact?: boolean;
+  experimentalApi?: boolean;
 } & ({ fork: true; prompt?: never } | { fork?: false; prompt: string });
 
 export function startCodex(options: CodexRunOptions): {
@@ -1326,11 +1332,14 @@ export function startCodex(options: CodexRunOptions): {
   const turnDone = new Promise<CodexResult>(resolve => {
     resolveTurn = resolve;
   });
+  let compacted = false;
   const outcome: { confirmed?: CodexResult } = {};
   const confirmTurn = (result: CodexResult) => {
     if (outcome.confirmed) return;
-    outcome.confirmed = result;
-    resolveTurn(result);
+    const context = codexContextFill(latestTokens);
+    const confirmed = context ? { ...result, context } : result;
+    outcome.confirmed = confirmed;
+    resolveTurn(confirmed);
   };
   const fail = (message: string) => {
     failure ??= safeMessage(message);
@@ -1698,6 +1707,18 @@ export function startCodex(options: CodexRunOptions): {
       });
       return;
     }
+    if (
+      options.compact &&
+      !turnId &&
+      message.method === 'turn/started' &&
+      params?.threadId === threadId
+    ) {
+      const turn = object(params.turn);
+      if (typeof turn?.id !== 'string' || !turn.id || turn.id.length > 200)
+        throw new Error('Codex returned an invalid compaction turn.');
+      turnId = turn.id;
+      return;
+    }
     if (!params || params.threadId !== threadId || !turnId) return;
     if (message.method === 'serverRequest/resolved') {
       if (
@@ -1728,7 +1749,17 @@ export function startCodex(options: CodexRunOptions): {
       pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       const usage = codexTurnUsage(firstTokens, latestTokens, turn);
-      if (turn.status === 'completed')
+      if (turn.status === 'completed' && options.compact)
+        confirmTurn(
+          compacted
+            ? { status: 'completed', error: null, usage, compacted: true }
+            : {
+                status: 'failed',
+                error: 'Codex did not compact the conversation.',
+                usage,
+              },
+        );
+      else if (turn.status === 'completed')
         confirmTurn(
           lastText
             ? {
@@ -1787,6 +1818,11 @@ export function startCodex(options: CodexRunOptions): {
       const item = object(params.item);
       if (!item || typeof item.id !== 'string' || typeof item.type !== 'string')
         throw new Error('Codex returned an invalid turn item.');
+      if (item.type === 'contextCompaction') {
+        if (message.method === 'item/completed') compacted = true;
+        else emit({ type: 'activity', text: 'Compacting conversation…' });
+        return;
+      }
       if (items.size >= 2000 && !items.has(item.id))
         throw new Error('Codex turn exceeded the supported item count.');
       items.set(item.id, item);
@@ -1883,6 +1919,8 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error('Unsupported Codex permission mode.');
       if (options.onDelegate && !object(options.delegationSchema))
         throw new Error('Codex delegation requires an explicit input schema.');
+      if (options.compact && (!options.resume || options.fork))
+        throw new Error('There is no Codex conversation to compact yet.');
       if (
         (options.resume || options.fork) &&
         (!options.sessionId || options.sessionId.length > 200)
@@ -1953,7 +1991,10 @@ export function startCodex(options: CodexRunOptions): {
         options.environment,
         features,
       );
-      await initialize(peer, Boolean(options.onDelegate));
+      await initialize(
+        peer,
+        Boolean(options.onDelegate) || options.experimentalApi === true,
+      );
       const isolated = await peer.request('config/read', {
         includeLayers: false,
         cwd: options.directory,
@@ -2108,41 +2149,64 @@ export function startCodex(options: CodexRunOptions): {
       emit({ type: 'init', sessionId: threadId, model: response.model });
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
       startingTurn = true;
-      const started = await peer.request('turn/start', {
-        threadId,
-        input: [
-          { type: 'text', text: options.prompt, text_elements: [] },
-          ...(skill
-            ? [{ type: 'skill', name: skill.name, path: skill.path }]
-            : []),
-          ...(options.images ?? []).map(path => ({ type: 'localImage', path })),
-        ],
-        cwd: options.directory,
-        approvalPolicy: turnApprovalPolicy,
-        approvalsReviewer: 'user',
-        sandboxPolicy: turnSandboxPolicy,
-        ...model,
-        ...effort,
-        ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
-      });
-      const turn = object(started.turn);
-      if (typeof turn?.id !== 'string' || !turn.id || turn.id.length > 200)
-        throw new Error('Codex returned an invalid turn.');
-      turnId = turn.id;
-      startingTurn = false;
-      for (const message of queued.splice(0)) consume(message);
-      result = await Promise.race([
-        turnDone,
-        peer.failure.then(error =>
-          error instanceof CodexDisconnectedError
-            ? {
-                status: 'interrupted' as const,
-                interruption: 'provider-disconnected' as const,
-                error: error.message,
-              }
-            : { status: 'failed' as const, error: error.message },
-        ),
-      ]);
+      if (options.compact) {
+        await peer.request('thread/compact/start', { threadId });
+        startingTurn = false;
+        for (const message of queued.splice(0)) consume(message);
+        result = await Promise.race([
+          turnDone,
+          peer.failure.then(error =>
+            error instanceof CodexDisconnectedError
+              ? {
+                  status: 'interrupted' as const,
+                  interruption: 'provider-disconnected' as const,
+                  error: error.message,
+                }
+              : { status: 'failed' as const, error: error.message },
+          ),
+        ]);
+      } else {
+        const started = await peer.request('turn/start', {
+          threadId,
+          input: [
+            { type: 'text', text: options.prompt, text_elements: [] },
+            ...(skill
+              ? [{ type: 'skill', name: skill.name, path: skill.path }]
+              : []),
+            ...(options.images ?? []).map(path => ({
+              type: 'localImage',
+              path,
+            })),
+          ],
+          cwd: options.directory,
+          approvalPolicy: turnApprovalPolicy,
+          approvalsReviewer: 'user',
+          sandboxPolicy: turnSandboxPolicy,
+          ...model,
+          ...effort,
+          ...(options.outputSchema
+            ? { outputSchema: options.outputSchema }
+            : {}),
+        });
+        const turn = object(started.turn);
+        if (typeof turn?.id !== 'string' || !turn.id || turn.id.length > 200)
+          throw new Error('Codex returned an invalid turn.');
+        turnId = turn.id;
+        startingTurn = false;
+        for (const message of queued.splice(0)) consume(message);
+        result = await Promise.race([
+          turnDone,
+          peer.failure.then(error =>
+            error instanceof CodexDisconnectedError
+              ? {
+                  status: 'interrupted' as const,
+                  interruption: 'provider-disconnected' as const,
+                  error: error.message,
+                }
+              : { status: 'failed' as const, error: error.message },
+          ),
+        ]);
+      }
     } catch (error) {
       if (
         options.fork &&
@@ -2150,6 +2214,13 @@ export function startCodex(options: CodexRunOptions): {
         error.code === -32601
       )
         failure = 'This Codex version does not support native thread forking.';
+      if (
+        options.compact &&
+        error instanceof CodexRpcError &&
+        error.code === -32601
+      )
+        failure =
+          'This Codex version cannot compact the conversation. Update the CLI.';
       result = failure
         ? { status: 'failed', error: failure }
         : stopped
