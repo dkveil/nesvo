@@ -103,3 +103,7 @@ M1 through M3 are implemented with small checkpoints through c20ca03, with the n
 ## R5: Automations and workflows
 
 Automations (scheduled jobs) and Workflows (step graphs) are owned by the host that stores them and run unattended on Local or a Linux daemon, read-only, with provider limits checked before each start. Missed occurrences are recorded as one skipped run and never replayed; reconnecting a client reads the stored run and pending result. The R5-G stage adds fixture-based desktop and daemon scenarios and their screenshots; see docs/testing.md. Real Codex on Windows, a scheduled run on the VPS daemon and a real Claude attempt are still pending separate evidence, listed in docs/platforms.md, and the stage needs Damian's review.
+
+## D76: Running apps
+
+Damian chose the smallest scope on November 18: a switch in Settings › General, off by default, that shows the ports of apps a session started beside that session. The host owns the reading: it lists listening TCP ports on its computer and returns only the ones it can attribute to a session, so other processes stay on the host. Nothing is stopped, restarted or replayed. A per-computer overview grouped by repository and worktree, port conflict warnings and an explicit Stop action are later options that need their own decision.
