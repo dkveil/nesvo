@@ -8,7 +8,7 @@ export function CodeCommentToken({ item }: { item: PendingCodeComment }) {
   return (
     <Hint label={`${commentFullLocation(item.comment)} · ${item.comment.body}`}>
       <AttachmentToken
-        kind="Code comment"
+        label="Code comment"
         name={commentLocation(item.comment)}
         icon={<FileCode2 />}
         className="font-mono"

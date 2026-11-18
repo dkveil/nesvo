@@ -16,7 +16,7 @@ type AttachmentTokenProps = Omit<ComponentProps<'span'>, 'children'> & {
   src?: string | null;
   status?: 'ready' | 'uploading' | 'failed';
   icon?: ReactNode;
-  kind?: string;
+  label?: string;
   onOpen?: () => void;
   menu?: ReactNode;
 };
@@ -33,7 +33,7 @@ export function AttachmentToken({
   src,
   status = 'ready',
   icon,
-  kind = 'Image',
+  label,
   onOpen,
   menu,
   className,
@@ -122,7 +122,7 @@ export function AttachmentToken({
       data-status={status}
       data-kind={kind}
       role="img"
-      aria-label={`${kind === 'file' ? 'File' : 'Image'} ${description}`}
+      aria-label={`${label ?? (kind === 'file' ? 'File' : 'Image')} ${description}`}
       className={cn(tokenClasses, className)}
       {...props}
     >
