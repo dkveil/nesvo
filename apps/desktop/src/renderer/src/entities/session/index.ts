@@ -189,6 +189,14 @@ export function sessionRoleLabel(session: Session) {
   return '';
 }
 
+export function sessionProjectLabel(
+  session: Pick<Session, 'directory' | 'worktree'>,
+) {
+  return directoryLabel(
+    session.worktree?.projectDirectory ?? session.directory,
+  );
+}
+
 export function directoryLabel(directory: string) {
   const name =
     directory

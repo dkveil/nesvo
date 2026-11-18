@@ -19,7 +19,7 @@ import {
   ModeIcon,
   modeLabel,
   modelLabel,
-  directoryLabel,
+  sessionProjectLabel,
   statusLabels,
   type Provider,
   type ProviderStates,
@@ -622,7 +622,7 @@ export function Conversation({
                 aria-label={`Working directory: ${session.directory}`}
                 className="shrink"
               >
-                <span>{directoryLabel(session.directory)}</span>
+                <span>{sessionProjectLabel(session)}</span>
               </Chip>
             </Hint>
             <span className="flex-1" />
@@ -773,7 +773,7 @@ export function Conversation({
               );
             })}
             {threadStarts.has(session.messages.length) && (
-              <Separator label="New provider thread" />
+              <Separator label="Session restarted" />
             )}
           </div>
           {session.error &&
@@ -973,11 +973,11 @@ export function Conversation({
       </ScrollArea>
       {empty && !finishedWorktree && (
         <div className="mx-auto mt-auto w-full max-w-(--composer-max-width) space-y-1 px-5 pt-10 pb-5 text-center">
-          <h2 className="text-2xl font-normal tracking-tight sm:text-3xl">
+          <h2 className="text-display font-normal tracking-tight sm:text-display-lg">
             What would you like to work on?
           </h2>
           <p className="truncate text-ui font-semibold">
-            {directoryLabel(session.directory)}
+            {sessionProjectLabel(session)}
           </p>
         </div>
       )}

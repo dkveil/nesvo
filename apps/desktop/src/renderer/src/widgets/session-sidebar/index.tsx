@@ -27,7 +27,7 @@ import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
 import {
-  directoryLabel,
+  sessionProjectLabel,
   ProviderGlyph,
   sessionFilterLabels,
   sessionFilters,
@@ -228,7 +228,7 @@ export function SessionSidebar({
     filterKeys[filter].has(entityKey(session));
   const matches = (session: Session) =>
     matchesStatus(session) &&
-    `${session.title} ${directoryLabel(session.directory)} ${computerOf(session)?.name ?? ''}`
+    `${session.title} ${sessionProjectLabel(session)} ${computerOf(session)?.name ?? ''}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
   const runOf = (session: Session) =>
@@ -336,7 +336,7 @@ export function SessionSidebar({
     const computer = computerOf(session);
     const selected = isSelected(session);
     const offline = computer?.status !== 'connected';
-    const directory = directoryLabel(session.directory);
+    const directory = sessionProjectLabel(session);
     const remote = session.hostId !== 'local';
     const unread = !selected && !!unreadKeys?.has(entityKey(session));
     const branch = branchOf(session);

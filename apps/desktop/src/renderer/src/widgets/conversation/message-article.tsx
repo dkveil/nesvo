@@ -70,7 +70,7 @@ export const MessageArticle = memo(function MessageArticle({
 }: MessageArticleProps) {
   return (
     <>
-      {threadStart && <Separator label="New provider thread" />}
+      {threadStart && <Separator label="Session restarted" />}
       {selectionChange && <Separator label={selectionChange} />}
       <article
         id={`message-${message.id}`}

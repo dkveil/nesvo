@@ -17,7 +17,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import {
-  directoryLabel,
+  sessionProjectLabel,
   sessionFilterLabels,
   sessionStatusLabel,
   type Session,
@@ -212,7 +212,7 @@ export function paletteSessions(
     .map(session => ({
       key: entityKey(session),
       title: session.title,
-      folder: directoryLabel(session.directory),
+      folder: sessionProjectLabel(session),
       group: groupLabel(session.groupId ?? null, groupsOf(session.hostId)),
       computer:
         computers.length > 1

@@ -2408,7 +2408,7 @@ ${text}`
           if (!open) setRestartTarget(null);
         }}
         title="Restart session?"
-        description={`The next message in “${restartTarget?.title ?? ''}” will start a new provider thread. Your history, folder and permission mode will stay in this session.`}
+        description={`Your next message in “${restartTarget?.title ?? ''}” starts a fresh ${restartTarget?.provider ?? 'provider'} conversation without the earlier context. The history, folder and permission mode stay in this session.`}
         confirmLabel="Restart session"
         pendingLabel="Restarting…"
         tone="default"
