@@ -3692,6 +3692,7 @@ try {
   seedNextRunAt(new Date(Date.now() - 10_000).toISOString());
   const limitedPage = await relaunchApplication();
   await limitedPage
+    .getByRole('navigation', { name: 'Primary', exact: true })
     .getByRole('button', { name: 'Automations', exact: true })
     .click();
   await limitedPage
@@ -3782,6 +3783,7 @@ try {
   );
   await writeFile(usageControl, '{}');
   await limitedPage
+    .getByRole('navigation', { name: 'Primary', exact: true })
     .getByRole('button', { name: 'Automations', exact: true })
     .click();
   await limitedPage
