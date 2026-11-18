@@ -9,6 +9,9 @@ import {
   type HostResponse,
   type SshComputerInput,
 } from '@nesvo/contracts';
+import { PermanentConnectionError } from './connection-errors';
+import { log } from './logging';
+import { requestTimeoutMs } from './request-timeouts';
 import { spawnSshBridge } from './ssh-transport';
 
 export function connectSshHost(
@@ -72,12 +75,22 @@ export function connectSshHost(
     if (!greeted) {
       const parsed = hostConnectionSchema.safeParse(value);
       if (!parsed.success || parsed.data.type !== 'connected') {
+        if (!parsed.success)
+          log.warn(
+            'An SSH host returned an invalid handshake.',
+            parsed.error.issues.slice(0, 5),
+          );
+        const refusal =
+          parsed.success && parsed.data.type === 'connection-error'
+            ? parsed.data.code
+            : null;
+        const message = refusal
+          ? `The host refused the connection: ${refusal}.`
+          : 'The host returned an unrecognized handshake. Run the same Nesvo version on both computers, then reconnect.';
         failure(
-          new Error(
-            parsed.success && parsed.data.type === 'connection-error'
-              ? `The host refused the connection: ${parsed.data.code}.`
-              : 'The host returned an invalid handshake.',
-          ),
+          refusal === 'busy' || refusal === 'invalid-frame'
+            ? new Error(message)
+            : new PermanentConnectionError(message),
         );
         return;
       }
@@ -86,7 +99,7 @@ export function connectSshHost(
         expectedInstanceId !== parsed.data.health.instanceId
       ) {
         failure(
-          new Error(
+          new PermanentConnectionError(
             'This connection reached a different Nesvo host. Check the server and its data directory.',
           ),
         );
@@ -99,6 +112,10 @@ export function connectSshHost(
     }
     const parsed = hostMessageSchema.safeParse(value);
     if (!parsed.success) {
+      log.warn(
+        'An SSH host returned an invalid message.',
+        parsed.error.issues.slice(0, 5),
+      );
       failure(new Error('The host returned an invalid response.'));
       return;
     }
@@ -226,29 +243,10 @@ export function connectSshHost(
             ),
           );
         },
-        method === 'finish-session-worktree' ||
-          (payload.method === 'create-session' && payload.input.isolation)
-          ? 120_000
-          : method === 'discover-skills' ||
-              method === 'start-workflow-task' ||
-              method === 'workflow-assistant-send' ||
-              method === 'act-on-pull-request'
-            ? 60_000
-            : method === 'provider-usage'
-              ? 40_000
-              : method === 'claude-status' ||
-                  method === 'codex-status' ||
-                  method === 'create-session' ||
-                  method === 'list-conversations' ||
-                  method === 'adopt-conversation' ||
-                  method === 'list-pull-requests' ||
-                  method === 'read-pull-request' ||
-                  method === 'read-pull-request-files' ||
-                  method === 'read-pull-request-threads' ||
-                  method === 'find-session-pull-request' ||
-                  method === 'read-session-worktree'
-                ? 30_000
-                : 15_000,
+        requestTimeoutMs(
+          method,
+          'input' in payload ? payload.input : undefined,
+        ),
       );
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(line);

@@ -32,6 +32,8 @@ import {
   type ListMcpServersInput,
   type SetSessionMcpInput,
 } from '@nesvo/contracts';
+import { log, writeHostOutput } from './logging';
+import { requestTimeoutMs } from './request-timeouts';
 
 export function startHost(directory: string) {
   const child = utilityProcess.fork(
@@ -54,8 +56,9 @@ export function startHost(directory: string) {
   let exited = false;
   const listeners = new Set<(event: DesktopEvent) => void>();
   const closed = new Promise<void>(resolve => {
-    child.once('exit', () => {
+    child.once('exit', (code: number) => {
       exited = true;
+      log.warn(`The local host exited with code ${code}.`);
       for (const request of pending.values()) {
         clearTimeout(request.timer);
         request.reject(new Error('Host stopped'));
@@ -65,10 +68,19 @@ export function startHost(directory: string) {
       resolve();
     });
   });
-  child.stderr?.on('data', (data: Buffer) => process.stderr.write(data));
+  child.stderr?.on('data', (data: Buffer) => writeHostOutput('stderr', data));
+  child.stdout?.on('data', (data: Buffer) => writeHostOutput('stdout', data));
+  let droppedMessages = 0;
   child.on('message', (value: unknown) => {
     const parsed = hostMessageSchema.safeParse(value);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      droppedMessages += 1;
+      log.warn(
+        `Dropped an invalid local host message (${droppedMessages} so far).`,
+        parsed.error.issues.slice(0, 5),
+      );
+      return;
+    }
     if (!('id' in parsed.data)) {
       for (const listener of listeners) listener(parsed.data);
       return;
@@ -94,32 +106,7 @@ export function startHost(directory: string) {
           pending.delete(id);
           reject(new Error('Host timed out'));
         },
-        method === 'finish-session-worktree' ||
-          (method === 'create-session' &&
-            (input as CreateSessionInput | undefined)?.isolation)
-          ? 120_000
-          : method === 'discover-skills' ||
-              method === 'start-workflow-task' ||
-              method === 'workflow-assistant-send' ||
-              method === 'act-on-pull-request'
-            ? 60000
-            : method === 'provider-usage'
-              ? 40000
-              : method === 'claude-status' ||
-                  method === 'codex-status' ||
-                  method === 'create-session' ||
-                  method === 'list-conversations' ||
-                  method === 'adopt-conversation' ||
-                  method === 'list-mcp-servers' ||
-                  method === 'set-session-mcp' ||
-                  method === 'list-pull-requests' ||
-                  method === 'read-pull-request' ||
-                  method === 'read-pull-request-files' ||
-                  method === 'read-pull-request-threads' ||
-                  method === 'find-session-pull-request' ||
-                  method === 'read-session-worktree'
-                ? 30000
-                : 15000,
+        requestTimeoutMs(method, input),
       );
       pending.set(id, { resolve, reject, timer });
       try {
