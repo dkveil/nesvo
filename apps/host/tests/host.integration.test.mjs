@@ -9106,7 +9106,9 @@ test(
               type: 'until',
               repeat: '[prepare, read-status]',
               condition: JSON.stringify(
-                'steps.read-status.outputs.count == "' + (index ? 5 : 2) + '"',
+                index
+                  ? 'steps.read-status.outputs.constructor != "missing"'
+                  : 'steps.read-status.outputs.count == "2"',
               ),
               max_iterations: 3,
               body: '',

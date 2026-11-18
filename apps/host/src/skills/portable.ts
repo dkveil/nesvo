@@ -108,16 +108,15 @@ export function yamlMapping(
   yaml: string,
   subject = 'Skill',
 ): Record<string, unknown> {
-  if (/(?:^|[\s,[{])(?:[&*][\w-]+|!!?[^\s]+)/m.test(yaml)) {
-    throw new Error(
-      `${subject} YAML anchors, aliases and explicit tags are not supported.`,
-    );
-  }
   let parsed: unknown;
   try {
     parsed = loadBoundedYaml(yaml);
   } catch (error) {
-    if (error instanceof YamlLimitError) throw error;
+    if (error instanceof YamlLimitError) {
+      if (error.kind === 'references')
+        throw new Error(`${subject} ${error.message}`);
+      throw error;
+    }
     throw new Error(
       `${subject} YAML could not be parsed within the supported limits.`,
       { cause: error },

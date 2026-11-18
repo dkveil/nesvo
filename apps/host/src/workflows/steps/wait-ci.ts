@@ -3,6 +3,7 @@ import {
   parsePullRequestUrl,
   PULL_REQUEST_NUMBER,
   STEP_OUTPUT_REFERENCE,
+  readWorkflowOutput,
   stepResultLimits,
   type PullRequestReference,
 } from '@nesvo/contracts';
@@ -35,7 +36,7 @@ function targetFor(execution: StepExecution, ports: Ports): string | null {
   }
   const match = STEP_OUTPUT_REFERENCE.exec(expression);
   const value = match
-    ? execution.outputs.get(match[1]!)?.[match[2]!]
+    ? readWorkflowOutput(execution.outputs, match[1]!, match[2]!)
     : expression;
   if (!value) return null;
   const reference = parsePullRequestUrl(value);

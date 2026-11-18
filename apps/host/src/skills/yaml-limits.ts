@@ -8,7 +8,7 @@ import {
 
 export const yamlLimits = { depth: 12, nodes: 512 } as const;
 
-export type YamlLimitKind = 'depth' | 'nodes' | 'documents';
+export type YamlLimitKind = 'depth' | 'nodes' | 'documents' | 'references';
 
 const parserDepthWithDocumentAndLeaf = yamlLimits.depth + 2;
 
@@ -26,6 +26,7 @@ const limitMessages: Record<YamlLimitKind, string> = {
   depth: `YAML nesting exceeds the supported depth of ${yamlLimits.depth}.`,
   nodes: `YAML exceeds the supported ${yamlLimits.nodes} nodes.`,
   documents: 'YAML must contain a single document.',
+  references: 'YAML anchors, aliases and explicit tags are not supported.',
 };
 
 function parseBoundedEvents(source: string): Event[] {
@@ -51,6 +52,12 @@ function assertWithinLimits(events: Event[]): void {
       if (depth > 0) depth--;
       continue;
     }
+    if (
+      event.type === EVENT_ID.ALIAS ||
+      event.anchorStart >= 0 ||
+      event.tagStart >= 0
+    )
+      throw new YamlLimitError('references');
     if (++nodes > yamlLimits.nodes) throw new YamlLimitError('nodes');
     if (event.type === EVENT_ID.SEQUENCE || event.type === EVENT_ID.MAPPING) {
       if (++depth > yamlLimits.depth) throw new YamlLimitError('depth');

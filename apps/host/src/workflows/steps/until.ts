@@ -1,4 +1,4 @@
-import { parseUntilCondition } from '@nesvo/contracts';
+import { parseUntilCondition, readWorkflowOutput } from '@nesvo/contracts';
 import type { StepExecutor } from '../runner';
 import { hostResult } from './host-result';
 
@@ -13,7 +13,7 @@ export const untilExecutor: StepExecutor = async execution => {
       'fail',
       'The loop condition or iteration limit is invalid.',
     );
-  const value = outputs.get(condition.step)?.[condition.key];
+  const value = readWorkflowOutput(outputs, condition.step, condition.key);
   const matched =
     value !== undefined &&
     (condition.operator === '=='

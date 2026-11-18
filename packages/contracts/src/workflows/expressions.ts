@@ -1,6 +1,15 @@
 export const STEP_OUTPUT_REFERENCE =
   /^steps\.([a-z0-9]+(?:-[a-z0-9]+)*)\.outputs\.([A-Za-z][A-Za-z0-9_.-]{0,63})$/;
 
+export function readWorkflowOutput(
+  outputs: ReadonlyMap<string, Readonly<Record<string, string>>>,
+  step: string,
+  key: string,
+): string | undefined {
+  const values = outputs.get(step);
+  return values && Object.hasOwn(values, key) ? values[key] : undefined;
+}
+
 const conditionPattern = /^(steps\.\S+) (==|!=) ("(?:[^"\\\r\n]|\\.)*")$/;
 
 export function parseUntilCondition(expression: string) {
