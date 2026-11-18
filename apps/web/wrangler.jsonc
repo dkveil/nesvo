@@ -18,7 +18,7 @@
     {
       "binding": "DB",
       "database_name": "nesvo-web",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "8ad4dadd-72d5-4c1a-9f86-9b9b53fc4eec",
       "migrations_dir": "migrations",
     },
   ],
