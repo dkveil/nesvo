@@ -248,7 +248,7 @@ export function ComposerEditor({
         suppressContentEditableWarning
         data-slot="composer-input"
         className={cn(
-          'block max-h-48 min-h-11 w-full overflow-y-auto px-1 text-sm leading-6 break-words whitespace-pre-wrap text-foreground outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50',
+          'block max-h-48 min-h-11 w-full overflow-y-auto px-1 text-ui leading-6 break-words whitespace-pre-wrap text-foreground outline-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50',
           className,
         )}
         onInput={event => {
@@ -292,7 +292,7 @@ export function ComposerEditor({
       {empty && placeholder && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-1 top-0 truncate text-sm leading-6 text-muted-foreground/70"
+          className="pointer-events-none absolute inset-x-1 top-0 truncate text-ui leading-6 text-muted-foreground/70"
         >
           {placeholder}
         </span>
