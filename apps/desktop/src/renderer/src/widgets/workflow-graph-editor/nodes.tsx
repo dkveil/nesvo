@@ -46,9 +46,11 @@ export type StepNodeData = {
   addedByAssistant: boolean;
   freeSuccess: boolean;
   freeFailure: boolean;
-  onAdd: (when: EdgeCondition, event: ReactMouseEvent) => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
+  onAdd?: (when: EdgeCondition, event: ReactMouseEvent) => void;
+  onDelete?: () => void;
+  onDuplicate?: () => void;
+  summary?: string;
+  width?: number;
 };
 export type StepNode = Node<StepNodeData, 'step'>;
 
@@ -155,7 +157,10 @@ const typeTileTone: Record<StepType, string> = {
   'fan-out': 'text-info-foreground',
 };
 
-export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
+export function StepNodeView({
+  data,
+  selected,
+}: Pick<NodeProps<StepNode>, 'data' | 'selected'>) {
   const { editor, issues, run, freeSuccess, freeFailure, addedByAssistant } =
     data;
   const step = editor.step;
@@ -164,50 +169,54 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
   const warnings = issues.length - errors;
   const tone = run ? stepStateTones[run.state] : phaseTones[step.phase];
   const routesFailure = step.type !== 'human';
-  const subtitle = `${phaseLabels[step.phase]} · ${stepDetail(step)}`;
+  const editable = !!data.onAdd;
+  const subtitle =
+    data.summary ?? `${phaseLabels[step.phase]} · ${stepDetail(step)}`;
   return (
     <>
-      <NodeToolbar
-        isVisible={hovered || selected}
-        position={Position.Top}
-        offset={6}
-        align="end"
-        className="nodrag nopan"
-      >
-        <div
-          role="toolbar"
-          aria-label={`Actions for ${step.name}`}
-          onMouseEnter={enter}
-          onMouseLeave={leave}
-          className="flex items-center gap-0.5 rounded-surface border bg-card p-0.5 shadow-(--popover-shadow)"
+      {editable && (
+        <NodeToolbar
+          isVisible={hovered || selected}
+          position={Position.Top}
+          offset={6}
+          align="end"
+          className="nodrag nopan"
         >
-          <IconButton
-            size={24}
-            data-node-duplicate={editor.id}
-            label={`Duplicate ${step.name}`}
-            shortcut="Ctrl D"
-            onClick={event => {
-              event.stopPropagation();
-              data.onDuplicate();
-            }}
+          <div
+            role="toolbar"
+            aria-label={`Actions for ${step.name}`}
+            onMouseEnter={enter}
+            onMouseLeave={leave}
+            className="flex items-center gap-0.5 rounded-surface border bg-card p-0.5 shadow-(--popover-shadow)"
           >
-            <Copy aria-hidden="true" />
-          </IconButton>
-          <IconButton
-            size={24}
-            tone="danger"
-            data-node-delete={editor.id}
-            label={`Remove ${step.name} from the workflow`}
-            shortcut="Delete"
-            onClick={event => {
-              event.stopPropagation();
-              data.onDelete();
-            }}
-          >
-            <Trash2 aria-hidden="true" />
-          </IconButton>
-        </div>
-      </NodeToolbar>
+            <IconButton
+              size={24}
+              data-node-duplicate={editor.id}
+              label={`Duplicate ${step.name}`}
+              shortcut="Ctrl D"
+              onClick={event => {
+                event.stopPropagation();
+                data.onDuplicate?.();
+              }}
+            >
+              <Copy aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              size={24}
+              tone="danger"
+              data-node-delete={editor.id}
+              label={`Remove ${step.name} from the workflow`}
+              shortcut="Delete"
+              onClick={event => {
+                event.stopPropagation();
+                data.onDelete?.();
+              }}
+            >
+              <Trash2 aria-hidden="true" />
+            </IconButton>
+          </div>
+        </NodeToolbar>
+      )}
       <div
         data-editor-node={editor.id}
         data-run-state={run?.state ?? undefined}
@@ -218,11 +227,11 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             ? `${step.name} · ${stepStateLabels[run.state]}`
             : issues.map(issue => issue.message).join('\n') || undefined
         }
-        style={stepNodeSize}
+        style={{ ...stepNodeSize, width: data.width ?? stepNodeSize.width }}
         className={cn(
           card,
           selected && 'border-ring shadow-[0_0_0_1px_var(--ring)]',
-          !selected && hovered && 'border-foreground/25',
+          editable && !selected && hovered && 'border-foreground/25',
           !selected && errors > 0 && 'border-error-foreground/60',
         )}
       >
@@ -243,7 +252,12 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
               <AddedByAssistantBadge />
             )}
           </div>
-          <div className="truncate text-2xs leading-4 text-muted-foreground">
+          <div
+            className={cn(
+              'truncate text-muted-foreground',
+              editable ? 'text-2xs leading-4' : 'text-ui',
+            )}
+          >
             {subtitle}
           </div>
         </div>
@@ -311,7 +325,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             style={{ top: '76%' }}
           />
         )}
-        {routesFailure && (
+        {editable && routesFailure && (
           <span
             aria-hidden="true"
             className={cn(
@@ -325,7 +339,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
             fail
           </span>
         )}
-        {freeSuccess && (
+        {editable && freeSuccess && (
           <AddButton
             id={editor.id}
             when="success"
@@ -334,10 +348,10 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
               routesFailure ? 'top-[40%]' : 'top-1/2',
               hovered || selected ? 'opacity-100' : 'opacity-70',
             )}
-            onClick={event => data.onAdd('success', event)}
+            onClick={event => data.onAdd?.('success', event)}
           />
         )}
-        {routesFailure && freeFailure && (
+        {editable && routesFailure && freeFailure && (
           <AddButton
             id={editor.id}
             when="failure"
@@ -347,7 +361,7 @@ export function StepNodeView({ data, selected }: NodeProps<StepNode>) {
                 ? 'opacity-100'
                 : 'pointer-events-none opacity-0',
             )}
-            onClick={event => data.onAdd('failure', event)}
+            onClick={event => data.onAdd?.('failure', event)}
           />
         )}
       </div>

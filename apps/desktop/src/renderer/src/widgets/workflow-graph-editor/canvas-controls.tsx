@@ -5,10 +5,10 @@ import { ToolbarSeparator } from '@/shared/ui/panel';
 import { fitViewOptions } from './canvas-types';
 
 type Props = {
-  minimap: boolean;
-  onToggleMinimap: () => void;
-  onTidy: () => void;
-  tidyDisabled: boolean;
+  minimap?: boolean;
+  onToggleMinimap?: () => void;
+  onTidy?: () => void;
+  tidyDisabled?: boolean;
 };
 
 export function CanvasControls({
@@ -40,13 +40,17 @@ export function CanvasControls({
       >
         <Maximize />
       </IconButton>
-      <ToolbarSeparator className="mx-0.5" />
-      <IconButton label="Minimap" pressed={minimap} onClick={onToggleMinimap}>
-        <Map />
-      </IconButton>
-      <IconButton label="Tidy up" disabled={tidyDisabled} onClick={onTidy}>
-        <LayoutGrid />
-      </IconButton>
+      {(onToggleMinimap || onTidy) && <ToolbarSeparator className="mx-0.5" />}
+      {onToggleMinimap && (
+        <IconButton label="Minimap" pressed={minimap} onClick={onToggleMinimap}>
+          <Map />
+        </IconButton>
+      )}
+      {onTidy && (
+        <IconButton label="Tidy up" disabled={tidyDisabled} onClick={onTidy}>
+          <LayoutGrid />
+        </IconButton>
+      )}
     </div>
   );
 }

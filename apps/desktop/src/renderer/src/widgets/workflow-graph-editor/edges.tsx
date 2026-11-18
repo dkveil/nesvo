@@ -18,10 +18,10 @@ import {
 
 export type ConditionEdgeData = {
   when: EdgeCondition;
-  hovered: boolean;
-  onHover: (hovering: boolean) => void;
-  onInsert: (event: ReactMouseEvent) => void;
-  onDelete: () => void;
+  hovered?: boolean;
+  onHover?: (hovering: boolean) => void;
+  onInsert?: (event: ReactMouseEvent) => void;
+  onDelete?: () => void;
 };
 export type ConditionEdge = Edge<ConditionEdgeData, 'condition'>;
 
@@ -69,10 +69,10 @@ export function ConditionEdgeView({
         <div
           className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
           style={{ left: labelX, top: labelY }}
-          onMouseEnter={() => data?.onHover(true)}
-          onMouseLeave={() => data?.onHover(false)}
+          onMouseEnter={() => data?.onHover?.(true)}
+          onMouseLeave={() => data?.onHover?.(false)}
         >
-          {active && (
+          {active && data?.onInsert && (
             <div
               role="toolbar"
               aria-label={`Connection ${id}`}
@@ -87,7 +87,7 @@ export function ConditionEdgeView({
                 className={cn(action, 'enabled:hover:border-foreground')}
                 onClick={event => {
                   event.stopPropagation();
-                  data?.onInsert(event);
+                  data.onInsert?.(event);
                 }}
               >
                 <Plus aria-hidden="true" />
@@ -101,7 +101,7 @@ export function ConditionEdgeView({
                 className={cn(action, 'enabled:hover:border-error-foreground')}
                 onClick={event => {
                   event.stopPropagation();
-                  data?.onDelete();
+                  data.onDelete?.();
                 }}
               >
                 <Trash2 aria-hidden="true" />
