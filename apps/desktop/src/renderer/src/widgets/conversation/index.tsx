@@ -58,6 +58,7 @@ const PASTE_NOTICE_MS = 5000;
 const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
 const ANNOUNCED_REPLY_LENGTH = 280;
+const EAGER_TAIL_MESSAGES = 8;
 
 export type ModelSelection = {
   model: string;
@@ -724,7 +725,7 @@ export function Conversation({
             aria-label="Messages"
             className="space-y-8"
           >
-            {session.messages.map(message => {
+            {session.messages.map((message, index) => {
               const live =
                 message.author === 'agent' &&
                 message.runId === session.runId &&
@@ -741,6 +742,10 @@ export function Conversation({
                   message={message}
                   provider={session.provider}
                   live={live}
+                  deferred={
+                    !live &&
+                    index < session.messages.length - EAGER_TAIL_MESSAGES
+                  }
                   showActivity={showActivity}
                   activity={
                     showActivity &&

@@ -18,6 +18,7 @@ type MessageArticleProps = {
   message: Message;
   provider: Provider;
   live: boolean;
+  deferred: boolean;
   showActivity: boolean;
   activity: ReactNode;
   showInterruption: boolean;
@@ -47,6 +48,7 @@ function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
     !next.showActivity &&
     previous.provider === next.provider &&
     previous.live === next.live &&
+    previous.deferred === next.deferred &&
     previous.showInterruption === next.showInterruption &&
     previous.selectionChange === next.selectionChange &&
     sameRenderedMessage(previous.message, next.message)
@@ -57,6 +59,7 @@ export const MessageArticle = memo(function MessageArticle({
   message,
   provider,
   live,
+  deferred,
   showActivity,
   activity,
   showInterruption,
@@ -74,7 +77,7 @@ export const MessageArticle = memo(function MessageArticle({
         className={cn(
           'group space-y-2 rounded-control',
           message.author === 'operator' && 'flex flex-col items-end',
-          !live && 'content-visibility-auto',
+          deferred && 'content-visibility-auto',
         )}
       >
         <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
