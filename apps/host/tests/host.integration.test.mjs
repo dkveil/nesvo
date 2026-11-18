@@ -849,6 +849,7 @@ test(
         'mcp-servers',
         'conversation-import',
         'scheduled-job-change-triggers',
+        'database-backup',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -865,6 +866,24 @@ test(
       'accept-edits',
       'auto',
     ]);
+    const backup = await host.request('backup-database');
+    assert.equal(backup.type, 'database-backup');
+    assert.equal(
+      backup.backup.path,
+      join(
+        directory,
+        `nesvo.sqlite.backup-${backup.backup.createdAt.replace(/\.\d{3}Z$/, 'Z').replaceAll(':', '-')}.bak`,
+      ),
+    );
+    assert.ok(backup.backup.bytes > 0);
+    const copy = new DatabaseSync(backup.backup.path, { readOnly: true });
+    assert.equal(
+      copy
+        .prepare('SELECT value FROM metadata WHERE key = ?')
+        .get('instance_id').value,
+      instanceId,
+    );
+    copy.close();
     const branchRoot = join(directory, 'branches');
     const seedHead = async (path, head) => {
       await mkdir(path, { recursive: true });
@@ -5827,6 +5846,7 @@ test(
       'mcp-servers',
       'conversation-import',
       'scheduled-job-change-triggers',
+      'database-backup',
     ]);
     const id = randomUUID();
     const jobInput = {

@@ -21,12 +21,7 @@ const migrationBackups = (path: string): string[] =>
     .sort((first, second) => second.modified - first.modified)
     .map(entry => entry.file);
 
-const backupBeforeMigration = (
-  database: DatabaseSync,
-  path: string,
-  version: number,
-) => {
-  const backup = `${path}.v${version}.bak`;
+const vacuumInto = (database: DatabaseSync, backup: string) => {
   const temporary = `${backup}.${randomUUID()}.tmp`;
   try {
     database.prepare('VACUUM INTO ?').run(temporary);
@@ -34,6 +29,40 @@ const backupBeforeMigration = (
   } finally {
     rmSync(temporary, { force: true });
   }
+};
+
+const backupTimestamp = (date: Date) =>
+  date
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z')
+    .replaceAll(':', '-');
+
+export const backupDatabaseNow = (
+  database: DatabaseSync,
+  directory: string,
+  now = new Date(),
+) => {
+  const backup = join(
+    directory,
+    `nesvo.sqlite.backup-${backupTimestamp(now)}.bak`,
+  );
+  if (statSync(backup, { throwIfNoEntry: false }))
+    throw new Error('A backup was written a moment ago. Try again shortly.');
+  vacuumInto(database, backup);
+  return {
+    path: backup,
+    bytes: statSync(backup).size,
+    createdAt: now.toISOString(),
+  };
+};
+
+const backupBeforeMigration = (
+  database: DatabaseSync,
+  path: string,
+  version: number,
+) => {
+  const backup = `${path}.v${version}.bak`;
+  vacuumInto(database, backup);
   for (const file of migrationBackups(path)
     .filter(file => file !== backup)
     .slice(BACKUP_LIMIT - 1))

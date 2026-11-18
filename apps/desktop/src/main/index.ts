@@ -24,6 +24,7 @@ import {
   type CatalogWorkflowMethod,
 } from './computer-manager';
 import { mobileAccess } from './mobile-access';
+import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
   createWorkflowDemo,
@@ -526,6 +527,30 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  handle('nesvo:about', event => {
+    authorize(event);
+    return aboutInfo(hostDirectory);
+  });
+  handle('nesvo:show-data-directory', event => {
+    authorize(event);
+    shell.showItemInFolder(app.getPath('userData'));
+  });
+  handle('nesvo:show-backup', (event, path: unknown) => {
+    authorize(event);
+    showBackup(hostDirectory, path);
+  });
+  handle('nesvo:open-licenses', async event => {
+    authorize(event);
+    await openLicenses();
+  });
+  handle('nesvo:save-text-file', (event, input: unknown) => {
+    authorize(event);
+    return saveTextFile(window, input);
+  });
+  handle('nesvo:backup-database', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('backup-database', undefined, route(hostId));
+  });
   handle('nesvo:list-cost-budgets', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-cost-budgets', undefined, route(hostId));

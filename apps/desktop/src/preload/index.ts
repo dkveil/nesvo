@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
+  aboutInfoSchema,
+  databaseBackupSchema,
+  saveTextFileSchema,
+  savedTextFileSchema,
   claudeStatusSchema,
   codexStatusSchema,
   colorSchemeSchema,
@@ -380,6 +384,28 @@ const api: DesktopApi = {
   openLogs: async () => {
     await ipcRenderer.invoke('nesvo:open-logs');
   },
+  about: async () =>
+    aboutInfoSchema.parse(await ipcRenderer.invoke('nesvo:about')),
+  showDataDirectory: async () => {
+    await ipcRenderer.invoke('nesvo:show-data-directory');
+  },
+  showBackup: async path => {
+    await ipcRenderer.invoke('nesvo:show-backup', path);
+  },
+  openLicenses: async () => {
+    await ipcRenderer.invoke('nesvo:open-licenses');
+  },
+  saveTextFile: async input =>
+    savedTextFileSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-text-file',
+        saveTextFileSchema.parse(input),
+      ),
+    ),
+  backupDatabase: async hostId =>
+    databaseBackupSchema.parse(
+      await ipcRenderer.invoke('nesvo:backup-database', route(hostId)),
+    ),
   focusWindow: async () => {
     await ipcRenderer.invoke('nesvo:focus-window');
   },

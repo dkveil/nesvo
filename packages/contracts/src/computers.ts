@@ -36,6 +36,7 @@ export const hostCapabilitySchema = z.enum([
   'mcp-servers',
   'conversation-import',
   'scheduled-job-change-triggers',
+  'database-backup',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -104,7 +105,7 @@ export const computerSchema = z.strictObject({
   instanceId: z.uuid().nullable(),
   lastSyncedAt: z.iso.datetime().nullable(),
   error: z.string().max(2000).nullable(),
-  capabilities: z.array(hostCapabilitySchema).max(16),
+  capabilities: z.array(hostCapabilitySchema).max(32),
   ssh: sshComputerInputSchema.optional(),
 });
 export type Computer = z.infer<typeof computerSchema>;

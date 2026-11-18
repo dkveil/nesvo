@@ -14,6 +14,7 @@ const longRequests = new Set<HostRequest['method']>([
   'start-workflow-task',
   'workflow-assistant-send',
   'act-on-pull-request',
+  'backup-database',
 ]);
 
 const providerRequests = new Set<HostRequest['method']>([

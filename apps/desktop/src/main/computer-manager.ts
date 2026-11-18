@@ -138,6 +138,8 @@ const costResponses = {
 } as const;
 
 const capabilityUpdates: Record<HostCapability, string> = {
+  'database-backup':
+    'Update this computer’s Nesvo host and reconnect to back up its data.',
   'session-fork':
     'Update this computer’s Nesvo host and reconnect to fork or restart sessions.',
   costs:
@@ -205,6 +207,7 @@ function requiredCapability(
   if (method === 'assign-session-workflow') return 'session-workflow';
   if (method === 'fork-session' || method === 'restart-session')
     return 'session-fork';
+  if (method === 'backup-database') return 'database-backup';
   if (method === 'list-mcp-servers' || method === 'set-session-mcp')
     return 'mcp-servers';
   if (
@@ -868,6 +871,7 @@ export class ComputerManager {
       'search-history': 'history-search',
       'list-conversations': 'conversation-import-catalog',
       'adopt-conversation': 'session',
+      'backup-database': 'database-backup',
       ...sessionGroupResponses,
       ...pullRequestResponses,
       ...costResponses,
@@ -894,6 +898,8 @@ export class ComputerManager {
         return response.catalog;
       case 'mcp-servers':
         return response.list;
+      case 'database-backup':
+        return response.backup;
       case 'workspace-directory':
         return response.directory;
       case 'workspace-search':

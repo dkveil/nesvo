@@ -15,7 +15,7 @@ import {
   type SkillCatalog,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
-import { openDatabase, ownDataDirectory } from './database';
+import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
 import { CostStore } from './cost-store';
 import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
@@ -175,6 +175,16 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
     Effect.gen(function* () {
       yield* ownDataDirectory(directory);
       const database = yield* openDatabase(directory);
+      const backupDatabase = () => {
+        try {
+          return backupDatabaseNow(database, directory);
+        } catch (error) {
+          throw new SessionError(
+            'unavailable',
+            `The backup could not be written. ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
       const history = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const index = new HistorySearch(database);
@@ -1424,6 +1434,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 type: 'session',
                 id: request.id,
                 session: sessions.restart(request.input),
+              };
+            if (request.method === 'backup-database')
+              return {
+                type: 'database-backup',
+                id: request.id,
+                backup: backupDatabase(),
               };
             if (request.method === 'list-session-groups')
               return {

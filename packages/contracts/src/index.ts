@@ -20,7 +20,14 @@ import {
 } from './costs';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import type { AppliedColorScheme, ColorScheme } from './appearance';
-import type { RendererErrorReport } from './diagnostics';
+import {
+  databaseBackupSchema,
+  type AboutInfo,
+  type DatabaseBackup,
+  type RendererErrorReport,
+  type SaveTextFileInput,
+  type SavedTextFile,
+} from './diagnostics';
 import {
   historySearchInputSchema,
   historySearchPageSchema,
@@ -424,6 +431,7 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: restartSessionSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-session-groups') }),
+  z.strictObject({ id: z.uuid(), method: z.literal('backup-database') }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('create-session-group'),
@@ -667,7 +675,7 @@ export const hostHealthSchema = z.strictObject({
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
   contractRevision: z.number().int().min(1).max(1_000_000).optional(),
-  capabilities: z.array(hostCapabilitySchema).max(16).optional(),
+  capabilities: z.array(hostCapabilitySchema).max(32).optional(),
 });
 
 export const hostConnectSchema = z.strictObject({
@@ -807,6 +815,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-groups'),
     id: z.uuid(),
     list: sessionGroupListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('database-backup'),
+    id: z.uuid(),
+    backup: databaseBackupSchema,
   }),
   z.strictObject({
     type: z.literal('pull-request-list'),
@@ -1051,6 +1064,12 @@ export type DesktopApi = {
   ) => () => void;
   openExternal: (url: string) => Promise<void>;
   openLogs: () => Promise<void>;
+  about: () => Promise<AboutInfo>;
+  showDataDirectory: () => Promise<void>;
+  showBackup: (path: string) => Promise<void>;
+  openLicenses: () => Promise<void>;
+  saveTextFile: (input: SaveTextFileInput) => Promise<SavedTextFile>;
+  backupDatabase: (hostId?: HostId) => Promise<DatabaseBackup>;
   focusWindow: () => Promise<void>;
   requestAttention: () => Promise<void>;
   reportError: (report: RendererErrorReport) => void;
