@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type ClipboardEvent, type FormEvent } from 'react';
 import {
   GITHUB_REPOSITORY_PATTERN,
   type Computer,
@@ -33,9 +33,12 @@ import {
 import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { PullRequestRow } from './pull-request-row';
+import { MAX_BATCH_REFERENCES, splitReferenceInput } from './reference-batch';
+import { useAddedPullRequests } from './use-added-pull-requests';
 import { usePullRequestList } from './use-pull-request-list';
 
 const RELATIVE_TIME_REFRESH_MS = 60_000;
+const REFERENCE_INPUT_MAX_LENGTH = 4000;
 
 const SCOPE_OPTIONS: { value: PullRequestListScope; label: string }[] = [
   { value: 'open', label: 'Open' },
@@ -77,6 +80,7 @@ export function PullRequestsView({
   const [refresh, setRefresh] = useState(0);
   const [reference, setReference] = useState('');
   const [referenceError, setReferenceError] = useState('');
+  const batch = useAddedPullRequests();
   const now = useNow(RELATIVE_TIME_REFRESH_MS);
   const api = unavailable ? null : apiFor(hostId);
   const result = usePullRequestList({
@@ -98,8 +102,43 @@ export function PullRequestsView({
     setRepositoryError('');
     setRepository(value);
   };
+  const openReferences = async (inputs: string[]) => {
+    if (!api) return;
+    if (inputs.length > MAX_BATCH_REFERENCES) {
+      setReferenceError(
+        `Paste up to ${MAX_BATCH_REFERENCES} pull requests at once.`,
+      );
+      return;
+    }
+    setReferenceError('');
+    const { opened, failures } = await batch.add(
+      api,
+      hostId,
+      inputs,
+      currentRepository,
+    );
+    setReference(failures.map(failure => failure.input).join(' '));
+    if (opened) onOpen(opened);
+  };
+  const pasteReferences = (event: ClipboardEvent<HTMLInputElement>) => {
+    const text = event.clipboardData.getData('text');
+    if (!/[\r\n]/.test(text)) return;
+    event.preventDefault();
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? reference.length;
+    const end = input.selectionEnd ?? reference.length;
+    setReference(
+      `${reference.slice(0, start)}${text.replace(/\s+/g, ' ').trim()}${reference.slice(end)}`,
+    );
+    setReferenceError('');
+  };
   const openReference = (event: FormEvent) => {
     event.preventDefault();
+    const inputs = splitReferenceInput(reference);
+    if (inputs.length > 1) {
+      void openReferences(inputs);
+      return;
+    }
     const parsed = parseReferenceInput(reference, currentRepository);
     if (!parsed) {
       setReferenceError(
@@ -202,15 +241,17 @@ export function PullRequestsView({
           <SearchField
             icon={<Link2 />}
             value={reference}
-            maxLength={300}
+            maxLength={REFERENCE_INPUT_MAX_LENGTH}
             spellCheck={false}
-            disabled={!!unavailable}
-            aria-label="Open a pull request by link or number"
+            disabled={!!unavailable || batch.pending > 0}
+            aria-label="Open pull requests by link or number"
             aria-invalid={!!referenceError}
-            placeholder="Paste a pull request link or #number"
+            placeholder="Paste pull request links or #numbers"
+            onPaste={pasteReferences}
             onChange={event => {
               setReference(event.target.value);
               setReferenceError('');
+              batch.dismissFailures();
             }}
             trailing={
               reference.trim() && (
@@ -225,6 +266,64 @@ export function PullRequestsView({
           <StatusMessage tone="error" className="px-2">
             {referenceError}
           </StatusMessage>
+        )}
+        {batch.pending > 0 && (
+          <StatusMessage tone="loading" className="px-2">
+            Opening {batch.pending} pull requests…
+          </StatusMessage>
+        )}
+        {batch.failures.length > 0 && (
+          <ul aria-label="Pull requests that could not be opened">
+            {batch.failures.map(failure => (
+              <li key={failure.input}>
+                <StatusMessage tone="error" className="px-2">
+                  <span className="font-mono">{failure.input}</span>:{' '}
+                  {failure.reason}
+                </StatusMessage>
+              </li>
+            ))}
+          </ul>
+        )}
+        {batch.added.length > 0 && (
+          <div>
+            <SectionLabel
+              action={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={batch.clear}
+                >
+                  Clear
+                </Button>
+              }
+            >
+              Added
+            </SectionLabel>
+            <ul className="space-y-px">
+              {batch.added.map(entry => (
+                <PullRequestRow
+                  key={`${entry.hostId}/${entry.pullRequest.repository}#${entry.pullRequest.number}`}
+                  pullRequest={entry.pullRequest}
+                  now={now}
+                  showRepository
+                  selected={
+                    openTarget?.hostId === entry.hostId &&
+                    sameReference(openTarget.reference, entry.pullRequest)
+                  }
+                  onOpen={() =>
+                    onOpen({
+                      hostId: entry.hostId,
+                      reference: {
+                        repository: entry.pullRequest.repository,
+                        number: entry.pullRequest.number,
+                      },
+                    })
+                  }
+                />
+              ))}
+            </ul>
+          </div>
         )}
         {unavailable ? (
           <InlineNotice>{unavailable}</InlineNotice>

@@ -13,6 +13,7 @@ type PullRequestRowProps = {
   pullRequest: PullRequestSummary;
   selected: boolean;
   now: number;
+  showRepository?: boolean;
   onOpen: () => void;
 };
 
@@ -20,6 +21,7 @@ export function PullRequestRow({
   pullRequest,
   selected,
   now,
+  showRepository = false,
   onOpen,
 }: PullRequestRowProps) {
   const state = visualState(pullRequest);
@@ -43,6 +45,7 @@ export function PullRequestRow({
         }
         description={
           <>
+            {showRepository && `${pullRequest.repository} · `}
             {pullRequest.author?.login ?? 'unknown'} ·{' '}
             <span className="font-mono">
               {pullRequest.headRefName} → {pullRequest.baseRefName}
