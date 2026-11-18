@@ -1,9 +1,19 @@
-import { createCn } from 'cn/config';
+import { clsx, type ClassValue } from 'clsx';
+import { extendTailwindMerge } from 'tailwind-merge';
 
-export const cn = createCn({
+const merge = extendTailwindMerge({
   extend: {
     theme: {
-      text: ['micro', 'ui', 'title', 'display', 'display-lg'],
+      text: [
+        'micro',
+        '2xs',
+        'xs',
+        'ui',
+        'sm',
+        'title',
+        'display',
+        'display-lg',
+      ],
       radius: ['control', 'surface', 'overlay', 'composer'],
     },
     classGroups: {
@@ -11,3 +21,7 @@ export const cn = createCn({
     },
   },
 });
+
+export function cn(...inputs: ClassValue[]): string {
+  return merge(clsx(inputs));
+}
