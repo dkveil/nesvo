@@ -42,6 +42,23 @@ const flags = [
   '--add-dir',
   '--disallowedTools',
   '--effort',
+  '--chrome',
+];
+const BROWSER_TOOL_PREFIX = 'mcp__claude-in-chrome__';
+const FIXTURE_COMMANDS = [
+  { name: 'review', description: 'Review a pull request', argumentHint: '' },
+  { name: 'init', description: 'Write a CLAUDE.md file', argumentHint: '' },
+  {
+    name: 'compact',
+    description: 'Compact the conversation',
+    argumentHint: '',
+  },
+  { name: 'config', description: 'Open the settings panel', argumentHint: '' },
+  {
+    name: 'fixture-native',
+    description: 'A native fixture command',
+    argumentHint: '[topic]',
+  },
 ];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PERMISSION_HELP = [
@@ -171,7 +188,9 @@ if (args.length === 1 && args[0] === '--version') {
   console.log(
     flags
       .filter(
-        flag => flag !== '--effort' || !process.env.NESVO_FIXTURE_NO_EFFORT,
+        flag =>
+          (flag !== '--effort' || !process.env.NESVO_FIXTURE_NO_EFFORT) &&
+          (flag !== '--chrome' || !process.env.NESVO_FIXTURE_NO_CHROME),
       )
       .map(flag =>
         flag === '--effort'
@@ -189,6 +208,57 @@ if (args.length === 1 && args[0] === '--version') {
   );
 } else if (args.join(' ') === 'auth status --json') {
   emit({ loggedIn: true, authMethod: 'fixture', apiProvider: 'fixture' });
+} else if (
+  args[args.indexOf('--input-format') + 1] === 'stream-json' &&
+  !args.includes('--session-id') &&
+  !args.includes('--resume') &&
+  !args.includes('--include-partial-messages') &&
+  args.includes('--setting-sources')
+) {
+  const settingSources = args[args.indexOf('--setting-sources') + 1];
+  assert.ok(['user', 'user,project,local'].includes(settingSources));
+  for (const [flag, expected] of [
+    ['--permission-mode', 'plan'],
+    ['--permission-prompts', 'none'],
+    ['--tools', ''],
+    ['--mcp-config', '{"mcpServers":{}}'],
+    ['--settings', '{"disableAllHooks":true}'],
+  ])
+    assert.equal(args[args.indexOf(flag) + 1], expected, flag);
+  for (const flag of args.filter(arg => arg.startsWith('--')))
+    assert.ok(flags.includes(flag), `Unexpected command argument: ${flag}`);
+  const projectCommands = [];
+  if (settingSources.includes('project')) {
+    const { readdirSync } = await import('node:fs');
+    const folder = join(process.cwd(), '.claude', 'commands');
+    if (existsSync(folder))
+      for (const name of readdirSync(folder))
+        if (name.endsWith('.md'))
+          projectCommands.push({
+            name: name.slice(0, -3),
+            description: '(project)',
+            argumentHint: '',
+          });
+  }
+  if (process.env.NESVO_FIXTURE_COMMANDS_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_COMMANDS_LOG,
+      JSON.stringify({ cwd: process.cwd(), settingSources }) + '\n',
+      { flag: 'a' },
+    );
+  for await (const line of createInterface({ input: process.stdin })) {
+    const frame = JSON.parse(line);
+    assert.equal(frame.type, 'control_request');
+    assert.equal(frame.request.subtype, 'initialize');
+    emit({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: frame.request_id,
+        response: { commands: [...FIXTURE_COMMANDS, ...projectCommands] },
+      },
+    });
+  }
 } else if (
   args[args.indexOf('--input-format') + 1] === 'stream-json' &&
   !args.includes('--session-id') &&
@@ -302,6 +372,7 @@ if (args.length === 1 && args[0] === '--version') {
     '--strict-mcp-config',
     '--no-session-persistence',
     '--fork-session',
+    '--chrome',
   ]);
   const values = new Map();
   for (let index = 0; index < args.length; index += 1) {
@@ -331,6 +402,12 @@ if (args.length === 1 && args[0] === '--version') {
     permissionMode === 'plan' &&
     hostPrompts &&
     values.get('--tools') === `${READ_TOOLS},ExitPlanMode`;
+  const browser = values.has('--chrome');
+  const allowed = values.get('--allowedTools').split(',');
+  const browserTools = allowed.filter(tool =>
+    tool.startsWith(BROWSER_TOOL_PREFIX),
+  );
+  if (browserTools.length) assert.ok(browser && (!hostPrompts || presentsPlan));
   for (const [flag, expected] of [
     ['--output-format', 'stream-json'],
     ['--permission-prompts', hostPrompts ? 'host' : 'none'],
@@ -340,9 +417,13 @@ if (args.length === 1 && args[0] === '--version') {
         ? `${READ_TOOLS},ExitPlanMode`
         : MODE_TOOLS.get(permissionMode),
     ],
-    ['--allowedTools', MODE_ALLOWED.get(permissionMode)],
   ])
     assert.equal(values.get(flag), expected, flag);
+  assert.equal(
+    allowed.filter(tool => !tool.startsWith(BROWSER_TOOL_PREFIX)).join(','),
+    MODE_ALLOWED.get(permissionMode),
+    '--allowedTools',
+  );
 
   const settingSources = values.get('--setting-sources');
   const readConfig = value =>
@@ -368,6 +449,8 @@ if (args.length === 1 && args[0] === '--version') {
         config,
         hooks: settings.hooks ?? {},
         settingSources,
+        browser,
+        browserTools,
         ...(process.env.NESVO_FIXTURE_MCP_ARGV === '1' ? { args } : {}),
       }) + '\n',
       { flag: 'a' },
@@ -652,9 +735,19 @@ if (args.length === 1 && args[0] === '--version') {
     session_id: sessionId,
     model: `fixture-${values.get('--model') ?? 'default'}`,
     tools: ['Read', 'Glob', 'Grep'],
-    mcp_servers: controlTools
-      ? [{ name: 'nesvo', status: 'connected', source: 'sdk' }]
-      : [],
+    mcp_servers: [
+      ...(controlTools
+        ? [{ name: 'nesvo', status: 'connected', source: 'sdk' }]
+        : []),
+      ...(browser && process.env.NESVO_FIXTURE_BROWSER_STATUS !== 'absent'
+        ? [
+            {
+              name: 'claude-in-chrome',
+              status: process.env.NESVO_FIXTURE_BROWSER_STATUS ?? 'connected',
+            },
+          ]
+        : []),
+    ],
   });
   emit({ type: 'assistant', parent_tool_use_id: 'fixture-subagent' });
   const messageId = `fixture-message-${turn}`;

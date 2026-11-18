@@ -32,6 +32,7 @@ import {
   type SearchWorkspaceFilesInput,
   type ReadWorkspaceFileInput,
   type DiscoverSkillsInput,
+  type ListClaudeCommandsInput,
   type ListMcpServersInput,
   type SetSessionMcpInput,
 } from '@nesvo/contracts';
@@ -186,6 +187,12 @@ export function startHost(directory: string) {
       if (response.type !== 'skills')
         throw new Error('Unexpected host response');
       return response.catalog;
+    },
+    listClaudeCommands: async (input: ListClaudeCommandsInput) => {
+      const response = await request('list-claude-commands', input);
+      if (response.type !== 'claude-commands')
+        throw new Error('Unexpected host response');
+      return response.list;
     },
     listMcpServers: async (input: ListMcpServersInput) => {
       const response = await request('list-mcp-servers', input);

@@ -119,6 +119,7 @@ const sessionCreateInputSchema = z.strictObject({
     .optional(),
   groupId: sessionIdSchema.optional(),
   planFirst: z.boolean().default(false),
+  browser: z.boolean().optional(),
 });
 const sessionSendInputSchema = z.strictObject({
   sessionId: sessionIdSchema,
@@ -171,7 +172,7 @@ export const sessionControlTools = {
     mutation: true,
     input: sessionCreateInputSchema,
     description:
-      'Create a child session on this computer and send its first prompt. The child belongs to you. directory is relative to your folder (or absolute) and must stay inside it; without directory the default session folder of this computer applies when it is inside your folder, otherwise your folder, and the result says so. worktree starts it in a new Git worktree of that folder. With planFirst the first turn is read-only and returns a plan that you accept or correct with session_decide. The computer owner limits providers, models and modes in Settings; refusals say why.',
+      'Create a child session on this computer and send its first prompt. The child belongs to you. directory is relative to your folder (or absolute) and must stay inside it; without directory the default session folder of this computer applies when it is inside your folder, otherwise your folder, and the result says so. worktree starts it in a new Git worktree of that folder. With planFirst the first turn is read-only and returns a plan that you accept or correct with session_decide. browser gives the child browser access when this computer supports it; otherwise its first turn fails and says why. The computer owner limits providers, models and modes in Settings; refusals say why.',
   },
   session_send: {
     title: 'Send to session',

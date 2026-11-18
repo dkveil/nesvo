@@ -10,11 +10,13 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
+  claudeCommandLimits,
   reasoningEffortSchema,
   SESSION_CONTROL_NAMESPACE,
   sessionControlToolTitle,
   type Approval,
   type ImageMediaType,
+  type ClaudeCommand,
   type ClaudeStatus,
   type ProviderUsage,
   type SessionMode,
@@ -28,6 +30,11 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import {
+  claudeBrowserExtensionInstalled,
+  claudeBrowserServerName,
+  unattendedBrowserTools,
+} from './browser-extension';
 import {
   inactivityFailure,
   maxTurnOutputBytes,
@@ -156,6 +163,10 @@ const claudeModes = {
 >;
 const optionalModes = ['accept-edits', 'auto'] as const;
 const EXIT_PLAN_TOOL = 'ExitPlanMode';
+const PLAN_BROWSER_MESSAGE =
+  'While planning, Nesvo only allows read-only browser tools.';
+const isBrowserTool = (tool: string) =>
+  tool.startsWith(`mcp__${claudeBrowserServerName}__`);
 const toolPresentation = {
   Read: { kind: 'read', title: 'Read file' },
   Glob: { kind: 'search', title: 'Find files' },
@@ -330,6 +341,17 @@ function claudeCompactInput(instructions: string | null) {
       '\n',
     content,
   };
+}
+
+function browserConnected(servers: unknown): boolean {
+  if (!Array.isArray(servers)) return false;
+  const server = servers
+    .map(object)
+    .find(entry => entry?.name === claudeBrowserServerName);
+  return (
+    !!server &&
+    !['failed', 'needs-auth', 'disabled'].includes(String(server.status))
+  );
 }
 
 function supportedModes(choices: string[]): ClaudeMode[] {
@@ -565,6 +587,27 @@ async function inspect(
   let permissionModes: string[] = [];
   let imageInput = false;
   let efforts: ClaudeStatus['efforts'] = [];
+  let browserFlag = false;
+  let browserExtension = false;
+  const browser = (state: ClaudeStatus['status']): ClaudeStatus['browser'] =>
+    state !== 'ready'
+      ? {
+          status: 'unsupported',
+          reason: 'Claude Code is not ready on this computer.',
+        }
+      : !browserFlag
+        ? {
+            status: 'unsupported',
+            reason:
+              'This Claude Code version cannot use the browser. Update the CLI to use the browser.',
+          }
+        : !browserExtension
+          ? {
+              status: 'unsupported',
+              reason:
+                'The Claude Code browser extension is not installed in Chrome on this computer. Install it, sign in, then refresh Claude Code status.',
+            }
+          : { status: 'supported' };
   const status = (
     state: ClaudeStatus['status'],
     detail: string | null,
@@ -595,6 +638,7 @@ async function inspect(
                 ? 'This Claude Code version cannot receive images. Update the CLI to attach images.'
                 : 'Claude Code is not ready on this computer.',
           },
+    browser: browser(state),
   });
   try {
     const executable = await executablePath();
@@ -635,6 +679,7 @@ async function inspect(
     permissionModes = permissionChoices(help.stdout);
     imageInput = acceptsStreamInput(help.stdout);
     efforts = effortChoices(help.stdout);
+    browserFlag = /(?:^|\s)--chrome(?:\s|$)/.test(help.stdout);
     const missing = requiredFlags.filter(flag => !help.stdout.includes(flag));
     if (help.code !== 0 || missing.length > 0 || !version) {
       return {
@@ -682,6 +727,7 @@ async function inspect(
         ),
       };
     }
+    browserExtension = browserFlag && (await claudeBrowserExtensionInstalled());
     const ready = status('ready', null);
     lastReadyModes = ready.modes.filter(isClaudeMode);
     lastReadyEfforts = ready.efforts.map(option => option.id);
@@ -914,6 +960,148 @@ export async function inspectClaudeUsage(
   return result;
 }
 
+export type ClaudeCommandReport = {
+  commands: ClaudeCommand[];
+  detail: string | null;
+};
+
+function reportedCommands(value: unknown): ClaudeCommand[] {
+  const listed = object(value)?.commands;
+  if (!Array.isArray(listed)) return [];
+  const seen = new Set<string>();
+  return listed
+    .map(object)
+    .flatMap(entry => {
+      const name = textField(entry, 'name').trim();
+      if (!name || name.length > claudeCommandLimits.name || seen.has(name))
+        return [];
+      seen.add(name);
+      return [
+        {
+          name,
+          description: textField(entry, 'description').slice(
+            0,
+            claudeCommandLimits.description,
+          ),
+          argumentHint:
+            textField(entry, 'argumentHint').slice(
+              0,
+              claudeCommandLimits.argumentHint,
+            ) || null,
+        },
+      ];
+    })
+    .slice(0, claudeCommandLimits.entries);
+}
+
+export async function inspectClaudeCommands(options: {
+  directory: string;
+  projectSettings: boolean;
+  signal?: AbortSignal;
+  environment?: Readonly<Record<string, string>>;
+}): Promise<ClaudeCommandReport> {
+  const unavailable = (detail: string): ClaudeCommandReport => ({
+    commands: [],
+    detail,
+  });
+  if (options.signal?.aborted) return unavailable('Stopped.');
+  const executable = await executablePath().catch(() => null);
+  if (!executable)
+    return unavailable('Install Claude Code to list its commands.');
+  const owned = ownProcess(
+    executable,
+    [
+      '--print',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--no-session-persistence',
+      '--permission-mode',
+      'plan',
+      '--permission-prompts',
+      'none',
+      '--tools',
+      '',
+      ...isolatedToolArgs,
+      '--setting-sources',
+      options.projectSettings ? 'user,project,local' : 'user',
+    ],
+    options.directory,
+    options.environment,
+  );
+  const requestId = randomUUID();
+  let detach: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  try {
+    const answer = new Promise<ClaudeCommandReport>(resolve => {
+      const finish = (report: ClaudeCommandReport) => {
+        resolve(report);
+        void owned.stop();
+      };
+      detach = readFrames(
+        owned.child.stdout,
+        4 * maxLineBytes,
+        value => {
+          const frame = object(value);
+          if (frame?.type === 'control_request')
+            return finish(
+              unavailable(
+                'Claude Code requested an operation while listing commands.',
+              ),
+            );
+          const response = object(frame?.response);
+          if (
+            frame?.type !== 'control_response' ||
+            response?.request_id !== requestId
+          )
+            return;
+          finish(
+            response.subtype === 'success'
+              ? {
+                  commands: reportedCommands(response.response),
+                  detail: null,
+                }
+              : unavailable(
+                  'This Claude Code version did not list its commands. Update the CLI.',
+                ),
+          );
+        },
+        () => finish(unavailable('Claude Code returned an invalid frame.')),
+      );
+      owned.child.stderr.resume();
+      abort = () => finish(unavailable('Stopped.'));
+      options.signal?.addEventListener('abort', abort, { once: true });
+      timer = setTimeout(
+        () =>
+          finish(unavailable('Claude Code did not list its commands in time.')),
+        15_000,
+      );
+      void owned.closed.then(() =>
+        finish(unavailable('Claude Code closed before listing its commands.')),
+      );
+      owned.child.stdin.write(
+        JSON.stringify({
+          type: 'control_request',
+          request_id: requestId,
+          request: { subtype: 'initialize', hooks: {}, sdkMcpServers: [] },
+        }) + '\n',
+      );
+    });
+    return await answer;
+  } catch {
+    return unavailable('Claude Code commands could not be listed.');
+  } finally {
+    clearTimeout(timer);
+    if (abort) options.signal?.removeEventListener('abort', abort);
+    detach?.();
+    owned.child.stdin.end();
+    await owned.stop();
+  }
+}
+
 export async function confirmClaudeFork(
   mode: SessionMode,
   signal: AbortSignal,
@@ -962,6 +1150,7 @@ export function startClaude(options: {
   compact?: { instructions: string | null };
   control?: SessionControlTurn;
   planTurn?: boolean;
+  browser?: boolean;
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -1027,6 +1216,11 @@ export function startClaude(options: {
           error:
             'This Claude Code version cannot receive images or PDF files. Update the CLI or send the message without them.',
         };
+      if (options.browser && inspection.status.browser.status !== 'supported')
+        return {
+          status: 'failed',
+          error: `${inspection.status.browser.reason} No provider turn was started.`,
+        };
       if (options.readDirectories?.length && !inspection.supportsAddDirectory)
         return {
           status: 'failed',
@@ -1060,7 +1254,6 @@ export function startClaude(options: {
         ...permission.tools,
         ...(presentsPlan ? [EXIT_PLAN_TOOL] : []),
       ].join(',');
-      const allowedTools = permission.allowed.join(',');
       const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
       );
@@ -1088,7 +1281,14 @@ export function startClaude(options: {
         (!readOnly ||
           Object.keys(servers).length > 0 ||
           controlled ||
-          presentsPlan);
+          presentsPlan ||
+          !!options.browser);
+      const allowedTools = [
+        ...permission.allowed,
+        ...(options.browser && (!hostPrompts || presentsPlan)
+          ? unattendedBrowserTools
+          : []),
+      ].join(',');
       if (integrations && options.mcpTurn)
         runConfig = await writeClaudeRunConfig(
           options.mcpTurn.dataDirectory,
@@ -1154,6 +1354,7 @@ export function startClaude(options: {
         );
       if (options.model !== 'default') args.push('--model', options.model);
       if (options.effort) args.push('--effort', options.effort);
+      if (options.browser) args.push('--chrome');
       if (options.ephemeral) args.push('--no-session-persistence');
       if (options.assistantPrompt)
         args.push('--append-system-prompt', options.assistantPrompt);
@@ -1345,6 +1546,14 @@ export function startClaude(options: {
           if (typeof plan === 'string' && plan.trim())
             emit({ type: 'plan', text: plan });
           deny(ask.requestId, PLAN_RECEIVED_MESSAGE);
+          return;
+        }
+        if (
+          options.planTurn &&
+          isBrowserTool(String(request.tool_name)) &&
+          !unattendedBrowserTools.includes(String(request.tool_name))
+        ) {
+          deny(ask.requestId, PLAN_BROWSER_MESSAGE);
           return;
         }
         if (readOnly && !String(request.tool_name).startsWith('mcp__')) {
@@ -1586,6 +1795,12 @@ export function startClaude(options: {
             reportedModel = value.model;
             if (control && !isClaudeControlServer(value.mcp_servers))
               controlUnavailable();
+            if (options.browser && !browserConnected(value.mcp_servers)) {
+              fail(
+                'The Claude Code browser extension did not connect. Open Chrome with the extension signed in, then send the message again.',
+              );
+              return;
+            }
             emit({
               type: 'init',
               sessionId: value.session_id,

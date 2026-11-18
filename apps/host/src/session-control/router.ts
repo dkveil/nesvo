@@ -683,6 +683,7 @@ export class SessionControl {
             }
           : {}),
         ...(groupId ? { groupId } : {}),
+        ...(input.browser ? { browser: true } : {}),
       });
       if (!create.success)
         return refusal(

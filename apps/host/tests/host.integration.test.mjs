@@ -294,6 +294,7 @@ const fixtureEnvironment = (directory, pidFile) => ({
   CLAUDE_CONFIG_DIR: join(directory, 'claude-config'),
   CODEX_HOME: join(directory, 'codex-config'),
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills-home'),
+  NESVO_TEST_BROWSER_DATA_DIRS: join(directory, 'browser-data'),
 });
 
 function reconstruct(history, event) {
@@ -1379,6 +1380,8 @@ test(
         'workflow-sharing',
         'workflow-child-sessions',
         'session-stages',
+        'claude-commands',
+        'session-browser',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6581,6 +6584,8 @@ test(
       'workflow-sharing',
       'workflow-child-sessions',
       'session-stages',
+      'claude-commands',
+      'session-browser',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -24209,6 +24214,413 @@ test('Claude Code writable modes add plan, subagent and skill tools while subage
   assert.equal(planned.status, 'completed', planned.error);
   assert.deepEqual(await lastTools(), ['Read,Glob,Grep', 'Read,Glob,Grep']);
 });
+
+test('Claude Code native commands are listed from the CLI, passed through and refused visibly, with repository commands and instructions only after trust', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-claude-commands-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const promptLog = join(directory, 'prompts.jsonl');
+  const mcpLog = join(directory, 'mcp.jsonl');
+  const commandsLog = join(directory, 'commands.jsonl');
+  await mkdir(join(project, '.git'), { recursive: true });
+  await mkdir(join(project, '.claude', 'commands'), { recursive: true });
+  await writeFile(
+    join(project, 'CLAUDE.md'),
+    'Answer with the word BLUEFIN.\n',
+  );
+  await writeFile(
+    join(project, '.claude', 'commands', 'ship.md'),
+    'Prepare the release notes.\n',
+  );
+  const host = launch(directory, pidFile, {
+    NESVO_FIXTURE_PROMPT_LOG: promptLog,
+    NESVO_FIXTURE_MCP_LOG: mcpLog,
+    NESVO_FIXTURE_COMMANDS_LOG: commandsLog,
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const logged = async path =>
+    (await readFile(path, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  const created = await host.request('create-session', {
+    title: 'Claude commands',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'accept-edits',
+    directory: project,
+  });
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  const sessionId = created.session.id;
+  const commands = async () => {
+    const response = await host.request('list-claude-commands', { sessionId });
+    assert.equal(response.type, 'claude-commands', JSON.stringify(response));
+    return response.list;
+  };
+  const turn = async text => {
+    const response = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === response.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  };
+
+  const untrusted = await commands();
+  assert.equal(untrusted.status, 'ready', untrusted.detail);
+  assert.equal(untrusted.projectCommands, false);
+  assert.deepEqual(
+    untrusted.commands.map(command => command.name),
+    ['review', 'init', 'fixture-native'],
+  );
+  assert.equal(untrusted.commands[2].argumentHint, '[topic]');
+  assert.deepEqual((await logged(commandsLog)).at(-1), {
+    cwd: project,
+    settingSources: 'user',
+  });
+
+  const passed = await turn('/fixture-native release topic');
+  assert.equal(passed.status, 'completed', passed.error);
+  assert.equal(
+    (await logged(promptLog)).at(-1).prompt,
+    '/fixture-native release topic',
+  );
+  assert.equal((await logged(mcpLog)).at(-1).settingSources, 'user');
+  const launches = (await logged(mcpLog)).length;
+  for (const [text, reason] of [
+    ['/compact keep the plan', /Compact conversation in Nesvo/],
+    ['/config', /interactive Claude Code screen/],
+    ['/__remote-workflow', /internal to Claude Code/],
+  ]) {
+    const refused = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(refused.code, 'invalid-request', JSON.stringify(refused));
+    assert.match(refused.message, reason);
+    const queued = await host.request('queue-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(queued.code, 'invalid-request', JSON.stringify(queued));
+  }
+  assert.equal((await logged(mcpLog)).length, launches);
+
+  const listed = await host.request('list-mcp-servers', { sessionId });
+  assert.equal(listed.type, 'mcp-servers', JSON.stringify(listed));
+  const repository = listed.list.repository;
+  assert.equal(repository.status, 'needs-trust');
+  assert.deepEqual(
+    repository.definitions.map(item => [item.name, item.detail]).sort(),
+    [
+      ['.claude/commands', 'Project commands: /ship'],
+      ['CLAUDE.md', 'Project instructions'],
+    ],
+  );
+  const trusted = await host.request('trust-repository-mcp', {
+    sessionId,
+    fingerprint: repository.fingerprint,
+  });
+  assert.equal(trusted.type, 'mcp-servers', JSON.stringify(trusted));
+  assert.equal(trusted.list.repository.status, 'trusted');
+
+  const allowed = await commands();
+  assert.equal(allowed.projectCommands, true);
+  assert.ok(allowed.commands.some(command => command.name === 'ship'));
+  assert.equal(
+    (await logged(commandsLog)).at(-1).settingSources,
+    'user,project,local',
+  );
+  const native = await turn('/ship');
+  assert.equal(native.status, 'completed', native.error);
+  const applied = (await logged(mcpLog)).at(-1);
+  assert.equal(applied.settingSources, 'user,project,local');
+  assert.deepEqual(applied.hooks, {});
+
+  await writeFile(
+    join(project, '.claude', 'commands', 'ship.md'),
+    'Prepare the release notes and tag the release.\n',
+  );
+  const changed = await host.request('list-mcp-servers', { sessionId });
+  assert.equal(changed.list.repository.status, 'needs-trust');
+  assert.equal((await commands()).projectCommands, false);
+  const after = await turn('Plain text again.');
+  assert.equal(after.status, 'completed', after.error);
+  assert.equal((await logged(mcpLog)).at(-1).settingSources, 'user');
+
+  const codex = await host.request('create-session', {
+    title: 'Codex commands',
+    provider: 'Codex',
+    model: 'default',
+    mode: 'read-only',
+    directory: project,
+  });
+  const notClaude = await host.request('list-claude-commands', {
+    sessionId: codex.session.id,
+  });
+  assert.equal(notClaude.code, 'invalid-request', JSON.stringify(notClaude));
+});
+
+test('Browser access is a session property that Claude Code checks before starting and fails visibly without support', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-claude-browser-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const launchLog = join(directory, 'launches.jsonl');
+  const browserData = join(directory, 'browser-with-extension');
+  await mkdir(project);
+  await mkdir(
+    join(
+      browserData,
+      'Default',
+      'Extensions',
+      'fcoeoabgfenejglbffodgkkbkcdhcgfn',
+    ),
+    { recursive: true },
+  );
+  const open = (extra = {}) =>
+    launch(directory, pidFile, {
+      NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      NESVO_TEST_BROWSER_DATA_DIRS: browserData,
+      ...extra,
+    });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const launches = async () =>
+    existsSync(launchLog)
+      ? (await readFile(launchLog, 'utf8'))
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line).args)
+          .filter(args => args.includes('--include-partial-messages'))
+      : [];
+  const status = await host.request('claude-status');
+  assert.deepEqual(status.status.browser, { status: 'supported' });
+  const created = await host.request('create-session', {
+    title: 'Claude browser',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'read-only',
+    directory: project,
+    browser: true,
+  });
+  assert.equal(created.type, 'session', JSON.stringify(created));
+  assert.equal(created.session.browser, true);
+  const sessionId = created.session.id;
+  const plain = await host.request('create-session', {
+    title: 'Claude without browser',
+    provider: 'Claude Code',
+    model: 'sonnet',
+    mode: 'read-only',
+    directory: project,
+  });
+  assert.equal(plain.session.browser, undefined);
+  const turn = async (id, text = 'Open the staging page.') => {
+    const response = await host.request('send-message', {
+      sessionId: id,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return host.event(
+      session =>
+        session.id === id &&
+        session.runId === response.session.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  };
+  const done = await turn(sessionId);
+  assert.equal(done.status, 'completed', done.error);
+  let args = (await launches()).at(-1);
+  assert.ok(args.includes('--chrome'));
+  assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
+  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Glob,Grep');
+  const without = await turn(plain.session.id);
+  assert.equal(without.status, 'completed', without.error);
+  assert.equal((await launches()).at(-1).includes('--chrome'), false);
+  const counted = (await launches()).length;
+
+  const expectRefusal = async (extra, pattern) => {
+    await host.stop();
+    host = open(extra);
+    const failed = await turn(sessionId);
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error, pattern);
+    return failed;
+  };
+  const older = await expectRefusal(
+    { NESVO_FIXTURE_NO_CHROME: '1' },
+    /cannot use the browser\. Update the CLI.*No provider turn was started/,
+  );
+  assert.equal(older.browser, true);
+  const olderStatus = await host.request('claude-status');
+  assert.equal(olderStatus.status.browser.status, 'unsupported');
+  await expectRefusal(
+    { NESVO_TEST_BROWSER_DATA_DIRS: join(directory, 'empty-browser') },
+    /browser extension is not installed/,
+  );
+  assert.equal((await launches()).length, counted);
+  await expectRefusal(
+    { NESVO_FIXTURE_BROWSER_STATUS: 'failed' },
+    /browser extension did not connect/,
+  );
+  await expectRefusal(
+    { NESVO_FIXTURE_BROWSER_STATUS: 'absent' },
+    /browser extension did not connect/,
+  );
+  args = (await launches()).at(-1);
+  assert.ok(args.includes('--chrome'));
+
+  const codex = await host.request('create-session', {
+    title: 'Codex browser',
+    provider: 'Codex',
+    model: 'default',
+    mode: 'read-only',
+    directory: project,
+    browser: true,
+  });
+  assert.equal(codex.type, 'session', JSON.stringify(codex));
+  const codexFailed = await turn(codex.session.id);
+  assert.equal(codexFailed.status, 'failed');
+  assert.match(codexFailed.error, /Codex has no browser MCP server/);
+});
+
+test(
+  'Workflow agent steps with needs browser run with browser access, while other steps stay blocked',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-workflow-browser-')),
+    );
+    const environment = {
+      NESVO_TEST_MODE: process.env.NESVO_TEST_MODE,
+      NESVO_WORKFLOWS_HOME: process.env.NESVO_WORKFLOWS_HOME,
+    };
+    const browserData = join(directory, 'browser-data');
+    await mkdir(
+      join(
+        browserData,
+        'Profile 1',
+        'Extensions',
+        'fcoeoabgfenejglbffodgkkbkcdhcgfn',
+      ),
+      { recursive: true },
+    );
+    process.env.NESVO_TEST_MODE = '1';
+    process.env.NESVO_WORKFLOWS_HOME = join(directory, 'empty-home');
+    const project = join(directory, 'project');
+    const write = async (path, content) => {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, content);
+    };
+    await mkdir(join(project, '.git'), { recursive: true });
+    const steps = {
+      look: 'type: agent\nneeds: [browser]\n---\nfixture:verdict-pass\nOpen the staging page and record what it shows.',
+      page: 'type: command\nneeds: [browser]\n---\necho never',
+    };
+    for (const [name, body] of Object.entries(steps))
+      await write(
+        join(project, '.agents', 'workflows', 'steps', `${name}.md`),
+        `---\nname: ${name}\nphase: pre-done\n${body}\n`,
+      );
+    for (const [workflow, step] of [
+      ['browse', 'look'],
+      ['shell', 'page'],
+    ]) {
+      await write(
+        join(project, '.agents', 'workflows', 'workflows', `${workflow}.md`),
+        `---\nname: ${workflow}\nsteps: [${step}]\n---\n`,
+      );
+      await write(
+        join(project, '.agents', 'tasks', `${workflow}.md`),
+        `---\nworkflow: ${workflow}\ntitle: Run ${workflow}\n---\n## Goal\nRun ${workflow}.\n`,
+      );
+    }
+    const pidFile = join(directory, 'pids.json');
+    let host = launch(join(directory, 'data'), pidFile, {
+      NESVO_TEST_BROWSER_DATA_DIRS: browserData,
+    });
+    t.after(async () => {
+      if (host.child.exitCode === null) await host.stop();
+      for (const [key, value] of Object.entries(environment))
+        if (value == null) delete process.env[key];
+        else process.env[key] = value;
+      await rm(directory, { recursive: true, force: true });
+    });
+    const run = async name => {
+      const response = await host.request('run-workflow-steps', {
+        directory: project,
+        specPath: join('.agents', 'tasks', `${name}.md`),
+      });
+      assert.equal(response.type, 'workflow-run', JSON.stringify(response));
+      const deadline = Date.now() + 30_000;
+      while (true) {
+        const detail = await host.request('get-workflow-run', {
+          runId: response.run.id,
+        });
+        assert.equal(
+          detail.type,
+          'workflow-run-detail',
+          JSON.stringify(detail),
+        );
+        const step = detail.detail.steps[0];
+        if (step && !['pending', 'running'].includes(step.state)) return step;
+        assert.ok(Date.now() < deadline, JSON.stringify(detail.detail.steps));
+        await delay(50);
+      }
+    };
+    const look = await run('browse');
+    assert.equal(look.state, 'passed', look.result?.summary);
+    const verdicts = (await readFile(pidFile + '.verdicts', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line).args);
+    const args = verdicts.at(-1);
+    assert.ok(args.includes('--chrome'));
+    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'none');
+    const allowed = args[args.indexOf('--allowedTools') + 1].split(',');
+    assert.ok(allowed.includes('mcp__claude-in-chrome__navigate'));
+    assert.ok(allowed.includes('mcp__claude-in-chrome__get_page_text'));
+    assert.equal(allowed.includes('mcp__claude-in-chrome__computer'), false);
+    assert.equal(
+      allowed.includes('mcp__claude-in-chrome__javascript_tool'),
+      false,
+    );
+
+    const page = await run('shell');
+    assert.equal(page.state, 'blocked');
+    assert.equal(page.result.summary, 'Only agent steps can use the browser');
+
+    await host.stop();
+    host = launch(join(directory, 'data'), pidFile, {
+      NESVO_TEST_BROWSER_DATA_DIRS: join(directory, 'no-browser'),
+    });
+    const blocked = await run('browse');
+    assert.equal(blocked.state, 'blocked');
+    assert.match(blocked.result.summary, /browser extension is not installed/);
+    assert.equal(
+      (await readFile(pidFile + '.verdicts', 'utf8')).trim().split('\n').length,
+      verdicts.length,
+    );
+  },
+);
 
 test(
   'Worktree recipes copy files, run approved setup with session resources and clean up',

@@ -129,6 +129,7 @@ import {
   linkSessionPullRequestSchema,
   findSessionPullRequestSchema,
   discoverSkillsSchema,
+  listClaudeCommandsSchema,
   listMcpServersSchema,
   trustRepositoryMcpSchema,
   setSessionMcpSchema,
@@ -955,6 +956,17 @@ void app.whenReady().then(async () => {
     authorize(event);
     return computers.listReviews(hostIdSchema.optional().parse(hostId));
   });
+  handle(
+    'nesvo:list-claude-commands',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-claude-commands',
+        listClaudeCommandsSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
   handle(
     'nesvo:discover-skills',
     async (event, input: unknown, hostId: unknown) => {

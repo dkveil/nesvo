@@ -68,6 +68,9 @@ import {
   sessionControlToolDefinitions,
   sessionPlanLimits,
   stageToolDefinitions,
+  claudeCommandRefusal,
+  typedClaudeCommand,
+  type ClaudeCommandList,
 } from '@nesvo/contracts';
 import {
   interactiveMcpSession,
@@ -82,6 +85,7 @@ import {
   reportedClaudeModes,
   startClaude,
   claudeSupportsHostPrompts,
+  inspectClaudeCommands,
   type ClaudeEvent,
   type ClaudeImage,
   type ClaudeResult,
@@ -523,6 +527,18 @@ const delegatesThroughCodex = (session: Session) =>
   session.provider === 'Codex' &&
   session.parentId === null &&
   session.role !== 'worker';
+
+const browserServerPattern = /browser|chrome|devtools/i;
+
+function refuseClaudeCommand(
+  session: Session,
+  input: Pick<SendMessageInput, 'text' | 'skillId'>,
+): void {
+  if (session.provider !== 'Claude Code' || input.skillId) return;
+  const command = typedClaudeCommand(input.text);
+  const refusal = command ? claudeCommandRefusal(command) : null;
+  if (refusal) throw new SessionError('invalid-request', refusal);
+}
 
 export class SessionService {
   private readonly active = new Map<string, ActiveRun>();
@@ -2073,6 +2089,89 @@ export class SessionService {
     return { ...list, readOnlyMcp: canAsk ? 'approval' : 'isolated' };
   }
 
+  async browserUnavailable(
+    session: Pick<Session, 'provider' | 'directory' | 'profileId'>,
+    { unattended }: { unattended: boolean },
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    const profileDirectory = await this.options.profiles?.directory(
+      session.provider,
+      session.profileId,
+      signal,
+    );
+    if (session.provider === 'Claude Code') {
+      const status = await inspectClaude(
+        signal,
+        profileEnvironment(session.provider, profileDirectory),
+      );
+      return status.browser.status === 'supported'
+        ? null
+        : status.browser.reason;
+    }
+    if (unattended)
+      return 'Codex workflow steps cannot use a browser. Run steps that need the browser with Claude Code.';
+    const list = await this.options.mcp
+      ?.list(session.provider, session.directory, signal, profileDirectory)
+      .catch(() => null);
+    return list?.servers.some(
+      server =>
+        server.scope === 'user' &&
+        !server.problem &&
+        browserServerPattern.test(server.name),
+    )
+      ? null
+      : 'Codex has no browser MCP server configured on this computer. Add one to its configuration, or turn off Browser for this session.';
+  }
+
+  async claudeCommands(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<ClaudeCommandList> {
+    const session = this.store.get(sessionId);
+    if (!session)
+      throw new SessionError(
+        'not-found',
+        'Session not found. Refresh the list.',
+      );
+    if (session.provider !== 'Claude Code')
+      throw new SessionError(
+        'invalid-request',
+        'Only Claude Code sessions list native commands.',
+      );
+    const profileDirectory = await this.options.profiles?.directory(
+      session.provider,
+      session.profileId,
+      signal,
+    );
+    const repository =
+      interactiveMcpSession(session) && this.options.mcp
+        ? await this.options.mcp
+            .list(session.provider, session.directory, signal, profileDirectory)
+            .then(list => list.repository?.status ?? null)
+            .catch(() => null)
+        : null;
+    const projectCommands = repository === 'trusted';
+    const report = await inspectClaudeCommands({
+      directory: session.directory,
+      projectSettings: projectCommands,
+      signal,
+      environment: {
+        ...this.options.environment?.(session),
+        ...profileEnvironment(session.provider, profileDirectory),
+      },
+    });
+    return {
+      sessionId,
+      status: report.detail ? 'unavailable' : 'ready',
+      detail: report.detail,
+      commands: report.commands.filter(
+        command => !claudeCommandRefusal(command.name),
+      ),
+      projectCommands,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   draftDirectory(directory: string): string {
     if (directory) return this.resolveDirectory(directory);
     const workspaces = join(this.directory, 'workspaces');
@@ -2110,6 +2209,7 @@ export class SessionService {
       );
     if (session.externalAttachment)
       throw new SessionError('busy', TERMINAL_ATTACHED_MESSAGE);
+    refuseClaudeCommand(session, input);
     const existing = session.messages.find(
       message => message.id === input.messageId,
     );
@@ -2417,6 +2517,7 @@ export class SessionService {
     const session = placement.session ?? this.acceptingSession(input.sessionId);
     if (session.externalAttachment)
       throw new SessionError('busy', TERMINAL_ATTACHED_MESSAGE);
+    refuseClaudeCommand(session, input);
     this.ensureWorktreeOpen(session);
     this.ensureNoStageDecision(session);
     if (input.skillHash && !input.skillId)
@@ -3665,6 +3766,20 @@ export class SessionService {
         }
         if (controller.signal.aborted)
           return { status: 'stopped', error: null };
+        if (session.browser && session.provider === 'Codex') {
+          const reason = mcpTurn
+            ? await this.browserUnavailable(
+                session,
+                { unattended: false },
+                controller.signal,
+              ).catch(() => 'The browser MCP server could not be checked.')
+            : 'This turn does not load MCP servers, so Codex cannot use a browser here.';
+          if (reason)
+            return {
+              status: 'failed',
+              error: `${reason} No provider turn was started.`,
+            };
+        }
         provider =
           session.provider === 'Codex'
             ? startCodex({
@@ -3778,6 +3893,7 @@ export class SessionService {
                 ...(planTurn ? { planTurn } : {}),
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
+                ...(session.browser ? { browser: true } : {}),
               });
         return provider.done;
       }),

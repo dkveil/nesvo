@@ -60,6 +60,11 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<SkillCatalog>;
+  browser?: (
+    provider: Session['provider'],
+    directory: string,
+    signal: AbortSignal,
+  ) => Promise<string | null>;
 };
 
 type StepSkill = { skillId: string; skillHash: string | undefined };
@@ -443,6 +448,17 @@ export const createAgentExecutor =
       skill = resolved;
     }
 
+    const browser = definition.needs.includes('browser');
+    if (browser) {
+      const unavailable = ports.browser
+        ? await ports.browser(run.gateProvider, run.directory, signal).catch(
+            () => 'Browser access could not be checked on this computer.',
+          )
+        : 'Browser steps are not available on this host';
+      if (signal.aborted) return interrupted;
+      if (unavailable) return result('blocked', unavailable);
+    }
+
     const spec = await ports.spec(run, signal).catch(() => null);
     if (signal.aborted) return interrupted;
     const prompt = verdictPrompt({
@@ -467,6 +483,7 @@ export const createAgentExecutor =
       model: run.gateModel,
       mode: 'read-only',
       directory: run.directory,
+      ...(browser ? { browser: true } : {}),
     };
     let session: Session;
     try {

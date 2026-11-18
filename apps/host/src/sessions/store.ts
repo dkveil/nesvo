@@ -339,6 +339,7 @@ export class SessionStore {
         mode: source.mode,
         directory,
         effort: source.effort ?? undefined,
+        ...(source.browser ? { browser: true } : {}),
       },
       directory,
       undefined,

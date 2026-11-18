@@ -252,6 +252,12 @@ import {
   type SkillCatalog,
 } from './skills';
 import {
+  claudeCommandListSchema,
+  listClaudeCommandsSchema,
+  type ClaudeCommandList,
+  type ListClaudeCommandsInput,
+} from './claude-commands';
+import {
   decideWorkflowGateSchema,
   definitionCatalogSchema,
   deleteWorkflowDefinitionSchema,
@@ -444,6 +450,7 @@ export * from './conversation-import';
 export * from './terminal-handoff';
 export * from './transcript-search';
 export * from './skills';
+export * from './claude-commands';
 export * from './mcp';
 export * from './mcp-selection';
 export * from './computers';
@@ -597,6 +604,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('discover-skills'),
     input: discoverSkillsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('list-claude-commands'),
+    input: listClaudeCommandsSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1236,6 +1248,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     catalog: skillCatalogSchema,
   }),
   z.strictObject({
+    type: z.literal('claude-commands'),
+    id: z.uuid(),
+    list: claudeCommandListSchema,
+  }),
+  z.strictObject({
     type: z.literal('mcp-servers'),
     id: z.uuid(),
     list: mcpServerListSchema,
@@ -1791,6 +1808,10 @@ export type DesktopApi = {
     input: DiscoverSkillsInput,
     hostId?: HostId,
   ) => Promise<SkillCatalog>;
+  listClaudeCommands: (
+    input: ListClaudeCommandsInput,
+    hostId?: HostId,
+  ) => Promise<ClaudeCommandList>;
   readGitBranch: (
     input: ReadGitBranchInput,
     hostId?: HostId,

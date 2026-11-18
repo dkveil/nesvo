@@ -130,6 +130,8 @@ import {
   workspaceSearchSchema,
   workspaceFileSchema,
   discoverSkillsSchema,
+  claudeCommandListSchema,
+  listClaudeCommandsSchema,
   listMcpServersSchema,
   trustRepositoryMcpSchema,
   mcpServerListSchema,
@@ -1206,6 +1208,14 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:discover-skills',
         discoverSkillsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listClaudeCommands: async (input, hostId) =>
+    claudeCommandListSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:list-claude-commands',
+        listClaudeCommandsSchema.parse(input),
         route(hostId),
       ),
     ),

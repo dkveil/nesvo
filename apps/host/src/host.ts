@@ -545,10 +545,17 @@ export const serveHost = ({
                     ? loaded.spec.body
                     : null;
                 },
+                browser: (provider, directory, signal) =>
+                  sessions.browserUnavailable(
+                    { provider, directory, profileId: null },
+                    { unattended: true },
+                    signal,
+                  ),
               }),
               session: childExecutor,
               'fan-out': childExecutor,
             },
+            browserSteps: true,
             author: createSessionAuthor({
               sessions,
               store: workflowRunStore,
@@ -689,6 +696,7 @@ export const serveHost = ({
       let workspaceRequests = 0;
       let worktreeRequests = 0;
       let skillRequests = 0;
+      let commandRequests = 0;
       let mcpRequests = 0;
       let definitionRequests = 0;
       let definitionWrites = 0;
@@ -1816,6 +1824,45 @@ export const serveHost = ({
           void inspection.finally(() => {
             skillRequests--;
             probes.pending.delete(inspection);
+          });
+          continue;
+        }
+        if (request.method === 'list-claude-commands') {
+          if (commandRequests >= 2) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message:
+                  'Claude Code commands are being listed. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          commandRequests++;
+          const listing = sessions
+            .claudeCommands(request.input.sessionId, probes.controller.signal)
+            .then(list =>
+              send({ type: 'claude-commands', id: request.id, list }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Claude Code commands could not be listed.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(listing);
+          void listing.finally(() => {
+            commandRequests--;
+            probes.pending.delete(listing);
           });
           continue;
         }

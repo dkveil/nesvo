@@ -24,6 +24,13 @@ import {
   stageReportSchema,
 } from './stage-report';
 
+export const browserSupportSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('supported') }),
+  z.strictObject({
+    status: z.literal('unsupported'),
+    reason: z.string().min(1).max(500),
+  }),
+]);
 export const claudeModelSchema = z.enum(['default', 'opus', 'sonnet', 'haiku']);
 export const providerSchema = z.enum(['Claude Code', 'Codex']);
 export const sessionModeSchema = z.enum([
@@ -320,6 +327,7 @@ export const createSessionSchema = z
     groupId: z.uuid().optional(),
     mcp: mcpSelectionSchema.optional(),
     planFirst: z.boolean().optional(),
+    browser: z.boolean().optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -550,6 +558,7 @@ export const sessionSchema = z.strictObject({
     .max(stageRecordLimit)
     .default([]),
   stageTools: z.boolean().default(false),
+  browser: z.boolean().optional(),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([
@@ -574,9 +583,14 @@ export const claudeStatusSchema = z.strictObject({
       'This computer runs an older Nesvo host that cannot send images. Update the host to attach images.',
   }),
   efforts: z.array(reasoningEffortOptionSchema).max(16).default([]),
+  browser: browserSupportSchema.default({
+    status: 'unsupported',
+    reason:
+      'This computer runs an older Nesvo host that cannot open a browser. Update the host to use the browser.',
+  }),
 });
 export const codexStatusSchema = claudeStatusSchema
-  .omit({ efforts: true })
+  .omit({ efforts: true, browser: true })
   .extend({
     models: z.array(
       z.strictObject({
@@ -624,6 +638,7 @@ export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type QueuedMessageRefInput = z.infer<typeof queuedMessageRefSchema>;
 export type StopRunInput = z.infer<typeof stopRunSchema>;
 export type ClaudeStatus = z.infer<typeof claudeStatusSchema>;
+export type BrowserSupport = z.infer<typeof browserSupportSchema>;
 export type CodexStatus = z.infer<typeof codexStatusSchema>;
 export type Provider = z.infer<typeof providerSchema>;
 export type SessionMode = z.infer<typeof sessionModeSchema>;

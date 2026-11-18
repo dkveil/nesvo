@@ -285,6 +285,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to run child workflow sessions.',
   'session-stages':
     'Update this computer’s Nesvo host and reconnect to plan sessions first and answer their questions.',
+  'claude-commands':
+    'Update this computer’s Nesvo host and reconnect to use Claude Code commands.',
+  'session-browser':
+    'Update this computer’s Nesvo host and reconnect to give sessions browser access.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -329,6 +333,15 @@ function requiredCapability(
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'list-running-apps') return 'running-apps';
+  if (method === 'list-claude-commands') return 'claude-commands';
+  if (
+    method === 'create-session' &&
+    typeof input === 'object' &&
+    input !== null &&
+    'browser' in input &&
+    input.browser
+  )
+    return 'session-browser';
   if (
     method === 'read-default-session-folder' ||
     method === 'set-default-session-folder'
@@ -1174,6 +1187,7 @@ export class ComputerManager {
       'save-session-control-policy': 'session-control-policy',
       'decide-review': 'review',
       'discover-skills': 'skills',
+      'list-claude-commands': 'claude-commands',
       'list-workspace-directory': 'workspace-directory',
       'search-workspace-files': 'workspace-search',
       'read-workspace-file': 'workspace-file',

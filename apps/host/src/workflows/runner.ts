@@ -172,6 +172,7 @@ export type RunnerPorts = {
   stopChildren?: (runId: string) => void;
   createManualSession?: (run: WorkflowRun) => string;
   environment?: NodeJS.ProcessEnv;
+  browserSteps?: boolean;
 };
 
 export class WorkflowRunError extends Error {
@@ -645,6 +646,7 @@ export class WorkflowRunner {
   private readonly stopChildren: RunnerPorts['stopChildren'];
   private readonly createManualSession: RunnerPorts['createManualSession'];
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly browserSteps: boolean;
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
   private readonly retryTimers = new Map<
@@ -667,6 +669,7 @@ export class WorkflowRunner {
     this.stopChildren = ports.stopChildren;
     this.createManualSession = ports.createManualSession;
     this.environment = ports.environment ?? process.env;
+    this.browserSteps = ports.browserSteps === true;
   }
 
   async startManualRun(
@@ -1472,8 +1475,13 @@ export class WorkflowRunner {
 
   private unmetNeed(definition: ResolvedStep): string | null {
     for (const need of definition.needs) {
-      if (need === 'browser')
-        return 'Browser steps are not available on this host';
+      if (need === 'browser') {
+        if (!this.browserSteps)
+          return 'Browser steps are not available on this host';
+        if (definition.type !== 'agent')
+          return 'Only agent steps can use the browser';
+        continue;
+      }
       const name = need.slice('env:'.length);
       if (this.environment[name] == null || this.environment[name] === '')
         return `Environment variable ${name} is not set on this computer`;
