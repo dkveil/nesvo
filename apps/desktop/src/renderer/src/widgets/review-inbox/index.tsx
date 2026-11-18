@@ -27,7 +27,7 @@ import {
   modelLabel,
   type Session,
 } from '@/entities/session';
-import { AlwaysAllowActions } from '@/features/session-mode/always-allow-actions';
+import { ApprovalActions } from '@/features/session-mode/approval-actions';
 import type { Computer } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 import type { ScheduledJob } from '@/entities/scheduled-job';
@@ -1095,9 +1095,11 @@ export function ReviewInbox({
                       </>
                     }
                   >
-                    <Decisions
-                      accept="Allow once"
-                      decline="Deny"
+                    <ApprovalActions
+                      approval={approval}
+                      sessionId={session.id}
+                      runId={session.runId ?? ''}
+                      hostId={session.hostId}
                       enabled={enabled}
                       onDecide={decision => {
                         if (session.runId)
@@ -1106,31 +1108,12 @@ export function ReviewInbox({
                               sessionId: session.id,
                               runId: session.runId,
                               requestId: approval.id,
-                              decision,
+                              ...decision,
                             },
                             session.hostId,
                           );
                       }}
                     />
-                    {approval.allowPattern && (
-                      <AlwaysAllowActions
-                        pattern={approval.allowPattern}
-                        enabled={enabled}
-                        onAllow={allowScope => {
-                          if (session.runId)
-                            onApproval(
-                              {
-                                sessionId: session.id,
-                                runId: session.runId,
-                                requestId: approval.id,
-                                decision: 'accept',
-                                allowScope,
-                              },
-                              session.hostId,
-                            );
-                        }}
-                      />
-                    )}
                     <OperationStatus
                       deciding={deciding}
                       error={operationError}

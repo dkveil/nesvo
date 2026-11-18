@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { ArrowDown, ListEnd, Square } from 'lucide-react';
+import { ArrowDown, ChevronDown, ListEnd, Square } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { hasEarlierMessages, windowOffset } from '@nesvo/contracts';
 import type {
@@ -17,7 +17,6 @@ import type {
   SessionMode,
 } from '@nesvo/contracts';
 import {
-  approvalKindLabels,
   effortLabel,
   modeLabel,
   modelLabel,
@@ -32,7 +31,6 @@ import { Chip } from '@/shared/ui/chip';
 import { CodeBlock } from '@/shared/ui/code-block';
 import { Composer, ComposerSend, ComposerToolbar } from '@/shared/ui/composer';
 import { IconButton } from '@/shared/ui/icon-button';
-import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -44,7 +42,8 @@ import {
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
-import { AlwaysAllowActions } from '@/features/session-mode/always-allow-actions';
+import { Popover, PopoverTrigger, PopoverContent } from '@/shared/ui/popover';
+import { ApprovalActions } from '@/features/session-mode/approval-actions';
 import { ModeSwitch } from '@/features/session-mode/mode-switch';
 import { cycleMode } from '@/features/session-mode/cycle-mode';
 import { mcpChangeLabel } from '@/features/session-mcp/mcp-labels';
@@ -131,10 +130,7 @@ type Props = {
   approvalsEnabled: boolean;
   approvalPending: Record<string, boolean>;
   onApproval: (
-    requestId: string,
-    decision: RespondApprovalInput['decision'],
-    message?: string,
-    allowScope?: RespondApprovalInput['allowScope'],
+    decision: Omit<RespondApprovalInput, 'sessionId' | 'runId' | 'fingerprint'>,
   ) => void;
   error: string;
   onDraft: (value: string) => void;
@@ -236,9 +232,6 @@ export function Conversation({
   const pasteTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pasteTimer.current), []);
   const [modeNotice, setModeNotice] = useState('');
-  const [denialMessages, setDenialMessages] = useState<Record<string, string>>(
-    {},
-  );
   const modeNoticeTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(modeNoticeTimer.current), []);
   const visibleSession = useRef('');
@@ -1167,6 +1160,11 @@ export function Conversation({
               </section>
             )}
             {session.pendingApprovals.map(approval => {
+              const label =
+                approval.label ??
+                (approval.kind === 'command'
+                  ? approval.detail.split('\n')[0] || approval.title
+                  : approval.title);
               const pending =
                 !!approvalPending[
                   `${entityKey(session)}/${session.runId}/${approval.id}`
@@ -1181,79 +1179,60 @@ export function Conversation({
                   key={`${session.runId}/${approval.id}`}
                   id={`approval-${approval.id}`}
                   aria-label="Operation approval"
-                  className="space-y-3 rounded-surface border bg-card p-4"
+                  className="min-w-0 space-y-1.5 rounded-surface border p-2"
                 >
-                  <p className="text-2xs text-muted-foreground">
-                    {approvalKindLabels[approval.kind]}
-                  </p>
-                  <h2 className="text-sm font-medium [overflow-wrap:anywhere]">
-                    {approval.title}
-                  </h2>
-                  <CodeBlock
-                    code={approval.detail}
-                    wrap
-                    maxHeightClassName="max-h-60"
-                    className="[overflow-wrap:anywhere]"
-                  />
-                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                    Working directory: {approval.directory ?? session.directory}
-                  </p>
-                  {approval.fingerprint && (
-                    <Input
-                      aria-label="Message with the denial"
-                      placeholder="Message for Claude if you deny (optional)"
-                      maxLength={2000}
-                      disabled={!enabled}
-                      value={denialMessages[approval.id] ?? ''}
-                      onChange={event =>
-                        setDenialMessages(previous => ({
-                          ...previous,
-                          [approval.id]: event.target.value,
-                        }))
-                      }
-                    />
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      disabled={!enabled}
-                      onClick={() => onApproval(approval.id, 'accept')}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        title={label}
+                        className="w-full justify-between bg-background px-2 dark:bg-background"
+                        aria-label={`Review operation details: ${label}`}
+                      >
+                        <code className="min-w-0 truncate font-mono text-xs">
+                          {label}
+                        </code>
+                        <ChevronDown className="text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      size="lg"
+                      surface="solid"
+                      padding="sm"
+                      aria-label={approval.title}
                     >
-                      Allow once
-                    </Button>
-                    {approval.allowPattern && (
-                      <AlwaysAllowActions
-                        pattern={approval.allowPattern}
-                        enabled={enabled}
-                        onAllow={scope =>
-                          onApproval(approval.id, 'accept', undefined, scope)
-                        }
+                      <CodeBlock
+                        code={approval.detail}
+                        wrap
+                        maxHeightClassName="max-h-60"
                       />
-                    )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!enabled}
-                      onClick={() =>
-                        onApproval(
-                          approval.id,
-                          'decline',
-                          denialMessages[approval.id]?.trim() || undefined,
-                        )
-                      }
-                    >
-                      Deny
-                    </Button>
-                  </div>
-                  <StatusMessage tone={pending ? 'loading' : 'info'}>
-                    {pending
-                      ? 'Sending decision…'
-                      : enabled
-                        ? approval.allowPattern
-                          ? approval.allowPattern.pattern
-                          : 'Applies to this operation only.'
+                    </PopoverContent>
+                  </Popover>
+                  <p
+                    className="truncate px-0.5 text-2xs text-muted-foreground"
+                    title={approval.directory ?? session.directory}
+                  >
+                    {approval.directory ?? session.directory}
+                  </p>
+                  <ApprovalActions
+                    approval={approval}
+                    sessionId={session.id}
+                    runId={session.runId ?? ''}
+                    hostId={session.hostId}
+                    enabled={enabled}
+                    onDecide={decision =>
+                      onApproval({ requestId: approval.id, ...decision })
+                    }
+                  />
+                  {(pending || !enabled) && (
+                    <StatusMessage tone={pending ? 'loading' : 'info'}>
+                      {pending
+                        ? 'Sending decision…'
                         : 'This request is inactive. Refresh the connection to check its status.'}
-                  </StatusMessage>
+                    </StatusMessage>
+                  )}
                 </section>
               );
             })}

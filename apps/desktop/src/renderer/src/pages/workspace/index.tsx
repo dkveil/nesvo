@@ -4884,17 +4884,10 @@ ${text}`
                 }
                 approvalsEnabled={operationEnabled}
                 approvalPending={approvalPending}
-                onApproval={(requestId, decision, message, allowScope) =>
+                onApproval={input =>
                   selected.runId &&
                   void respondApproval(
-                    {
-                      sessionId: selected.id,
-                      runId: selected.runId,
-                      requestId,
-                      decision,
-                      ...(message ? { message } : {}),
-                      ...(allowScope ? { allowScope } : {}),
-                    },
+                    { ...input, sessionId: selected.id, runId: selected.runId },
                     selectedHostId,
                   )
                 }

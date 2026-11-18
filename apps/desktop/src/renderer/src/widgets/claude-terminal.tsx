@@ -4,6 +4,25 @@ import type { Session } from '@/entities/session';
 import { Panel, PanelAction, PanelBody, PanelHeader } from '@/shared/ui/panel';
 import { StatusMessage } from '@/shared/ui/status-message';
 
+function TerminalPath({ path }: { path: string }) {
+  const middle = Math.max(
+    Math.floor(path.length / 2),
+    path.lastIndexOf('/') + 1,
+    path.lastIndexOf('\\') + 1,
+  );
+  return (
+    <span className="flex min-w-0" title={path}>
+      <span className="min-w-0 truncate">{path.slice(0, middle)}</span>
+      <span
+        className="max-w-1/2 shrink-0 overflow-hidden whitespace-nowrap"
+        dir="rtl"
+      >
+        <bdi dir="ltr">{path.slice(middle)}</bdi>
+      </span>
+    </span>
+  );
+}
+
 export function ClaudeTerminal({
   session,
   connected,
@@ -63,11 +82,21 @@ export function ClaudeTerminal({
             {item.detail && (
               <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {item.kind === 'command' ? '$ ' : ''}
-                {item.detail}
+                {item.kind === 'command'
+                  ? item.detail
+                  : item.detail
+                      .split('\n')
+                      .map((line, index) =>
+                        item.paths.includes(line) ? (
+                          <TerminalPath key={index} path={line} />
+                        ) : (
+                          <div key={index}>{line}</div>
+                        ),
+                      )}
               </div>
             )}
             {item.output && (
-              <pre className="overflow-x-auto rounded-surface bg-card p-2">
+              <pre className="overflow-x-auto rounded-surface border bg-background p-2">
                 {item.kind === 'file-change'
                   ? item.output.split('\n').map((line, index) => (
                       <span

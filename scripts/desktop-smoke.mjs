@@ -1777,15 +1777,17 @@ try {
       exact: true,
     });
     await send('fixture:ask-mcp');
-    await claudeApproval.getByText('Tool approval', { exact: true }).waitFor();
     await claudeApproval
       .getByText('Use MCP tool fixture / lookup', { exact: true })
       .waitFor();
     await claudeApproval
+      .getByRole('button', { name: 'Deny', exact: true })
+      .click();
+    await claudeApproval
       .getByRole('textbox', { name: 'Message with the denial', exact: true })
       .fill('Use the cached status.');
     await claudeApproval
-      .getByRole('button', { name: 'Deny', exact: true })
+      .getByRole('button', { name: 'Confirm denial', exact: true })
       .click();
     await message(
       'Fixture action denied: The operator denied this action. Their message: Use the cached status.',
