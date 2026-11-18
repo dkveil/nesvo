@@ -32,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { IconButton } from '@/shared/ui/icon-button';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 import { Label } from '@/shared/ui/label';
@@ -175,26 +176,28 @@ export function AutomationDetail({
                   Active
                 </Label>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={pending || !!runBlockedReason || !!activeRun}
-                title={runBlockedReason || undefined}
-                onClick={onRunNow}
-              >
-                <Zap />
-                Run now
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!!editBlockedReason}
-                title={editBlockedReason || undefined}
-                onClick={onEdit}
-              >
-                <Pencil />
-                Edit
-              </Button>
+              <DisabledHint reason={runBlockedReason}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending || !!runBlockedReason || !!activeRun}
+                  onClick={onRunNow}
+                >
+                  <Zap />
+                  Run now
+                </Button>
+              </DisabledHint>
+              <DisabledHint reason={editBlockedReason}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={!!editBlockedReason}
+                  onClick={onEdit}
+                >
+                  <Pencil />
+                  Edit
+                </Button>
+              </DisabledHint>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <IconButton label="More actions">

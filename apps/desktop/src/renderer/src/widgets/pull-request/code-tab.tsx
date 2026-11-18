@@ -28,7 +28,7 @@ import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { CommentBox } from './comment-box';
-import { DisabledHint } from './disabled-hint';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { PatchDiff } from './file-diff';
 import { lineRangeLabel, type LineDraft, type LineRange } from './line-comment';
 import { inlineThreadLines, parseFilePatch } from './patch';

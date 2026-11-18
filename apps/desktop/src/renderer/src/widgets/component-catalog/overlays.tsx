@@ -13,6 +13,7 @@ import { cn } from '@/shared/lib/cn';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import {
   Dialog,
   DialogCancel,
@@ -309,6 +310,18 @@ export function OverlaysSection() {
           Hover any IconButton for its label · <KeyCombo keys="Tab" /> focus
           shows it, programmatic focus does not
         </p>
+      </Specimen>
+      <Specimen title="DisabledHint" source="shared/ui/disabled-hint.tsx">
+        <div className="flex flex-wrap items-center gap-2">
+          <DisabledHint reason="Connect the computer to create a workflow.">
+            <Button variant="ghost" disabled>
+              New workflow
+            </Button>
+          </DisabledHint>
+          <DisabledHint reason="" hint="Starts the automation once">
+            <Button variant="secondary">Run now</Button>
+          </DisabledHint>
+        </div>
       </Specimen>
       <Specimen title="Popover" source="surface glass · solid · card">
         <div className="flex flex-wrap items-center gap-2">

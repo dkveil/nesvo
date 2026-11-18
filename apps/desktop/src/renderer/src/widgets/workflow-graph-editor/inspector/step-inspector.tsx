@@ -25,6 +25,7 @@ import {
   hasError,
   type FieldNote,
 } from './field-notes';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { Field, FieldMessages } from '@/shared/ui/field';
 import { Toolbar, ToolbarSpacer } from '@/shared/ui/panel';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
@@ -466,20 +467,19 @@ export function StepInspectorForm({
           </Button>
         )}
         <ToolbarSpacer />
-        <Button
-          type="submit"
-          size="xs"
-          disabled={blocked || !!pendingPhase}
-          title={
+        <DisabledHint
+          reason={
             blocked
               ? 'Fix the marked fields to save.'
               : pendingPhase
                 ? 'Confirm or keep the phase first.'
-                : undefined
+                : ''
           }
         >
-          {mode === 'create' ? 'Create step' : 'Save step'}
-        </Button>
+          <Button type="submit" size="xs" disabled={blocked || !!pendingPhase}>
+            {mode === 'create' ? 'Create step' : 'Save step'}
+          </Button>
+        </DisabledHint>
       </Toolbar>
     </form>
   );

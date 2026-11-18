@@ -10,6 +10,7 @@ import { entityKey } from '@/shared/lib/host-key';
 import { useNow } from '@/shared/lib/use-now';
 import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -67,16 +68,17 @@ export function AutomationList({
               ? 'No automations'
               : `${activeCount} active · ${jobs.length - activeCount} paused`}
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={!!createBlockedReason}
-            title={createBlockedReason || undefined}
-            onClick={onCreate}
-          >
-            <Plus />
-            New automation
-          </Button>
+          <DisabledHint reason={createBlockedReason}>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={!!createBlockedReason}
+              onClick={onCreate}
+            >
+              <Plus />
+              New automation
+            </Button>
+          </DisabledHint>
         </div>
         {notices.map(notice => (
           <p key={notice} className="mb-2 px-2 text-2xs text-muted-foreground">
@@ -153,16 +155,18 @@ export function AutomationList({
                             Enable
                           </Button>
                         )}
-                        <IconButton
-                          label={`Run ${job.name} now`}
-                          title={blocked || undefined}
-                          disabled={
-                            busy || !!blocked || (run && isActiveRun(run))
-                          }
-                          onClick={() => onRunNow(job)}
-                        >
-                          <Zap />
-                        </IconButton>
+                        <DisabledHint reason={blocked}>
+                          <IconButton
+                            label={`Run ${job.name} now`}
+                            tooltip={!blocked}
+                            disabled={
+                              busy || !!blocked || (run && isActiveRun(run))
+                            }
+                            onClick={() => onRunNow(job)}
+                          >
+                            <Zap />
+                          </IconButton>
+                        </DisabledHint>
                         <IconButton
                           label={
                             job.active
@@ -195,15 +199,16 @@ export function AutomationList({
               title="No automations yet"
               description="Run a read-only prompt on a schedule. Results arrive in the Inbox for acceptance."
               action={
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!!createBlockedReason}
-                  title={createBlockedReason || undefined}
-                  onClick={onCreate}
-                >
-                  New automation
-                </Button>
+                <DisabledHint reason={createBlockedReason}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!!createBlockedReason}
+                    onClick={onCreate}
+                  >
+                    New automation
+                  </Button>
+                </DisabledHint>
               }
             />
           )

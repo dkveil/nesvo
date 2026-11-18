@@ -13,7 +13,7 @@ import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { ListRow } from '@/shared/ui/list-row';
 import { CommentBox } from './comment-box';
-import { DisabledHint } from './disabled-hint';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { replyQuote, type TimelineDiscussion } from './session-prompt';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 

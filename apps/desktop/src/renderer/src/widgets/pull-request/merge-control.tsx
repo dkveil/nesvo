@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { ActionFeedback } from './action-feedback';
-import { DisabledHint } from './disabled-hint';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 const METHOD_ORDER: MergeMethod[] = ['squash', 'merge', 'rebase'];

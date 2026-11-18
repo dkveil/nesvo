@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { ActionFeedback } from './action-feedback';
-import { DisabledHint } from './disabled-hint';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type CheckoutControlProps = {

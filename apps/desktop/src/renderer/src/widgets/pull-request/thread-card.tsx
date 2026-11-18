@@ -8,7 +8,7 @@ import { Button } from '@/shared/ui/button';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { ActionFeedback } from './action-feedback';
 import { CommentBox } from './comment-box';
-import { DisabledHint } from './disabled-hint';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { isActionLocked, type ActionState } from './use-pull-request-actions';
 
 type ThreadCardProps = {

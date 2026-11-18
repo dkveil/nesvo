@@ -9,6 +9,7 @@ import {
 import { ComposerChip } from '@/features/new-thread/composer-chip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
+import { Hint } from '@/shared/ui/tooltip';
 
 type Props = {
   provider: Provider;
@@ -44,20 +45,25 @@ export function ModeSwitch({
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <ComposerChip
-          disabled={disabled}
-          aria-label="Permission mode"
-          title={`Permission mode: ${label}${pending ? ' · next turn' : ''}${readOnlyReason ? ` · ${readOnlyReason}` : ''}`}
-          icon={<ModeIcon mode={chosen} aria-hidden="true" />}
-          className="min-w-0"
-        >
-          <span>{label}</span>
-          {pending && (
-            <span className="shrink-0 text-muted-foreground">· next turn</span>
-          )}
-        </ComposerChip>
-      </PopoverTrigger>
+      <Hint
+        label={`Permission mode: ${label}${pending ? ' · next turn' : ''}${readOnlyReason ? ` · ${readOnlyReason}` : ''}`}
+      >
+        <PopoverTrigger asChild>
+          <ComposerChip
+            disabled={disabled}
+            aria-label="Permission mode"
+            icon={<ModeIcon mode={chosen} aria-hidden="true" />}
+            className="min-w-0"
+          >
+            <span>{label}</span>
+            {pending && (
+              <span className="shrink-0 text-muted-foreground">
+                · next turn
+              </span>
+            )}
+          </ComposerChip>
+        </PopoverTrigger>
+      </Hint>
       <PopoverContent
         side="top"
         align="start"

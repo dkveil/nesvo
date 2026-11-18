@@ -102,7 +102,7 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 
 **Disabled.** `opacity-50` and `cursor-not-allowed`; no hover. Disabled send buttons use the `send-idle` colours at full opacity instead.
 
-**Tooltips.** One `TooltipProvider` is mounted in `app.tsx`. A tooltip opens on pointer hover, or on focus only when the focus came from keyboard navigation (Tab, arrows, Home, End, F6). Focus restored by closing a dialog does not open one. Prefer IconButton's built-in tooltip or `Hint` over `title=`.
+**Tooltips.** One `TooltipProvider` is mounted in `app.tsx`. A tooltip opens on pointer hover, or on focus only when the focus came from keyboard navigation (Tab, arrows, Home, End, F6). Focus restored by closing a dialog does not open one. Prefer IconButton's built-in tooltip, `Hint` or `DisabledHint` over `title=`; a native `title` stays only where it reveals the full text of a truncated label, a link target or a file status letter.
 
 **Overlays.** Dialog and Sheet share the `--overlay` backdrop with a 2 px blur.
 
@@ -140,6 +140,8 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 **NavList / NavItem** — `shared/ui/nav-list.tsx`. Vertical navigation (settings sections, sidebar destinations). `selected` sets `aria-current="page"`; `trailing` holds a CountBadge; tones `default` and `sidebar`; sizes `sm` (28) and `md` (32).
 
 **Tooltip / Hint** — `shared/ui/tooltip.tsx`. `TooltipContent` variants `label` (single line, optional `shortcut`) and `panel` (short explanation). `Hint` wraps any trigger in one line. Do not use for essential information.
+
+**DisabledHint** — `shared/ui/disabled-hint.tsx`. Explains why a control is disabled. With a `reason` it wraps the disabled control in a focusable span that shows the reason in a panel tooltip, because a disabled button receives no pointer or focus events; with an empty `reason` it shows the optional `hint` as a Hint, or nothing. Give a disabled IconButton `tooltip={false}` while a reason shows.
 
 **Popover** — `shared/ui/popover.tsx`. `surface` `glass` (default) | `solid` | `card`; `size` `default` (288 px) | `sm` (240) | `md` (320) | `lg` (416) | `trigger`; `padding` `md` | `sm` | `none`; `scroll` caps the height at 28 rem within the available space. Use presets instead of `w-[min(...)]` formulas.
 
@@ -241,6 +243,8 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | `duration-75` … `duration-300`, transitions without a duration                | `duration-fast` / `duration-base` / `duration-slow`                |
 | A widget-level `<TooltipProvider>`                                            | Remove it; the app shell provides one                              |
 | `title="…"` on icon-only buttons                                              | IconButton `label` (tooltip included)                              |
+| `title={blockedReason}` on a disabled Button or IconButton                    | `<DisabledHint reason={blockedReason}>`                            |
+| `title=` on a Chip or other trigger                                           | `<Hint label="…">` around the trigger                             |
 | Hand-written `role="separator"` drag strips, resize corner `<button>`s         | `<ResizeHandle variant="edge" | "corner">`                       |
 | Hand-built Cancel + destructive Dialog footers                                | `<ConfirmDialog>`                                                  |
 | `outline` or `md` Cancel buttons in a `DialogFooter`                          | `<DialogCancel />` + an `lg` action                                |

@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { Hint } from '@/shared/ui/tooltip';
 import { ComposerChip } from './composer-chip';
 import { ReasoningColumn } from './reasoning-column';
 
@@ -80,25 +81,26 @@ export function ModelPicker({
         if (next) setActiveId(null);
       }}
     >
-      <PopoverTrigger asChild>
-        <ComposerChip
-          disabled={disabled}
-          aria-label={triggerLabel}
-          title={`${provider} · ${chipLabel}${hint ? ` · ${hint}` : ''}`}
-          icon={<ProviderGlyph provider={provider} />}
-          className={cn('text-ui text-foreground', triggerClassName)}
-        >
-          <span className="font-semibold">{shownLabel}</span>
-          {effort && (
-            <span className="shrink-0 text-muted-foreground">
-              {effortLabel(effort)}
-            </span>
-          )}
-          {hint && (
-            <span className="shrink-0 text-muted-foreground">· {hint}</span>
-          )}
-        </ComposerChip>
-      </PopoverTrigger>
+      <Hint label={`${provider} · ${chipLabel}${hint ? ` · ${hint}` : ''}`}>
+        <PopoverTrigger asChild>
+          <ComposerChip
+            disabled={disabled}
+            aria-label={triggerLabel}
+            icon={<ProviderGlyph provider={provider} />}
+            className={cn('text-ui text-foreground', triggerClassName)}
+          >
+            <span className="font-semibold">{shownLabel}</span>
+            {effort && (
+              <span className="shrink-0 text-muted-foreground">
+                {effortLabel(effort)}
+              </span>
+            )}
+            {hint && (
+              <span className="shrink-0 text-muted-foreground">· {hint}</span>
+            )}
+          </ComposerChip>
+        </PopoverTrigger>
+      </Hint>
       <PopoverContent
         side="top"
         align="end"

@@ -20,6 +20,7 @@ import {
 import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { CodeBlock } from '@/shared/ui/code-block';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { Field } from '@/shared/ui/field';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -330,20 +331,21 @@ export default function WorkflowDefinitions({
                 : `${catalog.workflows.length} ${catalog.workflows.length === 1 ? 'workflow' : 'workflows'} · ${catalog.steps.length} ${catalog.steps.length === 1 ? 'step' : 'steps'}${catalog.issues.length ? ` · ${catalog.issues.length} ${catalog.issues.length === 1 ? 'issue' : 'issues'}` : ''}`}
           </span>
           {onCreate && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={!connected}
-              title={
-                connected
-                  ? undefined
-                  : 'Connect the computer to create a workflow.'
+            <DisabledHint
+              reason={
+                connected ? '' : 'Connect the computer to create a workflow.'
               }
-              onClick={() => onCreate({ hostId, directory })}
             >
-              <Plus />
-              New workflow
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={!connected}
+                onClick={() => onCreate({ hostId, directory })}
+              >
+                <Plus />
+                New workflow
+              </Button>
+            </DisabledHint>
           )}
         </div>
         <form
