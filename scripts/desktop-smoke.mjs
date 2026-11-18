@@ -1216,11 +1216,7 @@ try {
     const modeSwitched = await waitState(modeTarget.id, 'completed');
     assert.equal(modeSwitched.mode, 'accept-edits');
     assert.equal(modeSwitched.messages.at(-2).mode, 'accept-edits');
-    await conversation
-      .locator('[data-session-mode="accept-edits"]', {
-        hasText: 'Accept edits',
-      })
-      .waitFor();
+    await modeSwitch.filter({ hasNotText: 'next turn' }).waitFor();
     assert.equal((await modeSwitch.textContent()).trim(), 'Accept edits');
     await messageEditor.press('Shift+Tab');
     await modeSwitch.filter({ hasText: 'next turn' }).waitFor();

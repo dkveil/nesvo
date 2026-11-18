@@ -18,7 +18,6 @@ import type {
 import {
   approvalKindLabels,
   effortLabel,
-  ModeIcon,
   modeLabel,
   modelLabel,
   sessionProjectLabel,
@@ -774,14 +773,6 @@ export function Conversation({
                 <span>{sessionProjectLabel(session)}</span>
               </Chip>
             </Hint>
-            <span className="flex-1" />
-            <Chip
-              interactive={false}
-              icon={<ModeIcon mode={session.mode} aria-hidden="true" />}
-              data-session-mode={session.mode}
-            >
-              <span>{modeLabel(session.provider, session.mode)}</span>
-            </Chip>
           </div>
           {!connected && (
             <StatusMessage className="px-3">
