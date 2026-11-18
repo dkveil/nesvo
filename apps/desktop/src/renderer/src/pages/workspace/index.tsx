@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type TransitionEvent,
 } from 'react';
 import type {
   ConversationIdentity,
@@ -124,6 +125,7 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { Separator } from '@/shared/ui/separator';
 import {
   Sheet,
   SheetContent,
@@ -717,7 +719,12 @@ export function Workspace() {
   const reviewRequests = useRef(new Set<string>());
   const reviewAttempts = useRef<Record<string, DecideReviewInput>>({});
   const [navigationOpen, setNavigationOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
+  const [sidebar, setSidebar] = useState(() => ({
+    open: readSidebarOpen(),
+    moving: false,
+  }));
+  const sidebarOpen = sidebar.open;
+  const sidebarShown = sidebar.open || sidebar.moving;
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const visibleSidebarWidth = clampSidebarWidth(sidebarWidth, viewportWidth);
@@ -1142,10 +1149,28 @@ export function Workspace() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const toggleSidebar = useCallback((open: boolean) => {
-    setSidebarOpen(open);
-    requestAnimationFrame(() => sidebarToggle.current?.focus());
+  const setSidebarOpen = useCallback((open: boolean) => {
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    setSidebar(current =>
+      current.open === open ? current : { open, moving: !reducedMotion },
+    );
   }, []);
+  const settleSidebar = (event: TransitionEvent<HTMLDivElement>) => {
+    if (
+      event.target === event.currentTarget &&
+      event.propertyName === '--sidebar-extent'
+    )
+      setSidebar(current => ({ ...current, moving: false }));
+  };
+  const toggleSidebar = useCallback(
+    (open: boolean) => {
+      setSidebarOpen(open);
+      requestAnimationFrame(() => sidebarToggle.current?.focus());
+    },
+    [setSidebarOpen],
+  );
   const openHistorySearch = useCallback((query = '') => {
     const focused = document.activeElement;
     setHistorySearch(
@@ -3087,7 +3112,12 @@ ${text}`
       : null;
   return (
     <div
-      className="relative flex h-dvh min-h-0 overflow-hidden bg-background"
+      className={cn(
+        'relative flex h-dvh min-h-0 overflow-hidden bg-background',
+        sidebar.moving &&
+          '[transition-property:--sidebar-extent] duration-slow ease-out',
+      )}
+      onTransitionEnd={settleSidebar}
       style={
         {
           '--sidebar-extent': sidebarOpen ? `${visibleSidebarWidth}px` : '0px',
@@ -3278,27 +3308,37 @@ ${text}`
       <aside
         aria-label="Sidebar"
         data-state={sidebarOpen ? 'expanded' : 'collapsed'}
-        style={{ width: visibleSidebarWidth }}
         className={cn(
-          'relative hidden shrink-0 border-r border-sidebar-border bg-sidebar',
-          sidebarOpen && 'md:block',
+          'relative hidden w-(--sidebar-extent) shrink-0 bg-sidebar',
+          sidebarShown && 'md:block',
         )}
       >
-        {sidebarOpen && (
+        {sidebarShown && (
           <>
-            <div className="h-full overflow-hidden">
-              <SessionSidebar
-                {...sidebarProps}
-                navigation="rail"
-                readBranch={readBranch}
-              />
+            <div className="h-full overflow-hidden" inert={!sidebarOpen}>
+              <div
+                className="h-full"
+                style={{ width: visibleSidebarWidth - 1 }}
+              >
+                <SessionSidebar
+                  {...sidebarProps}
+                  navigation="rail"
+                  readBranch={readBranch}
+                />
+              </div>
             </div>
-            <SidebarResizer
-              width={visibleSidebarWidth}
-              onResize={width =>
-                setSidebarWidth(clampSidebarWidth(width, viewportWidth))
-              }
+            <Separator
+              orientation="vertical"
+              className="absolute inset-y-0 right-0 bg-sidebar-border"
             />
+            {sidebarOpen && (
+              <SidebarResizer
+                width={visibleSidebarWidth}
+                onResize={width =>
+                  setSidebarWidth(clampSidebarWidth(width, viewportWidth))
+                }
+              />
+            )}
           </>
         )}
       </aside>

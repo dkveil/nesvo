@@ -343,6 +343,12 @@
   }
 }
 
+@property --sidebar-extent {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 @utility glass-popover {
   background-color: var(--popover-glass);
   border-color: var(--popover-border);
