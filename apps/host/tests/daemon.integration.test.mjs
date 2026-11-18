@@ -38,6 +38,38 @@ function bounded(operation, description, milliseconds = 10_000) {
   ]).finally(() => clearTimeout(timer));
 }
 
+const sessionHistory = new Map();
+
+function sessionEvent(message) {
+  if (message.id) return message;
+  if (
+    message.type !== 'session-changed' &&
+    message.type !== 'session-message-upserted'
+  )
+    return message;
+  const current = sessionHistory.get(message.session.id);
+  let messages;
+  if (message.type === 'session-changed') {
+    const offset =
+      message.session.messageCount - message.session.messages.length;
+    messages =
+      current && offset <= current.messages.length
+        ? [...current.messages.slice(0, offset), ...message.session.messages]
+        : message.session.messages;
+  } else {
+    messages = [...(current?.messages ?? [])];
+    messages[message.index] = message.message;
+  }
+  const {
+    messageCount: _count,
+    usageTotals: _usage,
+    ...rest
+  } = message.session;
+  const session = { ...rest, messages };
+  sessionHistory.set(session.id, session);
+  return { type: 'session-changed', session };
+}
+
 function channel(readable, writable, closed, description) {
   const messages = [];
   const received = [];
@@ -51,8 +83,9 @@ function channel(readable, writable, closed, description) {
   const lines = createInterface({ input: readable });
   lines.on('line', line => {
     try {
-      const message = JSON.parse(line);
-      received.push(message);
+      const raw = JSON.parse(line);
+      received.push(raw);
+      const message = sessionEvent(raw);
       const response = message.id && pending.get(message.id);
       if (response) response.resolve(message);
       else {
