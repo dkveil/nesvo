@@ -307,7 +307,10 @@ void app.whenReady().then(async () => {
     next.webContents.on('will-frame-navigate', event => event.preventDefault());
     next.webContents.session.setPermissionRequestHandler(
       (_contents, permission, callback) =>
-        callback(permission === 'notifications'),
+        callback(
+          permission === 'notifications' ||
+            permission === 'clipboard-sanitized-write',
+        ),
     );
     next.webContents.session.setPermissionCheckHandler(
       (_contents, permission) =>
