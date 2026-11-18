@@ -18,6 +18,12 @@ const permissionRequestSchema = z.looseObject({
   }),
 });
 
+const summarizedKeys: Record<string, string[]> = {
+  Bash: ['command', 'description'],
+  Write: ['file_path', 'content'],
+  Edit: ['file_path', 'old_string', 'new_string'],
+};
+
 const fileTitles: Record<string, string> = {
   Edit: 'Edit file',
   MultiEdit: 'Edit file',
@@ -40,11 +46,22 @@ export type ClaudePermissionParse =
 function displayText(value: string): string {
   return value
     .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '');
+    .replace(
+      /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g,
+      '',
+    );
 }
 
 function text(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function isSummarized(
+  toolName: string,
+  input: Record<string, unknown>,
+): boolean {
+  const keys = summarizedKeys[toolName];
+  return !!keys && Object.keys(input).every(key => keys.includes(key));
 }
 
 function presentation(
@@ -52,11 +69,12 @@ function presentation(
   input: Record<string, unknown>,
 ): Pick<Approval, 'kind' | 'title'> & { body: string } {
   const json = JSON.stringify(input, null, 2);
+  const summarized = isSummarized(toolName, input);
   if (toolName === 'Bash')
     return {
       kind: 'command',
       title: 'Run command',
-      body: text(input.command) ?? json,
+      body: (summarized && text(input.command)) || json,
     };
   const fileTitle = fileTitles[toolName];
   if (fileTitle) {
@@ -64,8 +82,9 @@ function presentation(
     const content = text(input.content);
     const before = text(input.old_string);
     const after = text(input.new_string);
-    const body =
-      path && toolName === 'Write' && content !== null
+    const body = !summarized
+      ? json
+      : path && toolName === 'Write' && content !== null
         ? `${path}\n\n${content}`
         : path && toolName === 'Edit' && before !== null && after !== null
           ? `${path}\n\nReplace:\n${before}\n\nWith:\n${after}`

@@ -19335,6 +19335,12 @@ test('Claude Code asks the operator once through the host prompt channel', async
     ['allow', 'deny', 'deny'],
   );
 
+  const editAll = await ask('fixture:ask-edit-all');
+  assert.equal(editAll.approval.title, 'Edit file');
+  assert.match(editAll.approval.detail, /"replace_all": true/);
+  assert.equal((await respond(editAll, 'decline')).type, 'session');
+  assert.equal((await finished(editAll.run)).status, 'completed');
+
   const stopping = await ask('fixture:ask-write');
   const stopPid = JSON.parse(await readFile(pidFile + '.ask', 'utf8')).pid;
   assert.equal(
@@ -19364,7 +19370,7 @@ test('Claude Code asks the operator once through the host prompt channel', async
   assert.equal((await respond(restarting, 'accept')).code, 'invalid-request');
   await delay(300);
   await assert.rejects(readFile(target(restarting)), { code: 'ENOENT' });
-  assert.equal((await decisions()).length, 3, 'No decision was replayed');
+  assert.equal((await decisions()).length, 4, 'No decision was replayed');
 
   const planId = await create('read-only');
   const refused = await finished(await send('fixture:ask-write', planId));
