@@ -236,6 +236,8 @@ export function connectSshHost(
             : method === 'claude-status' ||
                 method === 'codex-status' ||
                 method === 'create-session' ||
+                method === 'list-conversations' ||
+                method === 'adopt-conversation' ||
                 method === 'list-pull-requests' ||
                 method === 'read-pull-request' ||
                 method === 'read-pull-request-files' ||

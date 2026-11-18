@@ -2433,6 +2433,11 @@ ${text}`
               onManageComputers={() => setSettingsPage('computers')}
               busyReason={threadBusyReason}
               hostApi={desktopApi(threadSetup.hostId)}
+              onAdopted={session => {
+                store.merge([session]);
+                setCreationGroup(null);
+                select(entityKey(session));
+              }}
               onStart={startThread}
               onStartWorkflow={startWorkflowTask}
             />

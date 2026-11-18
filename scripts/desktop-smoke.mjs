@@ -657,6 +657,7 @@ try {
     'session-groups',
     'costs',
     'mcp-servers',
+    'conversation-import',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

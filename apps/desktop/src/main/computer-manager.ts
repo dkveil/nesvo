@@ -118,6 +118,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without GitHub pull requests. Update the host, then reconnect.',
   'git-branch':
     'This computer runs an older Nesvo host that cannot read Git branches. Update the host to show the branch.',
+  'conversation-import':
+    'This computer runs an older Nesvo host without conversation import. Update the host, then reconnect.',
   'history-search':
     'Update this computer’s Nesvo host and reconnect to search its history.',
   'session-groups':
@@ -134,6 +136,8 @@ function requiredCapability(
   if (Object.hasOwn(pullRequestResponses, method)) return 'pull-requests';
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'search-history') return 'history-search';
+  if (method === 'list-conversations' || method === 'adopt-conversation')
+    return 'conversation-import';
   if (Object.hasOwn(sessionGroupResponses, method)) return 'session-groups';
   if (
     method === 'create-session' &&
@@ -662,6 +666,8 @@ export class ComputerManager {
       'read-workspace-file': 'workspace-file',
       'read-git-branch': 'git-branch',
       'search-history': 'history-search',
+      'list-conversations': 'conversation-import-catalog',
+      'adopt-conversation': 'session',
       ...sessionGroupResponses,
       ...pullRequestResponses,
       ...costResponses,
@@ -708,6 +714,8 @@ export class ComputerManager {
         return response.reference;
       case 'git-branch':
         return response.branch;
+      case 'conversation-import-catalog':
+        return response.catalog;
       case 'history-search':
         return response.search;
       case 'session-groups':

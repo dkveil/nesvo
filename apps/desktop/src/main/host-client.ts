@@ -103,6 +103,8 @@ export function startHost(directory: string) {
                 method === 'codex-status' ||
                 method === 'create-session' ||
                 method === 'list-mcp-servers' ||
+                method === 'list-conversations' ||
+                method === 'adopt-conversation' ||
                 method === 'set-session-mcp' ||
                 method === 'list-pull-requests' ||
                 method === 'read-pull-request' ||

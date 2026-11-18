@@ -4,6 +4,7 @@ import type {
   CreateSessionInput,
   DefinitionIssue,
   DesktopApi,
+  DesktopSession,
   McpSelection,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
@@ -20,6 +21,7 @@ import {
   type TypedSubmission,
 } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
+import { ImportConversation } from '@/features/import-conversation';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import {
   Composer,
@@ -59,7 +61,11 @@ type Props = {
   onRefreshProvider: (provider: Provider) => void;
   onManageComputers: () => void;
   busyReason: string;
-  hostApi: Pick<DesktopApi, 'discoverSkills' | 'workflows'>;
+  hostApi: Pick<
+    DesktopApi,
+    'discoverSkills' | 'workflows' | 'listConversations' | 'adoptConversation'
+  >;
+  onAdopted: (session: DesktopSession) => void;
   onStart: (
     input: CreateSessionInput,
     text: string,
@@ -83,6 +89,7 @@ export function NewThread({
   busyReason,
   hostApi,
   onStart,
+  onAdopted,
   onStartWorkflow,
 }: Props) {
   const [text, setText] = useState('');
@@ -490,6 +497,15 @@ export function NewThread({
             </form>
           )}
         </SelectSkill>
+        <div className="flex justify-center">
+          <ImportConversation
+            key={[setup.hostId, computer?.instanceId].join(':')}
+            computer={computer}
+            api={hostApi}
+            disabled={pending}
+            onAdopted={onAdopted}
+          />
+        </div>
       </div>
     </section>
   );

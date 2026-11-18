@@ -133,3 +133,5 @@ If Claude reports an account limit, wait for the reset reported by Claude and re
 New Codex sessions can delegate without selecting a role. Access permissions remain independent and unchanged by delegation. Older sessions preserve their existing provider thread and recorded tool capability. Worker directories must already exist inside the parent directory; use separate non-overlapping directories when allowing writes. A supervised parent can delegate only read-only workers until isolated workspaces exist. One group runs at a time, and workers never launch before an individual operator decision.
 Quit the desktop to stop its utility host. On macOS, closing the last window alone does not quit the app.
 Development IPC and the host expose no network port. The renderer development server uses an available Vite port.
+
+Use **Import conversation…** on the new-thread screen to adopt a conversation from the selected computer’s Claude Code or Codex CLI history. See [Importing CLI conversations](architecture.md#importing-cli-conversations) for host paths and limits.

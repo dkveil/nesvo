@@ -38,6 +38,7 @@ import {
   readWorkspaceFileSchema,
   readGitBranchSchema,
   historySearchInputSchema,
+  adoptConversationSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
   actOnPullRequestSchema,
@@ -485,6 +486,21 @@ void app.whenReady().then(async () => {
       return computers.execute(
         'find-session-pull-request',
         findSessionPullRequestSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  ipcMain.handle('nesvo:list-conversations', async (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-conversations', undefined, route(hostId));
+  });
+  ipcMain.handle(
+    'nesvo:adopt-conversation',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'adopt-conversation',
+        adoptConversationSchema.parse(input),
         route(hostId),
       );
     },

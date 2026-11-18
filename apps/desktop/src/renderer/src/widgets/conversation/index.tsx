@@ -708,6 +708,7 @@ export function Conversation({
               message.runId === session.runId &&
               running;
             const showActivity =
+              message.origin !== 'imported' &&
               firstAgents.get(message.runId) === message.id &&
               (live ||
                 !!message.completedAt ||
@@ -730,6 +731,11 @@ export function Conversation({
                   )}
                 >
                   <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
+                    {message.origin === 'imported' && (
+                      <Chip interactive={false} size="sm">
+                        Imported
+                      </Chip>
+                    )}
                     {message.author === 'operator' &&
                       (message.skill || message.skillId) && (
                         <Chip

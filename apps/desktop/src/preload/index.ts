@@ -28,6 +28,8 @@ import {
   readWorkspaceFileSchema,
   readGitBranchSchema,
   historySearchInputSchema,
+  conversationImportCatalogSchema,
+  adoptConversationSchema,
   historySearchPageSchema,
   gitBranchSchema,
   listPullRequestsSchema,
@@ -714,6 +716,18 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:read-git-branch',
         readGitBranchSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  listConversations: async hostId =>
+    conversationImportCatalogSchema.parse(
+      await ipcRenderer.invoke('nesvo:list-conversations', route(hostId)),
+    ),
+  adoptConversation: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:adopt-conversation',
+        adoptConversationSchema.parse(input),
         route(hostId),
       ),
     ),
