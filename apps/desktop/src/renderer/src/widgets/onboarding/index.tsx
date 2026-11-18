@@ -19,6 +19,7 @@ import { Progress } from '@/shared/ui/progress';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { ComputersStep } from './computers-step';
 import { FinishStep } from './finish-step';
+import { InboxStep } from './inbox-step';
 import { ProvidersStep } from './providers-step';
 import { RoutinesStep } from './routines-step';
 import { SetupStep } from './setup-step';
@@ -36,6 +37,9 @@ type Props = {
     | 'workflows'
     | 'readCodeReviewSettings'
     | 'listTrackedRepositories'
+    | 'saveInboxRule'
+    | 'listInboxRules'
+    | 'setInboxRuleEnabled'
   >;
   onCheckProviders: () => void;
   onAddComputer: () => void;
@@ -64,6 +68,11 @@ const steps = [
     id: 'setup',
     title: 'Your setup',
     description: 'What your agents bring with them.',
+  },
+  {
+    id: 'inbox',
+    title: 'Your Inbox',
+    description: 'Choose what reaches you and when agents wait for you.',
   },
   {
     id: 'routines',
@@ -143,6 +152,7 @@ export function Onboarding({
               statuses={statuses}
             />
           )}
+          {step.id === 'inbox' && <InboxStep api={api} computer={computer} />}
           {step.id === 'routines' && (
             <RoutinesStep
               api={api}
