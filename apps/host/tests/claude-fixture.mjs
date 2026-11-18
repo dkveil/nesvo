@@ -1238,6 +1238,10 @@ if (args.length === 1 && args[0] === '--version') {
       ],
       'Renamed the automation.',
     );
+  } else if (command.startsWith('fixture:say ')) {
+    const text = command.slice('fixture:say '.length);
+    start(text);
+    finish(text);
   } else if (command === 'fixture:assistant-prose') {
     const text = 'I would add a lint step before the approval.';
     start(text);

@@ -449,6 +449,20 @@ export class PullRequests {
     );
   }
 
+  async sessionRepository(sessionId: string): Promise<string> {
+    const session = this.getSession(sessionId);
+    if (!session) throw new PullRequestError('not-found', 'Session not found.');
+    const { nameWithOwner } = await this.gh.json(
+      repositorySchema,
+      ['repo', 'view', '--json', 'nameWithOwner'],
+      {
+        cwd: await this.sessionFolder(session),
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    return validateRepository(nameWithOwner);
+  }
+
   private sessionFolder(session: Session): Promise<string> {
     if (!isAbsolute(session.directory))
       throw new PullRequestError(

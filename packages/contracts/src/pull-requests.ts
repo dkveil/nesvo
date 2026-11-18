@@ -41,6 +41,26 @@ export function parsePullRequestUrl(text: string): PullRequestReference | null {
   return parsed.success ? parsed.data : null;
 }
 
+const PULL_REQUEST_URLS_IN_TEXT =
+  /https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/pull\/\d{1,9}(?!\d)/g;
+
+export const pullRequestMentionLimit = 3;
+
+export function findPullRequestUrls(
+  text: string,
+  limit: number = pullRequestMentionLimit,
+): PullRequestReference[] {
+  const found = new Map<string, PullRequestReference>();
+  for (const match of text.matchAll(PULL_REQUEST_URLS_IN_TEXT)) {
+    const reference = parsePullRequestUrl(match[0]);
+    if (!reference) continue;
+    const key = `${reference.repository.toLowerCase()}#${reference.number}`;
+    if (!found.has(key)) found.set(key, reference);
+    if (found.size >= limit) break;
+  }
+  return [...found.values()];
+}
+
 const pathSchema = z.string().trim().max(4096);
 const textSchema = z.string().max(pullRequestLimits.bodyLength);
 const timestampSchema = z.iso.datetime({ offset: true });

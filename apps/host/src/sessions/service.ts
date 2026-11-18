@@ -22,6 +22,7 @@ import {
   type SessionWindow,
   type AssignSessionWorkflowInput,
   type LinkSessionPullRequestInput,
+  type PullRequestReference,
   type CreateSessionInput,
   type FinishSessionWorktreeInput,
   type ReadSessionWorktreeInput,
@@ -129,6 +130,18 @@ export async function confirmCodexEffort(
 }
 
 type TurnSelection = Pick<Session, 'model' | 'effort' | 'mode'>;
+
+const DISMISSED_PULL_REQUEST_LIMIT = 20;
+
+const sameReference = (
+  left: PullRequestReference | null,
+  right: PullRequestReference | null,
+) =>
+  left === right ||
+  (!!left &&
+    !!right &&
+    left.number === right.number &&
+    left.repository.toLowerCase() === right.repository.toLowerCase());
 
 const WORKER_PLAN_LIMIT = 12_000;
 const WORKER_PLAN_ROUND_LIMIT = 5;
@@ -1797,22 +1810,66 @@ export class SessionService {
   }
 
   linkPullRequest(input: LinkSessionPullRequestInput): Session {
-    const session =
-      this.active.get(input.sessionId)?.session ??
-      this.unsaved.get(input.sessionId) ??
-      this.store.get(input.sessionId);
+    const session = this.linkableSession(input.sessionId);
     if (!session) throw new SessionError('not-found', 'Session not found.');
     const previous = session.pullRequest;
-    if (
-      previous?.repository === input.pullRequest?.repository &&
-      previous?.number === input.pullRequest?.number
-    )
+    if (sameReference(previous, input.pullRequest))
       return structuredClone(session);
-    session.pullRequest = input.pullRequest;
+    const dismissed = input.pullRequest
+      ? session.pullRequestDismissed.filter(
+          item => !sameReference(item, input.pullRequest),
+        )
+      : previous
+        ? [
+            ...session.pullRequestDismissed.filter(
+              item => !sameReference(item, previous),
+            ),
+            previous,
+          ].slice(-DISMISSED_PULL_REQUEST_LIMIT)
+        : session.pullRequestDismissed;
+    return this.savePullRequest(session, input.pullRequest, dismissed);
+  }
+
+  autoLinkPullRequest(
+    sessionId: string,
+    reference: PullRequestReference,
+  ): Session | null {
+    const session = this.linkableSession(sessionId);
+    if (
+      !session ||
+      session.pullRequest ||
+      session.pullRequestDismissed.some(item => sameReference(item, reference))
+    )
+      return null;
+    return this.savePullRequest(
+      session,
+      reference,
+      session.pullRequestDismissed,
+    );
+  }
+
+  private linkableSession(sessionId: string): Session | undefined {
+    return (
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId)
+    );
+  }
+
+  private savePullRequest(
+    session: Session,
+    reference: PullRequestReference | null,
+    dismissed: PullRequestReference[],
+  ): Session {
+    const previous = session.pullRequest;
+    const previousDismissed = session.pullRequestDismissed;
+    session.pullRequest = reference;
+    session.pullRequestDismissed = dismissed;
     try {
       this.publish(session);
     } catch (error) {
       session.pullRequest = previous;
+      session.pullRequestDismissed = previousDismissed;
       throw error;
     }
     return structuredClone(session);

@@ -406,6 +406,7 @@ export class SessionStore {
       delegations: [],
       workflow: null,
       pullRequest: null,
+      pullRequestDismissed: [],
       groupId: input.groupId ?? null,
       order: 0,
       pinned: false,
@@ -484,6 +485,7 @@ export class SessionStore {
       workflow: null,
       mcp: { servers: [], hooks: false },
       pullRequest: null,
+      pullRequestDismissed: [],
       scheduledJobId: null,
       scheduledJobRunId: null,
       providerSessionId:

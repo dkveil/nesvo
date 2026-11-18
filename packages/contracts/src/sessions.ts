@@ -388,6 +388,7 @@ export const sessionSchema = z.strictObject({
   workflow: sessionWorkflowSchema.nullable().default(null),
   mcp: sessionMcpSchema.default({ servers: [], hooks: false }),
   pullRequest: pullRequestReferenceSchema.nullable().default(null),
+  pullRequestDismissed: z.array(pullRequestReferenceSchema).max(20).default([]),
   scheduledJobId: z.uuid().nullable().default(null),
   scheduledJobRunId: z.uuid().nullable().default(null),
   directory: z.string(),

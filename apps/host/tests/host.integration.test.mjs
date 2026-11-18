@@ -18437,6 +18437,123 @@ test(
   },
 );
 
+test(
+  'Pull request auto-link follows agent replies once and respects an unlink',
+  { timeout: 30_000 },
+  async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'nesvo-pr-auto-link-'));
+    const workspace = join(directory, 'project');
+    const fixture = join(directory, 'gh-fixture.cjs');
+    await mkdir(workspace);
+    await writeFile(fixture, `(${githubCliFixture.toString()})();\n`);
+    const git = promisify(execFile);
+    await git('git', ['init', '--quiet'], { cwd: workspace });
+    await git(
+      'git',
+      ['remote', 'add', 'origin', 'https://github.com/octo/project.git'],
+      { cwd: workspace },
+    );
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    const open = () => {
+      const host = launch(directory, join(directory, 'pids.json'), {
+        NESVO_GH_EXECUTABLE: fixture,
+        GH_CONFIG_DIR: directory,
+      });
+      hosts.push(host);
+      return host;
+    };
+    const repositoryLookups = async () =>
+      (
+        await readFile(join(directory, 'gh-calls.jsonl'), 'utf8').catch(
+          () => '',
+        )
+      )
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line))
+        .filter(
+          call =>
+            call.args[0] === 'repo' && call.args.includes('nameWithOwner'),
+        ).length;
+    let host = open();
+    const created = await host.request('create-session', {
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'read-only',
+      title: 'Auto-link',
+      directory: workspace,
+    });
+    const sessionId = created.session.id;
+    const say = text =>
+      host.request('send-message', {
+        sessionId,
+        messageId: randomUUID(),
+        text: `fixture:say ${text}`,
+      });
+    const replied = marker =>
+      host.event(
+        session =>
+          session.id === sessionId &&
+          session.status === 'completed' &&
+          session.messages.at(-1)?.body.includes(marker),
+      );
+
+    await say(
+      'Opened https://github.com/elsewhere/repo/pull/7 and https://github.com/OCTO/project/pull/42.',
+    );
+    const linked = await host.event(
+      session => session.id === sessionId && !!session.pullRequest,
+    );
+    assert.deepEqual(linked.pullRequest, {
+      repository: 'OCTO/project',
+      number: 42,
+    });
+    assert.equal(await repositoryLookups(), 1);
+
+    const unlinked = await host.request('link-session-pull-request', {
+      sessionId,
+      pullRequest: null,
+    });
+    assert.equal(unlinked.session.pullRequest, null);
+    assert.deepEqual(unlinked.session.pullRequestDismissed, [
+      { repository: 'OCTO/project', number: 42 },
+    ]);
+    await say('Still https://github.com/octo/project/pull/42 marker-again');
+    await replied('marker-again');
+    await say('Next https://github.com/octo/project/pull/43 marker-next');
+    const relinked = await host.event(
+      session => session.id === sessionId && session.pullRequest?.number === 43,
+    );
+    assert.deepEqual(relinked.pullRequestDismissed, [
+      { repository: 'OCTO/project', number: 42 },
+    ]);
+    assert.equal(await repositoryLookups(), 1);
+
+    await host.stop();
+    host = open();
+    const { sessions } = await host.request('list-sessions');
+    const restored = sessions.find(session => session.id === sessionId);
+    assert.equal(restored.pullRequest.number, 43);
+    await host.request('health');
+    assert.equal(await repositoryLookups(), 1);
+
+    const manual = await host.request('link-session-pull-request', {
+      sessionId,
+      pullRequest: { repository: 'octo/project', number: 42 },
+    });
+    assert.deepEqual(manual.session.pullRequestDismissed, []);
+  },
+);
+
 test('History search backfills and tracks the host session documents', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-history-search-'));
   const path = join(directory, 'nesvo.sqlite');

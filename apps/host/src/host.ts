@@ -33,6 +33,7 @@ import { SessionGroupStore } from './sessions/group-store';
 import { SessionDeletions } from './sessions/deletion';
 import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
+import { PullRequestAutoLink } from './pull-request-auto-link';
 import { PullRequests } from './pull-requests';
 import { PullRequestError } from './process/github-cli';
 import { CodeReviewStore } from './code-review/store';
@@ -336,6 +337,18 @@ export const serveHost = ({
             ),
         ),
         service => Effect.promise(() => service.close()),
+      );
+      const autoLink = new PullRequestAutoLink({
+        session: id => store.get(id),
+        repository: id => pullRequests.sessionRepository(id),
+        branchPullRequest: id => pullRequests.find(id),
+        link: (id, reference) => sessions.autoLinkPullRequest(id, reference),
+      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onRunFinished(finished => void autoLink.consider(finished)),
+        ),
+        release => Effect.sync(() => release()),
       );
       const usage = new ProviderUsageService();
       const evidence = new EvidenceStore(directory, id =>
