@@ -3,14 +3,22 @@ import { writeFileSync } from 'node:fs';
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
+  Menu,
   nativeTheme,
   powerMonitor,
   shell,
 } from 'electron';
 import appIcon from '../../build/icons/256x256.png?asset';
 import { startHost } from './host-client';
-import { log } from './logging';
+import { initializeLogging, log, logsDirectory } from './logging';
+import {
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  readWindowState,
+  saveWindowState,
+} from './window-state';
 import {
   ComputerManager,
   type CatalogWorkflowMethod,
@@ -143,15 +151,73 @@ const workflowInputs = {
   { parse: (input: unknown) => unknown }
 >;
 const MAX_EXTERNAL_URL_LENGTH = 2048;
+const RENDERER_CRASH_WINDOW_MS = 60_000;
+const MAX_RENDERER_RELOADS_PER_WINDOW = 3;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
-if (process.env.NESVO_DATA_DIR)
+if (process.env.NESVO_DATA_DIR) {
   app.setPath('userData', process.env.NESVO_DATA_DIR);
+  app.setAppLogsPath(join(process.env.NESVO_DATA_DIR, 'logs'));
+}
+initializeLogging(app.getPath('logs'), !app.isPackaged);
+process.on('uncaughtException', error =>
+  log.error('Uncaught exception in the main process.', error),
+);
+process.on('unhandledRejection', reason =>
+  log.error('Unhandled promise rejection in the main process.', reason),
+);
+app.on('child-process-gone', (_event, details) =>
+  log.error(
+    `A ${details.type} process stopped: ${details.reason} (exit code ${details.exitCode}).`,
+    details.name ?? details.serviceName ?? '',
+  ),
+);
+
+const applyApplicationMenu = () => {
+  if (!app.isPackaged) return;
+  Menu.setApplicationMenu(
+    process.platform === 'darwin'
+      ? Menu.buildFromTemplate([
+          { role: 'appMenu' },
+          { role: 'editMenu' },
+          { role: 'windowMenu' },
+        ])
+      : null,
+  );
+};
+
+const describeIpcFailure = (channel: string, error: unknown) => {
+  if (error instanceof Error && error.name === 'ZodError') {
+    log.warn(`${channel} received invalid data.`, error.message);
+    return new Error(
+      'Nesvo received invalid data for this action. Reload the window and try again.',
+    );
+  }
+  log.warn(
+    `${channel} failed.`,
+    error instanceof Error ? error.message : String(error),
+  );
+  return error instanceof Error ? error : new Error('The action failed.');
+};
+
+const handle = (
+  channel: string,
+  listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+) =>
+  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+    try {
+      return await listener(event, ...args);
+    } catch (error) {
+      throw describeIpcFailure(channel, error);
+    }
+  });
 
 const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
 void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   app.setAppUserModelId('app.nesvo.desktop');
+  log.info(`Nesvo ${app.getVersion()} started.`);
+  applyApplicationMenu();
   nativeTheme.themeSource = readColorScheme(app.getPath('userData'));
   const hostDirectory = join(app.getPath('userData'), 'host');
   const startLocalHost = () => {
@@ -171,12 +237,41 @@ void app.whenReady().then(async () => {
   );
   const mobile = mobileAccess(app.getPath('userData'), computers);
   let window: BrowserWindow | null = null;
+  const loadRenderer = (target: BrowserWindow) => {
+    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+      void target.loadURL(process.env.ELECTRON_RENDERER_URL);
+    } else {
+      void target.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+    }
+  };
+  const offerRecovery = async (target: BrowserWindow) => {
+    if (smokeTest || target.isDestroyed()) return;
+    const { response } = await dialog.showMessageBox(target, {
+      type: 'error',
+      message: 'The Nesvo window keeps stopping',
+      detail:
+        'Work on your computers keeps running. Reload the window to try again, or open the logs to see what happened.',
+      buttons: ['Reload window', 'Open logs', 'Quit Nesvo'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (target.isDestroyed()) return;
+    if (response === 1) void shell.openPath(logsDirectory());
+    else if (response === 2) app.quit();
+    else loadRenderer(target);
+  };
   const createWindow = () => {
+    const userData = app.getPath('userData');
+    const bounds = readWindowState(userData);
     const next = new BrowserWindow({
-      width: 1320,
-      height: 860,
-      minWidth: 640,
-      minHeight: 480,
+      ...(bounds.x === undefined || bounds.y === undefined
+        ? {}
+        : { x: bounds.x, y: bounds.y }),
+      width: bounds.width,
+      height: bounds.height,
+      minWidth: MIN_WINDOW_WIDTH,
+      minHeight: MIN_WINDOW_HEIGHT,
       title: 'Nesvo',
       icon: appIcon,
       backgroundColor: windowColors().background,
@@ -193,12 +288,51 @@ void app.whenReady().then(async () => {
       },
     });
     window = next;
+    if (bounds.maximized && !smokeTest) next.maximize();
     next.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     next.webContents.on('will-navigate', event => event.preventDefault());
+    next.webContents.on('will-redirect', event => event.preventDefault());
+    next.webContents.on('will-frame-navigate', event => event.preventDefault());
     next.webContents.session.setPermissionRequestHandler(
       (_contents, permission, callback) =>
         callback(permission === 'notifications'),
     );
+    next.webContents.session.setPermissionCheckHandler(
+      (_contents, permission) =>
+        permission === 'notifications' ||
+        permission === 'clipboard-sanitized-write',
+    );
+    let rendererCrashes: number[] = [];
+    next.webContents.on('render-process-gone', (_event, details) => {
+      log.error(
+        `The window renderer stopped: ${details.reason} (exit code ${details.exitCode}).`,
+      );
+      if (details.reason === 'clean-exit' || next.isDestroyed()) return;
+      const now = Date.now();
+      rendererCrashes = [
+        ...rendererCrashes.filter(
+          time => now - time < RENDERER_CRASH_WINDOW_MS,
+        ),
+        now,
+      ];
+      if (rendererCrashes.length > MAX_RENDERER_RELOADS_PER_WINDOW) {
+        log.error('The window renderer keeps stopping; reloading is paused.');
+        rendererCrashes = [];
+        void offerRecovery(next);
+        return;
+      }
+      loadRenderer(next);
+    });
+    next.webContents.on('unresponsive', () =>
+      log.warn('The window stopped responding.'),
+    );
+    next.webContents.on('responsive', () =>
+      log.info('The window is responding again.'),
+    );
+    next.webContents.on('preload-error', (_event, path, error) =>
+      log.error(`The preload script failed: ${path}.`, error),
+    );
+    next.on('close', () => saveWindowState(userData, next));
     const applyColors = () => {
       if (next.isDestroyed()) return;
       next.setBackgroundColor(windowColors().background);
@@ -211,11 +345,7 @@ void app.whenReady().then(async () => {
       nativeTheme.off('updated', applyColors);
       if (window === next) window = null;
     });
-    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-      void next.loadURL(process.env.ELECTRON_RENDERER_URL);
-    } else {
-      void next.loadFile(join(import.meta.dirname, '../renderer/index.html'));
-    }
+    loadRenderer(next);
   };
   const authorize = (event: Electron.IpcMainInvokeEvent) => {
     if (
@@ -253,15 +383,15 @@ void app.whenReady().then(async () => {
         : event,
     ),
   );
-  ipcMain.handle('nesvo:color-scheme', event => {
+  handle('nesvo:color-scheme', event => {
     authorize(event);
     return nativeTheme.themeSource;
   });
-  ipcMain.handle('nesvo:applied-color-scheme', event => {
+  handle('nesvo:applied-color-scheme', event => {
     authorize(event);
     return appliedColorScheme();
   });
-  ipcMain.handle('nesvo:set-color-scheme', (event, scheme: unknown) => {
+  handle('nesvo:set-color-scheme', (event, scheme: unknown) => {
     authorize(event);
     const next = colorSchemeSchema.parse(scheme);
     saveColorScheme(app.getPath('userData'), next);
@@ -272,7 +402,7 @@ void app.whenReady().then(async () => {
     );
     return next;
   });
-  ipcMain.handle('nesvo:open-external', async (event, url: unknown) => {
+  handle('nesvo:open-external', async (event, url: unknown) => {
     authorize(event);
     if (typeof url !== 'string') throw new Error('Invalid link');
     if (url.length > MAX_EXTERNAL_URL_LENGTH) throw new Error('Invalid link');
@@ -287,48 +417,48 @@ void app.whenReady().then(async () => {
     }
     await shell.openExternal(target.href);
   });
-  ipcMain.handle('nesvo:mobile-status', event => {
+  handle('nesvo:mobile-status', event => {
     authorize(event);
     return mobile.status();
   });
-  ipcMain.handle('nesvo:enable-mobile', event => {
+  handle('nesvo:enable-mobile', event => {
     authorize(event);
     return mobile.enable();
   });
-  ipcMain.handle('nesvo:disable-mobile', event => {
+  handle('nesvo:disable-mobile', event => {
     authorize(event);
     return mobile.disable();
   });
-  ipcMain.handle('nesvo:pair-mobile', event => {
+  handle('nesvo:pair-mobile', event => {
     authorize(event);
     return mobile.pair();
   });
-  ipcMain.handle('nesvo:revoke-mobile', (event, deviceId: unknown) => {
+  handle('nesvo:revoke-mobile', (event, deviceId: unknown) => {
     authorize(event);
     return mobile.revoke(mobileDeviceSchema.shape.id.parse(deviceId));
   });
-  ipcMain.handle('nesvo:list-computers', event => {
+  handle('nesvo:list-computers', event => {
     authorize(event);
     return computers.listComputers();
   });
-  ipcMain.handle('nesvo:add-computer', (event, input: unknown) => {
+  handle('nesvo:add-computer', (event, input: unknown) => {
     authorize(event);
     return computers.addComputer(sshComputerInputSchema.parse(input));
   });
-  ipcMain.handle('nesvo:connect-computer', (event, hostId: unknown) => {
+  handle('nesvo:connect-computer', (event, hostId: unknown) => {
     authorize(event);
     return computers.connectComputer(hostIdSchema.parse(hostId));
   });
-  ipcMain.handle('nesvo:disconnect-computer', (event, hostId: unknown) => {
+  handle('nesvo:disconnect-computer', (event, hostId: unknown) => {
     authorize(event);
     return computers.disconnectComputer(hostIdSchema.parse(hostId));
   });
-  ipcMain.handle('nesvo:remove-computer', (event, hostId: unknown) => {
+  handle('nesvo:remove-computer', (event, hostId: unknown) => {
     authorize(event);
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
-  ipcMain.handle('nesvo:list-cost-budgets', (event, hostId: unknown) => {
+  handle('nesvo:list-cost-budgets', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-cost-budgets', undefined, route(hostId));
   });
@@ -341,42 +471,36 @@ void app.whenReady().then(async () => {
   for (const method of Object.keys(costCommands) as Array<
     keyof typeof costCommands
   >) {
-    ipcMain.handle(
-      `nesvo:${method}`,
-      (event, input: unknown, hostId: unknown) => {
-        authorize(event);
-        return computers.execute(
-          method,
-          costCommands[method].parse(input),
-          route(hostId),
-        );
-      },
-    );
-  }
-  ipcMain.handle(
-    'nesvo:provider-usage',
-    (event, input: unknown, hostId: unknown) => {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
       authorize(event);
       return computers.execute(
-        'provider-usage',
-        providerUsageInputSchema.parse(input),
+        method,
+        costCommands[method].parse(input),
         route(hostId),
       );
-    },
-  );
-  ipcMain.handle('nesvo:health', async (event, hostId: unknown) => {
+    });
+  }
+  handle('nesvo:provider-usage', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'provider-usage',
+      providerUsageInputSchema.parse(input),
+      route(hostId),
+    );
+  });
+  handle('nesvo:health', async (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('health', undefined, route(hostId));
   });
-  ipcMain.handle('nesvo:claude-status', async (event, hostId: unknown) => {
+  handle('nesvo:claude-status', async (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('claude-status', undefined, route(hostId));
   });
-  ipcMain.handle('nesvo:codex-status', async (event, hostId: unknown) => {
+  handle('nesvo:codex-status', async (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('codex-status', undefined, route(hostId));
   });
-  ipcMain.handle(
+  handle(
     'nesvo:decide-delegation',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -387,7 +511,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:decide-worker-plan',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -398,7 +522,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:respond-approval',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -409,16 +533,16 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle('nesvo:list-sessions', async (event, hostId: unknown) => {
+  handle('nesvo:list-sessions', async (event, hostId: unknown) => {
     authorize(event);
     const id = hostIdSchema.optional().parse(hostId);
     return withDemoSessions(computers.listSessions(id), id);
   });
-  ipcMain.handle('nesvo:list-reviews', async (event, hostId: unknown) => {
+  handle('nesvo:list-reviews', async (event, hostId: unknown) => {
     authorize(event);
     return computers.listReviews(hostIdSchema.optional().parse(hostId));
   });
-  ipcMain.handle(
+  handle(
     'nesvo:discover-skills',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -429,7 +553,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:list-pull-requests',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -440,7 +564,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-pull-request',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -451,7 +575,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-pull-request-files',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -462,7 +586,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-pull-request-threads',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -473,7 +597,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:act-on-pull-request',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -484,7 +608,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:link-session-pull-request',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -495,7 +619,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:find-session-pull-request',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -506,11 +630,11 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle('nesvo:list-conversations', async (event, hostId: unknown) => {
+  handle('nesvo:list-conversations', async (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-conversations', undefined, route(hostId));
   });
-  ipcMain.handle(
+  handle(
     'nesvo:adopt-conversation',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -521,7 +645,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:search-history',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -532,7 +656,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-git-branch',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -543,7 +667,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:list-workspace-directory',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -554,7 +678,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:search-workspace-files',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -565,7 +689,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-workspace-file',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -576,7 +700,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:decide-review',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -587,7 +711,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle('nesvo:list-scheduled-jobs', (event, hostId: unknown) => {
+  handle('nesvo:list-scheduled-jobs', (event, hostId: unknown) => {
     authorize(event);
     return computers.executeScheduledJob(
       'list-scheduled-jobs',
@@ -595,7 +719,7 @@ void app.whenReady().then(async () => {
       hostIdSchema.parse(hostId),
     );
   });
-  ipcMain.handle(
+  handle(
     'nesvo:save-scheduled-job',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -606,7 +730,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:set-scheduled-job-active',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -617,7 +741,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:delete-scheduled-job',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -628,7 +752,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:run-scheduled-job-now',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -639,7 +763,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:list-scheduled-job-runs',
     (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -651,18 +775,15 @@ void app.whenReady().then(async () => {
     },
   );
   for (const method of Object.keys(workflowInputs) as CatalogWorkflowMethod[])
-    ipcMain.handle(
-      `nesvo:${method}`,
-      (event, input: unknown, hostId: unknown) => {
-        authorize(event);
-        const parsed = workflowInputs[method].parse(input);
-        const target = hostIdSchema.parse(hostId);
-        return workflowDemo?.serves(method, parsed, target)
-          ? workflowDemo.execute(method, parsed)
-          : computers.executeWorkflow(method, parsed, target);
-      },
-    );
-  ipcMain.handle(
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      const parsed = workflowInputs[method].parse(input);
+      const target = hostIdSchema.parse(hostId);
+      return workflowDemo?.serves(method, parsed, target)
+        ? workflowDemo.execute(method, parsed)
+        : computers.executeWorkflow(method, parsed, target);
+    });
+  handle(
     'nesvo:create-session',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -673,7 +794,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:send-message',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -684,7 +805,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:read-session-worktree',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -695,7 +816,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:finish-session-worktree',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -706,7 +827,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:list-mcp-servers',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -717,7 +838,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:set-session-mcp',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -728,7 +849,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:assign-session-workflow',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -739,13 +860,10 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
-    'nesvo:list-session-groups',
-    async (event, hostId: unknown) => {
-      authorize(event);
-      return computers.execute('list-session-groups', undefined, route(hostId));
-    },
-  );
+  handle('nesvo:list-session-groups', async (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-session-groups', undefined, route(hostId));
+  });
   const sessionGroupInputs = {
     'create-session-group': createSessionGroupSchema,
     'update-session-group': updateSessionGroupSchema,
@@ -759,7 +877,7 @@ void app.whenReady().then(async () => {
   for (const method of Object.keys(
     sessionGroupInputs,
   ) as (keyof typeof sessionGroupInputs)[])
-    ipcMain.handle(
+    handle(
       `nesvo:${method}`,
       async (event, input: unknown, hostId: unknown) => {
         authorize(event);
@@ -770,7 +888,7 @@ void app.whenReady().then(async () => {
         );
       },
     );
-  ipcMain.handle(
+  handle(
     'nesvo:queue-message',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -781,7 +899,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:cancel-queued',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -792,7 +910,7 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
+  handle(
     'nesvo:start-queued',
     async (event, input: unknown, hostId: unknown) => {
       authorize(event);
@@ -803,17 +921,14 @@ void app.whenReady().then(async () => {
       );
     },
   );
-  ipcMain.handle(
-    'nesvo:stop-run',
-    async (event, input: unknown, hostId: unknown) => {
-      authorize(event);
-      return computers.execute(
-        'stop-run',
-        stopRunSchema.parse(input),
-        route(hostId),
-      );
-    },
-  );
+  handle('nesvo:stop-run', async (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'stop-run',
+      stopRunSchema.parse(input),
+      route(hostId),
+    );
+  });
   createWindow();
   void computers
     .initialize()
