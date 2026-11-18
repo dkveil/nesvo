@@ -92,6 +92,7 @@ import {
   type AutomationValues,
 } from '@/features/edit-automation';
 import { ManageComputers } from '@/features/manage-computers';
+import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import { HistorySearchDialog } from '@/features/search-history';
 import { ImportConversation } from '@/features/import-conversation';
 import {
@@ -309,6 +310,7 @@ const assistantAddedNames = (
 
 export function Workspace() {
   const store = useSessions();
+  const defaultFolders = useDefaultSessionFolders(store.computers);
   const [location] = useState(readWorkspaceLocation);
   const [selectedId, setSelectedId] = useState(location.selectedId);
   const [inbox, setInbox] = useState(location.inbox);
@@ -759,6 +761,16 @@ export function Workspace() {
       directory: '',
     }),
   );
+  const threadFolder = defaultFolders.folders[threadSetup.hostId];
+  const [filledFolderHost, setFilledFolderHost] = useState('');
+  if (
+    threadFolder &&
+    filledFolderHost !== threadSetup.hostId &&
+    !threadSetup.directory.trim()
+  ) {
+    setFilledFolderHost(threadSetup.hostId);
+    setThreadSetup({ ...threadSetup, directory: threadFolder });
+  }
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
@@ -1398,7 +1410,13 @@ export function Workspace() {
   const openCreate = () =>
     guardEditor(() => {
       setCreationGroup(null);
-      setThreadSetup(previous => applyNewSessionDefaults(previous));
+      setThreadSetup(previous =>
+        applyNewSessionDefaults(
+          previous,
+          undefined,
+          defaultFolders.folders[previous.hostId] ?? null,
+        ),
+      );
       openCreateNow();
     });
   const openCreateInGroup = (hostId: string, group: SessionGroup) =>
@@ -1409,6 +1427,7 @@ export function Workspace() {
         const previous = applyNewSessionDefaults(
           { ...current, hostId },
           defaults,
+          defaultFolders.folders[hostId] ?? null,
         );
         const switched = !!provider && provider !== previous.provider;
         return {
@@ -3820,6 +3839,7 @@ ${text}`
               setup={threadSetup}
               onSetupChange={setThreadSetup}
               computers={store.computers}
+              defaultFolders={defaultFolders.folders}
               statuses={store.providerStates(threadSetup.hostId)}
               profiles={profilesFor(threadSetup.hostId)}
               onRefreshProvider={provider =>
@@ -4793,6 +4813,13 @@ ${text}`
                   profiles={profilesFor(settingsHostId)}
                   connected={store.hostReady(settingsHostId)}
                   api={desktopApi(settingsHostId)}
+                  defaultFolder={defaultFolders.folders[settingsHostId] ?? null}
+                  defaultFolderSupported={defaultFolders.supported(
+                    settingsHostId,
+                  )}
+                  onSaveDefaultFolder={directory =>
+                    defaultFolders.save(settingsHostId, directory)
+                  }
                 />
               </div>
             ) : page === 'notifications' ? (
@@ -4813,6 +4840,7 @@ ${text}`
             ) : page === 'computers' ? (
               <ManageComputers
                 computers={store.computers}
+                defaultFolders={defaultFolders}
                 api={desktopApi()}
                 onBusyChange={onBusyChange}
               />

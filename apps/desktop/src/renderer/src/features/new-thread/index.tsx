@@ -72,6 +72,7 @@ type Props = {
   setup: ThreadSetup;
   onSetupChange: (setup: ThreadSetup) => void;
   computers: Computer[];
+  defaultFolders: Readonly<Record<string, string | null>>;
   statuses: ProviderStates;
   profiles: ProviderProfile[];
   onRefreshProvider: (provider: Provider) => void;
@@ -104,6 +105,7 @@ export function NewThread({
   setup,
   onSetupChange,
   computers,
+  defaultFolders,
   statuses: defaultStatuses,
   profiles,
   onRefreshProvider: refreshDefaultProvider,
@@ -500,6 +502,7 @@ export function NewThread({
               <div className="flex min-w-0 flex-wrap items-center gap-1 px-2">
                 <HostPicker
                   computers={computers}
+                  defaultFolders={defaultFolders}
                   hostId={setup.hostId}
                   disabled={pending}
                   onChange={hostId => {
@@ -509,9 +512,17 @@ export function NewThread({
                       setWorktreeChoice(null);
                       setWorktreeBranch('');
                     }
+                    const previousDefault = defaultFolders[setup.hostId] ?? '';
+                    const keepsDefault =
+                      !setup.directory.trim() ||
+                      setup.directory.trim() === previousDefault;
                     onSetupChange({
                       ...setup,
                       hostId,
+                      directory:
+                        hostId !== setup.hostId && keepsDefault
+                          ? (defaultFolders[hostId] ?? '')
+                          : setup.directory,
                       profileId:
                         hostId === setup.hostId
                           ? setup.profileId
@@ -546,6 +557,7 @@ export function NewThread({
                 )}
                 <LocationPicker
                   directory={setup.directory}
+                  defaultDirectory={defaultFolders[setup.hostId] ?? null}
                   computerName={computer?.name ?? 'this computer'}
                   disabled={pending}
                   open={locationOpen && !pending}

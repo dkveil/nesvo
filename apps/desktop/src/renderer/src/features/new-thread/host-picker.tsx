@@ -15,6 +15,7 @@ import { ComposerChip } from './composer-chip';
 
 type Props = {
   computers: Computer[];
+  defaultFolders?: Readonly<Record<string, string | null>>;
   hostId: string;
   disabled?: boolean;
   onChange: (hostId: string) => void;
@@ -33,6 +34,7 @@ const statusLabels: Record<Computer['status'], string> = {
 
 export function HostPicker({
   computers,
+  defaultFolders = {},
   hostId,
   disabled = false,
   onChange,
@@ -62,7 +64,7 @@ export function HostPicker({
         align="start"
         collisionPadding={12}
         aria-label="Run on"
-        className="w-60"
+        className="w-72"
       >
         <DropdownMenuLabel>Run on</DropdownMenuLabel>
         <DropdownMenuRadioGroup
@@ -73,7 +75,14 @@ export function HostPicker({
           {computers.map(item => (
             <DropdownMenuRadioItem key={item.id} value={item.id}>
               {item.id === 'local' ? <Monitor /> : <Cloud />}
-              <span className="min-w-0 flex-1 truncate">{item.name}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.name}</span>
+                {defaultFolders[item.id] && (
+                  <span className="block truncate font-mono text-2xs text-muted-foreground">
+                    {defaultFolders[item.id]}
+                  </span>
+                )}
+              </span>
               {statusLabels[item.status] && (
                 <DropdownMenuShortcut>
                   {statusLabels[item.status]}

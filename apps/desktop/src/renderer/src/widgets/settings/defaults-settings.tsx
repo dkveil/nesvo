@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DesktopApi, ProviderProfile } from '@nesvo/contracts';
+import { DefaultFolderField } from '@/features/default-session-folder';
 import { ProfileSelect } from '@/features/provider-profiles/profile-select';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import {
@@ -33,6 +34,9 @@ type Props = {
   profiles: ProviderProfile[];
   connected: boolean;
   api: DesktopApi;
+  defaultFolder: string | null;
+  defaultFolderSupported: boolean;
+  onSaveDefaultFolder: (directory: string | null) => Promise<string | null>;
 };
 
 type Option = { value: string; label: string };
@@ -88,6 +92,9 @@ export function DefaultsSettings({
   profiles,
   connected,
   api,
+  defaultFolder,
+  defaultFolderSupported,
+  onSaveDefaultFolder,
 }: Props) {
   const [defaults, setDefaults] = useState(readNewSessionDefaults);
   const update = (patch: Partial<NewSessionDefaults>) => {
@@ -202,21 +209,35 @@ export function DefaultsSettings({
             }
           />
         </SettingsRow>
-        <SettingsRow
-          title={<label htmlFor="defaults-directory">Folder</label>}
-          description="Leave blank to keep the last folder."
-        >
-          <Input
-            id="defaults-directory"
-            size="md"
-            className="w-52 font-mono"
-            placeholder="Absolute path"
-            spellCheck={false}
-            maxLength={4096}
-            value={defaults.directory}
-            onChange={event => update({ directory: event.target.value })}
-          />
-        </SettingsRow>
+        {defaultFolderSupported ? (
+          <div className="px-3 py-2.5">
+            <DefaultFolderField
+              key={`${hostId}:${defaultFolder ?? ''}`}
+              id="defaults-directory"
+              label="Folder"
+              computerName={computerName}
+              value={defaultFolder}
+              supported
+              onSave={onSaveDefaultFolder}
+            />
+          </div>
+        ) : (
+          <SettingsRow
+            title={<label htmlFor="defaults-directory">Folder</label>}
+            description="Leave blank to keep the last folder."
+          >
+            <Input
+              id="defaults-directory"
+              size="md"
+              className="w-52 font-mono"
+              placeholder="Absolute path"
+              spellCheck={false}
+              maxLength={4096}
+              value={defaults.directory}
+              onChange={event => update({ directory: event.target.value })}
+            />
+          </SettingsRow>
+        )}
         <SettingsRow
           title={
             <label htmlFor="defaults-worktree">
@@ -233,9 +254,10 @@ export function DefaultsSettings({
         </SettingsRow>
       </SettingsSection>
       <p className="px-3 text-xs text-muted-foreground">
-        Defaults only pre-fill the new session form on this desktop. They never
-        change existing sessions, and group defaults take precedence when you
-        start a session in a group.
+        Defaults only pre-fill the new session form. The folder is saved on the
+        computer; the other defaults stay on this desktop. They never change
+        existing sessions, and group defaults take precedence when you start a
+        session in a group.
       </p>
     </div>
   );

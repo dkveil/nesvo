@@ -10,6 +10,7 @@ import { ComposerChip } from './composer-chip';
 
 type Props = {
   directory: string;
+  defaultDirectory?: string | null;
   computerName: string;
   disabled?: boolean;
   open: boolean;
@@ -19,6 +20,7 @@ type Props = {
 
 type FormProps = {
   directory: string;
+  defaultDirectory: string | null;
   computerName: string;
   onChange: (directory: string) => void;
   onDone: () => void;
@@ -26,6 +28,7 @@ type FormProps = {
 
 function LocationForm({
   directory,
+  defaultDirectory,
   computerName,
   onChange,
   onDone,
@@ -61,20 +64,47 @@ function LocationForm({
           Any folder on {computerName}. A Git repository is not required. Leave
           it blank to start in an isolated folder.
         </p>
+        {defaultDirectory && (
+          <p
+            data-default-folder
+            className="text-2xs [overflow-wrap:anywhere] text-muted-foreground"
+          >
+            Default folder:{' '}
+            <span className="font-mono text-foreground">
+              {defaultDirectory}
+            </span>
+          </p>
+        )}
       </div>
       <div className="flex items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground"
-          onClick={() => {
-            update('');
-            onDone();
-          }}
-        >
-          Use isolated folder
-        </Button>
+        <div className="flex items-center gap-1">
+          {defaultDirectory && draft.trim() !== defaultDirectory && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
+              onClick={() => {
+                update(defaultDirectory);
+                onDone();
+              }}
+            >
+              Use default folder
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => {
+              update('');
+              onDone();
+            }}
+          >
+            Use isolated folder
+          </Button>
+        </div>
         <Button type="button" size="xs" onClick={onDone}>
           Done
         </Button>
@@ -85,6 +115,7 @@ function LocationForm({
 
 export function LocationPicker({
   directory,
+  defaultDirectory = null,
   computerName,
   disabled = false,
   open,
@@ -115,6 +146,7 @@ export function LocationPicker({
       >
         <LocationForm
           directory={directory}
+          defaultDirectory={defaultDirectory}
           computerName={computerName}
           onChange={onChange}
           onDone={() => onOpenChange(false)}

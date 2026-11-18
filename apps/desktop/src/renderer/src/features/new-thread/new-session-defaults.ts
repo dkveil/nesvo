@@ -85,6 +85,7 @@ export function saveNewSessionDefaults(defaults: NewSessionDefaults): void {
 export function applyNewSessionDefaults(
   setup: ThreadSetup,
   defaults: NewSessionDefaults = readNewSessionDefaults(),
+  computerFolder: string | null = null,
 ): ThreadSetup {
   const provider = defaults.provider ?? setup.provider;
   const switched = provider !== setup.provider;
@@ -107,6 +108,6 @@ export function applyNewSessionDefaults(
         : switched
           ? 'read-only'
           : setup.mode,
-    directory: defaults.directory.trim() || setup.directory,
+    directory: computerFolder || defaults.directory.trim() || setup.directory,
   };
 }

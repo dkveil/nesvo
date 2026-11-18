@@ -6,6 +6,10 @@ import {
 } from '@nesvo/contracts';
 import { Monitor, Plus, Server } from 'lucide-react';
 import { errorDetail } from '@/entities/session';
+import {
+  DefaultFolderField,
+  type DefaultSessionFolders,
+} from '@/features/default-session-folder';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Disclosure } from '@/shared/ui/disclosure';
@@ -18,6 +22,7 @@ import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
 
 type Props = {
   computers: Computer[];
+  defaultFolders: DefaultSessionFolders;
   api: Pick<
     DesktopApi,
     'addComputer' | 'connectComputer' | 'disconnectComputer' | 'removeComputer'
@@ -64,7 +69,12 @@ const statusLabels: Record<Computer['status'], string> = {
   error: 'Connection failed',
 };
 
-export function ManageComputers({ computers, api, onBusyChange }: Props) {
+export function ManageComputers({
+  computers,
+  defaultFolders,
+  api,
+  onBusyChange,
+}: Props) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
@@ -84,6 +94,7 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
     nodePath: '',
     identityFile: '',
     knownHostsFile: '',
+    defaultFolder: '',
   });
   const action = async (id: string, operation: () => Promise<unknown>) => {
     if (pending) return;
@@ -118,10 +129,19 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
       setError(parsed.error.issues.map(issue => issue.message).join(' '));
       return;
     }
+    const folder = fields.defaultFolder.trim();
     void action('add', async () => {
       const computer = await api.addComputer(parsed.data);
       setAdding(false);
       await api.connectComputer(computer.id);
+      if (!folder) return;
+      try {
+        await defaultFolders.save(computer.id, folder);
+      } catch (failure) {
+        throw new Error(
+          `${computer.name} was added, but its default folder was not saved. ${errorDetail(failure)}`,
+        );
+      }
     });
   };
   const field = (
@@ -244,6 +264,19 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
                   )}
                 </div>
               </div>
+              {computer.status === 'connected' && (
+                <DefaultFolderField
+                  key={`${computer.id}:${defaultFolders.folders[computer.id] ?? ''}`}
+                  id={`computer-default-folder-${computer.id}`}
+                  computerName={computer.name}
+                  value={defaultFolders.folders[computer.id] ?? null}
+                  supported={defaultFolders.supported(computer.id)}
+                  onSave={directory =>
+                    defaultFolders.save(computer.id, directory)
+                  }
+                  className="ml-7"
+                />
+              )}
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
                 <Disclosure
                   title="Connection details"
@@ -312,6 +345,11 @@ export function ManageComputers({ computers, api, onBusyChange }: Props) {
               'nodePath',
               'Node executable',
               'Optional, for example /usr/bin/node',
+            )}
+            {field(
+              'defaultFolder',
+              'Default session folder',
+              'Optional, for example /home/user/development',
             )}
             <Disclosure
               title="Advanced SSH options"
