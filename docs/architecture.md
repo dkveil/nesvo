@@ -231,6 +231,18 @@ Codex forks the saved thread with `thread/fork` before saving the Nesvo session.
 
 Restart requires confirmation for the current session revision. It clears the provider thread ID, keeps the recorded model, mode, folder and conversation, and holds queued messages. A saved history divider marks the boundary. The next operator message starts a fresh provider thread. Automatic worker result context and dependencies are scoped to the current thread. Both commands refuse to change threads during active work. Reopening the host restores recorded thread state without starting provider work.
 
+## Settings, backups and export
+
+Settings › Defaults stores the new-session provider, model, permission mode, folder and worktree choice as a local view preference in `localStorage`. They only pre-fill the new session form; each unset field keeps the last used value. Group defaults are applied on top when a session starts in a group, and existing sessions never change. The model and mode lists come from the selected computer's provider report. The worktree default applies only when the chosen folder supports a worktree.
+
+Settings › Notifications turns desktop notifications for approvals and finished runs on or off on this desktop and can send a test notification. Taskbar attention for approvals is unaffected.
+
+`backup-database` asks a host for a consistent copy of its database through `VACUUM INTO`, written as `nesvo.sqlite.backup-<UTC time>.bak` next to `nesvo.sqlite` and returned with its path and size. It uses the same temporary-file and rename step as migration backups, does not count toward the kept migration backups and is gated by the `database-backup` capability. For Local, the desktop can show the file in its folder; it accepts only a backup file name inside the local host data folder.
+
+A session exports as Markdown from the session header menu. The renderer builds the text from the session it already holds, and the main process writes only the file chosen in the save dialog.
+
+Settings › About reads the app, Electron, Node.js and Chromium versions, the platform and the data and logs folders through a narrow preload call. Copy diagnostics puts versions, platform, host contract revision and each computer's name, kind and connection status on the clipboard, without paths, credentials or message content. Third-party licenses opens the notices shipped with the packaged app through `extraFiles`, or the repository notices in development.
+
 ## Model changes
 
 An existing session can change its model, and for Codex its reasoning effort, from the composer. The choice travels with the next message, including a queued one, and applies from that turn on: the host validates it with the same provider rules as session creation, updates the session and launches the next provider process with the new values while resuming the recorded provider thread. If Codex rejects the requested reasoning effort while the turn is being prepared, the run fails before a provider turn starts and the session returns to its previous model and effort. A running process is never restarted or replaced. Each operator message records the model and effort requested for its turn, and the conversation shows a divider where the recorded value changes; history saved before this field existed shows none. The provider cannot be switched inside a session.
