@@ -17993,7 +17993,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      15,
+      16,
     );
     database
       .prepare(
@@ -18356,7 +18356,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 15);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 16);
     } finally {
       check.close();
     }
