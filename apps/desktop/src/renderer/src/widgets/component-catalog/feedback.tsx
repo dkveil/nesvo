@@ -85,6 +85,20 @@ export function FeedbackSection() {
               </StateCaption>
             ))}
           </SpecimenRow>
+          <SpecimenRow label="hollow · spinner">
+            <StateCaption label="offline">
+              <StatusDot tone="neutral" variant="hollow" size="md" />
+            </StateCaption>
+            <StateCaption label="running">
+              <StatusDot tone="info" variant="spinner" size="md" />
+            </StateCaption>
+            <StateCaption label="sm">
+              <span className="flex items-center gap-1.5">
+                <StatusDot tone="neutral" variant="hollow" />
+                <StatusDot tone="info" variant="spinner" />
+              </span>
+            </StateCaption>
+          </SpecimenRow>
           <SpecimenRow label="pulse · ring">
             <StatusDot tone="info" pulse label="Working" />
             <span className="relative inline-flex size-6 items-center justify-center rounded-full bg-highlight">
