@@ -728,6 +728,45 @@ export async function codexSupportsMcpApprovals(
   }
 }
 
+async function codexFullAccessSupported(
+  executable: Executable,
+  environment: Readonly<Record<string, string>> | undefined,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (signal?.aborted) return false;
+  const owned = ownProcess(
+    executable,
+    ['exec', '--help'],
+    undefined,
+    environment,
+  );
+  const cancel = () => {
+    void owned.stop();
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(cancel, 5_000);
+  let output = '';
+  owned.child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    output += chunk;
+    if (output.length > 65_536) cancel();
+  });
+  owned.child.stderr.resume();
+  owned.child.stdin.end();
+  try {
+    const exit = await owned.closed;
+    return (
+      !signal?.aborted &&
+      exit.code === 0 &&
+      !exit.error &&
+      output.includes('danger-full-access')
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+    await owned.stop();
+  }
+}
+
 export async function inspectCodex(
   signal?: AbortSignal,
   environment?: Readonly<Record<string, string>>,
@@ -766,7 +805,19 @@ export async function inspectCodex(
     return {
       ...status,
       version,
-      modes: status.status === 'ready' ? [...codexModes] : [],
+      modes:
+        status.status === 'ready'
+          ? [
+              ...codexModes,
+              ...((await codexFullAccessSupported(
+                executable,
+                environment,
+                signal,
+              ))
+                ? ['full-access' as const]
+                : []),
+            ]
+          : [],
       images:
         status.status === 'ready'
           ? { status: 'per-model' }
@@ -1458,7 +1509,8 @@ type CodexRunOptions = {
   resume: boolean;
   model: string;
   effort?: string | null;
-  mode: 'read-only' | 'supervised';
+  mode: 'read-only' | 'supervised' | 'full-access';
+  assertFullAccess?: () => void;
   turnSandbox?: 'read-only';
   environment?: Readonly<Record<string, string>>;
   skillId?: string;
@@ -2266,7 +2318,7 @@ export function startCodex(options: CodexRunOptions): {
         throw new Error(
           'The selected skill identifier is invalid. Refresh skills and select it again.',
         );
-      if (!['read-only', 'supervised'].includes(options.mode))
+      if (!['read-only', 'supervised', 'full-access'].includes(options.mode))
         throw new Error('Unsupported Codex permission mode.');
       if (options.onDelegate && !object(options.delegationSchema))
         throw new Error('Codex delegation requires an explicit input schema.');
@@ -2458,21 +2510,32 @@ export function startCodex(options: CodexRunOptions): {
         }
       }
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
-      const approvalPolicy = readOnly
-        ? isolateTools
-          ? 'never'
-          : mcpOnlyApprovalPolicy
-        : 'untrusted';
+      const fullAccess = options.mode === 'full-access';
+      const requireFullAccess = () => {
+        if (!fullAccess) return;
+        if (!options.assertFullAccess)
+          throw new Error('Full access requires session confirmation.');
+        options.assertFullAccess();
+      };
+      const approvalPolicy = fullAccess
+        ? 'never'
+        : readOnly
+          ? isolateTools
+            ? 'never'
+            : mcpOnlyApprovalPolicy
+          : 'untrusted';
       const sandboxPolicy =
         options.mode === 'read-only'
           ? { type: 'readOnly', networkAccess: false }
-          : {
-              type: 'workspaceWrite',
-              writableRoots: [options.directory],
-              networkAccess: false,
-              excludeTmpdirEnvVar: true,
-              excludeSlashTmp: true,
-            };
+          : fullAccess
+            ? { type: 'dangerFullAccess' }
+            : {
+                type: 'workspaceWrite',
+                writableRoots: [options.directory],
+                networkAccess: false,
+                excludeTmpdirEnvVar: true,
+                excludeSlashTmp: true,
+              };
       const readOnlyTurn = options.turnSandbox === 'read-only';
       const turnApprovalPolicy = readOnlyTurn ? 'never' : approvalPolicy;
       const turnSandboxPolicy = readOnlyTurn
@@ -2490,6 +2553,7 @@ export function startCodex(options: CodexRunOptions): {
       }
       await verifyDefinitions();
       if (stopped || failure) throw new Error(failure ?? 'Stopped.');
+      requireFullAccess();
       const threadRequest = peer.request(
         options.fork
           ? 'thread/fork'
@@ -2546,8 +2610,11 @@ export function startCodex(options: CodexRunOptions): {
           cwd: options.directory,
           approvalPolicy,
           approvalsReviewer: 'user',
-          sandbox:
-            options.mode === 'read-only' ? 'read-only' : 'workspace-write',
+          sandbox: readOnly
+            ? 'read-only'
+            : fullAccess
+              ? 'danger-full-access'
+              : 'workspace-write',
           config: {
             ...toolPolicyConfig(features),
             ...threadIntegrations,
@@ -2598,7 +2665,7 @@ export function startCodex(options: CodexRunOptions): {
       if (
         !isDeepStrictEqual(response.approvalPolicy, approvalPolicy) ||
         sandbox?.type !== sandboxPolicy.type ||
-        sandbox.networkAccess !== false ||
+        (!fullAccess && sandbox.networkAccess !== false) ||
         (response.approvalsReviewer !== undefined &&
           response.approvalsReviewer !== 'user')
       )
@@ -2638,6 +2705,7 @@ export function startCodex(options: CodexRunOptions): {
       } else {
         await verifyDefinitions();
         if (stopped || failure) throw new Error(failure ?? 'Stopped.');
+        requireFullAccess();
         const started = await peer.request('turn/start', {
           threadId,
           input: codexTurnInput(options.prompt, options.images ?? [], skill),

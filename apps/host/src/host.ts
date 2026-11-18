@@ -111,6 +111,7 @@ import { RunningApps } from './running-apps/service';
 import { WorktreeRecipes } from './worktree-recipes/service';
 import { WorktreeRecipeStore } from './worktree-recipes/store';
 import { RunningAppsError } from './running-apps/scan';
+import { ClaudeAutonomyStore } from './sessions/claude-autonomy';
 import { DefaultSessionFolder } from './workspace/default-folder';
 import { SessionControl } from './session-control/router';
 import { SessionControlStore } from './session-control/store';
@@ -346,6 +347,7 @@ export const serveHost = ({
       const store = new SessionStore(database);
       const groupStore = new SessionGroupStore(database);
       const defaultFolder = new DefaultSessionFolder(database);
+      const claudeAutonomy = new ClaudeAutonomyStore(database);
       const costs = yield* Effect.acquireRelease(
         Effect.sync(
           () => new CostStore(database, directory, () => profiles.list()),
@@ -401,6 +403,7 @@ export const serveHost = ({
                 workflowRunStore.interruptActiveRuns(at);
               },
               {
+                autonomy: claudeAutonomy,
                 control: {
                   available: session =>
                     control.current?.bridge().available(session) ?? false,
@@ -2963,6 +2966,31 @@ export const serveHost = ({
           request.method === 'run-scheduled-job-now'
         )
           yield* Effect.promise(() => costs.refreshBudgets());
+        if (request.method === 'claude-autonomy') {
+          const pending = sessions
+            .claudeAutonomy(request.input, probes.controller.signal)
+            .then(autonomy =>
+              send({ type: 'claude-autonomy', id: request.id, autonomy }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : 'Permissions could not be updated on this computer.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
         const response = yield* Effect.sync((): HostReply => {
           try {
             if (request.method === 'create-cost-budget') {

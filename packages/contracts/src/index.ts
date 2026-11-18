@@ -9,6 +9,12 @@ import {
 } from './onboarding';
 export * from './onboarding';
 import {
+  claudeAutonomyInputSchema,
+  claudeAutonomySchema,
+  type ClaudeAutonomy,
+  type ClaudeAutonomyInput,
+} from './claude-autonomy';
+import {
   retentionDaysSchema,
   transcriptRetentionSchema,
   type TranscriptRetention,
@@ -533,6 +539,7 @@ export * from './terminal-handoff';
 export * from './transcript-search';
 export * from './skills';
 export * from './claude-commands';
+export * from './claude-autonomy';
 export * from './mcp';
 export * from './mcp-selection';
 export * from './computers';
@@ -1037,6 +1044,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('claude-autonomy'),
+    input: claudeAutonomyInputSchema,
+  }),
+  z.strictObject({
+    id: z.string().min(1).max(200),
     method: z.literal('read-default-session-folder'),
   }),
   z.strictObject({
@@ -1724,6 +1736,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     settings: inboxSettingsSchema,
   }),
   z.strictObject({
+    type: z.literal('claude-autonomy'),
+    id: z.string().min(1).max(200),
+    autonomy: claudeAutonomySchema,
+  }),
+  z.strictObject({
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
@@ -2347,6 +2364,10 @@ export type DesktopApi = {
     settings: InboxSettings,
     hostId?: HostId,
   ) => Promise<InboxSettings>;
+  claudeAutonomy: (
+    input: ClaudeAutonomyInput,
+    hostId?: HostId,
+  ) => Promise<ClaudeAutonomy>;
   readDefaultSessionFolder: (hostId?: HostId) => Promise<DefaultSessionFolder>;
   setDefaultSessionFolder: (
     directory: string | null,

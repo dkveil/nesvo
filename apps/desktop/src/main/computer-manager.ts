@@ -314,6 +314,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use gate rules.',
   'external-inbox':
     'Update this computer’s Nesvo host and reconnect to manage external Inbox devices.',
+  'claude-autonomy':
+    'Update this computer’s Nesvo host and reconnect to manage Claude rules and Full access.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -361,6 +363,7 @@ function requiredCapability(
   if (method === 'read-git-branch') return 'git-branch';
   if (method === 'list-running-apps') return 'running-apps';
   if (method === 'list-claude-commands') return 'claude-commands';
+  if (method === 'claude-autonomy') return 'claude-autonomy';
   if (
     method === 'create-session' &&
     typeof input === 'object' &&
@@ -1288,6 +1291,7 @@ export class ComputerManager {
       'enroll-external-inbox-device': 'external-inbox-enrollment',
       'revoke-external-inbox-device': 'external-inbox-devices',
       'external-inbox': 'external-inbox-result',
+      'claude-autonomy': 'claude-autonomy',
       'read-default-session-folder': 'default-session-folder',
       'set-default-session-folder': 'default-session-folder',
       ...sessionGroupResponses,
@@ -1377,6 +1381,8 @@ export class ComputerManager {
         return response.item;
       case 'inbox-settings':
         return response.settings;
+      case 'claude-autonomy':
+        return response.autonomy;
       case 'default-session-folder':
         return response.directory;
       case 'worktree-recipes':

@@ -81,6 +81,12 @@ export function StageRecord({ session, record, actions }: Props) {
         label={`Mode changed to ${modeLabel(session.provider, record.to)} by ${actorText(record.by)}`}
       />
     );
+  if (record.kind === 'allow-rule')
+    return (
+      <Separator
+        label={`Allowed in this ${record.rule.scope} · ${record.rule.pattern}`}
+      />
+    );
   if (record.kind === 'report')
     return (
       <ReportCard

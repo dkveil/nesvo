@@ -108,6 +108,7 @@ export const modeLabels: Record<Session['mode'], string> = {
   supervised: 'Workspace edits',
   'accept-edits': 'Accept edits',
   auto: 'Auto',
+  'full-access': 'Full access',
 };
 
 const modeDescriptions: Record<SessionMode, string> = {
@@ -117,6 +118,8 @@ const modeDescriptions: Record<SessionMode, string> = {
   'accept-edits':
     'Edits files without asking. Commands are not available in this mode.',
   auto: "Lets the agent's own review approve routine actions; refused actions stay visible.",
+  'full-access':
+    'Runs commands and edits with your account’s access to files and the network.',
 };
 
 const legacyModes: Record<Provider, SessionMode[]> = {
@@ -139,8 +142,12 @@ export function modeDescription(provider: Provider, mode: SessionMode) {
 export function providerModes(
   provider: Provider,
   status: ClaudeStatus | CodexStatus | null | undefined,
+  fullAccessEnabled = false,
 ) {
-  return status?.modes.length ? status.modes : legacyModes[provider];
+  const modes = status?.modes.length ? status.modes : legacyModes[provider];
+  return fullAccessEnabled
+    ? modes
+    : modes.filter(mode => mode !== 'full-access');
 }
 
 const versionedClaudeModel = /^claude-(opus|sonnet|haiku)-(\d+)-(\d+)/;

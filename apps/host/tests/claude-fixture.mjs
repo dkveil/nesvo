@@ -64,7 +64,11 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PERMISSION_HELP = [
   '--permission-mode <mode>  Permission mode to use for the session',
   '                          (choices: "acceptEdits", "auto",',
-  '                          "bypassPermissions", "manual", "dontAsk", "plan")',
+  '                          ' +
+    (process.env.NESVO_TEST_FULL_ACCESS === '1'
+      ? '"bypassPermissions", '
+      : '') +
+    '"manual", "dontAsk", "plan")',
 ].join('\n');
 const PROMPTS_HELP = [
   '--permission-prompts <target>  Who answers permission prompts with',
@@ -88,12 +92,14 @@ const MODE_TOOLS = new Map([
   ['dontAsk', READ_TOOLS],
   ['acceptEdits', `${EDIT_TOOLS},${WORK_TOOLS}`],
   ['auto', `${EDIT_TOOLS},Bash,${WORK_TOOLS}`],
+  ['bypassPermissions', `${EDIT_TOOLS},Bash,${WORK_TOOLS}`],
 ]);
 const MODE_ALLOWED = new Map([
   ['plan', READ_TOOLS],
   ['dontAsk', READ_TOOLS],
   ['acceptEdits', `${READ_TOOLS},TodoWrite`],
   ['auto', `${READ_TOOLS},TodoWrite`],
+  ['bypassPermissions', `${READ_TOOLS},TodoWrite`],
 ]);
 const VERDICT_ROLE =
   'You verify. You do not change files. Return only the JSON verdict.';
@@ -1858,6 +1864,80 @@ if (args.length === 1 && args[0] === '--version') {
       },
     });
     finish(`Fixture bash ${decision}.`);
+  } else if (command.startsWith('fixture:autonomy ')) {
+    const calls = JSON.parse(command.slice('fixture:autonomy '.length));
+    assert.equal(hostPrompts, true);
+    const answers = [];
+    start('Running checks. ');
+    for (const [index, call] of calls.entries()) {
+      const toolUse = 'fixture-autonomy-' + index;
+      emit({
+        type: 'assistant',
+        message: {
+          id: toolUse,
+          content: [
+            {
+              type: 'tool_use',
+              id: toolUse,
+              name: call.tool,
+              input: call.input,
+            },
+          ],
+        },
+      });
+      const requestId = randomUUID();
+      emit({
+        type: 'control_request',
+        request_id: requestId,
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: call.tool,
+          input: call.input,
+          tool_use_id: toolUse,
+        },
+      });
+      const answer = await nextFrame();
+      assert.equal(answer.response.request_id, requestId);
+      const allowed = answer.response.response.behavior === 'allow';
+      answers.push(allowed);
+      emit({
+        type: 'user',
+        ...(call.tool === 'Bash' && allowed
+          ? { tool_use_result: { stdout: 'Test suite passed', stderr: '' } }
+          : {}),
+        ...(call.tool === 'Edit' && allowed
+          ? {
+              tool_use_result: {
+                structuredPatch: [
+                  {
+                    oldStart: 1,
+                    oldLines: 1,
+                    newStart: 1,
+                    newLines: 1,
+                    lines: ['-before', '+after'],
+                  },
+                ],
+              },
+            }
+          : {}),
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: toolUse,
+              is_error: !allowed,
+              content: allowed ? 'Completed' : 'Denied',
+            },
+          ],
+        },
+      });
+    }
+    finish(JSON.stringify(answers));
+  } else if (command === 'fixture:full-access') {
+    assert.equal(permissionMode, 'bypassPermissions');
+    assert.equal(hostPrompts, false);
+    start('Full access selected.');
+    finish('Full access selected.');
   } else if (command.startsWith('fixture:say ')) {
     const text = command.slice('fixture:say '.length);
     start(text);

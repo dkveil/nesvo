@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  allowPatternSchema,
+  allowRuleSchema,
+  allowScopeSchema,
+} from './claude-autonomy';
 import { pullRequestReferenceSchema } from './pull-requests';
 import { decisionRouteSchema } from './decision-route';
 import { activityLimits, sessionActivitySchema } from './activities';
@@ -39,6 +44,7 @@ export const sessionModeSchema = z.enum([
   'supervised',
   'accept-edits',
   'auto',
+  'full-access',
 ]);
 export const providerSessionModes = {
   'Claude Code': ['read-only', 'accept-edits', 'auto'],
@@ -116,6 +122,7 @@ export const approvalSchema = z.strictObject({
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
+  allowPattern: allowPatternSchema.optional(),
 });
 export const sessionParentRequestSchema = z.strictObject({
   id: z.uuid(),
@@ -175,6 +182,10 @@ export const sessionStageRecordSchema = z.discriminatedUnion('kind', [
     from: sessionModeSchema,
     to: sessionModeSchema,
     by: stageActorSchema,
+  }),
+  recordBaseSchema.extend({
+    kind: z.literal('allow-rule'),
+    rule: allowRuleSchema,
   }),
   recordBaseSchema.extend({
     kind: z.literal('report'),
@@ -430,6 +441,7 @@ export const respondApprovalSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   message: z.string().trim().min(1).max(2000).optional(),
+  allowScope: allowScopeSchema.optional(),
 });
 export const decideDelegationSchema = z.strictObject({
   sessionId: z.uuid(),

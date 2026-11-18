@@ -1711,6 +1711,7 @@ test(
         'running-apps-web',
         'gate-rules',
         'external-inbox',
+        'claude-autonomy',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2717,7 +2718,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      30,
+      31,
     );
     migrated.close();
     const reopened = open();
@@ -5101,7 +5102,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 31');
+    database.exec('PRAGMA user_version = 32');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -5118,7 +5119,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -7311,6 +7312,7 @@ test(
       'running-apps-web',
       'gate-rules',
       'external-inbox',
+      'claude-autonomy',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -8187,7 +8189,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            30,
+            31,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -8270,11 +8272,11 @@ test(
       }
     });
 
-    await t.test('a version 31 database is refused', async () => {
+    await t.test('a version 32 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 31');
+      newer.exec('PRAGMA user_version = 32');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -8286,7 +8288,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          31,
+          32,
         );
       } finally {
         check.close();
@@ -11327,7 +11329,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        30,
+        31,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11378,7 +11380,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        30,
+        31,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20934,7 +20936,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      30,
+      31,
     );
     database
       .prepare(
@@ -21297,7 +21299,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -21312,7 +21314,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        30,
+        31,
       );
       assert.deepEqual(
         migrated
@@ -21492,7 +21494,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 30);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -22631,6 +22633,258 @@ test('imports existing Claude Code and Codex conversations into read-only resuma
     }
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('Claude matches and revokes scoped allow rules through the live prompt channel', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-autonomy-')),
+  );
+  const project = join(directory, 'project');
+  await mkdir(project);
+  await mkdir(join(project, '.git'));
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({ scripts: { test: 'node --test' } }),
+  );
+  const pidFile = join(directory, 'pids.json');
+  let host = launch(directory, pidFile);
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const create = async () => {
+    const result = await host.request('create-session', {
+      title: 'Claude allow rules',
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode: 'auto',
+      directory: project,
+    });
+    assert.equal(result.type, 'session', JSON.stringify(result));
+    return result.session.id;
+  };
+  const bash = command => ({ tool: 'Bash', input: { command } });
+  const edit = file_path => ({
+    tool: 'Edit',
+    input: { file_path, old_string: 'before', new_string: 'after' },
+  });
+  const send = async (sessionId, ...calls) => {
+    const result = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text: 'fixture:autonomy ' + JSON.stringify(calls),
+    });
+    assert.equal(result.type, 'session', JSON.stringify(result));
+    return result.session;
+  };
+  const seen = new Set();
+  const approval = async run => {
+    const pending = await host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        session.pendingApprovals.some(item => !seen.has(item.id)),
+    );
+    const next = pending.pendingApprovals.find(item => !seen.has(item.id));
+    seen.add(next.id);
+    return next;
+  };
+  const respond = (run, ask, decision, allowScope) =>
+    host.request('respond-approval', {
+      sessionId: run.id,
+      runId: run.runId,
+      requestId: ask.id,
+      fingerprint: ask.fingerprint,
+      decision,
+      ...(allowScope ? { allowScope } : {}),
+    });
+  const finish = async run => {
+    const completed = await host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        session.status !== 'running',
+    );
+    assert.equal(completed.status, 'completed', completed.error);
+    return completed;
+  };
+
+  const first = await create();
+  const safe = bash('bun run test');
+  const local = edit(join(project, 'sample.txt'));
+  let run = await send(first, safe, safe, local, local);
+  const shellRequest = await approval(run);
+  assert.equal(shellRequest.allowPattern.pattern, 'Bash(bun run test)');
+  assert.equal(
+    (await respond(run, shellRequest, 'accept', 'session')).type,
+    'session',
+  );
+  const editRequest = await approval(run);
+  assert.equal(editRequest.allowPattern.pattern, 'Edit(./sample.txt)');
+  assert.equal(
+    (await respond(run, editRequest, 'accept', 'project')).type,
+    'session',
+  );
+  const result = await finish(run);
+  assert.equal(
+    result.stageRecords.filter(record => record.kind === 'allow-rule').length,
+    2,
+  );
+  assert.ok(
+    result.activities.some(activity => activity.output === 'Test suite passed'),
+  );
+  assert.ok(
+    result.activities.some(activity => activity.output.includes('+after')),
+  );
+
+  await host.stop();
+  host = launch(directory, pidFile);
+  run = await send(first, safe, local);
+  await finish(run);
+
+  const second = await create();
+  run = await send(
+    second,
+    local,
+    safe,
+    bash('bun run test && curl https://example.invalid'),
+    bash('rm -rf target'),
+    bash('git push --force'),
+    bash('sudo true'),
+    edit(join(directory, 'outside.txt')),
+  );
+  for (let index = 0; index < 6; index++) {
+    const ask = await approval(run);
+    if (index === 0) {
+      assert.equal(ask.allowPattern.pattern, 'Bash(bun run test)');
+    } else {
+      assert.equal(ask.allowPattern, undefined);
+      assert.equal(
+        (await respond(run, ask, 'accept', 'project')).code,
+        'invalid-request',
+      );
+    }
+    const declined = await respond(run, ask, 'decline');
+    assert.equal(declined.type, 'session', JSON.stringify(declined));
+  }
+  await finish(run);
+
+  const settings = await host.request('claude-autonomy', { action: 'read' });
+  const rule = settings.autonomy.rules.find(item => item.scope === 'project');
+  assert.equal(
+    (
+      await host.request('claude-autonomy', {
+        action: 'remove-rule',
+        id: rule.id,
+      })
+    ).autonomy.rules.length,
+    1,
+  );
+  run = await send(second, local);
+  const removed = await approval(run);
+  assert.equal(removed.allowPattern.pattern, 'Edit(./sample.txt)');
+  assert.equal((await respond(run, removed, 'decline')).type, 'session');
+  await finish(run);
+});
+
+test('Full access requires the host switch and a confirmation for each session', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-full-access-')),
+  );
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const host = launch(directory, join(directory, 'pids.json'), {
+    NESVO_TEST_FULL_ACCESS: '1',
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const settings = input => host.request('claude-autonomy', input);
+  const create = (provider, mode = 'read-only') =>
+    host.request('create-session', {
+      title: provider,
+      provider,
+      model: 'default',
+      directory: project,
+      mode,
+    });
+  const send = (sessionId, text, mode) =>
+    host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+      ...(mode ? { mode } : {}),
+    });
+  const confirm = (sessionId, folder = project) =>
+    settings({
+      action: 'confirm-full-access',
+      sessionId,
+      directory: folder,
+    });
+  assert.equal(
+    (await settings({ action: 'read' })).autonomy.fullAccessEnabled,
+    false,
+  );
+  const invalidCreation = await host.send(
+    JSON.stringify({
+      id: randomUUID(),
+      method: 'create-session',
+      input: {
+        title: 'Claude Code',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: project,
+        mode: 'full-access',
+      },
+    }),
+  );
+  assert.equal(invalidCreation.code, 'invalid-request');
+  const claude = (await create('Claude Code')).session.id;
+  const codex = (await create('Codex')).session.id;
+  assert.equal((await confirm(claude)).code, 'invalid-request');
+  assert.equal(
+    (await send(claude, 'fixture:full-access', 'full-access')).code,
+    'invalid-request',
+  );
+  await settings({ action: 'set-full-access', enabled: true });
+  assert.equal(
+    (await send(claude, 'fixture:full-access', 'full-access')).code,
+    'invalid-request',
+  );
+  assert.equal((await confirm(claude, directory)).code, 'invalid-request');
+  assert.equal((await confirm(claude)).type, 'claude-autonomy');
+  assert.equal(
+    (await send(codex, 'Fixture work', 'full-access')).code,
+    'invalid-request',
+  );
+  assert.equal((await confirm(codex)).type, 'claude-autonomy');
+
+  const completed = async (sessionId, text, mode) => {
+    const result = await send(sessionId, text, mode);
+    assert.equal(result.type, 'session', JSON.stringify(result));
+    const session = await host.event(
+      item =>
+        item.id === sessionId &&
+        item.runId === result.session.runId &&
+        item.status !== 'running',
+    );
+    assert.equal(session.status, 'completed', session.error);
+    assert.equal(session.messages.at(-2).mode, mode);
+  };
+  await completed(claude, 'fixture:full-access', 'full-access');
+  await completed(codex, 'Fixture work', 'full-access');
+  await completed(codex, 'Continue safely', 'read-only');
+  assert.equal(
+    (await send(codex, 'Fixture work', 'full-access')).code,
+    'invalid-request',
+  );
+  await settings({ action: 'set-full-access', enabled: false });
+  await settings({ action: 'set-full-access', enabled: true });
+  assert.equal(
+    (await send(claude, 'fixture:full-access')).code,
+    'invalid-request',
+  );
 });
 
 test('Claude Code asks the operator once through the host prompt channel', async t => {

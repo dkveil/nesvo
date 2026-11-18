@@ -1,4 +1,8 @@
 import type { ProviderToolSubject, TurnGate } from '../inbox-rules/turn-gate';
+import {
+  claudeAllowCandidate,
+  type AllowCandidate,
+} from './claude-allow-pattern';
 import type { VerifyMcpTurn } from '../mcp/service';
 import { writeClaudeRunConfig } from '../mcp/claude-config-file';
 import { spawn } from 'node:child_process';
@@ -72,7 +76,12 @@ export type ClaudeEvent =
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
   | { type: 'tool-activity'; activity: ProviderActivity }
-  | { type: 'approval'; approval: Approval; subject?: ProviderToolSubject }
+  | {
+      type: 'approval';
+      approval: Approval;
+      subject?: ProviderToolSubject;
+      candidate?: AllowCandidate;
+    }
   | { type: 'approval-resolved'; id: string }
   | { type: 'plan'; text: string };
 
@@ -161,11 +170,16 @@ const claudeModes = {
     tools: [...readTools, ...editTools, 'Bash', ...workTools],
     allowed: workAllowed,
   },
+  'full-access': {
+    cli: 'bypassPermissions',
+    tools: [...readTools, ...editTools, 'Bash', ...workTools],
+    allowed: workAllowed,
+  },
 } as const satisfies Record<
   ClaudeMode,
   { cli: string; tools: string[]; allowed: string[] }
 >;
-const optionalModes = ['accept-edits', 'auto'] as const;
+const optionalModes = ['accept-edits', 'auto', 'full-access'] as const;
 const EXIT_PLAN_TOOL = 'ExitPlanMode';
 const PLAN_BROWSER_MESSAGE =
   'While planning, Nesvo only allows read-only browser tools.';
@@ -386,6 +400,40 @@ function toolResultText(content: unknown): string {
     )
     .filter(Boolean)
     .join('\n');
+}
+
+function toolPatch(result: RecordValue | null): string {
+  if (!Array.isArray(result?.structuredPatch)) return '';
+  const lines: string[] = [];
+  let length = 0;
+  for (const hunk of result.structuredPatch.map(object)) {
+    if (
+      !hunk ||
+      !Array.isArray(hunk.lines) ||
+      ![hunk.oldStart, hunk.oldLines, hunk.newStart, hunk.newLines].every(
+        Number.isSafeInteger,
+      )
+    )
+      continue;
+    const header =
+      '@@ -' +
+      hunk.oldStart +
+      ',' +
+      hunk.oldLines +
+      ' +' +
+      hunk.newStart +
+      ',' +
+      hunk.newLines +
+      ' @@';
+    for (const line of [header, ...hunk.lines]) {
+      if (typeof line !== 'string') continue;
+      lines.push(line.slice(0, activityLimits.output + 1));
+      length += line.length + 1;
+      if (length > activityLimits.output)
+        return lines.join('\n').slice(0, activityLimits.output + 1);
+    }
+  }
+  return lines.join('\n');
 }
 
 function approvalTimeout(): number {
@@ -1151,6 +1199,8 @@ export function startClaude(options: {
   images?: readonly ClaudeImage[];
   readDirectories?: readonly string[];
   approvals?: boolean;
+  assertFullAccess?: () => void;
+  permissionRules?: { allows: (candidate: AllowCandidate) => boolean };
   mcpTurn?: { verify: VerifyMcpTurn; dataDirectory: string };
   compact?: { instructions: string | null };
   control?: SessionControlTurn;
@@ -1400,11 +1450,21 @@ export function startClaude(options: {
       if (options.outputSchema)
         args.push('--json-schema', JSON.stringify(options.outputSchema));
       if (stopped) return { status: 'stopped', error: null };
+      if (options.mode === 'full-access') {
+        if (!options.assertFullAccess)
+          throw new Error('Full access requires session confirmation.');
+        options.assertFullAccess();
+      }
       owned = ownProcess(
         inspection.executable,
         args,
         options.directory,
-        options.environment,
+        options.permissionRules
+          ? {
+              ...options.environment,
+              CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+            }
+          : options.environment,
       );
       const running = owned;
       const messages = new Map<
@@ -1626,6 +1686,28 @@ export function startClaude(options: {
           emit({ type: 'approval', approval: ask.approval, subject });
           return;
         }
+        const candidate =
+          options.permissionRules &&
+          claudeAllowCandidate(
+            options.directory,
+            String(request.tool_name),
+            ask.input,
+            servers,
+            request.blocked_path,
+          );
+        if (candidate && options.permissionRules?.allows(candidate)) {
+          try {
+            writeFrame(
+              claudePermissionAnswer(ask.requestId, {
+                behavior: 'allow',
+                input: ask.input,
+              }),
+            );
+          } catch {
+            fail('Claude permission answer could not be delivered.');
+          }
+          return;
+        }
         const timer = setTimeout(() => {
           if (!approvals.has(ask.requestId)) return;
           try {
@@ -1639,7 +1721,12 @@ export function startClaude(options: {
           }
         }, approvalTimeout());
         approvals.set(ask.requestId, { input: ask.input, timer });
-        emit({ type: 'approval', approval: ask.approval, subject });
+        emit({
+          type: 'approval',
+          approval: ask.approval,
+          subject,
+          ...(candidate ? { candidate } : {}),
+        });
       };
       const publish = () => {
         const text = [...messages.values()]
@@ -1981,6 +2068,8 @@ export function startClaude(options: {
         } else if (value.type === 'user') {
           const message = object(value.message);
           if (!Array.isArray(message?.content)) return;
+          const result =
+            message.content.length === 1 ? object(value.tool_use_result) : null;
           for (const content of message.content) {
             const block = object(content);
             if (
@@ -1994,7 +2083,13 @@ export function startClaude(options: {
             const next = makeActivity({
               ...previous,
               status: failed ? 'failed' : 'completed',
-              output: failed ? toolResultText(block.content) : '',
+              output:
+                previous.kind === 'command'
+                  ? [textField(result, 'stdout'), textField(result, 'stderr')]
+                      .filter(Boolean)
+                      .join('\n') || toolResultText(block.content)
+                  : (previous.kind === 'file-change' && toolPatch(result)) ||
+                    (failed ? toolResultText(block.content) : ''),
             });
             toolActivities.set(next.id, next);
             emit({ type: 'tool-activity', activity: next });

@@ -131,6 +131,7 @@ import {
   decideSessionWorktreeRecipeSchema,
   removeTrackedRepositorySchema,
   setDefaultSessionFolderSchema,
+  claudeAutonomyInputSchema,
   reorderTrackedRepositoriesSchema,
   listTrackedPullRequestsSchema,
   readPullRequestSchema,
@@ -1201,6 +1202,14 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:claude-autonomy', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'claude-autonomy',
+      claudeAutonomyInputSchema.parse(input),
+      route(hostId),
+    );
+  });
   handle('nesvo:read-default-session-folder', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute(

@@ -15,6 +15,13 @@ import { createInterface } from 'node:readline';
 import { parse as parseToml } from 'smol-toml';
 
 const args = process.argv.slice(2);
+if (args[0] === 'exec' && args[1] === '--help') {
+  if (process.env.NESVO_TEST_FULL_ACCESS === '1')
+    process.stdout.write(
+      '--sandbox <MODE>  [possible values: read-only, workspace-write, danger-full-access]\n',
+    );
+  process.exit(0);
+}
 if (process.env.NESVO_FIXTURE_PROFILE_LOG) {
   const { appendFileSync } = await import('node:fs');
   appendFileSync(
@@ -177,15 +184,17 @@ if (args.length === 1 && args[0] === '--version') {
     return join(directory, `.nesvo-codex-fixture-${id}.json`);
   };
   const policy = () =>
-    thread.supervised
-      ? {
-          type: 'workspaceWrite',
-          writableRoots: [thread.cwd],
-          networkAccess: false,
-          excludeTmpdirEnvVar: true,
-          excludeSlashTmp: true,
-        }
-      : { type: 'readOnly', networkAccess: false };
+    thread.fullAccess
+      ? { type: 'dangerFullAccess' }
+      : thread.supervised
+        ? {
+            type: 'workspaceWrite',
+            writableRoots: [thread.cwd],
+            networkAccess: false,
+            excludeTmpdirEnvVar: true,
+            excludeSlashTmp: true,
+          }
+        : { type: 'readOnly', networkAccess: false };
   const scoped = extra => ({
     threadId: thread.id,
     turnId: current.id,
@@ -729,13 +738,20 @@ if (args.length === 1 && args[0] === '--version') {
     ) {
       threadConfig = params.config ?? {};
       assert.ok(isAbsolute(params.cwd));
-      assert.ok(['read-only', 'workspace-write'].includes(params.sandbox));
+      assert.ok(
+        ['read-only', 'workspace-write', 'danger-full-access'].includes(
+          params.sandbox,
+        ),
+      );
+      const fullAccess = params.sandbox === 'danger-full-access';
       const supervised = params.sandbox === 'workspace-write';
       assert.deepEqual(
         params.approvalPolicy,
-        supervised
-          ? 'untrusted'
-          : (effectiveConfig().approval_policy ?? 'never'),
+        fullAccess
+          ? 'never'
+          : supervised
+            ? 'untrusted'
+            : (effectiveConfig().approval_policy ?? 'never'),
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.ok(params.model === undefined || params.model === 'fixture-codex');
@@ -792,6 +808,7 @@ if (args.length === 1 && args[0] === '--version') {
         id: resumed ? params.threadId : randomUUID(),
         cwd: params.cwd,
         supervised,
+        fullAccess,
         resumed,
         effort,
         projectDocBytes: params.config?.project_doc_max_bytes ?? null,
@@ -888,9 +905,11 @@ if (args.length === 1 && args[0] === '--version') {
         thread.supervised && params.sandboxPolicy?.type === 'readOnly';
       assert.deepEqual(
         params.approvalPolicy,
-        thread.supervised && !readOnlyTurn
-          ? 'untrusted'
-          : (effectiveConfig().approval_policy ?? 'never'),
+        thread.fullAccess
+          ? 'never'
+          : thread.supervised && !readOnlyTurn
+            ? 'untrusted'
+            : (effectiveConfig().approval_policy ?? 'never'),
       );
       assert.equal(params.approvalsReviewer, 'user');
       assert.deepEqual(

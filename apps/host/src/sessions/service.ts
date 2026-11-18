@@ -1,3 +1,6 @@
+import { ClaudeAutonomyStore } from './claude-autonomy';
+import type { AllowCandidate } from '../providers/claude-allow-pattern';
+import type { ClaudeAutonomyInput } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -262,7 +265,7 @@ function resolveTurnMode(
       'invalid-request',
       'Workflow sessions keep the permissions chosen when the task started.',
     );
-  if (!isProviderSessionMode(session.provider, mode))
+  if (mode !== 'full-access' && !isProviderSessionMode(session.provider, mode))
     throw new SessionError(
       'invalid-request',
       `${session.provider} does not support the ${mode} permission mode.`,
@@ -422,6 +425,7 @@ export const isCoordinatorCandidate = (session: Session): boolean =>
 
 export type SessionServiceOptions = {
   control?: SessionControlBridge;
+  autonomy?: ClaudeAutonomyStore;
   profiles?: ProviderProfiles;
   mcp?: McpPolicy;
   refreshCostBudgets?: () => Promise<void>;
@@ -2344,7 +2348,14 @@ export class SessionService {
       this.resultlessRuns.add(session.runId);
     session.queue = session.queue.filter(item => item.id !== input.messageId);
     const superseded = this.reviews.supersededBy(session.id);
-    this.store.saveMany([session], () => this.reviews.saveMany(superseded));
+    this.store.saveMany([session], () => {
+      this.reviews.saveMany(superseded);
+      if (
+        previousSelection.mode === 'full-access' &&
+        selection.mode !== 'full-access'
+      )
+        this.options.autonomy?.revoke(session);
+    });
     this.emitSession(session);
     this.emitReviews(superseded);
     this.launch(session, prompt, {
@@ -2641,16 +2652,86 @@ export class SessionService {
     return structuredClone(session);
   }
 
+  private readonly allowCandidates = new WeakMap<
+    Session,
+    Map<string, AllowCandidate>
+  >();
+
+  async claudeAutonomy(input: ClaudeAutonomyInput, signal: AbortSignal) {
+    const autonomy = this.options.autonomy!;
+    if (input.action === 'set-full-access') {
+      autonomy.setEnabled(input.enabled);
+      if (!input.enabled) {
+        for (const active of this.active.values()) {
+          if (
+            active.session.mode === 'full-access' &&
+            active.session.status === 'running'
+          )
+            this.stop({
+              sessionId: active.session.id,
+              runId: active.session.runId!,
+            });
+        }
+      }
+    } else if (input.action === 'remove-rule') {
+      autonomy.remove(input.id);
+    } else if (input.action === 'confirm-full-access') {
+      const session = this.acceptingSession(input.sessionId);
+      const epoch = autonomy.epoch();
+      if (!epoch)
+        throw new SessionError(
+          'invalid-request',
+          'Enable Allow Full access mode in Settings first.',
+        );
+      const folder = await this.options.profiles?.directory(
+        session.provider,
+        session.profileId,
+        signal,
+      );
+      const environment = {
+        ...this.options.environment?.(session),
+        ...profileEnvironment(session.provider, folder),
+      };
+      const status =
+        session.provider === 'Claude Code'
+          ? await inspectClaude(signal, environment)
+          : await inspectCodex(signal, environment);
+      if (signal.aborted || !status.modes.includes('full-access'))
+        throw new SessionError(
+          'invalid-request',
+          'The installed provider does not offer Full access.',
+        );
+      autonomy.confirm(
+        this.acceptingSession(input.sessionId),
+        input.directory,
+        epoch,
+      );
+    }
+    return autonomy.get();
+  }
+
+  private requireFullAccess(session: Session) {
+    if (!this.options.autonomy)
+      throw new SessionError(
+        'invalid-request',
+        'Full access is disabled on this computer.',
+      );
+    this.options.autonomy.requireFullAccess(session);
+  }
+
   private turnSelection(
     session: Session,
     input: Pick<SendMessageInput, 'model' | 'effort' | 'mode'>,
   ): TurnSelection {
-    return resolveTurnSelection(
+    if (input.mode === 'full-access') this.requireFullAccess(session);
+    const selection = resolveTurnSelection(
       session,
       session.plan?.status === 'planning'
         ? { ...input, mode: 'read-only' }
         : input,
     );
+    if (selection.mode === 'full-access') this.requireFullAccess(session);
+    return selection;
   }
 
   private ensureNoStageDecision(session: Session): void {
@@ -3371,7 +3452,12 @@ export class SessionService {
       session,
       'This session is running. Change it after the turn finishes or send the change with the next message.',
     );
-    const selection = resolveTurnSelection(session, change);
+    if (change.mode === 'full-access')
+      throw new SessionError(
+        'invalid-request',
+        'Confirm Full access in the session composer.',
+      );
+    const selection = this.turnSelection(session, change);
     const from = session.mode;
     session.model = selection.model;
     session.effort = selection.effort;
@@ -3390,7 +3476,12 @@ export class SessionService {
           ]
         : [];
     for (const record of added) appendStageRecord(session, record);
-    this.publish(session);
+    this.publish(
+      session,
+      from === 'full-access' && session.mode !== 'full-access'
+        ? () => this.options.autonomy?.revoke(session)
+        : undefined,
+    );
     this.announceStage(session, added);
     return structuredClone(session);
   }
@@ -3482,16 +3573,45 @@ export class SessionService {
         'invalid-request',
         'A message can only accompany a Claude Code denial.',
       );
+    const candidate = this.allowCandidates
+      .get(active.session)
+      ?.get(input.requestId);
+    if (
+      input.allowScope &&
+      (input.decision !== 'accept' || !candidate || !this.options.autonomy)
+    )
+      throw new SessionError(
+        'invalid-request',
+        'This request cannot be saved as an allow rule.',
+      );
+    const prepared =
+      input.allowScope && candidate
+        ? this.options.autonomy?.prepareRule(
+            active.session,
+            input.allowScope,
+            candidate,
+          )
+        : null;
     const pending = active.session.pendingApprovals;
+    const records = active.session.stageRecords;
+    if (prepared)
+      appendStageRecord(active.session, {
+        id: prepared.rule.id,
+        at: prepared.rule.createdAt,
+        kind: 'allow-rule',
+        rule: prepared.rule,
+      });
     active.session.pendingApprovals = pending.filter(
       approval => approval.id !== input.requestId,
     );
     try {
-      this.publish(active.session);
+      this.publish(active.session, prepared?.save);
     } catch (error) {
       active.session.pendingApprovals = pending;
+      active.session.stageRecords = records;
       throw error;
     }
+    this.allowCandidates.get(active.session)?.delete(input.requestId);
     try {
       active.handle.respondApproval(
         input.requestId,
@@ -3967,6 +4087,8 @@ export class SessionService {
               error: `${reason} No provider turn was started.`,
             };
         }
+        const assertFullAccess = () => this.requireFullAccess(session);
+        if (session.mode === 'full-access' && !readOnly) assertFullAccess();
         provider =
           session.provider === 'Codex'
             ? startCodex({
@@ -3976,7 +4098,12 @@ export class SessionService {
                 mcpTurn,
                 sessionId: session.providerSessionId,
                 mode:
-                  session.mode === 'supervised' ? 'supervised' : 'read-only',
+                  session.mode === 'full-access' && !readOnly
+                    ? 'full-access'
+                    : session.mode === 'supervised'
+                      ? 'supervised'
+                      : 'read-only',
+                assertFullAccess,
                 effort: session.effort,
                 ...(images.paths.length ? { images: images.paths } : {}),
                 ...(readOnly ? { turnSandbox: 'read-only' as const } : {}),
@@ -4073,7 +4200,26 @@ export class SessionService {
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
                 mode: readOnly ? 'read-only' : session.mode,
-                approvals: !readOnly && !ephemeral,
+                approvals:
+                  !readOnly && !ephemeral && session.mode !== 'full-access',
+                assertFullAccess,
+                ...(this.options.autonomy &&
+                !unattended &&
+                !readOnly &&
+                !ephemeral &&
+                !outputSchema &&
+                !assistantPrompt &&
+                !session.parentId &&
+                !session.workflowRunId &&
+                !session.scheduledJobId &&
+                session.mode !== 'full-access'
+                  ? {
+                      permissionRules: {
+                        allows: (candidate: AllowCandidate) =>
+                          this.options.autonomy!.allows(session, candidate),
+                      },
+                    }
+                  : {}),
                 ...(controlCall && controlTools
                   ? { control: { tools: controlTools, call: controlCall } }
                   : {}),
@@ -4658,16 +4804,30 @@ export class SessionService {
         )
       )
         throw new Error('Duplicate provider approval');
-      session.pendingApprovals.push(event.approval);
-      session.activity =
-        this.options.inbox?.approvalRequested(
-          structuredClone(session),
-          event.approval,
-          event.subject ?? null,
-        ) ?? 'Waiting for your decision…';
+      const candidate = 'candidate' in event ? event.candidate : undefined;
+      if (candidate) {
+        const candidates =
+          this.allowCandidates.get(session) ??
+          new Map<string, AllowCandidate>();
+        candidates.set(event.approval.id, candidate);
+        this.allowCandidates.set(session, candidates);
+      }
+      session.pendingApprovals.push(
+        candidate
+          ? {
+              ...event.approval,
+              allowPattern: {
+                tool: candidate.tool,
+                pattern: candidate.pattern,
+              },
+            }
+          : event.approval,
+      );
+      session.activity = 'Waiting for your decision…';
       this.publish(session);
       return;
     } else if (event.type === 'approval-resolved') {
+      this.allowCandidates.get(session)?.delete(event.id);
       session.pendingApprovals = session.pendingApprovals.filter(
         approval => approval.id !== event.id,
       );
@@ -4755,8 +4915,8 @@ export class SessionService {
     );
   }
 
-  private publish(session: Session): void {
-    this.store.save(session);
+  private publish(session: Session, writeRelated?: () => void): void {
+    this.store.saveMany([session], writeRelated);
     const active = this.active.get(session.id);
     if (active) this.clearStreamTimer(active);
     this.emitSession(session);

@@ -136,6 +136,8 @@ import {
   runningAppListSchema,
   defaultSessionFolderSchema,
   setDefaultSessionFolderSchema,
+  claudeAutonomyInputSchema,
+  claudeAutonomySchema,
   saveWorktreeRecipeSchema,
   deleteWorktreeRecipeSchema,
   matchWorktreeRecipeSchema,
@@ -1438,6 +1440,14 @@ const api: DesktopApi = {
   listRunningApps: async (hostId, query) =>
     runningAppListSchema.parse(
       await ipcRenderer.invoke('nesvo:list-running-apps', route(hostId), query),
+    ),
+  claudeAutonomy: async (input, hostId) =>
+    claudeAutonomySchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:claude-autonomy',
+        claudeAutonomyInputSchema.parse(input),
+        hostIdSchema.optional().parse(hostId),
+      ),
     ),
   readDefaultSessionFolder: async hostId =>
     defaultSessionFolderSchema.parse(
