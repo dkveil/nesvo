@@ -192,6 +192,7 @@ export function CommandPalette({
           pending.current = null;
           action?.();
         }}
+        placement="top"
         className="gap-0 overflow-hidden p-0 sm:max-w-xl"
       >
         <DialogTitle className="sr-only">{label}</DialogTitle>

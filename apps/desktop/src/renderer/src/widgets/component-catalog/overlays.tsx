@@ -358,16 +358,32 @@ export function OverlaysSection() {
               </DialogHeader>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button variant="outline" size="md">
+                  <Button variant="ghost" size="lg">
                     Cancel
                   </Button>
                 </DialogClose>
                 <DialogClose asChild>
-                  <Button variant="destructive" size="md">
+                  <Button variant="destructive" size="lg">
                     Delete group
                   </Button>
                 </DialogClose>
               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline">Open top dialog</Button>
+            </DialogTrigger>
+            <DialogContent
+              placement="top"
+              showCloseButton={false}
+              className="gap-0 overflow-hidden p-0 sm:max-w-xl"
+            >
+              <DialogTitle className="sr-only">Sample palette</DialogTitle>
+              <DialogDescription className="px-4 py-3">
+                placement=&quot;top&quot; keeps a palette anchored while its
+                results change.
+              </DialogDescription>
             </DialogContent>
           </Dialog>
           <Sheet>

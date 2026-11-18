@@ -136,6 +136,7 @@ export function HistorySearchDialog({
           event.preventDefault();
           if (returnFocus?.isConnected) returnFocus.focus();
         }}
+        placement="top"
         className="gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
         <DialogTitle className="sr-only">Search all history</DialogTitle>
