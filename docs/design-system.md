@@ -177,7 +177,9 @@ Session rows use one StatusDot (`md`) as their only status glyph, mapped in `wid
 | idle | `neutral` dot | Ready, stopped |
 | offline | `neutral` hollow ring | The session's computer is offline |
 
-Hovering the dot, or focusing its row from the keyboard, shows the full status in a tooltip (`Running · 2m`, `Waiting for your approval`, `Checks passed`, `Failed: <first line of the error>`). The row's accessible name keeps the same words.
+Hovering the dot or, after a short delay, the row, or focusing the row from the keyboard, shows a panel tooltip: the full status (`Running · 2m`, `Waiting for your approval`, `Checks passed`, `Failed: <first line of the error>`) followed by muted lifecycle lines (`Created Nov 18, 2026, 3:04 PM (5d ago)`, `Last activity 2h ago`, `Archived 1d ago`). The row's accessible name keeps the status words and its accessible description carries the lifecycle lines.
+
+**Bulk selection dialog** (`features/clean-up-sessions`). A Dialog with a SegmentedControl for the preset, a Select all Checkbox (indeterminate when partly selected) with a `N of M selected` count, and a bordered scrolling list of Label rows with a Checkbox, title and one muted detail line. Every row starts selected. The primary button names the count (`Archive 3 sessions`) and only reversible actions are offered in bulk; the result is confirmed by a Toast with Undo.
 
 **Kbd / KeyCombo** — `shared/ui/kbd.tsx`. Key hints; `KeyCombo keys="Ctrl K"` splits on spaces. Tone `tooltip` inside tooltips.
 
