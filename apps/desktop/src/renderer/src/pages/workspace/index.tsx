@@ -1308,6 +1308,8 @@ export function Workspace({
       )
     : [];
   const visiblePanel = panel === 'diff' && !diffReview ? null : panel;
+  const headerIconSize =
+    visiblePanel && viewportWidth >= 1200 && viewportWidth < 1500 ? 24 : 32;
   const cardSession = !browsing && !creating && selected ? selected : null;
   const cardRun = cardSession ? selectedRun : undefined;
   useEffect(() => {
@@ -3858,11 +3860,14 @@ ${text}`
               <ArrowLeft />
             </IconButton>
           )}
-          <nav aria-label="Breadcrumb" className="min-w-0 flex-1 px-1">
+          <nav
+            aria-label="Breadcrumb"
+            className="@container/breadcrumb min-w-0 flex-1 px-1"
+          >
             <ol className="flex min-w-0 items-center gap-2 text-ui">
               {breadcrumbDirectory !== null && (
                 <>
-                  <li className="hidden min-w-0 max-w-[min(20rem,50%)] shrink-0 items-center gap-1.5 text-muted-foreground sm:flex">
+                  <li className="hidden min-w-0 max-w-[min(20rem,50%)] shrink-0 items-center gap-1.5 text-muted-foreground @min-[10rem]/breadcrumb:flex">
                     {breadcrumbDirectory ? (
                       <ProjectChip
                         label={directoryLabel(breadcrumbDirectory)}
@@ -3889,7 +3894,7 @@ ${text}`
                   </li>
                   <li
                     aria-hidden="true"
-                    className="hidden text-muted-foreground/60 sm:block"
+                    className="hidden text-muted-foreground/60 @min-[10rem]/breadcrumb:block"
                   >
                     /
                   </li>
@@ -4122,7 +4127,7 @@ ${text}`
             />
           ) : (
             <IconButton
-              size={32}
+              size={headerIconSize}
               label="Session details"
               pressed={cardOpen}
               aria-controls={cardOpen ? 'session-card' : undefined}
@@ -4134,7 +4139,7 @@ ${text}`
           )}
           {!browsing && !creating && selected && (
             <IconButton
-              size={32}
+              size={headerIconSize}
               label="Open skills"
               pressed={panel === 'skills'}
               onClick={openSkills}
@@ -4144,7 +4149,7 @@ ${text}`
           )}
           {!browsing && !creating && selected && (
             <IconButton
-              size={32}
+              size={headerIconSize}
               label="Open files"
               shortcut={shortcutKeys('files')}
               pressed={panel === 'files'}
@@ -4158,7 +4163,7 @@ ${text}`
             selected &&
             supportsSessionChanges(selectedHostId) && (
               <IconButton
-                size={32}
+                size={headerIconSize}
                 label="Open changes"
                 pressed={panel === 'changes'}
                 onClick={openChanges}
@@ -4187,6 +4192,7 @@ ${text}`
                   setSessionTarget('');
               }}
               triggerRef={resultsTrigger}
+              triggerSize={headerIconSize}
               reviews={selectedReviews}
               allReviews={hostReviews}
               focusedId={
@@ -4205,7 +4211,7 @@ ${text}`
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
-                <IconButton size={32} label="Open context">
+                <IconButton size={headerIconSize} label="Open context">
                   <PanelRight />
                 </IconButton>
               </SheetTrigger>

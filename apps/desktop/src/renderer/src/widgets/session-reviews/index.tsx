@@ -25,6 +25,7 @@ type Props = ReviewDecisionProps & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   triggerRef: Ref<HTMLButtonElement>;
+  triggerSize: 24 | 32;
   reviews: Review[];
   allReviews: Review[];
   focusedId: string;
@@ -268,6 +269,7 @@ export function SessionReviews({
   open,
   onOpenChange,
   triggerRef,
+  triggerSize,
   reviews,
   allReviews,
   focusedId,
@@ -312,7 +314,7 @@ export function SessionReviews({
       <PopoverTrigger asChild>
         <IconButton
           ref={triggerRef}
-          size={32}
+          size={triggerSize}
           label="Saved results"
           pressed={open}
           className="relative"
