@@ -30247,9 +30247,14 @@ test('Codex delegation routes through session control and isolates writable Git 
     assert.equal(existsSync(worker.directory), false);
     return viewed.result.head;
   };
-  assert.equal(
-    await resolve(a, 'merge', 'worker-a.txt'),
-    await git(project, 'rev-parse', 'HEAD'),
+  await writeFile(join(project, 'coordinator.txt'), 'Coordinator update.\n');
+  await git(project, 'add', '--', 'coordinator.txt');
+  await git(project, 'commit', '-qm', 'Update coordinator checkout');
+  const targetHead = await git(project, 'rev-parse', 'HEAD');
+  const mergedHead = await resolve(a, 'merge', 'worker-a.txt');
+  assert.deepEqual(
+    (await git(project, 'show', '-s', '--format=%P', 'HEAD')).split(' '),
+    [targetHead, mergedHead],
   );
   await resolve(b, 'discard', 'worker-b.txt');
   assert.equal(existsSync(join(project, 'worker-a.txt')), true);
