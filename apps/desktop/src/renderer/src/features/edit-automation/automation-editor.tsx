@@ -1,13 +1,14 @@
-import { useRef } from 'react';
-import { ScrollArea } from '@/shared/ui/scroll-area';
+import { useRef, type ReactNode } from 'react';
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/shared/ui/sheet';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog';
+import { ScrollArea } from '@/shared/ui/scroll-area';
+import { SectionLabel } from '@/shared/ui/section-label';
 import {
   automationEditorDescription,
   automationEditorTitle,
@@ -30,23 +31,44 @@ import {
   type AutomationEditorProps,
 } from './use-automation-editor';
 
+function EditorGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section aria-label={title} className="space-y-3">
+      <SectionLabel as="h3" className="px-0">
+        {title}
+      </SectionLabel>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
 export function AutomationEditor(props: AutomationEditorProps) {
   const form = useRef<HTMLFormElement>(null);
   const editor = useAutomationEditor(props, form);
   return (
-    <Sheet
+    <Dialog
       open
       onOpenChange={open => {
         if (!open && !editor.pending) editor.close();
       }}
     >
-      <SheetContent className="w-full sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>{automationEditorTitle(editor.editing)}</SheetTitle>
-          <SheetDescription>
+      <DialogContent
+        data-automation-editor=""
+        showCloseButton={!editor.pending}
+        className="flex h-[min(90vh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+      >
+        <DialogHeader className="border-b px-6 py-4">
+          <DialogTitle>{automationEditorTitle(editor.editing)}</DialogTitle>
+          <DialogDescription>
             {automationEditorDescription(editor.values)}
-          </SheetDescription>
-        </SheetHeader>
+          </DialogDescription>
+        </DialogHeader>
         <form
           ref={form}
           noValidate
@@ -57,22 +79,34 @@ export function AutomationEditor(props: AutomationEditorProps) {
           }}
         >
           <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-4 px-5 py-4">
-              <AutomationNameField editor={editor} />
-              <AutomationTaskFields editor={editor} />
-              <AutomationLocationField editor={editor} />
-              <AutomationModelField editor={editor} />
-              <AutomationScheduleField editor={editor} />
-              <AutomationTriggerFields editor={editor} />
-              <AutomationLimitFields editor={editor} />
+            <div className="grid gap-x-10 gap-y-6 px-6 py-5 md:grid-cols-2">
+              <div className="min-w-0 space-y-6">
+                <EditorGroup title="Task">
+                  <AutomationNameField editor={editor} />
+                  <AutomationTaskFields editor={editor} />
+                </EditorGroup>
+                <EditorGroup title="Computer and model">
+                  <AutomationLocationField editor={editor} />
+                  <AutomationModelField editor={editor} />
+                </EditorGroup>
+              </div>
+              <div className="min-w-0 space-y-6">
+                <EditorGroup title="Schedule">
+                  <AutomationScheduleField editor={editor} />
+                </EditorGroup>
+                <EditorGroup title="Condition and limits">
+                  <AutomationTriggerFields editor={editor} />
+                  <AutomationLimitFields editor={editor} />
+                </EditorGroup>
+              </div>
             </div>
           </ScrollArea>
-          <SheetFooter className="flex-wrap">
+          <DialogFooter className="flex-wrap border-t px-6 py-4 sm:flex-wrap">
             <AutomationEditorMessages editor={editor} />
             <AutomationEditorButtons editor={editor} />
-          </SheetFooter>
+          </DialogFooter>
         </form>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }

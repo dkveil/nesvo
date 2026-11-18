@@ -3826,7 +3826,7 @@ try {
     .getByRole('button', { name: 'New automation' })
     .first()
     .click();
-  const automationEditor = restartedPage.locator('[data-slot="sheet-content"]');
+  const automationEditor = restartedPage.locator('[data-automation-editor]');
   await automationEditor.getByLabel('Name').fill('Smoke automation');
   await automationEditor.getByLabel('Prompt').fill('/fixture-skill');
   await automationEditor
@@ -3959,11 +3959,11 @@ try {
   await automationDetail
     .getByRole('button', { name: 'Edit', exact: true })
     .click();
-  await restartedPage.locator('[data-slot="sheet-content"]').waitFor();
+  await restartedPage.locator('[data-automation-editor]').waitFor();
   await automationShot(restartedPage, 'editor');
   await restartedPage.keyboard.press('Escape');
   await restartedPage
-    .locator('[data-slot="sheet-content"]')
+    .locator('[data-automation-editor]')
     .waitFor({ state: 'hidden' });
   await automationShell
     .getByRole('button', { name: 'Automations', exact: true })
@@ -4183,7 +4183,7 @@ try {
     .getByRole('button', { name: 'New automation' })
     .first()
     .click();
-  const changeEditor = limitedPage.locator('[data-slot="sheet-content"]');
+  const changeEditor = limitedPage.locator('[data-automation-editor]');
   await changeEditor.getByLabel('Name').fill('Smoke change trigger');
   await changeEditor.getByLabel('Prompt').fill('Summarize the fixture folder.');
   await changeEditor
