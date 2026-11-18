@@ -25,6 +25,7 @@ import type {
   RespondApprovalInput,
   SessionMode,
   StartWorkflowTaskInput,
+  WorkflowImportOffer,
 } from '@nesvo/contracts';
 import {
   AGENT_REVIEW_BRANCH_PREFIX,
@@ -97,6 +98,11 @@ import { ManageComputers } from '@/features/manage-computers';
 import { useDefaultSessionFolders } from '@/features/default-session-folder';
 import { HistorySearchDialog } from '@/features/search-history';
 import { ImportConversation } from '@/features/import-conversation';
+import { ImportWorkflowDialog } from '@/features/import-workflow';
+import {
+  ShareWorkflowDialog,
+  type ShareTarget,
+} from '@/features/share-workflow';
 import {
   CommandPalette,
   type PaletteCommand,
@@ -202,6 +208,7 @@ import {
   KeyboardShortcutsSettings,
   NotificationsSettings,
   Settings,
+  SharingSettings,
   type SettingsPage,
 } from '@/widgets/settings';
 import { Onboarding } from '@/widgets/onboarding';
@@ -396,6 +403,21 @@ export function Workspace() {
     directory: string;
   } | null>(null);
   const [definitionsRefresh, setDefinitionsRefresh] = useState(0);
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const [importOffers, setImportOffers] = useState<WorkflowImportOffer[]>([]);
+  useEffect(() => {
+    const sharing = window.nesvo.sharing;
+    const take = () =>
+      void sharing.takeImports().then(
+        offers => {
+          if (offers.length)
+            setImportOffers(current => [...current, ...offers]);
+        },
+        () => undefined,
+      );
+    take();
+    return sharing.onImportAvailable(take);
+  }, []);
   const assistantChangesFor = (hostId: string) =>
     store.assistantChanges[hostId] ?? [];
   const assistantRefusalsFor = (hostId: string) =>
@@ -961,6 +983,18 @@ export function Workspace() {
     store.sessions.find(session => entityKey(session) === selectedId) ??
     store.sessions[0];
   const selectedKey = selected ? entityKey(selected) : '';
+  const importFolders = [
+    ...new Set(
+      [
+        workflowsSource.hostId === 'local' ? workflowsSource.directory : '',
+        ...store.sessions
+          .filter(session => session.hostId === 'local')
+          .map(
+            session => session.worktree?.projectDirectory ?? session.directory,
+          ),
+      ].filter(Boolean),
+    ),
+  ].slice(0, 12);
   const selectedLoaded = !!selected;
   const { openSession, loadEarlier } = store;
   useEffect(() => {
@@ -3964,6 +3998,13 @@ ${text}`
                 onRefreshProvider={provider =>
                   void store.refreshProvider(provider, workflowsEditor.hostId)
                 }
+                onShare={workflowName =>
+                  setShareTarget({
+                    hostId: workflowsEditor.hostId,
+                    directory: workflowsEditor.directory,
+                    workflowName,
+                  })
+                }
                 onRun={async input => {
                   const run = await window.nesvo.workflows.startTask(
                     workflowsEditor.hostId,
@@ -4063,6 +4104,7 @@ ${text}`
                     setWorkflowsEditor(target);
                   }}
                   onCreate={setNewWorkflow}
+                  onShare={setShareTarget}
                 />
                 {assistantDock(
                   workflowsSource.hostId,
@@ -4826,6 +4868,28 @@ ${text}`
             />
           </Suspense>
         )}
+      <ShareWorkflowDialog
+        target={shareTarget}
+        api={window.nesvo.sharing}
+        onOpenChange={open => {
+          if (!open) setShareTarget(null);
+        }}
+      />
+      <ImportWorkflowDialog
+        offer={importOffers[0] ?? null}
+        folders={importFolders}
+        api={window.nesvo.sharing}
+        onClose={() => setImportOffers(current => current.slice(1))}
+        onImported={imported => {
+          setImportOffers(current => current.slice(1));
+          setDefinitionsRefresh(version => version + 1);
+          openWorkflowEditor(
+            'local',
+            imported.directory,
+            imported.workflowName,
+          );
+        }}
+      />
       {newWorkflow && (
         <NewWorkflowSheet
           hostId={newWorkflow.hostId}
@@ -4928,6 +4992,8 @@ ${text}`
                   api={desktopApi(settingsHostId)}
                 />
               </div>
+            ) : page === 'sharing' ? (
+              <SharingSettings api={window.nesvo.sharing} />
             ) : page === 'data' ? (
               <DataSettings api={desktopApi()} computers={store.computers} />
             ) : page === 'about' ? (

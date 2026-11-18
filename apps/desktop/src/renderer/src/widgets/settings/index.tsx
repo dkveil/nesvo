@@ -25,6 +25,7 @@ export { AppearanceSettings } from './appearance-settings';
 export { DataSettings } from './data-settings';
 export { DefaultsSettings } from './defaults-settings';
 export { NotificationsSettings } from './notifications-settings';
+export { SharingSettings } from './sharing-settings';
 export { GeneralSettings } from './general-settings';
 export { KeyboardShortcutsSettings } from './keyboard-shortcuts-settings';
 

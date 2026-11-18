@@ -55,6 +55,7 @@ type Props = {
   onDiscoverSkills?: (directory: string) => Promise<SkillSummary[]>;
   onRefreshProvider?: (provider: Provider) => void;
   onRun?: (input: StartWorkflowTaskInput) => Promise<void>;
+  onShare?: (workflowName: string) => void;
   runOverlay?: { run: WorkflowRun; steps: WorkflowStepRecord[] };
   onInbox?: (target: InboxTarget) => void;
   onSession?: (key: string) => void;
@@ -98,6 +99,7 @@ export default function WorkflowGraphEditor({
   onDiscoverSkills,
   onRefreshProvider = () => {},
   onRun,
+  onShare,
   runOverlay,
   onInbox = () => {},
   onSession = () => {},
@@ -295,6 +297,7 @@ export default function WorkflowGraphEditor({
           }}
           onRefreshProvider={onRefreshProvider}
           onRun={onRun ?? null}
+          onShare={onShare ?? null}
           onClose={requestClose}
         />
         <IssuesStrip

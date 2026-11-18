@@ -11,6 +11,7 @@ import {
   Palette,
   ScanSearch,
   Settings2,
+  Share2,
   SlidersHorizontal,
   Smartphone,
   UserRound,
@@ -29,6 +30,7 @@ export type SettingsPage =
   | 'computers'
   | 'phone'
   | 'repositories'
+  | 'sharing'
   | 'account'
   | 'data'
   | 'about'
@@ -124,6 +126,13 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: FolderGit2,
     group: 'Connections',
     keywords: 'github pull requests repository track owner name checkout',
+  },
+  {
+    id: 'sharing',
+    label: 'Sharing',
+    icon: Share2,
+    group: 'Connections',
+    keywords: 'share workflow link import revoke expiry site origin nesvo.dev',
   },
   {
     id: 'account',

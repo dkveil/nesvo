@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Plus,
   RefreshCw,
+  Share2,
   SquarePen,
   Workflow,
 } from 'lucide-react';
@@ -60,6 +61,11 @@ type Props = {
   api: Pick<WorkflowsApi, 'listDefinitions'>;
   onEdit?: (target: EditorTarget) => void;
   onCreate?: (source: { hostId: string; directory: string }) => void;
+  onShare?: (target: {
+    hostId: string;
+    directory: string;
+    workflowName: string;
+  }) => void;
   refreshToken?: number;
   highlighted?: string[];
   onSourceChange?: (source: { hostId: string; directory: string }) => void;
@@ -240,6 +246,7 @@ export default function WorkflowDefinitions({
   api,
   onEdit,
   onCreate,
+  onShare,
   refreshToken = 0,
   highlighted = [],
   onSourceChange,
@@ -462,22 +469,39 @@ export default function WorkflowDefinitions({
                           </>
                         }
                         actions={
-                          onEdit && (
-                            <IconButton
-                              size={24}
-                              label={`Edit ${workflow.name}`}
-                              onClick={() =>
-                                onEdit({
-                                  hostId,
-                                  directory,
-                                  workflowName: workflow.name,
-                                  catalog,
-                                })
-                              }
-                            >
-                              <SquarePen />
-                            </IconButton>
-                          )
+                          <>
+                            {onShare && (
+                              <IconButton
+                                size={24}
+                                label={`Share ${workflow.name}`}
+                                onClick={() =>
+                                  onShare({
+                                    hostId,
+                                    directory,
+                                    workflowName: workflow.name,
+                                  })
+                                }
+                              >
+                                <Share2 />
+                              </IconButton>
+                            )}
+                            {onEdit && (
+                              <IconButton
+                                size={24}
+                                label={`Edit ${workflow.name}`}
+                                onClick={() =>
+                                  onEdit({
+                                    hostId,
+                                    directory,
+                                    workflowName: workflow.name,
+                                    catalog,
+                                  })
+                                }
+                              >
+                                <SquarePen />
+                              </IconButton>
+                            )}
+                          </>
                         }
                         onClick={() => {
                           setSelectedName(workflow.name);

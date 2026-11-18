@@ -3,6 +3,7 @@ import {
   Redo2,
   Save,
   Settings2,
+  Share2,
   ShieldCheck,
   Undo2,
   Workflow,
@@ -13,6 +14,7 @@ import type { Provider, ProviderStates } from '@/entities/session';
 import { StatusIcon } from '@/entities/status';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
 import {
@@ -34,6 +36,7 @@ type Props = {
   overlay: { available: boolean; on: boolean; onToggle: () => void };
   onRefreshProvider: (provider: Provider) => void;
   onRun: ((input: StartWorkflowTaskInput) => Promise<void>) | null;
+  onShare: ((workflowName: string) => void) | null;
   onClose: () => void;
 };
 
@@ -48,6 +51,7 @@ export function Toolbar({
   overlay,
   onRefreshProvider,
   onRun,
+  onShare,
   onClose,
 }: Props) {
   const errors = state.issues.filter(i => i.severity === 'error').length;
@@ -67,6 +71,12 @@ export function Toolbar({
       : state.validation.hasErrors
         ? 'Fix the errors before running.'
         : null;
+  const shareBlocked =
+    state.dirty || !state.document.hash
+      ? 'Save the workflow before sharing it.'
+      : state.validation.hasErrors
+        ? 'Fix the errors before sharing.'
+        : '';
   return (
     <ToolbarRow label="Graph editor" className="h-10 gap-1.5 pr-1.5 pl-3">
       <Workflow
@@ -174,6 +184,20 @@ export function Toolbar({
             </span>
           )}
         </Button>
+        {onShare && (
+          <DisabledHint reason={shareBlocked}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-muted-foreground"
+              disabled={!!shareBlocked}
+              onClick={() => onShare(state.document.name)}
+            >
+              <Share2 />
+              Share…
+            </Button>
+          </DisabledHint>
+        )}
         {onRun && (
           <RunPopover
             workflowName={state.document.name}
