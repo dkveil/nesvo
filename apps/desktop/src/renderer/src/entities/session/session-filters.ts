@@ -2,6 +2,7 @@ import type {
   DesktopReview,
   DesktopSession as Session,
   DesktopWorkflowRun,
+  WorkflowRunStatus,
 } from '@nesvo/contracts';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 
@@ -20,6 +21,19 @@ export const sessionFilterLabels: Record<SessionFilter, string> = {
   running: 'Running',
   failed: 'Failed',
 };
+
+const attentionRuns: WorkflowRunStatus[] = [
+  'awaiting-human',
+  'needs-attention',
+];
+const workingRuns: WorkflowRunStatus[] = [
+  'pending',
+  'planning',
+  'implementing',
+  'checking',
+  'fixing',
+];
+const failedRuns: WorkflowRunStatus[] = ['failed', 'rejected'];
 
 const runKey = (run: Pick<DesktopWorkflowRun, 'id' | 'hostId'>) =>
   hostKey(run.id, run.hostId);
@@ -61,12 +75,20 @@ export function sessionFilterKeys(
     if (
       waitsForDecision(session) ||
       reviewed.has(key) ||
-      run === 'awaiting-human'
+      (!!run && attentionRuns.includes(run))
     )
       keys['needs-me'].add(key);
-    if (session.status === 'running' || session.status === 'stopping')
+    if (
+      session.status === 'running' ||
+      session.status === 'stopping' ||
+      (!!run && workingRuns.includes(run))
+    )
       keys.running.add(key);
-    if (session.status === 'failed' || session.status === 'interrupted')
+    if (
+      session.status === 'failed' ||
+      session.status === 'interrupted' ||
+      (!!run && failedRuns.includes(run))
+    )
       keys.failed.add(key);
   }
   return keys;

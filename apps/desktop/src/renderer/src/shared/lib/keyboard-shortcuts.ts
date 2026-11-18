@@ -66,7 +66,7 @@ export const shortcuts = {
   },
   focusComposer: {
     keys: 'Esc',
-    label: 'Return focus from a panel to the composer',
+    label: 'Close a panel, or return focus from it to the composer',
     group: 'Panels',
   },
   permissionMode: {
