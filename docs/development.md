@@ -138,13 +138,11 @@ NESVO_GIT_EXECUTABLE optionally replaces Git with an absolute path, as the test 
 P0 has no migration from historical application data. Existing private directories and worktrees remain untouched.
 Do not run git clean or delete ignored files as part of setup.
 
-## Landing page
+## Website
 
-The public landing page lives in `site/` as plain static files: a single-viewport `index.html` with the wordmark inlined as SVG, `styles.css`, `favicon.svg` and a small `main.js` that picks the download for the visitor's operating system and runs the download button feedback, including the first-launch note for unsigned builds. Links use only the short paths from `site/_redirects`, so every download also works without JavaScript. There is no build step and no external fonts, scripts or trackers. Serve `site/` with its `_headers` applied when previewing, so the Content Security Policy is checked too.
+The public site at https://nesvo.dev is the Next.js application in `apps/web`, deployed as a Cloudflare Worker with a D1 database. It serves the download page, the macOS install script and shared workflows, and it is not indexed for now. Start it with `bun run --cwd apps/web dev`; local development, the share API, configuration and the deployment checklist are in [web.md](web.md).
 
-Download buttons point at the stable asset names of the latest GitHub Release (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so the page needs no change for a new version.
-
-The site is served by Cloudflare Pages at https://nesvo.dev through the Cloudflare Git integration: the Pages project builds from this repository with no build command and `site` as the output directory, deploys `master` to production and gives every other branch a preview URL. Nothing in the repository holds a Cloudflare token. `site/_headers` sets the security headers (a strict Content Security Policy that allows only same-origin scripts, styles and images) and `site/_redirects` provides short download links: `/download/windows`, `/download/mac`, `/download/mac-intel`, `/releases` and `/github`.
+Download buttons point at the stable asset names of the latest GitHub Release (`Nesvo-Windows-Setup.exe`, `Nesvo-macOS-arm64.dmg`, `Nesvo-macOS-x64.dmg`), so the site needs no change for a new version.
 
 ## Troubleshooting
 
