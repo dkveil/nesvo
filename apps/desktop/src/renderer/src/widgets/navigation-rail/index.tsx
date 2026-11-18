@@ -98,6 +98,7 @@ export function NavigationRail({
       <div className="flex flex-col items-center gap-1">
         <div
           inert={sidebarOpen}
+          aria-hidden={sidebarOpen}
           className={cn(
             'grid transition-[grid-template-rows,margin,opacity] duration-slow ease-out',
             sidebarOpen ? '-mb-1 grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr]',
