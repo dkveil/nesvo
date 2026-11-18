@@ -49,6 +49,7 @@ type PendingUpload = {
   head: Buffer;
   size: number;
   touchedAt: number;
+  writing: boolean;
 };
 
 export class AttachmentError extends Error {
@@ -157,7 +158,13 @@ export class AttachmentStore {
       head: Buffer.alloc(0),
       size: 0,
       touchedAt: now,
+      writing: false,
     };
+    if (upload.writing)
+      throw new AttachmentError(
+        'busy',
+        'The previous part of this upload is still being written.',
+      );
     if (upload.name !== input.name || input.offset !== upload.size) {
       await this.discard(input.uploadId, upload);
       throw new AttachmentError(
@@ -173,12 +180,15 @@ export class AttachmentStore {
       );
     }
     this.uploads.set(input.uploadId, upload);
+    upload.writing = true;
     try {
       await mkdir(this.uploadDirectory, { recursive: true });
       await appendFile(upload.path, chunk);
     } catch (error) {
       await this.discard(input.uploadId, upload);
       throw error;
+    } finally {
+      upload.writing = false;
     }
     upload.hash.update(chunk);
     if (upload.head.length < SIGNATURE_BYTES)
