@@ -78,14 +78,6 @@ import { hasEarlierMessages } from '@nesvo/contracts';
 import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
 import { useGitBranch } from '@/features/git-branch/use-git-branch';
 import { FinishWorktreeDialog } from '@/features/session-worktree/finish-worktree';
@@ -3673,45 +3665,21 @@ ${text}`
           }
         </Settings>
       )}
-      <Dialog
+      <ConfirmDialog
         open={leaveEditor !== null}
         onOpenChange={open => {
           if (!open) setLeaveEditor(null);
         }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Leave the graph editor?</DialogTitle>
-            <DialogDescription>
-              The workflow has unsaved changes. Leaving drops the edits made
-              since the last save.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              size="md"
-              onClick={() => setLeaveEditor(null)}
-            >
-              Keep editing
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="md"
-              onClick={() => {
-                const proceed = leaveEditor;
-                setLeaveEditor(null);
-                setEditorDirty(false);
-                proceed?.();
-              }}
-            >
-              Discard and leave
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title="Leave the graph editor?"
+        description="The workflow has unsaved changes. Leaving drops the edits made since the last save."
+        cancelLabel="Keep editing"
+        confirmLabel="Discard and leave"
+        onConfirm={() => {
+          const proceed = leaveEditor;
+          setEditorDirty(false);
+          proceed?.();
+        }}
+      />
     </div>
   );
 }

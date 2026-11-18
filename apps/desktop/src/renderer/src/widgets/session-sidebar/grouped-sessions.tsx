@@ -18,15 +18,7 @@ import {
 import type { SessionGroup } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import type { Session } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { toDropIndicator } from './drop-indicator';
@@ -91,7 +83,6 @@ export function GroupedSessions({
   const [moveTarget, setMoveTarget] = useState<MoveTarget | null>(null);
   const [defaultsGroup, setDefaultsGroup] = useState<SessionGroup | null>(null);
   const [deleting, setDeleting] = useState<SessionGroup | null>(null);
-  const [deletePending, setDeletePending] = useState(false);
   const groups = housekeeping.groups(hostId);
   const drag = useSidebarDrag(!searching);
   const full = buildHostTree(allRoots, groups);
@@ -633,48 +624,21 @@ export function GroupedSessions({
             : Promise.resolve(false)
         }
       />
-      <Dialog
+      <ConfirmDialog
         open={!!deleting}
         onOpenChange={open => {
-          if (!open && !deletePending) setDeleting(null);
+          if (!open) setDeleting(null);
         }}
-      >
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete {deleting?.name}?</DialogTitle>
-            <DialogDescription>
-              No sessions are deleted. Its sessions and subgroups move to{' '}
-              {groupById(deleting?.parentId ?? null)?.name ?? 'Ungrouped'}.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              size="lg"
-              type="button"
-              variant="ghost"
-              disabled={deletePending}
-              onClick={() => setDeleting(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="lg"
-              type="button"
-              variant="destructive"
-              disabled={deletePending}
-              onClick={async () => {
-                if (!deleting) return;
-                setDeletePending(true);
-                await housekeeping.deleteGroup(hostId, deleting.id);
-                setDeletePending(false);
-                setDeleting(null);
-              }}
-            >
-              {deletePending ? 'Deleting…' : 'Delete group'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title={`Delete ${deleting?.name ?? 'group'}?`}
+        description={`No sessions are deleted. Its sessions and subgroups move to ${
+          groupById(deleting?.parentId ?? null)?.name ?? 'Ungrouped'
+        }.`}
+        confirmLabel="Delete group"
+        pendingLabel="Deleting…"
+        onConfirm={() =>
+          deleting ? housekeeping.deleteGroup(hostId, deleting.id) : undefined
+        }
+      />
     </>
   );
 }

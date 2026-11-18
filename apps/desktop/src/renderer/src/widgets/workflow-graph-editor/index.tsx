@@ -24,15 +24,7 @@ import {
 } from '@/entities/workflow';
 import type { Provider, ProviderStates } from '@/entities/session';
 import { toFileText } from '@/entities/workflow-graph';
-import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import type { InboxTarget } from '@/widgets/workflow-step-result';
 import { EditorCanvas } from './canvas';
 import { ConflictDialog } from './conflict-dialog';
@@ -386,38 +378,15 @@ export default function WorkflowGraphEditor({
         conflict={state.conflict}
         onResolve={choice => void state.resolveConflict(choice)}
       />
-      <Dialog open={closing} onOpenChange={setClosing}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Discard unsaved changes?</DialogTitle>
-            <DialogDescription>
-              The workflow file was not written. Closing the editor drops the
-              edits made since the last save.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              size="md"
-              onClick={() => setClosing(false)}
-            >
-              Keep editing
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="md"
-              onClick={() => {
-                setClosing(false);
-                onClose();
-              }}
-            >
-              Discard and close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={closing}
+        onOpenChange={setClosing}
+        title="Discard unsaved changes?"
+        description="The workflow file was not written. Closing the editor drops the edits made since the last save."
+        cancelLabel="Keep editing"
+        confirmLabel="Discard and close"
+        onConfirm={onClose}
+      />
     </section>
   );
 }
