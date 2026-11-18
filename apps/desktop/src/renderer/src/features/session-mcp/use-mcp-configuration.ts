@@ -55,7 +55,9 @@ export function useMcpConfiguration(
 
   const visible = state?.key === key && enabled ? state : null;
   const repository = visible?.list?.repository;
-  const decisionKey = repository ? key + ':' + repository.fingerprint : null;
+  const decisionKey = repository
+    ? key + ':' + repository.status + ':' + repository.fingerprint
+    : null;
   const readRaw = async () => {
     if (!repository || !enabled || !sessionId)
       throw new Error('The repository is no longer available.');
@@ -100,7 +102,9 @@ export function useMcpConfiguration(
     trust,
     pending: !!decisionKey && pending === decisionKey,
     showDecision:
-      repository?.status === 'needs-trust' && dismissed !== decisionKey,
+      (repository?.status === 'needs-trust' ||
+        repository?.status === 'unavailable') &&
+      dismissed !== decisionKey,
     dismiss: () => setDismissed(decisionKey),
     reopen: () => {
       setDismissed(null);

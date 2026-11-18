@@ -113,7 +113,7 @@ export function McpChip({
             Repository MCP servers and hooks are paused.
           </StatusMessage>
         )}
-        {!isolated && repository?.status === 'needs-trust' && (
+        {!isolated && paused && (
           <Button
             type="button"
             variant="ghost"

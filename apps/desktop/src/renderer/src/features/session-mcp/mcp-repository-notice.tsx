@@ -83,6 +83,7 @@ function RepositoryDecision({
   const [raw, setRaw] = useState<typeof repository.rawReview>();
   const [rawError, setRawError] = useState<string>();
   const rawRequest = useRef(0);
+  const unavailable = repository.status === 'unavailable';
   const requiresRawReview = repository.definitions.some(
     definition =>
       definition.change !== 'removed' &&
@@ -105,12 +106,18 @@ function RepositoryDecision({
     <div className="space-y-2">
       <InlineNotice tone="warning">
         <strong className="block text-foreground">
-          Trust this repository’s MCP servers and hooks?
+          {unavailable
+            ? 'Repository configuration is paused'
+            : 'Trust this repository’s configuration?'}
         </strong>
         <span className="block">
-          {repository.changed
-            ? 'Repository definitions changed and are paused until you trust them again.'
-            : 'Repository definitions stay paused until you trust them.'}
+          {unavailable
+            ? configuration.list?.provider === 'Claude Code'
+              ? 'Project instructions and settings will not load until the repository can be reviewed.'
+              : 'Repository MCP servers and hooks are paused until the repository can be reviewed.'
+            : repository.changed
+              ? 'Repository definitions changed and are paused until you trust them again.'
+              : 'Repository definitions stay paused until you trust them.'}
         </span>
       </InlineNotice>
       <div
@@ -119,6 +126,15 @@ function RepositoryDecision({
         role="region"
         tabIndex={0}
       >
+        {unavailable &&
+          configuration.list?.issues.map(issue => (
+            <p
+              key={issue}
+              className="text-warning-foreground [overflow-wrap:anywhere]"
+            >
+              {issue}
+            </p>
+          ))}
         {repository.definitions.map(definition => (
           <div
             key={definition.id}
@@ -170,55 +186,57 @@ function RepositoryDecision({
         ))}
       </div>
       <div className="flex justify-end gap-1">
-        <Dialog onOpenChange={showRaw}>
-          <DialogTrigger asChild>
-            <Button type="button" variant="ghost" size="sm">
-              View raw definitions
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Raw repository definitions</DialogTitle>
-              <DialogDescription>
-                MCP and hook sections from the host’s configuration files. Plain
-                credential tokens are masked.
-              </DialogDescription>
-            </DialogHeader>
-            {rawError ? (
-              <InlineNotice tone="error">{rawError}</InlineNotice>
-            ) : raw ? (
-              <div
-                className="max-h-[60vh] min-w-0 space-y-4 overflow-auto"
-                aria-label="Source files"
-                role="region"
-                tabIndex={0}
-              >
-                {raw.files.map(file => (
-                  <div key={file.path} className="space-y-1">
-                    <p
-                      className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
-                      dir="ltr"
-                    >
-                      {file.path}
-                    </p>
-                    <CodeBlock
-                      code={file.text}
-                      dir="ltr"
-                      className="[overflow-wrap:anywhere]"
-                      maxHeightClassName="max-h-none"
-                      copyable={false}
-                      wrap
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground" role="status">
-                Loading repository definitions…
-              </p>
-            )}
-          </DialogContent>
-        </Dialog>
+        {!unavailable && (
+          <Dialog onOpenChange={showRaw}>
+            <DialogTrigger asChild>
+              <Button type="button" variant="ghost" size="sm">
+                View raw definitions
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Raw repository definitions</DialogTitle>
+                <DialogDescription>
+                  MCP and hook sections from the host’s configuration files.
+                  Plain credential tokens are masked.
+                </DialogDescription>
+              </DialogHeader>
+              {rawError ? (
+                <InlineNotice tone="error">{rawError}</InlineNotice>
+              ) : raw ? (
+                <div
+                  className="max-h-[60vh] min-w-0 space-y-4 overflow-auto"
+                  aria-label="Source files"
+                  role="region"
+                  tabIndex={0}
+                >
+                  {raw.files.map(file => (
+                    <div key={file.path} className="space-y-1">
+                      <p
+                        className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                        dir="ltr"
+                      >
+                        {file.path}
+                      </p>
+                      <CodeBlock
+                        code={file.text}
+                        dir="ltr"
+                        className="[overflow-wrap:anywhere]"
+                        maxHeightClassName="max-h-none"
+                        copyable={false}
+                        wrap
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground" role="status">
+                  Loading repository definitions…
+                </p>
+              )}
+            </DialogContent>
+          </Dialog>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -227,18 +245,20 @@ function RepositoryDecision({
         >
           Not now
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={
-            configuration.pending ||
-            configuration.loading ||
-            (requiresRawReview && !raw)
-          }
-          onClick={() => void configuration.trust(raw?.token)}
-        >
-          Trust
-        </Button>
+        {!unavailable && (
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              configuration.pending ||
+              configuration.loading ||
+              (requiresRawReview && !raw)
+            }
+            onClick={() => void configuration.trust(raw?.token)}
+          >
+            Trust
+          </Button>
+        )}
       </div>
       {configuration.error && (
         <InlineNotice tone="error">{configuration.error}</InlineNotice>

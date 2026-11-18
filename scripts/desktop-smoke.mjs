@@ -1220,7 +1220,7 @@ try {
     .waitFor();
   await page.keyboard.press('Escape');
   const trustNotice = conversation.getByText(
-    'Trust this repository’s MCP servers and hooks?',
+    'Trust this repository’s configuration?',
     { exact: true },
   );
   await trustNotice.waitFor();
@@ -1311,6 +1311,20 @@ try {
   await trustNotice.waitFor({ state: 'hidden' });
   await rm(repoMcp);
   await rm(repoHooks);
+  const instructionPath = join(first.directory, 'CLAUDE.md');
+  await writeFile(instructionPath, Buffer.alloc(256 * 1024 + 1));
+  await page.locator('[data-session-mcp]').click();
+  await mcpPopover.getByText(/The file exceeds 256 KiB/).waitFor();
+  await page.keyboard.press('Escape');
+  await conversation.getByText('Repository configuration is paused').waitFor();
+  await detailRegion
+    .getByText(/The file exceeds 256 KiB.*CLAUDE\.md/)
+    .waitFor();
+  assert.equal(await trustRepository.count(), 0);
+  await conversation
+    .getByRole('button', { name: 'Not now', exact: true })
+    .click();
+  await rm(instructionPath);
   const projectSkillPath = join(
     first.directory,
     '.claude',
