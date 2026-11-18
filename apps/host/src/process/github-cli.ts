@@ -158,6 +158,11 @@ function ghError(
       `GitHub refused the merge: ${message || 'An immediate merge is unavailable.'}`,
     );
   }
+  if (apiAction === 'review' && status === '422')
+    return new PullRequestError(
+      'invalid-request',
+      `GitHub refused the review: ${detail?.replace(/^gh: /, '').replace(/(?:^|\s*\()HTTP 422\)?$/, '').slice(0, 300) || 'A comment may point outside the diff.'}`,
+    );
   if (apiAction === 'line-comment' && status === '422')
     return new PullRequestError(
       'invalid-request',
@@ -174,7 +179,7 @@ type GhOptions = {
   inferHost?: boolean;
   stdin?: string;
   mutation?: boolean;
-  apiAction?: 'merge' | 'line-comment';
+  apiAction?: 'merge' | 'line-comment' | 'review';
   maxOutputBytes?: number;
   noCurrentPullRequest?: boolean;
   signal?: AbortSignal;

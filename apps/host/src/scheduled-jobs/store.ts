@@ -37,6 +37,7 @@ const toJob = (row: Row): ScheduledJob =>
     timeoutMinutes: row.timeout_minutes,
     workflow: row.workflow === null ? null : JSON.parse(String(row.workflow)),
     ...optionalJson('changeTrigger', row.change_trigger),
+    ...optionalJson('pullRequestReview', row.pull_request_review),
     ...optionalJson('lastCheck', row.last_check),
     ...optionalJson('pendingStart', row.pending_start),
     nextRunAt: text(row.next_run_at ?? null),
@@ -87,6 +88,7 @@ const jobValues = (job: ScheduledJob) => [
   job.timeoutMinutes,
   job.workflow ? JSON.stringify(job.workflow) : null,
   job.changeTrigger ? JSON.stringify(job.changeTrigger) : null,
+  job.pullRequestReview ? JSON.stringify(job.pullRequestReview) : null,
   job.lastCheck ? JSON.stringify(job.lastCheck) : null,
   job.pendingStart ? JSON.stringify(job.pendingStart) : null,
   job.nextRunAt,
@@ -155,7 +157,7 @@ export class ScheduledJobStore {
   insert(job: ScheduledJob): void {
     this.database
       .prepare(
-        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, change_trigger, last_check, pending_start, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO scheduled_jobs (revision, name, prompt, directory, provider, model, effort, mode, schedule, time_zone, active, timeout_minutes, workflow, change_trigger, pull_request_review, last_check, pending_start, next_run_at, updated_at, id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(...jobValues(job), job.id, job.createdAt);
   }
@@ -165,7 +167,7 @@ export class ScheduledJobStore {
       Number(
         this.database
           .prepare(
-            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, change_trigger = ?, last_check = ?, pending_start = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
+            'UPDATE scheduled_jobs SET revision = ?, name = ?, prompt = ?, directory = ?, provider = ?, model = ?, effort = ?, mode = ?, schedule = ?, time_zone = ?, active = ?, timeout_minutes = ?, workflow = ?, change_trigger = ?, pull_request_review = ?, last_check = ?, pending_start = ?, next_run_at = ?, updated_at = ? WHERE id = ? AND revision = ?',
           )
           .run(...jobValues(job), job.id, expectedRevision).changes,
       ) === 1

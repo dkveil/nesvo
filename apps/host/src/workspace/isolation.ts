@@ -416,6 +416,23 @@ export async function isGitHubRepositoryRoot(
   });
 }
 
+export async function readHeadCommit(
+  directory: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const result = await runGit({
+    args: ['rev-parse', 'HEAD'],
+    cwd: directory,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+    untranslated: true,
+  });
+  const commit = result.stdout.trim();
+  if (result.code !== 0 || !/^[0-9a-f]{40}$/.test(commit))
+    fail('git-failed', 'Git could not read the checked out commit.');
+  return commit;
+}
+
 export function createTaskWorktree(input: CreateTaskWorktreeParams) {
   return createWorktree(input, 'worktrees').then(
     ({ worktree, branch, base }) => ({

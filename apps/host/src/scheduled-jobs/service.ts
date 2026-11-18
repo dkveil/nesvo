@@ -181,6 +181,7 @@ export class ScheduledJobService {
       updatedAt: now.toISOString(),
     };
     if (!job.changeTrigger) delete job.changeTrigger;
+    if (!job.pullRequestReview) delete job.pullRequestReview;
     this.write(job, expectedRevision, resetCheck);
     return job;
   }

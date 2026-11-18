@@ -48,6 +48,10 @@ type LauncherSessions = Pick<
   'create' | 'send' | 'stop' | 'finished' | 'isBusy' | 'isIdleFor'
 >;
 
+export type ScheduledReviews = {
+  start: (job: ScheduledJob, runId: string) => Promise<number>;
+};
+
 export type ScheduledWorkflows = {
   start: (
     input: StartWorkflowTaskInput,
@@ -195,6 +199,7 @@ export class SessionLauncher implements ScheduledJobLauncher {
     private readonly folders: typeof resolveFolder = resolveFolder,
     private readonly workflows: ScheduledWorkflows | null = null,
     private readonly repositories: typeof isRepositoryRoot = isRepositoryRoot,
+    private readonly reviews: ScheduledReviews | null = null,
   ) {
     this.limits = new ProviderLimitGate(usage, () => this.clock.now());
   }
@@ -210,6 +215,8 @@ export class SessionLauncher implements ScheduledJobLauncher {
     const directory = scheduledJob.directory
       ? await this.folder(scheduledJob.directory, signal)
       : '';
+    if (scheduledJob.pullRequestReview)
+      return this.launchReviews(scheduledJob, run, progress);
     if (scheduledJob.workflow)
       return this.launchWorkflow(
         scheduledJob,
@@ -305,6 +312,39 @@ export class SessionLauncher implements ScheduledJobLauncher {
         sessionId: started.sessionId,
         runId: null,
         workflowRunId: started.id,
+      });
+    } catch {
+      return;
+    }
+  }
+
+  private async launchReviews(
+    scheduledJob: ScheduledJob,
+    run: ScheduledJobRun,
+    progress: ScheduledJobRunProgress,
+  ): Promise<void> {
+    if (!this.reviews)
+      throw new ScheduledJobLaunchError(
+        'catalog',
+        'Pull request reviews are not available on this host.',
+      );
+    try {
+      await this.reviews.start(scheduledJob, run.id);
+    } catch (error) {
+      throw new ScheduledJobLaunchError(
+        'catalog',
+        error instanceof Error
+          ? error.message
+          : 'The pull requests could not be listed.',
+      );
+    }
+    try {
+      progress.started({ sessionId: null, runId: null });
+      progress.finished({
+        status: 'completed',
+        reason: null,
+        reviewId: null,
+        resetAt: null,
       });
     } catch {
       return;

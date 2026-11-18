@@ -43,6 +43,12 @@ const currentPullRequestSchema = z
   .object({ number: z.number().int().positive(), url: z.url() })
   .nullable();
 const headSchema = z.object({ headRefOid: shaSchema, baseRefOid: shaSchema });
+const reviewTargetSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string().max(1024),
+  state: z.string().max(40),
+  headRefOid: shaSchema,
+});
 const threadReferenceSchema = z.object({
   data: z.object({
     node: z
@@ -120,6 +126,11 @@ type Checkout = (
 ) => Promise<void>;
 
 const maxActions = 4096;
+const reviewEvents = {
+  approve: 'APPROVE',
+  'request-changes': 'REQUEST_CHANGES',
+  comment: 'COMMENT',
+} as const;
 type ActionRequest = z.output<typeof actOnPullRequestSchema>;
 type ActionRecord = {
   fingerprint: string;
@@ -330,6 +341,58 @@ export class PullRequests {
     return { ...result, truncated: true };
   }
 
+  async reviewTarget(reference: PullRequestReference) {
+    const target = await this.gh.json(
+      reviewTargetSchema.extend({
+        body: z.string().max(limits.bodyLength).catch(''),
+      }),
+      [
+        'pr',
+        'view',
+        ...referenceArgs(reference),
+        '--json',
+        'number,title,state,headRefOid,body',
+      ],
+      { signal: AbortSignal.timeout(20_000) },
+    );
+    if (target.number !== reference.number)
+      throw new PullRequestError(
+        'unavailable',
+        'The GitHub CLI returned a different pull request.',
+      );
+    return target;
+  }
+
+  async openReviewTargets(directory: string) {
+    const signal = AbortSignal.timeout(20_000);
+    const repository = validateRepository(
+      (
+        await this.gh.json(
+          repositorySchema,
+          ['repo', 'view', '--json', 'nameWithOwner'],
+          { cwd: await resolveFolder(directory, this.signal), signal },
+        )
+      ).nameWithOwner,
+    );
+    const items = await this.gh.json(
+      z.array(reviewTargetSchema).max(limits.listItems),
+      [
+        'pr',
+        'list',
+        '--repo',
+        repository,
+        '--state',
+        'open',
+        '--limit',
+        String(limits.listItems),
+        '--json',
+        'number,title,state,headRefOid',
+      ],
+      { signal },
+    );
+    return { repository, items };
+  }
+
   async find(sessionId: string): Promise<PullRequestReference | null> {
     const session = this.getSession(sessionId);
     if (!session) throw new PullRequestError('not-found', 'Session not found.');
@@ -359,6 +422,31 @@ export class PullRequests {
         'The branch pull request URL is not supported.',
       );
     return reference;
+  }
+
+  async checkoutDetached(
+    reference: PullRequestReference,
+    directory: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const valid = await isGitHubRepositoryRoot(
+      directory,
+      reference.repository,
+      AbortSignal.any([this.signal, signal]),
+    ).catch((error: unknown) => {
+      if (error instanceof WorkspaceIsolationError)
+        throw new PullRequestError('unavailable', error.message);
+      throw error;
+    });
+    if (!valid)
+      throw new PullRequestError(
+        'invalid-request',
+        `This folder is not the root of a checkout of ${reference.repository}.`,
+      );
+    await this.gh.run(
+      ['pr', 'checkout', ...referenceArgs(reference), '--detach'],
+      { mutation: true, signal, maxOutputBytes: 64 * 1024, cwd: directory },
+    );
   }
 
   private sessionFolder(session: Session): Promise<string> {
@@ -557,6 +645,31 @@ export class PullRequests {
           { ...options, apiAction: 'merge' },
         );
         detail = 'Pull request merged.';
+        break;
+      case 'submit-review':
+        await this.gh.json(
+          z.object({ id: z.number() }),
+          ['api', '--method', 'POST', `${endpoint}/reviews`, '--input', '-'],
+          {
+            ...options,
+            apiAction: 'review',
+            stdin: JSON.stringify({
+              commit_id: action.commitId,
+              event: reviewEvents[action.event],
+              ...(action.body ? { body: action.body } : {}),
+              comments: action.comments.map(comment => ({
+                path: comment.path,
+                side: 'RIGHT',
+                line: comment.line,
+                body: comment.body,
+                ...(comment.startLine === null
+                  ? {}
+                  : { start_line: comment.startLine, start_side: 'RIGHT' }),
+              })),
+            }),
+          },
+        );
+        detail = 'Review published.';
         break;
       case 'checkout':
         await this.checkoutWorkspace(action.sessionId, async session => {

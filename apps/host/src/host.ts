@@ -35,6 +35,8 @@ import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
 import { PullRequests } from './pull-requests';
 import { PullRequestError } from './process/github-cli';
+import { CodeReviewStore } from './code-review/store';
+import { CodeReviewError, CodeReviews } from './code-review/service';
 import { WorkspaceError, WorkspaceFiles } from './workspace/files';
 import { FolderError, resolveFolder } from './workspace/folder';
 import { GitBranchError, readGitBranch } from './workspace/git-branch';
@@ -86,6 +88,8 @@ import { SessionLauncher } from './scheduled-jobs/launcher';
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
   'link-session-pull-request',
+  'start-pull-request-review',
+  'publish-pull-request-review',
   'create-session',
   'adopt-conversation',
   'finish-session-worktree',
@@ -321,6 +325,18 @@ export const serveHost = ({
             .withPullRequestCheckout(id, run)
             .finally(() => wakeIdleRuns()),
       );
+      const codeReviews = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new CodeReviews(
+              new CodeReviewStore(database),
+              sessions,
+              pullRequests,
+              emit,
+            ),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
       const usage = new ProviderUsageService();
       const evidence = new EvidenceStore(directory, id =>
         workflowRunStore.getStep(id),
@@ -400,11 +416,22 @@ export const serveHost = ({
           const service = new ScheduledJobService(
             scheduledJobStore,
             sessions,
-            new SessionLauncher(sessions, usage, undefined, undefined, {
-              start: (input, signal) => tasks.start(input, signal),
-              getRun: id => workflowRunStore.getRun(id),
-              stop: id => workflows.stop(id),
-            }),
+            new SessionLauncher(
+              sessions,
+              usage,
+              undefined,
+              undefined,
+              {
+                start: (input, signal) => tasks.start(input, signal),
+                getRun: id => workflowRunStore.getRun(id),
+                stop: id => workflows.stop(id),
+              },
+              undefined,
+              {
+                start: (job, runId) =>
+                  codeReviews.startForAutomation(job, runId),
+              },
+            ),
             emit,
           );
           service.start();
@@ -1352,6 +1379,107 @@ export const serveHost = ({
             skillRequests--;
             probes.pending.delete(inspection);
           });
+          continue;
+        }
+        if (
+          request.method === 'read-code-review-settings' ||
+          request.method === 'save-reviewer-profile' ||
+          request.method === 'delete-reviewer-profile' ||
+          request.method === 'save-review-convention' ||
+          request.method === 'delete-review-convention' ||
+          request.method === 'start-pull-request-review' ||
+          request.method === 'list-pull-request-reviews' ||
+          request.method === 'update-review-finding' ||
+          request.method === 'discard-pull-request-review' ||
+          request.method === 'publish-pull-request-review'
+        ) {
+          const { id } = request;
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'read-code-review-settings':
+                return {
+                  type: 'code-review-settings',
+                  id,
+                  settings: codeReviews.settings(),
+                };
+              case 'save-reviewer-profile':
+                return {
+                  type: 'code-review-settings',
+                  id,
+                  settings: codeReviews.saveProfile(request.input),
+                };
+              case 'delete-reviewer-profile':
+                return {
+                  type: 'code-review-settings',
+                  id,
+                  settings: codeReviews.deleteProfile(request.input),
+                };
+              case 'save-review-convention':
+                return {
+                  type: 'code-review-settings',
+                  id,
+                  settings: codeReviews.saveConvention(request.input),
+                };
+              case 'delete-review-convention':
+                return {
+                  type: 'code-review-settings',
+                  id,
+                  settings: codeReviews.deleteConvention(request.input),
+                };
+              case 'start-pull-request-review':
+                return {
+                  type: 'pull-request-review',
+                  id,
+                  draft: await codeReviews.start(request.input),
+                };
+              case 'list-pull-request-reviews':
+                return {
+                  type: 'pull-request-reviews',
+                  id,
+                  drafts: codeReviews.list(request.input),
+                };
+              case 'update-review-finding':
+                return {
+                  type: 'pull-request-review',
+                  id,
+                  draft: codeReviews.updateFinding(request.input),
+                };
+              case 'discard-pull-request-review':
+                return {
+                  type: 'pull-request-review',
+                  id,
+                  draft: codeReviews.discard(request.input),
+                };
+              case 'publish-pull-request-review':
+                return {
+                  type: 'pull-request-review-publish',
+                  id,
+                  result: await codeReviews.publish(request.input),
+                };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error => {
+              const known =
+                error instanceof CodeReviewError ||
+                error instanceof PullRequestError ||
+                error instanceof SessionError ||
+                error instanceof FolderError;
+              return send({
+                type: 'error',
+                id,
+                code: known ? error.code : 'unavailable',
+                message: known
+                  ? error.message
+                  : 'The code review operation failed.',
+              });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
           continue;
         }
         if (

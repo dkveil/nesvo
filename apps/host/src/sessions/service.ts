@@ -1659,7 +1659,10 @@ export class SessionService {
     return this.resolveDirectory(workspaces);
   }
 
-  send(input: SendMessageInput): Session {
+  send(
+    input: SendMessageInput,
+    turn: Pick<LaunchTurn, 'outputSchema'> = {},
+  ): Session {
     if (this.unsaved.size) {
       this.list();
       if (this.unsaved.size)
@@ -1743,6 +1746,7 @@ export class SessionService {
       skillId: input.skillId,
       skillHash: input.skillHash,
       ...(input.attachments ? { attachments: input.attachments } : {}),
+      ...(turn.outputSchema ? { outputSchema: turn.outputSchema } : {}),
       previousSelection,
     });
     return structuredClone(session);

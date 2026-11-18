@@ -38,6 +38,7 @@
 !/apps/host/src/workflows/
 !/apps/host/src/process/
 !/apps/host/src/mcp/
+!/apps/host/src/code-review/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs

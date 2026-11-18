@@ -6,8 +6,9 @@ import { Effect } from 'effect';
 import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
 import { installTranscriptIndex } from './sessions/transcript-index';
+import { installCodeReviewTables } from './code-review/store';
 
-const DATABASE_VERSION = 18;
+const DATABASE_VERSION = 19;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
@@ -343,6 +344,10 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
           database.exec(
             `ALTER TABLE scheduled_jobs ADD COLUMN ${column} TEXT CHECK (${column} IS NULL OR json_valid(${column}))`,
           );
+      if (!scheduledJobColumns.has('pull_request_review'))
+        database.exec(
+          'ALTER TABLE scheduled_jobs ADD COLUMN pull_request_review TEXT CHECK (pull_request_review IS NULL OR json_valid(pull_request_review))',
+        );
       if (!scheduledJobColumns.has('check_hash'))
         database.exec('ALTER TABLE scheduled_jobs ADD COLUMN check_hash TEXT');
       database.exec(
@@ -378,6 +383,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       database.exec(
         'CREATE INDEX IF NOT EXISTS session_tombstones_root ON session_tombstones (root_id); CREATE INDEX IF NOT EXISTS session_tombstones_pending ON session_tombstones (purge_after) WHERE purged_at IS NULL',
       );
+      installCodeReviewTables(database);
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);

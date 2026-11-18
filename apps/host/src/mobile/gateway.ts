@@ -916,7 +916,8 @@ export class MobileGateway {
       !this.accepting ||
       event.type === 'review-changed' ||
       event.type.startsWith('scheduled-job') ||
-      event.type.startsWith('workflow-')
+      event.type.startsWith('workflow-') ||
+      event.type.startsWith('pull-request-review')
     )
       return;
     try {
