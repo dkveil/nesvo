@@ -1,9 +1,16 @@
 import { useEffect, useRef } from 'react';
+import { latestStageReport, pendingStageQuestion } from '@nesvo/contracts';
 import { entityKey } from '@/shared/lib/host-key';
 import { readNotificationsEnabled } from '@/shared/lib/notification-preference';
 import type { Session } from '@/entities/session';
 
-type Snapshot = { status: Session['status']; pending: number };
+type Snapshot = {
+  status: Session['status'];
+  pending: number;
+  plan: string | null;
+  question: string | null;
+  report: string | null;
+};
 
 const working: Session['status'][] = ['running', 'stopping'];
 
@@ -29,7 +36,11 @@ function notify(
       onOpen(key);
     };
   };
-  if (title === 'Approval needed')
+  if (
+    title === 'Approval needed' ||
+    title === 'Plan ready' ||
+    title === 'Question waiting'
+  )
     void window.nesvo.requestAttention().catch(() => undefined);
   if (!readNotificationsEnabled()) return;
   if (Notification.permission === 'granted') show();
@@ -39,8 +50,27 @@ function notify(
     });
 }
 
+function readyPlan(session: Session) {
+  return session.plan?.status === 'plan-ready' ? session.plan.id : null;
+}
+
+function snapshotOf(session: Session): Snapshot {
+  return {
+    status: session.status,
+    pending: pendingCount(session),
+    plan: readyPlan(session),
+    question: pendingStageQuestion(session)?.id ?? null,
+    report: latestStageReport(session)?.id ?? null,
+  };
+}
+
 function attentionTitle(previous: Snapshot, session: Session) {
   if (pendingCount(session) > previous.pending) return 'Approval needed';
+  const next = snapshotOf(session);
+  if (next.plan && next.plan !== previous.plan) return 'Plan ready';
+  if (next.question && next.question !== previous.question)
+    return 'Question waiting';
+  if (next.report && next.report !== previous.report) return 'Report ready';
   if (session.status === previous.status) return null;
   if (!working.includes(previous.status)) return null;
   if (session.status === 'completed') return 'Finished';
@@ -63,10 +93,7 @@ export function useAttention(
     const next = new Map<string, Snapshot>();
     for (const session of sessions) {
       const key = entityKey(session);
-      const snapshot = {
-        status: session.status,
-        pending: pendingCount(session),
-      };
+      const snapshot = snapshotOf(session);
       next.set(key, snapshot);
       const before = previous.get(key);
       if (

@@ -153,6 +153,7 @@ import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
+import { StageRecord, useStageDecisions } from '@/widgets/session-stages';
 import { SessionDetails } from '@/widgets/session-details';
 import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
 import {
@@ -932,6 +933,17 @@ export function Workspace() {
   const [parentPending, setParentPending] = useState<Record<string, boolean>>(
     {},
   );
+  const stages = useStageDecisions({
+    api: desktopApi,
+    merge: sessions => store.merge(sessions),
+    isEnabled: session =>
+      !store.loading && !store.error && store.hostReady(session.hostId),
+    modesFor: session =>
+      providerModes(
+        session.provider,
+        store.providerStates(session.hostId)[session.provider].status,
+      ),
+  });
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
     Record<
@@ -4183,6 +4195,7 @@ ${text}`
               approvalPending={approvalPending}
               delegationPending={delegationPending}
               parentPending={parentPending}
+              stages={stages}
               onParent={(input, hostId) =>
                 void decideSessionParent(input, hostId)
               }
@@ -4309,6 +4322,13 @@ ${text}`
               <Conversation
                 key={selectedKey}
                 session={selected}
+                renderStageRecord={record => (
+                  <StageRecord
+                    session={selected}
+                    record={record}
+                    actions={stages}
+                  />
+                )}
                 activity={(runId, startedAt, completedAt, status, live) => (
                   <SessionActivity
                     runId={runId}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GitFork } from 'lucide-react';
+import { GitFork, ListChecks } from 'lucide-react';
 import { sessionIsolationSchema } from '@nesvo/contracts';
 import type {
   Computer,
@@ -131,6 +131,7 @@ export function NewThread({
   const [worktreeChoice, setWorktreeChoice] = useState<boolean | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState('');
+  const [planFirst, setPlanFirst] = useState(false);
   const piped = !!workflow?.workflowName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
@@ -152,6 +153,9 @@ export function NewThread({
     gitRepository &&
     !!computer?.capabilities.includes('session-worktrees');
   const useWorktree = worktreeChoice ?? (worktreeDefault && worktreeAvailable);
+  const planFirstAvailable =
+    !piped && !!computer?.capabilities.includes('session-stages');
+  const usePlanFirst = planFirst && planFirstAvailable;
   const isolation = sessionIsolationSchema.safeParse({
     kind: 'worktree',
     branch: worktreeBranch.trim() || undefined,
@@ -326,6 +330,7 @@ export function NewThread({
           ...(useWorktree && isolation.success
             ? { isolation: isolation.data }
             : {}),
+          ...(usePlanFirst ? { planFirst: true } : {}),
         },
         message,
         chosen,
@@ -585,6 +590,20 @@ export function NewThread({
                   >
                     <span>Worktree</span>
                   </Chip>
+                )}
+                {planFirstAvailable && (
+                  <Hint label="The first turn only plans. You approve, correct or reject the plan before it runs with the chosen permissions.">
+                    <Chip
+                      type="button"
+                      icon={<ListChecks aria-hidden="true" />}
+                      selected={usePlanFirst}
+                      aria-pressed={usePlanFirst}
+                      disabled={pending}
+                      onClick={() => setPlanFirst(!planFirst)}
+                    >
+                      <span>Plan first</span>
+                    </Chip>
+                  </Hint>
                 )}
                 <div className="flex-1" />
                 <PermissionPicker

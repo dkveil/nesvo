@@ -1,8 +1,12 @@
 import { useState, type ComponentProps, type ReactNode } from 'react';
-import type {
-  DecideDelegationInput,
-  DecideSessionParentInput,
-  RespondApprovalInput,
+import {
+  latestStageReport,
+  pendingStageQuestion,
+  type DecideDelegationInput,
+  type DecideSessionParentInput,
+  type RespondApprovalInput,
+  type StageQuestionRecord,
+  type StageReportRecord,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
 import {
@@ -40,6 +44,12 @@ import {
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
+import { NativeDisclosure } from '@/shared/ui/disclosure';
+import {
+  PlanDecision,
+  QuestionAnswer,
+  type StageActions,
+} from '@/widgets/session-stages';
 
 type Props = ReviewDecisionProps & {
   reviews: Review[];
@@ -65,6 +75,7 @@ type Props = ReviewDecisionProps & {
   onAutomationDecision: (job: ScheduledJob, decision: 'start' | 'skip') => void;
   originLabel?: (review: Review) => string;
   notice?: ReactNode;
+  stages: StageActions;
 };
 
 type Filter = 'pending' | 'history' | 'all';
@@ -90,6 +101,27 @@ type ActionRow =
       type: 'parent';
       session: Session;
       request: NonNullable<Session['parentRequest']>;
+      at: string;
+      id: string;
+    }
+  | {
+      type: 'plan';
+      session: Session;
+      plan: NonNullable<Session['plan']>;
+      at: string;
+      id: string;
+    }
+  | {
+      type: 'question';
+      session: Session;
+      record: StageQuestionRecord;
+      at: string;
+      id: string;
+    }
+  | {
+      type: 'report';
+      session: Session;
+      record: StageReportRecord;
       at: string;
       id: string;
     };
@@ -292,6 +324,7 @@ export function ReviewInbox({
   onAutomationDecision,
   originLabel,
   notice,
+  stages,
   ...decisionProps
 }: Props) {
   const [filter, setFilter] = useState<Filter>('pending');
@@ -342,6 +375,41 @@ export function ReviewInbox({
             at: session.updatedAt,
             id: `${entityKey(session)}/${session.runId}/${delegation.id}`,
           });
+    }
+  if (filter !== 'history')
+    for (const session of sessions) {
+      const key = entityKey(session);
+      if (session.plan?.status === 'plan-ready')
+        rows.push({
+          type: 'plan',
+          session,
+          plan: session.plan,
+          at: session.plan.readyAt ?? session.updatedAt,
+          id: `${key}/${session.plan.id}`,
+        });
+      const question = pendingStageQuestion(session);
+      if (question)
+        rows.push({
+          type: 'question',
+          session,
+          record: question,
+          at: question.at,
+          id: `${key}/${question.id}`,
+        });
+      const report = latestStageReport(session);
+      if (
+        report &&
+        report.runId === session.runId &&
+        session.status !== 'running' &&
+        session.status !== 'stopping'
+      )
+        rows.push({
+          type: 'report',
+          session,
+          record: report,
+          at: report.at,
+          id: `${key}/${report.id}`,
+        });
     }
   if (filter !== 'history')
     for (const job of automations)
@@ -425,6 +493,8 @@ export function ReviewInbox({
               row.type === 'approval' ||
               row.type === 'delegation' ||
               row.type === 'parent' ||
+              row.type === 'plan' ||
+              row.type === 'question' ||
               row.type === 'automation',
           ) && (
             <StatusMessage className="mb-3 px-2">
@@ -556,6 +626,144 @@ export function ReviewInbox({
               }
               const { session } = row;
               const operationError = operationErrors[entityKey(session)];
+              const parentTitle = session.parentId
+                ? sessions.find(
+                    item =>
+                      item.id === session.parentId &&
+                      item.hostId === session.hostId,
+                  )?.title
+                : undefined;
+              const from = parentTitle ? ` · for ${parentTitle}` : '';
+              if (row.type === 'plan') {
+                const { plan } = row;
+                return (
+                  <ActionItem
+                    key={`plan/${row.id}`}
+                    aria-label={`Plan: ${session.title}`}
+                    data-host-id={session.hostId}
+                    title={session.title}
+                    onOpen={() =>
+                      onSession(entityKey(session), `plan-${plan.id}`)
+                    }
+                    location={location(session.hostId)}
+                    summary={
+                      <NativeDisclosure
+                        title={
+                          <span className="text-ui text-foreground">
+                            {compactPreview(plan.text ?? '', 180) ||
+                              'Empty plan'}
+                          </span>
+                        }
+                        triggerLabel="Show the full plan"
+                        className="-ml-2"
+                      >
+                        <p className="max-h-80 overflow-y-auto pr-2 text-ui whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
+                          {plan.text}
+                        </p>
+                      </NativeDisclosure>
+                    }
+                    meta={
+                      <>
+                        <span>
+                          {plan.round > 0 ? `Plan ${plan.round + 1}` : 'Plan'} ·{' '}
+                          {session.provider} · then{' '}
+                          {modeLabel(session.provider, plan.targetMode)}
+                          {from}
+                        </span>
+                        <time dateTime={row.at}>{reviewDate(row.at)}</time>
+                      </>
+                    }
+                  >
+                    <PlanDecision session={session} actions={stages} compact />
+                  </ActionItem>
+                );
+              }
+              if (row.type === 'question') {
+                const { record } = row;
+                return (
+                  <ActionItem
+                    key={`question/${row.id}`}
+                    aria-label={`Question: ${session.title}`}
+                    data-host-id={session.hostId}
+                    title={session.title}
+                    onOpen={() =>
+                      onSession(entityKey(session), `question-${record.id}`)
+                    }
+                    location={location(session.hostId)}
+                    summary={
+                      <>
+                        <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
+                          {record.question.question}
+                        </p>
+                        {record.question.recommendation && (
+                          <FullText text={record.question.recommendation}>
+                            <p className="line-clamp-1 text-2xs text-muted-foreground">
+                              Recommendation:{' '}
+                              {compactPreview(
+                                record.question.recommendation,
+                                200,
+                              )}
+                            </p>
+                          </FullText>
+                        )}
+                      </>
+                    }
+                    meta={
+                      <>
+                        <span>
+                          {record.question.kind === 'product'
+                            ? 'Product question'
+                            : 'Technical question'}{' '}
+                          · {session.provider}
+                          {from}
+                        </span>
+                        <time dateTime={row.at}>{reviewDate(row.at)}</time>
+                      </>
+                    }
+                  >
+                    <QuestionAnswer
+                      session={session}
+                      record={record}
+                      actions={stages}
+                      compact
+                    />
+                  </ActionItem>
+                );
+              }
+              if (row.type === 'report') {
+                const { report } = row.record;
+                return (
+                  <ActionItem
+                    key={`report/${row.id}`}
+                    aria-label={`Report: ${session.title}`}
+                    data-host-id={session.hostId}
+                    title={session.title}
+                    onOpen={() =>
+                      onSession(entityKey(session), `stage-${row.record.id}`)
+                    }
+                    location={location(session.hostId)}
+                    summary={
+                      <FullText text={report.summary}>
+                        <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
+                          {report.summary}
+                        </p>
+                      </FullText>
+                    }
+                    meta={
+                      <>
+                        <span>
+                          Report · {report.status === 'ok' ? 'OK' : 'Failed'}
+                          {report.links.length
+                            ? ` · ${report.links.length} ${report.links.length === 1 ? 'link' : 'links'}`
+                            : ''}
+                          {from}
+                        </span>
+                        <time dateTime={row.at}>{reviewDate(row.at)}</time>
+                      </>
+                    }
+                  />
+                );
+              }
               if (row.type === 'parent') {
                 const { request } = row;
                 const deciding = !!parentPending[row.id];

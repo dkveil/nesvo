@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ArrowDown, ListEnd, Square } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { hasEarlierMessages, windowOffset } from '@nesvo/contracts';
 import type {
+  SessionStageRecord,
   DesktopApi,
   ReasoningEffort,
   RespondApprovalInput,
@@ -149,6 +157,7 @@ type Props = {
   contextMeter?: ReactNode;
   onLoadEarlier: () => Promise<boolean>;
   attachments: ConversationAttachments;
+  renderStageRecord?: (record: SessionStageRecord) => ReactNode;
 };
 
 export function Conversation({
@@ -199,6 +208,7 @@ export function Conversation({
   contextMeter,
   onLoadEarlier,
   attachments,
+  renderStageRecord,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const sessionKey = entityKey(session);
@@ -434,6 +444,25 @@ export function Conversation({
           ? `${session.provider} replied. ${lastAgent.body.slice(0, ANNOUNCED_REPLY_LENGTH)}`
           : `${session.provider}: ${statusLabels[lastAgent.state]}`
         : '';
+  const stagesAfter = new Map<string, SessionStageRecord[]>();
+  const stagesBefore: SessionStageRecord[] = [];
+  for (const record of renderStageRecord ? session.stageRecords : []) {
+    const anchor = session.messages.findLast(
+      message => message.createdAt < record.at,
+    );
+    if (anchor)
+      stagesAfter.set(anchor.id, [
+        ...(stagesAfter.get(anchor.id) ?? []),
+        record,
+      ]);
+    else if (firstIndex === 0) stagesBefore.push(record);
+  }
+  const stageItems = (records: readonly SessionStageRecord[] | undefined) =>
+    records?.map(record => (
+      <Fragment key={`stage-${record.id}`}>
+        {renderStageRecord?.(record)}
+      </Fragment>
+    ));
   const firstAgents = new Map<string, string>();
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
@@ -934,6 +963,7 @@ export function Conversation({
                 aria-label="Messages"
                 className="space-y-8"
               >
+                {stageItems(stagesBefore)}
                 {session.messages.map((message, index) => {
                   const live =
                     message.author === 'agent' &&
@@ -946,31 +976,33 @@ export function Conversation({
                       !!message.completedAt ||
                       activityRunIds.has(message.runId));
                   return (
-                    <MessageArticle
-                      key={message.id}
-                      message={message}
-                      provider={session.provider}
-                      live={live}
-                      deferred={
-                        !live &&
-                        index < session.messages.length - EAGER_TAIL_MESSAGES
-                      }
-                      showActivity={showActivity}
-                      activity={
-                        showActivity &&
-                        activity(
-                          message.runId,
-                          runStarts.get(message.runId) ?? null,
-                          message.completedAt,
-                          live ? session.status : message.state,
-                          live,
-                        )
-                      }
-                      showInterruption={message.runId !== session.runId}
-                      selectionChange={selectionChanges.get(message.id)}
-                      threadStart={threadStarts.has(firstIndex + index)}
-                      compacted={compactedAt.has(firstIndex + index)}
-                    />
+                    <Fragment key={message.id}>
+                      <MessageArticle
+                        message={message}
+                        provider={session.provider}
+                        live={live}
+                        deferred={
+                          !live &&
+                          index < session.messages.length - EAGER_TAIL_MESSAGES
+                        }
+                        showActivity={showActivity}
+                        activity={
+                          showActivity &&
+                          activity(
+                            message.runId,
+                            runStarts.get(message.runId) ?? null,
+                            message.completedAt,
+                            live ? session.status : message.state,
+                            live,
+                          )
+                        }
+                        showInterruption={message.runId !== session.runId}
+                        selectionChange={selectionChanges.get(message.id)}
+                        threadStart={threadStarts.has(firstIndex + index)}
+                        compacted={compactedAt.has(firstIndex + index)}
+                      />
+                      {stageItems(stagesAfter.get(message.id))}
+                    </Fragment>
                   );
                 })}
                 {compactedAt.has(session.messageCount) && (
