@@ -35,6 +35,7 @@ import { InlineNotice } from '@/shared/ui/inline-notice';
 import { PanelAction, PanelHeader } from '@/shared/ui/panel';
 import { PanelResizer } from '@/shared/ui/panel-resizer';
 import { panelSurface } from '@/shared/ui/panel-styles';
+import { Skeleton } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { TabPanel, Tabs } from '@/shared/ui/tabs';
 import { Hint } from '@/shared/ui/tooltip';
@@ -413,9 +414,23 @@ export default function PullRequestPanel({
             </Button>
           </div>
         ) : (
-          <StatusMessage tone="loading" className="p-4">
-            Loading pull request…
-          </StatusMessage>
+          <div role="status" aria-label="Loading pull request" aria-busy="true">
+            <div className="space-y-2 border-b px-3 py-3">
+              <Skeleton className="h-3 w-3/4" />
+              <Skeleton className="w-1/2" />
+            </div>
+            <div className="flex h-9 items-center gap-4 border-b px-3">
+              <Skeleton className="w-14" />
+              <Skeleton className="w-14" />
+              <Skeleton className="w-10" />
+            </div>
+            <div className="space-y-2.5 px-3 py-4">
+              <Skeleton className="w-full" />
+              <Skeleton className="w-11/12" />
+              <Skeleton className="w-4/5" />
+              <Skeleton className="w-2/3" />
+            </div>
+          </div>
         )
       ) : (
         <>

@@ -5,6 +5,7 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Kbd, KeyCombo } from '@/shared/ui/kbd';
 import { Meter, Progress } from '@/shared/ui/progress';
+import { Skeleton, SkeletonList } from '@/shared/ui/skeleton';
 import { Spinner } from '@/shared/ui/spinner';
 import { StatusDot, type StatusDotTone } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -111,6 +112,28 @@ export function FeedbackSection() {
           </SpecimenRow>
         </Specimen>
       </div>
+      <Specimen title="Skeleton" source="shared/ui/skeleton.tsx">
+        <div className="grid gap-x-8 gap-y-3 md:grid-cols-3">
+          <StateCaption label="shapes · line, block, circle">
+            <div className="flex items-center gap-3">
+              <Skeleton className="w-24" />
+              <Skeleton shape="block" className="h-7 w-16" />
+              <Skeleton shape="circle" className="size-6" />
+            </div>
+          </StateCaption>
+          <StateCaption label="SkeletonList · compact">
+            <SkeletonList label="Loading sample files" rows={4} />
+          </StateCaption>
+          <StateCaption label="SkeletonList · two-line, no leading">
+            <SkeletonList
+              label="Loading sample sessions"
+              density="two-line"
+              leading={false}
+              rows={3}
+            />
+          </StateCaption>
+        </div>
+      </Specimen>
       <Specimen title="Meter and Progress" source="shared/ui/progress.tsx">
         <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
           <StateCaption label="meter · success (sample 72%)">

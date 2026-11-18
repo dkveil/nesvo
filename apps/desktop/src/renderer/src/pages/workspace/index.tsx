@@ -1987,6 +1987,7 @@ ${text}`
     : undefined;
   const sidebarProps = {
     housekeeping,
+    loading: store.loading,
     currentHostId: creating ? threadSetup.hostId : selectedHostId,
     sessions: store.sessions,
     workflowRuns: store.workflowRuns,

@@ -13,6 +13,7 @@ import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { AddedByAssistantBadge } from '@/widgets/workflow-assistant/added-by-assistant-badge';
@@ -83,9 +84,11 @@ export function AutomationList({
           </p>
         ))}
         {loading && jobs.length === 0 && (
-          <StatusMessage tone="loading" className="px-2 py-3">
-            Loading automations…
-          </StatusMessage>
+          <SkeletonList
+            label="Loading automations"
+            density="two-line"
+            rows={4}
+          />
         )}
         {jobs.length > 0 ? (
           <ul className="space-y-px">

@@ -24,6 +24,7 @@ import { Label } from '@/shared/ui/label';
 import { ListRow } from '@/shared/ui/list-row';
 import { Toolbar, ToolbarSpacer } from '@/shared/ui/panel';
 import { SectionLabel } from '@/shared/ui/section-label';
+import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { CommentBox } from './comment-box';
@@ -173,9 +174,11 @@ export function CodeTab({
     );
   if (!files.data)
     return (
-      <StatusMessage tone="loading" className="p-4">
-        Loading changed files…
-      </StatusMessage>
+      <SkeletonList
+        label="Loading changed files"
+        rows={8}
+        className="px-1 py-2"
+      />
     );
   return (
     <div className="flex min-h-0 flex-1 flex-col">

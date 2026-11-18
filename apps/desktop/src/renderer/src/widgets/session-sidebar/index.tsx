@@ -46,6 +46,7 @@ import { ListRow } from '@/shared/ui/list-row';
 import { NavItem } from '@/shared/ui/nav-list';
 import { ProjectChip } from '@/shared/ui/project-chip';
 import { SearchField } from '@/shared/ui/search-field';
+import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
@@ -87,6 +88,7 @@ type Props = {
   readBranch?: ReadBranch;
   housekeeping?: SidebarHousekeeping;
   currentHostId?: string;
+  loading?: boolean;
 };
 
 const TREE_INDENT_PX = 12;
@@ -173,6 +175,7 @@ export function SessionSidebar({
   onPullRequests,
   navigation = 'inline',
   readBranch,
+  loading = false,
   housekeeping,
   currentHostId = 'local',
 }: Props) {
@@ -764,7 +767,16 @@ export function SessionSidebar({
               </section>
             );
           })}
-          {groups.length === 0 && (
+          {groups.length === 0 && loading && (
+            <SkeletonList
+              label="Loading sessions"
+              density="two-line"
+              leading={false}
+              rows={6}
+              className="pt-2"
+            />
+          )}
+          {groups.length === 0 && !loading && (
             <EmptyState
               size="sm"
               title={search ? 'No matching sessions.' : 'No sessions yet.'}

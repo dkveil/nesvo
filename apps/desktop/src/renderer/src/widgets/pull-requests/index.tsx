@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select';
+import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { PullRequestRow } from './pull-request-row';
 import { usePullRequestList } from './use-pull-request-list';
@@ -247,9 +248,11 @@ export function PullRequestsView({
             </Button>
           </div>
         ) : result.status === 'loading' && items.length === 0 ? (
-          <StatusMessage tone="loading" className="px-2 py-2">
-            Loading pull requests…
-          </StatusMessage>
+          <SkeletonList
+            label="Loading pull requests"
+            density="two-line"
+            rows={6}
+          />
         ) : items.length === 0 ? (
           <EmptyState
             size="sm"

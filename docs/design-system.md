@@ -33,6 +33,7 @@ All colours are CSS variables defined for light on `:root` and for dark on `:roo
 | `error-foreground`                                 | `#f0707a`             | `#c2343d`             | Failures, invalid fields, deletions            |
 | `--overlay`                                        | black 60%             | black 24%             | Dialog and sheet backdrop                      |
 | `track` (`--usage-ring-track`)                     | white 12%             | black 10%             | Meter and progress track                       |
+| `skeleton`                                         | white 7%              | black 6%              | Skeleton placeholders                          |
 | `send-idle` / `send-idle-foreground`               | `#292929` / `#929393` | `#e4e4e7` / `#71717b` | Disabled send button                           |
 | `--popover-glass`, `--composer-surface`            | 80% glass             | 80% glass             | `glass-popover`, `glass-composer` utilities    |
 
@@ -156,6 +157,8 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Spinner** — `shared/ui/spinner.tsx`. Inline loading glyph; `label` when it stands alone.
 
+**Skeleton / SkeletonList** — `shared/ui/skeleton.tsx`. Placeholders that hold the layout while a list or detail loads for the first time. Skeleton is a `bg-skeleton` shape (`line` 10 px default, `block`, `circle`) sized by the caller and hidden from assistive technology; it pulses with `animate-pulse`, which the global reduced-motion rule stops. SkeletonList stacks rows that match ListRow heights (`density` `compact` 28 px or `two-line` 44 px, `rows`, `leading` glyph) inside a `role="status"` with the required `label` as its accessible name. Use them when content replaces the placeholder in place (session list, pull request list and detail, changed files, automations); keep Spinner or StatusMessage `loading` for inline action states (sending, refreshing, searching).
+
 **Separator** — `shared/ui/separator.tsx`. Horizontal or vertical 1 px rule. `label` centres `text-2xs` muted text between two rules (history dividers such as "Mode changed to …").
 
 **ResizeHandle** — `shared/ui/resize-handle.tsx`. A focusable `role="separator"` that resizes the surface it sits in. `variant="edge"` (default) is an 8 px vertical strip on the `left` or `right` edge with a 1 px line that lights up on hover, focus and drag; `variant="corner"` is a 16 px square in a `corner` (`top-left` default) with the `focus-ring`. Pointer drags report the offset from the drag start through `onResize` (`onResizeStart` and `onResizeEnd` bracket the drag); arrow keys call `onStep` with a direction (`x`, `y` in −1…1; edges react only to Left and Right). The caller maps both to its own size and step, passes `aria-valuenow`, `aria-valuemin` and `aria-valuemax` for an edge, and adds Home, End or double-click through the usual handlers. `hint` shows a tooltip that hides while dragging. PanelResizer and the sidebar resizer are built on it.
@@ -236,4 +239,5 @@ Later iterations move feature widgets onto the library area by area. Use these r
 | `title="…"` on icon-only buttons                                              | IconButton `label` (tooltip included)                              |
 | Hand-written `role="separator"` drag strips, resize corner `<button>`s         | `<ResizeHandle variant="edge" | "corner">`                       |
 | Hand-built Cancel + destructive Dialog footers                                | `<ConfirmDialog>`                                                  |
+| `StatusMessage tone="loading"` as the only content of a list that loads      | `<SkeletonList label="Loading …">`                                 |
 | Dashed `border-dashed` "add" buttons                                         | `<AddTile>`                                                        |

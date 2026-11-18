@@ -65,6 +65,7 @@
   --color-pr-merged: var(--pr-merged);
   --color-pr-closed: var(--pr-closed);
   --color-track: var(--usage-ring-track);
+  --color-skeleton: var(--skeleton);
   --text-micro: 0.625rem;
   --text-micro--line-height: 0.875rem;
   --text-2xs: 0.6875rem;
@@ -168,6 +169,7 @@
   --glass-blur: 12px;
   --glass-saturate: 1.14;
   --usage-ring-track: rgb(0 0 0 / 10%);
+  --skeleton: rgb(0 0 0 / 6%);
   --scrollbar-thumb: #d9d9d9;
   --scrollbar-thumb-hover: #bfbfbf;
   --selection: rgb(15 148 136 / 22%);
@@ -254,6 +256,7 @@
   --glass-blur: 16px;
   --glass-saturate: 1.08;
   --usage-ring-track: rgb(255 255 255 / 12%);
+  --skeleton: rgb(255 255 255 / 7%);
   --scrollbar-thumb: rgb(255 255 255 / 8%);
   --scrollbar-thumb-hover: rgb(255 255 255 / 12%);
   --selection: rgb(45 212 191 / 30%);
