@@ -99,6 +99,9 @@ import {
   type CodexResult,
 } from '../providers/codex';
 import { shiftPlacement } from '../providers/interleave';
+import { makeActivity } from '../providers/activity';
+import type { SessionInboxHooks } from '../inbox-rules/turn-gate';
+import type { DecisionRoute } from '@nesvo/contracts';
 import { SessionStore, type SessionOrigin } from './store';
 import {
   appendStageRecord,
@@ -437,6 +440,7 @@ export type SessionServiceOptions = {
   worktreeCreated?: (session: Session) => void;
   worktreeFinishing?: (sessionId: string, signal: AbortSignal) => Promise<void>;
   lessons?: (session: Session) => string | null;
+  inbox?: SessionInboxHooks;
 };
 
 export const GATE_PENDING_MESSAGE =
@@ -2649,6 +2653,8 @@ export class SessionService {
   }
 
   private ensureNoStageDecision(session: Session): void {
+    const held = this.options.inbox?.heldReason(session.id);
+    if (held) throw new SessionError('invalid-request', held);
     if (session.plan?.status === 'plan-ready')
       throw new SessionError(
         'invalid-request',
@@ -3040,6 +3046,64 @@ export class SessionService {
       throw error;
     }
     return structuredClone(session);
+  }
+
+  appendDecisionRecord(sessionId: string, record: SessionStageRecord): void {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session) return;
+    const records = session.stageRecords;
+    appendStageRecord(session, record);
+    try {
+      this.publish(session);
+    } catch (error) {
+      session.stageRecords = records;
+      throw error;
+    }
+  }
+
+  queueOwnerMessage(sessionId: string, text: string): Session {
+    const session = this.acceptingSession(sessionId);
+    return this.queue(
+      { sessionId, messageId: randomUUID(), text: text.slice(0, 32_000) },
+      { session, front: true },
+    );
+  }
+
+  setDecisionRoute(sessionId: string, route: DecisionRoute): void {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session || session.decisionRoute === route) return;
+    session.decisionRoute = route;
+    this.publish(session);
+  }
+
+  holdQueueFor(sessionId: string): void {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session || !session.queue.some(item => !item.held)) return;
+    holdQueue(session);
+    this.publish(session);
+  }
+
+  releaseInboxHold(sessionId: string): void {
+    const session =
+      this.active.get(sessionId)?.session ??
+      this.unsaved.get(sessionId) ??
+      this.store.get(sessionId);
+    if (!session || this.active.has(sessionId)) return;
+    if (session.plan?.status === 'plan-ready' || pendingStageQuestion(session))
+      return;
+    if (!session.queue.some(item => item.held)) return;
+    session.queue = session.queue.map(item => ({ ...item, held: false }));
+    this.publish(session);
+    this.startNextQueued(session);
   }
 
   private acceptingSession(sessionId: string): Session {
@@ -3840,6 +3904,40 @@ export class SessionService {
         }
         if (controller.signal.aborted)
           return { status: 'stopped', error: null };
+        let inboxRules: Awaited<
+          ReturnType<SessionInboxHooks['prepareTurn']>
+        > | null = null;
+        try {
+          inboxRules =
+            (await this.options.inbox?.prepareTurn(
+              session,
+              { mode: readOnly ? 'read-only' : session.mode },
+              controller.signal,
+            )) ?? null;
+        } catch {
+          return controller.signal.aborted
+            ? { status: 'stopped', error: null }
+            : {
+                status: 'failed',
+                error:
+                  'Inbox rules could not be checked. No provider turn was started.',
+              };
+        }
+        if (inboxRules?.refusal)
+          return { status: 'failed', error: inboxRules.refusal };
+        for (const [index, warning] of (inboxRules?.warnings ?? []).entries())
+          this.update(session, {
+            type: 'tool-activity',
+            activity: makeActivity({
+              id: `inbox-rule-warning-${index}`,
+              kind: 'tool',
+              title: 'Inbox rule cannot hold here',
+              status: 'failed',
+              detail: warning,
+            }),
+          });
+        if (controller.signal.aborted)
+          return { status: 'stopped', error: null };
         if (session.browser && session.provider === 'Codex') {
           const reason = mcpTurn
             ? await this.browserUnavailable(
@@ -3968,6 +4066,7 @@ export class SessionService {
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
                 ...(session.browser ? { browser: true } : {}),
+                ...(inboxRules ? { gate: inboxRules.gate } : {}),
               });
         return provider.done;
       }),
@@ -4170,6 +4269,21 @@ export class SessionService {
 
   private notifyFinished(session: Session): void {
     if (!session.runId) return;
+    let held = false;
+    try {
+      held =
+        this.options.inbox?.holdsAfterRun(structuredClone(session)) ?? false;
+    } catch {
+      held = false;
+    }
+    if (held && session.queue.some(item => !item.held)) {
+      holdQueue(session);
+      try {
+        this.publish(session);
+      } catch {
+        session.revision += 1;
+      }
+    }
     const review = this.reviews.latest(session.id);
     const finished: RunFinished = {
       sessionId: session.id,
@@ -4529,7 +4643,12 @@ export class SessionService {
       )
         throw new Error('Duplicate provider approval');
       session.pendingApprovals.push(event.approval);
-      session.activity = 'Waiting for your decision…';
+      session.activity =
+        this.options.inbox?.approvalRequested(
+          structuredClone(session),
+          event.approval,
+          event.subject ?? null,
+        ) ?? 'Waiting for your decision…';
       this.publish(session);
       return;
     } else if (event.type === 'approval-resolved') {

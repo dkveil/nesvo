@@ -1,3 +1,4 @@
+import type { ProviderToolSubject } from '../inbox-rules/turn-gate';
 import { isDeepStrictEqual } from 'node:util';
 import { codexProjectOverride, tomlInline } from '../mcp/codex-overrides';
 import type { VerifyMcpTurn } from '../mcp/service';
@@ -65,6 +66,7 @@ export type CodexEvent =
         detail: string;
         directory: string | null;
       };
+      subject?: ProviderToolSubject;
     }
   | { type: 'approval-resolved'; id: string };
 
@@ -1942,6 +1944,10 @@ export function startCodex(options: CodexRunOptions): {
             detail,
             directory: options.directory,
           },
+          subject: {
+            tool: `mcp__${server}__${name}`,
+            input: object(meta?.tool_params) ?? {},
+          },
         });
         return;
       }
@@ -2028,6 +2034,9 @@ export function startCodex(options: CodexRunOptions): {
           detail,
           directory,
         },
+        ...(command && typeof params.command === 'string'
+          ? { subject: { tool: 'Bash', input: { command: params.command } } }
+          : {}),
       });
       return;
     }

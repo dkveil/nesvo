@@ -363,6 +363,7 @@ export const pullRequestActionResultSchema = z.strictObject({
     'submit-review',
   ]),
   detail: z.string().max(1000).nullable(),
+  heldBy: z.string().max(200).optional(),
 });
 export type PullRequestActionResult = z.infer<
   typeof pullRequestActionResultSchema

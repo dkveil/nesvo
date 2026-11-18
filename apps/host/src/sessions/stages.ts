@@ -71,7 +71,9 @@ export const derivedUuid = (seed: string, purpose: string): string => {
 export const decisionMessageId = (decisionId: string) =>
   derivedUuid(decisionId, 'message');
 
-export const ownerActor = (via: 'desktop' | 'mobile'): StageActor => ({
+export const ownerActor = (
+  via: 'desktop' | 'mobile' | 'parent',
+): StageActor => ({
   kind: 'owner',
   via,
   sessionId: null,
@@ -102,4 +104,6 @@ export const actorLabel = (actor: StageActor) =>
     ? 'The coordinator'
     : actor.via === 'mobile'
       ? 'The owner on the phone'
-      : 'The owner';
+      : actor.via === 'parent'
+        ? 'The owner in the parent session'
+        : 'The owner';

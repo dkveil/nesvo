@@ -145,7 +145,7 @@ const knownFields: Record<Kind, readonly string[]> = {
     'policy',
     'max_depth',
   ],
-  workflow: ['name', 'description', 'steps', ...graphFields],
+  workflow: ['name', 'description', 'decisions', 'steps', ...graphFields],
   spec: ['workflow', 'pipeline', 'title'],
 };
 const legacyFields: Partial<Record<Kind, Record<string, string>>> = {
@@ -400,7 +400,7 @@ async function projectRoot(
   return directory;
 }
 
-function globalRoot(): string {
+export function globalRoot(): string {
   const override = process.env.NESVO_WORKFLOWS_HOME;
   return process.env.NESVO_TEST_MODE === '1' && override && isAbsolute(override)
     ? override
@@ -1002,6 +1002,14 @@ function stepWarnings(steps: Map<string, ResolvedStep>): DefinitionIssue[] {
         'warning',
       ),
     );
+}
+
+export async function findProjectRoot(
+  directory: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const read = context(signal);
+  return projectRoot(await canonicalDirectory(directory, read), read);
 }
 
 export async function loadCatalog(

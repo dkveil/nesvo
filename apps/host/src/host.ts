@@ -58,6 +58,7 @@ import { WorkflowRunStore } from './workflows/store';
 import {
   DefinitionError,
   inside as insideFolder,
+  findProjectRoot,
   loadCatalog,
   loadSpec,
 } from './workflows/definitions';
@@ -117,6 +118,12 @@ import { resumeSession } from './sessions/resume';
 import { MergedWorktreeCleanups } from './sessions/merged-cleanup';
 import { LessonError, LessonService } from './lessons/service';
 import { LessonStore } from './lessons/store';
+import { InboxRuleError, InboxRules } from './inbox-rules/service';
+import { InboxRuleFileError } from './inbox-rules/files';
+import { proposeInboxRule } from './inbox-rules/proposal';
+import { InboxItemStore } from './inbox-rules/store';
+import type { PreparedTurnRules } from './inbox-rules/turn-gate';
+import type { StepExecutor } from './workflows/runner';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -186,6 +193,11 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'workflow-assistant-send',
   'workflow-assistant-undo',
   'resolve-workflow-step',
+  'save-inbox-rule',
+  'delete-inbox-rule',
+  'set-inbox-rule-enabled',
+  'decide-inbox-item',
+  'save-inbox-settings',
 ]);
 const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
   'list-workflow-definitions',
@@ -210,6 +222,16 @@ const SERVED_WORKFLOW_METHODS = new Set<HostRequest['method']>([
   'assign-session-workflow',
 ]);
 const CONCURRENT_DEFINITION_WRITES = 4;
+const NO_INBOX_RULES: PreparedTurnRules = {
+  refusal: null,
+  warnings: [],
+  gate: {
+    askRules: [],
+    holds: () => false,
+    withoutHostPrompts: { refusal: null, warning: null },
+  },
+};
+const GOOD_CHECK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 const ADVERTISED_CAPABILITIES = hostCapabilitySchema.options;
 
 const worktreeFailure = (error: unknown, message: string) => ({
@@ -236,6 +258,29 @@ const definitionErrorCode = (error: unknown) => {
   if (error.kind === 'busy') return 'busy' as const;
   return 'unavailable' as const;
 };
+
+const inboxFailure = (error: unknown, message: string) => ({
+  code:
+    error instanceof InboxRuleError || error instanceof InboxRuleFileError
+      ? error.code
+      : error instanceof SessionError
+        ? error.code
+        : error instanceof DefinitionError
+          ? definitionErrorCode(error)
+          : ('unavailable' as const),
+  message:
+    error instanceof InboxRuleFileError && error.issues.length
+      ? `${error.message} ${error.issues
+          .map(issue => issue.message)
+          .slice(0, 5)
+          .join(' ')}`.slice(0, 2000)
+      : error instanceof InboxRuleError ||
+          error instanceof InboxRuleFileError ||
+          error instanceof SessionError ||
+          error instanceof DefinitionError
+        ? error.message
+        : message,
+});
 
 type HostTransport = {
   directory: string;
@@ -314,6 +359,8 @@ export const serveHost = ({
       let observeAssistant: (session: Session) => void = () => {};
       const control: { current?: SessionControl } = {};
       const controlStore = new SessionControlStore(database);
+      const mcpPolicy = new McpPolicy(database);
+      const inbox: { current?: InboxRules } = {};
       const emitSessionEvent = (
         message: DesktopEvent,
         session: Session | null,
@@ -354,7 +401,23 @@ export const serveHost = ({
                         }),
                 },
                 profiles,
-                mcp: new McpPolicy(database),
+                mcp: mcpPolicy,
+                inbox: {
+                  prepareTurn: (session, turn, signal) =>
+                    inbox.current
+                      ? inbox.current.prepareTurn(session, turn, signal)
+                      : Promise.resolve(NO_INBOX_RULES),
+                  approvalRequested: (session, approval, subject) =>
+                    inbox.current?.approvalRequested(
+                      session,
+                      approval,
+                      subject,
+                    ) ?? null,
+                  holdsAfterRun: session =>
+                    inbox.current?.holdsAfterRun(session) ?? false,
+                  heldReason: sessionId =>
+                    inbox.current?.heldReason(sessionId) ?? null,
+                },
                 checkCostBudgets: (session, now) => costs.check(session, now),
                 environment: session => {
                   const run = session.workflowRunId
@@ -463,6 +526,92 @@ export const serveHost = ({
         id => store.get(id),
         (id, run) => sessions.withPullRequestCheckout(id, run),
       );
+      const inboxRules = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const service = new InboxRules({
+            store: new InboxItemStore(database),
+            sessions: {
+              snapshot: id => sessions.snapshot(id),
+              list: () => sessions.list(),
+              respondApproval: input => sessions.respondApproval(input),
+              appendDecisionRecord: (id, record) =>
+                sessions.appendDecisionRecord(id, record),
+              queueOwnerMessage: (id, text) => {
+                sessions.queueOwnerMessage(id, text);
+              },
+              releaseInboxHold: id => sessions.releaseInboxHold(id),
+              holdQueue: id => sessions.holdQueueFor(id),
+            },
+            repositoryStatus: (provider, folder, signal) =>
+              mcpPolicy.repositoryStatus(provider, folder, signal),
+            projectRoot: (folder, signal) => findProjectRoot(folder, signal),
+            changes: (sessionId, signal) =>
+              sessionChanges.read({ sessionId }, signal),
+            group: groupId => groupStore.get(groupId),
+            workflowRun: runId => workflowRunStore.getRun(runId),
+            runCost: runId => {
+              const row = database
+                .prepare(
+                  'SELECT SUM(cost_usd) AS cost FROM cost_turns WHERE run_id = ?',
+                )
+                .get(runId);
+              return typeof row?.cost === 'number' ? row.cost : null;
+            },
+            actOnPullRequest: input => pullRequests.act(input),
+            ciStatus: async (session, signal) => {
+              const reference = session.pullRequest;
+              if (!reference) return null;
+              const observed = await pullRequests.workflowChecks(
+                `https://github.com/${reference.repository}/pull/${reference.number}`,
+                session.directory,
+                signal,
+              );
+              const failing = observed.checks.flatMap(check =>
+                check.status === 'completed' &&
+                check.conclusion &&
+                !GOOD_CHECK_CONCLUSIONS.has(check.conclusion)
+                  ? [check.name]
+                  : [],
+              );
+              const passed =
+                observed.checks.length > 0 &&
+                observed.checks.every(
+                  check =>
+                    check.status === 'completed' &&
+                    !!check.conclusion &&
+                    GOOD_CHECK_CONCLUSIONS.has(check.conclusion),
+                );
+              return {
+                headSha: observed.headSha,
+                status: failing.length
+                  ? ('red' as const)
+                  : passed
+                    ? ('green' as const)
+                    : ('pending' as const),
+                failing,
+              };
+            },
+            coordinator: (child, type, summary, detail) =>
+              sessionControl.decisionEvent(child, type, summary, detail),
+            emit,
+            signal: probes.controller.signal,
+          });
+          service.start();
+          return service;
+        }),
+        service => Effect.sync(() => service.close()),
+      );
+      inbox.current = inboxRules;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onStageRecords((session, records) =>
+            inboxRules.stageRecorded(session, records),
+          ),
+        ),
+        release => Effect.sync(() => release()),
+      );
+      const gated = (executor: StepExecutor) =>
+        inboxRules.wrapStepExecutor(executor);
       const mergedCleanups = new MergedWorktreeCleanups({
         dataDirectory: directory,
         snapshot: id => sessions.snapshot(id),
@@ -555,50 +704,57 @@ export const serveHost = ({
                 { origin: { kind: 'workflow', runId: run.id } },
               ).id,
             stepExecutors: {
-              command: commandExecutor,
-              probe: probeExecutor,
-              action: actionExecutor,
-              'wait-ci': createWaitCiExecutor({
-                read: (target, cwd, signal) =>
-                  pullRequests.workflowChecks(target, cwd, signal),
-                linked: id => store.get(id)?.pullRequest ?? null,
-              }),
-              human: createHumanExecutor({
-                latest: sessionId => reviewStore.latest(sessionId),
-              }),
-              agent: createAgentExecutor({
-                sessions,
-                usage,
-                spec: async (run, signal) => {
-                  const snapshot = snapshots.read(run.id);
-                  if (snapshot !== null) return snapshot;
-                  const loaded = await loadSpec(
-                    run.specPath,
-                    run.directory,
-                    signal,
-                  );
-                  return loaded.source.contentHash === run.specHash
-                    ? loaded.spec.body
-                    : null;
-                },
-                browser: (provider, directory, signal) =>
-                  sessions.browserUnavailable(
-                    { provider, directory, profileId: null },
-                    { unattended: true },
-                    signal,
-                  ),
-                lessons: (run, step) =>
-                  lessons.current?.blockFor({
-                    directories: [run.directory, run.projectRoot],
-                    provider: run.gateProvider === 'Codex' ? 'codex' : 'claude',
-                    role: 'workflow-agent',
-                    workflow: run.workflow.name,
-                    step,
-                    paths: [],
-                  }) ?? null,
-              }),
-              session: childExecutor,
-              'fan-out': childExecutor,
+              command: gated(commandExecutor),
+              probe: gated(probeExecutor),
+              action: gated(actionExecutor),
+              'wait-ci': gated(
+                createWaitCiExecutor({
+                  read: (target, cwd, signal) =>
+                    pullRequests.workflowChecks(target, cwd, signal),
+                  linked: id => store.get(id)?.pullRequest ?? null,
+                }),
+              ),
+              human: gated(
+                createHumanExecutor({
+                  latest: sessionId => reviewStore.latest(sessionId),
+                }),
+              ),
+              agent: gated(
+                createAgentExecutor({
+                  sessions,
+                  usage,
+                  spec: async (run, signal) => {
+                    const snapshot = snapshots.read(run.id);
+                    if (snapshot !== null) return snapshot;
+                    const loaded = await loadSpec(
+                      run.specPath,
+                      run.directory,
+                      signal,
+                    );
+                    return loaded.source.contentHash === run.specHash
+                      ? loaded.spec.body
+                      : null;
+                  },
+                  browser: (provider, directory, signal) =>
+                    sessions.browserUnavailable(
+                      { provider, directory, profileId: null },
+                      { unattended: true },
+                      signal,
+                    ),
+                  lessons: (run, step) =>
+                    lessons.current?.blockFor({
+                      directories: [run.directory, run.projectRoot],
+                      provider:
+                        run.gateProvider === 'Codex' ? 'codex' : 'claude',
+                      role: 'workflow-agent',
+                      workflow: run.workflow.name,
+                      step,
+                      paths: [],
+                    }) ?? null,
+                }),
+              ),
+              session: gated(childExecutor),
+              'fan-out': gated(childExecutor),
             },
             browserSteps: true,
             author: createSessionAuthor({
@@ -1075,6 +1231,107 @@ export const serveHost = ({
                 ...worktreeFailure(
                   error,
                   'The worktree recipe operation could not be completed.',
+                ),
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'list-inbox-rules' ||
+          request.method === 'validate-inbox-rule' ||
+          request.method === 'save-inbox-rule' ||
+          request.method === 'delete-inbox-rule' ||
+          request.method === 'set-inbox-rule-enabled' ||
+          request.method === 'propose-inbox-rule' ||
+          request.method === 'list-inbox-items' ||
+          request.method === 'decide-inbox-item' ||
+          request.method === 'read-inbox-settings' ||
+          request.method === 'save-inbox-settings'
+        ) {
+          const { id } = request;
+          const signal = probes.controller.signal;
+          const operation = async (): Promise<HostReply> => {
+            switch (request.method) {
+              case 'list-inbox-rules':
+                return {
+                  type: 'inbox-rules',
+                  id,
+                  catalog: await inboxRules.catalog(
+                    request.input.directory,
+                    signal,
+                  ),
+                };
+              case 'validate-inbox-rule':
+                return {
+                  type: 'inbox-rule-validation',
+                  id,
+                  validation: inboxRules.validate(request.input.text),
+                };
+              case 'save-inbox-rule':
+                return {
+                  type: 'inbox-rules',
+                  id,
+                  catalog: await inboxRules.save(request.input, signal),
+                };
+              case 'delete-inbox-rule':
+                return {
+                  type: 'inbox-rules',
+                  id,
+                  catalog: await inboxRules.remove(request.input, signal),
+                };
+              case 'set-inbox-rule-enabled':
+                return {
+                  type: 'inbox-rules',
+                  id,
+                  catalog: await inboxRules.setEnabled(request.input, signal),
+                };
+              case 'propose-inbox-rule':
+                return {
+                  type: 'inbox-rule-proposal',
+                  id,
+                  proposal: await proposeInboxRule(
+                    sessions,
+                    request.input,
+                    text => inboxRules.validate(text),
+                    signal,
+                  ),
+                };
+              case 'list-inbox-items':
+                return { type: 'inbox-items', id, items: inboxRules.items() };
+              case 'decide-inbox-item':
+                return {
+                  type: 'inbox-item',
+                  id,
+                  item: await inboxRules.decide(request.input),
+                };
+              case 'read-inbox-settings':
+                return {
+                  type: 'inbox-settings',
+                  id,
+                  settings: inboxRules.settings(),
+                };
+              case 'save-inbox-settings':
+                return {
+                  type: 'inbox-settings',
+                  id,
+                  settings: inboxRules.saveSettings(request.input),
+                };
+            }
+          };
+          const pending = operation()
+            .then(send)
+            .catch(error =>
+              send({
+                type: 'error',
+                id,
+                ...inboxFailure(
+                  error,
+                  'The Inbox rule operation could not be completed.',
                 ),
               }),
             )
@@ -2260,12 +2517,24 @@ export const serveHost = ({
                   id,
                   threads: await pullRequests.threads(request.input),
                 };
-              case 'act-on-pull-request':
+              case 'act-on-pull-request': {
+                const held = await inboxRules.beforePullRequestAction(
+                  request.input,
+                  probes.controller.signal,
+                );
                 return {
                   type: 'pull-request-action',
                   id,
-                  result: await pullRequests.act(request.input),
+                  result: held
+                    ? {
+                        actionId: request.input.actionId,
+                        action: request.input.action.action,
+                        detail: `Held by the Inbox rule "${held.rule.name}". Decide it in the Inbox.`,
+                        heldBy: held.rule.name,
+                      }
+                    : await pullRequests.act(request.input),
                 };
+              }
               case 'find-session-pull-request':
                 return {
                   type: 'pull-request-reference',
@@ -2753,12 +3022,21 @@ export const serveHost = ({
                 session: sessions.stop(request.input),
               };
             }
-            if (request.method === 'respond-approval')
+            if (request.method === 'respond-approval') {
+              const answered = sessions.respondApproval(request.input);
+              if (answered.parentId)
+                sessionControl.decisionEvent(
+                  answered,
+                  'decision-made',
+                  `The owner ${request.input.decision === 'accept' ? 'approved' : 'declined'} an operation of ${answered.title}.`,
+                  null,
+                );
               return {
                 type: 'session',
                 id: request.id,
-                session: sessions.respondApproval(request.input),
+                session: answered,
               };
+            }
             if (request.method === 'decide-delegation')
               return {
                 type: 'session',

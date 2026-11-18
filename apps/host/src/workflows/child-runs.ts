@@ -19,7 +19,7 @@ import type { SpecSnapshots } from './tasks';
 
 type ChildSessions = Pick<
   SessionService,
-  'createWithEffort' | 'folderBusyMessage'
+  'createWithEffort' | 'folderBusyMessage' | 'setDecisionRoute'
 >;
 
 const scrub = (text: string, length: number) =>
@@ -135,6 +135,8 @@ export class ChildRuns {
       signal,
       parent.id,
     );
+    if (run.workflow.decisions)
+      this.ports.sessions.setDecisionRoute(session.id, run.workflow.decisions);
     const now = execution.now().toISOString();
     const stopped = signal.aborted;
     const child: WorkflowRun = {

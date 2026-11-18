@@ -1,3 +1,4 @@
+import { installInboxTables } from './inbox-rules/store';
 import { hostDiagnostic } from './log-redaction';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -13,7 +14,7 @@ import { installWorktreeRecipeTables } from './worktree-recipes/store';
 import { installSessionControlTables } from './session-control/store';
 import { installLessonTables } from './lessons/store';
 
-const DATABASE_VERSION = 26;
+const DATABASE_VERSION = 27;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -410,6 +411,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
       installTranscriptIndex(database);
+      installInboxTables(database);
       database.exec(
         'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
       );

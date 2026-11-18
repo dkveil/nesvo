@@ -1,4 +1,5 @@
 ﻿import { createHmac, randomUUID } from 'node:crypto';
+import { ruleFileFingerprints } from '../inbox-rules/files';
 import { SessionError } from '../sessions/session-error';
 import { basename } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -200,6 +201,19 @@ export class McpPolicy {
           instruction.detail,
           instruction.config,
         );
+    const inboxRules = await ruleFileFingerprints(
+      folders.at(-1)!,
+      signal ?? new AbortController().signal,
+    );
+    if (inboxRules.unreadable)
+      projectIssues.push('A repository Inbox rule file cannot be read.');
+    for (const rule of inboxRules.files)
+      addDefinition(
+        `inbox-rule:${rule.name}`,
+        `Inbox rule ${rule.name}`,
+        `Inbox rule · ${rule.bytes} bytes`,
+        { inboxRule: rule.hash },
+      );
     for (const [index, layer] of layers.entries()) {
       for (const [scope, servers] of [
         ['project', layer.servers],
@@ -339,6 +353,17 @@ export class McpPolicy {
       policy,
       sources,
     };
+  }
+
+  async repositoryStatus(
+    provider: Provider,
+    directory: string,
+    signal?: AbortSignal,
+  ) {
+    return (
+      (await this.inspect(provider, directory, signal)).list.repository
+        ?.status ?? 'empty'
+    );
   }
 
   async list(

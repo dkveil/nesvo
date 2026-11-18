@@ -419,6 +419,24 @@ export class SessionControl {
     }
   }
 
+  decisionEvent(
+    child: Session,
+    type: 'decision-needed' | 'decision-made',
+    summary: string,
+    detail: string | null,
+  ): void {
+    const record = this.params.store.child(child.id);
+    if (!record || record.parentId !== child.parentId) return;
+    this.record(record.parentId, {
+      sessionId: child.id,
+      runId: child.runId,
+      type,
+      status: child.status,
+      summary,
+      detail,
+    });
+  }
+
   observe(session: Session): void {
     if (!session.pendingApprovals.length || !session.parentId) return;
     const fresh = session.pendingApprovals.filter(

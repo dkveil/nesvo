@@ -43,6 +43,7 @@
 !/apps/host/src/worktree-recipes/
 !/apps/host/src/session-control/
 !/apps/host/src/lessons/
+!/apps/host/src/inbox-rules/
 !/apps/host/tests/
 /apps/host/tests/*
 !/apps/host/tests/host.integration.test.mjs

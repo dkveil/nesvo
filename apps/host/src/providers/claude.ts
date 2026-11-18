@@ -1,3 +1,4 @@
+import type { ProviderToolSubject, TurnGate } from '../inbox-rules/turn-gate';
 import type { VerifyMcpTurn } from '../mcp/service';
 import { writeClaudeRunConfig } from '../mcp/claude-config-file';
 import { spawn } from 'node:child_process';
@@ -71,7 +72,7 @@ export type ClaudeEvent =
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
   | { type: 'tool-activity'; activity: ProviderActivity }
-  | { type: 'approval'; approval: Approval }
+  | { type: 'approval'; approval: Approval; subject?: ProviderToolSubject }
   | { type: 'approval-resolved'; id: string }
   | { type: 'plan'; text: string };
 
@@ -1151,6 +1152,7 @@ export function startClaude(options: {
   control?: SessionControlTurn;
   planTurn?: boolean;
   browser?: boolean;
+  gate?: TurnGate;
   onEvent: (event: ClaudeEvent) => void;
 }): {
   done: Promise<ClaudeResult>;
@@ -1275,6 +1277,16 @@ export function startClaude(options: {
         !options.assistantPrompt &&
         !options.outputSchema &&
         inspection.supportsHostPrompts === true;
+      const gate = options.gate;
+      if (gate?.askRules.length && !canAsk && !readOnly) {
+        if (gate.withoutHostPrompts.refusal)
+          return { status: 'failed', error: gate.withoutHostPrompts.refusal };
+      }
+      const promptWarning =
+        gate?.askRules.length && !canAsk && !readOnly
+          ? gate.withoutHostPrompts.warning
+          : null;
+      const askRules = !readOnly && canAsk ? (gate?.askRules ?? []) : [];
       const controlled = !!options.control && canAsk;
       const hostPrompts =
         canAsk &&
@@ -1299,7 +1311,11 @@ export function startClaude(options: {
               : integrations.projectSettings
                 ? {}
                 : { hooks: integrations.projectHooks }),
-            ...(readOnly ? { permissions: { ask: ['mcp__*'] } } : {}),
+            ...(readOnly
+              ? { permissions: { ask: ['mcp__*'] } }
+              : askRules.length
+                ? { permissions: { ask: askRules } }
+                : {}),
           },
         );
       const mcpArgs = runConfig
@@ -1313,7 +1329,18 @@ export function startClaude(options: {
             integrations?.projectSettings ? 'user,project,local' : 'user',
           ]
         : [
-            ...isolatedToolArgs,
+            ...(askRules.length
+              ? [
+                  '--strict-mcp-config',
+                  '--mcp-config',
+                  '{"mcpServers":{}}',
+                  '--settings',
+                  JSON.stringify({
+                    disableAllHooks: true,
+                    permissions: { ask: askRules },
+                  }),
+                ]
+              : isolatedToolArgs),
             '--setting-sources',
             options.instructionsOnly ? '' : 'user',
           ];
@@ -1437,6 +1464,17 @@ export function startClaude(options: {
           }),
         });
       if (options.control && !control) controlUnavailable();
+      if (promptWarning)
+        emit({
+          type: 'tool-activity',
+          activity: makeActivity({
+            id: 'inbox-rule-prompts-unavailable',
+            kind: 'tool',
+            title: 'Inbox rule cannot hold here',
+            status: 'failed',
+            detail: promptWarning,
+          }),
+        });
       const controlToolNames = options.control
         ? claudeControlToolNames(options.control.tools)
         : new Set<string>();
@@ -1564,6 +1602,18 @@ export function startClaude(options: {
           fail('Claude repeated a permission request.');
           return;
         }
+        const subject = {
+          tool: String(request.tool_name),
+          input: ask.input,
+        };
+        if (gate?.holds(subject)) {
+          approvals.set(ask.requestId, {
+            input: ask.input,
+            timer: setTimeout(() => undefined, 0),
+          });
+          emit({ type: 'approval', approval: ask.approval, subject });
+          return;
+        }
         const timer = setTimeout(() => {
           if (!approvals.has(ask.requestId)) return;
           try {
@@ -1577,7 +1627,7 @@ export function startClaude(options: {
           }
         }, approvalTimeout());
         approvals.set(ask.requestId, { input: ask.input, timer });
-        emit({ type: 'approval', approval: ask.approval });
+        emit({ type: 'approval', approval: ask.approval, subject });
       };
       const publish = () => {
         const text = [...messages.values()]
