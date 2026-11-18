@@ -71,9 +71,14 @@ export class LessonStore {
     this.setMetadata(PROPOSAL_KEY, lessonProposalStateSchema.parse(state));
   }
 
-  claimNumber(atLeast: number): number {
+  claimNumber(atLeast: number, maximum: number): number {
     const stored = Number(this.metadata(NUMBER_KEY) ?? 1);
-    const next = Math.max(Number.isInteger(stored) ? stored : 1, atLeast);
+    const next = Math.max(
+      Number.isSafeInteger(stored) && stored > 0 ? stored : 1,
+      atLeast,
+    );
+    if (next > maximum)
+      throw new Error('No lesson numbers are left on this computer.');
     this.setMetadata(NUMBER_KEY, next + 1);
     return next;
   }

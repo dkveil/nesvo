@@ -45,6 +45,7 @@ import type {
 } from '../workflows/assistant-changes';
 import { pathKey } from '../workflows/definitions';
 import {
+  RULE_ENTRY_MAX_NUMBER,
   globalWorkflowsRoot,
   highestRuleEntryNumber,
   projectRootOfWorkflowsRoot,
@@ -638,9 +639,12 @@ export class LessonService {
       return;
     }
     const target = this.targetFor(edited.project);
-    const known = this.allEntries().entries.map(stored => stored.entry);
+    const known = this.allEntries()
+      .entries.filter(stored => this.isTrusted(stored))
+      .map(stored => stored.entry);
     const number = this.ports.store.claimNumber(
       highestRuleEntryNumber(known) + 1,
+      RULE_ENTRY_MAX_NUMBER,
     );
     const id = `lesson-${String(number).padStart(4, '0')}`;
     const entry: RuleEntry = {
@@ -863,7 +867,9 @@ export class LessonService {
         rule: lesson.body.rule,
       })),
       ...this.allEntries()
-        .entries.filter(stored => stored.entry.status === 'active')
+        .entries.filter(
+          stored => stored.entry.status === 'active' && this.isTrusted(stored),
+        )
         .map(stored => ({
           id: stored.entry.id,
           description: stored.entry.description,

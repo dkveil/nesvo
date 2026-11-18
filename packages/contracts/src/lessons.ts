@@ -42,7 +42,7 @@ const absolutePathSchema = z
   .min(1)
   .max(lessonLimits.path)
   .regex(
-    /^(?:\/|[A-Za-z]:[\\/]|\\\\)[^\u0000-\u001f\u007f]*$/,
+    /^(?:\/(?!\/)|[A-Za-z]:[\\/])[^\u0000-\u001f\u007f]*$/,
     'Use an absolute project folder.',
   );
 

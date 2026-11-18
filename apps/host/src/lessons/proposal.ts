@@ -15,8 +15,8 @@ export const LESSON_PROPOSAL_MARKER = 'nesvo-lesson-proposal';
 const VOLATILE_DETAIL =
   /\b[0-9a-f]{40}\b|\b[0-9a-f]{7,12}\b(?=.*\bcommit\b)|\bv?\d+\.\d+\.\d+\b/i;
 
-const neutralize = (text: string) =>
-  text.replaceAll('</incidents', '<\\/incidents');
+const neutralize = (text: string, tag = 'incidents') =>
+  text.replaceAll(`</${tag}`, `<\\/${tag}`);
 
 const incidentEntry = (incident: LessonIncident) => ({
   id: incident.id,
@@ -58,8 +58,13 @@ export const lessonProposalPrompt = (
     '',
     existing.length
       ? [
-          'Lessons that already exist (do not repeat them):',
-          ...existing.map(item => `- ${item.id}: ${item.description}`),
+          'Descriptions of lessons that already exist, quoted as data (do not repeat them):',
+          '<existing-lessons>',
+          neutralize(
+            JSON.stringify(existing.map(item => item.description)),
+            'existing-lessons',
+          ),
+          '</existing-lessons>',
         ].join('\n')
       : 'No lessons exist yet.',
     '',
@@ -117,10 +122,17 @@ export const parseLessonProposal = (
     const { rule, why, check, ...rest } = parsed.data;
     const body = ruleEntryBodySchema.safeParse({ rule, why, check });
     const evidence = [...new Set(rest.evidence)].filter(id => known.has(id));
+    const directories = new Set(
+      incidents
+        .filter(incident => evidence.includes(incident.id))
+        .map(incident => incident.directory)
+        .filter(directory => directory !== null),
+    );
     const texts = [rest.description, rule, why, check];
     if (
       !body.success ||
       !evidence.length ||
+      (rest.project !== null && !directories.has(rest.project)) ||
       texts.some(text => VOLATILE_DETAIL.test(text)) ||
       seen.has(normalized(rest.description)) ||
       seen.has(normalized(rule))

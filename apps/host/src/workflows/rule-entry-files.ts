@@ -162,11 +162,12 @@ export const readRuleEntryFolder = (
   return { entries, issues };
 };
 
+export const RULE_ENTRY_MAX_NUMBER = 9_999_999;
+
 export const highestRuleEntryNumber = (
   entries: readonly Pick<RuleEntry, 'id'>[],
 ): number =>
-  entries.reduce(
-    (highest, entry) =>
-      Math.max(highest, Number(/-(\d+)$/.exec(entry.id)?.[1] ?? 0)),
-    0,
-  );
+  entries.reduce((highest, entry) => {
+    const number = Number(/-(\d+)$/.exec(entry.id)?.[1] ?? 0);
+    return number <= RULE_ENTRY_MAX_NUMBER ? Math.max(highest, number) : highest;
+  }, 0);

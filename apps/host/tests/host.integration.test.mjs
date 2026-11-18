@@ -27810,14 +27810,34 @@ test(
               description: 'Applies when editing anything. Write long bodies.',
               rule: 'x'.repeat(700),
             }),
+            candidate({
+              description: 'Applies when planning elsewhere. Write outside.',
+              rule: 'Write to another folder.',
+              project: '/elsewhere',
+            }),
+            candidate({
+              description: 'Applies when sharing. Write to a share.',
+              rule: 'Write to a network share.',
+              project: '\\\\server\\share',
+            }),
+            candidate({
+              description: 'Applies when planning in alpha. Keep plans small.',
+              rule: 'Keep each plan inside one module.',
+              project: '/projects/alpha',
+            }),
           ],
         },
         incidents,
         [],
       );
       assert.equal(admitted.valid, true);
-      assert.equal(admitted.lessons.length, 1);
-      assert.equal(admitted.dropped, 5);
+      assert.equal(admitted.lessons.length, 2);
+      assert.equal(
+        admitted.dropped,
+        7,
+        'A project must be the folder of a cited incident and never a network path',
+      );
+      assert.equal(admitted.lessons[1].project, '/projects/alpha');
       assert.deepEqual(admitted.lessons[0].evidence, [known]);
       assert.equal(
         modules.parseLessonProposal({ lessons: [candidate()] }, incidents, [
