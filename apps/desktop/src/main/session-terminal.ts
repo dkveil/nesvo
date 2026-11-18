@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
-  existsSync,
+  lstatSync,
   mkdtempSync,
   statSync,
   writeFileSync,
@@ -79,7 +79,7 @@ export const locateExecutable: Locate = name => {
   ].filter(Boolean);
   for (const folder of folders) {
     const candidate = join(folder, name);
-    if (existsSync(candidate)) return candidate;
+    if (lstatSync(candidate, { throwIfNoEntry: false })) return candidate;
   }
   return null;
 };
