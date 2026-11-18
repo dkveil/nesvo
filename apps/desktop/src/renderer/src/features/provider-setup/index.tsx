@@ -18,7 +18,7 @@ type ProviderSetupProps = {
   onCheckAgain: () => void;
 };
 
-type Step = { key: string; label: string; code: string };
+type Step = { label: string; code: string };
 
 function providerSummary(
   provider: Provider,
@@ -43,9 +43,9 @@ function providerSummary(
 
 function providerSteps(provider: Provider, { status }: ProviderState): Step[] {
   const { install, signIn } = providerCommands[provider];
-  const installStep = { key: 'install', label: 'Install', code: install };
-  const updateStep = { key: 'update', label: 'Update', code: install };
-  const signInStep = { key: 'sign-in', label: 'Sign in', code: signIn };
+  const installStep = { label: 'Install', code: install };
+  const updateStep = { label: 'Update', code: install };
+  const signInStep = { label: 'Sign in', code: signIn };
   switch (status?.status) {
     case 'ready':
       return [];
@@ -89,7 +89,7 @@ export function ProviderSetup({
           </Button>
         }
       />
-      <ul className="grid gap-3 sm:grid-cols-2">
+      <ul className="grid gap-3">
         {providers.map(provider => {
           const state = statuses[provider];
           const summary = providerSummary(provider, state);
@@ -121,14 +121,16 @@ export function ProviderSetup({
                     {state.status.detail}
                   </p>
                 )}
-              {steps.map(step => (
+              {steps.length > 0 && (
                 <CodeBlock
-                  key={step.key}
-                  label={step.label}
-                  code={step.code}
-                  wrap
+                  label={steps
+                    .map((step, index) =>
+                      index ? step.label.toLowerCase() : step.label,
+                    )
+                    .join(', then ')}
+                  code={steps.map(step => step.code).join('\n')}
                 />
-              ))}
+              )}
             </li>
           );
         })}
