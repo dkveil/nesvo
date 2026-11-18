@@ -662,6 +662,7 @@ test(
     assert.deepEqual(health.health, {
       status: 'ready',
       protocolVersion: 1,
+      contractRevision: 1,
       instanceId,
       capabilities: [
         'scheduled-jobs',

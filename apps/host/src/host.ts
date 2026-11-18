@@ -1,4 +1,5 @@
 import {
+  HOST_CONTRACT_REVISION,
   hostHealthSchema,
   hostCapabilitySchema,
   hostRequestSchema,
@@ -1612,6 +1613,7 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
                 status: 'ready',
                 instanceId: row?.value,
                 protocolVersion: 1,
+                contractRevision: HOST_CONTRACT_REVISION,
                 capabilities: [...ADVERTISED_CAPABILITIES],
                 ...(quarantinedSessionCount ? { quarantinedSessionCount } : {}),
               }),

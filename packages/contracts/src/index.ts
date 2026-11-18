@@ -245,6 +245,7 @@ export * from './costs';
 export * from './mobile';
 export * from './scheduled-jobs';
 export * from './appearance';
+export * from './diagnostics';
 export * from './workflows';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
@@ -643,6 +644,7 @@ export const hostHealthSchema = z.strictObject({
   status: z.literal('ready'),
   instanceId: z.uuid(),
   protocolVersion: z.literal(1),
+  contractRevision: z.number().int().min(1).max(1_000_000).optional(),
   capabilities: z.array(hostCapabilitySchema).max(16).optional(),
 });
 
