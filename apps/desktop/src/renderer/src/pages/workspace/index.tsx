@@ -168,6 +168,7 @@ import { PermissionSettings } from '@/widgets/settings/permission-settings';
 import { FullAccessDialog } from '@/features/session-mode/full-access-dialog';
 import { PermissionRules } from '@/features/session-mode/permission-rules';
 import { useClaudeAutonomy } from '@/features/session-mode/use-claude-autonomy';
+import { ClaudeTerminal } from '@/widgets/claude-terminal';
 import { SessionDetails } from '@/widgets/session-details';
 import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
 import {
@@ -413,7 +414,7 @@ export function Workspace({
     null,
   );
   const [panel, setPanel] = useState<
-    'diff' | 'files' | 'skills' | 'pull-request' | 'changes' | null
+    'diff' | 'files' | 'skills' | 'pull-request' | 'changes' | 'terminal' | null
   >(location.diff ? 'diff' : null);
   const [pullRequestsView, setPullRequestsView] = useState(false);
   const [pullRequestHandoff, setPullRequestHandoff] = useState<Session | null>(
@@ -4081,6 +4082,16 @@ ${text}`
                 <GitCompareArrows />
               </IconButton>
             )}
+          {!browsing && !creating && selected?.provider === 'Claude Code' && (
+            <IconButton
+              size={32}
+              label="Open Claude terminal"
+              pressed={panel === 'terminal'}
+              onClick={() => setPanel(panel === 'terminal' ? null : 'terminal')}
+            >
+              <SquareTerminal />
+            </IconButton>
+          )}
           {!browsing && !creating && selected && (
             <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
               <SheetTrigger asChild>
@@ -5206,6 +5217,17 @@ ${text}`
               onClose={closeDiff}
             />
           </Suspense>
+        )}
+      {panel === 'terminal' &&
+        !browsing &&
+        !creating &&
+        selected?.provider === 'Claude Code' && (
+          <ClaudeTerminal
+            key={selectedKey}
+            session={selected}
+            connected={store.hostReady(selectedHostId)}
+            onClose={closeDiff}
+          />
         )}
       {panel === 'changes' &&
         !browsing &&
