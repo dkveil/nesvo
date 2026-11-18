@@ -8,6 +8,9 @@ import {
   codexStatusSchema,
   colorSchemeSchema,
   appliedColorSchemeSchema,
+  attentionSessionSchema,
+  desktopAttentionSchema,
+  keepRunningInBackgroundSchema,
   respondApprovalSchema,
   createSessionSchema,
   readSessionWorktreeSchema,
@@ -434,6 +437,31 @@ const api: DesktopApi = {
   requestAttention: async () => {
     await ipcRenderer.invoke('nesvo:request-attention');
   },
+  setAttention: async attention => {
+    await ipcRenderer.invoke(
+      'nesvo:set-attention',
+      desktopAttentionSchema.parse(attention),
+    );
+  },
+  onOpenSession: listener => {
+    const receive = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = attentionSessionSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on('nesvo:open-session', receive);
+    return () => ipcRenderer.removeListener('nesvo:open-session', receive);
+  },
+  keepRunningInBackground: async () =>
+    keepRunningInBackgroundSchema.parse(
+      await ipcRenderer.invoke('nesvo:keep-running-in-background'),
+    ),
+  setKeepRunningInBackground: async enabled =>
+    keepRunningInBackgroundSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-keep-running-in-background',
+        keepRunningInBackgroundSchema.parse(enabled),
+      ),
+    ),
   reportError,
   mobileStatus: async () =>
     mobileGatewayStatusSchema.parse(

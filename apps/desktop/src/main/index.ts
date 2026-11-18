@@ -11,6 +11,12 @@ import {
   shell,
 } from 'electron';
 import appIcon from '../../build/icons/256x256.png?asset';
+import trayIcon from '../../build/icons/32x32.png?asset';
+import { AttentionIndicators } from './attention-indicators';
+import {
+  readKeepRunningInBackground,
+  saveKeepRunningInBackground,
+} from './background-store';
 import { startHost } from './host-client';
 import { initializeLogging, log, logsDirectory } from './logging';
 import {
@@ -34,6 +40,8 @@ import {
 } from './workflow-demo';
 import {
   colorSchemeSchema,
+  desktopAttentionSchema,
+  keepRunningInBackgroundSchema,
   createSessionSchema,
   readSessionWorktreeSchema,
   finishSessionWorktreeSchema,
@@ -263,6 +271,7 @@ void app.whenReady().then(async () => {
   const mobile = mobileAccess(app.getPath('userData'), computers);
   let window: BrowserWindow | null = null;
   let quitting = false;
+  let keepRunning = readKeepRunningInBackground(app.getPath('userData'));
   app.once('before-quit', () => {
     quitting = true;
   });
@@ -366,7 +375,13 @@ void app.whenReady().then(async () => {
       log.error(`The preload script failed: ${path}.`, error),
     );
     next.on('focus', () => next.flashFrame(false));
-    next.on('close', () => saveWindowState(userData, next));
+    next.on('close', event => {
+      saveWindowState(userData, next);
+      if (quitting || !keepRunning || smokeTest) return;
+      event.preventDefault();
+      next.hide();
+    });
+    next.on('show', () => indicators.refreshWindow());
     const applyColors = () => {
       if (next.isDestroyed()) return;
       next.setBackgroundColor(windowColors().background);
@@ -381,6 +396,24 @@ void app.whenReady().then(async () => {
     });
     loadRenderer(next);
   };
+  const showWindow = () => {
+    if (!window || window.isDestroyed()) createWindow();
+    if (!window || smokeTest) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    if (process.platform === 'darwin') app.focus({ steal: true });
+    window.focus();
+  };
+  const indicators = new AttentionIndicators({
+    iconPath: trayIcon,
+    window: () => window,
+    show: showWindow,
+    openSession: target => {
+      showWindow();
+      window?.webContents.send('nesvo:open-session', target);
+    },
+    quit: () => app.quit(),
+  });
   const authorize = (
     event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
   ) => {
@@ -466,6 +499,21 @@ void app.whenReady().then(async () => {
     window.show();
     if (process.platform === 'darwin') app.focus({ steal: true });
     window.focus();
+  });
+  handle('nesvo:set-attention', (event, attention: unknown) => {
+    authorize(event);
+    indicators.update(desktopAttentionSchema.parse(attention));
+  });
+  handle('nesvo:keep-running-in-background', event => {
+    authorize(event);
+    return keepRunning;
+  });
+  handle('nesvo:set-keep-running-in-background', (event, enabled: unknown) => {
+    authorize(event);
+    const next = keepRunningInBackgroundSchema.parse(enabled);
+    saveKeepRunningInBackground(app.getPath('userData'), next);
+    keepRunning = next;
+    return keepRunning;
   });
   handle('nesvo:request-attention', event => {
     authorize(event);
@@ -1246,6 +1294,7 @@ void app.whenReady().then(async () => {
     );
   });
   createWindow();
+  if (!smokeTest) indicators.start();
   void computers
     .initialize()
     .catch(error => log.error('Computers could not be initialized.', error));
@@ -1260,6 +1309,7 @@ void app.whenReady().then(async () => {
   });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else if (window && !window.isVisible()) showWindow();
   });
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin' || smokeTest) app.quit();
@@ -1276,6 +1326,7 @@ void app.whenReady().then(async () => {
       .catch(() => undefined)
       .then(() => computers.close())
       .finally(() => {
+        indicators.destroy();
         closed = true;
         app.quit();
       });

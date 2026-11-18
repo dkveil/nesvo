@@ -33,6 +33,7 @@ import {
 } from './costs';
 import type { MobileGatewayStatus, MobilePairing } from './mobile';
 import type { AppliedColorScheme, ColorScheme } from './appearance';
+import type { AttentionSession, DesktopAttention } from './attention';
 import {
   databaseBackupSchema,
   type AboutInfo,
@@ -318,6 +319,7 @@ export * from './costs';
 export * from './mobile';
 export * from './scheduled-jobs';
 export * from './appearance';
+export * from './attention';
 export * from './diagnostics';
 export * from './workflows';
 
@@ -1246,6 +1248,10 @@ export type DesktopApi = {
   backupDatabase: (hostId?: HostId) => Promise<DatabaseBackup>;
   focusWindow: () => Promise<void>;
   requestAttention: () => Promise<void>;
+  setAttention: (attention: DesktopAttention) => Promise<void>;
+  onOpenSession: (listener: (target: AttentionSession) => void) => () => void;
+  keepRunningInBackground: () => Promise<boolean>;
+  setKeepRunningInBackground: (enabled: boolean) => Promise<boolean>;
   reportError: (report: RendererErrorReport) => void;
   mobileStatus: () => Promise<MobileGatewayStatus>;
   enableMobile: () => Promise<MobileGatewayStatus>;

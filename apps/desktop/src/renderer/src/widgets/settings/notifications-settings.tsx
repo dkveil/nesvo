@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   readNotificationsEnabled,
   saveNotificationsEnabled,
@@ -9,6 +9,11 @@ import { StatusMessage, type StatusTone } from '@/shared/ui/status-message';
 import { Switch } from '@/shared/ui/switch';
 
 type TestResult = { tone: StatusTone; message: string } | null;
+
+const backgroundDescription =
+  document.documentElement.dataset.platform === 'mac'
+    ? 'Closing the window keeps Nesvo running so notifications and the Dock badge keep working. Quit from the Dock or with Command Q.'
+    : 'Closing the window keeps Nesvo running in the system tray so notifications and the attention count keep working. Quit from the tray menu.';
 
 const blockedMessage =
   'Notifications are blocked for Nesvo. Allow them in the system notification settings.';
@@ -21,6 +26,30 @@ async function notificationPermission() {
 export function NotificationsSettings() {
   const [enabled, setEnabled] = useState(readNotificationsEnabled);
   const [result, setResult] = useState<TestResult>(null);
+  const [background, setBackground] = useState<boolean | null>(null);
+  const [backgroundError, setBackgroundError] = useState('');
+  useEffect(() => {
+    let current = true;
+    window.nesvo.keepRunningInBackground().then(
+      value => {
+        if (current) setBackground(value);
+      },
+      () => {
+        if (current) setBackgroundError('The setting could not be read.');
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+  const changeBackground = (next: boolean) => {
+    setBackground(next);
+    setBackgroundError('');
+    window.nesvo.setKeepRunningInBackground(next).then(setBackground, () => {
+      setBackground(!next);
+      setBackgroundError('The setting could not be saved.');
+    });
+  };
   const change = (next: boolean) => {
     setEnabled(next);
     saveNotificationsEnabled(next);
@@ -72,6 +101,27 @@ export function NotificationsSettings() {
         >
           Send test notification
         </Button>
+      </SettingsRow>
+      <SettingsRow
+        title={
+          <label htmlFor="settings-background">
+            Keep running in the background
+          </label>
+        }
+        description={
+          backgroundError ? (
+            <StatusMessage tone="error">{backgroundError}</StatusMessage>
+          ) : (
+            backgroundDescription
+          )
+        }
+      >
+        <Switch
+          id="settings-background"
+          checked={background ?? false}
+          disabled={background === null}
+          onCheckedChange={changeBackground}
+        />
       </SettingsRow>
     </SettingsSection>
   );

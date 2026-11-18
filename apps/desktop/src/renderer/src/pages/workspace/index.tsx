@@ -174,6 +174,7 @@ import {
 import { PullRequestsView } from '@/widgets/pull-requests';
 import { readSeen, writeSeen } from './seen-store';
 import { useAttention } from './use-attention';
+import { useBackgroundAttention } from './use-background-attention';
 import { useProviderUsage } from './use-provider-usage';
 import { readWorkspaceLocation, saveWorkspaceLocation } from './location';
 import { readSidebarOpen, saveSidebarOpen } from './sidebar-preference';
@@ -1016,6 +1017,9 @@ export function Workspace() {
   const filterKeys = useMemo(
     () => sessionFilterKeys(store.sessions, store.reviews, store.workflowRuns),
     [store.sessions, store.reviews, store.workflowRuns],
+  );
+  useBackgroundAttention(store.sessions, filterKeys['needs-me'], key =>
+    select(key),
   );
   const panelTrigger = () =>
     cardOpen
