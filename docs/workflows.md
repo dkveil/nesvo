@@ -156,7 +156,7 @@ Warnings are saved and shown next to the step:
 - the `layout` names a step that is not in the workflow (the editor drops it on the next save);
 - an `external` step, or a body that mentions `git push`, `gh pr`, `curl` or `wget`, that some path reaches without a human step first;
 - the workflow has no gate at all, or a `fix` step has no retries;
-- two agent steps of one phase could start together, while the computer runs one session at a time.
+- two agent steps of one phase could start together, while a run drives one author session at a time.
 
 ## Phases and author turns
 
@@ -172,14 +172,14 @@ The run passes when the last phase passes. A `human` gate binds to the latest sa
 ## How a run moves through a graph
 
 - **Ready steps.** A step starts when every incoming edge has fired and every step that precedes it through any edges has finished. A step with no incoming edge starts with its phase.
-- **Parallel.** Up to four non-agent checks and actions can run at once. `agent` and `human` steps run one at a time, because the computer runs one session at a time and a gate binds to one result. A human gate and an action never run together.
+- **Parallel.** Up to four non-agent checks and actions can run at once. `agent` and `human` steps run one at a time, because a run drives one author session and a gate binds to one result. A human gate and an action never run together.
 - **Joins.** A step with several incoming edges is an and-join: it starts only when all of them have fired.
 - **Failure branches.** An edge `on failure` fires when its source fails. Use it for work that should happen before the failure takes effect, such as collecting logs. It never turns the failure into a pass: when the phase settles, the failed gate still applies its `on_fail`.
 - **Not reached.** A step cut off because a step it needed failed, or passed when only an `on failure` edge led to it, is recorded as Not reached with the reason, for example `Not reached: "unit" failed`. Its own outgoing edges then die in turn.
 - **Operator skip.** Skipping a step counts as success for routing, and the steps before it still have to finish.
 - **Outputs.** A step receives the outputs of the steps that precede it in its phase graph and of every step in earlier phases as `NESVO_OUTPUT_<STEP>_<KEY>` variables. Steps running in parallel never see each other, so results do not depend on timing. Treat outputs from agent steps as untrusted text.
 - **Stop and restart.** Stop ends every running step. When the computer restarts, a running `command` becomes interrupted and a running `action` becomes uncertain, because its effect may have happened: you choose **It already ran** or **Run it again**. Resume gives interrupted and failed steps a new attempt and lets Not reached steps be re-evaluated. A run never repeats work by itself.
-- **One task per project** runs at a time, and a workflow turn starts only while no other session works on the computer.
+- **One task per project** runs at a time. Tasks in different projects or worktrees run together; a workflow turn waits only while another session or a folder operation holds the folder of its session.
 
 ## The graph editor
 
@@ -207,13 +207,13 @@ The conversation is an ordinary visible, read-only session: it appears in the si
 
 What it can do: read your question, the open document, the selected steps, a summary of the catalog and the automations of the folder, and create, change or delete steps, workflows and automations while it answers. Each change is saved as soon as the assistant writes it and appears at once: a new card on the canvas (marked **Assistant**), a new row in the Workflows list and a new automation in the Automations list (marked **Added by assistant**), until you select it. Every change is also listed under the turn as a card with **Undo**; the host keeps the history of the conversation's changes and the dock loads it when a conversation opens, so a change can be taken back later too. Undo restores the exact previous file or automation, or removes what the assistant created. An automation created by the assistant starts **disabled** and shows an **Enable** action in the list; the assistant never starts work on its own.
 
-What it cannot do: change project code, run commands or enable an automation. A workflow it saves cannot reach an external action, such as a `git push`, without a human step before it; that is a refusal, not a warning. Every change goes through the same checks as a save from the editor: when a file changed since the assistant read it, when the result is invalid or when a step is still used by a workflow, the change is refused, nothing is written and the reason shows under the turn. Undo is refused the same way when the file or automation changed after the assistant's change, so newer content is never overwritten. The session itself cannot write: Claude Code has only Read, Glob and Grep there, and Codex runs in its read-only sandbox; the host applies the changes the assistant describes. While another session works on the computer, sending answers that the computer is busy and creates nothing.
+What it cannot do: change project code, run commands or enable an automation. A workflow it saves cannot reach an external action, such as a `git push`, without a human step before it; that is a refusal, not a warning. Every change goes through the same checks as a save from the editor: when a file changed since the assistant read it, when the result is invalid or when a step is still used by a workflow, the change is refused, nothing is written and the reason shows under the turn. Undo is refused the same way when the file or automation changed after the assistant's change, so newer content is never overwritten. The session itself cannot write: Claude Code has only Read, Glob and Grep there, and Codex runs in its read-only sandbox; the host applies the changes the assistant describes. While another session writes in the folder, sending answers that the folder is in use and creates nothing.
 
 Changing the provider or model starts a new conversation. The assistant sends the open workflow only while the editor has no unsaved edits. Quoted files and catalog entries are data for the assistant, not instructions.
 
 ## Automations as triggers
 
-A workflow file has no trigger. A task starts from the new-thread screen (the Workflow chip) or from an automation: a scheduled job with a workflow and a spec instead of a prompt. The job uses its provider and model in read-only mode, a worktree when the folder is a repository, and the other provider as the gate. The usual limits still apply before the start: the provider's limit gate, the busy refusal and the operator-idle rule. The job's run records the session and the workflow run and finishes when the workflow run settles; a missing or invalid workflow fails the job run with a catalog reason. The Start node of the editor lists these automations and adds new ones.
+A workflow file has no trigger. A task starts from the new-thread screen (the Workflow chip) or from an automation: a scheduled job with a workflow and a spec instead of a prompt. The job uses its provider and model in read-only mode, a worktree when the folder is a repository, and the other provider as the gate. The usual limits still apply before the start: the provider's limit gate, one task per project and the operator-idle rule. Other sessions on the computer do not hold the job back. The job's run records the session and the workflow run and finishes when the workflow run settles; a missing or invalid workflow fails the job run with a catalog reason. The Start node of the editor lists these automations and adds new ones.
 
 ### Watching command output
 
