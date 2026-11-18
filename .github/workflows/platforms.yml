@@ -1,14 +1,21 @@
 name: Native desktop checks
 on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '23 2 * * *'
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: native-desktop-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   desktop:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(github.event_name == 'push' && '["windows-latest"]' || github.event_name == 'schedule' && '["macos-latest"]' || '["windows-latest", "macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -23,17 +30,10 @@ jobs:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bun run check
+        if: github.event_name == 'workflow_dispatch'
       - run: bun run package:dir
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Check unpackaged desktop
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            xvfb-run -a bun run smoke:desktop
-          else
-            bun run smoke:desktop
-          fi
       - name: Check native package
         shell: bash
         run: |
@@ -49,6 +49,15 @@ jobs:
             xvfb-run -a bun run smoke:desktop:package
           else
             bun run smoke:desktop:package
+          fi
+      - name: Check unpackaged desktop
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a bun run smoke:desktop
+          else
+            bun run smoke:desktop
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: github.event_name == 'workflow_dispatch'
