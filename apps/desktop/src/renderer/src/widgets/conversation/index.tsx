@@ -29,18 +29,17 @@ import {
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { CodeBlock } from '@/shared/ui/code-block';
-import {
-  Composer,
-  ComposerInput,
-  ComposerSend,
-  ComposerToolbar,
-} from '@/shared/ui/composer';
+import { Composer, ComposerSend, ComposerToolbar } from '@/shared/ui/composer';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+} from '@/shared/ui/composer-editor';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
 import { SelectedSkillChip } from '@/features/select-skill/selected-skill-chip';
 import { ModelPicker } from '@/features/new-thread/model-picker';
@@ -55,9 +54,11 @@ import { entityKey } from '@/shared/lib/host-key';
 import { AttachButton } from '@/features/attach-images/attach-button';
 import { AttachmentPreviewProvider } from '@/features/attach-images/attachment-preview';
 import { AttachmentTray } from '@/features/attach-images/attachment-tray';
+import { composerTokens } from '@/features/attach-images/composer-tokens';
 import type { ImageSupport } from '@/features/attach-images/image-support';
 import {
   imageFiles,
+  type AttachmentPlacement,
   type ComposerAttachment,
 } from '@/features/attach-images/use-composer-attachments';
 import { MessageBody } from './message-body';
@@ -76,7 +77,8 @@ export type ConversationAttachments = {
   notice: string;
   support: ImageSupport;
   api: Pick<DesktopApi, 'readAttachment'>;
-  onAdd: (files: File[]) => void;
+  onAdd: (files: File[], offset: number | null) => void;
+  onPlace: (placement: AttachmentPlacement) => void;
   onRemove: (localId: string) => void;
   onNotice: (notice: string) => void;
 };
@@ -190,7 +192,7 @@ export function Conversation({
   attachments,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
-  const messageInput = useRef<HTMLTextAreaElement>(null);
+  const messageInput = useRef<ComposerEditorHandle>(null);
   const latestDraft = useRef(draft);
   useEffect(() => {
     latestDraft.current = draft;
@@ -259,8 +261,12 @@ export function Conversation({
   );
   const attachmentsReady = !uploading && !attachmentFailed;
   const canSubmit = (queueing ? canQueue : canSend) && attachmentsReady;
-  const addImages = (files: File[]) => {
-    if (attachments.support.enabled) attachments.onAdd(files);
+  const addImages = (files: File[], offset?: number | null) => {
+    if (attachments.support.enabled)
+      attachments.onAdd(
+        files,
+        offset ?? messageInput.current?.selection().start ?? draft.length,
+      );
     else
       attachments.onNotice(
         `Images cannot be attached in this session. ${attachments.support.reason}`,
@@ -445,7 +451,20 @@ export function Conversation({
       draft={draft}
       onSelect={skill => {
         onSkillChange(skill);
-        if (draft.startsWith('/')) onDraft(draft.replace(/^\/[^\s]*\s?/, ''));
+        if (!draft.startsWith('/')) return;
+        const next = draft.replace(/^\/[^\s]*\s?/, '');
+        const removed = draft.length - next.length;
+        onDraft(next);
+        attachments.onPlace({
+          offsets: Object.fromEntries(
+            attachments.items.flatMap(item =>
+              item.offset == null
+                ? []
+                : [[item.localId, Math.max(0, item.offset - removed)]],
+            ),
+          ),
+          removed: [],
+        });
       }}
       onFocusMessage={() => messageInput.current?.focus()}
     >
@@ -480,7 +499,11 @@ export function Conversation({
             setDragging(false);
             const files = [...event.dataTransfer.files];
             const images = imageFiles(files);
-            if (images.length) addImages(files);
+            if (images.length)
+              addImages(
+                files,
+                messageInput.current?.offsetAt(event.clientX, event.clientY),
+              );
             else if (files.length)
               attachments.onNotice(
                 'Only PNG, JPEG, WebP and GIF images can be attached.',
@@ -503,9 +526,6 @@ export function Conversation({
             });
           }}
         >
-          <label htmlFor="message-input" className="sr-only">
-            Message
-          </label>
           {anchor(
             <Composer
               className={cn(
@@ -525,14 +545,19 @@ export function Conversation({
                   onRemove={() => onSkillChange(null)}
                 />
               )}
-              <ComposerInput
+              <ComposerEditor
                 ref={messageInput}
                 id="message-input"
+                aria-label="Message"
                 {...inputAria}
                 onKeyDown={event => {
                   onKeyDown(event);
                   if (event.defaultPrevented) return;
                   const target = event.currentTarget;
+                  const selection = messageInput.current?.selection() ?? {
+                    start: draft.length,
+                    end: draft.length,
+                  };
                   if (
                     event.key === 'Tab' &&
                     event.shiftKey &&
@@ -556,7 +581,8 @@ export function Conversation({
                     !event.nativeEvent.isComposing
                   ) {
                     event.preventDefault();
-                    if (!running || canQueue) target.form?.requestSubmit();
+                    if (!running || canQueue)
+                      target.closest('form')?.requestSubmit();
                     return;
                   }
                   if (
@@ -565,17 +591,12 @@ export function Conversation({
                     event.ctrlKey ||
                     event.metaKey ||
                     event.nativeEvent.isComposing ||
-                    target.selectionStart !== target.selectionEnd
+                    selection.start !== selection.end
                   )
                     return;
                   if (draft && draft !== recall?.text) return;
                   if (event.key === 'ArrowUp') {
-                    if (
-                      target.value
-                        .slice(0, target.selectionStart)
-                        .includes('\n')
-                    )
-                      return;
+                    if (draft.slice(0, selection.start).includes('\n')) return;
                     const index = recall
                       ? Math.max(0, recall.index - 1)
                       : operatorBodies.length - 1;
@@ -585,8 +606,7 @@ export function Conversation({
                     setRecall({ sessionId: session.id, index, text });
                     onDraft(text);
                   } else if (event.key === 'ArrowDown' && recall) {
-                    if (target.value.slice(target.selectionEnd).includes('\n'))
-                      return;
+                    if (draft.slice(selection.end).includes('\n')) return;
                     event.preventDefault();
                     const index = recall.index + 1;
                     const text = operatorBodies[index];
@@ -600,17 +620,20 @@ export function Conversation({
                   }
                 }}
                 onPaste={event => {
-                  const target = event.currentTarget;
                   const pasted = event.clipboardData.getData('text');
                   const images = imageFiles(event.clipboardData.files);
+                  const selection = messageInput.current?.selection() ?? {
+                    start: draft.length,
+                    end: draft.length,
+                  };
                   if (images.length) {
-                    addImages(images);
+                    addImages(images, selection.start);
                     if (!pasted) {
                       event.preventDefault();
                       return;
                     }
                   }
-                  const selected = target.selectionEnd - target.selectionStart;
+                  const selected = selection.end - selection.start;
                   if (
                     draft.length - selected + pasted.length <=
                     MESSAGE_MAX_LENGTH
@@ -626,9 +649,11 @@ export function Conversation({
                 onInput={onInput}
                 placeholder="Ask anything. / for skills"
                 value={draft}
-                onChange={event => {
+                tokens={composerTokens(attachments.items)}
+                onChange={({ value, offsets, removed }) => {
                   setRecall(null);
-                  onDraft(event.target.value);
+                  onDraft(value);
+                  attachments.onPlace({ offsets, removed });
                 }}
                 maxLength={MESSAGE_MAX_LENGTH}
               />

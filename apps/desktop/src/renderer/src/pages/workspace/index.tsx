@@ -177,6 +177,10 @@ import { readDrafts, writeDrafts } from './draft-store';
 import { SessionWorkflowChip } from '@/features/session-workflow';
 import { imageSupport } from '@/features/attach-images/image-support';
 import { useComposerAttachments } from '@/features/attach-images/use-composer-attachments';
+import {
+  placeInText,
+  withoutPlacement,
+} from '@/features/attach-images/placement';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
@@ -774,6 +778,10 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('conversation-compaction');
+  const supportsInlineAttachments = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('inline-attachments');
   const supportsModes = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -1340,7 +1348,9 @@ export function Workspace() {
     attachments: readonly MessageAttachment[] = [],
   ) => {
     const sessionId = target.id;
-    const attachmentIds = attachments.map(item => item.id).join();
+    const attachmentIds = attachments
+      .map(item => `${item.id}@${item.offset ?? ''}`)
+      .join();
     const sessionKey = entityKey(target);
     const hostId = target.hostId;
     const skillId = skill?.id;
@@ -1384,7 +1394,13 @@ export function Workspace() {
           ? { model: selection.model, effort: selection.effort }
           : {}),
         ...(mode ? { mode } : {}),
-        ...(attachments.length ? { attachments: [...attachments] } : {}),
+        ...(attachments.length
+          ? {
+              attachments: supportsInlineAttachments(hostId)
+                ? [...attachments]
+                : attachments.map(withoutPlacement),
+            }
+          : {}),
       });
       store.merge([session]);
       acknowledge();
@@ -1424,10 +1440,15 @@ export function Workspace() {
     )
       return;
     const sessionKey = entityKey(selected);
-    const text = typed?.text ?? drafts[sessionKey]?.trim();
+    const draft = drafts[sessionKey] ?? '';
+    const text = typed?.text ?? draft.trim();
     if (!text || text.length > 32000) return;
     if (composerAttachments.pending(sessionKey)) return;
-    const attachments = composerAttachments.ready(sessionKey);
+    const attachments = placeInText(
+      composerAttachments.ready(sessionKey),
+      Math.max(0, draft.indexOf(text)),
+      text.length,
+    );
     const version = draftVersions.current[sessionKey] ?? 0;
     const skill = typed?.skill ?? selectedSkills[sessionKey] ?? null;
     const selection = modelSelections[sessionKey] ?? null;
@@ -4040,12 +4061,15 @@ ${text}`
                     capabilities: selectedComputer?.capabilities ?? [],
                   }),
                   api: desktopApi(selectedHostId),
-                  onAdd: files =>
+                  onAdd: (files, offset) =>
                     composerAttachments.add(
                       selectedKey,
                       desktopApi(selectedHostId),
                       files,
+                      offset,
                     ),
+                  onPlace: placement =>
+                    composerAttachments.place(selectedKey, placement),
                   onRemove: localId =>
                     composerAttachments.remove(selectedKey, localId),
                   onNotice: notice =>

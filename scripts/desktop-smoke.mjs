@@ -1095,7 +1095,7 @@ try {
   assert.equal(
     await page
       .getByRole('textbox', { name: 'Message', exact: true })
-      .inputValue(),
+      .textContent(),
     'First session draft',
   );
   await page.reload();
@@ -1407,7 +1407,7 @@ try {
   await messageEditor.press('Escape');
   await skillPicker.waitFor({ state: 'hidden' });
   assert.equal(
-    await messageEditor.inputValue(),
+    await messageEditor.textContent(),
     '/fixture-claude-instructions',
   );
   await messageEditor.fill('/');

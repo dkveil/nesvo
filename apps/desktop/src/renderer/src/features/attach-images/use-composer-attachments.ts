@@ -16,6 +16,12 @@ export type ComposerAttachment = {
   status: 'uploading' | 'ready' | 'failed';
   error: string;
   attachment: MessageAttachment | null;
+  offset: number | null;
+};
+
+export type AttachmentPlacement = {
+  offsets: Record<string, number>;
+  removed: readonly string[];
 };
 
 type AttachmentMap = Record<string, ComposerAttachment[]>;
@@ -74,7 +80,12 @@ export const useComposerAttachments = () => {
     [],
   );
   const add = useCallback(
-    (key: string, api: Pick<DesktopApi, 'stageAttachment'>, files: File[]) => {
+    (
+      key: string,
+      api: Pick<DesktopApi, 'stageAttachment'>,
+      files: File[],
+      offset: number | null = null,
+    ) => {
       const current = itemsRef.current[key] ?? [];
       const problems: string[] = [];
       const accepted: File[] = [];
@@ -103,6 +114,7 @@ export const useComposerAttachments = () => {
           status: 'uploading' as const,
           error: '',
           attachment: null,
+          offset,
         },
       }));
       if (!added.length) return;
@@ -144,6 +156,31 @@ export const useComposerAttachments = () => {
     },
     [change, notify],
   );
+  const place = useCallback(
+    (key: string, { offsets, removed }: AttachmentPlacement) => {
+      const current = itemsRef.current[key] ?? [];
+      const moved = current.some(
+        item =>
+          Object.hasOwn(offsets, item.localId) &&
+          offsets[item.localId] !== item.offset,
+      );
+      if (!moved && !removed.length) return;
+      for (const item of itemsRef.current[key] ?? [])
+        if (removed.includes(item.localId) && item.previewUrl)
+          URL.revokeObjectURL(item.previewUrl);
+      change(key, list =>
+        list
+          .filter(item => !removed.includes(item.localId))
+          .map(item =>
+            Object.hasOwn(offsets, item.localId)
+              ? { ...item, offset: offsets[item.localId]! }
+              : item,
+          ),
+      );
+      if (removed.length) notify(key, '');
+    },
+    [change, notify],
+  );
   const clear = useCallback(
     (key: string, sent: readonly MessageAttachment[]) => {
       const ids = new Set(sent.map(attachment => attachment.id));
@@ -166,7 +203,7 @@ export const useComposerAttachments = () => {
             attachment =>
               !list.some(item => item.attachment?.id === attachment.id),
           )
-          .map(attachment => ({
+          .map(({ offset, ...attachment }) => ({
             localId: crypto.randomUUID(),
             name: attachment.name,
             size: attachment.size,
@@ -174,6 +211,7 @@ export const useComposerAttachments = () => {
             status: 'ready' as const,
             error: '',
             attachment,
+            offset: offset ?? null,
           })),
       ]),
     [change],
@@ -182,7 +220,13 @@ export const useComposerAttachments = () => {
     (items[key] ?? []).some(item => item.status !== 'ready');
   const ready = (key: string) =>
     (items[key] ?? []).flatMap(item =>
-      item.status === 'ready' && item.attachment ? [item.attachment] : [],
+      item.status === 'ready' && item.attachment
+        ? [
+            item.offset == null
+              ? item.attachment
+              : { ...item.attachment, offset: item.offset },
+          ]
+        : [],
     );
   return {
     items: (key: string) => items[key] ?? [],
@@ -190,6 +234,7 @@ export const useComposerAttachments = () => {
     notify,
     add,
     remove,
+    place,
     clear,
     restore,
     pending,

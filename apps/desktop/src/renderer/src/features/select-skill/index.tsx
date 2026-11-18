@@ -209,7 +209,9 @@ export function SelectSkill({
     }
     if (
       !(event.target instanceof Element) ||
-      !event.target.closest('input, textarea, [role="listbox"]')
+      !event.target.closest(
+        'input, textarea, [role="textbox"], [role="listbox"]',
+      )
     )
       return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
