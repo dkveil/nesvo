@@ -19,6 +19,7 @@ import { Action, colors, Notice, styles } from '@/components/ui';
 import { TurnActivity } from '@/components/turn-activity';
 import { SubsessionBar } from '@/components/subsession-bar';
 import { AgentsSheet } from '@/components/agents-sheet';
+import { SessionServers } from '@/components/session-servers';
 import { useMobileWorkspace } from '@/hooks/mobile-workspace';
 
 export default function ConversationScreen() {
@@ -85,6 +86,13 @@ export default function ConversationScreen() {
     `${key}/${session.runId}/${requestId}`;
   const footer = (
     <View style={{ gap: 16, paddingBottom: 12 }}>
+      <SessionServers
+        key={key}
+        connection={store.selected}
+        session={session}
+        childrenSessions={children}
+        watching={ready && store.foreground}
+      />
       {session.pendingApprovals.map(approval => (
         <View
           key={`${session.runId}/${approval.id}`}

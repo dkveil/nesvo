@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   mobileSnapshotSchema,
   mobilePairResponseSchema,
+  mobileRunningAppsResponseSchema,
   mobileCommandResponseSchema,
   mobileServerMessageSchema,
   type MobileCommand,
@@ -195,6 +196,34 @@ export async function command(connection: Connection, value: MobileCommand) {
       'The command response did not match its computer. Refresh the conversation.',
     );
   return result.session;
+}
+
+export async function listRunningApps(
+  connection: Connection,
+  hostId: string,
+  sessionId: string,
+  signal: AbortSignal,
+) {
+  const params = new URLSearchParams({ hostId, sessionId });
+  const result = mobileRunningAppsResponseSchema.parse(
+    await request(
+      connection.baseUrl,
+      '/v1/running-apps?' + params.toString(),
+      connection.token,
+      undefined,
+      signal,
+    ),
+  );
+  if (
+    result.serverId !== connection.serverId ||
+    result.hostId !== hostId ||
+    result.sessionId !== sessionId
+  )
+    throw new GatewayError(
+      'server-mismatch',
+      'The response did not match this session.',
+    );
+  return result.list.apps;
 }
 
 export function openEvents(

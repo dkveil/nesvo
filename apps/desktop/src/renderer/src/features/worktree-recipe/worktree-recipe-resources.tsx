@@ -27,7 +27,7 @@ function PortValue({
           {app.name || `Process ${app.pid}`} listening
         </span>
       )}
-      {app && local && (
+      {app?.web && local && (
         <Button
           type="button"
           size="xs"

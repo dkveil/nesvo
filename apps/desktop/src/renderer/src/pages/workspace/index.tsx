@@ -130,7 +130,10 @@ import type { SelectedSkill } from '@/features/select-skill';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
-import { RunningAppsChip } from '@/features/running-apps/running-apps-chip';
+import {
+  RunningAppsChip,
+  RunningAppsSection,
+} from '@/features/running-apps/running-apps-chip';
 import { useRunningApps } from '@/features/running-apps/use-running-apps';
 import { useRunningAppsEnabled } from '@/features/running-apps/use-running-apps-enabled';
 import { useGitBranch } from '@/features/git-branch/use-git-branch';
@@ -3135,7 +3138,27 @@ ${text}`
     return session ? sessionCommands(session) : [];
   };
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
-  const runningApps = useRunningApps(store.computers, runningAppsEnabled);
+  const runningApps = useRunningApps(
+    store.computers,
+    store.sessions,
+    runningAppsEnabled &&
+      ((sidebarOpen && viewportWidth >= 768) || navigationOpen),
+    runningAppsEnabled && !browsing && !creating ? (selected ?? null) : null,
+  );
+  const selectedApps = selected
+    ? (runningApps.get(entityKey(selected)) ?? [])
+    : [];
+  const portOwner = (id: string) => {
+    const session = hostSessions.find(item => item.id === id);
+    if (!session) return 'Session';
+    const role =
+      session.role === 'worker'
+        ? 'Worker'
+        : session.parentId
+          ? 'Child session'
+          : 'Session';
+    return role + ' · ' + session.title;
+  };
   const sidebarProps = {
     runningApps,
     profilesFor,
@@ -3774,8 +3797,8 @@ ${text}`
                     <BranchChip branch={branch} worktree={headerWorktree} />
                     {sessionPanels && selected && (
                       <RunningAppsChip
-                        apps={runningApps.get(entityKey(selected)) ?? []}
-                        computerName={selectedComputer?.name ?? 'Local'}
+                        apps={selectedApps}
+                        owner={portOwner}
                         local={selected.hostId === 'local'}
                       />
                     )}
@@ -4051,10 +4074,17 @@ ${text}`
                 </SheetHeader>
                 <ScrollArea className="min-h-0 flex-1">
                   <SessionDetails session={selected}>
+                    <RunningAppsSection
+                      apps={selectedApps}
+                      owner={portOwner}
+                      local={selected.hostId === 'local'}
+                    />
                     {sessionRecipe.run && (
                       <WorktreeRecipeResources
                         run={sessionRecipe.run}
-                        runningApps={runningApps.get(entityKey(selected)) ?? []}
+                        runningApps={selectedApps.filter(
+                          app => app.sessionId === selected.id,
+                        )}
                         local={selectedComputer?.kind === 'local'}
                       />
                     )}

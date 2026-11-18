@@ -345,7 +345,9 @@ export function SessionSidebar({
           ? branch.sha
           : null;
     const machine = computer?.name ?? session.hostId;
-    const apps = runningApps?.get(entityKey(session)) ?? [];
+    const apps =
+      runningApps?.get(entityKey(session))?.filter(app => app.web === true) ??
+      [];
     const renamingField = decoration?.title;
     const indicator = sessionIndicator({
       session,

@@ -513,6 +513,7 @@ function useWorkspaceState() {
     storageError,
     selected,
     selectedId,
+    foreground,
     selectConnection,
     view,
     status: connectionState.status,
