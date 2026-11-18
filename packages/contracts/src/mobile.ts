@@ -14,6 +14,7 @@ import {
   answerSessionQuestionSchema,
   decideSessionPlanSchema,
 } from './session-control';
+import { runningAppListSchema } from './running-apps';
 
 export const mobileLimits = {
   protocolVersion: 1,
@@ -108,6 +109,16 @@ export const mobileSnapshotSchema = z.strictObject({
   sessions: z.array(desktopSessionSchema).max(mobileLimits.sessions),
 });
 export type MobileSnapshot = z.infer<typeof mobileSnapshotSchema>;
+
+export const mobileRunningAppsQuerySchema = z.strictObject({
+  hostId: hostIdSchema,
+  sessionId: z.uuid(),
+});
+export const mobileRunningAppsResponseSchema =
+  mobileRunningAppsQuerySchema.extend({
+    serverId: z.uuid(),
+    list: runningAppListSchema,
+  });
 
 export const mobileCommandSchema = z.discriminatedUnion('method', [
   z.strictObject({

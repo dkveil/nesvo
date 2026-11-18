@@ -1063,6 +1063,7 @@ try {
     'lessons',
     'inbox-rules',
     'decision-routing',
+    'running-apps-web',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

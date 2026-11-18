@@ -1,6 +1,10 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { desktopSessionSchema, workLaptopRestriction } from '@nesvo/contracts';
+import {
+  desktopSessionSchema,
+  runningAppListSchema,
+  workLaptopRestriction,
+} from '@nesvo/contracts';
 import {
   createMobileGateway,
   type MobileGatewayOptions,
@@ -55,6 +59,19 @@ export function mobileAccess(
   const workspace: MobileGatewayWorkspace = {
     listComputers: async () => computers.listComputers(),
     listSessions: async hostId => computers.listSessions(hostId),
+    listRunningApps: async (hostId, query) => {
+      const computer = computers
+        .listComputers()
+        .find(item => item.id === hostId);
+      if (
+        computer?.status !== 'connected' ||
+        !computer.capabilities.includes('running-apps-web')
+      )
+        throw new Error('Servers are not available on this computer.');
+      return runningAppListSchema.parse(
+        await computers.execute('list-running-apps', query, hostId),
+      );
+    },
     getSession: (input, hostId) =>
       computers.getSession(input, hostId, { remember: false }),
     sendMessage: async (input, hostId) =>

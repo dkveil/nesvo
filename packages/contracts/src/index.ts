@@ -394,7 +394,12 @@ import {
   type TrackedRepository,
   type TrackedRepositorySuggestion,
 } from './tracked-repositories';
-import { runningAppListSchema, type RunningAppList } from './running-apps';
+import {
+  runningAppListSchema,
+  runningAppQuerySchema,
+  type RunningAppList,
+  type RunningAppQuery,
+} from './running-apps';
 import {
   decideInboxItemSchema,
   deleteInboxRuleSchema,
@@ -981,6 +986,7 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({
     id: z.uuid(),
     method: z.literal('list-running-apps'),
+    input: runningAppQuerySchema.optional(),
   }),
   z.strictObject({
     id: z.uuid(),
@@ -2221,7 +2227,10 @@ export type DesktopApi = {
     hostId?: HostId,
   ) => Promise<PullRequestReference | null>;
   listTrackedRepositories: (hostId?: HostId) => Promise<TrackedRepository[]>;
-  listRunningApps: (hostId?: HostId) => Promise<RunningAppList>;
+  listRunningApps: (
+    hostId?: HostId,
+    input?: RunningAppQuery,
+  ) => Promise<RunningAppList>;
   listInboxRules: (
     input: ListInboxRulesInput,
     hostId?: HostId,

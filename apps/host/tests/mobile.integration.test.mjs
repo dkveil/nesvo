@@ -155,6 +155,7 @@ test(
     let gateway;
     let mutationCalls = 0;
     let sessionReads = 0;
+    const portReads = [];
     const listeners = new Set();
     const sockets = [];
     const streams = [];
@@ -192,6 +193,10 @@ test(
       listSessions: async () => {
         sessionReads++;
         return [];
+      },
+      listRunningApps: async (hostId, input) => {
+        portReads.push({ hostId, input });
+        return { apps: [], observedAt: new Date().toISOString() };
       },
       subscribe: listener => {
         listeners.add(listener);
@@ -302,6 +307,25 @@ test(
       403,
     );
     assert.equal(sessionReads, readsBeforeAuthentication);
+    const watchedSession = randomUUID();
+    const runningAppsPath =
+      '/v1/running-apps?hostId=' + remoteId + '&sessionId=' + watchedSession;
+    assert.equal((await request(runningAppsPath)).status, 401);
+    const missingSession = await request('/v1/running-apps?hostId=local', {
+      token: credentials.token,
+    });
+    assert.equal(missingSession.status, 400);
+    assert.deepEqual(portReads, []);
+    const runningApps = await request(runningAppsPath, {
+      token: credentials.token,
+    });
+    assert.equal(runningApps.status, 200);
+    assert.equal(runningApps.body.serverId, status.serverId);
+    assert.equal(runningApps.body.hostId, remoteId);
+    assert.equal(runningApps.body.sessionId, watchedSession);
+    assert.deepEqual(portReads, [
+      { hostId: remoteId, input: { sessionId: watchedSession } },
+    ]);
     for (const headers of [{}, { 'x-nesvo-server-id': randomUUID() }]) {
       const response = await request('/v1/events', {
         token: credentials.token,

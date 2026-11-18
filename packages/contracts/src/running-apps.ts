@@ -14,6 +14,11 @@ export const runningAppSchema = z.strictObject({
   name: z.string().max(runningAppLimits.nameLength),
   sessionId: z.string().min(1).max(200),
   match: runningAppMatchSchema,
+  web: z.boolean().optional(),
+});
+
+export const runningAppQuerySchema = z.strictObject({
+  sessionId: z.uuid().optional(),
 });
 
 export const runningAppListSchema = z.strictObject({
@@ -23,4 +28,5 @@ export const runningAppListSchema = z.strictObject({
 
 export type RunningAppMatch = z.infer<typeof runningAppMatchSchema>;
 export type RunningApp = z.infer<typeof runningAppSchema>;
+export type RunningAppQuery = z.infer<typeof runningAppQuerySchema>;
 export type RunningAppList = z.infer<typeof runningAppListSchema>;

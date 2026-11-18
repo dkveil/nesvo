@@ -1393,9 +1393,9 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
-  listRunningApps: async hostId =>
+  listRunningApps: async (hostId, query) =>
     runningAppListSchema.parse(
-      await ipcRenderer.invoke('nesvo:list-running-apps', route(hostId)),
+      await ipcRenderer.invoke('nesvo:list-running-apps', route(hostId), query),
     ),
   readDefaultSessionFolder: async hostId =>
     defaultSessionFolderSchema.parse(

@@ -71,6 +71,7 @@ export const hostCapabilitySchema = z.enum([
   'lessons',
   'inbox-rules',
   'decision-routing',
+  'running-apps-web',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

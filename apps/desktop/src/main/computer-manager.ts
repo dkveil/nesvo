@@ -308,6 +308,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use Inbox rules.',
   'decision-routing':
     'Update this computer’s Nesvo host and reconnect to route decisions to parent sessions.',
+  'running-apps-web':
+    'Update this computer’s Nesvo host and reconnect to classify its running apps.',
 };
 
 const hasFileAttachments = (input: unknown) =>

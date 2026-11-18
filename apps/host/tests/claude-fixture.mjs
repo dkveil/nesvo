@@ -655,7 +655,36 @@ if (args.length === 1 && args[0] === '--version') {
       process.execPath,
       [
         '-e',
-        "const server = require('node:net').createServer(); server.listen(0, '127.0.0.1', () => require('node:fs').writeFileSync(process.env.NESVO_FIXTURE_LISTEN_FILE, JSON.stringify({ pid: process.pid, port: server.address().port, sessionId: process.env.NESVO_SESSION_ID ?? null })));",
+        `
+          const { createServer } = require('node:http');
+          const { writeFileSync } = require('node:fs');
+          const file = process.env.NESVO_FIXTURE_LISTEN_FILE;
+          const requests = [];
+          const record = request => {
+            requests.push(request.method + ' ' + request.url);
+            writeFileSync(file + '.requests', JSON.stringify(requests));
+          };
+          const html = createServer((request, response) => {
+            record(request);
+            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            response.end('<!doctype html><title>Nesvo Preview</title><h1>Preview server</h1>');
+          });
+          const redirect = createServer((request, response) => {
+            record(request);
+            response.writeHead(302, { Location: 'http://127.0.0.1:' + html.address().port + '/redirected' });
+            response.end();
+          });
+          const tcp = require('node:net').createServer(socket => socket.end('fixture TCP'));
+          const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+          Promise.all([listen(html), listen(redirect), listen(tcp)]).then(() => {
+            writeFileSync(file, JSON.stringify({
+              pid: process.pid, port: tcp.address().port,
+              htmlPort: html.address().port, redirectPort: redirect.address().port,
+              sessionId: process.env.NESVO_SESSION_ID ?? null,
+            }));
+          });
+          setTimeout(() => process.exit(), 120000).unref();
+        `,
       ],
       { detached: true, stdio: 'ignore', windowsHide: true },
     ).unref();

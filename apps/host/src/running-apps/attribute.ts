@@ -4,13 +4,18 @@ import {
   type RunningAppMatch,
 } from '@nesvo/contracts';
 import type { ProviderProcess } from '../process/provider-processes';
+import { loopbackHost } from './listeners';
 import type { ListeningSocket, ProcessEntry } from './scan';
 
 const MAX_ANCESTOR_DEPTH = 32;
 const PROVIDER_START_TOLERANCE_MS = 10_000;
 const CHILD_START_TOLERANCE_MS = 1_000;
 
-export type SessionFolder = { id: string; directory: string };
+export type SessionFolder = {
+  id: string;
+  directory: string;
+  parentId: string | null;
+};
 
 type Attribution = { sessionId: string; match: RunningAppMatch };
 
@@ -18,6 +23,7 @@ type AttributeInput = {
   sockets: readonly ListeningSocket[];
   processes: ReadonlyMap<number, ProcessEntry>;
   sessions: readonly SessionFolder[];
+  sessionId?: string;
   providerProcess: (pid: number) => ProviderProcess | undefined;
   caseInsensitivePaths: boolean;
 };
@@ -29,13 +35,12 @@ function isOwnedBy(
 ): boolean {
   if (entry)
     return (
-      entry.startedAt === null ||
+      entry.startedAt !== null &&
       Math.abs(entry.startedAt - owner.recordedAt) <=
         PROVIDER_START_TOLERANCE_MS
     );
   return (
-    !child ||
-    child.startedAt === null ||
+    child?.startedAt != null &&
     child.startedAt >= owner.recordedAt - CHILD_START_TOLERANCE_MS
   );
 }
@@ -53,6 +58,12 @@ function attributeByProcess(
     if (current <= 0 || visited.has(current)) return null;
     visited.add(current);
     const entry = processes.get(current);
+    if (
+      entry?.startedAt != null &&
+      child?.startedAt != null &&
+      entry.startedAt > child.startedAt + CHILD_START_TOLERANCE_MS
+    )
+      return null;
     const owner = providerProcess(current);
     if (
       owner &&
@@ -125,11 +136,23 @@ function preferredAddress(addresses: readonly string[]): string {
 
 export function attributeRunningApps(input: AttributeInput): RunningApp[] {
   const sessionIds = new Set(input.sessions.map(session => session.id));
+  const scope = input.sessionId
+    ? new Set(
+        input.sessions
+          .filter(
+            session =>
+              session.id === input.sessionId ||
+              session.parentId === input.sessionId,
+          )
+          .map(session => session.id),
+      )
+    : sessionIds;
   const grouped = new Map<
     string,
     { pid: number; port: number; addresses: string[] }
   >();
   for (const socket of input.sockets) {
+    if (socket.pid <= 0 || !loopbackHost(socket.address)) continue;
     const key = `${socket.pid}:${socket.port}`;
     const group = grouped.get(key);
     if (group) group.addresses.push(socket.address);
@@ -146,7 +169,7 @@ export function attributeRunningApps(input: AttributeInput): RunningApp[] {
     if (!cache.has(group.pid))
       cache.set(group.pid, attribute(group.pid, input, sessionIds));
     const attribution = cache.get(group.pid);
-    if (!attribution) continue;
+    if (!attribution || !scope.has(attribution.sessionId)) continue;
     apps.push({
       port: group.port,
       address: preferredAddress(group.addresses).slice(0, 64),

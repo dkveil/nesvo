@@ -1351,8 +1351,10 @@ export const serveHost = ({
                 sessions.list().map(session => ({
                   id: session.id,
                   directory: session.directory,
+                  parentId: session.parentId,
                 })),
               probes.controller.signal,
+              request.input,
             )
             .then(list => send({ type: 'running-apps', id: request.id, list }))
             .catch(error =>

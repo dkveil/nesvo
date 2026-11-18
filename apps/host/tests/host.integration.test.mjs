@@ -1390,6 +1390,7 @@ test(
         'lessons',
         'inbox-rules',
         'decision-routing',
+        'running-apps-web',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6987,6 +6988,7 @@ test(
       'lessons',
       'inbox-rules',
       'decision-routing',
+      'running-apps-web',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -22864,7 +22866,7 @@ test('image, PDF and file attachments reach both providers, reject invalid uploa
   assert.ok(existsSync(claudeNotesPath));
 });
 
-test('running apps attribute a listening port to the session that started it', async () => {
+test('running apps classify owned web and TCP ports within the watched session', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nesvo-running-apps-'));
   const pidFile = join(directory, 'fixture.pid');
   const listenFile = join(directory, 'listen.json');
@@ -22877,7 +22879,7 @@ test('running apps attribute a listening port to the session that started it', a
     });
     const health = (await host.request('health')).health;
     assert.ok(health.capabilities.includes('running-apps'));
-    const before = await host.request('list-running-apps');
+    const before = await host.request('list-running-apps', {});
     assert.equal(before.type, 'running-apps', JSON.stringify(before));
     assert.deepEqual(before.list.apps, []);
     const created = (
@@ -22903,18 +22905,35 @@ test('running apps attribute a listening port to the session that started it', a
     assert.equal(completed.status, 'completed', completed.error);
     server = JSON.parse(await readFile(listenFile, 'utf8'));
     assert.equal(server.sessionId, created.id);
-    let app;
-    for (let attempt = 0; attempt < 40 && !app; attempt++) {
-      const listed = await host.request('list-running-apps');
+    const sessionId = created.id;
+    let apps;
+    for (let attempt = 0; attempt < 40 && !apps; attempt++) {
+      const listed = await host.request('list-running-apps', { sessionId });
       assert.equal(listed.type, 'running-apps', JSON.stringify(listed));
-      app = listed.list.apps.find(item => item.port === server.port);
-      if (!app) await delay(500);
+      if (listed.list.apps.length === 3) apps = listed.list.apps;
+      else await delay(500);
     }
-    assert.ok(app, 'The fixture server port is listed');
-    assert.deepEqual(
-      { pid: app.pid, sessionId: app.sessionId, match: app.match },
-      { pid: server.pid, sessionId: created.id, match: 'process' },
+    assert.ok(apps, 'All fixture ports are listed');
+    for (const app of apps) {
+      assert.equal(app.pid, server.pid);
+      assert.equal(app.sessionId, sessionId);
+      assert.equal(app.match, 'process');
+    }
+    assert.equal(apps.find(app => app.port === server.htmlPort)?.web, true);
+    assert.equal(apps.find(app => app.port === server.redirectPort)?.web, true);
+    assert.equal(apps.find(app => app.port === server.port)?.web, false);
+    const unrelated = await host.request('list-running-apps', {
+      sessionId: randomUUID(),
+    });
+    assert.deepEqual(unrelated.list.apps, []);
+    const legacy = await host.request('list-running-apps');
+    assert.ok(
+      legacy.list.apps.some(app => app.port === server.port && !('web' in app)),
     );
+    const requests = JSON.parse(
+      await readFile(listenFile + '.requests', 'utf8'),
+    );
+    assert.deepEqual(requests.toSorted(), ['GET /', 'GET /']);
   } finally {
     if (server)
       try {

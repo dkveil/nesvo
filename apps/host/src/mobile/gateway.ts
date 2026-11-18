@@ -14,6 +14,8 @@ import {
   mobileGatewayStatusSchema,
   mobileLimits,
   mobilePairRequestSchema,
+  mobileRunningAppsQuerySchema,
+  mobileRunningAppsResponseSchema,
   mobileServerMessageSchema,
   mobileSnapshotSchema,
   applySessionChange,
@@ -34,6 +36,7 @@ export type MobileGatewayWorkspace = Pick<
   DesktopApi,
   | 'listComputers'
   | 'listSessions'
+  | 'listRunningApps'
   | 'getSession'
   | 'sendMessage'
   | 'stopRun'
@@ -548,6 +551,39 @@ export class MobileGateway {
         const snapshot = await deadline(this.snapshot());
         this.checkDevice(device.id);
         this.reply(response, 200, snapshot);
+        return;
+      }
+      if (
+        request.method === 'GET' &&
+        request.url?.startsWith('/v1/running-apps?')
+      ) {
+        if (!this.rate('read:' + device.id, 30))
+          throw new GatewayError('busy', 'Wait before refreshing again.', 429);
+        const query = mobileRunningAppsQuerySchema.safeParse(
+          Object.fromEntries(
+            new URL(request.url, 'http://localhost').searchParams,
+          ),
+        );
+        if (!query.success)
+          throw new GatewayError(
+            'invalid-request',
+            'Choose a session on a connected computer.',
+            400,
+          );
+        const { hostId, sessionId } = query.data;
+        const list = await deadline(
+          this.options.workspace.listRunningApps(hostId, { sessionId }),
+        );
+        this.checkDevice(device.id);
+        this.reply(
+          response,
+          200,
+          mobileRunningAppsResponseSchema.parse({
+            ...query.data,
+            serverId: this.store.serverId,
+            list,
+          }),
+        );
         return;
       }
       if (request.method !== 'POST' || request.url !== '/v1/command')

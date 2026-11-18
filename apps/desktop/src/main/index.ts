@@ -1,6 +1,10 @@
 import { installTestCommandAudit } from '@nesvo/host';
 import { deleteLocalData } from './delete-local-data';
-import { deleteLocalDataPhrase, retentionDaysSchema } from '@nesvo/contracts';
+import {
+  deleteLocalDataPhrase,
+  retentionDaysSchema,
+  runningAppQuerySchema,
+} from '@nesvo/contracts';
 import { workLaptopPolicy } from './work-laptop-policy';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -1152,10 +1156,17 @@ void app.whenReady().then(async () => {
     authorize(event);
     return computers.execute('read-inbox-settings', undefined, route(hostId));
   });
-  handle('nesvo:list-running-apps', (event, hostId: unknown) => {
-    authorize(event);
-    return computers.execute('list-running-apps', undefined, route(hostId));
-  });
+  handle(
+    'nesvo:list-running-apps',
+    (event, hostId: unknown, query: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'list-running-apps',
+        runningAppQuerySchema.optional().parse(query),
+        route(hostId),
+      );
+    },
+  );
   handle('nesvo:read-default-session-folder', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute(
