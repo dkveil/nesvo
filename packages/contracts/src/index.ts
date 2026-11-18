@@ -380,6 +380,7 @@ import {
   setDefaultSessionFolderSchema,
   type DefaultSessionFolder,
 } from './default-session-folder';
+import {
   decideSessionWorktreeRecipeSchema,
   deleteWorktreeRecipeSchema,
   matchWorktreeRecipeSchema,
@@ -831,6 +832,9 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('set-default-session-folder'),
     input: setDefaultSessionFolderSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('list-worktree-recipes'),
   }),
   z.strictObject({
@@ -1374,6 +1378,8 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('default-session-folder'),
     id: z.uuid(),
     directory: defaultSessionFolderSchema,
+  }),
+  z.strictObject({
     type: z.literal('worktree-recipes'),
     id: z.uuid(),
     recipes: worktreeRecipeListSchema,
