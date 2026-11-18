@@ -474,6 +474,12 @@ import {
   answerSessionQuestionSchema,
   coordinatorPolicySchema,
   decideSessionParentSchema,
+  workerWorktreeInputSchema,
+  continueCoordinatorSchema,
+  type ContinueCoordinatorInput,
+  workerWorktreeResultSchema,
+  type WorkerWorktreeInput,
+  type WorkerWorktreeResult,
   decideSessionPlanSchema,
   type AnswerSessionQuestionInput,
   type CoordinatorPolicy,
@@ -1205,6 +1211,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('continue-coordinator'),
+    input: continueCoordinatorSchema,
+  }),
+  z.strictObject({
+    method: z.literal('worker-worktree'),
+    id: z.uuid(),
+    input: workerWorktreeInputSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('read-session-control-policy'),
   }),
   z.strictObject({
@@ -1669,6 +1685,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('tracked-repositories'),
     id: z.uuid(),
     repositories: trackedRepositoryListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('worker-worktree'),
+    id: z.uuid(),
+    result: workerWorktreeResultSchema,
   }),
   z.strictObject({
     type: z.literal('session-control-policy'),
@@ -2487,6 +2508,14 @@ export type DesktopApi = {
     input: DecideWorkerPlanInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  continueCoordinator: (
+    input: ContinueCoordinatorInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  workerWorktree: (
+    input: WorkerWorktreeInput,
+    hostId?: HostId,
+  ) => Promise<WorkerWorktreeResult>;
   decideSessionParent: (
     input: DecideSessionParentInput,
     hostId?: HostId,

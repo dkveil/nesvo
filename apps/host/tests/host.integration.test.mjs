@@ -1712,6 +1712,7 @@ test(
         'gate-rules',
         'external-inbox',
         'claude-autonomy',
+        'coordinator-workers',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2718,7 +2719,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      31,
+      32,
     );
     migrated.close();
     const reopened = open();
@@ -5102,7 +5103,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 32');
+    database.exec('PRAGMA user_version = 33');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -5119,7 +5120,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 33);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -7313,6 +7314,7 @@ test(
       'gate-rules',
       'external-inbox',
       'claude-autonomy',
+      'coordinator-workers',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -8189,7 +8191,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            31,
+            32,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -8276,7 +8278,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 32');
+      newer.exec('PRAGMA user_version = 33');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -8288,7 +8290,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          32,
+          33,
         );
       } finally {
         check.close();
@@ -11329,7 +11331,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        31,
+        32,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11380,7 +11382,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        31,
+        32,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -11940,7 +11942,7 @@ test(
         );
         assert.deepEqual(
           [operator.experimentalApi, operator.dynamicTools],
-          [true, ['nesvo_delegate']],
+          [true, ['nesvo']],
         );
         const permissions = entry => ({
           cwd: entry.cwd,
@@ -20936,7 +20938,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      31,
+      32,
     );
     database
       .prepare(
@@ -21299,7 +21301,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -21314,7 +21316,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        31,
+        32,
       );
       assert.deepEqual(
         migrated
@@ -21494,7 +21496,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 31);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 32);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -26572,6 +26574,8 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       providers: ['Claude Code', 'Codex'],
       models: [],
       childModes: ['read-only', 'accept-edits'],
+      groupSize: 4,
+      nested: false,
       worktrees: false,
       acceptPlans: true,
       browser: false,
@@ -29243,9 +29247,10 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-2), [
+  assert.deepEqual(capabilities.slice(-3), [
     'external-inbox',
     'claude-autonomy',
+    'coordinator-workers',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {
@@ -30066,3 +30071,247 @@ test(
     );
   },
 );
+
+test('Codex delegation routes through session control and isolates writable Git workers', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-g3-git-')),
+  );
+  const project = join(directory, 'project');
+  const data = join(directory, 'host');
+  await mkdir(project);
+  await mkdir(data);
+  const git = async (cwd, ...args) =>
+    (
+      await promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Nesvo Test',
+          '-c',
+          'user.email=test@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_GLOBAL: join(directory, 'missing-git-config'),
+          },
+        },
+      )
+    ).stdout.trim();
+  await git(project, 'init', '--quiet', '--initial-branch=coordinator');
+  await git(project, 'config', 'user.name', 'Nesvo Test');
+  await git(project, 'config', 'user.email', 'test@example.invalid');
+  await writeFile(join(project, 'base.txt'), 'base\n');
+  await git(project, 'add', '--', 'base.txt');
+  await git(project, 'commit', '-qm', 'Initial commit');
+  const base = await git(project, 'rev-parse', 'HEAD');
+  const host = launch(data, join(data, 'fixture.pid'));
+  t.after(async () => {
+    if (host.child.exitCode === null && host.child.signalCode === null)
+      await host.stop();
+    await host.exited;
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  const root = (
+    await host.request('create-session', {
+      title: 'Writable coordinator',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      mode: 'supervised',
+      directory: project,
+    })
+  ).session;
+  const initial = await host.request('send-message', {
+    sessionId: root.id,
+    messageId: randomUUID(),
+    text: 'Hello.',
+  });
+  const initialDone = await finishedChild(host, root.id);
+  assert.equal(initialDone.runId, initial.session.runId);
+  const delegated = await host.request('send-message', {
+    sessionId: root.id,
+    messageId: randomUUID(),
+    text: 'fixture:delegate-git-legacy',
+  });
+  const awaiting = await host.event(
+    item =>
+      item.id === root.id &&
+      item.delegations.filter(
+        proposal =>
+          proposal.runId === delegated.session.runId &&
+          proposal.status === 'pending',
+      ).length === 2,
+  );
+  const workers = [];
+  for (const proposal of awaiting.delegations) {
+    const decision = await host.request('decide-delegation', {
+      sessionId: root.id,
+      runId: awaiting.runId,
+      delegationId: proposal.id,
+      decision: 'accept',
+    });
+    assert.equal(decision.type, 'session', JSON.stringify(decision));
+    workers.push(
+      decision.session.delegations.find(item => item.id === proposal.id)
+        .childSessionId,
+    );
+  }
+  const [a, b] = await Promise.all(workers.map(id => finishedChild(host, id)));
+  assert.notEqual(a.directory, b.directory);
+  for (const worker of [a, b]) {
+    assert.ok(worker.directory.startsWith(data));
+    assert.ok(!worker.directory.startsWith(project));
+    assert.equal(worker.worktree.base, base);
+    assert.match(worker.worktree.branch, /^nesvo\/worker\/coordinator-/);
+  }
+  const done = await host.event(
+    item =>
+      item.id === root.id &&
+      item.runId === awaiting.runId &&
+      item.status === 'completed',
+  );
+  assert.equal(done.providerSessionId, initialDone.providerSessionId);
+  assert.equal(done.mode, 'supervised');
+  const result = JSON.parse(
+    agent(done).body.slice('Codex delegation results: '.length),
+  );
+  assert.equal(result.ok, true);
+  assert.match(result.actionId, /^[a-f0-9]{64}$/);
+  assert.equal(await git(project, 'rev-parse', 'HEAD'), base);
+  assert.equal(existsSync(join(project, 'worker-a.txt')), false);
+  const resolve = async (worker, action, filename) => {
+    const target = { sessionId: root.id, workerId: worker.id };
+    const viewed = await host.request('worker-worktree', {
+      ...target,
+      action: 'read',
+    });
+    assert.equal(viewed.type, 'worker-worktree', JSON.stringify(viewed));
+    assert.ok(viewed.result.diff.includes(filename));
+    const input = {
+      ...target,
+      action,
+      confirmed: true,
+      expectedHead: viewed.result.head,
+      expectedTargetHead: viewed.result.targetHead,
+    };
+    assert.equal(
+      (
+        await host.request('worker-worktree', {
+          ...input,
+          expectedHead: '0'.repeat(40),
+        })
+      ).type,
+      'error',
+    );
+    const resolved = await host.request('worker-worktree', input);
+    assert.equal(resolved.type, 'worker-worktree', JSON.stringify(resolved));
+    assert.equal(resolved.result.resolved, true);
+    assert.equal(existsSync(worker.directory), false);
+    return viewed.result.head;
+  };
+  assert.equal(
+    await resolve(a, 'merge', 'worker-a.txt'),
+    await git(project, 'rev-parse', 'HEAD'),
+  );
+  await resolve(b, 'discard', 'worker-b.txt');
+  assert.equal(existsSync(join(project, 'worker-a.txt')), true);
+  assert.equal(existsSync(join(project, 'worker-b.txt')), false);
+  assert.ok(await git(project, 'rev-parse', b.worktree.branch));
+});
+
+test('host recovery restores a coordinator wait and Continue starts exactly one new turn', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-g3-recovery-')),
+  );
+  const pidFile = join(directory, 'fixture.pid');
+  const hosts = [];
+  const start = () => {
+    const host = launch(directory, pidFile);
+    hosts.push(host);
+    return host;
+  };
+  t.after(async () => {
+    for (const host of hosts) {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+    }
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  let host = start();
+  await host.request('save-session-control-policy', { enabled: true });
+  const root = (
+    await host.request('create-session', {
+      title: 'Recoverable coordinator',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory,
+    })
+  ).session;
+  const created = await controlTurn(host, root.id, [
+    {
+      tool: 'session_create',
+      arguments: { title: 'Long worker', prompt: 'fixture:hold' },
+    },
+  ]);
+  const workerId = created[0].result.sessionId;
+  const worker = await host.event(
+    item => item.id === workerId && item.status === 'running',
+  );
+  await host.request('send-message', {
+    sessionId: root.id,
+    messageId: randomUUID(),
+    text:
+      'fixture:nesvo ' +
+      JSON.stringify([
+        { tool: 'events_wait', arguments: { cursor: 0, timeoutSeconds: 600 } },
+      ]),
+  });
+  const waiting = await host.event(
+    item => item.id === root.id && !!item.coordinatorWait,
+  );
+  assert.deepEqual(waiting.coordinatorWait.workers, [
+    { sessionId: worker.id, runId: worker.runId },
+  ]);
+  await host.stop();
+  host = start();
+  const recovered = (await host.request('get-session', { sessionId: root.id }))
+    .session;
+  assert.equal(recovered.coordinatorWait.away, true);
+  assert.equal(recovered.runId, waiting.runId);
+  assert.equal(recovered.providerSessionId, waiting.providerSessionId);
+  const recoveredChild = (
+    await host.request('get-session', { sessionId: worker.id })
+  ).session;
+  assert.equal(recoveredChild.runId, worker.runId);
+  assert.equal(recoveredChild.status, 'interrupted');
+  const input = {
+    sessionId: root.id,
+    waitRunId: waiting.runId,
+    messageId: randomUUID(),
+  };
+  const continued = await host.request('continue-coordinator', input);
+  assert.equal(continued.type, 'session', JSON.stringify(continued));
+  assert.notEqual(continued.session.runId, waiting.runId);
+  assert.equal(continued.session.coordinatorWait, undefined);
+  const retry = await host.request('continue-coordinator', input);
+  assert.equal(retry.session.runId, continued.session.runId);
+  const done = await host.event(
+    item =>
+      item.id === root.id &&
+      item.runId === continued.session.runId &&
+      item.status === 'completed',
+  );
+  assert.equal(done.providerSessionId, waiting.providerSessionId);
+  assert.equal(
+    (await host.request('list-sessions')).sessions.filter(
+      item => item.parentId === root.id,
+    ).length,
+    1,
+  );
+});

@@ -472,10 +472,16 @@ export class SessionStore {
     sessions.forEach((session, index) => Object.assign(session, next[index]));
   }
 
-  worker(parent: Session, proposal: Delegation, directory: string): Session {
+  worker(
+    parent: Session,
+    proposal: Delegation,
+    directory: string,
+    worktree?: { id: string; metadata: NonNullable<Session['worktree']> },
+  ): Session {
     const now = new Date().toISOString();
     return {
-      id: randomUUID(),
+      id: worktree?.id ?? randomUUID(),
+      ...(worktree ? { worktree: worktree.metadata } : {}),
       title: proposal.title,
       provider: proposal.provider,
       profileId:
@@ -562,6 +568,10 @@ export class SessionStore {
             };
           }
         }
+        changed = true;
+      }
+      if (session.coordinatorWait && !session.coordinatorWait.away) {
+        session.coordinatorWait.away = true;
         changed = true;
       }
       if (session.pendingApprovals.length) {

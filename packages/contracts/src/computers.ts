@@ -79,6 +79,7 @@ export const hostCapabilitySchema = z.enum([
   'gate-rules',
   'external-inbox',
   'claude-autonomy',
+  'coordinator-workers',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

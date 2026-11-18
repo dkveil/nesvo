@@ -1068,6 +1068,7 @@ try {
     'gate-rules',
     'external-inbox',
     'claude-autonomy',
+    'coordinator-workers',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

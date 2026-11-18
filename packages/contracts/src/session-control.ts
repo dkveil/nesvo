@@ -3,6 +3,8 @@ import { pullRequestReferenceSchema } from './pull-requests';
 import { reasoningEffortSchema } from './reasoning-effort';
 import {
   providerSchema,
+  coordinatorGroupCap,
+  delegationPlanSchema,
   SESSION_BRANCH_PATTERN,
   sessionModeSchema,
   sessionStateSchema,
@@ -24,6 +26,7 @@ export const sessionControlLimits = {
   planRounds: 5,
   statusSessions: 20,
   models: 50,
+  groupSize: coordinatorGroupCap,
 } as const;
 
 const sessionIdSchema = z.uuid().toLowerCase();
@@ -46,6 +49,13 @@ export const coordinatorPolicySchema = z.strictObject({
     .max(4)
     .default(['read-only', 'accept-edits'])
     .transform(values => [...new Set(values)]),
+  groupSize: z
+    .number()
+    .int()
+    .min(2)
+    .max(sessionControlLimits.groupSize)
+    .default(4),
+  nested: z.boolean().default(false),
   worktrees: z.boolean().default(false),
   acceptPlans: z.boolean().default(true),
   browser: z.boolean().default(false),
@@ -62,6 +72,44 @@ export const decideSessionParentSchema = z.strictObject({
 export type DecideSessionParentInput = z.infer<
   typeof decideSessionParentSchema
 >;
+
+export const continueCoordinatorSchema = z.strictObject({
+  sessionId: sessionIdSchema,
+  waitRunId: sessionIdSchema,
+  messageId: sessionIdSchema,
+});
+export type ContinueCoordinatorInput = z.infer<
+  typeof continueCoordinatorSchema
+>;
+
+const gitCommit = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/);
+const workerWorktreeTarget = {
+  sessionId: sessionIdSchema,
+  workerId: sessionIdSchema,
+};
+export const workerWorktreeInputSchema = z.discriminatedUnion('action', [
+  z.strictObject({ ...workerWorktreeTarget, action: z.literal('read') }),
+  z.strictObject({
+    ...workerWorktreeTarget,
+    action: z.enum(['merge', 'discard']),
+    expectedHead: gitCommit,
+    expectedTargetHead: gitCommit,
+    confirmed: z.literal(true),
+  }),
+]);
+export const workerWorktreeResultSchema = z.strictObject({
+  branch: z.string().max(200),
+  targetBranch: z.string().max(1024),
+  head: gitCommit,
+  targetHead: gitCommit,
+  dirty: z.boolean(),
+  canMerge: z.boolean(),
+  diff: z.string().max(256_000),
+  truncated: z.boolean(),
+  resolved: z.boolean(),
+});
+export type WorkerWorktreeInput = z.infer<typeof workerWorktreeInputSchema>;
+export type WorkerWorktreeResult = z.infer<typeof workerWorktreeResultSchema>;
 
 const decisionTextSchema = z.string().trim().min(1).max(stageLimits.answer);
 const decisionChannelSchema = z
@@ -170,6 +218,13 @@ const eventsWaitInputSchema = z.strictObject({
 });
 
 export const sessionControlTools = {
+  session_delegate: {
+    title: 'Delegate to workers',
+    description:
+      'Propose visible workers with an explicit task and scope. Each worker needs an operator decision. The tool waits for the worker outcomes.',
+    input: delegationPlanSchema,
+    mutation: true,
+  },
   session_create: {
     title: 'Create session',
     mutation: true,

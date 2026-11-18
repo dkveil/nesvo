@@ -316,6 +316,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage external Inbox devices.',
   'claude-autonomy':
     'Update this computer’s Nesvo host and reconnect to manage Claude rules and Full access.',
+  'coordinator-workers':
+    'Update the Nesvo host on this computer and reconnect to manage coordinator workers.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -383,6 +385,8 @@ function requiredCapability(
     method === 'decide-session-parent'
   )
     return 'session-control';
+  if (method === 'continue-coordinator' || method === 'worker-worktree')
+    return 'coordinator-workers';
   if (
     method === 'prepare-workflow-share' ||
     method === 'import-workflow-bundle'
@@ -1248,6 +1252,8 @@ export class ComputerManager {
       'stop-run': 'session',
       'respond-approval': 'session',
       'decide-delegation': 'session',
+      'continue-coordinator': 'session',
+      'worker-worktree': 'worker-worktree',
       'decide-worker-plan': 'session',
       'decide-session-parent': 'session',
       'decide-session-plan': 'session',
@@ -1393,6 +1399,8 @@ export class ComputerManager {
         return response.trial;
       case 'session-worktree-recipe':
         return response.run;
+      case 'worker-worktree':
+        return response.result;
       case 'session-control-policy':
         return response.policy;
       case 'lessons':

@@ -12,7 +12,6 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, normalize } from 'node:path';
 import {
   activityLimits,
-  delegationActivityTitle,
   SESSION_CONTROL_NAMESPACE,
   sessionControlToolTitle,
   modelEffortsSchema,
@@ -1517,8 +1516,7 @@ type CodexRunOptions = {
   skillRoots?: string[];
   onSkillResolved?: (skill: SkillReference) => void | Promise<void>;
   onEvent: (event: CodexEvent) => void;
-  onDelegate?: (input: unknown, signal: AbortSignal) => Promise<string>;
-  delegationSchema?: Record<string, unknown>;
+  legacyDelegation?: boolean;
   onControl?: SessionControlHandler;
   controlTools?: readonly SessionControlToolDefinition[];
   outputSchema?: Record<string, unknown>;
@@ -1555,10 +1553,6 @@ export function startCodex(options: CodexRunOptions): {
   let approvedMcpServers: RecordValue | null = null;
   const seenRequests = new Set<string>();
   const seenCalls = new Set<string>();
-  const pendingDelegates = new Map<
-    string,
-    { rpcId: RpcId; threadId: string; turnId: string }
-  >();
   const delegationController = new AbortController();
   const pendingControls = new Map<RpcId, AbortController>();
   const queued: RecordValue[] = [];
@@ -1586,7 +1580,6 @@ export function startCodex(options: CodexRunOptions): {
   const fail = (message: string) => {
     failure ??= safeMessage(message);
     delegationController.abort();
-    pendingDelegates.clear();
     resolveTurn({ status: 'failed', error: failure });
     void peer?.close();
   };
@@ -1750,11 +1743,16 @@ export function startCodex(options: CodexRunOptions): {
       seenRequests.add(id);
       if (
         message.method === 'item/tool/call' &&
-        params?.namespace === SESSION_CONTROL_NAMESPACE &&
+        params &&
+        (params.namespace === SESSION_CONTROL_NAMESPACE ||
+          (options.legacyDelegation &&
+            options.resume &&
+            params.namespace === null &&
+            params.tool === 'nesvo_delegate')) &&
         options.onControl
       ) {
         const callId = params.callId;
-        const tool = params.tool;
+        const tool = params.namespace === null ? 'nesvo_delegate' : params.tool;
         if (
           !threadId ||
           !turnId ||
@@ -1846,119 +1844,15 @@ export function startCodex(options: CodexRunOptions): {
         return;
       }
       if (message.method === 'item/tool/call') {
-        if (
-          !options.onDelegate ||
-          !threadId ||
-          !turnId ||
-          params?.threadId !== threadId ||
-          params.turnId !== turnId ||
-          params.namespace !== null ||
-          params.tool !== 'nesvo_delegate' ||
-          typeof params.callId !== 'string' ||
-          !params.callId ||
-          params.callId.length > 200 ||
-          seenCalls.has(params.callId) ||
-          seenCalls.size >= 1000
-        ) {
-          peer.send({
-            id: rpcId,
-            result: {
-              contentItems: [
-                {
-                  type: 'inputText',
-                  text: 'Unsupported or stale delegation request.',
-                },
-              ],
-              success: false,
-            },
-          });
-          throw new Error(
-            'Codex returned an unsupported, duplicate or stale delegation request.',
-          );
-        }
-        const callId = params.callId;
-        seenCalls.add(callId);
-        const pending = { rpcId, threadId, turnId };
-        pendingDelegates.set(callId, pending);
-        emitTool(
-          makeActivity({
-            id,
-            kind: 'tool',
-            title: delegationActivityTitle,
-            status: 'running',
-            detail: 'Waiting for operator decisions and worker results.',
-          }),
-        );
-        const respond = (text: string, success: boolean) => {
-          if (
-            stopped ||
-            finished ||
-            failure ||
-            delegationController.signal.aborted ||
-            !peer ||
-            pendingDelegates.get(callId) !== pending ||
-            pending.threadId !== threadId ||
-            pending.turnId !== turnId
-          )
-            return;
-          if (
-            typeof text !== 'string' ||
-            Buffer.byteLength(text) > maxTextBytes ||
-            Buffer.byteLength(
-              JSON.stringify({
-                id: rpcId,
-                result: {
-                  contentItems: [{ type: 'inputText', text }],
-                  success,
-                },
-              }),
-            ) > maxLineBytes
-          ) {
-            text = 'Worker results exceeded the supported response size.';
-            success = false;
-          }
-          pendingDelegates.delete(callId);
-          emitTool(
-            makeActivity({
-              id,
-              kind: 'tool',
-              title: delegationActivityTitle,
-              status: success ? 'completed' : 'failed',
-              startedAt: toolActivities.get(id)?.startedAt,
-            }),
-          );
-          try {
-            peer.send({
-              id: rpcId,
-              result: { contentItems: [{ type: 'inputText', text }], success },
-            });
-          } catch (error) {
-            fail(
-              error instanceof Error
-                ? error.message
-                : 'Codex delegation response failed.',
-            );
-          }
-        };
-        void Promise.resolve()
-          .then(() => {
-            if (delegationController.signal.aborted)
-              throw new Error('Delegation stopped.');
-            return options.onDelegate!(
-              params.arguments,
-              delegationController.signal,
-            );
-          })
-          .then(
-            text => respond(text, true),
-            error =>
-              respond(
-                safeMessage(
-                  error instanceof Error ? error.message : 'Delegation failed.',
-                ),
-                false,
-              ),
-          );
+        peer.send({
+          id: rpcId,
+          result: {
+            contentItems: [
+              { type: 'inputText', text: 'Unsupported Nesvo call.' },
+            ],
+            success: false,
+          },
+        });
         return;
       }
       if (message.method === 'mcpServer/elicitation/request') {
@@ -2120,16 +2014,6 @@ export function startCodex(options: CodexRunOptions): {
         return;
       }
       if (
-        [...pendingDelegates.values()].some(
-          pending => pending.rpcId === params.requestId,
-        )
-      ) {
-        fail(
-          'Codex cancelled a delegation request before receiving worker outcomes.',
-        );
-        return;
-      }
-      if (
         typeof params.requestId === 'string' ||
         typeof params.requestId === 'number'
       )
@@ -2139,12 +2023,7 @@ export function startCodex(options: CodexRunOptions): {
     if (message.method === 'turn/completed') {
       const turn = object(params.turn);
       if (turn?.id !== turnId) return;
-      if (turn.status === 'completed' && pendingDelegates.size > 0)
-        throw new Error(
-          'Codex completed the turn before receiving worker outcomes.',
-        );
       delegationController.abort();
-      pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       const usage = codexTurnUsage(firstTokens, latestTokens, turn);
       if (turn.status === 'completed' && options.compact)
@@ -2299,10 +2178,7 @@ export function startCodex(options: CodexRunOptions): {
     const inactivityLimit = providerInactivityLimit();
     watchdog = watchInactivity({
       limitMs: inactivityLimit,
-      isWaiting: () =>
-        approvals.size > 0 ||
-        pendingDelegates.size > 0 ||
-        pendingControls.size > 0,
+      isWaiting: () => approvals.size > 0 || pendingControls.size > 0,
       onInactive: () => fail(inactivityFailure('Codex', inactivityLimit)),
     });
     let result: CodexResult;
@@ -2320,8 +2196,6 @@ export function startCodex(options: CodexRunOptions): {
         );
       if (!['read-only', 'supervised', 'full-access'].includes(options.mode))
         throw new Error('Unsupported Codex permission mode.');
-      if (options.onDelegate && !object(options.delegationSchema))
-        throw new Error('Codex delegation requires an explicit input schema.');
       if (options.compact && (!options.resume || options.fork))
         throw new Error('There is no Codex conversation to compact yet.');
       if (
@@ -2458,10 +2332,7 @@ export function startCodex(options: CodexRunOptions): {
         processOverrides,
         features,
       );
-      await initialize(
-        peer,
-        Boolean(options.onDelegate) || options.experimentalApi === true,
-      );
+      await initialize(peer, options.experimentalApi === true);
       await verifyCodexToolPolicy(
         peer,
         options.directory,
@@ -2571,39 +2442,20 @@ export function startCodex(options: CodexRunOptions): {
                 developerInstructions: options.summaryInstructions,
               }
             : {}),
-          ...(!options.resume &&
-          !options.fork &&
-          (options.onDelegate || options.controlTools?.length)
+          ...(!options.resume && !options.fork && options.controlTools?.length
             ? {
                 dynamicTools: [
-                  ...(options.controlTools?.length
-                    ? [
-                        {
-                          type: 'namespace',
-                          name: SESSION_CONTROL_NAMESPACE,
-                          description: options.onDelegate
-                            ? 'Nesvo session control: create, steer and wait for your child sessions on this computer.'
-                            : 'Nesvo stage tools: report the end of your stage, ask a blocking question or share progress.',
-                          tools: options.controlTools.map(tool => ({
-                            type: 'function',
-                            name: tool.name,
-                            description: tool.description,
-                            inputSchema: tool.inputSchema,
-                          })),
-                        },
-                      ]
-                    : []),
-                  ...(options.onDelegate
-                    ? [
-                        {
-                          type: 'function',
-                          name: 'nesvo_delegate',
-                          description: `When the task benefits from delegation, propose one or two visible workers with separate tasks and explicit scopes. Each worker starts only after operator approval. Use existing directories within this workspace ("." is allowed). Choose an available Codex model ID or a Claude alias (default, opus, sonnet, haiku). Set planFirst when a worker should propose a plan before acting: its first turn is read-only and returns a plan that the operator accepts or corrects before the worker continues. The tool waits for every operator decision and actual worker outcome. Workers cannot delegate. ${options.mode === 'supervised' ? 'This session has write access, so every proposed worker must use read-only mode. Use a separate read-only session when workers need to change files.' : 'This session is read-only. Workers may use supervised mode to change files in non-overlapping directories.'}`,
-                          inputSchema: options.delegationSchema,
-                          deferLoading: false,
-                        },
-                      ]
-                    : []),
+                  {
+                    type: 'namespace',
+                    name: SESSION_CONTROL_NAMESPACE,
+                    description: 'Nesvo tools for this session.',
+                    tools: options.controlTools.map(tool => ({
+                      type: 'function',
+                      name: tool.name,
+                      description: tool.description,
+                      inputSchema: tool.inputSchema,
+                    })),
+                  },
                 ],
               }
             : {}),
@@ -2772,7 +2624,6 @@ export function startCodex(options: CodexRunOptions): {
       watchdog.stop();
       finished = true;
       delegationController.abort();
-      pendingDelegates.clear();
       for (const id of approvals.keys()) resolveApproval(id);
       const exit = await peer?.close();
       if (exit && !exit.confirmed)
@@ -2793,7 +2644,6 @@ export function startCodex(options: CodexRunOptions): {
       stopTask ??= (async () => {
         stopped = true;
         delegationController.abort();
-        pendingDelegates.clear();
         resolveTurn({ status: 'stopped', error: null });
         for (const id of approvals.keys()) resolveApproval(id);
         if (peer && threadId && turnId)

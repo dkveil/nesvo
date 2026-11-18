@@ -4,6 +4,7 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   createSessionSchema,
   isProviderSessionMode,
+  isWritableSessionMode,
   isSessionControlToolName,
   isStageToolName,
   latestStageReport,
@@ -12,6 +13,7 @@ import {
   sessionControlTools,
   stageTools,
   type CoordinatorPolicy,
+  type ContinueCoordinatorInput,
   type DecideSessionParentInput,
   type Session,
   type SessionControlChild,
@@ -84,7 +86,8 @@ class ChildRefusal extends SessionError {
 }
 
 const refusalFor = (error: unknown): SessionControlReply => {
-  if (error instanceof ChildRefusal) return refusal(error.refusal, error.message);
+  if (error instanceof ChildRefusal)
+    return refusal(error.refusal, error.message);
   if (!(error instanceof SessionError))
     return refusal('unsupported', 'Nesvo could not complete this call.');
   const code: SessionControlRefusalCode =
@@ -156,16 +159,31 @@ const allowedModes = (policy: CoordinatorPolicy) =>
 export class SessionControl {
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly inFlight = new Map<string, Promise<SessionControlReply>>();
+  private readonly creating = new Map<string, number>();
   private readonly seenApprovals = new Set<string>();
 
   constructor(private readonly params: SessionControlParams) {}
 
   bridge(): SessionControlBridge {
     return {
-      available: session =>
-        this.params.store.policy().enabled && isCoordinatorCandidate(session),
+      available: session => this.eligible(session, this.policy()),
       call: (caller, call, signal) => this.call(caller, call, signal),
     };
+  }
+
+  private eligible(session: Session, policy: CoordinatorPolicy): boolean {
+    if (!policy.enabled) return false;
+    if (isCoordinatorCandidate(session)) return true;
+    if (
+      !policy.nested ||
+      !session.parentId ||
+      session.workflowRunId ||
+      session.scheduledJobId ||
+      session.workflowStepId
+    )
+      return false;
+    const parent = this.params.sessions.snapshot(session.parentId);
+    return !!parent && isCoordinatorCandidate(parent);
   }
 
   policy(): CoordinatorPolicy {
@@ -181,6 +199,8 @@ export class SessionControl {
     call: SessionControlCall,
     signal: AbortSignal,
   ): Promise<SessionControlReply> {
+    if (call.tool === 'nesvo_delegate')
+      call = { ...call, tool: 'session_delegate' };
     const stage = isStageToolName(call.tool);
     if (!stage && !isSessionControlToolName(call.tool))
       return refusal('unsupported', `Nesvo has no tool named ${call.tool}.`);
@@ -217,6 +237,27 @@ export class SessionControl {
       .finally(() => this.inFlight.delete(actionId));
     this.inFlight.set(actionId, execution);
     return execution;
+  }
+
+  continue(input: ContinueCoordinatorInput): Session {
+    const wait = this.params.sessions.snapshot(
+      input.sessionId,
+    )?.coordinatorWait;
+    const events =
+      wait?.runId === input.waitRunId
+        ? this.params.store
+            .events(input.sessionId, wait.cursor)
+            .events.filter(event => event.at >= wait.startedAt)
+            .slice(0, 20)
+        : [];
+    return this.params.sessions.continueCoordinator(
+      input,
+      events.map(event => ({
+        ...event,
+        summary: event.summary.slice(0, 300),
+        detail: event.detail?.slice(0, 200),
+      })),
+    );
   }
 
   decideParent(input: DecideSessionParentInput): Session {
@@ -308,7 +349,10 @@ export class SessionControl {
   private stageEvent(
     session: Session,
     entry: SessionStageRecord,
-  ): Omit<Parameters<SessionControlStore['appendEvent']>[0], 'parentId'> | null {
+  ): Omit<
+    Parameters<SessionControlStore['appendEvent']>[0],
+    'parentId'
+  > | null {
     const base = {
       sessionId: session.id,
       runId: 'runId' in entry ? entry.runId : session.runId,
@@ -479,7 +523,7 @@ export class SessionControl {
     signal: AbortSignal,
   ): Promise<SessionControlReply> {
     const policy = this.params.store.policy();
-    if (!policy.enabled)
+    if (!policy.enabled && tool !== 'session_delegate')
       return refusal(
         'disabled',
         'Session control is turned off in Settings on this computer.',
@@ -488,11 +532,15 @@ export class SessionControl {
     if (
       !coordinator ||
       coordinator.runId !== caller.runId ||
-      !isCoordinatorCandidate(coordinator)
+      coordinator.status !== 'running' ||
+      !(
+        this.eligible(coordinator, policy) ||
+        (!policy.enabled && isCoordinatorCandidate(coordinator))
+      )
     )
       return refusal(
         'unsupported',
-        'Only the running turn of a top-level session can coordinate sessions.',
+        'This running session is outside the allowed coordinator group.',
       );
     const parsed = sessionControlTools[tool].input.safeParse(input);
     if (!parsed.success)
@@ -500,10 +548,7 @@ export class SessionControl {
         'invalid',
         parsed.error.issues
           .slice(0, 5)
-          .map(
-            issue =>
-              `${issue.path.join('.') || 'input'}: ${issue.message}`,
-          )
+          .map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`)
           .join('; '),
       );
     const handler = this.handlers[tool] as Handler<typeof tool>;
@@ -520,13 +565,46 @@ export class SessionControl {
     }
   }
 
+  private groupRoot(session: Session): Session {
+    const parent =
+      session.parentId && this.params.sessions.snapshot(session.parentId);
+    return parent ? this.groupRoot(parent) : session;
+  }
+
+  private activeWorkerSlots(root: Session): number {
+    const snapshots = this.params.sessions.list();
+    const parents = new Set([
+      root.id,
+      ...snapshots
+        .filter(item => item.parentId === root.id)
+        .map(item => item.id),
+    ]);
+    const active = snapshots.filter(
+      item =>
+        item.parentId &&
+        parents.has(item.parentId) &&
+        (item.status === 'running' ||
+          item.status === 'stopping' ||
+          item.queue.some(message => !message.held) ||
+          item.plan?.status === 'plan-ready'),
+    );
+    const proposals = [...parents].flatMap(
+      id => this.params.sessions.snapshot(id)?.delegations ?? [],
+    );
+    return (
+      active.length +
+      proposals.filter(
+        item =>
+          item.status === 'pending' ||
+          (item.status === 'plan-ready' &&
+            !active.some(child => child.id === item.childSessionId)),
+      ).length
+    );
+  }
+
   private child(coordinator: Session, sessionId: string): Session {
     const child = this.params.sessions.snapshot(sessionId);
-    if (
-      !child ||
-      child.parentId !== coordinator.id ||
-      child.role === 'worker'
-    )
+    if (!child || child.parentId !== coordinator.id)
       throw new ChildRefusal(
         'not-in-subtree',
         'This session is not one of your child sessions.',
@@ -537,12 +615,19 @@ export class SessionControl {
   private children(coordinator: Session): Session[] {
     return this.params.sessions
       .list()
-      .filter(
-        session =>
-          session.parentId === coordinator.id && session.role !== 'worker',
-      )
+      .filter(session => session.parentId === coordinator.id)
       .map(session => this.params.sessions.snapshot(session.id))
       .filter((session): session is Session => !!session);
+  }
+
+  private steerableChild(coordinator: Session, sessionId: string): Session {
+    const child = this.child(coordinator, sessionId);
+    if (child.role === 'worker')
+      throw new ChildRefusal(
+        'human-only',
+        'This worker is bound to its approved task. Use the Inbox for decisions.',
+      );
+    return child;
   }
 
   private summary(child: Session): SessionControlChild {
@@ -567,12 +652,12 @@ export class SessionControl {
           : question
             ? 'question'
             : child.pendingApprovals.length
-            ? 'approval'
-            : window.waitingFor
-              ? 'folder'
-              : child.queue.length && !running
-                ? 'queue'
-                : null,
+              ? 'approval'
+              : window.waitingFor
+                ? 'folder'
+                : child.queue.length && !running
+                  ? 'queue'
+                  : null,
       needsDecision:
         plan === 'plan-ready' || question || child.pendingApprovals.length > 0,
       queued: child.queue.length,
@@ -619,6 +704,24 @@ export class SessionControl {
     );
   }
 
+  private async refuseWritableDirectory(
+    coordinator: Session,
+    child: Session,
+    mode: Session['mode'],
+    signal: AbortSignal,
+  ) {
+    if (!isWritableSessionMode(mode) || child.worktree) return null;
+    if (
+      isWritableSessionMode(coordinator.mode) ||
+      (await this.params.sessions.workerBase(coordinator, signal))
+    )
+      return refusal(
+        'forbidden-by-policy',
+        'Start a new isolated worker for writes to this workspace.',
+      );
+    return null;
+  }
+
   private wait(parentId: string, milliseconds: number, signal: AbortSignal) {
     return new Promise<void>(resolve => {
       const listeners = this.waiters.get(parentId) ?? new Set<() => void>();
@@ -641,6 +744,49 @@ export class SessionControl {
   private readonly handlers: {
     [T in SessionControlToolName]: Handler<T>;
   } = {
+    session_delegate: async ({
+      coordinator,
+      policy,
+      input,
+      actionId,
+      signal,
+    }) => {
+      for (const worker of input.workers) {
+        if (!policy.enabled) continue;
+        if (!policy.providers.includes(worker.provider))
+          return refusal(
+            'forbidden-by-policy',
+            `The coordinator policy does not allow ${worker.provider} workers.`,
+          );
+        const refused =
+          this.refuseModel(policy, worker.model) ??
+          this.refuseMode(policy, worker.mode);
+        if (refused) return refused;
+      }
+      const root = this.groupRoot(coordinator);
+      const checkSlots = () => {
+        if (
+          this.activeWorkerSlots(root) +
+            (this.creating.get(root.id) ?? 0) +
+            input.workers.length >=
+          policy.groupSize
+        )
+          throw new ChildRefusal(
+            'busy',
+            `The coordinator group is limited to ${policy.groupSize} sessions.`,
+          );
+      };
+      return this.params.sessions.delegate(
+        coordinator.id,
+        input.workers.map((worker, index) => ({
+          ...worker,
+          id: derivedId(actionId, `worker-${index}`),
+        })),
+        policy.groupSize,
+        checkSlots,
+        signal,
+      );
+    },
     session_create: async ({
       coordinator,
       input,
@@ -686,67 +832,139 @@ export class SessionControl {
           'forbidden-by-policy',
           `Child sessions work in an existing folder inside your folder (${basename(coordinator.directory)}).`,
         );
-      const create = createSessionSchema.safeParse({
-        requestId: derivedId(actionId, 'create'),
-        title: input.title,
-        provider,
-        model,
-        mode: input.mode,
-        ...(input.planFirst ? { planFirst: true } : {}),
-        ...(placement.directory ? { directory: placement.directory } : {}),
-        ...(input.effort ? { effort: input.effort } : {}),
-        ...(input.worktree
-          ? {
-              isolation: {
-                kind: 'worktree',
-                ...(input.worktree.branch
-                  ? { branch: input.worktree.branch }
-                  : {}),
-              },
-            }
-          : {}),
-        ...(groupId ? { groupId } : {}),
-        ...(input.browser ? { browser: true } : {}),
-      });
-      if (!create.success)
+      const root = this.groupRoot(coordinator);
+      const reserved = this.creating.get(root.id) ?? 0;
+      if (this.activeWorkerSlots(root) + reserved + 1 >= policy.groupSize)
         return refusal(
-          'invalid',
-          create.error.issues.map(issue => issue.message).join('; '),
+          'busy',
+          `The coordinator group is limited to ${policy.groupSize} sessions.`,
         );
-      const child = await this.params.sessions.createWithEffort(
-        create.data,
-        signal,
-        coordinator.id,
-      );
-      if (!this.params.store.child(child.id))
-        this.params.store.saveChild({
-          sessionId: child.id,
-          parentId: coordinator.id,
-          planStatus: null,
-          planRound: 0,
-          targetMode: null,
-          plan: null,
+      this.creating.set(root.id, reserved + 1);
+      try {
+        const writable = isWritableSessionMode(input.mode);
+        const workerBase = writable
+          ? await this.params.sessions.workerBase(coordinator, signal)
+          : undefined;
+        if (
+          workerBase &&
+          placement.directory &&
+          placement.directory !== childDirectory(coordinator, '.')
+        )
+          return refusal(
+            'invalid',
+            'Use the coordinator folder for an isolated writable worker and put narrower boundaries in its task scope.',
+          );
+        if (workerBase && !policy.worktrees)
+          return refusal(
+            'forbidden-by-policy',
+            'Enable worktrees in the coordinator policy before starting a writable Git worker.',
+          );
+        if (writable && !workerBase && isWritableSessionMode(coordinator.mode))
+          return refusal(
+            'forbidden-by-policy',
+            'A writable coordinator needs a Git worktree to start a writable worker.',
+          );
+        const create = createSessionSchema.safeParse({
+          requestId: derivedId(actionId, 'create'),
+          title: input.title,
+          provider,
+          model,
+          mode: input.mode,
+          ...(input.planFirst ? { planFirst: true } : {}),
+          ...(placement.directory ? { directory: placement.directory } : {}),
+          ...(input.effort ? { effort: input.effort } : {}),
+          ...(workerBase || input.worktree
+            ? {
+                isolation: {
+                  kind: 'worktree',
+                  ...(workerBase
+                    ? {
+                        branch: this.params.sessions.workerBranch(
+                          workerBase.branch,
+                          actionId,
+                        ),
+                      }
+                    : input.worktree?.branch
+                      ? { branch: input.worktree.branch }
+                      : {}),
+                },
+              }
+            : {}),
+          ...(groupId ? { groupId } : {}),
+          ...(input.browser ? { browser: true } : {}),
         });
-      const messageId = derivedId(actionId, 'message');
-      this.params.sessions.queue({
-        sessionId: child.id,
-        messageId,
-        text: input.prompt,
-      });
-      return success({
-        sessionId: child.id,
-        messageId,
-        ...this.delivery(child, messageId),
-        planFirst: input.planFirst,
-        ...(placement.folderNote ? { folderNote: placement.folderNote } : {}),
-      });
+        if (!create.success)
+          return refusal(
+            'invalid',
+            create.error.issues.map(issue => issue.message).join('; '),
+          );
+        const child = await this.params.sessions.createWithEffort(
+          create.data,
+          signal,
+          coordinator.id,
+          workerBase,
+        );
+        if (!this.params.store.child(child.id))
+          this.params.store.saveChild({
+            sessionId: child.id,
+            parentId: coordinator.id,
+            planStatus: null,
+            planRound: 0,
+            targetMode: null,
+            plan: null,
+          });
+        const messageId = derivedId(actionId, 'message');
+        this.params.sessions.queue({
+          sessionId: child.id,
+          messageId,
+          text: workerBase
+            ? `${input.prompt}\n\nSave your result as commits on ${child.worktree?.branch}. The operator reviews the diff and decides whether to merge.`
+            : input.prompt,
+        });
+        return success({
+          sessionId: child.id,
+          messageId,
+          ...this.delivery(child, messageId),
+          planFirst: input.planFirst,
+          ...(placement.folderNote ? { folderNote: placement.folderNote } : {}),
+        });
+      } finally {
+        const remaining = (this.creating.get(root.id) ?? 1) - 1;
+        if (remaining) this.creating.set(root.id, remaining);
+        else this.creating.delete(root.id);
+      }
     },
-    session_send: ({ coordinator, input, actionId, policy }) => {
-      const child = this.child(coordinator, input.sessionId);
+    session_send: async ({ coordinator, input, actionId, policy, signal }) => {
+      const child = this.steerableChild(coordinator, input.sessionId);
       const refused =
         this.refuseModel(policy, input.model) ??
         this.refuseMode(policy, input.mode);
       if (refused) return refused;
+      const mode = input.mode ?? child.mode;
+      const scope = await this.refuseWritableDirectory(
+        coordinator,
+        child,
+        mode,
+        signal,
+      );
+      if (scope) return scope;
+      if (
+        child.status !== 'running' &&
+        child.status !== 'stopping' &&
+        !child.queue.some(item => !item.held)
+      ) {
+        const root = this.groupRoot(coordinator);
+        if (
+          this.activeWorkerSlots(root) +
+            (this.creating.get(root.id) ?? 0) +
+            1 >=
+          policy.groupSize
+        )
+          return refusal(
+            'busy',
+            `The coordinator group is limited to ${policy.groupSize} sessions.`,
+          );
+      }
       const messageId = derivedId(actionId, 'message');
       this.params.sessions.queue({
         sessionId: child.id,
@@ -839,7 +1057,7 @@ export class SessionControl {
       });
     },
     session_set_model: ({ coordinator, input, policy }) => {
-      const child = this.child(coordinator, input.sessionId);
+      const child = this.steerableChild(coordinator, input.sessionId);
       const refused = this.refuseModel(policy, input.model);
       if (refused) return refused;
       const updated = this.params.sessions.changeSelection(child.id, {
@@ -852,7 +1070,7 @@ export class SessionControl {
       });
     },
     session_set_effort: ({ coordinator, input }) => {
-      const child = this.child(coordinator, input.sessionId);
+      const child = this.steerableChild(coordinator, input.sessionId);
       const updated = this.params.sessions.changeSelection(child.id, {
         effort: input.effort,
       });
@@ -862,10 +1080,17 @@ export class SessionControl {
         appliesFrom: 'next-turn',
       });
     },
-    session_set_mode: ({ coordinator, input, policy }) => {
-      const child = this.child(coordinator, input.sessionId);
+    session_set_mode: async ({ coordinator, input, policy, signal }) => {
+      const child = this.steerableChild(coordinator, input.sessionId);
       const refused = this.refuseMode(policy, input.mode);
       if (refused) return refused;
+      const scope = await this.refuseWritableDirectory(
+        coordinator,
+        child,
+        input.mode,
+        signal,
+      );
+      if (scope) return scope;
       if (!isProviderSessionMode(child.provider, input.mode))
         return refusal(
           'invalid',
@@ -895,8 +1120,7 @@ export class SessionControl {
     },
     session_set_parent: ({ coordinator, input, actionId }) => {
       const target = this.params.sessions.snapshot(input.sessionId);
-      if (!target)
-        return refusal('not-found', 'This session does not exist.');
+      if (!target) return refusal('not-found', 'This session does not exist.');
       if (target.parentId === coordinator.id)
         return success({ sessionId: target.id, status: 'attached' });
       if (target.id === coordinator.id)
@@ -961,23 +1185,46 @@ export class SessionControl {
       });
     },
     events_wait: async ({ coordinator, input, signal }) => {
-      const deadline = Date.now() + input.timeoutSeconds * 1000;
-      for (;;) {
-        const page = this.params.store.events(coordinator.id, input.cursor);
-        if (page.events.length)
-          return success({
-            events: page.events,
-            cursor: page.events.at(-1)!.seq,
-            more: page.more,
-          });
-        const remaining = deadline - Date.now();
-        if (remaining <= 0 || signal.aborted || this.params.signal.aborted)
-          return success({ events: [], cursor: input.cursor, timedOut: true });
-        await this.wait(coordinator.id, remaining, signal);
+      this.params.sessions.recordCoordinatorWait(
+        coordinator.id,
+        coordinator.runId!,
+        input.cursor,
+        this.children(coordinator).filter(
+          child =>
+            child.status === 'running' ||
+            child.status === 'stopping' ||
+            child.queue.length,
+        ),
+      );
+      try {
+        const deadline = Date.now() + input.timeoutSeconds * 1000;
+        for (;;) {
+          const page = this.params.store.events(coordinator.id, input.cursor);
+          if (page.events.length)
+            return success({
+              events: page.events,
+              cursor: page.events.at(-1)!.seq,
+              more: page.more,
+            });
+          const remaining = deadline - Date.now();
+          if (remaining <= 0 || signal.aborted || this.params.signal.aborted)
+            return success({
+              events: [],
+              cursor: input.cursor,
+              timedOut: true,
+            });
+          await this.wait(coordinator.id, remaining, signal);
+        }
+      } finally {
+        if (!signal.aborted && !this.params.signal.aborted)
+          this.params.sessions.clearCoordinatorWait(
+            coordinator.id,
+            coordinator.runId!,
+          );
       }
     },
     session_answer: ({ coordinator, input, actionId }) => {
-      const child = this.child(coordinator, input.sessionId);
+      const child = this.steerableChild(coordinator, input.sessionId);
       const question = pendingStageQuestion(child);
       if (!question)
         return refusal(

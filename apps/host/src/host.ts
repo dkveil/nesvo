@@ -178,6 +178,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'stop-run',
   'respond-approval',
   'decide-delegation',
+  'continue-coordinator',
+  'worker-worktree',
   'decide-worker-plan',
   'decide-session-parent',
   'decide-session-plan',
@@ -2991,6 +2993,46 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (
+          request.method === 'decide-delegation' ||
+          request.method === 'worker-worktree'
+        ) {
+          const response = yield* Effect.promise(
+            async (): Promise<HostReply> => {
+              try {
+                const signal = probes.controller.signal;
+                return request.method === 'decide-delegation'
+                  ? {
+                      type: 'session',
+                      id: request.id,
+                      session: await sessions.decideDelegation(
+                        request.input,
+                        signal,
+                      ),
+                    }
+                  : {
+                      type: 'worker-worktree',
+                      id: request.id,
+                      result: await sessions.workerWorktree(
+                        request.input,
+                        signal,
+                      ),
+                    };
+              } catch (error) {
+                return {
+                  type: 'error',
+                  id: request.id,
+                  ...worktreeFailure(
+                    error,
+                    'The worker operation could not be completed.',
+                  ),
+                };
+              }
+            },
+          );
+          yield* Effect.tryPromise(() => send(response));
+          continue;
+        }
         const response = yield* Effect.sync((): HostReply => {
           try {
             if (request.method === 'create-cost-budget') {
@@ -3256,11 +3298,11 @@ export const serveHost = ({
                 session: answered,
               };
             }
-            if (request.method === 'decide-delegation')
+            if (request.method === 'continue-coordinator')
               return {
                 type: 'session',
                 id: request.id,
-                session: sessions.decideDelegation(request.input),
+                session: sessionControl.continue(request.input),
               };
             if (request.method === 'decide-worker-plan') {
               const decided = sessions.decideWorkerPlan(request.input);

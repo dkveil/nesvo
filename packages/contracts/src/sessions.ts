@@ -82,16 +82,19 @@ export const workerProposalSchema = z
     if (
       !isProviderSessionMode(value.provider, value.mode) ||
       (value.provider === 'Claude Code' &&
-        (value.mode !== 'read-only' ||
-          !claudeModelSchema.safeParse(value.model).success))
+        !claudeModelSchema.safeParse(value.model).success)
     )
       context.addIssue({
         code: 'custom',
         message: `Unsupported ${value.provider} worker configuration`,
       });
   });
+export const coordinatorGroupCap = 8;
 export const delegationPlanSchema = z.strictObject({
-  workers: z.array(workerProposalSchema).min(1).max(2),
+  workers: z
+    .array(workerProposalSchema)
+    .min(1)
+    .max(coordinatorGroupCap - 1),
 });
 export const delegationSchema = workerProposalSchema.safeExtend({
   id: z.uuid(),
@@ -278,6 +281,7 @@ export const sessionWorktreeSchema = z.strictObject({
   branch: z.string().min(1).max(200).regex(SESSION_BRANCH_PATTERN),
   base: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/),
   state: z.enum(['active', 'kept', 'removed']),
+  workerTargetBranch: z.string().min(1).max(1024).optional(),
   includes: z
     .strictObject({
       copied: z.number().int().nonnegative().max(64),
@@ -527,6 +531,19 @@ export const sessionSchema = z.strictObject({
   parentRunId: z.uuid().nullable().default(null),
   scope: z.string().max(1000).nullable().default(null),
   delegationEnabled: z.boolean().default(false),
+  coordinatorWait: z
+    .strictObject({
+      runId: z.uuid(),
+      cursor: z.number().int().nonnegative(),
+      startedAt: z.iso.datetime(),
+      away: z.boolean(),
+      workers: z
+        .array(
+          z.strictObject({ sessionId: z.uuid(), runId: z.uuid().nullable() }),
+        )
+        .max(8),
+    })
+    .optional(),
   delegations: z.array(delegationSchema).max(100).default([]),
   workflowRunId: z.uuid().nullable().default(null),
   workflowStepId: z.uuid().nullable().default(null),

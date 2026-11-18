@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -333,7 +333,14 @@ if (args.length === 1 && args[0] === '--version') {
         },
         { ...worker('b', 'hold'), directory: 'read-worker' },
       ];
-    else if (variant === 'too-many') workers.push(worker('c', 'complete'));
+    else if (variant === 'too-many')
+      workers.push(worker('c', 'complete'), worker('d', 'complete'));
+    else if (variant === 'git' || variant === 'git-legacy')
+      workers = ['a', 'b'].map(letter => ({
+        ...worker(letter, 'complete'),
+        task: `fixture:worker-commit:${letter}`,
+        mode: 'supervised',
+      }));
     else if (variant === 'escape')
       workers = [{ ...worker('a', 'complete'), directory: '../outside' }];
     else if (variant === 'symlink')
@@ -348,8 +355,8 @@ if (args.length === 1 && args[0] === '--version') {
       method: 'item/tool/call',
       params: scoped({
         callId: randomUUID(),
-        namespace: null,
-        tool: 'nesvo_delegate',
+        namespace: variant === 'git-legacy' ? null : 'nesvo',
+        tool: variant === 'git-legacy' ? 'nesvo_delegate' : 'session_delegate',
         arguments: { workers },
       }),
     });
@@ -427,6 +434,8 @@ if (args.length === 1 && args[0] === '--version') {
         let result;
         try {
           result = JSON.parse(text);
+          if (!message.result.success && !result.error)
+            result.error = result.message;
         } catch {
           result = { error: text };
         }
@@ -1102,11 +1111,41 @@ if (args.length === 1 && args[0] === '--version') {
         ],
         outputs: { checked: 'sample.txt' },
       };
+      const commitWorker = /fixture:worker-commit:([ab])/.exec(requestPrompt);
       const worker =
         /fixture:worker-(hold|complete|fail|recursive|plan):([a-z])/.exec(
           requestPrompt,
         );
-      if (worker) {
+      if (commitWorker) {
+        assert.equal(thread.supervised, true);
+        const file = `worker-${commitWorker[1]}.txt`;
+        writeFileSync(join(thread.cwd, file), 'Isolated worker result.\n');
+        const git = (...args) =>
+          execFileSync(
+            'git',
+            [
+              '-c',
+              'user.name=Nesvo Test',
+              '-c',
+              'user.email=test@example.invalid',
+              '-c',
+              'commit.gpgsign=false',
+              ...args,
+            ],
+            {
+              cwd: thread.cwd,
+              env: {
+                ...process.env,
+                GIT_CONFIG_NOSYSTEM: '1',
+                GIT_CONFIG_GLOBAL: join(thread.cwd, 'missing-git-config'),
+              },
+              windowsHide: true,
+            },
+          );
+        git('add', '--', file);
+        git('commit', '-qm', `Write ${file}`);
+        complete(`Committed ${file}.`);
+      } else if (worker) {
         assert.equal(
           experimentalApi,
           false,

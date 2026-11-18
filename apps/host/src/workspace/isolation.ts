@@ -368,6 +368,21 @@ export async function repositoryRoot(
   return realPathOf(resolve(root));
 }
 
+export async function currentGitBranch(directory: string, signal: AbortSignal) {
+  const result = await runGit({
+    args: ['symbolic-ref', '--quiet', '--short', 'HEAD'],
+    cwd: directory,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  if (result.code !== 0 || !result.stdout.trim())
+    fail(
+      'invalid-branch',
+      'Check out a named branch before creating a writable worker.',
+    );
+  return result.stdout.trim();
+}
+
 async function headCommit(
   directory: string,
   signal: AbortSignal,
@@ -546,7 +561,7 @@ export async function readHeadCommit(
     untranslated: true,
   });
   const commit = result.stdout.trim();
-  if (result.code !== 0 || !/^[0-9a-f]{40}$/.test(commit))
+  if (result.code !== 0 || !COMMIT_PATTERN.test(commit))
     fail('git-failed', 'Git could not read the checked out commit.');
   return commit;
 }
