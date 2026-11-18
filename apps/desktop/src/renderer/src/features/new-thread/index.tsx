@@ -30,6 +30,7 @@ import { ProfileSelect } from '@/features/provider-profiles/profile-select';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { ImportConversation } from '@/features/import-conversation';
 import { ProviderSetup } from '@/features/provider-setup';
+import { WorktreeRecipeHint } from '@/features/worktree-recipe';
 import {
   Composer,
   ComposerInput,
@@ -86,6 +87,7 @@ type Props = {
     | 'adoptConversation'
     | 'codexStatus'
     | 'claudeStatus'
+    | 'matchWorktreeRecipe'
   >;
   onAdopted: (session: DesktopSession) => void;
   gitRepository: boolean;
@@ -627,6 +629,16 @@ export function NewThread({
                   />
                 </Field>
               )}
+              <WorktreeRecipeHint
+                api={hostApi}
+                directory={setup.directory}
+                enabled={
+                  worktreeAvailable &&
+                  useWorktree &&
+                  connected &&
+                  !!computer?.capabilities.includes('worktree-recipes')
+                }
+              />
               {!piped && useWorktree && !worktreeAvailable && (
                 <StatusMessage tone="warning" variant="notice">
                   Choose a Git project folder to create the worktree.

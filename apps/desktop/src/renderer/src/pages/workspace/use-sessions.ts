@@ -96,6 +96,20 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     suggestTrackedRepositories: () => api.suggestTrackedRepositories(hostId),
     listTrackedPullRequests: input =>
       api.listTrackedPullRequests(input, hostId),
+    listWorktreeRecipes: () => api.listWorktreeRecipes(hostId),
+    saveWorktreeRecipe: input => api.saveWorktreeRecipe(input, hostId),
+    deleteWorktreeRecipe: input => api.deleteWorktreeRecipe(input, hostId),
+    matchWorktreeRecipe: input => api.matchWorktreeRecipe(input, hostId),
+    startWorktreeRecipeTrial: input =>
+      api.startWorktreeRecipeTrial(input, hostId),
+    readWorktreeRecipeTrial: input =>
+      api.readWorktreeRecipeTrial(input, hostId),
+    stopWorktreeRecipeTrial: input =>
+      api.stopWorktreeRecipeTrial(input, hostId),
+    readSessionWorktreeRecipe: input =>
+      api.readSessionWorktreeRecipe(input, hostId),
+    decideSessionWorktreeRecipe: input =>
+      api.decideSessionWorktreeRecipe(input, hostId),
     readCodeReviewSettings: () => api.readCodeReviewSettings(hostId),
     saveReviewerProfile: input => api.saveReviewerProfile(input, hostId),
     deleteReviewerProfile: input => api.deleteReviewerProfile(input, hostId),

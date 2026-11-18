@@ -147,6 +147,16 @@ import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { SessionDetails } from '@/widgets/session-details';
+import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
+import {
+  useSessionWorktreeRecipe,
+  WorktreeRecipeCard,
+  WorktreeRecipeResources,
+} from '@/features/worktree-recipe';
+import {
+  isRecipeHolding,
+  supportsWorktreeRecipes,
+} from '@/entities/worktree-recipe';
 import { SessionActivity } from '@/widgets/session-activity';
 import { SessionReviews } from '@/widgets/session-reviews';
 import { NavigationRail } from '@/widgets/navigation-rail';
@@ -1123,7 +1133,17 @@ export function Workspace() {
     : selected.status === 'running' || selected.status === 'stopping'
       ? selected
       : folderBlocker(selected, store.sessions);
-  const folderBusy = !!activeRun || !!selected?.waitingFor;
+  const sessionRecipe = useSessionWorktreeRecipe(
+    selected?.worktree &&
+      supportsWorktreeRecipes(selectedComputer) &&
+      store.hostReady(selectedHostId)
+      ? desktopApi(selectedHostId)
+      : undefined,
+    selected?.worktree ? selected.id : undefined,
+    `${selected?.worktree?.state ?? ''}:${selected?.status ?? ''}`,
+  );
+  const folderBusy =
+    !!activeRun || !!selected?.waitingFor || isRecipeHolding(sessionRecipe.run);
   const waitingSessionId = selected?.waitingFor
     ? selected.waitingFor.sessionId
     : activeRun?.id;
@@ -1766,12 +1786,21 @@ export function Workspace() {
       setDrafts(previous => ({ ...previous, [key]: text }));
       setSelectedSkills(previous => ({ ...previous, [key]: skill }));
       if (navigationVersion.current === origin) select(key);
-      await deliver(session, text, skill, () => {
-        if ((draftVersions.current[key] ?? 0) === version) {
-          setDrafts(previous => ({ ...previous, [key]: '' }));
-          setSelectedSkills(previous => ({ ...previous, [key]: null }));
-        }
-      });
+      await deliver(
+        session,
+        text,
+        skill,
+        () => {
+          if ((draftVersions.current[key] ?? 0) === version) {
+            setDrafts(previous => ({ ...previous, [key]: '' }));
+            setSelectedSkills(previous => ({ ...previous, [key]: null }));
+          }
+        },
+        !!session.worktree &&
+          supportsWorktreeRecipes(
+            store.computers.find(computer => computer.id === hostId),
+          ),
+      );
     } finally {
       threadRequest.current = false;
     }
@@ -3728,7 +3757,15 @@ ${text}`
                   </SheetDescription>
                 </SheetHeader>
                 <ScrollArea className="min-h-0 flex-1">
-                  <SessionDetails session={selected} />
+                  <SessionDetails session={selected}>
+                    {sessionRecipe.run && (
+                      <WorktreeRecipeResources
+                        run={sessionRecipe.run}
+                        runningApps={runningApps.get(entityKey(selected)) ?? []}
+                        local={selectedComputer?.kind === 'local'}
+                      />
+                    )}
+                  </SessionDetails>
                 </ScrollArea>
               </SheetContent>
             </Sheet>
@@ -4242,6 +4279,15 @@ ${text}`
                       connected={store.hostReady(selectedHostId)}
                       onStopChild={child => void stop(child)}
                       onOpen={select}
+                    />
+                  )
+                }
+                preparation={
+                  sessionRecipe.run && (
+                    <WorktreeRecipeCard
+                      {...sessionRecipe}
+                      run={sessionRecipe.run}
+                      enabled={store.hostReady(selectedHostId)}
                     />
                   )
                 }
@@ -4869,6 +4915,15 @@ ${text}`
               />
             ) : page === 'phone' ? (
               <MobileAccess api={desktopApi()} />
+            ) : page === 'worktree-recipes' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <WorktreeRecipesSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
             ) : page === 'repositories' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}

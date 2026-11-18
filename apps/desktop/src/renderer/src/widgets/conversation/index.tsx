@@ -98,6 +98,7 @@ type Props = {
   workers: Session[];
   activityBar?: ReactNode;
   delegations: ReactNode;
+  preparation?: ReactNode;
   results: ReactNode;
   renderPullRequest?: PullRequestMentionRenderer;
   activity: (
@@ -157,6 +158,7 @@ export function Conversation({
   workers,
   activityBar,
   delegations,
+  preparation,
   results,
   renderPullRequest,
   activity,
@@ -307,7 +309,8 @@ export function Conversation({
     !error &&
     session.pendingApprovals.length === 0 &&
     session.delegations.length === 0 &&
-    session.queue.length === 0;
+    session.queue.length === 0 &&
+    !preparation;
   const providerState = statuses[session.provider];
   const labelFor = (id: string) =>
     providerState.status?.models.find(option => option.id === id)?.label ??
@@ -1184,6 +1187,7 @@ export function Conversation({
                 </section>
               );
             })}
+            {preparation}
             {results}
             {error && (
               <StatusMessage

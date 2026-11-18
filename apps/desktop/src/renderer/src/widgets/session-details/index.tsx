@@ -10,9 +10,10 @@ import {
 } from '@/entities/session';
 import { formatCost } from '@/shared/lib/format-cost';
 import { useNow } from '@/shared/lib/use-now';
+import type { ReactNode } from 'react';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 
-type Props = { session: Session };
+type Props = { session: Session; children?: ReactNode };
 
 const DETAILS_CLOCK_MS = 60_000;
 
@@ -39,7 +40,7 @@ function sessionUsage({ usageTotals: totals }: Session) {
   };
 }
 
-export function SessionDetails({ session }: Props) {
+export function SessionDetails({ session, children }: Props) {
   const role = sessionRoleLabel(session);
   const usage = sessionUsage(session);
   const now = useNow(DETAILS_CLOCK_MS);
@@ -81,6 +82,7 @@ export function SessionDetails({ session }: Props) {
           ]}
         />
       </section>
+      {children}
       {usage && (
         <section aria-label="Usage" className="space-y-4">
           <h2 className="text-xs font-medium">Usage</h2>

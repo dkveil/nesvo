@@ -3,6 +3,7 @@ import {
   Blocks,
   Database,
   FolderGit2,
+  GitFork,
   Info,
   Keyboard,
   Monitor,
@@ -20,6 +21,7 @@ export type SettingsPage =
   | 'appearance'
   | 'shortcuts'
   | 'defaults'
+  | 'worktree-recipes'
   | 'notifications'
   | 'code-review'
   | 'computers'
@@ -68,6 +70,14 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: SlidersHorizontal,
     group: '',
     keywords: 'new session provider model permission mode folder worktree',
+  },
+  {
+    id: 'worktree-recipes',
+    label: 'Worktree recipes',
+    icon: GitFork,
+    group: '',
+    keywords:
+      'worktree recipe setup command copy files env ports tag temporary cleanup repository',
   },
   {
     id: 'notifications',
