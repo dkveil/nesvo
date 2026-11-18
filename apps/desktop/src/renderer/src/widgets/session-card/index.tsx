@@ -27,6 +27,7 @@ export { WorkflowSection } from './workflow-section';
 export { UsageSection } from './usage-section';
 export { WorkersSection } from './workers-section';
 export { ContextSection } from './context-section';
+export { PullRequestSection } from './pull-request-section';
 
 type Props = {
   id: string;
@@ -35,6 +36,7 @@ type Props = {
   session: Session | null;
   run: WorkflowRun | undefined;
   gitBranch: GitBranch | null;
+  pullRequest?: ReactNode;
   workflow: ReactNode;
   workers: ReactNode;
   usage: ReactNode;
@@ -110,6 +112,7 @@ export function SessionCard({
   session,
   run,
   gitBranch,
+  pullRequest,
   workflow,
   workers,
   usage,
@@ -202,6 +205,7 @@ export function SessionCard({
           />
         </div>
       )}
+      {pullRequest}
       {session && (
         <div className={cardSection} data-session-workflow-section>
           <SectionLabel

@@ -15,6 +15,7 @@ import { CopyMessageButton } from './copy-message-button';
 import { interruptionLabels } from './interruption-labels';
 import { isLongPrompt } from './long-prompt';
 import { MessageBody } from './message-body';
+import { MessagePullRequests } from './message-pull-requests';
 
 type Message = Session['messages'][number];
 
@@ -192,6 +193,9 @@ export const MessageArticle = memo(function MessageArticle({
               className="w-full text-ui leading-relaxed"
             />
           ))}
+        {message.author === 'agent' && !live && message.body && (
+          <MessagePullRequests body={message.body} />
+        )}
         {message.author === 'agent' && !live && message.body && (
           <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
             <CopyMessageButton body={message.body} />

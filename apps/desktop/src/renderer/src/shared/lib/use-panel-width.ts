@@ -6,6 +6,7 @@ const PANEL_KINDS = [
   'diff',
   'skills',
   'pull-request',
+  'pull-request-review',
 ] as const;
 
 export type PanelKind = (typeof PANEL_KINDS)[number];

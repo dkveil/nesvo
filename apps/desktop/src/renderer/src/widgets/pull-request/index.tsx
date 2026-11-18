@@ -5,6 +5,7 @@ import {
   Copy,
   Ellipsis,
   ExternalLink,
+  Maximize2,
   RefreshCw,
   Unlink,
   X,
@@ -13,6 +14,7 @@ import { cn } from '@/shared/lib/cn';
 import {
   PullRequestStateIcon,
   RelativeTime,
+  primePullRequestDetails,
   pullRequestUrl,
   visualState,
   visualStateLabels,
@@ -56,6 +58,7 @@ import {
 } from './session-prompt';
 import { SummaryTab } from './summary-tab';
 import { ThreadCard } from './thread-card';
+import { ThreadsTab } from './threads-tab';
 import { TimelineTab } from './timeline-tab';
 import { usePullRequestActions } from './use-pull-request-actions';
 import { useResource } from './use-resource';
@@ -67,6 +70,12 @@ const DEFAULT_MAX_WIDTH_PX = 1000;
 const defaultPanelWidth = (viewportWidth: number) =>
   Math.min(DEFAULT_MAX_WIDTH_PX, viewportWidth * DEFAULT_WIDTH_RATIO);
 
+const REVIEW_WIDTH_RATIO = 0.45;
+const REVIEW_MAX_WIDTH_PX = 820;
+
+const defaultReviewWidth = (viewportWidth: number) =>
+  Math.min(REVIEW_MAX_WIDTH_PX, viewportWidth * REVIEW_WIDTH_RATIO);
+
 const STALE_REVISION_REASON =
   'The pull request changed. Refresh to review the latest commit.';
 
@@ -74,9 +83,13 @@ const PANEL_ID_PREFIX = 'pull-request';
 
 const EMPTY_REVIEW_DRAFT: ReviewDraft = { event: 'comment', body: '' };
 
-type PanelTab = 'summary' | 'timeline' | 'code' | 'agent-review';
+type PanelTab = 'summary' | 'timeline' | 'code' | 'threads' | 'agent-review';
+
+export type PullRequestPanelLayout = 'surface' | 'session';
 
 type PullRequestPanelProps = {
+  layout?: PullRequestPanelLayout;
+  onExpand?: () => void;
   target: PullRequestTarget;
   api: PullRequestApi & AgentReviewApi;
   blockedReason: string;
@@ -92,6 +105,8 @@ type PullRequestPanelProps = {
 };
 
 export default function PullRequestPanel({
+  layout = 'surface',
+  onExpand,
   target,
   api,
   blockedReason,
@@ -108,7 +123,8 @@ export default function PullRequestPanel({
   const { reference } = target;
   const now = useNow(RELATIVE_TIME_REFRESH_MS);
   const [tab, setTab] = useState<PanelTab>('summary');
-  const [codeRequested, setCodeRequested] = useState(false);
+  const inSession = layout === 'session';
+  const [codeRequested, setCodeRequested] = useState(inSession);
   const [reviewRequest, setReviewRequest] = useState(0);
   const [versions, setVersions] = useState({
     pullRequest: 0,
@@ -129,7 +145,10 @@ export default function PullRequestPanel({
     attach: attachPanel,
     style: panelStyle,
     resizer,
-  } = usePanelWidth('pull-request', defaultPanelWidth);
+  } = usePanelWidth(
+    inSession ? 'pull-request-review' : 'pull-request',
+    inSession ? defaultReviewWidth : defaultPanelWidth,
+  );
   const readable = !blockedReason;
   const pullRequest = useResource(
     () => api.readPullRequest(reference),
@@ -146,6 +165,10 @@ export default function PullRequestPanel({
     `threads:${versions.threads}`,
     readable && codeRequested,
   );
+  useEffect(() => {
+    if (pullRequest.data)
+      primePullRequestDetails(target.hostId, pullRequest.data);
+  }, [pullRequest.data, target.hostId]);
   const bump = (key: keyof typeof versions) =>
     setVersions(previous => ({ ...previous, [key]: previous[key] + 1 }));
   const refreshAll = () => {
@@ -183,7 +206,7 @@ export default function PullRequestPanel({
   }, []);
   const changeTab = (next: PanelTab) => {
     setTab(next);
-    if (next === 'code') setCodeRequested(true);
+    if (next === 'code' || next === 'threads') setCodeRequested(true);
   };
   const data = pullRequest.data;
   const url = data?.url ?? pullRequestUrl(reference);
@@ -326,8 +349,9 @@ export default function PullRequestPanel({
   return (
     <section
       role="region"
-      aria-label={`Pull request ${reference.repository} #${reference.number}`}
+      aria-label={`${inSession ? 'Review pull request' : 'Pull request'} ${reference.repository} #${reference.number}`}
       data-pull-request={`${reference.repository}#${reference.number}`}
+      data-pull-request-layout={layout}
       ref={attachPanel}
       style={panelStyle}
       className={panelSurface}
@@ -343,17 +367,55 @@ export default function PullRequestPanel({
           )
         }
         title={
-          <>
-            <span className="font-normal text-muted-foreground">
-              {reference.repository}
-            </span>{' '}
-            #{reference.number}
-            {state && (
-              <span className="sr-only">, {visualStateLabels[state]}</span>
-            )}
-          </>
+          inSession ? (
+            <>
+              #{reference.number}{' '}
+              <span className="font-normal text-muted-foreground">
+                {reference.repository}
+              </span>
+              {state && (
+                <span className="sr-only">, {visualStateLabels[state]}</span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="font-normal text-muted-foreground">
+                {reference.repository}
+              </span>{' '}
+              #{reference.number}
+              {state && (
+                <span className="sr-only">, {visualStateLabels[state]}</span>
+              )}
+            </>
+          )
         }
       >
+        {inSession && files.data && (
+          <span
+            className="mr-1 text-2xs text-muted-foreground tabular-nums"
+            aria-live="polite"
+            data-viewed-progress={`${viewedCount}/${changedPaths.length}`}
+          >
+            {viewedCount} / {changedPaths.length} viewed
+          </span>
+        )}
+        {inSession && data?.state === 'open' && (
+          <ReviewControl
+            events={allowedReviewEvents}
+            draft={reviewDraft}
+            blockedReason={blockedReason}
+            state={actions.states.review}
+            onDraftChange={editReview}
+            onSubmit={submitReview}
+          />
+        )}
+        {inSession && onExpand && (
+          <Hint label="Open in Pull requests" side="bottom">
+            <PanelAction aria-label="Open in Pull requests" onClick={onExpand}>
+              <Maximize2 />
+            </PanelAction>
+          </Hint>
+        )}
         <Hint label="Open on GitHub" side="bottom">
           <PanelAction
             aria-label="Open on GitHub"
@@ -362,7 +424,7 @@ export default function PullRequestPanel({
             <ExternalLink />
           </PanelAction>
         </Hint>
-        {data && linkedSession && (
+        {!inSession && data && linkedSession && (
           <CheckoutControl
             pullRequest={data}
             session={linkedSession}
@@ -377,7 +439,7 @@ export default function PullRequestPanel({
             }
           />
         )}
-        {data && (
+        {!inSession && data && (
           <MergeControl
             pullRequest={data}
             blockedReason={blockedReason}
@@ -533,20 +595,42 @@ export default function PullRequestPanel({
               idPrefix={PANEL_ID_PREFIX}
               value={tab}
               onChange={changeTab}
-              options={[
-                { value: 'summary', label: 'Summary' },
-                {
-                  value: 'timeline',
-                  label: 'Timeline',
-                  count: data.timeline.length,
-                },
-                { value: 'code', label: 'Code', count: data.changedFiles },
-                { value: 'agent-review', label: 'Agent review' },
-              ]}
+              options={
+                inSession
+                  ? [
+                      { value: 'summary', label: 'Summary' },
+                      {
+                        value: 'code',
+                        label: 'Code',
+                        count: data.changedFiles,
+                      },
+                      {
+                        value: 'threads',
+                        label: 'Threads',
+                        count: threads.data?.threads.filter(
+                          thread => !thread.isResolved,
+                        ).length,
+                      },
+                    ]
+                  : [
+                      { value: 'summary', label: 'Summary' },
+                      {
+                        value: 'timeline',
+                        label: 'Timeline',
+                        count: data.timeline.length,
+                      },
+                      {
+                        value: 'code',
+                        label: 'Code',
+                        count: data.changedFiles,
+                      },
+                      { value: 'agent-review', label: 'Agent review' },
+                    ]
+              }
               className="min-w-0 flex-1 border-b-0"
             />
             <div className="flex shrink-0 items-center gap-2 pr-2">
-              {tab === 'code' && files.data && (
+              {!inSession && tab === 'code' && files.data && (
                 <span
                   className="text-2xs text-muted-foreground tabular-nums"
                   aria-live="polite"
@@ -554,7 +638,7 @@ export default function PullRequestPanel({
                   {viewedCount} / {changedPaths.length} viewed
                 </span>
               )}
-              {data.state === 'open' && (
+              {!inSession && data.state === 'open' && (
                 <ReviewControl
                   events={allowedReviewEvents}
                   draft={reviewDraft}
@@ -571,7 +655,10 @@ export default function PullRequestPanel({
             value={tab}
             className={cn(
               'flex min-h-0 flex-1 flex-col',
-              tab !== 'code' && tab !== 'agent-review' && 'overflow-y-auto',
+              tab !== 'code' &&
+                tab !== 'threads' &&
+                tab !== 'agent-review' &&
+                'overflow-y-auto',
             )}
           >
             {tab === 'summary' && (
@@ -603,6 +690,15 @@ export default function PullRequestPanel({
                   if (done) bump('pullRequest');
                   return done;
                 }}
+              />
+            )}
+            {tab === 'threads' && (
+              <ThreadsTab
+                threads={threads}
+                sendReason={sendReason}
+                onSendAll={sendThreads}
+                onRetry={() => bump('threads')}
+                renderThread={renderThread}
               />
             )}
             {tab === 'code' && (

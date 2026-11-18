@@ -56,6 +56,10 @@ import {
 import { MessageBody } from './message-body';
 import { interruptionLabels } from './interruption-labels';
 import { MessageArticle } from './message-article';
+import {
+  PullRequestMentionContext,
+  type PullRequestMentionRenderer,
+} from './pull-request-mentions';
 
 const MESSAGE_MAX_LENGTH = 32000;
 const PASTE_NOTICE_MS = 5000;
@@ -91,6 +95,7 @@ type Props = {
   workers: Session[];
   delegations: ReactNode;
   results: ReactNode;
+  renderPullRequest?: PullRequestMentionRenderer;
   activity: (
     runId: string,
     startedAt: string | null,
@@ -147,6 +152,7 @@ export function Conversation({
   workers,
   delegations,
   results,
+  renderPullRequest,
   activity,
   draft,
   selectedSkill,
@@ -889,64 +895,68 @@ export function Conversation({
                 Claude Code will fork the conversation on your next message.
               </StatusMessage>
             )}
-            <div
-              role="log"
-              aria-live="polite"
-              aria-relevant="additions"
-              aria-label="Messages"
-              className="space-y-8"
+            <PullRequestMentionContext.Provider
+              value={renderPullRequest ?? null}
             >
-              {session.messages.map((message, index) => {
-                const live =
-                  message.author === 'agent' &&
-                  message.runId === session.runId &&
-                  running;
-                const showActivity =
-                  message.origin !== 'imported' &&
-                  firstAgents.get(message.runId) === message.id &&
-                  (live ||
-                    !!message.completedAt ||
-                    activityRunIds.has(message.runId));
-                return (
-                  <MessageArticle
-                    key={message.id}
-                    message={message}
-                    provider={session.provider}
-                    live={live}
-                    deferred={
-                      !live &&
-                      index < session.messages.length - EAGER_TAIL_MESSAGES
-                    }
-                    showActivity={showActivity}
-                    activity={
-                      showActivity &&
-                      activity(
-                        message.runId,
-                        runStarts.get(message.runId) ?? null,
-                        message.completedAt,
-                        live ? session.status : message.state,
-                        live,
-                      )
-                    }
-                    showInterruption={message.runId !== session.runId}
-                    selectionChange={selectionChanges.get(message.id)}
-                    threadStart={threadStarts.has(firstIndex + index)}
-                    compacted={compactedAt.has(firstIndex + index)}
-                  />
-                );
-              })}
-              {compactedAt.has(session.messageCount) && (
-                <Separator label="Conversation compacted" />
-              )}
-              {runWithoutMessages && (
-                <StatusMessage tone="loading">
-                  {session.activity ?? `${session.provider} is working…`}
-                </StatusMessage>
-              )}
-              {threadStarts.has(session.messageCount) && (
-                <Separator label="Session restarted" />
-              )}
-            </div>
+              <div
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-label="Messages"
+                className="space-y-8"
+              >
+                {session.messages.map((message, index) => {
+                  const live =
+                    message.author === 'agent' &&
+                    message.runId === session.runId &&
+                    running;
+                  const showActivity =
+                    message.origin !== 'imported' &&
+                    firstAgents.get(message.runId) === message.id &&
+                    (live ||
+                      !!message.completedAt ||
+                      activityRunIds.has(message.runId));
+                  return (
+                    <MessageArticle
+                      key={message.id}
+                      message={message}
+                      provider={session.provider}
+                      live={live}
+                      deferred={
+                        !live &&
+                        index < session.messages.length - EAGER_TAIL_MESSAGES
+                      }
+                      showActivity={showActivity}
+                      activity={
+                        showActivity &&
+                        activity(
+                          message.runId,
+                          runStarts.get(message.runId) ?? null,
+                          message.completedAt,
+                          live ? session.status : message.state,
+                          live,
+                        )
+                      }
+                      showInterruption={message.runId !== session.runId}
+                      selectionChange={selectionChanges.get(message.id)}
+                      threadStart={threadStarts.has(firstIndex + index)}
+                      compacted={compactedAt.has(firstIndex + index)}
+                    />
+                  );
+                })}
+                {compactedAt.has(session.messageCount) && (
+                  <Separator label="Conversation compacted" />
+                )}
+                {runWithoutMessages && (
+                  <StatusMessage tone="loading">
+                    {session.activity ?? `${session.provider} is working…`}
+                  </StatusMessage>
+                )}
+                {threadStarts.has(session.messageCount) && (
+                  <Separator label="Session restarted" />
+                )}
+              </div>
+            </PullRequestMentionContext.Provider>
             {session.error &&
               session.status !== 'interrupted' &&
               session.status !== 'completed' && (

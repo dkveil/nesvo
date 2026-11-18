@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 import {
   fileKindLabels,
@@ -18,6 +18,7 @@ import { ListRow } from '@/shared/ui/list-row';
 import { entityKey, hostKey } from '@/shared/lib/host-key';
 
 type Props = ReviewDecisionProps & {
+  pullRequest?: ReactNode;
   reviews: Review[];
   allReviews: Review[];
   focusedId: string;
@@ -228,6 +229,7 @@ function ReviewVersion({
 }
 
 export function SessionReviews({
+  pullRequest,
   reviews,
   allReviews,
   focusedId,
@@ -243,7 +245,7 @@ export function SessionReviews({
   const [latest, ...earlier] = versions;
   const focusedEarlier = earlier.some(review => review.id === focusedId);
   const [earlierOpen, setEarlierOpen] = useOpenWhenFocused(focusedEarlier);
-  if (reviews.length === 0) return null;
+  if (reviews.length === 0 && !pullRequest) return null;
   const earlierLabel = `${earlier.length} earlier ${earlier.length === 1 ? 'version' : 'versions'}`;
   const renderVersion = (review: Review) => (
     <ReviewVersion
@@ -259,7 +261,8 @@ export function SessionReviews({
   return (
     <section aria-label="Session results" className="space-y-2 border-t pt-5">
       <h2 className="text-sm font-medium">Session results</h2>
-      <div className="-mx-2">
+      {pullRequest}
+      <div className="-mx-2 empty:hidden">
         {latest && renderVersion(latest)}
         {earlier.length > 0 && (
           <NativeDisclosure
