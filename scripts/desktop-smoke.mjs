@@ -1815,8 +1815,9 @@ try {
   await waitState(orchestrator.id, 'completed');
   const proposal = title =>
     page
-      .getByRole('region', { name: 'Worker proposal', exact: true })
-      .filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+      .locator('[data-workers]')
+      .getByRole('group', { name: title, exact: true })
+      .first();
   await send('fixture:delegate');
   await proposal('Fixture worker A').waitFor();
   await proposal('Fixture worker B').waitFor();
@@ -1872,7 +1873,7 @@ try {
     .getByRole('button', { name: /^Prototype orchestration/ })
     .click();
   await proposal('Fixture worker A')
-    .getByRole('button', { name: 'Open worker session', exact: true })
+    .getByRole('button', { name: 'Open Fixture worker A', exact: true })
     .click();
   await page
     .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
@@ -1953,15 +1954,23 @@ try {
   );
   await screenshot('-workers');
   const subsessionBar = page.locator('[data-subsession-bar]');
-  await subsessionBar
-    .getByRole('button', { name: 'Waiting on 2 workers', exact: true })
-    .waitFor();
-  const showAgents = running =>
+  const showAgents = label =>
     subsessionBar.getByRole('button', {
-      name: `${running} of 2 workers running, show agents`,
+      name: `${label}, show agents`,
       exact: true,
     });
-  await showAgents(2).click();
+  await sessionCardToggle.click();
+  const subsessionsSection = sessionCard.getByRole('region', {
+    name: 'Subsessions · 2 running',
+    exact: true,
+  });
+  await subsessionsSection
+    .getByRole('button', { name: /^Open Fixture worker A, Working/ })
+    .waitFor();
+  await screenshot('-subsessions');
+  await page.keyboard.press('Escape');
+  await sessionCard.waitFor({ state: 'hidden' });
+  await showAgents('2 workers running').click();
   const agentsPanel = page.getByRole('dialog', { name: 'Agents' });
   await agentsPanel
     .getByRole('button', { name: /^Open Fixture worker A, Working/ })
@@ -1973,7 +1982,7 @@ try {
   await page.keyboard.press('Escape');
   await agentsPanel.waitFor({ state: 'detached' });
   await proposal('Fixture worker A')
-    .getByRole('button', { name: 'Open worker session', exact: true })
+    .getByRole('button', { name: 'Open Fixture worker A', exact: true })
     .click();
   await page
     .getByRole('heading', { name: 'Fixture worker A', exact: true, level: 1 })
@@ -1989,16 +1998,27 @@ try {
   await page
     .getByRole('button', { name: 'Back to parent session', exact: true })
     .click();
-  await subsessionBar
-    .getByRole('button', { name: 'Waiting on 1 worker', exact: true })
-    .waitFor();
-  await showAgents(1).click();
+  await showAgents('1 worker running').click();
   await agentsPanel
     .getByRole('button', { name: /^Open Fixture worker A, Stopped/ })
     .waitFor();
   await screenshot('-agents-stopped');
   await page.keyboard.press('Escape');
   await agentsPanel.waitFor({ state: 'detached' });
+  await sessionCardToggle.click();
+  const remainingSubsessions = sessionCard.getByRole('region', {
+    name: 'Subsessions · 1 running',
+    exact: true,
+  });
+  await remainingSubsessions
+    .getByRole('button', { name: 'Previous subsessions, 2', exact: true })
+    .click();
+  await remainingSubsessions
+    .getByRole('button', { name: /^Open Fixture worker A, Stopped/ })
+    .waitFor();
+  await screenshot('-subsessions-previous');
+  await page.keyboard.press('Escape');
+  await sessionCard.waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Stop group', exact: true }).click();
   await waitState(orchestrator.id, 'stopped');
   await waitState(childB.id, 'stopped');
