@@ -165,7 +165,17 @@ export class LessonService {
         ...store.proposals(),
         ...files.lessons.map(file => this.withChange(file.lesson)),
       ],
-      issues: files.issues.slice(0, 50),
+      issues: [
+        ...files.lessons
+          .filter(file => !this.isOwnerApproved(file.lesson))
+          .map(
+            file =>
+              `${file.lesson.location?.path ?? file.lesson.title}: this project lesson was not written by your decision in Nesvo, so it is not added to prompts. Keep it to approve the current text.`,
+          ),
+        ...files.issues,
+      ]
+        .map(issue => issue.slice(0, lessonLimits.error))
+        .slice(0, 50),
       incidents: store.incidents(),
       pendingIncidents: store.pendingCount(),
     };
@@ -434,8 +444,18 @@ export class LessonService {
   }
 
   private lessonsFor(context: LessonContext): Lesson[] {
-    return this.filesIn(this.projectRoots(context.directories)).lessons.map(
-      file => file.lesson,
+    return this.filesIn(this.projectRoots(context.directories))
+      .lessons.filter(file => this.isOwnerApproved(file.lesson))
+      .map(file => file.lesson);
+  }
+
+  private isOwnerApproved(lesson: Lesson): boolean {
+    if (lesson.location?.scope !== 'project') return true;
+    const latest = this.ports.changes.latest(lesson.id);
+    return (
+      latest?.createdBy === 'owner' &&
+      latest.after?.type === 'hash' &&
+      latest.after.hash === lesson.version
     );
   }
 
