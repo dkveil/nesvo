@@ -507,6 +507,15 @@ export async function readGitHubFetchRemotes(
   directory: string,
   signal: AbortSignal,
 ): Promise<string[]> {
+  return (await readGitHubFetchRemoteEntries(directory, signal)).map(
+    remote => remote.repository,
+  );
+}
+
+export async function readGitHubFetchRemoteEntries(
+  directory: string,
+  signal: AbortSignal,
+): Promise<{ name: string; repository: string }[]> {
   const remotes = await runGit({
     args: ['remote', '-v'],
     cwd: directory,
@@ -516,11 +525,13 @@ export async function readGitHubFetchRemotes(
   });
   if (remotes.code !== 0 || remotes.outputTruncated) return [];
   const fetchRemote =
-    /^\S+\t(?:(?:https?|ssh|git):\/\/(?:[^/\s@]+@)?github\.com(?::\d+)?\/|(?:[^/\s@]+@)?github\.com:)([a-z0-9-]+\/[a-z0-9._-]+) \(fetch\)$/i;
-  return remotes.stdout
-    .split(/\r?\n/)
-    .map(line => fetchRemote.exec(line)?.[1]?.replace(/\.git$/i, ''))
-    .filter((name): name is string => !!name);
+    /^(\S+)\t(?:(?:https?|ssh|git):\/\/(?:[^/\s@]+@)?github\.com(?::\d+)?\/|(?:[^/\s@]+@)?github\.com:)([a-z0-9-]+\/[a-z0-9._-]+) \(fetch\)$/i;
+  return remotes.stdout.split(/\r?\n/).flatMap(line => {
+    const match = fetchRemote.exec(line);
+    return match
+      ? [{ name: match[1]!, repository: match[2]!.replace(/\.git$/i, '') }]
+      : [];
+  });
 }
 
 export async function readHeadCommit(

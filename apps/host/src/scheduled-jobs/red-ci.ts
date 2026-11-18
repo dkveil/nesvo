@@ -7,7 +7,7 @@ import {
 import { redactLogMessage } from '../log-redaction';
 import type { GitHubCli } from '../process/github-cli';
 import { check, checkSchema, shaSchema } from '../pull-request-data';
-import { readGitHubFetchRemotes, runGit } from '../workspace/isolation';
+import { readGitHubFetchRemoteEntries, runGit } from '../workspace/isolation';
 
 const openPullRequests = z
   .array(
@@ -148,11 +148,12 @@ export async function prepareCiHead(
   signal: AbortSignal,
 ) {
   const repository = head.reference.repository;
-  const remotes = await readGitHubFetchRemotes(directory, signal);
-  if (
-    !remotes.some(remote => remote.toLowerCase() === repository.toLowerCase())
-  )
-    return false;
+  const remotes = await readGitHubFetchRemoteEntries(directory, signal);
+  const remote = remotes.find(
+    candidate =>
+      candidate.repository.toLowerCase() === repository.toLowerCase(),
+  );
+  if (!remote) return false;
   const hasCommit = async () =>
     (
       await runGit({
@@ -170,8 +171,9 @@ export async function prepareCiHead(
       '--no-recurse-submodules',
       '--no-write-fetch-head',
       '--no-auto-maintenance',
+      '--refmap=',
       '--',
-      `https://github.com/${repository}.git`,
+      remote.name,
       `refs/pull/${head.reference.number}/head`,
     ],
     cwd: directory,
