@@ -11,11 +11,13 @@ import { useNow } from '@/shared/lib/use-now';
 import { infoPanelSurface } from '@/shared/ui/card-row-styles';
 import { SectionLabel } from '@/shared/ui/section-label';
 import { WorkerItem } from './worker-item';
+import { WorkerWorktree } from './worker-worktree';
 
 type Props = {
   session: Session;
   children: Session[];
   enabled: boolean;
+  worktreeActions?: boolean;
   pending: Record<string, boolean>;
   onDecision: (
     delegationId: string,
@@ -35,6 +37,7 @@ export function Delegations({
   session,
   children,
   enabled,
+  worktreeActions,
   pending,
   onDecision,
   onPlanDecision,
@@ -56,6 +59,15 @@ export function Delegations({
   };
   const childOf = (id: string | null | undefined) =>
     id ? children.find(child => child.id === id) : undefined;
+  const worktreeAction = (child: Session | undefined) =>
+    worktreeActions &&
+    child?.worktree?.workerTargetBranch &&
+    child.worktree.state === 'active' &&
+    child.runId &&
+    child.status !== 'running' &&
+    child.status !== 'stopping' ? (
+      <WorkerWorktree parent={session} worker={child} enabled={enabled} />
+    ) : undefined;
   return (
     <section
       aria-label="Workers"
@@ -83,6 +95,7 @@ export function Delegations({
               title={delegation.title}
               delegation={delegation}
               child={child}
+              worktreeAction={worktreeAction(child)}
               current
               elapsed={elapsedOf(child)}
               canDecide={isCurrentRun && delegation.status === 'pending'}
@@ -104,6 +117,7 @@ export function Delegations({
               delegation => delegation.childSessionId === child.id,
             )}
             child={child}
+            worktreeAction={worktreeAction(child)}
             current={false}
             elapsed={elapsedOf(child)}
             canDecide={false}

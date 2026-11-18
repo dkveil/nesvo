@@ -780,6 +780,8 @@ try {
       providers: ['Claude Code', 'Codex'],
       models: [],
       childModes: ['read-only', 'accept-edits'],
+      groupSize: 4,
+      nested: false,
       worktrees: false,
       acceptPlans: true,
       browser: false,

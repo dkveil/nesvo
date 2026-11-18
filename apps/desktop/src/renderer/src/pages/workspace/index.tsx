@@ -155,6 +155,7 @@ import {
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
+import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
 import { ChildDecisions } from '@/widgets/child-decisions';
@@ -2088,6 +2089,16 @@ export function Workspace({
       });
     }
   };
+  const continueCoordinator = async (session: Session) => {
+    if (!session.coordinatorWait) return;
+    store.merge([
+      await desktopApi(session.hostId).continueCoordinator({
+        sessionId: session.id,
+        waitRunId: session.coordinatorWait.runId,
+        messageId: crypto.randomUUID(),
+      }),
+    ]);
+  };
   const decideSessionParent = async (
     input: DecideSessionParentInput,
     hostId = 'local',
@@ -2997,7 +3008,11 @@ ${text}`
         ]
       : [];
   const finishWorktreeAvailable =
-    !browsing && !creating && !!selected?.worktree && !!window.nesvo;
+    !browsing &&
+    !creating &&
+    !!selected?.worktree &&
+    !selected.worktree.workerTargetBranch &&
+    !!window.nesvo;
   const headerOwnActions: RowAction[] = [
     ...headerThreadActions,
     ...(finishWorktreeAvailable
@@ -3984,6 +3999,18 @@ ${text}`
                 {sessionStatusLabel(selected)}
               </span>
             )}
+          {!browsing && !creating && selected?.coordinatorWait && (
+            <CoordinatorWait
+              key={selectedKey}
+              session={selected}
+              sessions={workers}
+              enabled={
+                store.hostReady(selectedHostId) &&
+                !!selectedComputer?.capabilities.includes('coordinator-workers')
+              }
+              onContinue={() => continueCoordinator(selected)}
+            />
+          )}
           {finishingWorktree && headerWorktree && selected && window.nesvo && (
             <FinishWorktreeDialog
               key={selectedKey}
@@ -4548,6 +4575,7 @@ ${text}`
               approvalPending={approvalPending}
               delegationPending={delegationPending}
               parentPending={parentPending}
+              onContinueCoordinator={continueCoordinator}
               stages={stages}
               onParent={(input, hostId) =>
                 void decideSessionParent(input, hostId)
@@ -4821,6 +4849,9 @@ ${text}`
                     session={selected}
                     children={workers}
                     enabled={operationEnabled}
+                    worktreeActions={selectedComputer?.capabilities.includes(
+                      'coordinator-workers',
+                    )}
                     pending={delegationPending}
                     onDecision={(delegationId, decision) =>
                       selected.runId &&

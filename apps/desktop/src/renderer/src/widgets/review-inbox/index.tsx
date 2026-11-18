@@ -69,7 +69,10 @@ import {
   type InboxItemDecision,
 } from '@/features/inbox-rules';
 
+import { CoordinatorWait } from '@/widgets/delegations/coordinator-wait';
+
 type Props = ReviewDecisionProps & {
+  onContinueCoordinator: (session: Session) => Promise<void>;
   reviews: Review[];
   sessions: Session[];
   loading: boolean;
@@ -117,6 +120,7 @@ type ActionRow =
       at: string;
       id: string;
     }
+  | { type: 'coordinator-wait'; session: Session; at: string; id: string }
   | { type: 'review'; review: Review; at: string; id: string }
   | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
   | { type: 'automation'; job: ScheduledJob; at: string; id: string }
@@ -358,6 +362,7 @@ export function ReviewInbox({
   onParent,
   onApproval,
   onDelegation,
+  onContinueCoordinator,
   onSession,
   onRefresh,
   automations,
@@ -422,6 +427,15 @@ export function ReviewInbox({
       at: review.createdAt,
       id: entityKey(review),
     }));
+  if (filter !== 'history')
+    for (const session of sessions)
+      if (session.coordinatorWait)
+        rows.push({
+          type: 'coordinator-wait',
+          session,
+          at: session.coordinatorWait.startedAt,
+          id: entityKey(session),
+        });
   if (filter !== 'history')
     for (const session of sessions)
       if (session.parentRequest)
@@ -662,6 +676,25 @@ export function ReviewInbox({
                       setUndoError('');
                       setGateToast({ row: saved, hostId });
                     }}
+                  />
+                );
+              }
+              if (row.type === 'coordinator-wait') {
+                const { session } = row;
+                return (
+                  <ListRow
+                    key={row.id}
+                    title={session.title}
+                    onClick={() => onSession(entityKey(session))}
+                    actions={
+                      <CoordinatorWait
+                        session={session}
+                        sessions={sessions}
+                        enabled={isOperationEnabled(session)}
+                        onContinue={() => onContinueCoordinator(session)}
+                      />
+                    }
+                    actionsPlacement="visible"
                   />
                 );
               }

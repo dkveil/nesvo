@@ -609,7 +609,7 @@ Codex       -> thread/start dynamicTools namespace "nesvo" -> item/tool/call on 
              coordinator policy, subtree, actionId, SessionService
 ```
 
-**Identity.** The adapter passes the session ID and run ID of the turn that owns the process; no tool accepts a caller argument. A call is accepted only while that run is the session's current run, the session is top-level (no parent, not a worker, not part of a workflow or automation) and session control is enabled on the computer.
+**Identity.** The adapter passes the session ID and run ID of the turn that owns the process; no tool accepts a caller argument. A coordinator call requires the running turn of a top-level session or a direct child allowed by the computer's policy. Workflow and automation sessions do not gain coordinator tools. The session control toggle enables policy-authorized tools. An explicit Inbox decision remains available for Codex delegation proposals when the toggle is off.
 
 **Registration.** Claude Code turns of an eligible session register the tools on every turn, so resumed and imported conversations receive them. The turn always uses the stream-json host channel (`--permission-prompts host --permission-prompt-tool stdio`); the CLI's `system/init` must report the `nesvo` server as connected, otherwise the turn shows a failed Session control unavailable row instead of silently continuing without the tools. A CLI without the host channel gets no tools and shows the same row. Codex registers the `nesvo` namespace at thread start and resume keeps the provider's stored tool metadata. Existing native threads are never replaced or reregistered. A direct child can request coordinator tools only when the policy enables one additional level.
 

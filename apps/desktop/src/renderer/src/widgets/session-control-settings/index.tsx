@@ -101,6 +101,9 @@ export function SessionControlSettings({
     }
   };
   const locked = pending || !policy.enabled;
+  const workersAvailable = computer?.capabilities.includes(
+    'coordinator-workers',
+  );
   return (
     <div className="space-y-6">
       <p className="text-xs leading-5 text-muted-foreground">
@@ -126,6 +129,53 @@ export function SessionControlSettings({
             onCheckedChange={enabled => void save({ ...policy, enabled })}
           />
         </SettingsRow>
+        {workersAvailable && (
+          <>
+            <SettingsRow
+              title={
+                <label htmlFor="coordinator-group-size">
+                  Maximum group size
+                </label>
+              }
+              description="Includes the coordinator and its active workers."
+            >
+              <Input
+                key={policy.groupSize}
+                id="coordinator-group-size"
+                type="number"
+                min={2}
+                max={8}
+                step={1}
+                className="w-20"
+                defaultValue={policy.groupSize}
+                disabled={pending}
+                onBlur={event => {
+                  const size = event.target.valueAsNumber;
+                  if (!Number.isInteger(size) || size < 2 || size > 8) {
+                    event.target.value = String(policy.groupSize);
+                  } else if (size !== policy.groupSize) {
+                    void save({ ...policy, groupSize: size });
+                  }
+                }}
+              />
+            </SettingsRow>
+            <SettingsRow
+              title={
+                <label htmlFor="coordinator-nested">
+                  One level of subdelegation
+                </label>
+              }
+              description="Allow a direct child to coordinate workers within the same group limit."
+            >
+              <Switch
+                id="coordinator-nested"
+                checked={policy.nested}
+                disabled={locked}
+                onCheckedChange={nested => void save({ ...policy, nested })}
+              />
+            </SettingsRow>
+          </>
+        )}
         <SettingsRow
           title="Providers"
           description="Child sessions can use these providers."

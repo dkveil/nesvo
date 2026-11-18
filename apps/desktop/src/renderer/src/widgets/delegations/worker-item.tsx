@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type {
   DecideDelegationInput,
@@ -33,6 +33,7 @@ type WorkerItemProps = {
     correction?: string,
   ) => void;
   onOpen: () => void;
+  worktreeAction?: ReactNode;
 };
 
 const detailsInset = 'pr-2 pb-2 pl-7';
@@ -49,6 +50,7 @@ export function WorkerItem({
   onDecision,
   onPlanDecision,
   onOpen,
+  worktreeAction,
 }: WorkerItemProps) {
   const status = workerStatus(delegation, child);
   const pending = current && delegation?.status === 'pending';
@@ -89,11 +91,14 @@ export function WorkerItem({
         onClick={delegation ? () => setToggled(!expanded) : onOpen}
         actionsPlacement="visible"
         actions={
-          child && (
-            <IconButton size={24} label={`Open ${title}`} onClick={onOpen}>
-              <ChevronRight />
-            </IconButton>
-          )
+          <>
+            {worktreeAction}
+            {child && (
+              <IconButton size={24} label={`Open ${title}`} onClick={onOpen}>
+                <ChevronRight />
+              </IconButton>
+            )}
+          </>
         }
       />
       {pending && (
