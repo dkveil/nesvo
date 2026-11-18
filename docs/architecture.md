@@ -879,6 +879,29 @@ An automation can review new pull requests instead of sending a prompt. Its defi
 
 Draft changes are published to clients as `pull-request-review-changed` events. The mobile gateway does not forward them.
 
+## Owner lessons
+
+A host that advertises `lessons` (the last capability in the list) records incidents, proposes lessons from them and adds approved lessons to prompts within their scope. Everything is host-owned per computer; an older desktop with strict capability parsing needs an update before it connects to such a host.
+
+Incidents are recorded automatically and bounded: at most 500 rows in `lesson_incidents` (schema version 26), oldest dropped first, each recorded once by a fingerprint and linked to its session, provider run or workflow run. A deleted session deletes its incidents. Sources:
+
+- a workflow step that fails after its last retry (`retries` above zero);
+- a turn stopped by the inactivity watchdog;
+- a session plan the owner declines, or one corrected for the third time since the last approval, and the same for worker plans;
+- a `probe` step that reports a secret or personal-data signal; only the kinds and counts are recorded, never values or file names;
+- a completed turn whose provider-reported cost is above the norm in Settings > Lessons (5 USD by default, empty to switch it off);
+- a stage report with `systemRemarks` or `deadEnds` notes.
+
+Summaries are written by Nesvo. Details quote at most six lines of up to 400 characters each, passed through the probe mask first. A plan decision text written by the owner is kept as the incident `quote`; agent notes never are.
+
+`propose-lessons` (a request ID makes it idempotent) or the daily check, which runs in the host every ten minutes and starts at most one proposal a day when the owner switched daily proposals on and new incidents exist, creates an ordinary read-only session with the provider and model chosen in Settings > Lessons in `<data>/lessons/workspace`. It sends one prompt with up to 60 unproposed incidents as quoted data and the existing lesson descriptions, constrains the answer with a JSON Schema generated from the Zod contract and starts the turn with project settings and instructions isolated, like agent reviews. The turn saves no Inbox result and the session is archived when it finishes. The host parses each proposed lesson on its own: an entry is left out when it fails the schema, cites no recorded incident, contains a commit hash or version number, exceeds the 600-character body or repeats an existing description or rule. Kept entries become proposals in `<data>/lessons/proposals/<key>.json` with provenance assembled by the host from the cited incidents (incident IDs, the first session, workflow run and step, the date and the owner's quote when one exists); the cited incidents are marked as used. A host restart marks a running proposal failed and starts nothing.
+
+Approved lessons are plain files, described in [docs/workflows.md](workflows.md#lessons-and-gate-rules). `decide-lesson` approves, edits or rejects a proposal and keeps (approves again), edits, retires or undoes a lesson file, always against the version the owner saw (the proposal or file hash). Approval assigns the next `lesson-NNNN` ID, which is never reused, and writes `<root>/lessons/<id>.md` in the project workflows root when the proposal names a project folder, otherwise in the global root. Every write goes through the assistant change path as an owner change: the same file-name, size and front matter validation, a hash check that refuses a file changed since it was read, and Undo through the recorded previous text. The proposal file is removed after the write.
+
+Selection follows the documented budget. For each turn the host reads the lessons of the global root and of the session's project root (cached for three seconds), keeps active entries whose `enforcedBy` is `none`, whose review date has not passed and whose providers, roles, workflows and steps match the session, and builds an `<owner-lessons>` block with at most 20 `id: description` lines and 2,000 characters, dropping the least recently cited first. Full bodies (rule, Why, Check) are added only for entries whose steps, workflows or paths match, at most six and 3,000 characters. The block is appended to the provider prompt and never stored in the conversation; a resumed provider thread receives it again only when the selection changed. Structured-output turns (reviews, verdicts, proposals), assistant turns and slash commands get no block; workflow `agent` steps receive the block inside their verdict prompt with the step name, and pull request reviews receive matching lessons as global review conventions. A lesson in a project root is used only while its file hash equals the last owner change recorded for it, so a lesson file arriving with a branch or pull request is listed under "Lesson files that need attention" until the owner keeps it. `rule_entry_metrics` counts deliveries and the last delivery and citation per entry; Settings shows "Unused" after 60 days without delivery and "Keeps failing, consider a check" for an instruction cited twice. Nothing is removed automatically.
+
+The Inbox shows one Lessons table per connected computer with proposed and due lessons: Approve, Edit and Reject, or Keep, Edit and Retire when the review date has passed. Settings > Lessons holds the daily switch (off by default), the proposal model, the cost norm, Propose lessons, the lesson list with a scope filter, Edit, Retire and Undo, the files that need attention and recent incidents.
+
 ## Importing CLI conversations
 
 D73 adds **Import conversation…** to the new-thread screen. It lists conversations from the selected Local or SSH computer. Electron routes `list-conversations` and `adopt-conversation` only to connected hosts advertising `conversation-import`. The picker filters by title, folder and provider and previews a short excerpt before adoption.

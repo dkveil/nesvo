@@ -17,4 +17,5 @@
 - Provider accounts per session, import of existing CLI conversations, and search across CLI transcripts.
 - A command palette with session actions, keyboard navigation, status filters, and tray attention badges.
 - About, Defaults, Notifications and Data settings, rotating logs, automatic host restart and reconnect, and database backups before migrations.
+- Owner lessons: incidents recorded from stuck sessions, rejected plans, failed workflow steps, sensitive probe findings, costly turns and stage report remarks, lessons proposed by a chosen model on demand or once a day, approved in the Inbox into lesson files in the workflows folders and added to scoped prompts until their review date.
 - Paired mobile access to existing sessions, plus unsigned Windows and macOS installers with SHA-256 checksums.

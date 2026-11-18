@@ -22,6 +22,51 @@ Saving or deleting a workflow that has a run in progress is refused as busy, in 
 
 The files are the source of truth. Nesvo never keeps a second copy of a definition: a run pins the definitions it started with, so editing a file never changes a run in progress.
 
+## Lessons and gate rules
+
+Owner lessons and gate rules are short rule entries stored as files in the same roots: `<root>/lessons/<id>.md` for lessons and `<root>/gate-rules/<id>.md` for gate rules. The folder decides the entry type; IDs are `lesson-NNNN` and `rule-NNNN`, assigned by the host and never reused. The files are the source of truth; the host database keeps only incidents and per-entry delivery counts. The schema, parser and serializer are shared in `packages/contracts/src/rule-entries.ts`.
+
+```markdown
+---
+id: lesson-0007
+description: "Applies when editing host persistence code. Bump the database version together with every schema-version assertion."
+kind: instruction
+scope:
+  providers: ["claude", "codex"]
+  workflows: ["pre-push"]
+  steps: ["review"]
+  paths: ["apps/host/src/**"]
+status: active
+enforcedBy: "none"
+review: 2026-12-18
+provenance:
+  source: incident
+  incidents: ["0b9c..."]
+  session: 8f9c...
+  date: 2026-11-18
+  quote: "The newer database test still expects the old version."
+---
+
+Bump the database version in the same commit as every assertion that names it.
+Why: parallel branches collided on the same version.
+Check: the version assertions in the host tests show one value.
+```
+
+| Field | Meaning |
+| -- | -- |
+| `id` | Matches the file name. |
+| `description` | Required, at most 200 characters, third person, starts with "Applies when". The only text always added to prompts. |
+| `kind` | `instruction` for an agent, or `check` for a deterministic command or lint rule offered as a suggestion. |
+| `scope` | All keys optional: `providers` (`claude`, `codex`), `roles` (`standalone`, `orchestrator`, `worker`, `workflow-agent`, `reviewer`), `workflows`, `steps` and `paths` (globs). An empty scope means every session of the root; a project root applies only to sessions inside that project. |
+| `status` | `active` or `retired`. Retiring keeps the ID. |
+| `enforcedBy` | `none`, `lint:<rule>`, `test:<file>` or `ci:<job>`. Enforced entries are not added to prompts. |
+| `review` | Optional date. On that day the entry stops being added to prompts and returns to the Inbox until the owner keeps or retires it. |
+| `provenance` | Assembled by the host: `source`, cited `incidents`, `run`, `step`, `session`, `decision`, `date` and a `quote` of at most 400 characters. |
+
+The body has at most 600 characters: the rule in one to three imperative sentences, a `Why:` line and a `Check:` line as the last line. Leave out dates, hashes, versions and counts.
+
+Prompts receive an index of matching `id: description` lines (at most 20 lines and 2,000 characters) and the full bodies only of entries whose `steps`, `workflows` or `paths` match the current step or files (at most six bodies and 3,000 characters). Retired entries, entries past their review date and entries with `enforcedBy` are never added. Nesvo writes these files only when the owner decides in the Inbox or in Settings > Lessons, through the same checked and undoable path as assistant changes. A lesson file in a project is added to prompts only after the owner approved its current text on this computer.
+
 ## The step file
 
 One file per step, named `<name>.md`. The frontmatter describes the step and the body is what it does.
