@@ -29,6 +29,7 @@ import { constants, type BigIntStats, type Dirent } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { workflowStepGuards } from '../inbox-rules/files';
 import { document, text } from '../skills/portable';
 import { YamlLimitError } from '../skills/yaml-limits';
 
@@ -883,17 +884,35 @@ function graphListIssues(
   );
 }
 
+export type StepGuard = (
+  workflow: string,
+  step: string,
+  phase: GraphStep['phase'],
+) => boolean;
+
 export function checkGraph(
   workflow: GraphInput,
   path: string,
   lines: GraphLines,
   steps: ReadonlyMap<string, GraphStep>,
+  guarded: StepGuard = () => false,
 ): { graph: WorkflowGraph; issues: DefinitionIssue[] } {
   const resolution = resolveGraph(workflow, steps);
   return {
     graph: resolution.graph,
     issues: graphIssues(
-      resolution.issues.filter(item => !graphListRules.includes(item.rule)),
+      resolution.issues.filter(
+        item =>
+          !graphListRules.includes(item.rule) &&
+          !(
+            item.rule === 'W2' &&
+            item.steps.length > 0 &&
+            item.steps.every(name => {
+              const step = steps.get(name);
+              return !!step && guarded(workflow.name, name, step.phase);
+            })
+          ),
+      ),
       path,
       lines,
     ),
@@ -1104,6 +1123,7 @@ export async function loadCatalog(
       notes: entry.notes,
     });
   }
+  const guarded = await workflowStepGuards(root, signal);
   const resolvedWorkflows: ResolvedWorkflow[] = [];
   for (const [, entry] of [...workflows].sort(([left], [right]) =>
     left.localeCompare(right, 'en'),
@@ -1133,6 +1153,7 @@ export async function loadCatalog(
       entry.parsed.file.path,
       graphLines(entry.parsed.yaml),
       resolvedSteps,
+      guarded,
     );
     issues.push(...checked.issues);
     if (checked.issues.some(item => item.severity === 'error')) continue;

@@ -1,5 +1,6 @@
 import {
   inboxRuleFieldsSchema,
+  matchesNameFilter,
   inboxRuleLimits,
   type InboxRule,
   type InboxRuleIssue,
@@ -7,7 +8,7 @@ import {
 } from '@nesvo/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { document } from '../skills/portable';
 import {
   DefinitionError,
@@ -345,4 +346,42 @@ export const ruleFileFingerprints = async (
     })),
     unreadable: issues.some(item => item.severity === 'error'),
   };
+};
+
+export const workflowStepGuards = async (
+  projectRoot: string,
+  signal: AbortSignal,
+): Promise<
+  (workflow: string, step: string, phase: InboxRule['phase']) => boolean
+> => {
+  const issues: InboxRuleIssue[] = [];
+  const files = [
+    ...(await readRuleRoot(globalRulesRoot(), 'global', signal, issues).catch(
+      () => [],
+    )),
+    ...(await readRuleRoot(
+      projectRulesRoot(projectRoot),
+      'project',
+      signal,
+      issues,
+    ).catch(() => [])),
+  ];
+  const guards = files.flatMap(file =>
+    file.rule?.enabled &&
+    file.rule.action === 'hold' &&
+    file.rule.trigger === 'workflow-step' &&
+    !file.rule.group &&
+    !file.rule.computer &&
+    (!file.rule.repository ||
+      matchesNameFilter(file.rule.repository, basename(projectRoot)))
+      ? [file.rule]
+      : [],
+  );
+  return (workflow, step, phase) =>
+    guards.some(
+      rule =>
+        (!rule.workflow || matchesNameFilter(rule.workflow, workflow)) &&
+        (!rule.step || matchesNameFilter(rule.step, step)) &&
+        (!rule.phase || rule.phase === phase),
+    );
 };
