@@ -9,7 +9,7 @@ type Props = { children: ReactNode };
 type State = {
   error: Error | null;
   componentStack: string;
-  copy: 'idle' | 'copied' | 'failed';
+  copy: 'idle' | 'copied' | 'failed' | 'logs-failed';
 };
 
 const MAX_DETAIL_CHARACTERS = 16_000;
@@ -61,6 +61,13 @@ export class AppErrorBoundary extends Component<Props, State> {
     );
   };
 
+  private openLogs = () => {
+    this.setState({ copy: 'idle' });
+    void window.nesvo
+      ?.openLogs()
+      .catch(() => this.setState({ copy: 'logs-failed' }));
+  };
+
   override render() {
     if (!this.state.error) return this.props.children;
     const { copy } = this.state;
@@ -73,12 +80,17 @@ export class AppErrorBoundary extends Component<Props, State> {
           description="Work on your computers keeps running. Reload the window to continue, or copy the details to report the problem."
           action={
             <>
-              <Button onClick={() => window.location.reload()}>
+              <Button size="md" onClick={() => window.location.reload()}>
                 Reload window
               </Button>
-              <Button variant="outline" onClick={this.copyDetails}>
+              <Button size="md" variant="outline" onClick={this.copyDetails}>
                 Copy details
               </Button>
+              {window.nesvo && (
+                <Button size="md" variant="ghost" onClick={this.openLogs}>
+                  Open logs
+                </Button>
+              )}
             </>
           }
         />
@@ -89,7 +101,9 @@ export class AppErrorBoundary extends Component<Props, State> {
           >
             {copy === 'copied'
               ? 'Details copied.'
-              : 'The details could not be copied.'}
+              : copy === 'logs-failed'
+                ? 'The logs folder could not be opened.'
+                : 'The details could not be copied.'}
           </StatusMessage>
         )}
       </main>
