@@ -39,6 +39,21 @@ type Props = {
 const conversationKey = (conversation: Conversation) =>
   [conversation.provider, conversation.providerSessionId].join(':');
 
+const folderName = (directory: string) =>
+  directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory;
+
+const catalogNotice = ({
+  truncated,
+  skippedFiles,
+}: ConversationImportCatalog) =>
+  [
+    truncated && 'Showing recent conversations only.',
+    !!skippedFiles &&
+      `${skippedFiles} unreadable ${skippedFiles === 1 ? 'transcript' : 'transcripts'} skipped.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
 export function ImportConversation({
   computer,
   api,
@@ -242,7 +257,7 @@ function ConversationPicker({
                       title={conversation.title}
                       description={
                         <Hint label={conversation.directory}>
-                          <span>{conversation.directory}</span>
+                          <span>{folderName(conversation.directory)}</span>
                         </Hint>
                       }
                       meta={
@@ -283,19 +298,8 @@ function ConversationPicker({
               </div>
             </ScrollArea>
           )}
-          {!!catalog?.skippedFiles && (
-            <StatusMessage>
-              {catalog.skippedFiles}{' '}
-              {catalog.skippedFiles === 1
-                ? 'transcript skipped'
-                : 'transcripts skipped'}
-              .
-            </StatusMessage>
-          )}
-          {catalog?.truncated && (
-            <StatusMessage>
-              Showing a limited set of recent conversations.
-            </StatusMessage>
+          {catalog && (catalog.truncated || !!catalog.skippedFiles) && (
+            <StatusMessage>{catalogNotice(catalog)}</StatusMessage>
           )}
           {selected && (
             <div className="min-w-0 space-y-1 rounded-control bg-accent px-3 py-2">
