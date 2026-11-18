@@ -12,6 +12,7 @@ import {
   type Provider,
   type ProviderStates,
 } from '@/entities/session';
+import { useTrackedRepositories } from '@/entities/tracked-repository';
 import { HostPicker } from '@/features/new-thread/host-picker';
 import { LocationPicker } from '@/features/new-thread/location-picker';
 import { ModelPicker } from '@/features/new-thread/model-picker';
@@ -45,6 +46,7 @@ import {
 } from './automation-form';
 import { errorMessages, messagesId } from './field-messages';
 import { ReviewTaskFields } from './review-task-fields';
+import { TrackedCheckoutField } from './tracked-checkout-field';
 import { useReviewProfiles } from './use-review-profiles';
 import { ScheduleFields } from './schedule-fields';
 
@@ -66,7 +68,9 @@ type Props = {
   onRecover: (hostId: string, id: string) => Promise<ScheduledJob | undefined>;
   onSaved: (job: ScheduledJob) => void;
   onClose: () => void;
-  reviewApi?: (hostId: string) => Pick<DesktopApi, 'readCodeReviewSettings'>;
+  reviewApi?: (
+    hostId: string,
+  ) => Pick<DesktopApi, 'readCodeReviewSettings' | 'listTrackedRepositories'>;
 };
 
 const fieldOrder: AutomationField[] = [
@@ -121,6 +125,14 @@ export function AutomationEditor({
     supportsReviews && reviewApi ? reviewApi(values.hostId) : null,
     values.hostId,
     supportsReviews && connected && values.reviewMode,
+  );
+  const trackedRepositories = useTrackedRepositories(
+    supportsReviews && reviewApi ? reviewApi(values.hostId) : null,
+    values.hostId,
+    supportsReviews &&
+      connected &&
+      values.reviewMode &&
+      !!computer?.capabilities.includes('tracked-repositories'),
   );
   const reviewProfile = reviewProfiles.profiles.find(
     profile => profile.id === values.reviewProfileId,
@@ -294,6 +306,14 @@ export function AutomationEditor({
                   error={visible('review')}
                   disabled={pending || editing}
                   onChange={change}
+                />
+              )}
+              {values.reviewMode && (
+                <TrackedCheckoutField
+                  repositories={trackedRepositories.repositories}
+                  directory={values.directory}
+                  disabled={pending}
+                  onChange={directory => change({ directory })}
                 />
               )}
               {values.reviewMode ? null : values.workflow ? (
