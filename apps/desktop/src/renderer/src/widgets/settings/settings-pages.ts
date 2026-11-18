@@ -6,6 +6,7 @@ import {
   Keyboard,
   Monitor,
   Palette,
+  ScanSearch,
   Settings2,
   SlidersHorizontal,
   Smartphone,
@@ -19,6 +20,7 @@ export type SettingsPage =
   | 'shortcuts'
   | 'defaults'
   | 'notifications'
+  | 'code-review'
   | 'computers'
   | 'phone'
   | 'account'
@@ -70,6 +72,14 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Bell,
     group: '',
     keywords: 'desktop alerts approvals finished runs test',
+  },
+  {
+    id: 'code-review',
+    label: 'Code review',
+    icon: ScanSearch,
+    group: '',
+    keywords:
+      'pull request reviewer agent profiles conventions rules findings github',
   },
   {
     id: 'computers',
