@@ -34,6 +34,13 @@ export function inactivityFailure(provider: string, limitMs: number): string {
   return `${provider} turn stopped after ${durationText(limitMs)} without any activity from the provider.`;
 }
 
+const INACTIVITY_FAILURE =
+  /\b(?:Claude|Codex) turn stopped after \d+ (?:minutes?|seconds?) without any activity from the provider\./;
+
+export function isInactivityFailure(error: string | null): boolean {
+  return !!error && INACTIVITY_FAILURE.test(error);
+}
+
 export function watchInactivity(options: {
   limitMs: number;
   isWaiting: () => boolean;

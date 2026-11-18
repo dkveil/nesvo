@@ -702,6 +702,11 @@ if (args.length === 1 && args[0] === '--version') {
     ]);
     assert.equal(values.get('--setting-sources'), 'user');
     assert.equal(values.has('--no-session-persistence'), false);
+  } else if (prompt.startsWith('[nesvo-lesson-proposal]')) {
+    const schema = JSON.parse(values.get('--json-schema'));
+    assert.deepEqual(Object.keys(schema.properties), ['lessons']);
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.match(prompt, /<incidents>\n[\s\S]*\n<\/incidents>/);
   } else if (/fixture:review-[a-z]+/.test(prompt)) {
     const schema = JSON.parse(values.get('--json-schema'));
     assert.deepEqual(Object.keys(schema.properties).sort(), [
@@ -955,7 +960,35 @@ if (args.length === 1 && args[0] === '--version') {
       }) + '\n',
       { flag: 'a' },
     );
-  if (
+  const lessonProposal =
+    values.has('--json-schema') && prompt.startsWith('[nesvo-lesson-proposal]');
+  if (lessonProposal) {
+    const incidents = JSON.parse(
+      /<incidents>\n([\s\S]*)\n<\/incidents>/.exec(prompt)[1],
+    );
+    if (process.env.NESVO_FIXTURE_LESSON_LOG)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_LESSON_LOG,
+        JSON.stringify({ cwd: process.cwd(), prompt, incidents }) + '\n',
+        { flag: 'a' },
+      );
+    const output = process.env.NESVO_FIXTURE_LESSON_OUTPUT
+      ? JSON.parse(
+          readFileSync(process.env.NESVO_FIXTURE_LESSON_OUTPUT, 'utf8'),
+        )
+      : {
+          lessons: incidents.slice(0, 1).map(incident => ({
+            title: 'Confirm the plan scope first',
+            rule: 'State the files you will change before proposing a plan.',
+            scope: incident.directory
+              ? { kind: 'repository', value: incident.directory }
+              : { kind: 'global' },
+            evidence: [incident.id, '00000000-0000-4000-8000-000000000000'],
+            reviewInDays: 14,
+          })),
+        };
+    verdict('Lessons proposed.', output);
+  } else if (
     reviewCommand === 'fixture:review-findings' &&
     process.env.NESVO_FIXTURE_REVIEW_OUTPUT
   ) {

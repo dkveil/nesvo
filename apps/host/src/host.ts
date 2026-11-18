@@ -89,7 +89,12 @@ import {
   createSessionAuthor,
   runEnvironment,
 } from './workflows/tasks';
-import { deleteDefinition, saveDefinition } from './workflows/writer';
+import {
+  deleteDefinition,
+  deleteLessonFile,
+  saveDefinition,
+  saveLessonFile,
+} from './workflows/writer';
 import { importBundle, prepareShare } from './workflows/sharing';
 import { ScheduledJobStore } from './scheduled-jobs/store';
 import {
@@ -110,6 +115,8 @@ import { SessionControlStore } from './session-control/store';
 import { ownerActor } from './sessions/stages';
 import { resumeSession } from './sessions/resume';
 import { MergedWorktreeCleanups } from './sessions/merged-cleanup';
+import { LessonError, LessonService } from './lessons/service';
+import { LessonStore } from './lessons/store';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -162,6 +169,9 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'decide-session-plan',
   'answer-session-question',
   'save-session-control-policy',
+  'save-lesson-settings',
+  'propose-lessons',
+  'decide-lesson',
   'decide-review',
   'start-workflow-task',
   'run-workflow-steps',
@@ -292,8 +302,14 @@ export const serveHost = ({
       const sessionChanges = new SessionChangeReader(id => store.get(id));
       const recipes: { current?: WorktreeRecipes } = {};
       let outgoing = Promise.resolve();
+      const lessons: { current?: LessonService } = {};
       const emit = (message: DesktopEvent) => {
         outgoing = outgoing.then(() => send(message)).catch(() => undefined);
+        if (message.type === 'workflow-step-changed')
+          lessons.current?.workflowStepChanged(
+            workflowRunStore.getRun(message.step.runId),
+            message.step,
+          );
       };
       let observeAssistant: (session: Session) => void = () => {};
       const control: { current?: SessionControl } = {};
@@ -355,6 +371,8 @@ export const serveHost = ({
                   };
                 },
                 worktreeCreated: session => recipes.current?.created(session),
+                lessons: session =>
+                  lessons.current?.instructions(session) ?? null,
                 worktreeFinishing: (sessionId, signal) =>
                   recipes.current?.finishing(sessionId, signal) ??
                   Promise.resolve(),
@@ -469,6 +487,8 @@ export const serveHost = ({
               sessions,
               pullRequests,
               emit,
+              undefined,
+              draft => lessons.current?.reviewConventions(draft) ?? [],
             ),
         ),
         service => Effect.promise(() => service.close()),
@@ -567,6 +587,13 @@ export const serveHost = ({
                     { unattended: true },
                     signal,
                   ),
+                lessons: run =>
+                  lessons.current?.blockFor({
+                    directories: [run.directory, run.projectRoot],
+                    repository: null,
+                    role: 'workflow-agent',
+                    workflow: run.workflow.name,
+                  }) ?? null,
               }),
               session: childExecutor,
               'fan-out': childExecutor,
@@ -711,8 +738,53 @@ export const serveHost = ({
           save: input => scheduledJobs.save(input),
           delete: input => scheduledJobs.delete(input),
         },
+        lessons: {
+          save: (input, options) =>
+            saveLessonFile(input, probes.controller.signal, options),
+          remove: (input, options) =>
+            deleteLessonFile(input, probes.controller.signal, options),
+        },
         emit,
       });
+      const lessonService = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new LessonService({
+              store: new LessonStore(database),
+              sessions,
+              changes: assistantChanges,
+              dataDirectory: directory,
+              directories: () =>
+                store
+                  .listSummaries()
+                  .map(
+                    session =>
+                      session.worktree?.projectDirectory ?? session.directory,
+                  ),
+              workflowName: runId =>
+                workflowRunStore.getRun(runId)?.workflow.name ?? null,
+              archive: sessionId =>
+                void housekeeping.setArchived({ sessionId, archived: true }),
+            }),
+        ),
+        service => Effect.promise(() => service.close()),
+      );
+      lessons.current = lessonService;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const releaseRuns = sessions.onRunFinished(finished =>
+            lessonService.runFinished(finished),
+          );
+          const releaseStages = sessions.onStageRecords((session, records) =>
+            lessonService.stageRecorded(session, records),
+          );
+          return () => {
+            releaseRuns();
+            releaseStages();
+          };
+        }),
+        release => Effect.sync(() => release()),
+      );
       const assistant = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
@@ -2032,6 +2104,44 @@ export const serveHost = ({
           continue;
         }
         if (
+          request.method === 'read-lessons' ||
+          request.method === 'save-lesson-settings' ||
+          request.method === 'propose-lessons' ||
+          request.method === 'decide-lesson'
+        ) {
+          const { id } = request;
+          const operation = async (): Promise<HostReply> => ({
+            type: 'lessons',
+            id,
+            overview:
+              request.method === 'read-lessons'
+                ? lessonService.overview()
+                : request.method === 'save-lesson-settings'
+                  ? lessonService.saveSettings(request.input)
+                  : request.method === 'propose-lessons'
+                    ? lessonService.propose(request.input)
+                    : await lessonService.decide(request.input),
+          });
+          const pending = operation()
+            .then(send)
+            .catch(error => {
+              const known =
+                error instanceof LessonError || error instanceof SessionError;
+              return send({
+                type: 'error',
+                id,
+                code: known ? error.code : 'unavailable',
+                message: known ? error.message : 'The lesson operation failed.',
+              });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
+          continue;
+        }
+        if (
           request.method === 'list-tracked-repositories' ||
           request.method === 'add-tracked-repository' ||
           request.method === 'remove-tracked-repository' ||
@@ -2644,12 +2754,16 @@ export const serveHost = ({
                 id: request.id,
                 session: sessions.decideDelegation(request.input),
               };
-            if (request.method === 'decide-worker-plan')
-              return {
-                type: 'session',
-                id: request.id,
-                session: sessions.decideWorkerPlan(request.input),
-              };
+            if (request.method === 'decide-worker-plan') {
+              const decided = sessions.decideWorkerPlan(request.input);
+              lessonService.workerPlanDecided(
+                decided,
+                request.input.delegationId,
+                request.input.decision,
+                request.input.correction ?? null,
+              );
+              return { type: 'session', id: request.id, session: decided };
+            }
             if (request.method === 'read-session-control-policy')
               return {
                 type: 'session-control-policy',

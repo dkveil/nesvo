@@ -49,6 +49,27 @@ export type DefinitionTarget = {
   name: string;
 };
 
+type FolderTarget = Omit<DefinitionTarget, 'kind'> & {
+  kind: DefinitionKind | 'lesson';
+};
+
+export type LessonFileTarget = Omit<DefinitionTarget, 'kind'>;
+
+export type SaveLessonFileInput = LessonFileTarget & {
+  document: string;
+  expectedHash: string | null;
+  validate: (document: string) => string[];
+};
+
+export type DeleteLessonFileInput = LessonFileTarget & {
+  expectedHash: string;
+};
+
+export type LessonFileWriteResult =
+  | { type: 'written'; path: string; root: string }
+  | { type: 'conflict'; path: string; currentHash: string | null }
+  | { type: 'refused'; issues: DefinitionIssue[] };
+
 export type SaveDefinitionInput = DefinitionTarget & {
   document: string;
   expectedHash: string | null;
@@ -181,7 +202,7 @@ async function deepestExisting(path: string): Promise<string> {
 }
 
 async function prepareFolder(
-  target: DefinitionTarget,
+  target: FolderTarget,
   roots: Awaited<ReturnType<typeof resolveWriteRoots>>,
   create: boolean,
 ): Promise<Location | WorkflowDefinitionRefused | null> {
@@ -435,19 +456,20 @@ function stepUsers(
     }));
 }
 
-async function publish(
-  target: SaveDefinitionInput,
+async function publishFile(
+  document: string,
+  expectedHash: string | null,
   location: Location,
   signal: AbortSignal,
-): Promise<'written' | DefinitionWriteResult> {
+): Promise<'written' | WorkflowDefinitionRefused | Current> {
   const temporary = `${location.path}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, target.document, {
+    await writeFile(temporary, document, {
       mode: fileMode,
       flag: 'wx',
       flush: true,
     });
-    if (target.expectedHash === null) {
+    if (expectedHash === null) {
       try {
         await link(temporary, location.path);
         return 'written';
@@ -458,20 +480,32 @@ async function publish(
     } else {
       const current = await readCurrent(location.path, signal);
       if (isRefusal(current)) return current;
-      if (current.file?.contentHash === target.expectedHash) {
+      if (current.file?.contentHash === expectedHash) {
         await rename(temporary, location.path);
         return 'written';
       }
     }
-    const latest = await readCurrent(location.path, signal);
-    return isRefusal(latest)
-      ? latest
-      : conflict(target, location.path, latest.file);
+    return await readCurrent(location.path, signal);
   } catch (error) {
     return unavailable(error);
   } finally {
     await unlink(temporary).catch(() => undefined);
   }
+}
+
+async function publish(
+  target: SaveDefinitionInput,
+  location: Location,
+  signal: AbortSignal,
+): Promise<'written' | DefinitionWriteResult> {
+  const outcome = await publishFile(
+    target.document,
+    target.expectedHash,
+    location,
+    signal,
+  );
+  if (outcome === 'written' || isRefusal(outcome)) return outcome;
+  return conflict(target, location.path, outcome.file);
 }
 
 export function checkFileText(
@@ -702,6 +736,136 @@ export async function deleteDefinition(
       return unavailable(error);
     }
     return loadCatalog(input.directory, signal);
+  }).catch(error => {
+    if (error instanceof DefinitionError) throw error;
+    return unavailable(error);
+  });
+}
+
+const lessonRequested = async (target: LessonFileTarget, signal: AbortSignal) => {
+  const roots = await resolveWriteRoots(target.directory, signal);
+  return {
+    roots,
+    requested: target.scope === 'global' ? roots.global : roots.project,
+  };
+};
+
+const lessonConflict = (
+  path: string,
+  current: Current,
+): LessonFileWriteResult => ({
+  type: 'conflict',
+  path,
+  currentHash: current.file?.contentHash ?? null,
+});
+
+export async function saveLessonFile(
+  input: SaveLessonFileInput,
+  signal: AbortSignal,
+  options: WriteOptions = {},
+): Promise<LessonFileWriteResult> {
+  requireName(input.name);
+  const { roots, requested } = await lessonRequested(input, signal);
+  const plannedPath = join(requested, 'lessons', `${input.name}.md`);
+  const textIssues = checkFileText(input.document, plannedPath);
+  if (textIssues.length) return { type: 'refused', issues: textIssues };
+  const invalid = input.validate(input.document);
+  if (invalid.length)
+    return {
+      type: 'refused',
+      issues: invalid.map(message => issueAt(plannedPath, message)),
+    };
+  const target = { ...input, kind: 'lesson' as const };
+  return exclusive(pathKey(requested), async () => {
+    const moved = await movedRoot(requested, options.expectedRoot);
+    if (moved) return { type: 'refused' as const, issues: moved.issues };
+    const existing = await prepareFolder(target, roots, false);
+    if (existing && 'type' in existing)
+      return { type: 'refused' as const, issues: existing.issues };
+    const path = existing?.path ?? plannedPath;
+    const current: Current | WorkflowDefinitionRefused = existing
+      ? await readCurrent(path, signal)
+      : { file: null };
+    if (isRefusal(current))
+      return { type: 'refused' as const, issues: current.issues };
+    if ((current.file?.contentHash ?? null) !== input.expectedHash)
+      return lessonConflict(path, current);
+    const location = await prepareFolder(target, roots, true);
+    if (!location || 'type' in location)
+      return {
+        type: 'refused' as const,
+        issues: location?.issues ?? [
+          issueAt(requested, 'The folder cannot be created.'),
+        ],
+      };
+    if (
+      options.expectedRoot &&
+      pathKey(location.root) !== pathKey(options.expectedRoot)
+    )
+      return {
+        type: 'refused' as const,
+        issues: [
+          issueAt(
+            options.expectedRoot,
+            `The workflows folder now resolves to ${location.root}, not ${options.expectedRoot} where this change was made.`,
+          ),
+        ],
+      };
+    options.onPrevious?.(current.file, location.root);
+    const outcome = await publishFile(
+      input.document,
+      input.expectedHash,
+      location,
+      signal,
+    );
+    if (outcome === 'written')
+      return { type: 'written' as const, path: location.path, root: location.root };
+    if (isRefusal(outcome))
+      return { type: 'refused' as const, issues: outcome.issues };
+    return lessonConflict(location.path, outcome);
+  }).catch(error => {
+    if (error instanceof DefinitionError) throw error;
+    return unavailable(error);
+  });
+}
+
+export async function deleteLessonFile(
+  input: DeleteLessonFileInput,
+  signal: AbortSignal,
+  options: WriteOptions = {},
+): Promise<LessonFileWriteResult> {
+  requireName(input.name);
+  const { roots, requested } = await lessonRequested(input, signal);
+  const target = { ...input, kind: 'lesson' as const };
+  return exclusive(pathKey(requested), async () => {
+    const moved = await movedRoot(requested, options.expectedRoot);
+    if (moved) return { type: 'refused' as const, issues: moved.issues };
+    const location = await prepareFolder(target, roots, false);
+    if (location && 'type' in location)
+      return { type: 'refused' as const, issues: location.issues };
+    const path =
+      location?.path ?? join(requested, 'lessons', `${input.name}.md`);
+    const latest: Current | WorkflowDefinitionRefused = location
+      ? await readCurrent(path, signal)
+      : { file: null };
+    if (isRefusal(latest))
+      return { type: 'refused' as const, issues: latest.issues };
+    if (latest.file?.contentHash !== input.expectedHash)
+      return lessonConflict(path, latest);
+    options.onPrevious?.(
+      latest.file,
+      location?.root ?? (await realpath(requested).catch(() => requested)),
+    );
+    try {
+      await unlink(path);
+    } catch (error) {
+      return unavailable(error);
+    }
+    return {
+      type: 'written' as const,
+      path,
+      root: location?.root ?? requested,
+    };
   }).catch(error => {
     if (error instanceof DefinitionError) throw error;
     return unavailable(error);

@@ -1385,6 +1385,7 @@ test(
         'session-resume',
         'merged-worktree-cleanup',
         'automation-rituals',
+        'lessons',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2391,7 +2392,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      25,
+      26,
     );
     migrated.close();
     const reopened = open();
@@ -4775,7 +4776,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 26');
+    database.exec('PRAGMA user_version = 27');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4792,7 +4793,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 27);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -6979,6 +6980,7 @@ test(
       'session-resume',
       'merged-worktree-cleanup',
       'automation-rituals',
+      'lessons',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7855,7 +7857,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            25,
+            26,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7938,11 +7940,11 @@ test(
       }
     });
 
-    await t.test('a version 26 database is refused', async () => {
+    await t.test('a version 27 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 26');
+      newer.exec('PRAGMA user_version = 27');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7954,7 +7956,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          26,
+          27,
         );
       } finally {
         check.close();
@@ -10995,7 +10997,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        25,
+        26,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -11046,7 +11048,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        25,
+        26,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -20602,7 +20604,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      25,
+      26,
     );
     database
       .prepare(
@@ -20965,7 +20967,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -20980,7 +20982,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        25,
+        26,
       );
       assert.deepEqual(
         migrated
@@ -21160,7 +21162,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 25);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 26);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -27444,5 +27446,688 @@ test(
     assert.equal(repeated.result.outcome, 'finished');
     assert.equal(repeated.result.branchDeleted, false);
     assert.equal(repeated.result.cleanup.branch, 'missing');
+  },
+);
+
+const loadLessonModules = async directory => {
+  const source = fileURLToPath(new URL('../src/', import.meta.url));
+  const outdir = join(directory, 'lesson-modules');
+  const entries = [
+    'database.ts',
+    'lessons/store.ts',
+    'lessons/incidents.ts',
+    'lessons/proposal.ts',
+    'lessons/scope.ts',
+    'lessons/files.ts',
+  ];
+  await promisify(execFile)('bun', [
+    'build',
+    ...entries.map(entry => join(source, entry)),
+    '--target=node',
+    '--format=esm',
+    '--splitting',
+    `--root=${source}`,
+    `--outdir=${outdir}`,
+  ]);
+  const modules = await Promise.all(
+    entries.map(
+      entry =>
+        import(pathToFileURL(join(outdir, entry.replace(/\.ts$/, '.js'))).href),
+    ),
+  );
+  return Object.assign({}, ...modules);
+};
+
+const lessonSession = overrides => ({
+  id: randomUUID(),
+  provider: 'Claude Code',
+  title: 'Lesson fixture',
+  status: 'completed',
+  error: null,
+  activity: null,
+  model: 'sonnet',
+  actualModel: 'claude-sonnet',
+  mode: 'read-only',
+  role: 'standalone',
+  directory: '/projects/alpha',
+  workflowRunId: null,
+  workflowStepId: null,
+  messages: [],
+  stageRecords: [],
+  plan: null,
+  delegations: [],
+  ...overrides,
+});
+
+test(
+  'lesson incidents are recorded from every source, bounded and masked, and proposals and review dates are validated',
+  { timeout: 120_000 },
+  async () => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-lesson-modules-')),
+    );
+    try {
+      const modules = await loadLessonModules(directory);
+      const database = modules.openDatabaseSync(join(directory, 'data'));
+      const store = new modules.LessonStore(database);
+      const now = new Date('2026-11-18T10:00:00.000Z');
+      const runId = randomUUID();
+      const stuck = lessonSession({
+        status: 'failed',
+        error:
+          'Claude turn stopped after 15 minutes without any activity from the provider.',
+        messages: [
+          {
+            id: randomUUID(),
+            runId,
+            author: 'agent',
+            usage: { costUsd: 7.5 },
+          },
+        ],
+      });
+      const finished = modules.finishedRunIncidents(stuck, runId, 5, now);
+      assert.deepEqual(
+        finished.map(item => item.incident.kind),
+        ['session-stuck', 'cost-over-norm'],
+      );
+      assert.equal(finished[0].incident.sessionId, stuck.id);
+      assert.equal(finished[0].incident.runId, runId);
+      assert.match(finished[1].incident.summary, /7\.50 USD, above the 5\.00/);
+      assert.deepEqual(
+        modules
+          .finishedRunIncidents(stuck, runId, null, now)
+          .map(item => item.incident.kind),
+        ['session-stuck'],
+      );
+
+      const planId = randomUUID();
+      const decision = (kind, extra = {}) => ({
+        id: randomUUID(),
+        at: now.toISOString(),
+        kind: 'plan-decision',
+        planId: randomUUID(),
+        decision: kind,
+        by: { kind: 'owner', via: 'desktop', sessionId: null },
+        mode: null,
+        text: 'Narrow the change to the parser.',
+        messageId: null,
+        ...extra,
+      });
+      const corrections = [
+        decision('correct'),
+        decision('correct'),
+        decision('correct', { planId }),
+      ];
+      const report = {
+        id: randomUUID(),
+        at: now.toISOString(),
+        kind: 'report',
+        runId,
+        source: 'tool',
+        report: {
+          status: 'ok',
+          summary: 'Done.',
+          links: [],
+          notes: {
+            deadEnds: ['Retrying the flaky e2e test wasted an hour.'],
+            assumptions: ['Not an incident.'],
+            later: [],
+            systemRemarks: [
+              'The token ghp_abcdefghijklmnopqrstuvwxyz0123456789 leaked into a log.',
+            ],
+          },
+        },
+      };
+      const declined = decision('decline');
+      const planned = lessonSession({
+        stageRecords: [...corrections, declined, report],
+        plan: { runId },
+      });
+      const stages = modules.stageRecordIncidents(planned, [
+        corrections[1],
+        corrections[2],
+        declined,
+        report,
+      ]);
+      assert.deepEqual(
+        stages.map(item => item.incident.kind),
+        ['plan-corrected', 'plan-rejected', 'stage-remarks'],
+      );
+      assert.equal(stages[0].fingerprint, `plan-corrected:${planId}`);
+      const remarks = stages[2].incident;
+      assert.equal(remarks.details.length, 2);
+      assert.match(remarks.details[0], /^System remark: /);
+      assert.match(remarks.details[1], /^Dead end: /);
+      assert.ok(
+        !JSON.stringify(remarks).includes('ghp_abcdefghijklmnop'),
+        'Secrets in remarks are masked',
+      );
+      assert.ok(!JSON.stringify(remarks).includes('Not an incident'));
+
+      const delegation = {
+        id: randomUUID(),
+        runId,
+        title: 'Read the parser',
+        planRound: 3,
+        childSessionId: randomUUID(),
+        childRunId: null,
+      };
+      const parent = lessonSession({ delegations: [delegation] });
+      assert.equal(
+        modules.workerPlanIncident(parent, delegation, 'correct', 'Again.', now)
+          .incident.kind,
+        'plan-corrected',
+      );
+      assert.equal(
+        modules.workerPlanIncident(parent, delegation, 'accept', null, now),
+        null,
+      );
+
+      const run = {
+        id: randomUUID(),
+        projectRoot: '/projects/alpha',
+        workflow: {
+          name: 'gates',
+          steps: [{ retries: 2 }, { retries: 0 }, { retries: 0 }],
+        },
+      };
+      const stepBase = {
+        id: randomUUID(),
+        runId: run.id,
+        sessionId: null,
+        result: { summary: 'Lint failed.', evidence: [] },
+      };
+      const exhausted = modules.workflowStepIncidents(
+        run,
+        {
+          ...stepBase,
+          index: 0,
+          name: 'lint',
+          type: 'command',
+          state: 'failed',
+          retry: 2,
+        },
+        now,
+      );
+      assert.deepEqual(
+        exhausted.map(item => item.incident.kind),
+        ['step-retries-exhausted'],
+      );
+      assert.equal(exhausted[0].incident.workflow, 'gates');
+      assert.equal(exhausted[0].incident.workflowRunId, run.id);
+      assert.deepEqual(
+        modules.workflowStepIncidents(
+          run,
+          {
+            ...stepBase,
+            index: 0,
+            name: 'lint',
+            type: 'command',
+            state: 'failed',
+            retry: 1,
+          },
+          now,
+        ),
+        [],
+      );
+      const probe = modules.workflowStepIncidents(
+        run,
+        {
+          ...stepBase,
+          id: randomUUID(),
+          index: 1,
+          name: 'probe',
+          type: 'probe',
+          state: 'passed',
+          result: {
+            summary: '3 diff findings.',
+            evidence: [
+              { text: 'Private key [masked] — src/keys.ts:3' },
+              { text: 'Email address [masked] — docs/team.md:9' },
+              { text: 'Assertion removed — test/a.test.ts:4' },
+            ],
+          },
+        },
+        now,
+      );
+      assert.deepEqual(
+        probe.map(item => item.incident.kind),
+        ['probe-sensitive-data'],
+      );
+      assert.match(probe[0].incident.summary, /1 secret and 1 personal-data/);
+      assert.ok(!JSON.stringify(probe).includes('keys.ts'));
+
+      const all = [...finished, ...stages, ...exhausted, ...probe];
+      for (const item of all)
+        assert.equal(
+          store.recordIncident(item.incident, item.fingerprint),
+          true,
+        );
+      assert.equal(
+        store.recordIncident(
+          { ...finished[0].incident, id: randomUUID() },
+          finished[0].fingerprint,
+        ),
+        false,
+        'An incident is recorded once',
+      );
+      assert.deepEqual(
+        new Set(store.incidents().map(incident => incident.kind)),
+        new Set([
+          'session-stuck',
+          'cost-over-norm',
+          'plan-corrected',
+          'plan-rejected',
+          'stage-remarks',
+          'step-retries-exhausted',
+          'probe-sensitive-data',
+        ]),
+      );
+      assert.equal(
+        store.incidents().find(item => item.kind === 'session-stuck').sessionId,
+        null,
+        'An unknown session is not linked',
+      );
+      for (let index = 0; index < 505; index++)
+        store.recordIncident(
+          {
+            ...finished[0].incident,
+            id: randomUUID(),
+            at: new Date(now.getTime() + index * 1000).toISOString(),
+          },
+          `bulk:${index}`,
+        );
+      assert.equal(
+        Number(
+          database
+            .prepare('SELECT count(*) AS total FROM lesson_incidents')
+            .get().total,
+        ),
+        500,
+      );
+
+      const incidents = store.pendingIncidents(60);
+      const known = incidents[0].id;
+      assert.equal(
+        modules.parseLessonProposal(
+          { lessons: [{ title: 'x' }] },
+          incidents,
+          [],
+          now,
+        ).valid,
+        false,
+      );
+      assert.equal(
+        modules.parseLessonProposal('Prose answer', incidents, [], now).valid,
+        false,
+      );
+      const proposal = modules.parseLessonProposal(
+        {
+          lessons: [
+            {
+              title: 'Check the parser first',
+              rule: 'Run the parser tests before editing it.',
+              scope: { kind: 'repository', value: '/projects/alpha' },
+              evidence: [known, randomUUID()],
+              reviewInDays: 7,
+            },
+            {
+              title: 'Unsupported',
+              rule: 'Cite only invented incidents.',
+              scope: { kind: 'global' },
+              evidence: [randomUUID()],
+              reviewInDays: 7,
+            },
+            {
+              title: 'Duplicate',
+              rule: 'run the parser tests  before editing it.',
+              scope: { kind: 'global' },
+              evidence: [known],
+              reviewInDays: 7,
+            },
+          ],
+        },
+        incidents,
+        [],
+        now,
+      );
+      assert.equal(proposal.valid, true);
+      assert.equal(proposal.lessons.length, 1);
+      assert.deepEqual(proposal.lessons[0].evidence, [known]);
+      assert.equal(proposal.lessons[0].reviewAt, '2026-11-25T10:00:00.000Z');
+      assert.equal(
+        modules.parseLessonProposal(
+          {
+            lessons: [
+              {
+                title: 'Shell',
+                rule: 'Use rm -rf /',
+                scope: { kind: 'role', value: 'administrator' },
+                evidence: [known],
+                reviewInDays: 7,
+              },
+            ],
+          },
+          incidents,
+          [],
+          now,
+        ).valid,
+        false,
+        'Unknown roles are refused',
+      );
+
+      const project = join(directory, 'alpha');
+      await mkdir(join(project, '.git'), { recursive: true });
+      const root = join(project, '.agents', 'workflows');
+      await mkdir(join(root, 'lessons'), { recursive: true });
+      const lesson = {
+        id: randomUUID(),
+        title: 'Check the parser first',
+        rule: 'Run the parser tests before editing it.',
+        scope: { kind: 'repository', value: project },
+        status: 'approved',
+        reviewAt: '2026-11-25T10:00:00.000Z',
+        approvedAt: now.toISOString(),
+        proposalId: randomUUID(),
+        evidence: [
+          {
+            incidentId: known,
+            kind: incidents[0].kind,
+            summary: incidents[0].summary,
+            at: incidents[0].at,
+            sessionId: null,
+            runId: null,
+            workflowRunId: null,
+          },
+        ],
+      };
+      const text = modules.serializeLesson(lesson, project);
+      assert.match(text, /^---\nkind: lesson\nid: /);
+      assert.doesNotMatch(text, /^target:/m);
+      await writeFile(join(root, 'lessons', 'check-parser.md'), text);
+      await writeFile(
+        join(root, 'lessons', 'broken.md'),
+        '---\nkind: step\n---\n',
+      );
+      const folder = modules.readLessonFolder(
+        { scope: 'project', root },
+        project,
+      );
+      assert.equal(folder.lessons.length, 1);
+      assert.equal(folder.issues.length, 1);
+      const [stored] = folder.lessons.map(item => item.lesson);
+      assert.deepEqual(stored.scope, { kind: 'repository', value: project });
+      assert.equal(stored.evidence[0].incidentId, known);
+      const inside = {
+        directories: [join(project, 'src')],
+        repository: null,
+        role: 'standalone',
+        workflow: null,
+      };
+      const outside = { ...inside, directories: [join(directory, 'beta')] };
+      assert.equal(modules.applicableLessons([stored], inside, now).length, 1);
+      assert.equal(modules.applicableLessons([stored], outside, now).length, 0);
+      const block = modules.ownerLessonsBlock([stored]);
+      assert.match(block, /^<owner-lessons>\nOwner lessons\./);
+      assert.match(block, /Run the parser tests before editing it\./);
+      const later = new Date('2026-11-26T00:00:00.000Z');
+      assert.equal(
+        modules.applicableLessons([stored], inside, later).length,
+        0,
+        'A lesson past its review date is not injected',
+      );
+      assert.equal(modules.isLessonActive(stored, later), false);
+      const role = modules.applicableLessons(
+        [{ ...stored, scope: { kind: 'role', value: 'worker' } }],
+        { ...outside, role: 'worker' },
+        now,
+      );
+      assert.equal(role.length, 1);
+      database.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'an approved lesson becomes a workflows file through the change path, reaches only scoped prompts and returns for review',
+  { timeout: 180_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-lessons-')),
+    );
+    const pidFile = join(directory, 'fixture.pid');
+    const promptLog = join(directory, 'prompts.jsonl');
+    const lessonLog = join(directory, 'lessons.jsonl');
+    const workflowsHome = join(directory, 'workflows-home');
+    const alpha = join(directory, 'alpha');
+    const beta = join(directory, 'beta');
+    for (const project of [alpha, beta])
+      await mkdir(join(project, '.git'), { recursive: true });
+    const host = launch(directory, pidFile, {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: workflowsHome,
+      NESVO_FIXTURE_PROMPT_LOG: promptLog,
+      NESVO_FIXTURE_LESSON_LOG: lessonLog,
+    });
+    t.after(async () => {
+      try {
+        await host.stop();
+      } catch {
+        host.child.kill();
+      }
+      await rm(directory, { recursive: true, force: true });
+    });
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes('lessons'),
+    );
+    const initial = await host.request('read-lessons');
+    assert.equal(initial.type, 'lessons', JSON.stringify(initial));
+    assert.equal(initial.overview.settings.dailyProposals, false);
+    assert.equal(initial.overview.lessons.length, 0);
+    const empty = await host.request('propose-lessons', {
+      requestId: randomUUID(),
+    });
+    assert.equal(empty.code, 'invalid-request');
+
+    const planned = (
+      await host.request('create-session', {
+        title: 'Alpha plan',
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'accept-edits',
+        directory: alpha,
+        planFirst: true,
+      })
+    ).session;
+    const planTurn = await host.request('send-message', {
+      sessionId: planned.id,
+      messageId: randomUUID(),
+      text: 'Plan the parser change.',
+    });
+    const ready = await settledTurn(host, planned.id, planTurn.session.runId);
+    assert.equal(ready.plan.status, 'plan-ready');
+    const declined = await host.request('decide-session-plan', {
+      sessionId: planned.id,
+      planId: ready.plan.id,
+      decisionId: randomUUID(),
+      decision: 'decline',
+      text: 'It touches files outside the parser.',
+    });
+    assert.equal(declined.type, 'session', JSON.stringify(declined));
+    let overview = (await host.request('read-lessons')).overview;
+    const incident = overview.incidents.find(
+      item => item.kind === 'plan-rejected',
+    );
+    assert.ok(incident, JSON.stringify(overview.incidents));
+    assert.equal(incident.sessionId, planned.id);
+    assert.equal(incident.directory, alpha);
+    assert.match(incident.details[0], /outside the parser/);
+
+    const requestId = randomUUID();
+    const started = await host.request('propose-lessons', { requestId });
+    assert.equal(started.type, 'lessons', JSON.stringify(started));
+    assert.equal(started.overview.proposal.status, 'running');
+    const repeated = await host.request('propose-lessons', { requestId });
+    assert.equal(repeated.type, 'lessons', 'A repeated request is idempotent');
+    const deadline = Date.now() + 30_000;
+    while (overview.proposal.status !== 'idle' || !overview.lessons.length) {
+      assert.ok(Date.now() < deadline, JSON.stringify(overview.proposal));
+      assert.notEqual(
+        overview.proposal.status,
+        'failed',
+        overview.proposal.error,
+      );
+      await delay(100);
+      overview = (await host.request('read-lessons')).overview;
+    }
+    const proposalLog = (await readFile(lessonLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.equal(proposalLog.length, 1);
+    assert.ok(proposalLog[0].incidents.some(item => item.id === incident.id));
+    assert.doesNotMatch(proposalLog[0].prompt, /<owner-lessons>/);
+    const [proposed] = overview.lessons;
+    assert.equal(proposed.status, 'proposed');
+    assert.equal(proposed.location, null);
+    assert.deepEqual(proposed.scope, { kind: 'repository', value: alpha });
+    assert.deepEqual(
+      proposed.evidence.map(item => item.incidentId),
+      [incident.id],
+      'Evidence is limited to recorded incidents',
+    );
+    assert.equal(overview.pendingIncidents, 0);
+    const proposalSession = overview.proposal.sessionId;
+    assert.ok(proposalSession);
+
+    const approved = await host.request('decide-lesson', {
+      lessonId: proposed.id,
+      expectedVersion: proposed.version,
+      decision: 'approve',
+      rule: 'List the files a plan will change before you propose it.',
+    });
+    assert.equal(approved.type, 'lessons', JSON.stringify(approved));
+    const lesson = approved.overview.lessons.find(
+      item => item.id === proposed.id,
+    );
+    assert.equal(lesson.status, 'approved');
+    assert.equal(lesson.location.scope, 'project');
+    assert.ok(lesson.location.changeId);
+    assert.equal(
+      approved.overview.lessons.filter(item => item.status === 'proposed')
+        .length,
+      0,
+      'An approved proposal leaves the database',
+    );
+    const file = join(
+      alpha,
+      '.agents',
+      'workflows',
+      'lessons',
+      `${lesson.location.name}.md`,
+    );
+    const written = await readFile(file, 'utf8');
+    assert.match(written, /^---\nkind: lesson\n/);
+    assert.match(written, new RegExp(`- id: ${incident.id}`));
+    assert.match(written, /\n---\nList the files a plan will change/);
+    const stale = await host.request('decide-lesson', {
+      lessonId: proposed.id,
+      expectedVersion: proposed.version,
+      decision: 'retire',
+    });
+    assert.equal(stale.code, 'invalid-request');
+
+    const prompts = async () =>
+      (await readFile(promptLog, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line).prompt);
+    const turnIn = async (project, title) => {
+      const created = (
+        await host.request('create-session', {
+          title,
+          provider: 'Claude Code',
+          model: 'default',
+          mode: 'read-only',
+          directory: project,
+        })
+      ).session;
+      const sent = await host.request('send-message', {
+        sessionId: created.id,
+        messageId: randomUUID(),
+        text: `Review ${title}.`,
+      });
+      const done = await settledTurn(host, created.id, sent.session.runId);
+      assert.equal(done.status, 'completed', done.error);
+      return (await prompts()).at(-1);
+    };
+    const scoped = await turnIn(alpha, 'alpha work');
+    assert.match(scoped, /<owner-lessons>/);
+    assert.match(scoped, /List the files a plan will change/);
+    assert.equal(
+      (
+        await host.request('get-session', { sessionId: planned.id, limit: 5 })
+      ).session.messages.some(message =>
+        message.body.includes('owner-lessons'),
+      ),
+      false,
+      'Lessons are not stored in the conversation',
+    );
+    const unscoped = await turnIn(beta, 'beta work');
+    assert.doesNotMatch(unscoped, /owner-lessons|List the files a plan/);
+
+    const retired = await host.request('decide-lesson', {
+      lessonId: lesson.id,
+      expectedVersion: lesson.version,
+      decision: 'retire',
+    });
+    assert.equal(retired.type, 'lessons', JSON.stringify(retired));
+    assert.match(await readFile(file, 'utf8'), /^status: retired$/m);
+    assert.doesNotMatch(await turnIn(alpha, 'retired check'), /owner-lessons/);
+    const retiredLesson = retired.overview.lessons.find(
+      item => item.id === lesson.id,
+    );
+    const undone = await host.request('decide-lesson', {
+      lessonId: lesson.id,
+      expectedVersion: retiredLesson.version,
+      decision: 'undo',
+    });
+    assert.equal(undone.type, 'lessons', JSON.stringify(undone));
+    assert.equal(
+      await readFile(file, 'utf8'),
+      written,
+      'Undo restores the file',
+    );
+
+    await writeFile(
+      file,
+      written.replace(/^review: ".*"$/m, 'review: "2026-01-01T00:00:00.000Z"'),
+    );
+    await delay(3_200);
+    overview = (await host.request('read-lessons')).overview;
+    const due = overview.lessons.find(item => item.id === lesson.id);
+    assert.equal(due.reviewAt, '2026-01-01T00:00:00.000Z');
+    assert.equal(due.status, 'approved', 'A due lesson comes back for review');
+    assert.doesNotMatch(await turnIn(alpha, 'due check'), /owner-lessons/);
+    const kept = await host.request('decide-lesson', {
+      lessonId: lesson.id,
+      expectedVersion: due.version,
+      decision: 'approve',
+    });
+    assert.equal(kept.type, 'lessons', JSON.stringify(kept));
+    const renewed = kept.overview.lessons.find(item => item.id === lesson.id);
+    assert.ok(Date.parse(renewed.reviewAt) > Date.now());
+    assert.match(await turnIn(alpha, 'renewed check'), /<owner-lessons>/);
+
+    const archived = await host.request('get-session', {
+      sessionId: proposalSession,
+      limit: 5,
+    });
+    assert.ok(
+      archived.session.archivedAt,
+      'The proposal session is archived after it finishes',
+    );
   },
 );

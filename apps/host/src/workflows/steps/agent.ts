@@ -65,6 +65,7 @@ export type AgentStepPorts = {
     directory: string,
     signal: AbortSignal,
   ) => Promise<string | null>;
+  lessons?: (run: WorkflowRun) => string | null;
 };
 
 type StepSkill = { skillId: string; skillHash: string | undefined };
@@ -137,6 +138,7 @@ export const verdictPrompt = ({
   body,
   skill,
   probeFindings = [],
+  lessons = null,
 }: {
   spec: string | null;
   review: Review | undefined;
@@ -144,6 +146,7 @@ export const verdictPrompt = ({
   body: string;
   skill: string | null;
   probeFindings?: readonly Evidence[];
+  lessons?: string | null;
 }): string => {
   const instructions = skill
     ? [
@@ -179,6 +182,7 @@ export const verdictPrompt = ({
     '',
     ...instructions,
     '',
+    ...(lessons ? [lessons, ''] : []),
     'Return a single JSON object matching this schema and nothing else:',
     '<verdict-schema>',
     JSON.stringify(agentVerdictJsonSchema()),
@@ -476,6 +480,7 @@ export const createAgentExecutor =
       body: display(definition.body),
       skill: definition.prompt_skill?.name ?? definition.skill,
       probeFindings: findings,
+      lessons: ports.lessons?.(run) ?? null,
     });
 
     const input: CreateSessionInput = {

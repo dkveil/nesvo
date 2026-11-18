@@ -126,6 +126,9 @@ export class CodeReviews {
     private readonly pullRequests: ReviewPullRequests,
     private readonly emit: (event: DesktopEvent) => void,
     private readonly now: () => Date = () => new Date(),
+    private readonly lessons: (
+      draft: ReviewDraft,
+    ) => ReviewConvention[] = () => [],
   ) {
     this.recover();
     this.releaseRunListener = sessions.onRunFinished(() => this.pump());
@@ -518,7 +521,7 @@ export class CodeReviews {
         {
           sessionId: session.id,
           messageId: derivedId('review-message', draft.id),
-          text: reviewPrompt(draft, description, files, this.store.conventions()),
+          text: reviewPrompt(draft, description, files, this.conventionsFor(draft)),
         },
         { outputSchema: agentReviewOutputJsonSchema(), instructionsOnly: true },
       );
@@ -539,6 +542,19 @@ export class CodeReviews {
             : failureMessage(error),
         });
     }
+  }
+
+  private conventionsFor(draft: ReviewDraft): ReviewConvention[] {
+    const conventions = this.store.conventions();
+    const texts = new Set(
+      conventions.map(convention => convention.text.trim().toLowerCase()),
+    );
+    return [
+      ...conventions,
+      ...this.lessons(draft).filter(
+        lesson => !texts.has(lesson.text.trim().toLowerCase()),
+      ),
+    ];
   }
 
   private async checkout(

@@ -31,7 +31,10 @@ import {
 import { filterResultText } from './evidence';
 import type {
   DeleteDefinitionInput,
+  DeleteLessonFileInput,
+  LessonFileWriteResult,
   SaveDefinitionInput,
+  SaveLessonFileInput,
   WriteOptions,
 } from './writer';
 
@@ -63,9 +66,37 @@ type ChangePorts = {
     save: (input: SaveAutomationInput) => ScheduledJob;
     delete: (input: { id: string; expectedRevision: number }) => void;
   };
+  lessons?: {
+    save: (
+      input: SaveLessonFileInput,
+      options: WriteOptions,
+    ) => Promise<LessonFileWriteResult>;
+    remove: (
+      input: DeleteLessonFileInput,
+      options: WriteOptions,
+    ) => Promise<LessonFileWriteResult>;
+  };
   emit: (event: DesktopEvent) => void;
   now?: () => Date;
 };
+
+export type LessonFileOperation = {
+  op: AssistantChange['op'];
+  scope: AssistantDefinitionOperation['scope'];
+  name: string;
+  basedOnHash: string | null;
+  document: string | null;
+  summary: string;
+  validate: (document: string) => string[];
+};
+
+export type LessonChangeOutcome =
+  | { status: 'applied'; change: AssistantChange; path: string }
+  | {
+      status: 'refused';
+      reason: 'invalid' | 'conflict' | 'unavailable';
+      issues: DefinitionIssue[];
+    };
 
 type Refusal = Pick<
   AssistantChangeRefusal,
@@ -197,6 +228,24 @@ export class AssistantChanges {
       });
   }
 
+  applyLesson(
+    context: ChangeContext,
+    operation: LessonFileOperation,
+  ): Promise<LessonChangeOutcome> {
+    return this.serial(context.conversationId, () =>
+      this.applyLessonNow(context, operation),
+    );
+  }
+
+  latest(conversationId: string): AssistantChange | null {
+    return (
+      this.ports.store
+        .list(conversationId)
+        .filter(change => change.status === 'applied')
+        .at(-1) ?? null
+    );
+  }
+
   undo(input: AssistantUndoInput): Promise<AssistantUndoResult> {
     return this.serial(input.conversationId, () => this.undoNow(input));
   }
@@ -258,7 +307,112 @@ export class AssistantChanges {
     }
   }
 
-  private record(context: ChangeContext, applied: Applied): AssistantChange {
+  private async applyLessonNow(
+    context: ChangeContext,
+    operation: LessonFileOperation,
+  ): Promise<LessonChangeOutcome> {
+    const lessons = this.ports.lessons;
+    const target: DefinitionTarget = {
+      type: 'definition',
+      root: operation.scope,
+      path: `lessons/${operation.name}.md`,
+      name: operation.name,
+    };
+    const refused = (
+      reason: 'invalid' | 'conflict' | 'unavailable',
+      message: string,
+    ): LessonChangeOutcome => ({
+      status: 'refused',
+      reason,
+      issues: [issueAt(target.path, message)],
+    });
+    if (!lessons) return refused('unavailable', 'Lesson files are unavailable.');
+    if ((operation.op === 'create') !== (operation.basedOnHash === null))
+      return refused('invalid', 'Only a create has no basedOnHash.');
+    if (operation.op !== 'delete' && operation.document === null)
+      return refused('invalid', 'A create or update needs the document.');
+    let previous: DefinitionFile | null = null;
+    let root: string | null = null;
+    const options: WriteOptions = {
+      onPrevious: (file, folder) => {
+        previous = file;
+        root = folder;
+      },
+    };
+    const base = {
+      directory: context.directory,
+      scope: operation.scope,
+      name: operation.name,
+    };
+    let result: LessonFileWriteResult;
+    try {
+      result =
+        operation.op === 'delete'
+          ? await lessons.remove(
+              { ...base, expectedHash: operation.basedOnHash! },
+              options,
+            )
+          : await lessons.save(
+              {
+                ...base,
+                document: operation.document!,
+                expectedHash: operation.basedOnHash,
+                validate: operation.validate,
+              },
+              options,
+            );
+    } catch (error) {
+      return refused(
+        'unavailable',
+        errorMessage(error, 'The lesson file could not be written.'),
+      );
+    }
+    if (result.type === 'conflict')
+      return refused(
+        'conflict',
+        result.currentHash
+          ? `The lesson file changed; its current hash is ${result.currentHash}.`
+          : 'The lesson file does not exist.',
+      );
+    if (result.type === 'refused')
+      return {
+        status: 'refused',
+        reason: 'invalid',
+        issues: result.issues.slice(0, assistantChangeLimits.issues),
+      };
+    const replaced = previous as DefinitionFile | null;
+    try {
+      const change = this.record(
+        context,
+        {
+          kind: 'lesson',
+          op: operation.op,
+          target,
+          before: replaced ? { type: 'hash', hash: replaced.contentHash } : null,
+          after:
+            operation.op === 'delete'
+              ? null
+              : { type: 'hash', hash: hashOf(operation.document!) },
+          summary: operation.summary,
+          previous: replaced?.text ?? null,
+          root,
+        },
+        'owner',
+      );
+      return { status: 'applied', change, path: result.path };
+    } catch {
+      return refused(
+        'unavailable',
+        'The lesson was saved but could not be recorded, so it cannot be undone here.',
+      );
+    }
+  }
+
+  private record(
+    context: ChangeContext,
+    applied: Applied,
+    createdBy: AssistantChange['createdBy'] = 'assistant',
+  ): AssistantChange {
     const { previous, root, ...fields } = applied;
     const change = assistantChangeSchema.parse({
       conversationId: context.conversationId,
@@ -268,13 +422,14 @@ export class AssistantChanges {
       directory: context.directory,
       ...fields,
       summary: summaryText(fields.summary) || 'Assistant change.',
-      createdBy: 'assistant',
+      createdBy,
       at: this.now(),
       status: 'applied',
       undoneAt: null,
     });
     this.ports.store.insert(change, previous, root);
-    this.ports.emit({ type: 'workflow-assistant-change', change });
+    if (change.kind !== 'lesson')
+      this.ports.emit({ type: 'workflow-assistant-change', change });
     return change;
   }
 
@@ -515,7 +670,9 @@ export class AssistantChanges {
     const outcome =
       change.target.type === 'automation'
         ? this.undoAutomation(change, change.target.automationId, previous)
-        : await this.undoDefinition(change, change.target, previous, root);
+        : change.kind === 'lesson'
+          ? await this.undoLesson(change, change.target, previous, root)
+          : await this.undoDefinition(change, change.target, previous, root);
     if (outcome) return outcome;
     const undone = assistantChangeSchema.parse({
       ...change,
@@ -523,7 +680,8 @@ export class AssistantChanges {
       undoneAt: this.now(),
     });
     this.ports.store.markUndone(undone);
-    this.ports.emit({ type: 'workflow-assistant-change', change: undone });
+    if (undone.kind !== 'lesson')
+      this.ports.emit({ type: 'workflow-assistant-change', change: undone });
     return { status: 'undone', change: undone };
   }
 
@@ -597,6 +755,77 @@ export class AssistantChanges {
       issues: result.issues.length
         ? result.issues.slice(0, assistantChangeLimits.issues)
         : [issueAt(target.path, 'The change could not be undone.')],
+    };
+  }
+
+  private async undoLesson(
+    change: AssistantChange,
+    target: DefinitionTarget,
+    previous: string | null,
+    root: string | null,
+  ): Promise<AssistantUndoResult | null> {
+    const lessons = this.ports.lessons;
+    if (!root || !lessons)
+      return {
+        status: 'refused',
+        changeId: change.changeId,
+        issues: [
+          issueAt(
+            target.path,
+            'The workflows folder of this lesson was not recorded, so it cannot be undone here.',
+          ),
+        ],
+      };
+    const options: WriteOptions = { expectedRoot: root };
+    const base = {
+      directory: change.directory,
+      scope: target.root,
+      name: target.name,
+    };
+    const afterHash = change.after?.type === 'hash' ? change.after.hash : null;
+    let result: LessonFileWriteResult;
+    try {
+      result =
+        change.op === 'create'
+          ? await lessons.remove({ ...base, expectedHash: afterHash! }, options)
+          : await lessons.save(
+              {
+                ...base,
+                document: previous ?? '',
+                expectedHash: change.op === 'update' ? afterHash : null,
+                validate: () => [],
+              },
+              options,
+            );
+    } catch (error) {
+      return {
+        status: 'refused',
+        changeId: change.changeId,
+        issues: [
+          issueAt(
+            target.path,
+            errorMessage(error, 'The lesson change could not be undone.'),
+          ),
+        ],
+      };
+    }
+    if (result.type === 'written') return null;
+    if (result.type === 'conflict')
+      return {
+        status: 'conflict',
+        changeId: change.changeId,
+        current: result.currentHash
+          ? { type: 'hash', hash: result.currentHash }
+          : null,
+        message:
+          'The lesson file changed after this decision. Undo would overwrite newer content, so nothing was changed.',
+      };
+    return {
+      status: 'refused',
+      changeId: change.changeId,
+      issues: result.issues.length
+        ? result.issues.slice(0, assistantChangeLimits.issues)
+        : [issueAt(target.path, 'The lesson change could not be undone.')],
     };
   }
 
