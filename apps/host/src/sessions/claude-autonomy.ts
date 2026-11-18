@@ -5,12 +5,14 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import {
   allowRuleSchema,
+  sessionModeSchema,
   type AllowScope,
   type ClaudeAutonomy,
   type Session,
 } from '@nesvo/contracts';
 import {
-  insideDirectory,
+  allowPatternMatches,
+  prepareAllowPattern,
   type AllowCandidate,
 } from '../providers/claude-allow-pattern';
 import { SessionError } from './session-error';
@@ -21,6 +23,8 @@ const storedRuleSchema = z.strictObject({
   rule: allowRuleSchema,
   target: z.string(),
   binding: z.string().optional(),
+  matching: z.literal('pattern').optional(),
+  mode: sessionModeSchema.optional(),
 });
 const settingsSchema = z.strictObject({
   epoch: z.uuid().nullable().default(null),
@@ -154,14 +158,31 @@ export class ClaudeAutonomyStore {
     candidate: AllowCandidate,
   ) {
     const { rule, target, binding } = entry;
+    if (
+      rule.scope === 'session'
+        ? rule.sessionId !== session.id
+        : rule.directory !== project
+    )
+      return false;
+    if (!entry.matching)
+      return (
+        rule.tool === candidate.tool &&
+        (candidate.kind !== 'mcp' || candidate.legacyMcp === true) &&
+        target === candidate.target &&
+        binding ===
+          (candidate.kind === 'shell'
+            ? candidate.legacyBinding
+            : candidate.binding) &&
+        (candidate.kind !== 'shell' ||
+          rule.pattern === 'Bash(' + candidate.value + ')')
+      );
     return (
-      rule.tool === candidate.tool &&
-      target === candidate.target &&
+      (candidate.kind === 'mcp'
+        ? rule.tool.startsWith('mcp__')
+        : rule.tool === candidate.tool) &&
       binding === candidate.binding &&
-      (rule.tool !== 'Bash' || rule.pattern === candidate.pattern) &&
-      (rule.scope === 'session'
-        ? rule.sessionId === session.id
-        : rule.directory === project)
+      (candidate.kind !== 'mcp' || entry.mode === session.mode) &&
+      allowPatternMatches(candidate, rule.pattern, target)
     );
   }
 
@@ -172,13 +193,44 @@ export class ClaudeAutonomyStore {
     );
   }
 
-  prepareRule(session: Session, scope: AllowScope, candidate: AllowCandidate) {
+  validateRule(
+    session: Session,
+    scope: AllowScope,
+    candidate: AllowCandidate,
+    source: string,
+  ) {
+    const basis =
+      scope === 'session'
+        ? session.directory
+        : permissionProject(session.directory);
+    return prepareAllowPattern(candidate, source, basis);
+  }
+
+  prepareRule(
+    session: Session,
+    scope: AllowScope,
+    candidate: AllowCandidate,
+    source: string,
+  ) {
     const settings = this.settings();
-    const project = permissionProject(session.directory);
+    const directory =
+      scope === 'session'
+        ? session.directory
+        : permissionProject(session.directory);
+    const validated = prepareAllowPattern(candidate, source, directory);
+    if ('reason' in validated)
+      throw new SessionError('invalid-request', validated.reason);
+    const { pattern } = validated;
+    const mode = candidate.kind === 'mcp' ? session.mode : undefined;
     const existing = settings.entries.find(
-      entry =>
-        entry.rule.scope === scope &&
-        this.applies(entry, session, project, candidate),
+      ({ rule, binding, matching, mode: savedMode }) =>
+        matching === 'pattern' &&
+        rule.scope === scope &&
+        rule.directory === directory &&
+        (scope === 'project' || rule.sessionId === session.id) &&
+        rule.pattern === pattern &&
+        binding === candidate.binding &&
+        savedMode === mode,
     );
     if (existing) return null;
     if (settings.entries.length >= maxRules)
@@ -186,14 +238,6 @@ export class ClaudeAutonomyStore {
         'invalid-request',
         'Remove a saved permission rule before adding another.',
       );
-    const directory = scope === 'session' ? session.directory : project;
-    const pattern =
-      scope === 'project' && insideDirectory(directory, candidate.target)
-        ? candidate.tool +
-          '(./' +
-          relative(directory, candidate.target).replaceAll('\\', '/') +
-          ')'
-        : candidate.pattern;
     const rule = {
       id: randomUUID(),
       sessionId: session.id,
@@ -205,7 +249,9 @@ export class ClaudeAutonomyStore {
     };
     const entry = {
       rule,
-      target: candidate.target,
+      target: directory,
+      matching: 'pattern' as const,
+      mode,
       binding: candidate.binding,
     };
     return {

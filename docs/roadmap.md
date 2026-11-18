@@ -134,7 +134,7 @@ Day, week and month use the desktop's time zone in Costs and the host's time zon
 
 ## D82: Claude autonomy controls
 
-The owner authorized fewer repeat approvals and an embedded Claude terminal on November 18, 2026. From a reviewable tool call, the operator can allow once or save a narrow rule for this session or its project on the current computer. Unsafe shell forms, network tools and paths outside the session folder are excluded. Rules apply from the next matching call and can be removed in Context or Settings. History records the approved pattern and scope.
+The owner authorized fewer repeat approvals and an embedded Claude terminal on November 18, 2026. From a reviewable tool call, the operator can allow once or save an editable rule for the session or project on the current computer. The editor validates Bash prefix patterns, relative file globs, configured MCP tool and server patterns, and exact WebFetch domains. Risky commands, uploads and paths outside the session folder are excluded. Rules apply from the next matching call and can be removed in Context or Settings. History records the approved pattern and scope.
 
 Full access is available only when the installed provider reports support and the computer-wide setting is enabled. The setting starts off. The operator confirms the folder and risk for each session. Messages record the selected mode and a history divider marks mode changes. New sessions, group defaults, workers and automations never inherit Full access. Disabling the setting revokes confirmations and stops active Full access turns.
 

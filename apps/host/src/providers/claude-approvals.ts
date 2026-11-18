@@ -129,6 +129,10 @@ export function parseClaudePermissionRequest(
   }
   const { request_id: requestId, request } = parsed.data;
   const shown = presentation(request.tool_name, request.input);
+  const label =
+    request.tool_name === 'Bash' && typeof request.input.command === 'string'
+      ? displayText(request.input.command).trim().slice(0, 8192)
+      : null;
   const detail = displayText(
     [
       request.decision_reason ? `Reason: ${request.decision_reason}` : '',
@@ -151,6 +155,7 @@ export function parseClaudePermissionRequest(
         kind: shown.kind,
         title: displayText(shown.title).slice(0, 500) || 'Use tool',
         detail,
+        ...(label ? { label } : {}),
         directory,
         fingerprint: claudeInputFingerprint(request.tool_name, request.input),
       },

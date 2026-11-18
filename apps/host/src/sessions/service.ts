@@ -2654,11 +2654,35 @@ export class SessionService {
 
   private readonly allowCandidates = new WeakMap<
     Session,
-    Map<string, AllowCandidate>
+    Map<string, () => AllowCandidate | { reason: string }>
   >();
 
   async claudeAutonomy(input: ClaudeAutonomyInput, signal: AbortSignal) {
     const autonomy = this.options.autonomy!;
+    if (input.action === 'validate-rule') {
+      const { active, approval } = this.findApproval(input);
+      const candidate = this.allowCandidates
+        .get(active.session)
+        ?.get(approval.id)?.();
+      const checked =
+        candidate && 'kind' in candidate
+          ? autonomy.validateRule(
+              active.session,
+              input.scope,
+              candidate,
+              input.pattern,
+            )
+          : {
+              reason:
+                candidate?.reason ??
+                approval.allowRuleReason ??
+                'This operation cannot be saved as a rule.',
+            };
+      return {
+        ...autonomy.get(),
+        validation: { error: 'reason' in checked ? checked.reason : null },
+      };
+    }
     if (input.action === 'set-full-access') {
       autonomy.setEnabled(input.enabled);
       if (!input.enabled) {
@@ -3536,7 +3560,12 @@ export class SessionService {
     return structuredClone(active.session);
   }
 
-  respondApproval(input: RespondApprovalInput): Session {
+  private findApproval(
+    input: Pick<
+      RespondApprovalInput,
+      'sessionId' | 'runId' | 'requestId' | 'fingerprint'
+    >,
+  ) {
     const active = this.active.get(input.sessionId);
     if (
       !active ||
@@ -3564,6 +3593,15 @@ export class SessionService {
           ? 'This decision does not match the requested operation.'
           : 'Update this app to answer this request.',
       );
+    return {
+      active,
+      approval,
+      respond: active.handle.respondApproval.bind(active.handle),
+    };
+  }
+
+  respondApproval(input: RespondApprovalInput): Session {
+    const { active, approval, respond } = this.findApproval(input);
     if (
       input.message &&
       (input.decision !== 'decline' ||
@@ -3573,25 +3611,41 @@ export class SessionService {
         'invalid-request',
         'A message can only accompany a Claude Code denial.',
       );
-    const candidate = this.allowCandidates
-      .get(active.session)
-      ?.get(input.requestId);
-    if (
-      input.allowScope &&
-      (input.decision !== 'accept' || !candidate || !this.options.autonomy)
-    )
+    if (input.allowPattern !== undefined && !input.allowScope)
       throw new SessionError(
         'invalid-request',
-        'This request cannot be saved as an allow rule.',
+        'Choose a scope before saving a rule.',
       );
-    const prepared =
-      input.allowScope && candidate
-        ? this.options.autonomy?.prepareRule(
-            active.session,
-            input.allowScope,
-            candidate,
-          )
-        : null;
+    let prepared: ReturnType<ClaudeAutonomyStore['prepareRule']> = null;
+    if (input.allowScope) {
+      const candidate = this.allowCandidates
+        .get(active.session)
+        ?.get(input.requestId)?.();
+      if (
+        input.decision !== 'accept' ||
+        !candidate ||
+        'reason' in candidate ||
+        !this.options.autonomy
+      )
+        throw new SessionError(
+          'invalid-request',
+          (candidate && 'reason' in candidate
+            ? candidate.reason
+            : approval.allowRuleReason) ??
+            'This request cannot be saved as an allow rule.',
+        );
+      if (input.allowPattern === undefined)
+        throw new SessionError(
+          'invalid-request',
+          'Review the pattern before saving this rule.',
+        );
+      prepared = this.options.autonomy.prepareRule(
+        active.session,
+        input.allowScope,
+        candidate,
+        input.allowPattern,
+      );
+    }
     const pending = active.session.pendingApprovals;
     const records = active.session.stageRecords;
     if (prepared)
@@ -3613,11 +3667,7 @@ export class SessionService {
     }
     this.allowCandidates.get(active.session)?.delete(input.requestId);
     try {
-      active.handle.respondApproval(
-        input.requestId,
-        input.decision,
-        input.message,
-      );
+      respond(input.requestId, input.decision, input.message);
     } catch {
       void active.handle.stop().catch(() => undefined);
       throw new SessionError(
@@ -4805,11 +4855,11 @@ export class SessionService {
       )
         throw new Error('Duplicate provider approval');
       const candidate = 'candidate' in event ? event.candidate : undefined;
-      if (candidate) {
+      if (candidate && 'recheckRule' in event && event.recheckRule) {
         const candidates =
           this.allowCandidates.get(session) ??
-          new Map<string, AllowCandidate>();
-        candidates.set(event.approval.id, candidate);
+          new Map<string, () => AllowCandidate | { reason: string }>();
+        candidates.set(event.approval.id, event.recheckRule);
         this.allowCandidates.set(session, candidates);
       }
       session.pendingApprovals.push(

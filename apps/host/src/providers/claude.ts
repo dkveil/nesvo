@@ -81,6 +81,7 @@ export type ClaudeEvent =
       approval: Approval;
       subject?: ProviderToolSubject;
       candidate?: AllowCandidate;
+      recheckRule?: () => AllowCandidate | { reason: string };
     }
   | { type: 'approval-resolved'; id: string }
   | { type: 'plan'; text: string };
@@ -194,6 +195,7 @@ const toolPresentation = {
   Write: { kind: 'file-change', title: 'Write file' },
   NotebookEdit: { kind: 'file-change', title: 'Edit notebook' },
   Bash: { kind: 'command', title: 'Run command' },
+  WebFetch: { kind: 'tool', title: 'Fetch URL' },
   TodoWrite: { kind: 'tool', title: 'Update plan' },
   Agent: { kind: 'tool', title: 'Run subagent' },
   Skill: { kind: 'tool', title: 'Use skill' },
@@ -1306,11 +1308,6 @@ export function startClaude(options: {
         options.mode === 'read-only' &&
         options.approvals === true &&
         inspection.supportsHostPrompts === true;
-      const tools = options.summaryInstructions
-        ? ''
-        : [...permission.tools, ...(presentsPlan ? [EXIT_PLAN_TOOL] : [])].join(
-            ',',
-          );
       const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
       );
@@ -1341,7 +1338,23 @@ export function startClaude(options: {
         gate?.askRules.length && !canAsk && !readOnly
           ? gate.withoutHostPrompts.warning
           : null;
-      const askRules = !readOnly && canAsk ? (gate?.askRules ?? []) : [];
+      const webFetch = !!options.permissionRules && canAsk && !readOnly;
+      const tools = options.summaryInstructions
+        ? ''
+        : [
+            ...permission.tools,
+            ...(presentsPlan ? [EXIT_PLAN_TOOL] : []),
+            ...(webFetch ? ['WebFetch'] : []),
+          ].join(',');
+      const askRules =
+        !readOnly && canAsk
+          ? [
+              ...new Set([
+                ...(gate?.askRules ?? []),
+                ...(webFetch ? ['WebFetch'] : []),
+              ]),
+            ]
+          : [];
       const controlled = !!options.control && canAsk;
       const hostPrompts =
         canAsk &&
@@ -1686,15 +1699,19 @@ export function startClaude(options: {
           emit({ type: 'approval', approval: ask.approval, subject });
           return;
         }
+        const recheckRule = options.permissionRules
+          ? () =>
+              claudeAllowCandidate(
+                options.directory,
+                String(request.tool_name),
+                ask.input,
+                servers,
+                request.blocked_path,
+              )
+          : undefined;
+        const eligibility = recheckRule?.();
         const candidate =
-          options.permissionRules &&
-          claudeAllowCandidate(
-            options.directory,
-            String(request.tool_name),
-            ask.input,
-            servers,
-            request.blocked_path,
-          );
+          eligibility && 'kind' in eligibility ? eligibility : undefined;
         if (candidate && options.permissionRules?.allows(candidate)) {
           try {
             writeFrame(
@@ -1723,9 +1740,12 @@ export function startClaude(options: {
         approvals.set(ask.requestId, { input: ask.input, timer });
         emit({
           type: 'approval',
-          approval: ask.approval,
+          approval:
+            eligibility && 'reason' in eligibility
+              ? { ...ask.approval, allowRuleReason: eligibility.reason }
+              : ask.approval,
           subject,
-          ...(candidate ? { candidate } : {}),
+          ...(candidate ? { candidate, recheckRule } : {}),
         });
       };
       const publish = () => {
@@ -1813,12 +1833,14 @@ export function startClaude(options: {
               ? workToolDetail(name, input)
               : name === 'Bash'
                 ? command
-                : [
-                    typeof input?.pattern === 'string' ? input.pattern : '',
-                    ...paths,
-                  ]
-                    .filter(Boolean)
-                    .join('\n') || null;
+                : name === 'WebFetch' && typeof input?.url === 'string'
+                  ? input.url
+                  : [
+                      typeof input?.pattern === 'string' ? input.pattern : '',
+                      ...paths,
+                    ]
+                      .filter(Boolean)
+                      .join('\n') || null;
           const next = makeActivity({
             id: block.id,
             kind: toolPresentation[name].kind,

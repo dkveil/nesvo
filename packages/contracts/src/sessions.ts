@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   allowPatternSchema,
   allowRuleSchema,
+  allowRuleTextSchema,
   allowScopeSchema,
 } from './claude-autonomy';
 import { pullRequestReferenceSchema } from './pull-requests';
@@ -123,6 +124,8 @@ export const approvalSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   allowPattern: allowPatternSchema.optional(),
+  allowRuleReason: z.string().min(1).max(500).optional(),
+  label: z.string().min(1).max(8192).optional(),
 });
 export const sessionParentRequestSchema = z.strictObject({
   id: z.uuid(),
@@ -442,6 +445,7 @@ export const respondApprovalSchema = z.strictObject({
     .optional(),
   message: z.string().trim().min(1).max(2000).optional(),
   allowScope: allowScopeSchema.optional(),
+  allowPattern: allowRuleTextSchema.optional(),
 });
 export const decideDelegationSchema = z.strictObject({
   sessionId: z.uuid(),

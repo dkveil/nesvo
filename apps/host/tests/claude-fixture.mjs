@@ -410,6 +410,8 @@ if (args.length === 1 && args[0] === '--version') {
     hostPrompts &&
     values.get('--tools') === `${READ_TOOLS},ExitPlanMode`;
   const browser = values.has('--chrome');
+  const offersWebFetch = values.get('--tools').endsWith(',WebFetch');
+  if (offersWebFetch) assert.ok(hostPrompts && permissionMode !== 'plan');
   const allowed = values.get('--allowedTools').split(',');
   const browserTools = allowed.filter(tool =>
     tool.startsWith(BROWSER_TOOL_PREFIX),
@@ -424,7 +426,8 @@ if (args.length === 1 && args[0] === '--version') {
         ? ''
         : presentsPlan
           ? `${READ_TOOLS},ExitPlanMode`
-          : MODE_TOOLS.get(permissionMode),
+          : MODE_TOOLS.get(permissionMode) +
+            (offersWebFetch ? ',WebFetch' : ''),
     ],
   ])
     assert.equal(values.get(flag), expected, flag);
@@ -438,6 +441,7 @@ if (args.length === 1 && args[0] === '--version') {
   const readConfig = value =>
     JSON.parse(value.startsWith('{') ? value : readFileSync(value, 'utf8'));
   const settings = readConfig(values.get('--settings'));
+  if (offersWebFetch) assert.ok(settings.permissions.ask.includes('WebFetch'));
   const config = readConfig(values.get('--mcp-config'));
   assert.ok(['', 'user', 'user,project,local'].includes(settingSources));
   assert.equal(values.has('--strict-mcp-config'), true);
