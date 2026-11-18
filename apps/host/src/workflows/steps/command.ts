@@ -68,6 +68,7 @@ export function stepEnvironment(execution: StepExecution): {
       NESVO_RUN_ID: execution.run.id,
       NESVO_STEP_NAME: execution.step.name,
       NESVO_PHASE: execution.step.phase,
+      ...(execution.step.iteration ? { NESVO_STEP_ITERATION: String(execution.step.iteration) } : {}),
       NESVO_SPEC_PATH: execution.run.specPath,
       NESVO_PROJECT_ROOT: execution.run.projectRoot,
       CI: '1',

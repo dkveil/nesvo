@@ -1,4 +1,5 @@
 import type { StepEffect, StepPhase, StepType } from './definitions';
+import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 
 export const workflowGraphLimits = {
   edges: 64,
@@ -18,6 +19,9 @@ export type GraphStep = {
   phase: StepPhase;
   effect: StepEffect;
   body: string;
+  pr?: string;
+  repeat?: readonly string[];
+  condition?: string;
 };
 export type GraphLayout = Readonly<Record<string, readonly [number, number]>>;
 export type GraphInput = {
@@ -39,6 +43,8 @@ export type GraphRule =
   | 'E7'
   | 'E8'
   | 'E9'
+  | 'E10'
+  | 'E11'
   | 'W1'
   | 'W2'
   | 'W3'
@@ -523,6 +529,82 @@ export const checkGraphList = (
   return ordered(report.issues);
 };
 
+function validateHostSteps(
+  names: readonly string[],
+  stepsByName: ReadonlyMap<string, GraphStep>,
+  graph: GraphEdges,
+  report: Collector,
+): void {
+  const members = new Set(names);
+  const claimed = new Set<string>();
+  for (const name of names) {
+    const step = stepsByName.get(name);
+    if (!step) continue;
+    const prSource = step.pr && STEP_OUTPUT_REFERENCE.exec(step.pr)?.[1];
+    if (prSource) {
+      const upstream = stepsByName.get(prSource);
+      if (
+        !members.has(prSource) ||
+        !upstream ||
+        !(
+          phaseRank[upstream.phase] < phaseRank[step.phase] ||
+          ancestors(graph, name).includes(prSource)
+        )
+      )
+        report.add(
+          'E11',
+          'The pull request expression must read an upstream step in this workflow.',
+          [name],
+        );
+    }
+    if (step.type !== 'until' || !step.repeat?.length) continue;
+    const chain = [...step.repeat, name];
+    const condition = step.condition && parseUntilCondition(step.condition);
+    if (!condition || !step.repeat.includes(condition.step))
+      report.add(
+        'E10',
+        'The loop condition must read an output from a repeated step.',
+        [name],
+      );
+    for (const [index, member] of step.repeat.entries()) {
+      const previous = chain[index - 1];
+      const next = chain[index + 1];
+      const sources = incoming(graph, member);
+      const targets = outgoing(graph, member);
+      const definition = stepsByName.get(member);
+      if (
+        !members.has(member) ||
+        !definition ||
+        definition.phase !== step.phase ||
+        definition.type === 'until' ||
+        claimed.has(member) ||
+        (previous &&
+          (sources.length !== 1 ||
+            sources[0]?.from !== previous ||
+            sources[0]?.when !== 'success')) ||
+        targets.length !== 1 ||
+        targets[0]?.to !== next ||
+        targets[0]?.when !== 'success'
+      ) {
+        report.add(
+          'E10',
+          'Connect the repeated steps and Loop until in one same-phase success chain. A repeated step can belong to only one loop.',
+          [name, member],
+        );
+        break;
+      }
+      claimed.add(member);
+    }
+    const end = incoming(graph, name);
+    if (end.length !== 1 || end[0]?.from !== step.repeat.at(-1))
+      report.add(
+        'E10',
+        'Loop until must have one incoming edge from the last repeated step.',
+        [name],
+      );
+  }
+}
+
 export const resolveGraph = (
   input: GraphInput,
   stepsByName: ReadonlyMap<string, GraphStep>,
@@ -542,6 +624,7 @@ export const resolveGraph = (
   for (const cycle of looped)
     report.add('E6', graphMessages.cycle(cycle), cycle);
   layoutWarnings(input.layout, members, report);
+  validateHostSteps(input.steps, stepsByName, { edges }, report);
   if (known.length && known.every(step => step.type === 'action'))
     report.add('W3', graphMessages.noGate(input.name));
   if ((!input.edges || listed) && !looped.length) {

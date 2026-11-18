@@ -1,3 +1,4 @@
+import { untilExecutor } from './steps/until';
 import {
   ancestors,
   parseDurationMs,
@@ -103,7 +104,7 @@ export type StepEvidence = Pick<
 >;
 
 export type StepOutcome =
-  | { kind: 'result'; result: StepResult }
+  | { kind: 'result' | 'repeat'; result: StepResult }
   | { kind: 'skipped'; reason: string }
   | { kind: 'interrupted' }
   | {
@@ -461,6 +462,7 @@ const EXCLUSIVE_STEP_TYPES = {
   agent: [],
   human: ['action'],
   'wait-ci': [],
+  until: [],
 } as const satisfies Record<StepType, readonly StepType[]>;
 
 const admits = (
@@ -1033,6 +1035,9 @@ export class WorkflowRunner {
     };
     const existing = latestAttempts(this.store.stepsForRun(run.id));
     const created: WorkflowStepRecord[] = [];
+    const loopMembers = new Set(run.workflow.steps.flatMap(definition =>
+      definition.type === 'until' ? [definition.name, ...(definition.repeat ?? [])] : [],
+    ));
     const written = this.store.transact(() => {
       if (!this.store.replaceRun(next, run.revision)) return false;
       for (const index of indices) {
@@ -1048,6 +1053,7 @@ export class WorkflowRunner {
           phase: definition.phase,
           state: 'pending',
           attempt,
+          ...(loopMembers.has(definition.name) ? { iteration: 1 } : {}),
           result: null,
           sessionId: null,
           reviewId: null,
@@ -1117,7 +1123,7 @@ export class WorkflowRunner {
         return current?.state === 'running' && this.writeStep(current, { ciWait });
       },
     };
-    const executor = this.executors[definition.type] ?? unavailableExecutor;
+    const executor = definition.type === 'until' ? untilExecutor : this.executors[definition.type] ?? unavailableExecutor;
     const done = Promise.resolve()
       .then(() => executor(execution))
       .catch(
@@ -1194,6 +1200,10 @@ export class WorkflowRunner {
     const state = VERDICT_STATES[result.status];
     const run = this.store.getRun(current.runId);
     const definition = run?.workflow.steps[current.index];
+    if (run && parsed.success && outcome.kind === 'repeat' && definition?.type === 'until') {
+      this.repeatSequence(run, current, definition.repeat ?? [], result);
+      return;
+    }
     const retry = current.retry ?? 0;
     if (
       run?.status === 'checking' &&
@@ -1209,19 +1219,41 @@ export class WorkflowRunner {
         retry: retry + 1,
         ...(backoff > 0 ? { retryAt: new Date(now.getTime() + backoff).toISOString() } : {}),
       };
-      const finished = { ...current, state, result, revision: current.revision + 1, updatedAt: now.toISOString() };
+      this.finishAndQueue(current, state, result, [next]);
+      return;
+    }
+    this.writeStep(current, { state, result });
+  }
+
+  private repeatSequence(run: WorkflowRun, control: WorkflowStepRecord, repeat: readonly string[], result: StepResult): void {
+    const iteration = (control.iteration ?? 1) + 1;
+    const latest = [...latestAttempts(this.store.stepsForRun(run.id)).values()];
+    const names = new Set([...repeat, control.name]);
+    const now = this.timestamp();
+    const next = latest.filter(step => names.has(step.name)).map(step => ({
+      ...nextAttempt(step, now),
+      iteration,
+    }));
+    this.finishAndQueue(control, 'passed', result, next);
+  }
+
+  private finishAndQueue(
+    current: WorkflowStepRecord,
+    state: WorkflowStepState,
+    result: StepResult,
+    queued: readonly WorkflowStepRecord[],
+  ): void {
+    const finished = { ...current, state, result, revision: current.revision + 1, updatedAt: this.timestamp() };
       const written = this.store.transact(() => {
         if (!this.store.replaceStep(finished, current.revision)) return false;
-        if (!this.store.insertStep(next)) throw new Error('Step row exists.');
+        for (const step of queued)
+          if (!this.store.insertStep(step)) throw new Error('Step row exists.');
         return true;
       });
       if (written) {
         this.emit({ type: 'workflow-step-changed', step: finished });
-        this.emit({ type: 'workflow-step-changed', step: next });
+        for (const step of queued) this.emit({ type: 'workflow-step-changed', step });
       }
-      return;
-    }
-    this.writeStep(current, { state, result });
   }
 
   private awaitHuman(

@@ -97,6 +97,7 @@ export const stepTypeLabels: Record<StepType, string> = {
   human: 'Human',
   action: 'Action',
   'wait-ci': 'Wait for PR checks',
+  until: 'Loop until',
 };
 
 export const stepTypeOrder: StepType[] = [
@@ -105,6 +106,7 @@ export const stepTypeOrder: StepType[] = [
   'human',
   'action',
   'wait-ci',
+  'until',
 ];
 
 export const phaseTones: Record<StepPhase, WorkflowTone> = {
@@ -219,6 +221,9 @@ export const stepDefinitionOf = (
   idempotent: step.idempotent,
   pr: step.pr,
   poll_interval: step.poll_interval,
+  repeat: step.repeat?.map(name => name.trim()),
+  condition: step.condition,
+  max_iterations: step.max_iterations,
   on_fail: step.on_fail,
   effect: step.effect,
   needs: [...step.needs],
@@ -273,6 +278,9 @@ export const editorEdge = (edge: GraphEdge): EditorEdge => ({
 });
 
 const graphStep = (step: StepDefinition): GraphStep => ({
+  pr: step.pr,
+  repeat: step.repeat,
+  condition: step.condition,
   type: step.type,
   phase: step.phase,
   effect: step.effect,
@@ -529,6 +537,10 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.idempotent) lines.push('idempotent: true');
   if (step.pr) lines.push(`pr: ${yamlText(step.pr)}`);
   if (step.poll_interval) lines.push(`poll_interval: ${step.poll_interval}`);
+  if (step.repeat)
+    lines.push(`repeat: [${step.repeat.map(yamlName).join(', ')}]`);
+  if (step.condition) lines.push(`condition: ${yamlText(step.condition)}`);
+  if (step.max_iterations) lines.push(`max_iterations: ${step.max_iterations}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);

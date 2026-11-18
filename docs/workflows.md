@@ -41,7 +41,7 @@ bun run lint
 | Field | Values | Meaning |
 | -- | -- | -- |
 | `name` | lowercase letters, digits and inner hyphens | Must match the file name. |
-| `type` | `command`, `agent`, `human`, `action`, `wait-ci` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
+| `type` | `command`, `agent`, `human`, `action`, `wait-ci`, `until` | `command` runs a check, `agent` asks a read-only session to verify, `human` waits for your decision, `action` runs something with an effect outside the task. |
 | `phase` | `plan`, `pre-done`, `pre-push` | When the step runs, see [Phases](#phases-and-author-turns). |
 | `timeout` | `1s` to `4h`, for example `90s`, `15m` | Default `15m`. |
 | `retries` | 0 to 5 | Default 0. `retries: 2` allows up to three attempts. The run records each attempt, then applies the normal failure route and `on_fail`. Human decisions never retry. |
@@ -61,6 +61,23 @@ A `wait-ci` step polls on the session host using the installed `gh` CLI. The bod
 `timeout` includes time while the host is down. Set `poll_interval` between `1s` and `1m` (default `10s`). The runner records the pull request and head SHA and resumes the same attempt after restart when only CI waits were active. A changed head fails the attempt. A known failed check ends the wait early. An empty check list waits until checks appear or time expires.
 
 Outputs are `status` (`success`, `failure` or `timeout`), `failing_checks` (newline-separated names), and `head_sha` when known. Failure and timeout follow the same routing and retry rules as other failed checks.
+
+### Repeating a sequence
+
+An `until` step follows the steps it repeats. Set `repeat` to their names in order, `condition` to a string comparison and `max_iterations` to a number from 1 to 20. For example:
+
+```yaml
+name: ready
+type: until
+phase: pre-done
+repeat: [read-status]
+condition: 'steps.read-status.outputs.state == "ready"'
+max_iterations: 4
+```
+
+Connect the body and the loop control in one same-phase success chain. The body can receive incoming edges at its first step, and exits go from the control step. Loops cannot overlap or nest. Only a current iteration's output can satisfy the condition. A missing output does not match either comparison. A body failure follows the normal failure route. When the limit is reached without a match, the control step fails.
+
+The run records both the iteration and the attempt. Shell steps in the body receive `NESVO_STEP_ITERATION`, starting at 1. Each iteration has its own retry allowance. Include a human gate in the repeated sequence when each repetition needs a decision.
 
 ## The workflow file
 

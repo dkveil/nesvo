@@ -114,6 +114,7 @@ export function StepInspectorForm({
   const blocked = Object.keys(client).length > 0;
   const update = (patch: Partial<StepDraft>) => onChange({ ...step, ...patch });
   const human = step.type === 'human';
+  const canRetry = !human && step.type !== 'until';
   const shared = mode === 'edit' && usedBy.length > 0;
   const phaseMoved = shared && step.phase !== origin.phase;
   const duration = splitDuration(step.timeout);
@@ -259,6 +260,60 @@ export function StepInspectorForm({
             />
           </Field>
         )}
+        {step.type === 'until' && (
+          <>
+            <Field
+              id={fieldId('repeat')}
+              label="Repeat steps"
+              hint="Enter step names in execution order, separated by commas."
+              messages={notesOf('repeat')}
+            >
+              <Input
+                size="sm"
+                id={fieldId('repeat')}
+                value={step.repeat?.join(',') ?? ''}
+                onChange={event =>
+                  update({ repeat: event.target.value.split(',') })
+                }
+              />
+            </Field>
+            <Field
+              id={fieldId('condition')}
+              label="Stop condition"
+              hint={'Use steps.<step>.outputs.<key> == "value" or != "value".'}
+              messages={notesOf('condition')}
+            >
+              <Input
+                size="sm"
+                id={fieldId('condition')}
+                value={step.condition ?? ''}
+                onChange={event => update({ condition: event.target.value })}
+              />
+            </Field>
+            <Field
+              id={fieldId('max_iterations')}
+              label="Maximum iterations"
+              hint="From 1 to 20."
+              messages={notesOf('max_iterations')}
+            >
+              <Input
+                size="sm"
+                type="number"
+                min={1}
+                max={20}
+                id={fieldId('max_iterations')}
+                value={step.max_iterations ?? ''}
+                onChange={event =>
+                  update({
+                    max_iterations: event.target.value
+                      ? Number(event.target.value)
+                      : undefined,
+                  })
+                }
+              />
+            </Field>
+          </>
+        )}
         {step.type === 'wait-ci' && (
           <>
             <Field
@@ -382,7 +437,7 @@ export function StepInspectorForm({
           >
             <Select
               value={String(step.retries)}
-              disabled={human}
+              disabled={!canRetry}
               onValueChange={value => update({ retries: Number(value) })}
             >
               <SelectTrigger
@@ -438,7 +493,7 @@ export function StepInspectorForm({
               onChange={on_fail => update({ on_fail })}
             />
           </Field>
-          {!human && step.retries > 0 && (
+          {canRetry && step.retries > 0 && (
             <>
               <Field
                 id={fieldId('retry_backoff')}

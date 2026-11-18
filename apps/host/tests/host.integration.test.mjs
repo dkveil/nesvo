@@ -9087,6 +9087,66 @@ test(
     );
 
     await t.test(
+      'loops stop at a matching output or their iteration limit',
+      async () => {
+        const loopProject = await createProject(
+          'loops',
+          [
+            { name: 'prepare', type: 'command', body: 'echo prepare' },
+            {
+              name: 'read-status',
+              type: 'action',
+              body: shellBody(
+                'printf \'{"count":"%s"}\\n\' "$NESVO_STEP_ITERATION"',
+                'echo {"count":"%NESVO_STEP_ITERATION%"}',
+              ),
+            },
+            ...['converges', 'exhausts'].map((name, index) => ({
+              name,
+              type: 'until',
+              repeat: '[prepare, read-status]',
+              condition: JSON.stringify(
+                'steps.read-status.outputs.count == "' + (index ? 5 : 2) + '"',
+              ),
+              max_iterations: 3,
+              body: '',
+            })),
+            { name: 'after-loop', type: 'command', body: 'echo after' },
+          ],
+          {
+            converges: ['prepare', 'read-status', 'converges', 'after-loop'],
+            exhausts: ['prepare', 'read-status', 'exhausts', 'after-loop'],
+            invalid: ['read-status', 'prepare', 'converges'],
+          },
+        );
+        const invalid = await host.request('run-workflow-steps', {
+          directory: loopProject,
+          specPath: '.agents/tasks/invalid.md',
+        });
+        assert.equal(invalid.code, 'invalid-request');
+        for (const [name, iterations, status] of [
+          ['converges', 2, 'passed'],
+          ['exhausts', 3, 'failed'],
+        ]) {
+          const run = await start(loopProject, name);
+          const current = await settled(run.id);
+          assert.equal(current.run.status, status);
+          assert.equal(
+            stepNamed(current, 'after-loop').state,
+            status === 'passed' ? 'passed' : 'pending',
+          );
+          for (const member of ['prepare', 'read-status', name]) {
+            const rows = current.steps.filter(step => step.name === member);
+            assert.deepEqual(
+              rows.map(step => step.iteration),
+              Array.from({ length: iterations }, (_, index) => index + 1),
+            );
+          }
+        }
+      },
+    );
+
+    await t.test(
       'the portability fixture produces the expected results',
       async () => {
         const fixture = join(directory, 'portability');

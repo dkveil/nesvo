@@ -146,6 +146,7 @@ const typeTileTone: Record<StepType, string> = {
   human: 'text-warning-foreground',
   action: 'text-error-foreground',
   'wait-ci': 'text-info-foreground',
+  until: 'text-info-foreground',
 };
 
 export function StepNodeView({ data, selected }: NodeProps<StepNode>) {

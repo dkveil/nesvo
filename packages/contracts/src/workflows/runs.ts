@@ -141,6 +141,12 @@ export const workflowStepRecordSchema = z.strictObject({
     .optional(),
   retryAt: z.iso.datetime().optional(),
   ciWait: ciWaitSchema.optional(),
+  iteration: z
+    .number()
+    .int()
+    .min(1)
+    .max(workflowDefinitionLimits.iterations)
+    .optional(),
   result: stepResultSchema.nullable(),
   sessionId: idSchema.nullable(),
   reviewId: idSchema.nullable(),

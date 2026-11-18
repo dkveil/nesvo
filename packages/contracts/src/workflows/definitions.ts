@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { parsePullRequestUrl } from '../pull-requests';
+import { parseUntilCondition, STEP_OUTPUT_REFERENCE } from './expressions';
 import {
   implicitEdges,
   WORKFLOW_EDGE_CONDITIONS,
@@ -16,6 +17,7 @@ export const workflowDefinitionLimits = {
   workflowSteps: 32,
   needs: 16,
   retries: 5,
+  iterations: 20,
   path: 4096,
   catalogSteps: 200,
   catalogWorkflows: 100,
@@ -55,9 +57,9 @@ export const stepTypeSchema = z.enum([
   'human',
   'action',
   'wait-ci',
+  'until',
 ]);
-export const STEP_OUTPUT_REFERENCE =
-  /^steps\.([a-z0-9]+(?:-[a-z0-9]+)*)\.outputs\.([A-Za-z][A-Za-z0-9_.-]{0,63})$/;
+
 export const PULL_REQUEST_NUMBER = /^[1-9]\d{0,8}$/;
 const prExpressionSchema = z
   .string()
@@ -106,6 +108,26 @@ const stepDefinitionShape = {
   skill: stepSkillSchema.nullable().default(null),
   timeout: durationSchema.default('15m'),
   pr: prExpressionSchema.optional(),
+  repeat: z
+    .array(stepNameSchema)
+    .min(1)
+    .max(workflowDefinitionLimits.workflowSteps - 1)
+    .refine(values => !hasDuplicates(values), 'List each repeated step once.')
+    .optional(),
+  condition: z
+    .string()
+    .max(500)
+    .refine(
+      value => parseUntilCondition(value) !== null,
+      'Use steps.<step>.outputs.<key> == "value" or != "value".',
+    )
+    .optional(),
+  max_iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(workflowDefinitionLimits.iterations)
+    .optional(),
   poll_interval: durationSchema
     .refine(
       value => (parseDurationMs(value) ?? Infinity) <= 60_000,
@@ -135,6 +157,9 @@ type StepRuleSubject = {
   skill: string | null;
   retries: number;
   pr?: string;
+  repeat?: string[];
+  condition?: string;
+  max_iterations?: number;
   poll_interval?: string;
   retry_backoff?: string;
   idempotent?: boolean;
@@ -143,6 +168,22 @@ type StepRuleSubject = {
 };
 
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
+  for (const field of ['repeat', 'condition', 'max_iterations'] as const)
+    if ((value.type === 'until') !== (value[field] !== undefined))
+      context.addIssue({
+        code: 'custom',
+        path: [field],
+        message:
+          value.type === 'until'
+            ? 'This field is required for Loop until.'
+            : 'This field belongs to a Loop until step.',
+      });
+  if (value.type === 'until' && (value.retries !== 0 || value.retry_backoff))
+    context.addIssue({
+      code: 'custom',
+      path: ['retries'],
+      message: 'Set the loop iteration limit instead.',
+    });
   for (const field of ['pr', 'poll_interval'] as const)
     if (value.type !== 'wait-ci' && value[field] !== undefined)
       context.addIssue({
@@ -178,6 +219,7 @@ const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
   if (
     !value.body.trim() &&
     value.type !== 'wait-ci' &&
+    value.type !== 'until' &&
     (value.type !== 'agent' || value.skill === null)
   )
     context.addIssue({

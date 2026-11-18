@@ -6,3 +6,4 @@ export * from './commands';
 export * from './assistant';
 export * from './assistant-changes';
 export * from './graph';
+export * from './expressions';

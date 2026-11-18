@@ -1,5 +1,5 @@
 import { stepResultLimits, type StepResult } from '@nesvo/contracts';
-import type { StepExecution, StepOutcome } from '../runner';
+import type { StepExecution } from '../runner';
 
 export function hostResult(
   execution: StepExecution,
@@ -7,7 +7,7 @@ export function hostResult(
   summary: string,
   outputs: StepResult['outputs'] = {},
   evidence: StepResult['evidence'] = [],
-): Extract<StepOutcome, { kind: 'result' }> {
+): { kind: 'result'; result: StepResult } {
   const { step } = execution;
   const finishedAt = execution.now().toISOString();
   const startedAt = step.startedAt ?? finishedAt;

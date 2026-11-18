@@ -18,6 +18,9 @@ export const stepFields = [
   'idempotent',
   'pr',
   'poll_interval',
+  'repeat',
+  'condition',
+  'max_iterations',
   'on_fail',
   'needs',
   'effect',
@@ -54,6 +57,7 @@ export const bodyLabels: Record<StepType, string> = {
   agent: 'Instructions',
   human: 'Description',
   'wait-ci': 'Notes',
+  until: 'Notes',
 };
 
 export const bodyPlaceholders: Record<StepType, string> = {
@@ -62,6 +66,7 @@ export const bodyPlaceholders: Record<StepType, string> = {
   agent: 'What the agent checks and how it reports the verdict.',
   human: 'What the reviewer looks at before deciding.',
   'wait-ci': '',
+  until: '',
 };
 
 export const typeLabels: Record<StepType, string> = {
@@ -70,6 +75,7 @@ export const typeLabels: Record<StepType, string> = {
   human: 'Human',
   action: 'Action',
   'wait-ci': 'Wait for PR checks',
+  until: 'Loop until',
 };
 
 export const declaresEffect = (type: StepType) =>
@@ -78,11 +84,15 @@ export const declaresEffect = (type: StepType) =>
 export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   ...step,
   type,
+  repeat: type === 'until' ? (step.repeat ?? []) : undefined,
+  condition: type === 'until' ? (step.condition ?? '') : undefined,
+  max_iterations: type === 'until' ? (step.max_iterations ?? 3) : undefined,
   pr: type === 'wait-ci' ? step.pr : undefined,
   poll_interval: type === 'wait-ci' ? step.poll_interval : undefined,
   skill: type === 'agent' ? step.skill : null,
-  retries: type === 'human' ? 0 : step.retries,
-  retry_backoff: type === 'human' ? undefined : step.retry_backoff,
+  retries: type === 'human' || type === 'until' ? 0 : step.retries,
+  retry_backoff:
+    type === 'human' || type === 'until' ? undefined : step.retry_backoff,
   idempotent: type === 'human' ? undefined : step.idempotent,
   on_fail: type === 'human' ? 'stop' : step.on_fail,
   effect: declaresEffect(type) ? step.effect : 'local',
@@ -101,6 +111,9 @@ export const stepNotes = (step: StepDraft) =>
       idempotent: step.idempotent,
       pr: step.pr,
       poll_interval: step.poll_interval,
+      repeat: step.repeat?.map(name => name.trim()),
+      condition: step.condition,
+      max_iterations: step.max_iterations,
       on_fail: step.on_fail,
       effect: step.effect,
       needs: step.needs,

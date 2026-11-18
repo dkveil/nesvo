@@ -193,6 +193,11 @@ export function StepResult({
               {duration}
             </span>
           )}
+          {record?.iteration && (
+            <span className="text-muted-foreground">
+              Iteration {record.iteration}
+            </span>
+          )}
           {record && record.attempt > 0 && (
             <span className="text-muted-foreground">
               Attempt {record.attempt}
@@ -217,7 +222,9 @@ export function StepResult({
           onChange={value => setAttempt(Number(value))}
           options={attempts.map(item => ({
             value: String(item.attempt),
-            label: String(item.attempt),
+            label: item.iteration
+              ? `${item.iteration} ? ${item.attempt}`
+              : String(item.attempt),
             ariaLabel: `Attempt ${item.attempt} · ${stepStateLabels[item.state]}`,
             icon: <StepStateIcon state={item.state} />,
           }))}
