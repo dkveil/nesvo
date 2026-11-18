@@ -9,7 +9,15 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import type { Session } from '@nesvo/contracts';
 import {
   OwnedProcessError,
@@ -1036,13 +1044,17 @@ async function worktreeDirty(
 }
 
 export async function removeSessionWorktree(
-  input: SessionWorktreeLocation & { force?: boolean },
+  input: SessionWorktreeLocation & {
+    force?: boolean;
+    allowsIgnoredFiles?: boolean;
+  },
 ) {
   const registration = await registeredSessionWorktree(input);
   if (!registration) return;
   const { target, gitDirectory, cwd } = registration;
   if (
     !input.force &&
+    !input.allowsIgnoredFiles &&
     !target.prunable &&
     (await worktreeDirty(registration, input.signal))
   )
@@ -1124,4 +1136,175 @@ async function removeWorktree(
     );
   if (result.code !== 0) fail('git-failed', gitMessage(result));
   return target;
+}
+
+const MERGED_CHANGE_LIMIT = 50;
+const MERGED_COMMIT_LIMIT = 20;
+const MERGED_SUBJECT_LENGTH = 200;
+
+export type MergedWorktreeInspection = {
+  registered: boolean;
+  changes: string[];
+  changesTruncated: boolean;
+  localFiles: number;
+  unpushed: { sha: string; subject: string }[];
+  unpushedTruncated: boolean;
+  branchExists: boolean;
+};
+
+type MergedWorktreeParams = SessionWorktreeLocation & {
+  branch: string;
+  mergedHead: string | null;
+};
+
+async function gitSucceeds(
+  gitDirectory: string,
+  args: string[],
+  signal: AbortSignal,
+): Promise<boolean> {
+  const result = await runGit({
+    args: [`--git-dir=${gitDirectory}`, ...args],
+    cwd: dirname(gitDirectory),
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  return result.code === 0;
+}
+
+async function worktreeChanges(
+  registration: NonNullable<
+    Awaited<ReturnType<typeof registeredSessionWorktree>>
+  >,
+  signal: AbortSignal,
+) {
+  const result = await runGit({
+    args: [
+      `--git-dir=${registration.admin}`,
+      `--work-tree=${registration.target.worktree}`,
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.quotePath=false',
+      '--no-optional-locks',
+      'status',
+      '--porcelain',
+      '--untracked-files=normal',
+      '--ignored=matching',
+      '--ignore-submodules=none',
+    ],
+    cwd: registration.cwd,
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  if (result.code !== 0) fail('git-failed', gitMessage(result));
+  const lines = result.stdout.split(/\r?\n/).filter(Boolean);
+  const changed = lines.filter(line => !line.startsWith('!! '));
+  return {
+    changes: changed.slice(0, MERGED_CHANGE_LIMIT).map(line => line.slice(3)),
+    changesTruncated:
+      changed.length > MERGED_CHANGE_LIMIT || result.outputTruncated,
+    localFiles: lines.length - changed.length,
+  };
+}
+
+async function unpushedCommits(
+  gitDirectory: string,
+  tips: string[],
+  mergedHead: string | null,
+  signal: AbortSignal,
+) {
+  if (tips.length === 0) return { unpushed: [], unpushedTruncated: false };
+  const known =
+    mergedHead &&
+    (await gitSucceeds(
+      gitDirectory,
+      ['cat-file', '-e', `${mergedHead}^{commit}`],
+      signal,
+    ));
+  const result = await runGit({
+    args: [
+      `--git-dir=${gitDirectory}`,
+      'log',
+      `--max-count=${MERGED_COMMIT_LIMIT + 1}`,
+      '--format=%H%x09%s',
+      ...tips,
+      '--not',
+      '--remotes',
+      ...(known ? [mergedHead] : []),
+      '--',
+    ],
+    cwd: dirname(gitDirectory),
+    timeoutMs: GIT_QUERY_TIMEOUT_MS,
+    signal,
+  });
+  if (result.code !== 0) fail('git-failed', gitMessage(result));
+  const commits = result.stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => {
+      const [sha = '', ...subject] = line.split('\t');
+      return {
+        sha,
+        subject: subject.join('\t').slice(0, MERGED_SUBJECT_LENGTH),
+      };
+    });
+  return {
+    unpushed: commits.slice(0, MERGED_COMMIT_LIMIT),
+    unpushedTruncated: commits.length > MERGED_COMMIT_LIMIT,
+  };
+}
+
+export async function inspectMergedSessionWorktree(
+  input: MergedWorktreeParams,
+): Promise<MergedWorktreeInspection> {
+  const registration = await registeredSessionWorktree(input);
+  const gitDirectory =
+    registration?.gitDirectory ??
+    input.gitDirectory ??
+    (await repositoryGitDirectory(
+      projectPath(input.projectDirectory),
+      input.signal,
+    ));
+  const branchExists = await gitSucceeds(
+    gitDirectory,
+    ['show-ref', '--verify', '--quiet', `refs/heads/${input.branch}`],
+    input.signal,
+  );
+  const live = registration && !registration.target.prunable;
+  const status = live
+    ? await worktreeChanges(registration, input.signal)
+    : { changes: [], changesTruncated: false, localFiles: 0 };
+  const commits = await unpushedCommits(
+    live ? registration.admin : gitDirectory,
+    [...(live ? ['HEAD'] : []), ...(branchExists ? [input.branch] : [])],
+    input.mergedHead,
+    input.signal,
+  );
+  return {
+    registered: !!live,
+    ...status,
+    ...commits,
+    branchExists,
+  };
+}
+
+export async function deleteMergedSessionBranch(input: {
+  projectDirectory: string;
+  gitDirectory?: string;
+  branch: string;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const gitDirectory =
+    input.gitDirectory ??
+    (await repositoryGitDirectory(
+      projectPath(input.projectDirectory),
+      input.signal,
+    ));
+  const result = await runGit({
+    args: [`--git-dir=${gitDirectory}`, 'branch', '-D', input.branch],
+    cwd: dirname(gitDirectory),
+    timeoutMs: GIT_CHANGE_TIMEOUT_MS,
+    signal: input.signal,
+  });
+  return result.code === 0;
 }

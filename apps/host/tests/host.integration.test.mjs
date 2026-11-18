@@ -1382,6 +1382,8 @@ test(
         'session-stages',
         'claude-commands',
         'session-browser',
+        'session-resume',
+        'merged-worktree-cleanup',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6586,6 +6588,8 @@ test(
       'session-stages',
       'claude-commands',
       'session-browser',
+      'session-resume',
+      'merged-worktree-cleanup',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -26473,3 +26477,442 @@ test('Codex children receive the stage tools at thread start and a plan-first Co
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test(
+  'resume continues failed and interrupted sessions in the same provider thread without replaying work',
+  { timeout: 60_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-session-resume-')),
+    );
+    const project = join(directory, 'project');
+    const launchLog = join(directory, 'launches.jsonl');
+    await mkdir(project);
+    await mkdir(join(directory, 'second'));
+    const hosts = [];
+    const open = () => {
+      const host = launch(directory, join(directory, 'pids.json'), {
+        NESVO_FIXTURE_LAUNCH_LOG: launchLog,
+      });
+      hosts.push(host);
+      return host;
+    };
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const launches = async () =>
+      (await readFile(launchLog, 'utf8').catch(() => ''))
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    const flag = (args, name) =>
+      args.includes(name) ? args[args.indexOf(name) + 1] : null;
+    let host = open();
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'session-resume',
+      ),
+    );
+    const settled = run =>
+      host.event(
+        session =>
+          session.id === run.id &&
+          session.runId === run.runId &&
+          !['running', 'stopping'].includes(session.status),
+      );
+    const send = async (sessionId, text) => {
+      const response = await host.request('send-message', {
+        sessionId,
+        messageId: randomUUID(),
+        text,
+      });
+      assert.equal(response.type, 'session', JSON.stringify(response));
+      return response.session;
+    };
+    const create = async (title, folder = project) => {
+      const created = await host.request('create-session', {
+        title,
+        provider: 'Claude Code',
+        model: 'sonnet',
+        mode: 'accept-edits',
+        directory: folder,
+      });
+      assert.equal(created.type, 'session', JSON.stringify(created));
+      const completed = await settled(
+        await send(created.session.id, 'fixture:continue'),
+      );
+      assert.equal(completed.status, 'completed', completed.error);
+      const failed = await settled(await send(completed.id, 'fixture:fail'));
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.providerSessionId, completed.providerSessionId);
+      return failed;
+    };
+    const resume = (session, text, messageId = randomUUID()) =>
+      host.request('resume-session', {
+        sessionId: session.id,
+        messageId,
+        revision: session.revision,
+        text,
+      });
+
+    const first = await create('Resume first');
+    const second = await create('Resume second', join(directory, 'second'));
+    const completedTurn = await settled(
+      await send(second.id, 'fixture:continue'),
+    );
+    assert.equal(
+      (await resume(completedTurn, 'Continue')).code,
+      'invalid-request',
+    );
+    const secondFailed = await settled(
+      await send(completedTurn.id, 'fixture:fail'),
+    );
+    assert.equal(
+      (await resume({ ...first, revision: first.revision - 1 }, 'Continue'))
+        .code,
+      'invalid-request',
+    );
+
+    const before = (await launches()).length;
+    const text = `Continue from where you stopped. The last turn failed with: ${first.error}`;
+    const messageId = randomUUID();
+    const [resumedFirst, resumedSecond] = await Promise.all([
+      resume(first, text, messageId),
+      resume(secondFailed, 'Continue the second session.'),
+    ]);
+    assert.equal(resumedFirst.type, 'session', JSON.stringify(resumedFirst));
+    assert.equal(resumedSecond.type, 'session', JSON.stringify(resumedSecond));
+    assert.equal(resumedFirst.session.mode, 'accept-edits');
+    assert.equal(resumedFirst.session.directory, first.directory);
+    assert.equal(resumedFirst.session.groupId, first.groupId);
+    assert.equal(
+      resumedFirst.session.providerSessionId,
+      first.providerSessionId,
+    );
+    const continued = await settled(resumedFirst.session);
+    assert.equal(continued.status, 'completed', continued.error);
+    assert.equal(continued.providerSessionId, first.providerSessionId);
+    const operatorMessages = continued.messages.filter(
+      message => message.author === 'operator',
+    );
+    assert.equal(operatorMessages.at(-1).body, text);
+    assert.equal(operatorMessages.at(-1).id, messageId);
+    await settled(resumedSecond.session);
+    const resumedLaunches = (await launches()).slice(before);
+    assert.equal(resumedLaunches.length, 2);
+    assert.ok(
+      resumedLaunches.some(
+        entry => flag(entry.args, '--resume') === first.providerSessionId,
+      ),
+    );
+    assert.ok(
+      resumedLaunches.some(
+        entry => flag(entry.args, '--resume') === second.providerSessionId,
+      ),
+    );
+
+    const repeated = await resume(first, text, messageId);
+    assert.equal(repeated.type, 'session', JSON.stringify(repeated));
+    assert.equal(repeated.session.messages.length, continued.messages.length);
+    assert.equal((await launches()).length, before + 2);
+
+    const held = await send(first.id, 'fixture:hold');
+    await host.event(
+      session =>
+        session.id === first.id &&
+        session.runId === held.runId &&
+        agent(session)?.body.includes('Fixture is waiting.'),
+    );
+    await host.stop();
+    const heldLaunches = (await launches()).length;
+
+    host = open();
+    const reopened = (await host.request('list-sessions')).sessions.find(
+      session => session.id === first.id,
+    );
+    assert.equal(reopened.status, 'interrupted');
+    assert.equal(reopened.providerSessionId, first.providerSessionId);
+    await host.request('health');
+    await delay(300);
+    assert.equal((await launches()).length, heldLaunches);
+    const afterInterruption = await resume(
+      reopened,
+      'Continue from where you stopped. The last turn was interrupted before it finished.',
+    );
+    assert.equal(
+      afterInterruption.type,
+      'session',
+      JSON.stringify(afterInterruption),
+    );
+    const recovered = await settled(afterInterruption.session);
+    assert.equal(recovered.status, 'completed', recovered.error);
+    assert.equal(recovered.providerSessionId, first.providerSessionId);
+    assert.equal(
+      flag((await launches()).at(-1).args, '--resume'),
+      first.providerSessionId,
+    );
+
+    const failedAgain = await settled(await send(first.id, 'fixture:fail'));
+    const restarted = await host.request('restart-session', {
+      sessionId: failedAgain.id,
+      revision: failedAgain.revision,
+    });
+    assert.equal(restarted.type, 'session', JSON.stringify(restarted));
+    const refused = await host.request('resume-session', {
+      sessionId: first.id,
+      messageId: randomUUID(),
+      revision: restarted.session.revision,
+      text: 'Continue',
+    });
+    assert.equal(refused.code, 'invalid-request');
+    assert.match(refused.message, /failed, interrupted or stopped/);
+  },
+);
+
+function mergedPullRequestCliFixture() {
+  const { appendFileSync, readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const args = process.argv.slice(2);
+  appendFileSync(
+    join(process.env.GH_CONFIG_DIR, 'gh-calls.jsonl'),
+    JSON.stringify({ args }) + '\n',
+  );
+  if (args[0] === 'pr' && args[1] === 'view') {
+    const state = JSON.parse(
+      readFileSync(
+        join(process.env.GH_CONFIG_DIR, `pr-${args[2]}.json`),
+        'utf8',
+      ),
+    );
+    console.log(JSON.stringify({ number: Number(args[2]), ...state }));
+  } else {
+    console.error('Unexpected gh call: ' + args.join(' '));
+    process.exitCode = 1;
+  }
+}
+
+test(
+  'finishing worktrees after a merged pull request refuses unsaved work and deletes the branch only for a merged pull request',
+  { timeout: 90_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-merged-cleanup-')),
+    );
+    const project = join(directory, 'project');
+    const remote = join(directory, 'remote.git');
+    const data = join(directory, 'data');
+    const fixture = join(directory, 'gh-fixture.cjs');
+    await mkdir(project);
+    await writeFile(
+      fixture,
+      `(${mergedPullRequestCliFixture.toString()})();\n`,
+    );
+    const hosts = [];
+    t.after(async () => {
+      for (const host of hosts) {
+        if (host.child.exitCode === null && host.child.signalCode === null)
+          await host.stop().catch(() => host.child.kill());
+        await host.exited;
+      }
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const git = async (cwd, ...args) =>
+      (
+        await promisify(execFile)(
+          'git',
+          [
+            '-c',
+            'user.name=Nesvo Test',
+            '-c',
+            'user.email=test@example.invalid',
+            '-c',
+            'commit.gpgsign=false',
+            ...args,
+          ],
+          { cwd },
+        )
+      ).stdout.trim();
+    const branchExists = branch =>
+      promisify(execFile)(
+        'git',
+        ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+        { cwd: project },
+      ).then(
+        () => true,
+        () => false,
+      );
+    await git(directory, 'init', '--quiet', '--bare', remote);
+    await git(project, 'init', '--quiet', '--initial-branch=main');
+    await git(project, 'remote', 'add', 'origin', remote);
+    await writeFile(join(project, '.gitignore'), '.env\n');
+    await writeFile(join(project, 'readme.txt'), 'base\n');
+    await git(project, 'add', '.');
+    await git(project, 'commit', '-qm', 'Initial commit');
+    await git(project, 'push', '-q', 'origin', 'main');
+    const setPullRequest = (number, state) =>
+      writeFile(join(directory, `pr-${number}.json`), JSON.stringify(state));
+
+    const host = launch(data, join(directory, 'pids.json'), {
+      NESVO_GH_EXECUTABLE: fixture,
+      GH_CONFIG_DIR: directory,
+    });
+    hosts.push(host);
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'merged-worktree-cleanup',
+      ),
+    );
+    const create = async (title, number) => {
+      const created = await host.request('create-session', {
+        provider: 'Claude Code',
+        model: 'default',
+        mode: 'read-only',
+        directory: project,
+        title,
+        isolation: { kind: 'worktree' },
+      });
+      assert.equal(created.type, 'session', JSON.stringify(created));
+      const { session } = created;
+      await writeFile(join(session.directory, `${number}.txt`), `${title}\n`);
+      await git(session.directory, 'add', '.');
+      await git(session.directory, 'commit', '-qm', `Work for ${title}`);
+      await git(
+        session.directory,
+        'push',
+        '-q',
+        'origin',
+        session.worktree.branch,
+      );
+      const linked = await host.request('link-session-pull-request', {
+        sessionId: session.id,
+        pullRequest: { repository: 'octo/project', number },
+      });
+      assert.equal(linked.type, 'session', JSON.stringify(linked));
+      return {
+        session: linked.session,
+        head: await git(session.directory, 'rev-parse', 'HEAD'),
+      };
+    };
+    const read = sessionId =>
+      host.request('read-merged-worktree-cleanup', { sessionId });
+    const current = async sessionId =>
+      (await host.request('list-sessions')).sessions.find(
+        session => session.id === sessionId,
+      );
+    const finish = async sessionId =>
+      host.request('finish-merged-worktree', {
+        sessionId,
+        revision: (await current(sessionId)).revision,
+      });
+
+    const merged = await create('Merged work', 5);
+    const other = await create('Closed work', 6);
+    const branch = merged.session.worktree.branch;
+    await setPullRequest(5, {
+      state: 'OPEN',
+      headRefName: branch,
+      headRefOid: merged.head,
+    });
+    const open = await read(merged.session.id);
+    assert.equal(open.type, 'merged-worktree-cleanup', JSON.stringify(open));
+    assert.deepEqual(open.cleanup.blockers, ['not-merged']);
+    assert.equal(open.cleanup.branch, 'not-merged');
+    const notMerged = await finish(merged.session.id);
+    assert.equal(notMerged.result.outcome, 'blocked');
+    assert.equal((await stat(merged.session.directory)).isDirectory(), true);
+
+    await setPullRequest(5, {
+      state: 'MERGED',
+      headRefName: branch,
+      headRefOid: merged.head,
+    });
+    await writeFile(join(merged.session.directory, '.env'), 'LOCAL=1\n');
+    await writeFile(join(merged.session.directory, 'draft.txt'), 'unsaved\n');
+    const dirty = await read(merged.session.id);
+    assert.deepEqual(dirty.cleanup.blockers, ['uncommitted-changes']);
+    assert.deepEqual(dirty.cleanup.changes, ['draft.txt']);
+    assert.equal(dirty.cleanup.localFiles, 1);
+    assert.equal(dirty.cleanup.branch, 'delete');
+    const refusedDirty = await finish(merged.session.id);
+    assert.equal(refusedDirty.result.outcome, 'blocked');
+    assert.equal(refusedDirty.result.branchDeleted, false);
+    assert.equal((await stat(merged.session.directory)).isDirectory(), true);
+    assert.equal(await branchExists(branch), true);
+
+    await rm(join(merged.session.directory, 'draft.txt'));
+    await writeFile(join(merged.session.directory, 'later.txt'), 'later\n');
+    await git(merged.session.directory, 'add', 'later.txt');
+    await git(merged.session.directory, 'commit', '-qm', 'Later change');
+    const ahead = await read(merged.session.id);
+    assert.deepEqual(ahead.cleanup.blockers, ['unpushed-commits']);
+    assert.deepEqual(
+      ahead.cleanup.unpushed.map(commit => commit.subject),
+      ['Later change'],
+    );
+    assert.equal((await finish(merged.session.id)).result.outcome, 'blocked');
+    assert.equal(await branchExists(branch), true);
+    await git(merged.session.directory, 'reset', '-q', '--hard', merged.head);
+
+    await setPullRequest(6, {
+      state: 'CLOSED',
+      headRefName: other.session.worktree.branch,
+      headRefOid: other.head,
+    });
+    assert.deepEqual((await read(other.session.id)).cleanup.blockers, [
+      'not-merged',
+    ]);
+    assert.equal((await finish(other.session.id)).result.outcome, 'blocked');
+    await setPullRequest(6, {
+      state: 'MERGED',
+      headRefName: 'someone-else/branch',
+      headRefOid: other.head,
+    });
+    const clean = await read(merged.session.id);
+    assert.deepEqual(clean.cleanup.blockers, []);
+    assert.equal(clean.cleanup.branch, 'delete');
+    assert.equal((await read(other.session.id)).cleanup.branch, 'other-branch');
+
+    const [finishedMerged, finishedOther] = await Promise.all([
+      finish(merged.session.id),
+      finish(other.session.id),
+    ]);
+    assert.equal(
+      finishedMerged.type,
+      'merged-worktree-finish',
+      JSON.stringify(finishedMerged),
+    );
+    const summary = ({ outcome, branchDeleted, archived }) => ({
+      outcome,
+      branchDeleted,
+      archived,
+    });
+    assert.deepEqual(summary(finishedMerged.result), {
+      outcome: 'finished',
+      branchDeleted: true,
+      archived: true,
+    });
+    assert.deepEqual(summary(finishedOther.result), {
+      outcome: 'finished',
+      branchDeleted: false,
+      archived: true,
+    });
+    await assert.rejects(stat(merged.session.directory), { code: 'ENOENT' });
+    await assert.rejects(stat(other.session.directory), { code: 'ENOENT' });
+    assert.equal(await branchExists(branch), false);
+    assert.equal(await branchExists(other.session.worktree.branch), true);
+    const finishedSession = await current(merged.session.id);
+    assert.equal(finishedSession.worktree.state, 'removed');
+    assert.ok(finishedSession.archivedAt);
+
+    const repeated = await finish(merged.session.id);
+    assert.equal(repeated.result.outcome, 'finished');
+    assert.equal(repeated.result.branchDeleted, false);
+    assert.equal(repeated.result.cleanup.branch, 'missing');
+  },
+);

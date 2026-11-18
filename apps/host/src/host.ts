@@ -106,6 +106,8 @@ import { DefaultSessionFolder } from './workspace/default-folder';
 import { SessionControl } from './session-control/router';
 import { SessionControlStore } from './session-control/store';
 import { ownerActor } from './sessions/stages';
+import { resumeSession } from './sessions/resume';
+import { MergedWorktreeCleanups } from './sessions/merged-cleanup';
 
 const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
@@ -127,6 +129,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'decide-session-worktree-recipe',
   'fork-session',
   'restart-session',
+  'resume-session',
+  'finish-merged-worktree',
   'compact-session',
   'send-message',
   'queue-message',
@@ -439,6 +443,16 @@ export const serveHost = ({
         id => store.get(id),
         (id, run) => sessions.withPullRequestCheckout(id, run),
       );
+      const mergedCleanups = new MergedWorktreeCleanups({
+        dataDirectory: directory,
+        snapshot: id => sessions.snapshot(id),
+        isRunning: id => sessions.isRunning(id),
+        mergeState: reference => pullRequests.mergeState(reference),
+        finishWorktree: (input, signal, removal) =>
+          sessions.finishWorktree(input, signal, removal),
+        archive: sessionId =>
+          housekeeping.setArchived({ sessionId, archived: true }),
+      });
       const trackedRepositories = new TrackedRepositories({
         database,
         pullRequests,
@@ -1019,7 +1033,9 @@ export const serveHost = ({
           request.method === 'read-session-worktree-setup' ||
           request.method === 'run-session-worktree-setup' ||
           request.method === 'list-orphaned-session-worktrees' ||
-          request.method === 'remove-orphaned-session-worktree'
+          request.method === 'remove-orphaned-session-worktree' ||
+          request.method === 'read-merged-worktree-cleanup' ||
+          request.method === 'finish-merged-worktree'
         ) {
           const worktree =
             request.method !== 'create-session' || !!request.input.isolation;
@@ -1063,6 +1079,18 @@ export const serveHost = ({
                   request.input,
                   signal,
                 ),
+              };
+            if (request.method === 'read-merged-worktree-cleanup')
+              return {
+                type: 'merged-worktree-cleanup',
+                id: request.id,
+                cleanup: await mergedCleanups.read(request.input, signal),
+              };
+            if (request.method === 'finish-merged-worktree')
+              return {
+                type: 'merged-worktree-finish',
+                id: request.id,
+                result: await mergedCleanups.finish(request.input, signal),
               };
             if (request.method === 'read-session-worktree')
               return {
@@ -2400,6 +2428,12 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: sessions.restart(request.input),
+              };
+            if (request.method === 'resume-session')
+              return {
+                type: 'session',
+                id: request.id,
+                session: resumeSession(sessions, request.input),
               };
             if (request.method === 'compact-session')
               return {

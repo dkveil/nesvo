@@ -38,6 +38,11 @@ import {
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
+  resumeSessionSchema,
+  readMergedWorktreeCleanupSchema,
+  finishMergedWorktreeSchema,
+  mergedWorktreeCleanupSchema,
+  mergedWorktreeFinishSchema,
   compactSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
@@ -1005,6 +1010,30 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:restart-session',
         restartSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  resumeSession: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:resume-session',
+        resumeSessionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readMergedWorktreeCleanup: async (input, hostId) =>
+    mergedWorktreeCleanupSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:read-merged-worktree-cleanup',
+        readMergedWorktreeCleanupSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  finishMergedWorktree: async (input, hostId) =>
+    mergedWorktreeFinishSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:finish-merged-worktree',
+        finishMergedWorktreeSchema.parse(input),
         route(hostId),
       ),
     ),

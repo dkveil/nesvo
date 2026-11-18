@@ -63,6 +63,8 @@ export const hostCapabilitySchema = z.enum([
   'session-stages',
   'claude-commands',
   'session-browser',
+  'session-resume',
+  'merged-worktree-cleanup',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

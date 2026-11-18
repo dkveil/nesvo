@@ -289,6 +289,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to use Claude Code commands.',
   'session-browser':
     'Update this computer’s Nesvo host and reconnect to give sessions browser access.',
+  'session-resume':
+    'Update this computer’s Nesvo host and reconnect to resume sessions in their provider conversation.',
+  'merged-worktree-cleanup':
+    'Update this computer’s Nesvo host and reconnect to finish worktrees after their pull request is merged.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -422,6 +426,12 @@ function requiredCapability(
   )
     return 'session-groups';
   if (method === 'assign-session-workflow') return 'session-workflow';
+  if (method === 'resume-session') return 'session-resume';
+  if (
+    method === 'read-merged-worktree-cleanup' ||
+    method === 'finish-merged-worktree'
+  )
+    return 'merged-worktree-cleanup';
   if (method === 'fork-session' || method === 'restart-session')
     return 'session-fork';
   if (method === 'backup-database') return 'database-backup';
@@ -1169,6 +1179,9 @@ export class ComputerManager {
       'assign-session-workflow': 'session',
       'fork-session': 'session',
       'restart-session': 'session',
+      'resume-session': 'session',
+      'read-merged-worktree-cleanup': 'merged-worktree-cleanup',
+      'finish-merged-worktree': 'merged-worktree-finish',
       'compact-session': 'session',
       'set-session-mcp': 'session',
       'list-mcp-servers': 'mcp-servers',
@@ -1326,6 +1339,10 @@ export class ComputerManager {
         return response.worktrees;
       case 'orphaned-session-worktree-removal':
         return response.removal;
+      case 'merged-worktree-cleanup':
+        return response.cleanup;
+      case 'merged-worktree-finish':
+        return response.result;
       case 'history-search':
       case 'transcript-search':
         return response.search;

@@ -1965,6 +1965,7 @@ export class SessionService {
   async finishWorktree(
     input: FinishSessionWorktreeInput,
     signal: AbortSignal,
+    removal: { allowsIgnoredFiles?: boolean } = {},
   ): Promise<Session> {
     const { session, metadata, location } = this.sessionWorktree(
       input.sessionId,
@@ -1998,6 +1999,7 @@ export class SessionService {
       await removeSessionWorktree({
         ...location,
         force: input.action.force,
+        allowsIgnoredFiles: removal.allowsIgnoredFiles,
         signal,
       });
       const current = this.sessionWorktree(session.id).session;

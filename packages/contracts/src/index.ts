@@ -423,6 +423,17 @@ import {
   type DecideSessionParentInput,
   type DecideSessionPlanInput,
 } from './session-control';
+import { resumeSessionSchema, type ResumeSessionInput } from './session-resume';
+import {
+  finishMergedWorktreeSchema,
+  mergedWorktreeCleanupSchema,
+  mergedWorktreeFinishSchema,
+  readMergedWorktreeCleanupSchema,
+  type FinishMergedWorktreeInput,
+  type MergedWorktreeCleanup,
+  type MergedWorktreeFinish,
+  type ReadMergedWorktreeCleanupInput,
+} from './merged-worktree-cleanup';
 
 export * from './sessions';
 export * from './session-history';
@@ -463,6 +474,8 @@ export * from './appearance';
 export * from './attention';
 export * from './diagnostics';
 export * from './workflows';
+export * from './session-resume';
+export * from './merged-worktree-cleanup';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -733,6 +746,21 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('restart-session'),
     input: restartSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('resume-session'),
+    input: resumeSessionSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('read-merged-worktree-cleanup'),
+    input: readMergedWorktreeCleanupSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('finish-merged-worktree'),
+    input: finishMergedWorktreeSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1343,6 +1371,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     removal: orphanedSessionWorktreeRemovalSchema,
   }),
   z.strictObject({
+    type: z.literal('merged-worktree-cleanup'),
+    id: z.uuid(),
+    cleanup: mergedWorktreeCleanupSchema,
+  }),
+  z.strictObject({
+    type: z.literal('merged-worktree-finish'),
+    id: z.uuid(),
+    result: mergedWorktreeFinishSchema,
+  }),
+  z.strictObject({
     type: z.literal('reviews'),
     id: z.uuid(),
     reviews: z.array(reviewSchema),
@@ -1923,6 +1961,18 @@ export type DesktopApi = {
     input: RestartSessionInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  resumeSession: (
+    input: ResumeSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  readMergedWorktreeCleanup: (
+    input: ReadMergedWorktreeCleanupInput,
+    hostId?: HostId,
+  ) => Promise<MergedWorktreeCleanup>;
+  finishMergedWorktree: (
+    input: FinishMergedWorktreeInput,
+    hostId?: HostId,
+  ) => Promise<MergedWorktreeFinish>;
   compactSession: (
     input: CompactSessionInput,
     hostId?: HostId,

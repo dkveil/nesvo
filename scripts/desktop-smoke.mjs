@@ -964,6 +964,8 @@ try {
     'session-stages',
     'claude-commands',
     'session-browser',
+    'session-resume',
+    'merged-worktree-cleanup',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

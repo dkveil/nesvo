@@ -67,6 +67,9 @@ import {
   assignSessionWorkflowSchema,
   forkSessionSchema,
   restartSessionSchema,
+  resumeSessionSchema,
+  readMergedWorktreeCleanupSchema,
+  finishMergedWorktreeSchema,
   compactSessionSchema,
   createSessionGroupSchema,
   deleteSessionGroupSchema,
@@ -1647,12 +1650,18 @@ void app.whenReady().then(async () => {
   const sessionThreadInputs = {
     'fork-session': forkSessionSchema,
     'restart-session': restartSessionSchema,
+    'resume-session': resumeSessionSchema,
     'compact-session': compactSessionSchema,
+    'read-merged-worktree-cleanup': readMergedWorktreeCleanupSchema,
+    'finish-merged-worktree': finishMergedWorktreeSchema,
   } as const;
   for (const method of [
     'fork-session',
     'restart-session',
+    'resume-session',
     'compact-session',
+    'read-merged-worktree-cleanup',
+    'finish-merged-worktree',
   ] as const) {
     handle(
       `nesvo:${method}`,

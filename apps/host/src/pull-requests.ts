@@ -422,6 +422,41 @@ export class PullRequests {
     return target;
   }
 
+  async mergeState(reference: PullRequestReference) {
+    const target = await this.gh.json(
+      z.object({
+        number: z.number().int().positive(),
+        state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+        headRefName: z.string().max(255),
+        headRefOid: z
+          .string()
+          .regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/)
+          .nullable()
+          .catch(null),
+      }),
+      [
+        'pr',
+        'view',
+        ...referenceArgs(reference),
+        '--json',
+        'number,state,headRefName,headRefOid',
+      ],
+      { signal: AbortSignal.timeout(20_000) },
+    );
+    if (target.number !== reference.number)
+      throw new PullRequestError(
+        'unavailable',
+        'The GitHub CLI returned a different pull request.',
+      );
+    return {
+      state: ({ OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' } as const)[
+        target.state
+      ],
+      headRefName: target.headRefName,
+      headSha: target.headRefOid,
+    };
+  }
+
   async openReviewTargets(directory: string) {
     const signal = AbortSignal.timeout(20_000);
     const repository = validateRepository(
