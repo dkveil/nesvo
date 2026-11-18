@@ -121,9 +121,13 @@ import {
 } from '@/widgets/session-card';
 import { ProviderAccounts, ProviderUsage } from '@/widgets/provider-rail';
 import {
+  AboutSettings,
   AppearanceSettings,
+  DataSettings,
+  DefaultsSettings,
   GeneralSettings,
   KeyboardShortcutsSettings,
+  NotificationsSettings,
   Settings,
   type SettingsPage,
 } from '@/widgets/settings';
@@ -3575,6 +3579,17 @@ ${text}`
               <AppearanceSettings api={desktopApi()} />
             ) : page === 'shortcuts' ? (
               <KeyboardShortcutsSettings />
+            ) : page === 'defaults' ? (
+              <DefaultsSettings
+                providerStates={store.providerStates(selectedHostId)}
+                computerName={selectedComputer?.name ?? 'Local'}
+              />
+            ) : page === 'notifications' ? (
+              <NotificationsSettings />
+            ) : page === 'data' ? (
+              <DataSettings api={desktopApi()} computers={store.computers} />
+            ) : page === 'about' ? (
+              <AboutSettings api={desktopApi()} computers={store.computers} />
             ) : page === 'computers' ? (
               <ManageComputers
                 computers={store.computers}

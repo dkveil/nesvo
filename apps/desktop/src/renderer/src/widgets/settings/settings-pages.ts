@@ -1,9 +1,13 @@
 import {
+  Bell,
   Blocks,
+  Database,
+  Info,
   Keyboard,
   Monitor,
   Palette,
   Settings2,
+  SlidersHorizontal,
   Smartphone,
   UserRound,
   type LucideIcon,
@@ -13,9 +17,13 @@ export type SettingsPage =
   | 'general'
   | 'appearance'
   | 'shortcuts'
+  | 'defaults'
+  | 'notifications'
   | 'computers'
   | 'phone'
   | 'account'
+  | 'data'
+  | 'about'
   | 'components';
 
 type SettingsPageEntry = {
@@ -50,6 +58,20 @@ export const settingsPages: SettingsPageEntry[] = [
     keywords: 'keys hotkeys bindings palette navigation',
   },
   {
+    id: 'defaults',
+    label: 'Defaults',
+    icon: SlidersHorizontal,
+    group: '',
+    keywords: 'new session provider model permission mode folder worktree',
+  },
+  {
+    id: 'notifications',
+    label: 'Notifications',
+    icon: Bell,
+    group: '',
+    keywords: 'desktop alerts approvals finished runs test',
+  },
+  {
     id: 'computers',
     label: 'Computers',
     icon: Monitor,
@@ -69,6 +91,21 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: UserRound,
     group: 'Account',
     keywords: 'usage quota limits reset weekly',
+  },
+  {
+    id: 'data',
+    label: 'Data',
+    icon: Database,
+    group: 'System',
+    keywords: 'backup database export markdown sqlite',
+  },
+  {
+    id: 'about',
+    label: 'About',
+    icon: Info,
+    group: 'System',
+    keywords:
+      'version electron node chrome platform data folder logs licenses diagnostics',
   },
   ...(import.meta.env.DEV
     ? [

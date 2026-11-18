@@ -20,7 +20,11 @@ import {
 } from './settings-pages';
 
 export type { SettingsPage } from './settings-pages';
+export { AboutSettings } from './about-settings';
 export { AppearanceSettings } from './appearance-settings';
+export { DataSettings } from './data-settings';
+export { DefaultsSettings } from './defaults-settings';
+export { NotificationsSettings } from './notifications-settings';
 export { GeneralSettings } from './general-settings';
 export { KeyboardShortcutsSettings } from './keyboard-shortcuts-settings';
 
