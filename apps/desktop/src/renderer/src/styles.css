@@ -13,6 +13,9 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-info-panel: var(--info-panel);
+  --color-info-panel-border: var(--info-panel-border);
+  --color-info-panel-divider: var(--info-panel-divider);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -159,6 +162,9 @@
   --popover-glass: rgb(255 255 255 / var(--glass-opacity));
   --popover-border: #e4e4e7;
   --popover-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  --info-panel: #ffffff;
+  --info-panel-border: #d4d4d8;
+  --info-panel-divider: #e4e4e7;
   --tooltip: #18181b;
   --tooltip-foreground: #fafafa;
   --tooltip-key: rgb(255 255 255 / 14%);
@@ -244,6 +250,9 @@
   --popover-glass: rgb(20 20 20 / var(--glass-opacity));
   --popover-border: rgb(255 255 255 / 10%);
   --popover-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  --info-panel: #0a0a0a;
+  --info-panel-border: rgb(255 255 255 / 12%);
+  --info-panel-divider: rgb(255 255 255 / 8%);
   --tooltip: #1b1b1b;
   --tooltip-foreground: #ededed;
   --tooltip-key: rgb(255 255 255 / 9%);

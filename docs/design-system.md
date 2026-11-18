@@ -17,6 +17,7 @@ All colours are CSS variables defined for light on `:root` and for dark on `:roo
 | `background`                                       | `#000000`             | `#fcfcfc`             | Canvas, panel bodies                           |
 | `card`                                             | `#111111`             | `#ffffff`             | Cards, dialogs, sheets, settings navigation    |
 | `popover`                                          | `#111111`             | `#ffffff`             | Menus, solid popovers                          |
+| `info-panel` / `-border` / `-divider`              | `#0a0a0a` / white 12% / white 8% | `#ffffff` / `#d4d4d8` / `#e4e4e7` | Read-only information panels: session details, account and limits |
 | `accent`                                           | white 4%              | `#f4f4f5`             | **Hover** and highlighted menu items           |
 | `highlight`                                        | white 7%              | `#f4f4f5`             | **Selected** rows, tabs and pressed toggles    |
 | `sidebar-row-hover` / `sidebar-row-selected`       | `#131313` / `#1c1c1c` | `#f4f4f5` / `#ffffff` | Hover and selected in the sidebar tone         |
@@ -147,7 +148,7 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **DisabledHint** — `shared/ui/disabled-hint.tsx`. Explains why a control is disabled. With a `reason` it wraps the disabled control in a focusable span that shows the reason in a panel tooltip, because a disabled button receives no pointer or focus events; with an empty `reason` it shows the optional `hint` as a Hint, or nothing. Give a disabled IconButton `tooltip={false}` while a reason shows.
 
-**Popover** — `shared/ui/popover.tsx`. `surface` `glass` (default) | `solid` | `card`; `size` `default` (288 px) | `sm` (240) | `md` (320) | `lg` (416) | `trigger`; `padding` `md` | `sm` | `none`; `scroll` caps the height at 28 rem within the available space. Use presets instead of `w-[min(...)]` formulas.
+**Popover** — `shared/ui/popover.tsx`. `surface` `glass` (default) | `solid` | `card` | `panel` (the darker `info-panel` surface for information panels such as account and limits; the session details panel uses the same look through `infoPanelSurface` with `divide-info-panel-divider` between sections); `size` `default` (288 px) | `sm` (240) | `md` (320) | `lg` (416) | `trigger`; `padding` `md` | `sm` | `none`; `scroll` caps the height at 28 rem within the available space. Use presets instead of `w-[min(...)]` formulas.
 
 **DropdownMenu** — `shared/ui/dropdown-menu.tsx`. Action menus. Item, CheckboxItem, RadioGroup/RadioItem, Label, Separator, Shortcut, Sub/SubTrigger/SubContent, Group. `variant="destructive"` on an item that deletes. Every item is 28 px, `text-ui`, `rounded-control`, `bg-accent` when highlighted; the classes live in `shared/ui/menu-styles.ts` and Select and Listbox reuse them.
 

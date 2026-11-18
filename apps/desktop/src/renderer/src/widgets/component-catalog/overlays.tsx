@@ -323,9 +323,9 @@ export function OverlaysSection() {
           </DisabledHint>
         </div>
       </Specimen>
-      <Specimen title="Popover" source="surface glass · solid · card">
+      <Specimen title="Popover" source="surface glass · solid · card · panel">
         <div className="flex flex-wrap items-center gap-2">
-          {(['glass', 'solid', 'card'] as const).map(surface => (
+          {(['glass', 'solid', 'card', 'panel'] as const).map(surface => (
             <Popover key={surface}>
               <PopoverTrigger asChild>
                 <Button variant="outline">{surface}</Button>

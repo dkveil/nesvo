@@ -5,6 +5,7 @@ const SURFACES = [
   ['background', 'bg-background'],
   ['card', 'bg-card'],
   ['popover', 'bg-popover'],
+  ['info-panel', 'bg-info-panel'],
   ['accent (hover)', 'bg-accent'],
   ['highlight (selected)', 'bg-highlight'],
   ['segment-track', 'bg-segment-track'],

@@ -24,5 +24,8 @@ export const cardIconButton =
 export const cardSurface =
   'rounded-overlay border border-(--popover-border) bg-card text-card-foreground';
 
+export const infoPanelSurface =
+  'rounded-overlay border border-info-panel-border bg-info-panel text-card-foreground';
+
 export const fieldSurface =
   'rounded-overlay border border-input bg-transparent text-card-foreground dark:bg-input/30';

@@ -14,7 +14,7 @@ function PopoverTrigger({
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
 }
 
-type PopoverSurface = 'glass' | 'solid' | 'card';
+type PopoverSurface = 'glass' | 'solid' | 'card' | 'panel';
 type PopoverSize = 'default' | 'auto' | 'sm' | 'md' | 'lg' | 'trigger';
 
 type PopoverContentProps = React.ComponentProps<
@@ -52,6 +52,8 @@ function PopoverContent({
             'border-(--popover-border) bg-popover shadow-(--popover-shadow)',
           surface === 'card' &&
             'border-(--popover-border) bg-card text-card-foreground shadow-(--popover-shadow)',
+          surface === 'panel' &&
+            'border-info-panel-border bg-info-panel text-card-foreground shadow-(--popover-shadow)',
           size === 'default' && 'w-72',
           size === 'sm' && 'w-[min(15rem,calc(100vw-1rem))]',
           size === 'md' && 'w-[min(20rem,calc(100vw-1rem))]',
