@@ -203,6 +203,10 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot answer Claude Code approvals. Update the host, then reconnect.',
   'message-attachments':
     'This computer runs an older Nesvo host that cannot receive images. Update the host, then reconnect.',
+  'terminal-handoff':
+    'Update this computer’s Nesvo host and reconnect to open its sessions in a terminal.',
+  'transcript-search':
+    'Update this computer’s Nesvo host and reconnect to search its CLI transcripts.',
 };
 
 function requiredCapability(
@@ -238,6 +242,8 @@ function requiredCapability(
   )
     return 'session-worktrees';
   if (method === 'search-history') return 'history-search';
+  if (method === 'search-transcripts') return 'transcript-search';
+  if (method === 'set-session-terminal') return 'terminal-handoff';
   if (method === 'list-conversations' || method === 'adopt-conversation')
     return 'conversation-import';
   if (Object.hasOwn(sessionGroupResponses, method)) return 'session-groups';
@@ -948,6 +954,8 @@ export class ComputerManager {
       'read-attachment': 'attachment-content',
       'read-git-branch': 'git-branch',
       'search-history': 'history-search',
+      'search-transcripts': 'transcript-search',
+      'set-session-terminal': 'session',
       'list-conversations': 'conversation-import-catalog',
       'adopt-conversation': 'session',
       'backup-database': 'database-backup',
@@ -1016,6 +1024,7 @@ export class ComputerManager {
       case 'orphaned-session-worktree-removal':
         return response.removal;
       case 'history-search':
+      case 'transcript-search':
         return response.search;
       case 'session-groups':
         return response.list;

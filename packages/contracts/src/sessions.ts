@@ -397,6 +397,10 @@ export const sessionSchema = z.strictObject({
   order: z.number().int().default(0),
   pinned: z.boolean().default(false),
   archivedAt: z.iso.datetime().nullable().default(null),
+  externalAttachment: z
+    .strictObject({ attachedAt: z.iso.datetime() })
+    .nullable()
+    .default(null),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([

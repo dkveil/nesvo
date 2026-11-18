@@ -6,6 +6,17 @@ import {
   type ConversationImportCatalog,
 } from './conversation-import';
 import {
+  setSessionTerminalSchema,
+  type OpenSessionTerminalInput,
+  type SetSessionTerminalInput,
+} from './terminal-handoff';
+import {
+  transcriptSearchInputSchema,
+  transcriptSearchPageSchema,
+  type TranscriptSearchInput,
+  type TranscriptSearchPage,
+} from './transcript-search';
+import {
   costBudgetListSchema,
   costBudgetSchema,
   costReportSchema,
@@ -62,6 +73,7 @@ import {
   type DesktopWorkflowRunPage,
   type DesktopSession,
   type HostId,
+  type OpenedSessionTerminal,
   type SshComputerInput,
   type WorkspaceEvent,
 } from './computers';
@@ -283,6 +295,8 @@ export * from './reviews';
 export * from './workspace';
 export * from './history-search';
 export * from './conversation-import';
+export * from './terminal-handoff';
+export * from './transcript-search';
 export * from './skills';
 export * from './mcp';
 export * from './mcp-selection';
@@ -546,6 +560,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('set-session-archived'),
     input: setSessionArchivedSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-session-terminal'),
+    input: setSessionTerminalSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('search-transcripts'),
+    input: transcriptSearchInputSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -849,6 +873,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('conversation-import-catalog'),
     id: z.uuid(),
     catalog: conversationImportCatalogSchema,
+  }),
+  z.strictObject({
+    type: z.literal('transcript-search'),
+    id: z.uuid(),
+    search: transcriptSearchPageSchema,
   }),
   z.strictObject({
     type: z.literal('git-branch'),
@@ -1233,6 +1262,10 @@ export type DesktopApi = {
     input: HistorySearchInput,
     hostId?: HostId,
   ) => Promise<HistorySearchPage>;
+  searchTranscripts: (
+    input: TranscriptSearchInput,
+    hostId?: HostId,
+  ) => Promise<TranscriptSearchPage>;
   listConversations: (hostId?: HostId) => Promise<ConversationImportCatalog>;
   adoptConversation: (
     input: AdoptConversationInput,
@@ -1336,6 +1369,14 @@ export type DesktopApi = {
   ) => Promise<DesktopSession>;
   renameSession: (
     input: RenameSessionInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  openSessionInTerminal: (
+    input: OpenSessionTerminalInput,
+    hostId?: HostId,
+  ) => Promise<OpenedSessionTerminal>;
+  setSessionTerminal: (
+    input: SetSessionTerminalInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
   setSessionPinned: (

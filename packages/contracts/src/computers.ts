@@ -41,6 +41,8 @@ export const hostCapabilitySchema = z.enum([
   'database-backup',
   'claude-approvals',
   'message-attachments',
+  'terminal-handoff',
+  'transcript-search',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
@@ -156,6 +158,11 @@ export const desktopWorkflowRunDetailSchema = workflowRunDetailSchema.extend({
 export const desktopWorkflowAssistantProposalSchema =
   workflowAssistantProposalEventSchema.extend({ hostId: hostIdSchema });
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
+export const openedSessionTerminalSchema = z.strictObject({
+  session: desktopSessionSchema,
+  terminal: z.string().min(1).max(100),
+});
+export type OpenedSessionTerminal = z.infer<typeof openedSessionTerminalSchema>;
 export type DesktopReview = z.infer<typeof desktopReviewSchema>;
 export type DesktopScheduledJob = z.infer<typeof desktopScheduledJobSchema>;
 export type DesktopScheduledJobRun = z.infer<

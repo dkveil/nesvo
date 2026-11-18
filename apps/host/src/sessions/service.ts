@@ -38,6 +38,7 @@ import {
   type DesktopEvent,
   type QueuedMessageRefInput,
   type SendMessageInput,
+  type SetSessionTerminalInput,
   type Session,
   type StopRunInput,
   type RespondApprovalInput,
@@ -218,6 +219,9 @@ function asksForApproval(session: Session): boolean {
     ? session.mode === 'supervised'
     : session.mode === 'accept-edits' || session.mode === 'auto';
 }
+
+const TERMINAL_ATTACHED_MESSAGE =
+  'This session is open in a terminal. Choose Return to Nesvo before sending a message here.';
 
 function holdQueue(session: Session): void {
   session.queue = session.queue.map(item => ({ ...item, held: true }));
@@ -1022,6 +1026,7 @@ export class SessionService {
     session.error = null;
     session.interruption = null;
     session.pendingApprovals = [];
+    session.externalAttachment = null;
     if (session.providerThreadStarts.at(-1) !== session.messages.length)
       session.providerThreadStarts.push(session.messages.length);
     holdQueue(session);
@@ -1527,6 +1532,8 @@ export class SessionService {
         'invalid-request',
         'This session records a workflow gate and does not accept messages. Start a new session to continue the work.',
       );
+    if (session.externalAttachment)
+      throw new SessionError('busy', TERMINAL_ATTACHED_MESSAGE);
     const existing = session.messages.find(
       message => message.id === input.messageId,
     );
@@ -1614,6 +1621,33 @@ export class SessionService {
     return structuredClone(session);
   }
 
+  setTerminal(input: SetSessionTerminalInput): Session {
+    const session = this.acceptingSession(input.sessionId);
+    if (input.attached) {
+      if (this.isRunning(session.id))
+        throw new SessionError(
+          'busy',
+          'Stop the active run before opening this session in a terminal.',
+        );
+      if (
+        !session.providerInitialized ||
+        !session.providerSessionId ||
+        session.pendingClaudeFork
+      )
+        throw new SessionError(
+          'invalid-request',
+          'Send a first message in Nesvo before opening this session in a terminal.',
+        );
+    }
+    return this.amend([session.id], ([target]) => {
+      target!.externalAttachment = input.attached
+        ? (target!.externalAttachment ?? {
+            attachedAt: new Date().toISOString(),
+          })
+        : null;
+    })[0]!;
+  }
+
   isRunning(sessionId: string): boolean {
     const session =
       this.active.get(sessionId)?.session ?? this.store.get(sessionId);
@@ -1638,12 +1672,13 @@ export class SessionService {
       return session;
     });
     const previous = targets.map(
-      ({ title, groupId, order, pinned, archivedAt }) => ({
+      ({ title, groupId, order, pinned, archivedAt, externalAttachment }) => ({
         title,
         groupId,
         order,
         pinned,
         archivedAt,
+        externalAttachment,
       }),
     );
     try {
@@ -1738,6 +1773,8 @@ export class SessionService {
 
   queue(input: SendMessageInput): Session {
     const session = this.acceptingSession(input.sessionId);
+    if (session.externalAttachment)
+      throw new SessionError('busy', TERMINAL_ATTACHED_MESSAGE);
     this.ensureWorktreeOpen(session);
     if (input.skillHash && !input.skillId)
       throw new SessionError(

@@ -408,6 +408,7 @@ export class SessionStore {
       order: 0,
       pinned: false,
       archivedAt: null,
+      externalAttachment: null,
       ...originLinks(origin, input),
     };
     return session;
@@ -503,6 +504,7 @@ export class SessionStore {
       order: 0,
       pinned: false,
       archivedAt: null,
+      externalAttachment: null,
     };
   }
 

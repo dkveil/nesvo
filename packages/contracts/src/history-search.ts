@@ -10,7 +10,7 @@ export const historySearchInputSchema = z.strictObject({
     .optional(),
 });
 
-const snippetSchema = z
+export const searchSnippetSchema = z
   .strictObject({
     text: z.string().max(360),
     ranges: z
@@ -38,7 +38,7 @@ export const historySearchResultSchema = z.strictObject({
   directory: z.string(),
   provider: providerSchema,
   role: z.union([sessionMessageSchema.shape.author, z.literal('title')]),
-  snippet: snippetSchema,
+  snippet: searchSnippetSchema,
   createdAt: z.iso.datetime(),
 });
 

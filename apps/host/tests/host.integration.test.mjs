@@ -2127,7 +2127,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      16,
+      17,
     );
     migrated.close();
     const reopened = open();
@@ -7018,7 +7018,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            16,
+            17,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7101,11 +7101,11 @@ test(
       }
     });
 
-    await t.test('a version 17 database is refused', async () => {
+    await t.test('a version 18 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 17');
+      newer.exec('PRAGMA user_version = 18');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7117,7 +7117,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          17,
+          18,
         );
       } finally {
         check.close();
@@ -9798,7 +9798,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        16,
+        17,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -9849,7 +9849,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        16,
+        17,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -18580,7 +18580,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      16,
+      17,
     );
     database
       .prepare(
@@ -18943,7 +18943,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 16);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 17);
     } finally {
       check.close();
     }
@@ -19935,4 +19935,321 @@ test('image attachments reach both providers, reject invalid uploads and survive
     (await readFile(claudeImages, 'utf8')).trim().split('\n').length,
     1,
   );
+});
+
+test('a session opened in a terminal refuses Nesvo turns until it returns', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-terminal-handoff-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const cwd = await realpath(directory);
+  let host;
+  try {
+    host = launch(directory, pidFile);
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('terminal-handoff'));
+    const created = (
+      await host.request('create-session', {
+        title: 'Terminal handoff',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+      })
+    ).session;
+    const early = await host.request('set-session-terminal', {
+      sessionId: created.id,
+      attached: true,
+    });
+    assert.equal(early.code, 'invalid-request');
+    assert.match(early.message, /first message/);
+    const first = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'Start the fixture conversation.',
+    });
+    assert.equal(first.type, 'session', JSON.stringify(first));
+    const completed = await host.event(
+      item =>
+        item.id === created.id &&
+        item.runId === first.session.runId &&
+        item.status !== 'running',
+    );
+    assert.equal(completed.status, 'completed', completed.error);
+    const attached = await host.request('set-session-terminal', {
+      sessionId: created.id,
+      attached: true,
+    });
+    assert.equal(attached.type, 'session', JSON.stringify(attached));
+    const attachedAt = attached.session.externalAttachment?.attachedAt;
+    assert.ok(attachedAt && Date.parse(attachedAt) > 0);
+    const again = await host.request('set-session-terminal', {
+      sessionId: created.id,
+      attached: true,
+    });
+    assert.equal(again.session.externalAttachment.attachedAt, attachedAt);
+    for (const method of ['send-message', 'queue-message']) {
+      const refused = await host.request(method, {
+        sessionId: created.id,
+        messageId: randomUUID(),
+        text: 'This must not start a parallel turn.',
+      });
+      assert.equal(refused.code, 'busy', JSON.stringify(refused));
+      assert.match(refused.message, /open in a terminal.*Return to Nesvo/);
+    }
+
+    await host.stop();
+    host = launch(directory, pidFile);
+    const restored = (
+      await host.request('get-session', { sessionId: created.id })
+    ).session;
+    assert.equal(restored.externalAttachment.attachedAt, attachedAt);
+    const stillRefused = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'Still attached after restart.',
+    });
+    assert.equal(stillRefused.code, 'busy');
+
+    const returned = await host.request('set-session-terminal', {
+      sessionId: created.id,
+      attached: false,
+    });
+    assert.equal(returned.type, 'session', JSON.stringify(returned));
+    assert.equal(returned.session.externalAttachment, null);
+    const next = await host.request('send-message', {
+      sessionId: created.id,
+      messageId: randomUUID(),
+      text: 'Continue after the terminal.',
+    });
+    assert.equal(next.type, 'session', JSON.stringify(next));
+    const resumed = await host.event(
+      item =>
+        item.id === created.id &&
+        item.runId === next.session.runId &&
+        item.status !== 'running',
+    );
+    assert.equal(resumed.status, 'completed', resumed.error);
+    assert.equal(resumed.providerSessionId, completed.providerSessionId);
+    await host.stop();
+    host = undefined;
+  } finally {
+    if (host) {
+      host.child.stdin.end();
+      await bounded(host.exited, 'Terminal handoff host did not exit');
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('CLI transcript search indexes unadopted transcripts within its bounds', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-transcript-search-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const cwd = await realpath(directory);
+  const timestamp = '2026-11-17T15:00:00.000Z';
+  const claudeFolder = join(directory, 'claude-config', 'projects', 'fixture');
+  const codexFolder = join(
+    directory,
+    'codex-config',
+    'sessions',
+    '2026',
+    '11',
+    '17',
+  );
+  const jsonl = rows => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
+  const claudeRows = (sessionId, texts) =>
+    texts.map((text, index) => ({
+      type: index % 2 ? 'assistant' : 'user',
+      sessionId,
+      cwd,
+      timestamp,
+      message: {
+        role: index % 2 ? 'assistant' : 'user',
+        content: index % 2 ? [{ type: 'text', text }] : text,
+      },
+    }));
+  const codexMessage = (role, text) => ({
+    timestamp,
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      role,
+      content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }],
+    },
+  });
+  const claudeId = randomUUID();
+  const boundedId = randomUUID();
+  const oldId = randomUUID();
+  const codexId = randomUUID();
+  const claudeFile = join(claudeFolder, claudeId + '.jsonl');
+  const codexFile = join(
+    codexFolder,
+    'rollout-2026-11-17T15-00-00-' + codexId + '.jsonl',
+  );
+  const files = new Map();
+  const write = async (path, content, modified) => {
+    await writeFile(path, content);
+    if (modified) await utimes(path, modified, modified);
+    files.set(path, Buffer.from(content));
+  };
+  let host;
+  try {
+    await mkdir(claudeFolder, { recursive: true });
+    await mkdir(codexFolder, { recursive: true });
+    await write(
+      claudeFile,
+      jsonl(
+        claudeRows(claudeId, [
+          'Investigate the quasar cache eviction',
+          'The quasar cache keeps stale entries.',
+        ]),
+      ),
+    );
+    await write(
+      join(claudeFolder, boundedId + '.jsonl'),
+      jsonl(
+        claudeRows(boundedId, [
+          'Earliest note mentions nebulamarker',
+          ...Array.from(
+            { length: 12 },
+            (_, index) => 'recent ' + index + ' ' + 'x'.repeat(3900),
+          ),
+          'Latest note mentions pulsarmarker',
+        ]),
+      ),
+    );
+    await write(join(claudeFolder, randomUUID() + '.jsonl'), '{invalid');
+    await write(
+      join(claudeFolder, randomUUID() + '.jsonl'),
+      Buffer.alloc(8 * 1024 * 1024 + 1),
+    );
+    const filler = new Date('2025-01-01T00:00:00Z');
+    for (let index = 0; index < 300; index++) {
+      const id = randomUUID();
+      await write(
+        join(claudeFolder, id + '.jsonl'),
+        jsonl(claudeRows(id, ['filler conversation ' + index])),
+        filler,
+      );
+    }
+    await write(
+      join(claudeFolder, oldId + '.jsonl'),
+      jsonl(claudeRows(oldId, ['Ancient task with cometmarker'])),
+      new Date('2020-01-01T00:00:00Z'),
+    );
+    await write(
+      codexFile,
+      jsonl([
+        { timestamp, type: 'session_meta', payload: { id: codexId, cwd } },
+        codexMessage('user', 'Codex quasar migration plan'),
+        codexMessage('user', 'Rotate the token=hidden-secret-value now'),
+      ]),
+    );
+
+    host = launch(directory, pidFile);
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('transcript-search'));
+    const search = async query => {
+      const response = await host.request('search-transcripts', { query });
+      assert.equal(
+        response.type,
+        'transcript-search',
+        JSON.stringify(response),
+      );
+      return response.search;
+    };
+
+    const quasar = await search('QUASAR cache');
+    assert.equal(quasar.truncated, true);
+    assert.equal(quasar.skippedFiles, 2);
+    assert.equal(quasar.indexedTranscripts, 296 + 2 + 1);
+    assert.deepEqual(
+      quasar.results.map(result => result.providerSessionId),
+      [claudeId],
+    );
+    const [hit] = quasar.results;
+    assert.equal(hit.provider, 'Claude Code');
+    assert.equal(hit.directory, cwd);
+    assert.equal(hit.title, 'Investigate the quasar cache eviction');
+    assert.ok(hit.snippet.ranges.length >= 2);
+    for (const range of hit.snippet.ranges)
+      assert.match(
+        hit.snippet.text.slice(range.start, range.end).toLowerCase(),
+        /quasar|cache/,
+      );
+    assert.deepEqual(
+      (await search('quasar')).results
+        .map(result => result.provider)
+        .toSorted(),
+      ['Claude Code', 'Codex'],
+    );
+    assert.equal((await search('pulsarmarker')).results.length, 1);
+    assert.equal((await search('nebulamarker')).results.length, 0);
+    assert.equal((await search('cometmarker')).results.length, 0);
+    assert.equal((await search('hidden secret value')).results.length, 0);
+
+    const appended = Buffer.concat([
+      files.get(codexFile),
+      Buffer.from(jsonl([codexMessage('assistant', 'Added quasarfresh note')])),
+    ]);
+    await write(codexFile, appended);
+    await delay(2_100);
+    assert.deepEqual(
+      (await search('quasarfresh')).results.map(
+        result => result.providerSessionId,
+      ),
+      [codexId],
+    );
+
+    const adopted = await host.request('adopt-conversation', {
+      provider: 'Codex',
+      providerSessionId: codexId,
+      requestId: randomUUID(),
+    });
+    assert.equal(adopted.type, 'session', JSON.stringify(adopted));
+    assert.equal((await search('quasarfresh')).results.length, 0);
+    assert.deepEqual(
+      (await search('quasar')).results.map(result => result.providerSessionId),
+      [claudeId],
+    );
+
+    await host.stop();
+    host = launch(directory, pidFile);
+    assert.deepEqual(
+      (await search('pulsarmarker')).results.map(
+        result => result.providerSessionId,
+      ),
+      [boundedId],
+    );
+    await host.stop();
+    host = undefined;
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'), {
+      readOnly: true,
+    });
+    try {
+      assert.equal(
+        database
+          .prepare(
+            "SELECT value FROM metadata WHERE key = 'transcript_index_mode'",
+          )
+          .get().value,
+        'fts5',
+      );
+      assert.equal(
+        database
+          .prepare(
+            "SELECT count(*) AS count FROM transcript_files WHERE provider = 'Claude Code'",
+          )
+          .get().count,
+        300,
+      );
+    } finally {
+      database.close();
+    }
+    for (const [path, content] of files)
+      assert.equal(Buffer.compare(await readFile(path), content), 0, path);
+  } finally {
+    if (host) {
+      host.child.stdin.end();
+      await bounded(host.exited, 'Transcript search host did not exit');
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -27,6 +27,7 @@ import { AttachmentError } from './sessions/attachments';
 import { SessionStore } from './sessions/store';
 import { ConversationImport } from './sessions/conversation-import';
 import { HistorySearch } from './sessions/history-search';
+import { TranscriptIndex } from './sessions/transcript-index';
 import { SessionGroupStore } from './sessions/group-store';
 import { SessionHousekeeping } from './sessions/housekeeping';
 import { ReviewStore } from './review/store';
@@ -100,6 +101,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'move-session',
   'rename-session',
   'set-session-pinned',
+  'set-session-terminal',
   'set-session-archived',
   'set-session-mcp',
   'cancel-queued',
@@ -453,6 +455,11 @@ export const serveHost = ({
         sessions,
         probes.controller.signal,
       );
+      const transcriptIndex = new TranscriptIndex(
+        database,
+        store,
+        probes.controller.signal,
+      );
       let conversationRequests = 0;
       let workspaceRequests = 0;
       let worktreeRequests = 0;
@@ -680,6 +687,25 @@ export const serveHost = ({
             .catch(() => undefined);
           probes.pending.add(change);
           void change.finally(() => probes.pending.delete(change));
+          continue;
+        }
+        if (request.method === 'search-transcripts') {
+          const pending = transcriptIndex
+            .search(request.input)
+            .then(search =>
+              send({ type: 'transcript-search', id: request.id, search }),
+            )
+            .catch(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'unavailable',
+                message: 'CLI transcripts could not be searched. Try again.',
+              }),
+            )
+            .catch(() => undefined);
+          probes.pending.add(pending);
+          void pending.finally(() => probes.pending.delete(pending));
           continue;
         }
         if (
@@ -1604,6 +1630,12 @@ export const serveHost = ({
                 type: 'session',
                 id: request.id,
                 session: housekeeping.setPinned(request.input),
+              };
+            if (request.method === 'set-session-terminal')
+              return {
+                type: 'session',
+                id: request.id,
+                session: sessions.setTerminal(request.input),
               };
             if (request.method === 'set-session-archived')
               return {

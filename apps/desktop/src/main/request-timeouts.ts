@@ -17,6 +17,7 @@ const longRequests = new Set<HostRequest['method']>([
   'act-on-pull-request',
   'backup-database',
   'run-session-worktree-setup',
+  'search-transcripts',
 ]);
 
 const providerRequests = new Set<HostRequest['method']>([

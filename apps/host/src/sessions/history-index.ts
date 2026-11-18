@@ -29,7 +29,7 @@ const indexSession = `
   WHERE (role, body, created_at) IS NOT (excluded.role, excluded.body, excluded.created_at);
 `;
 
-function supportsFts(database: DatabaseSync): boolean {
+export function supportsFts(database: DatabaseSync): boolean {
   try {
     database.exec(
       'CREATE VIRTUAL TABLE temp.history_fts_probe USING fts5(body)',

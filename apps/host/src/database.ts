@@ -5,8 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { Effect } from 'effect';
 import { migrateCosts } from './cost-store';
 import { installHistoryIndex } from './sessions/history-index';
+import { installTranscriptIndex } from './sessions/transcript-index';
 
-const DATABASE_VERSION = 16;
+const DATABASE_VERSION = 17;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>
@@ -363,6 +364,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
       );
       installHistoryIndex(database, version < 12, version < 15);
       if (version < 14) migrateCosts(database);
+      installTranscriptIndex(database);
       database.exec(`PRAGMA user_version = ${DATABASE_VERSION}; COMMIT`);
     } catch (error) {
       database.exec('ROLLBACK');

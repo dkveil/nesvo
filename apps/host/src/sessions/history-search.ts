@@ -30,7 +30,11 @@ function clipSnippet(text: string, ranges: Snippet['ranges']): Snippet {
   };
 }
 
-function ftsSnippet(value: string, open: string, close: string): Snippet {
+export function ftsSnippet(
+  value: string,
+  open: string,
+  close: string,
+): Snippet {
   const ranges: Snippet['ranges'] = [];
   let text = '';
   for (const part of value.split(open)) {
@@ -45,7 +49,7 @@ function ftsSnippet(value: string, open: string, close: string): Snippet {
   return clipSnippet(text, ranges);
 }
 
-function likeSnippet(value: string, terms: string[]): Snippet {
+export function likeSnippet(value: string, terms: string[]): Snippet {
   const pattern = new RegExp(
     terms.toSorted((a, b) => b.length - a.length).join('|'),
     'giu',

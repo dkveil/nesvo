@@ -24,6 +24,7 @@ import {
   type CatalogWorkflowMethod,
 } from './computer-manager';
 import { mobileAccess } from './mobile-access';
+import { launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
@@ -65,6 +66,10 @@ import {
   stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
+  openSessionTerminalSchema,
+  setSessionTerminalSchema,
+  terminalResume,
+  transcriptSearchInputSchema,
   adoptConversationSchema,
   listPullRequestsSchema,
   readPullRequestSchema,
@@ -168,6 +173,9 @@ const MAX_RENDERER_RELOADS_PER_WINDOW = 3;
 const ERROR_REPORT_WINDOW_MS = 60_000;
 const MAX_ERROR_REPORTS_PER_WINDOW = 30;
 const smokeTest = process.env.NESVO_SMOKE_TEST === '1';
+const terminalLaunchLog = app.isPackaged
+  ? undefined
+  : process.env.NESVO_TERMINAL_LAUNCH_LOG;
 if (process.env.NESVO_DATA_DIR) {
   app.setPath('userData', process.env.NESVO_DATA_DIR);
   app.setAppLogsPath(join(process.env.NESVO_DATA_DIR, 'logs'));
@@ -770,6 +778,70 @@ void app.whenReady().then(async () => {
         adoptConversationSchema.parse(input),
         route(hostId),
       );
+    },
+  );
+  handle(
+    'nesvo:search-transcripts',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'search-transcripts',
+        transcriptSearchInputSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:set-session-terminal',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        'set-session-terminal',
+        setSessionTerminalSchema.parse(input),
+        route(hostId),
+      );
+    },
+  );
+  handle(
+    'nesvo:open-session-terminal',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      const { sessionId } = openSessionTerminalSchema.parse(input);
+      if (route(hostId) !== 'local')
+        throw new Error(
+          'Sessions on other computers open in a terminal there. Copy the command instead.',
+        );
+      const current = await computers.getSession({ sessionId }, 'local', {
+        remember: false,
+      });
+      const resume = terminalResume(
+        current.provider,
+        current.providerSessionId,
+        current.directory,
+      );
+      if (!resume)
+        throw new Error(
+          'This session has no provider conversation to resume yet. Send a first message in Nesvo.',
+        );
+      const session = await computers.execute(
+        'set-session-terminal',
+        { sessionId, attached: true },
+        'local',
+      );
+      try {
+        const terminal = await launchTerminal(resume, terminalLaunchLog);
+        return { session, terminal };
+      } catch (error) {
+        if (!current.externalAttachment)
+          await computers
+            .execute(
+              'set-session-terminal',
+              { sessionId, attached: false },
+              'local',
+            )
+            .catch(() => undefined);
+        throw error;
+      }
     },
   );
   handle(

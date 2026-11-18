@@ -47,6 +47,11 @@ import {
   stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
+  openSessionTerminalSchema,
+  openedSessionTerminalSchema,
+  setSessionTerminalSchema,
+  transcriptSearchInputSchema,
+  transcriptSearchPageSchema,
   conversationImportCatalogSchema,
   adoptConversationSchema,
   historySearchPageSchema,
@@ -886,6 +891,30 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:adopt-conversation',
         adoptConversationSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  searchTranscripts: async (input, hostId) =>
+    transcriptSearchPageSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:search-transcripts',
+        transcriptSearchInputSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  openSessionInTerminal: async (input, hostId) =>
+    openedSessionTerminalSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:open-session-terminal',
+        openSessionTerminalSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  setSessionTerminal: async (input, hostId) =>
+    desktopSessionSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:set-session-terminal',
+        setSessionTerminalSchema.parse(input),
         route(hostId),
       ),
     ),

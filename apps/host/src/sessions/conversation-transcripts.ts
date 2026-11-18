@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 const fileLimit = conversationImportLimit / 2;
 const entryLimit = 8192;
-const fileByteLimit = 8 * 1024 * 1024;
+export const fileByteLimit = 8 * 1024 * 1024;
 const scanByteLimit = 48 * 1024 * 1024;
 const snapshotLimit = 48;
 const messageLimit = 6000;
@@ -60,9 +60,20 @@ type Conversation = Omit<
   ConversationImportCatalog['conversations'][number],
   'adopted'
 >;
-type Transcript = { conversation: Conversation; messages: Message[] };
-type File = { path: string; id: string; size: number; modifiedAt: number };
+export type Transcript = { conversation: Conversation; messages: Message[] };
+export type TranscriptFile = {
+  path: string;
+  id: string;
+  size: number;
+  modifiedAt: number;
+};
+type File = TranscriptFile;
 type Inventory = { files: File[]; skippedFiles: number; truncated: boolean };
+export type TranscriptLimits = { messages: number; characters: number };
+const snapshotLimits: TranscriptLimits = {
+  messages: snapshotLimit,
+  characters: messageLimit,
+};
 
 function redact(text: string) {
   return text
@@ -113,6 +124,7 @@ function parseTranscript(
   text: string,
   file: File,
   provider: Provider,
+  limits: TranscriptLimits,
 ): Transcript | undefined {
   let cwd: string | undefined;
   let title = '';
@@ -123,10 +135,10 @@ function parseTranscript(
     if (!body) return;
     if (role === 'user' && !firstPrompt) firstPrompt = body;
     messageCount++;
-    if (messages.length === snapshotLimit) messages.shift();
+    if (messages.length === limits.messages) messages.shift();
     messages.push({
       author: role === 'user' ? 'operator' : 'agent',
-      body: excerpt(body, messageLimit),
+      body: excerpt(body, limits.characters),
       at: new Date(at).toISOString(),
     });
   };
@@ -209,7 +221,7 @@ function roots(provider: Provider) {
       };
 }
 
-async function inventory(
+export async function inventory(
   provider: Provider,
   signal: AbortSignal,
   targetId?: string,
@@ -279,10 +291,11 @@ function transcriptId(
   return match[1];
 }
 
-async function readTranscript(
+export async function readTranscript(
   file: File,
   provider: Provider,
   signal: AbortSignal,
+  limits = snapshotLimits,
 ) {
   const handle = await open(
     file.path,
@@ -307,6 +320,7 @@ async function readTranscript(
       new TextDecoder('utf-8', { fatal: true }).decode(bytes),
       file,
       provider,
+      limits,
     );
   } finally {
     await handle.close();
