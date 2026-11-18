@@ -8,7 +8,7 @@ import { installHistoryIndex } from './sessions/history-index';
 import { installTranscriptIndex } from './sessions/transcript-index';
 import { installCodeReviewTables } from './code-review/store';
 
-const DATABASE_VERSION = 19;
+const DATABASE_VERSION = 20;
 const BACKUP_LIMIT = 3;
 
 const migrationBackups = (path: string): string[] =>

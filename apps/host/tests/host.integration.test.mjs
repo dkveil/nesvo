@@ -2146,7 +2146,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      19,
+      20,
     );
     migrated.close();
     const reopened = open();
@@ -4524,7 +4524,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 20');
+    database.exec('PRAGMA user_version = 21');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4541,7 +4541,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 20);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 21);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.ok(host.error().includes(backup));
     } finally {
@@ -19090,7 +19090,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 20);
     } finally {
       check.close();
     }
@@ -19255,7 +19255,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 20);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
