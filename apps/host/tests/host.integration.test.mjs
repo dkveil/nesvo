@@ -24300,16 +24300,18 @@ test(
   },
 );
 const controlTurn = async (host, sessionId, calls, method = 'send-message') => {
+  const messageId = randomUUID();
   const sent = await host.request(method, {
     sessionId,
-    messageId: randomUUID(),
+    messageId,
     text: `fixture:nesvo ${JSON.stringify(calls)}`,
   });
   assert.equal(sent.type, 'session', JSON.stringify(sent));
   const completed = await host.event(
     item =>
       item.id === sessionId &&
-      item.runId === sent.session.runId &&
+      item.messages.some(message => message.id === messageId) &&
+      item.messages.at(-1)?.author === 'agent' &&
       item.status !== 'running' &&
       item.status !== 'stopping',
   );
@@ -24526,6 +24528,7 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       [[childA, 'finished']],
     );
 
+    await mkdir(join(cwd, 'child-e'));
     const asking = await controlTurn(host, coordinator.id, [
       {
         tool: 'session_create',
@@ -24534,29 +24537,49 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
           title: 'Child E',
           prompt: 'fixture:ask-write',
           mode: 'accept-edits',
-          directory: elsewhere,
+          directory: 'child-e',
         },
       },
       {
-        tool: 'events_wait',
-        arguments: { cursor: blocked[2].result.cursor, timeoutSeconds: 30 },
+        tool: 'session_create',
+        arguments: {
+          title: 'Outside',
+          prompt: 'Look elsewhere.',
+          directory: elsewhere,
+        },
       },
     ]);
     const childE = asking[0].result.sessionId;
-    assert.deepEqual(
-      asking[1].result.events.map(event => [event.sessionId, event.type]),
-      [[childE, 'approval-pending']],
+    assert.equal(asking[0].result.status, 'queued');
+    assert.equal(asking[1].result.code, 'forbidden-by-policy');
+    const waitingE = await host.event(
+      item => item.id === childE && item.pendingApprovals.length === 1,
     );
-    const refusedApproval = await controlTurn(host, coordinator.id, [
-      {
-        tool: 'session_decide',
-        arguments: { sessionId: childE, kind: 'operation', decision: 'accept' },
-      },
-    ]);
-    assert.equal(refusedApproval[0].result.code, 'human-only');
-    const waitingE = (await host.request('get-session', { sessionId: childE }))
-      .session;
-    assert.equal(waitingE.pendingApprovals.length, 1);
+    const refusing = controlTurn(
+      host,
+      coordinator.id,
+      [
+        {
+          tool: 'events_wait',
+          arguments: { cursor: blocked[2].result.cursor, timeoutSeconds: 30 },
+        },
+        {
+          tool: 'session_decide',
+          arguments: {
+            sessionId: childE,
+            kind: 'operation',
+            decision: 'accept',
+          },
+        },
+      ],
+      'queue-message',
+    );
+    await delay(300);
+    assert.equal(
+      (await host.request('get-session', { sessionId: childE })).session
+        .pendingApprovals.length,
+      1,
+    );
     const answered = await host.request('respond-approval', {
       sessionId: childE,
       runId: waitingE.runId,
@@ -24565,7 +24588,15 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       fingerprint: waitingE.pendingApprovals[0].fingerprint,
     });
     assert.equal(answered.type, 'session', JSON.stringify(answered));
-    await finishedChild(host, childE);
+    const [approvalEvents, refusedApproval] = await refusing;
+    assert.deepEqual(
+      approvalEvents.result.events.map(event => [event.sessionId, event.type]),
+      [
+        [childE, 'approval-pending'],
+        [childE, 'finished'],
+      ],
+    );
+    assert.equal(refusedApproval.result.code, 'human-only');
 
     const standalone = (
       await host.request('create-session', {

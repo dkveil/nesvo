@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   createSessionSchema,
   isProviderSessionMode,
@@ -104,6 +105,30 @@ const correctedPlanPrompt = (correction: string) =>
 
 const lastReply = (session: Session) =>
   session.messages.findLast(message => message.author === 'agent');
+
+const insideFolder = (parent: string, child: string) => {
+  const path = relative(parent, child);
+  return (
+    path === '' ||
+    (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+  );
+};
+
+const childDirectory = (coordinator: Session, requested: string) => {
+  let root: string;
+  let directory: string;
+  try {
+    root = realpathSync(coordinator.directory);
+    directory = realpathSync(
+      isAbsolute(requested)
+        ? requested
+        : resolve(coordinator.directory, requested),
+    );
+  } catch {
+    return null;
+  }
+  return insideFolder(root, directory) ? directory : null;
+};
 
 const allowedModes = (policy: CoordinatorPolicy) =>
   policy.childModes.length ? policy.childModes.join(', ') : 'no modes';
@@ -474,9 +499,12 @@ export class SessionControl {
           'forbidden-by-policy',
           'The coordinator policy does not allow creating worktrees.',
         );
-      const directory = isAbsolute(input.directory)
-        ? input.directory
-        : resolve(coordinator.directory, input.directory);
+      const directory = childDirectory(coordinator, input.directory);
+      if (!directory)
+        return refusal(
+          'forbidden-by-policy',
+          `Child sessions work in an existing folder inside your folder (${basename(coordinator.directory)}).`,
+        );
       const create = createSessionSchema.safeParse({
         requestId: derivedId(actionId, 'create'),
         title: input.title,
