@@ -461,6 +461,13 @@ if (args.length === 1 && args[0] === '--version') {
     ]);
     assert.equal(values.has('--setting-sources'), false);
     assert.equal(values.has('--no-session-persistence'), false);
+  } else if (/fixture:review-[a-z]+/.test(prompt)) {
+    const schema = JSON.parse(values.get('--json-schema'));
+    assert.deepEqual(Object.keys(schema.properties).sort(), [
+      'findings',
+      'summary',
+    ]);
+    assert.equal(values.get('--permission-mode'), 'plan');
   } else {
     assert.equal(values.has('--json-schema'), false);
     assert.equal(values.has('--setting-sources'), false);
@@ -676,7 +683,60 @@ if (args.length === 1 && args[0] === '--version') {
   };
   const fixtureModel = `fixture-${values.get('--model') ?? 'default'}`;
   const contextWindow = { [fixtureModel]: { contextWindow: 200000 } };
-  if (prompt.startsWith('/compact')) {
+  const reviewCommand = values.has('--json-schema')
+    ? /fixture:review-[a-z]+/.exec(prompt)?.[0]
+    : undefined;
+  if (reviewCommand && process.env.NESVO_FIXTURE_REVIEW_LOG)
+    writeFileSync(
+      process.env.NESVO_FIXTURE_REVIEW_LOG,
+      JSON.stringify({
+        command: reviewCommand,
+        cwd: process.cwd(),
+        permissionMode: values.get('--permission-mode'),
+        schema: JSON.parse(values.get('--json-schema')),
+        prompt,
+      }) + '\n',
+      { flag: 'a' },
+    );
+  if (reviewCommand === 'fixture:review-findings') {
+    verdict('Review recorded.', {
+      summary: 'Fixture summary of the change.',
+      findings: [
+        {
+          path: 'src/app.ts',
+          startLine: 2,
+          endLine: 2,
+          severity: 'major',
+          type: 'suggestion',
+          body: 'Name the constant.',
+          suggestion: 'const answer = 42;',
+        },
+        {
+          path: 'src/app.ts',
+          startLine: 40,
+          endLine: 41,
+          severity: 'minor',
+          type: 'comment',
+          body: 'This line is outside the diff.',
+          suggestion: null,
+        },
+        {
+          path: 'src/app.ts',
+          startLine: 1,
+          endLine: 1,
+          severity: 'info',
+          type: 'nit',
+          body: 'Below the minimum severity.',
+          suggestion: null,
+        },
+      ],
+    });
+  } else if (reviewCommand === 'fixture:review-invalid') {
+    verdict('Here are my thoughts in prose.', {
+      summary: null,
+      findings: [{ path: 'src/app.ts', line: 'two', body: 'Unstructured.' }],
+    });
+  } else if (prompt.startsWith('/compact')) {
     if (process.env.NESVO_FIXTURE_COMPACT_LOG)
       writeFileSync(
         process.env.NESVO_FIXTURE_COMPACT_LOG,

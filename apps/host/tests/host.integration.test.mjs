@@ -120,6 +120,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
   const scheduledEvents = [];
   const workflowEvents = [];
   const groupEvents = [];
+  const draftEvents = [];
   const timeline = [];
   const sessionHistory = new Map();
   let transportError;
@@ -164,6 +165,8 @@ function launch(directory, pidFile, extraEnvironment = {}) {
         workflowEvents.push(message);
       } else if (message.type === 'session-groups-changed') {
         groupEvents.push(message.list);
+      } else if (message.type === 'pull-request-review-changed') {
+        draftEvents.push(message.draft);
       } else if (message.type === 'sessions-removed') {
         assert.ok(!message.id);
       } else {
@@ -252,6 +255,7 @@ function launch(directory, pidFile, extraEnvironment = {}) {
     scheduledEvents,
     workflowEvents,
     groupEvents,
+    draftEvents,
     timeline,
     request,
     send,
@@ -1135,6 +1139,7 @@ test(
         'conversation-compaction',
         'provider-profiles',
         'inline-attachments',
+        'pull-request-reviews',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -2136,7 +2141,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      18,
+      19,
     );
     migrated.close();
     const reopened = open();
@@ -4514,7 +4519,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 19');
+    database.exec('PRAGMA user_version = 20');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -4531,7 +4536,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 20);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.ok(host.error().includes(backup));
     } finally {
@@ -6141,6 +6146,7 @@ test(
       'conversation-compaction',
       'provider-profiles',
       'inline-attachments',
+      'pull-request-reviews',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -7033,7 +7039,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            18,
+            19,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -7116,11 +7122,11 @@ test(
       }
     });
 
-    await t.test('a version 19 database is refused', async () => {
+    await t.test('a version 20 database is refused', async () => {
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 19');
+      newer.exec('PRAGMA user_version = 20');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -7132,7 +7138,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          19,
+          20,
         );
       } finally {
         check.close();
@@ -9813,7 +9819,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        18,
+        19,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -9864,7 +9870,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        18,
+        19,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -18595,7 +18601,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      18,
+      19,
     );
     database
       .prepare(
@@ -18958,7 +18964,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 18);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
     } finally {
       check.close();
     }
@@ -19123,7 +19129,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 18);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 19);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -20907,3 +20913,344 @@ test('provider profiles scope probes, turns and forks to the recorded account', 
     assert.ok(processes.every(launch => launch.directory === expected));
   }
 });
+
+function reviewGithubFixture() {
+  const { appendFileSync, readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const args = process.argv.slice(2);
+  const directory = process.env.GH_CONFIG_DIR;
+  const stdin = args.includes('--input') ? readFileSync(0, 'utf8') : null;
+  appendFileSync(
+    join(directory, 'gh-calls.jsonl'),
+    JSON.stringify({ args, stdin, cwd: process.cwd() }) + '\n',
+  );
+  const head = readFileSync(join(directory, 'head'), 'utf8').trim();
+  const json = value => console.log(JSON.stringify(value));
+  if (args[0] === 'pr' && args[1] === 'view') {
+    if (args.includes('headRefOid,baseRefOid'))
+      json({ headRefOid: head, baseRefOid: 'c'.repeat(40) });
+    else
+      json({
+        number: Number(args[2]),
+        title: 'Add the answer',
+        state: 'OPEN',
+        headRefOid: head,
+        body: 'Adds a named constant.',
+      });
+  } else if (args[0] === 'pr' && args[1] === 'checkout') {
+    if (!args.includes('--detach')) throw Error('Review checkouts detach.');
+  } else if (args[0] === 'api' && args.includes('--slurp')) {
+    json([
+      [
+        {
+          filename: 'src/app.ts',
+          status: 'modified',
+          additions: 2,
+          deletions: 1,
+          patch:
+            '@@ -1,2 +1,3 @@\n const a = 1;\n-const b = 2;\n+const value = 42;\n+export { value };',
+        },
+      ],
+    ]);
+  } else if (args[0] === 'api' && args[3]?.endsWith('/reviews')) {
+    json({ id: 7 });
+  } else {
+    throw Error(`Unexpected gh fixture invocation: ${args.join(' ')}`);
+  }
+}
+
+test(
+  'agent pull request reviews validate findings and publish bound to the reviewed head',
+  { timeout: 120_000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-agent-review-')),
+    );
+    const project = join(directory, 'project');
+    const fixture = join(directory, 'gh-review-fixture.cjs');
+    const reviewLog = join(directory, 'reviews.jsonl');
+    await mkdir(join(project, 'src'), { recursive: true });
+    await writeFile(
+      join(project, 'src', 'app.ts'),
+      'const a = 1;\nconst value = 42;\nexport { value };\n',
+    );
+    await writeFile(fixture, `(${reviewGithubFixture.toString()})();\n`);
+    const git = (...args) =>
+      promisify(execFile)(
+        'git',
+        [
+          '-c',
+          'user.name=Fixture',
+          '-c',
+          'user.email=fixture@example.com',
+          ...args,
+        ],
+        { cwd: project },
+      );
+    await git('init', '--quiet');
+    await git('remote', 'add', 'origin', 'git@github.com:octo/project.git');
+    await git('add', '.');
+    await git('commit', '--quiet', '-m', 'Initial');
+    const commit = (await git('rev-parse', 'HEAD')).stdout.trim();
+    await writeFile(join(directory, 'head'), commit);
+    const host = launch(directory, join(directory, 'pids.json'), {
+      NESVO_GH_EXECUTABLE: fixture,
+      GH_CONFIG_DIR: directory,
+      NESVO_FIXTURE_REVIEW_LOG: reviewLog,
+    });
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null)
+        await host.stop().catch(() => host.child.kill());
+      await host.exited;
+      await rm(directory, { recursive: true, force: true });
+    });
+    const request = (method, input) => host.request(method, input);
+    const reference = { repository: 'octo/project', number: 42 };
+    const posted = async () =>
+      (await readFile(join(directory, 'gh-calls.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+        .filter(call => call.args[3]?.endsWith('/reviews'));
+    const settled = async draftId => {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const { drafts } = await request('list-pull-request-reviews', {
+          reference,
+        });
+        const draft = drafts.find(item => item.id === draftId);
+        if (['ready', 'failed', 'invalid'].includes(draft?.status))
+          return draft;
+        assert.ok(
+          Date.now() < deadline,
+          `Review did not settle: ${JSON.stringify(draft)} ${host.error()}`,
+        );
+        await delay(100);
+      }
+    };
+
+    assert.ok(
+      (await request('health')).health.capabilities.includes(
+        'pull-request-reviews',
+      ),
+    );
+    const profileId = randomUUID();
+    const profile = await request('save-reviewer-profile', {
+      id: profileId,
+      expectedRevision: null,
+      name: 'Strict',
+      provider: 'Claude Code',
+      model: 'default',
+      effort: null,
+      findingTypes: ['comment', 'suggestion', 'question'],
+      minimumSeverity: 'minor',
+      maxFindings: 10,
+      tone: 'direct',
+      language: 'English',
+      includeSummary: true,
+    });
+    assert.equal(profile.type, 'code-review-settings', JSON.stringify(profile));
+    assert.equal(profile.settings.profiles[0].revision, 1);
+    const globalId = randomUUID();
+    for (const convention of [
+      {
+        id: globalId,
+        layer: 'global',
+        scope: '',
+        text: 'fixture:review-findings',
+      },
+      {
+        id: randomUUID(),
+        layer: 'language',
+        scope: 'ts',
+        text: 'Prefer named exports.',
+      },
+      {
+        id: randomUUID(),
+        layer: 'language',
+        scope: 'py',
+        text: 'Use type hints.',
+      },
+      {
+        id: randomUUID(),
+        layer: 'project',
+        scope: 'octo/project',
+        text: 'Keep the public API stable.',
+      },
+    ])
+      assert.equal(
+        (await request('save-review-convention', convention)).type,
+        'code-review-settings',
+      );
+
+    const requestId = randomUUID();
+    const start = () =>
+      request('start-pull-request-review', {
+        requestId,
+        reference,
+        directory: project,
+        profileId,
+      });
+    const started = await start();
+    assert.equal(started.type, 'pull-request-review', JSON.stringify(started));
+    assert.equal(started.draft.headSha, commit);
+    assert.equal((await start()).draft.id, started.draft.id);
+    const ready = await settled(started.draft.id);
+    assert.equal(ready.status, 'ready', ready.error);
+    assert.equal(ready.headSha, commit);
+    assert.equal(ready.summary, 'Fixture summary of the change.');
+    assert.equal(ready.filtered, 1);
+    assert.deepEqual(
+      ready.findings.map(finding => [
+        finding.type,
+        finding.startLine,
+        finding.state,
+      ]),
+      [
+        ['suggestion', 2, 'pending'],
+        ['comment', 40, 'pending'],
+      ],
+    );
+    assert.ok(host.draftEvents.some(draft => draft.status === 'running'));
+    const [logged] = (await readFile(reviewLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.equal(logged.permissionMode, 'plan');
+    assert.notEqual(await realpath(logged.cwd), project);
+    assert.match(logged.prompt, /AGENTS\.md and CLAUDE\.md/);
+    assert.match(logged.prompt, /\(language: ts\) Prefer named exports\./);
+    assert.match(
+      logged.prompt,
+      /\(project: octo\/project\) Keep the public API/,
+    );
+    assert.doesNotMatch(logged.prompt, /Use type hints/);
+    assert.match(logged.prompt, /\+const value = 42;/);
+    assert.deepEqual(Object.keys(logged.schema.properties).sort(), [
+      'findings',
+      'summary',
+    ]);
+    const session = await request('get-session', {
+      sessionId: ready.sessionId,
+      limit: 20,
+    });
+    assert.equal(session.session.mode, 'read-only');
+    assert.deepEqual(session.session.pullRequest, reference);
+    assert.ok(session.session.worktree);
+
+    const [suggestion, outside] = ready.findings;
+    const edited = await request('update-review-finding', {
+      draftId: ready.id,
+      findingId: suggestion.id,
+      expectedRevision: ready.revision,
+      body: 'Name the constant after its meaning.',
+    });
+    assert.equal(edited.draft.findings[0].state, 'kept');
+    assert.equal(edited.draft.findings[0].edited, true);
+    const stale = await request('update-review-finding', {
+      draftId: ready.id,
+      findingId: outside.id,
+      expectedRevision: ready.revision,
+      state: 'kept',
+    });
+    assert.equal(stale.code, 'invalid-request');
+    const kept = await request('update-review-finding', {
+      draftId: ready.id,
+      findingId: outside.id,
+      expectedRevision: edited.draft.revision,
+      state: 'kept',
+    });
+
+    await writeFile(join(directory, 'head'), 'b'.repeat(40));
+    const moved = await request('publish-pull-request-review', {
+      draftId: ready.id,
+      actionId: randomUUID(),
+      expectedRevision: kept.draft.revision,
+      event: 'comment',
+      body: 'Thanks.',
+    });
+    assert.equal(moved.type, 'pull-request-review-publish');
+    assert.equal(moved.result.status, 'head-moved');
+    assert.equal(moved.result.currentHeadSha, 'b'.repeat(40));
+    assert.equal((await posted()).length, 0);
+
+    await writeFile(join(directory, 'head'), commit);
+    const actionId = randomUUID();
+    const publish = () =>
+      request('publish-pull-request-review', {
+        draftId: ready.id,
+        actionId,
+        expectedRevision: kept.draft.revision,
+        event: 'comment',
+        body: 'Thanks.',
+      });
+    const published = await publish();
+    assert.equal(
+      published.result.status,
+      'published',
+      JSON.stringify(published),
+    );
+    assert.equal(published.result.draft.published.inline, 1);
+    assert.equal(published.result.draft.published.inBody, 1);
+    const [submitted] = await posted();
+    assert.deepEqual(submitted.args.slice(0, 4), [
+      'api',
+      '--method',
+      'POST',
+      'repos/octo/project/pulls/42/reviews',
+    ]);
+    const payload = JSON.parse(submitted.stdin);
+    assert.equal(payload.commit_id, commit);
+    assert.equal(payload.event, 'COMMENT');
+    assert.match(payload.body, /^Thanks\.\n\nFixture summary/);
+    assert.match(payload.body, /`src\/app\.ts:40-41`/);
+    assert.deepEqual(
+      payload.comments.map(comment => [
+        comment.path,
+        comment.line,
+        comment.side,
+      ]),
+      [['src/app.ts', 2, 'RIGHT']],
+    );
+    assert.match(
+      payload.comments[0].body,
+      /```suggestion\nconst answer = 42;\n```/,
+    );
+    assert.equal((await publish()).result.status, 'published');
+    assert.equal((await posted()).length, 1);
+    const again = await request('publish-pull-request-review', {
+      draftId: ready.id,
+      actionId: randomUUID(),
+      expectedRevision: published.result.draft.revision,
+      event: 'approve',
+      body: '',
+    });
+    assert.equal(again.code, 'invalid-request');
+
+    await request('save-review-convention', {
+      id: globalId,
+      layer: 'global',
+      scope: '',
+      text: 'fixture:review-invalid',
+    });
+    const invalidStart = await request('start-pull-request-review', {
+      requestId: randomUUID(),
+      reference,
+      directory: project,
+      profileId,
+    });
+    const invalid = await settled(invalidStart.draft.id);
+    assert.equal(invalid.status, 'invalid', invalid.error);
+    assert.match(invalid.error, /do not match the required form/);
+    assert.deepEqual(invalid.findings, []);
+    const refused = await request('publish-pull-request-review', {
+      draftId: invalid.id,
+      actionId: randomUUID(),
+      expectedRevision: invalid.revision,
+      event: 'comment',
+      body: 'Anything',
+    });
+    assert.equal(refused.code, 'invalid-request');
+    assert.equal((await posted()).length, 1);
+  },
+);
