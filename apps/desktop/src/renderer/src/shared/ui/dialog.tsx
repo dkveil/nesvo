@@ -51,10 +51,12 @@ function DialogContent({
   children,
   showCloseButton = true,
   placement = 'center',
+  surface = 'card',
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
   placement?: 'center' | 'top' | 'fullscreen';
+  surface?: 'card' | 'panel';
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -62,8 +64,12 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         data-placement={placement}
+        data-surface={surface}
         className={cn(
-          'fixed left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] gap-4 rounded-overlay border bg-card p-6 shadow-(--dialog-shadow) duration-slow ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.97] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97] sm:max-w-lg',
+          'fixed left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] gap-4 rounded-overlay border p-6 shadow-(--dialog-shadow) duration-slow ease-out outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-[0.97] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.97] sm:max-w-lg',
+          surface === 'card' && 'bg-card',
+          surface === 'panel' &&
+            'border-info-panel-border bg-info-panel text-card-foreground',
           placement === 'center' && 'top-[50%] translate-y-[-50%]',
           placement === 'top' && 'top-[12vh]',
           placement === 'fullscreen' &&

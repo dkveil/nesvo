@@ -384,6 +384,31 @@ export function OverlaysSection() {
           </Dialog>
           <Dialog>
             <DialogTrigger asChild>
+              <Button variant="outline">Open panel dialog</Button>
+            </DialogTrigger>
+            <DialogContent surface="panel" className="gap-0 p-0 sm:max-w-2xl">
+              <DialogHeader className="border-b border-info-panel-divider px-6 py-4">
+                <DialogTitle>Sample editor</DialogTitle>
+                <DialogDescription>
+                  surface=&quot;panel&quot; uses the darker information panel
+                  surface for a large form such as the automation editor.
+                </DialogDescription>
+              </DialogHeader>
+              <p className="px-6 py-5 text-ui text-muted-foreground">
+                Two columns of fields sit here.
+              </p>
+              <DialogFooter className="border-t border-info-panel-divider px-6 py-4">
+                <DialogClose asChild>
+                  <DialogCancel />
+                </DialogClose>
+                <DialogClose asChild>
+                  <Button size="lg">Save</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog>
+            <DialogTrigger asChild>
               <Button variant="outline">Open top dialog</Button>
             </DialogTrigger>
             <DialogContent
