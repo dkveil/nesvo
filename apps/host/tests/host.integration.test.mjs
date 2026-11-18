@@ -1134,6 +1134,7 @@ test(
         'session-delete',
         'conversation-compaction',
         'provider-profiles',
+        'inline-attachments',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6139,6 +6140,7 @@ test(
       'session-delete',
       'conversation-compaction',
       'provider-profiles',
+      'inline-attachments',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -20038,12 +20040,20 @@ test('image attachments reach both providers, reject invalid uploads and survive
     'Claude Code': [stagedPng.upload.attachment, stagedJpeg.upload.attachment],
     Codex: [stagedPng.upload.attachment],
   };
-  for (const provider of ['Claude Code', 'Codex']) {
+  const placedText = 'Look at  and compare with  please.';
+  const placed = {
+    'Claude Code': [
+      { ...stagedPng.upload.attachment, offset: 26 },
+      { ...stagedJpeg.upload.attachment, offset: 8 },
+    ],
+    Codex: [{ ...stagedPng.upload.attachment, offset: 8 }],
+  };
+  const sendAndFinish = async (provider, text, sentAttachments) => {
     const sent = await host.request('send-message', {
       sessionId: sessions[provider].id,
       messageId: randomUUID(),
-      text: 'Describe the attached screenshot',
-      attachments: attachments[provider],
+      text,
+      attachments: sentAttachments,
     });
     assert.equal(sent.type, 'session', JSON.stringify(sent));
     const finished = await host.event(
@@ -20053,28 +20063,66 @@ test('image attachments reach both providers, reject invalid uploads and survive
         !['running', 'stopping'].includes(session.status),
     );
     assert.equal(finished.status, 'completed', finished.error);
+  };
+  for (const provider of ['Claude Code', 'Codex']) {
+    await sendAndFinish(
+      provider,
+      'Describe the attached screenshot',
+      attachments[provider],
+    );
+    await sendAndFinish(provider, placedText, placed[provider]);
   }
 
   const claudeLog = (await readFile(claudeImages, 'utf8'))
     .trim()
     .split('\n')
     .map(line => JSON.parse(line));
+  const pngImage = {
+    mediaType: 'image/png',
+    size: png.length,
+    sha256: sha256(png),
+  };
+  const jpegImage = {
+    mediaType: 'image/jpeg',
+    size: jpeg.length,
+    sha256: sha256(jpeg),
+  };
   assert.deepEqual(claudeLog, [
     {
       provider: 'Claude Code',
       text: 'Describe the attached screenshot',
-      images: [
-        { mediaType: 'image/png', size: png.length, sha256: sha256(png) },
-        { mediaType: 'image/jpeg', size: jpeg.length, sha256: sha256(jpeg) },
+      sequence: ['text:Describe the attached screenshot', 'image:0', 'image:1'],
+      images: [pngImage, jpegImage],
+    },
+    {
+      provider: 'Claude Code',
+      text: placedText,
+      sequence: [
+        'text:Look at ',
+        'image:0',
+        'text: and compare with ',
+        'image:1',
+        'text: please.',
       ],
+      images: [jpegImage, pngImage],
     },
   ]);
   const codexLog = (await readFile(codexImages, 'utf8'))
     .trim()
     .split('\n')
     .map(line => JSON.parse(line));
-  assert.equal(codexLog.length, 1);
+  assert.equal(codexLog.length, 2);
   assert.equal(codexLog[0].text, 'Describe the attached screenshot');
+  assert.deepEqual(codexLog[0].sequence, [
+    'text:Describe the attached screenshot',
+    'image:0',
+  ]);
+  assert.equal(codexLog[1].text, placedText);
+  assert.deepEqual(codexLog[1].sequence, [
+    'text:Look at ',
+    'image:0',
+    'text: and compare with  please.',
+  ]);
   assert.deepEqual(
     codexLog[0].images.map(({ size, sha256: hash }) => ({ size, hash })),
     [{ size: png.length, hash: sha256(png) }],
@@ -20088,10 +20136,12 @@ test('image attachments reach both providers, reject invalid uploads and survive
   host = open();
   const restored = (await host.request('list-sessions')).sessions;
   for (const provider of ['Claude Code', 'Codex']) {
-    const operator = restored
+    const operators = restored
       .find(session => session.id === sessions[provider].id)
-      .messages.find(message => message.author === 'operator');
-    assert.deepEqual(operator.attachments, attachments[provider]);
+      .messages.filter(message => message.author === 'operator');
+    assert.deepEqual(operators[0].attachments, attachments[provider]);
+    assert.equal(operators[1].body, placedText);
+    assert.deepEqual(operators[1].attachments, placed[provider]);
   }
   const content = await host.request('read-attachment', {
     id: stagedJpeg.upload.attachment.id,
@@ -20130,7 +20180,7 @@ test('image attachments reach both providers, reject invalid uploads and survive
   assert.match(failed.error, /cannot receive images/);
   assert.equal(
     (await readFile(claudeImages, 'utf8')).trim().split('\n').length,
-    1,
+    2,
   );
 });
 

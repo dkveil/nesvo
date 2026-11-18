@@ -719,6 +719,7 @@ try {
     'session-delete',
     'conversation-compaction',
     'provider-profiles',
+    'inline-attachments',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

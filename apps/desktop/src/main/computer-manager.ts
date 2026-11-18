@@ -208,6 +208,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot answer Claude Code approvals. Update the host, then reconnect.',
   'message-attachments':
     'This computer runs an older Nesvo host that cannot receive images. Update the host, then reconnect.',
+  'inline-attachments':
+    'Update this computer’s Nesvo host and reconnect to place images inside the message text.',
   'terminal-handoff':
     'Update this computer’s Nesvo host and reconnect to open its sessions in a terminal.',
   'transcript-search':

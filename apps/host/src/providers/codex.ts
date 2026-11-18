@@ -24,6 +24,7 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import { interleave } from './interleave';
 import { readCodexUsage } from './codex-usage';
 import {
   codexContextFill,
@@ -1285,6 +1286,28 @@ const constrainedMessage = (messages: ReadonlyMap<string, string>): unknown => {
   }
 };
 
+export type CodexImage = { path: string; offset?: number };
+
+function codexTurnInput(
+  prompt: string,
+  images: readonly CodexImage[],
+  skill: { name: string; path: string } | null,
+): RecordValue[] {
+  const items: RecordValue[] = interleave(prompt, images).map(part =>
+    part.type === 'text'
+      ? { type: 'text', text: part.text, text_elements: [] }
+      : { type: 'localImage', path: part.item.path },
+  );
+  if (!skill) return items;
+  const firstText = items.findIndex(item => item.type === 'text');
+  items.splice(firstText + 1, 0, {
+    type: 'skill',
+    name: skill.name,
+    path: skill.path,
+  });
+  return items;
+}
+
 type CodexRunOptions = {
   directory: string;
   sessionId: string | null;
@@ -1302,7 +1325,7 @@ type CodexRunOptions = {
   delegationSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   instructionsOnly?: boolean;
-  images?: readonly string[];
+  images?: readonly CodexImage[];
   mcp?: {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
@@ -2188,16 +2211,7 @@ export function startCodex(options: CodexRunOptions): {
       } else {
         const started = await peer.request('turn/start', {
           threadId,
-          input: [
-            { type: 'text', text: options.prompt, text_elements: [] },
-            ...(skill
-              ? [{ type: 'skill', name: skill.name, path: skill.path }]
-              : []),
-            ...(options.images ?? []).map(path => ({
-              type: 'localImage',
-              path,
-            })),
-          ],
+          input: codexTurnInput(options.prompt, options.images ?? [], skill),
           cwd: options.directory,
           approvalPolicy: turnApprovalPolicy,
           approvalsReviewer: 'user',

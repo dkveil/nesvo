@@ -71,8 +71,10 @@ import {
   inspectCodex,
   startCodex,
   type CodexEvent,
+  type CodexImage,
   type CodexResult,
 } from '../providers/codex';
+import { shiftPlacement } from '../providers/interleave';
 import { SessionStore, type SessionOrigin } from './store';
 import { AttachmentError, AttachmentStore } from './attachments';
 import { finishActivities, updateActivity } from './activities';
@@ -312,14 +314,20 @@ const GATE_REVIEW_STATUS = {
   'request-changes': 'changes-requested',
 } as const satisfies Record<GateReviewDecision['decision'], Review['status']>;
 
-type TurnImages = { paths: string[]; inline: ClaudeImage[] };
+type TurnImages = { paths: CodexImage[]; inline: ClaudeImage[] };
+
+const placement = (attachment: MessageAttachment) =>
+  attachment.offset == null ? {} : { offset: attachment.offset };
+
+const attachmentKey = (attachment: MessageAttachment) =>
+  `${attachment.id}@${attachment.offset ?? ''}`;
 
 const sameAttachments = (
   left: readonly MessageAttachment[] | undefined,
   right: readonly MessageAttachment[] | undefined,
 ) =>
-  (left ?? []).map(attachment => attachment.id).join() ===
-  (right ?? []).map(attachment => attachment.id).join();
+  (left ?? []).map(attachmentKey).join() ===
+  (right ?? []).map(attachmentKey).join();
 
 type LaunchTurn = {
   skillId?: string;
@@ -2803,7 +2811,16 @@ export class SessionService {
                     }
                   : {}),
                 ...(ephemeral ? { ephemeral } : {}),
-                ...(images.inline.length ? { images: images.inline } : {}),
+                ...(images.inline.length
+                  ? {
+                      images: selected?.snapshot
+                        ? shiftPlacement(
+                            images.inline,
+                            sharedSkillPrompt(selected.snapshot, '').length,
+                          )
+                        : images.inline,
+                    }
+                  : {}),
                 ...(instructionsOnly ? { instructionsOnly } : {}),
                 ...(assistantPrompt ? { assistantPrompt } : {}),
                 ...(turnMcp
@@ -2960,7 +2977,10 @@ export class SessionService {
     this.attachments.confirm(attachments);
     if (provider === 'Codex')
       return {
-        paths: attachments.map(attachment => this.attachments.path(attachment)),
+        paths: attachments.map(attachment => ({
+          path: this.attachments.path(attachment),
+          ...placement(attachment),
+        })),
         inline: [],
       };
     return {
@@ -2969,6 +2989,7 @@ export class SessionService {
         attachments.map(async attachment => ({
           mediaType: attachment.mediaType,
           data: (await this.attachments.load(attachment)).toString('base64'),
+          ...placement(attachment),
         })),
       ),
     };

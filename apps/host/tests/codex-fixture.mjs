@@ -758,17 +758,28 @@ if (args.length === 1 && args[0] === '--version') {
       );
       assert.equal(params.effort ?? null, thread.effort);
       const images = params.input.filter(item => item.type === 'localImage');
+      const texts = params.input.filter(item => item.type === 'text');
+      const skillItems = params.input.filter(item => item.type === 'skill');
+      assert.equal(skillItems.length, selectedSkills ? 1 : 0);
       assert.equal(
         params.input.length,
-        (selectedSkills ? 2 : 1) + images.length,
+        texts.length + skillItems.length + images.length,
       );
-      assert.equal(params.input[0].type, 'text');
+      assert.ok(texts.length > 0);
+      const turnText = texts.map(item => item.text).join('');
       if (images.length && process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG)
         writeFileSync(
           process.env.NESVO_CODEX_FIXTURE_IMAGE_LOG,
           JSON.stringify({
             provider: 'Codex',
-            text: params.input[0].text,
+            text: turnText,
+            sequence: params.input.flatMap(item =>
+              item.type === 'text'
+                ? [`text:${item.text}`]
+                : item.type === 'localImage'
+                  ? [`image:${images.indexOf(item)}`]
+                  : [],
+            ),
             images: images.map(image => {
               assert.ok(isAbsolute(image.path), 'Image paths must be absolute');
               const bytes = readFileSync(image.path);
@@ -781,19 +792,19 @@ if (args.length === 1 && args[0] === '--version') {
           }) + '\n',
           { flag: 'a' },
         );
-      assert.ok(params.input[0].text.trim());
+      assert.ok(turnText.trim());
       if (selectedSkills) {
+        const skillItem = skillItems[0];
         const selectedSkill = selectedSkills.find(
           skill =>
-            skill.path === params.input[1].path &&
-            skill.name === params.input[1].name,
+            skill.path === skillItem.path && skill.name === skillItem.name,
         );
         assert.ok(
           selectedSkill,
           'Selected native input must match the current registered catalog',
         );
         assert.equal(selectedSkill.enabled, true);
-        assert.deepEqual(params.input[1], {
+        assert.deepEqual(skillItem, {
           type: 'skill',
           name: selectedSkill.name,
           path: selectedSkill.path,
@@ -816,7 +827,7 @@ if (args.length === 1 && args[0] === '--version') {
           item: { id: current.itemId, type: 'agentMessage', text: '' },
         }),
       );
-      const prompt = params.input[0].text;
+      const prompt = turnText;
       if (process.env.NESVO_CODEX_FIXTURE_RUN_LOG)
         writeFileSync(
           process.env.NESVO_CODEX_FIXTURE_RUN_LOG,

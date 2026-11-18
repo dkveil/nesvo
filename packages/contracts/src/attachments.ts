@@ -10,6 +10,7 @@ export const attachmentLimits = {
   bytes: 5 * 1024 * 1024,
   perMessage: 5,
   chunkBytes: 512 * 1024,
+  textOffset: 32000,
 } as const;
 
 const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4;
@@ -21,6 +22,12 @@ export const messageAttachmentSchema = z.strictObject({
   mediaType: attachmentMediaTypeSchema,
   size: z.number().int().positive().max(attachmentLimits.bytes),
   name: z.string().trim().min(1).max(255),
+  offset: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(attachmentLimits.textOffset)
+    .optional(),
 });
 export const messageAttachmentsSchema = z
   .array(messageAttachmentSchema)

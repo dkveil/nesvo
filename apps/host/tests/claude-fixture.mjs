@@ -69,8 +69,9 @@ const REPAIR_NOTE = 'The verdict did not match the required shape';
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
 const readUserContent = content => {
   if (typeof content === 'string') return content;
-  assert.equal(content[0].type, 'text');
-  const images = content.slice(1);
+  const texts = content.filter(block => block.type === 'text');
+  const images = content.filter(block => block.type !== 'text');
+  assert.ok(texts.length > 0, 'Every user message carries text');
   if (content.length === 1 && content[0].text.startsWith('/compact'))
     return content[0].text;
   assert.ok(images.length > 0, 'Content blocks are used only for images');
@@ -78,12 +79,20 @@ const readUserContent = content => {
     assert.equal(image.type, 'image');
     assert.equal(image.source.type, 'base64');
   }
+  for (const text of texts)
+    assert.ok(text.text.trim(), 'Text blocks are not blank');
+  const prompt = texts.map(block => block.text).join('');
   if (process.env.NESVO_FIXTURE_IMAGE_LOG)
     writeFileSync(
       process.env.NESVO_FIXTURE_IMAGE_LOG,
       JSON.stringify({
         provider: 'Claude Code',
-        text: content[0].text,
+        text: prompt,
+        sequence: content.map(block =>
+          block.type === 'text'
+            ? `text:${block.text}`
+            : `image:${images.indexOf(block)}`,
+        ),
         images: images.map(image => {
           const bytes = Buffer.from(image.source.data, 'base64');
           return {
@@ -95,7 +104,7 @@ const readUserContent = content => {
       }) + '\n',
       { flag: 'a' },
     );
-  return content[0].text;
+  return prompt;
 };
 const runEnvironment = () => ({
   NESVO_RUN_ID: process.env.NESVO_RUN_ID ?? null,

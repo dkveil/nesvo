@@ -27,6 +27,7 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import { interleave } from './interleave';
 import {
   claudeApprovalTimeoutMs,
   claudeControlError,
@@ -60,7 +61,11 @@ export type ClaudeResult = {
   compacted?: true;
 };
 
-export type ClaudeImage = { mediaType: AttachmentMediaType; data: string };
+export type ClaudeImage = {
+  mediaType: AttachmentMediaType;
+  data: string;
+  offset?: number;
+};
 
 type Executable = { command: string; prefix: string[] };
 type ClaudeMode = Exclude<SessionMode, 'supervised'>;
@@ -179,17 +184,18 @@ function claudeUserContent(
   images: readonly ClaudeImage[],
 ): string | Record<string, unknown>[] {
   if (!images.length) return prompt;
-  return [
-    { type: 'text', text: prompt },
-    ...images.map(image => ({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: image.mediaType,
-        data: image.data,
-      },
-    })),
-  ];
+  return interleave(prompt, images).map(part =>
+    part.type === 'text'
+      ? { type: 'text', text: part.text }
+      : {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: part.item.mediaType,
+            data: part.item.data,
+          },
+        },
+  );
 }
 
 function claudeTurnInput(
