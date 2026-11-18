@@ -3734,6 +3734,43 @@ try {
       automationLimit: { status: limitedRun.status, reason: limitedRun.reason },
     }),
   );
+  const savedWindowState = JSON.parse(
+    await readFile(join(directory, 'window-state.json'), 'utf8'),
+  );
+  assert.deepEqual(
+    [savedWindowState.width, savedWindowState.height],
+    [1280, 900],
+  );
+  const beforeHostCrash = await listAutomationState(limitedPage);
+  const crashedHostPid = hostPid;
+  process.kill(crashedHostPid);
+  await waitDead(crashedHostPid);
+  let restartedLocal;
+  for (let attempt = 0; attempt < 300; attempt++) {
+    restartedLocal = (
+      await limitedPage.evaluate(() => window.nesvo.listComputers())
+    ).find(computer => computer.id === 'local');
+    hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+    if (restartedLocal.status === 'connected' && hostPid !== crashedHostPid)
+      break;
+    await delay(100);
+  }
+  assert.equal(restartedLocal.status, 'connected');
+  assert.notEqual(hostPid, crashedHostPid);
+  const afterHostCrash = await listAutomationState(limitedPage);
+  assert.deepEqual(
+    afterHostCrash.sessions.map(session => session.id).toSorted(),
+    beforeHostCrash.sessions.map(session => session.id).toSorted(),
+  );
+  assert.equal(afterHostCrash.runs.length, beforeHostCrash.runs.length);
+  const mainLog = await readFile(join(directory, 'logs', 'main.log'), 'utf8');
+  assert.match(mainLog, /The local host exited/);
+  assert.match(mainLog, /Reconnecting Local in 1000 ms/);
+  console.log(
+    JSON.stringify({
+      localHostRestart: { crashedHostPid, restartedHostPid: hostPid },
+    }),
+  );
   assert.deepEqual(errors, []);
   await application.close();
   application = undefined;
