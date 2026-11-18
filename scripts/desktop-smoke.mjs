@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
   mkdir,
@@ -3865,10 +3866,14 @@ try {
     .locator('[data-editor-notice]')
     .filter({ hasText: 'Saved smoke-graph.' })
     .waitFor();
-  assert.match(
-    await readFile(join(workflowRoot, 'steps', 'smoke-timeout.md'), 'utf8'),
-    /^timeout: 90m$/m,
-  );
+  const savedTimeoutStep = join(workflowRoot, 'steps', 'smoke-timeout.md');
+  for (
+    let attempt = 0;
+    attempt < 100 && !existsSync(savedTimeoutStep);
+    attempt += 1
+  )
+    await delay(50);
+  assert.match(await readFile(savedTimeoutStep, 'utf8'), /^timeout: 90m$/m);
   await editor.locator('[data-editor-start]').click();
   await editor.locator('[data-editor-inspector="start"]').waitFor();
   await inspector
