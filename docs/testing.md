@@ -17,6 +17,8 @@ D66 adds one focused mobile transport integration case and one principal native 
 - Review visual and low-risk copy changes manually. Do not add unit tests solely for JSX, styles, wrappers or getters.
 - No coverage percentage, mandatory unit-test count, one-test-per-function policy or large component snapshots.
 
+Claude operation approvals add one spawned-host case with the Claude fixture. In Accept edits the fixture asks through the stdio host channel: Allow once returns the unchanged input and the write happens; wrong run, request or fingerprint and a message with an allow are refused; an answered request cannot be reused; an MCP denial carries the operator's message; a withdrawn request leaves the session; an unanswered request is denied after a shortened timeout; Stop while pending terminates the process; a host restart while pending marks the run interrupted without replaying a decision; Plan refuses the same action without asking. The fixture accepts the channel only in writable modes. The real CLI path was checked separately with one trivial turn; fixture runs are not evidence of model behaviour.
+
 Current checks:
 
 | Check                            | Evidence                                                                                     |
