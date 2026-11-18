@@ -32,6 +32,7 @@ type Params = {
   merge: (sessions: Session[]) => void;
   isEnabled: (session: Session) => boolean;
   modesFor: (session: Session) => SessionMode[];
+  via?: 'desktop' | 'parent';
 };
 
 export const stageKey = (session: Session, id: string) =>
@@ -51,6 +52,7 @@ export function useStageDecisions({
   merge,
   isEnabled,
   modesFor,
+  via = 'desktop',
 }: Params): StageActions {
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,6 +89,7 @@ export function useStageDecisions({
             sessionId: session.id,
             planId: plan.id,
             decisionId: crypto.randomUUID(),
+            via,
             ...choice,
           },
           session.hostId,
@@ -102,6 +105,7 @@ export function useStageDecisions({
             sessionId: session.id,
             questionId: question.id,
             decisionId: crypto.randomUUID(),
+            via,
             ...choice,
           },
           session.hostId,

@@ -22,6 +22,7 @@ import type {
   ForkSessionInput,
   CodeComment,
   MessageAttachment,
+  PullRequestReference,
   RespondApprovalInput,
   SessionMode,
   StartWorkflowTaskInput,
@@ -153,6 +154,12 @@ import { Conversation, type ModelSelection } from '@/widgets/conversation';
 import { Delegations } from '@/widgets/delegations';
 import { WorkflowStatus } from '@/widgets/workflow-status';
 import { ReviewInbox } from '@/widgets/review-inbox';
+import { ChildDecisions } from '@/widgets/child-decisions';
+import {
+  resolveDecisionRoute,
+  useInboxItems,
+  type HostedInboxItem,
+} from '@/features/inbox-rules';
 import { StageRecord, useStageDecisions } from '@/widgets/session-stages';
 import { SessionDetails } from '@/widgets/session-details';
 import { WorktreeRecipesSettings } from '@/widgets/worktree-recipes-settings';
@@ -973,6 +980,37 @@ export function Workspace() {
   const composerAttachments = useComposerAttachments();
   const stopping = useRef(new Set<string>());
   const automations = useScheduledJobs(store.computers);
+  const inboxRules = useInboxItems(store.computers);
+  const routeOf = (session: Session) =>
+    resolveDecisionRoute(
+      session,
+      store.groups(session.hostId),
+      inboxRules.defaultRoute(session.hostId),
+    );
+  const parentStages = useStageDecisions({
+    api: desktopApi,
+    merge: sessions => store.merge(sessions),
+    isEnabled: session =>
+      !store.loading && !store.error && store.hostReady(session.hostId),
+    modesFor: session =>
+      providerModes(
+        session.provider,
+        store.providerStates(session.hostId)[session.provider].status,
+      ),
+    via: 'parent',
+  });
+  const openRuleChanges = (item: HostedInboxItem) => {
+    if (!item.sessionId) return;
+    const key = hostKey(item.sessionId, item.hostId);
+    guardEditor(() => {
+      selectNow(key);
+      setPanel('changes');
+    });
+  };
+  const openRulePullRequest = (
+    item: HostedInboxItem,
+    reference: PullRequestReference,
+  ) => openPullRequestSurface({ hostId: item.hostId, reference });
   const jobOf = (
     session: Pick<Session, 'scheduledJobId' | 'hostId' | 'workflowRunId'>,
   ) =>
@@ -4378,6 +4416,15 @@ ${text}`
           ) : inbox ? (
             <ReviewInbox
               {...reviewDecisionProps}
+              ruleItems={inboxRules.items}
+              rulePending={inboxRules.pending}
+              ruleErrors={inboxRules.errors}
+              onRuleDecision={(item, decision) =>
+                void inboxRules.decide(item, decision)
+              }
+              onRuleOpenChanges={openRuleChanges}
+              onRuleOpenPullRequest={openRulePullRequest}
+              routeOf={routeOf}
               reviews={store.reviews}
               automations={automations.jobs}
               automationPending={automationPending}
@@ -4586,13 +4633,39 @@ ${text}`
                   )
                 }
                 preparation={
-                  sessionRecipe.run && (
-                    <WorktreeRecipeCard
-                      {...sessionRecipe}
-                      run={sessionRecipe.run}
-                      enabled={store.hostReady(selectedHostId)}
+                  <>
+                    {sessionRecipe.run && (
+                      <WorktreeRecipeCard
+                        {...sessionRecipe}
+                        run={sessionRecipe.run}
+                        enabled={store.hostReady(selectedHostId)}
+                      />
+                    )}
+                    <ChildDecisions
+                      parent={selected}
+                      sessions={store.sessions}
+                      items={inboxRules.items}
+                      routeOf={routeOf}
+                      enabled={
+                        !store.loading &&
+                        !store.error &&
+                        store.hostReady(selectedHostId)
+                      }
+                      stages={parentStages}
+                      rulePending={inboxRules.pending}
+                      ruleErrors={inboxRules.errors}
+                      onRuleDecision={(item, decision) =>
+                        void inboxRules.decide(item, decision)
+                      }
+                      approvalPending={approvalPending}
+                      onApproval={(input, hostId) =>
+                        void respondApproval(input, hostId)
+                      }
+                      onOpen={select}
+                      onOpenChanges={openRuleChanges}
+                      onOpenPullRequest={openRulePullRequest}
                     />
-                  )
+                  </>
                 }
                 results={
                   <SessionReviews

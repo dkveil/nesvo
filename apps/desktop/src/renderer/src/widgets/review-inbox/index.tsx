@@ -2,6 +2,9 @@ import { useState, type ComponentProps, type ReactNode } from 'react';
 import {
   latestStageReport,
   pendingStageQuestion,
+  routesToInbox,
+  type DecisionRoute,
+  type PullRequestReference,
   type DecideDelegationInput,
   type DecideSessionParentInput,
   type RespondApprovalInput,
@@ -50,6 +53,14 @@ import {
   QuestionAnswer,
   type StageActions,
 } from '@/widgets/session-stages';
+import {
+  InboxRuleDecisions,
+  InboxRuleSummary,
+  inboxItemKey,
+  inboxRuleMeta,
+  type HostedInboxItem,
+  type InboxItemDecision,
+} from '@/features/inbox-rules';
 
 type Props = ReviewDecisionProps & {
   reviews: Review[];
@@ -77,12 +88,23 @@ type Props = ReviewDecisionProps & {
   notice?: ReactNode;
   lessons?: ReactNode;
   stages: StageActions;
+  ruleItems: HostedInboxItem[];
+  rulePending: Record<string, boolean>;
+  ruleErrors: Record<string, string>;
+  onRuleDecision: (item: HostedInboxItem, decision: InboxItemDecision) => void;
+  onRuleOpenChanges: (item: HostedInboxItem) => void;
+  onRuleOpenPullRequest: (
+    item: HostedInboxItem,
+    reference: PullRequestReference,
+  ) => void;
+  routeOf: (session: Session) => DecisionRoute;
 };
 
 type Filter = 'pending' | 'history' | 'all';
 
 type ActionRow =
   | { type: 'review'; review: Review; at: string; id: string }
+  | { type: 'rule'; item: HostedInboxItem; at: string; id: string }
   | { type: 'automation'; job: ScheduledJob; at: string; id: string }
   | {
       type: 'approval';
@@ -327,9 +349,22 @@ export function ReviewInbox({
   notice,
   lessons,
   stages,
+  ruleItems,
+  rulePending,
+  ruleErrors,
+  onRuleDecision,
+  onRuleOpenChanges,
+  onRuleOpenPullRequest,
+  routeOf,
   ...decisionProps
 }: Props) {
   const [filter, setFilter] = useState<Filter>('pending');
+  const heldSessions = new Set(
+    ruleItems
+      .filter(item => item.status === 'pending' && item.binding === 'provider')
+      .map(item => `${item.hostId}/${item.sessionId}`),
+  );
+  const inInbox = (session: Session) => routesToInbox(routeOf(session));
   const rows: ActionRow[] = reviews
     .filter(
       review =>
@@ -354,9 +389,25 @@ export function ReviewInbox({
           at: session.parentRequest.requestedAt,
           id: `${entityKey(session)}/${session.parentRequest.id}`,
         });
+  for (const item of ruleItems)
+    if (
+      routesToInbox(item.route) &&
+      (filter === 'all' ||
+        (filter === 'pending'
+          ? item.status === 'pending'
+          : item.status !== 'pending'))
+    )
+      rows.push({
+        type: 'rule',
+        item,
+        at: item.decidedAt ?? item.createdAt,
+        id: inboxItemKey(item),
+      });
   if (filter !== 'history')
     for (const session of sessions) {
       if (session.status !== 'running' || !session.runId) continue;
+      if (!inInbox(session)) continue;
+      if (heldSessions.has(`${session.hostId}/${session.id}`)) continue;
       for (const approval of session.pendingApprovals)
         rows.push({
           type: 'approval',
@@ -381,6 +432,7 @@ export function ReviewInbox({
   if (filter !== 'history')
     for (const session of sessions) {
       const key = entityKey(session);
+      if (!inInbox(session)) continue;
       if (session.plan?.status === 'plan-ready')
         rows.push({
           type: 'plan',
@@ -581,6 +633,61 @@ export function ReviewInbox({
                         </StatusMessage>
                       )
                     )}
+                  </ActionItem>
+                );
+              }
+              if (row.type === 'rule') {
+                const { item } = row;
+                const key = inboxItemKey(item);
+                const subjectSession = sessions.find(
+                  session =>
+                    session.id === item.sessionId &&
+                    session.hostId === item.hostId,
+                );
+                return (
+                  <ActionItem
+                    key={`rule/${row.id}`}
+                    aria-label={`Inbox rule ${item.rule.name}: ${item.sessionTitle}`}
+                    data-host-id={item.hostId}
+                    data-inbox-rule={item.rule.name}
+                    title={subjectSession?.title ?? item.sessionTitle}
+                    onOpen={() =>
+                      item.sessionId
+                        ? onSession(hostKey(item.sessionId, item.hostId))
+                        : item.presentation.pullRequest &&
+                          onRuleOpenPullRequest(
+                            item,
+                            item.presentation.pullRequest,
+                          )
+                    }
+                    location={location(item.hostId)}
+                    summary={
+                      <InboxRuleSummary
+                        item={item}
+                        onOpenChanges={
+                          item.sessionId
+                            ? () => onRuleOpenChanges(item)
+                            : undefined
+                        }
+                        onOpenPullRequest={reference =>
+                          onRuleOpenPullRequest(item, reference)
+                        }
+                      />
+                    }
+                    meta={
+                      <>
+                        <span>{inboxRuleMeta(item)}</span>
+                        <time dateTime={row.at}>{reviewDate(row.at)}</time>
+                      </>
+                    }
+                  >
+                    <InboxRuleDecisions
+                      item={item}
+                      enabled={isOperationEnabled(item)}
+                      deciding={!!rulePending[key]}
+                      error={ruleErrors[key]}
+                      onDecide={decision => onRuleDecision(item, decision)}
+                    />
                   </ActionItem>
                 );
               }
