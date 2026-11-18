@@ -34,6 +34,7 @@ export type MobileGatewayWorkspace = Pick<
   DesktopApi,
   | 'listComputers'
   | 'listSessions'
+  | 'getSession'
   | 'sendMessage'
   | 'stopRun'
   | 'respondApproval'
@@ -164,6 +165,9 @@ async function body(request: IncomingMessage) {
     );
   }
 }
+
+const MOBILE_HISTORY_SESSIONS = 16;
+const MOBILE_HISTORY_MESSAGES = 40;
 
 export class MobileGateway {
   private server: ReturnType<typeof httpServer> | undefined;
@@ -627,11 +631,27 @@ export class MobileGateway {
         413,
       );
     for (const session of sessions) this.remember(session);
+    await Promise.all(
+      [...sessions]
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .slice(0, MOBILE_HISTORY_SESSIONS)
+        .map(session =>
+          this.options.workspace
+            .getSession(
+              { sessionId: session.id, limit: MOBILE_HISTORY_MESSAGES },
+              session.hostId,
+            )
+            .then(
+              loaded => this.remember(loaded),
+              () => undefined,
+            ),
+        ),
+    );
     const snapshot = mobileSnapshotSchema.parse({
       serverId: this.store.serverId,
       sequence,
       computers: computers.map(publicComputer),
-      sessions,
+      sessions: sessions.map(session => this.windowOf(session)),
     });
     json(snapshot);
     return snapshot;
@@ -848,19 +868,34 @@ export class MobileGateway {
       type: 'snapshot',
       session,
     });
-    if (applied) this.sessions.set(key, trimSessionWindow(applied.session));
+    if (applied)
+      this.sessions.set(
+        key,
+        trimSessionWindow(applied.session, MOBILE_HISTORY_MESSAGES),
+      );
+  }
+
+  private windowOf(session: DesktopSession) {
+    return this.sessions.get(`${session.hostId}/${session.id}`) ?? session;
   }
 
   private mobileEvent(event: WorkspaceEvent): WorkspaceEvent | null {
     if (event.type === 'host-snapshot') {
+      const current = new Set(
+        event.sessions.map(session => `${session.hostId}/${session.id}`),
+      );
       for (const key of [...this.sessions.keys()])
-        if (key.startsWith(`${event.hostId}/`)) this.sessions.delete(key);
+        if (key.startsWith(`${event.hostId}/`) && !current.has(key))
+          this.sessions.delete(key);
       for (const session of event.sessions) this.remember(session);
-      return event;
+      return {
+        ...event,
+        sessions: event.sessions.map(session => this.windowOf(session)),
+      };
     }
     if (event.type === 'session-changed') {
       this.remember(event.session);
-      return event;
+      return { ...event, session: this.windowOf(event.session) };
     }
     if (event.type !== 'session-message-upserted') return event;
     const key = `${event.session.hostId}/${event.session.id}`;
@@ -869,7 +904,7 @@ export class MobileGateway {
       type: 'upsert',
     });
     if (!applied) return null;
-    const session = trimSessionWindow(applied.session);
+    const session = trimSessionWindow(applied.session, MOBILE_HISTORY_MESSAGES);
     this.sessions.set(key, session);
     return { type: 'session-changed', session };
   }

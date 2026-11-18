@@ -51,6 +51,8 @@ export function mobileAccess(directory: string, computers: ComputerManager) {
   const workspace: MobileGatewayWorkspace = {
     listComputers: async () => computers.listComputers(),
     listSessions: async hostId => computers.listSessions(hostId),
+    getSession: (input, hostId) =>
+      computers.getSession(input, hostId, { remember: false }),
     sendMessage: async (input, hostId) =>
       desktopSessionSchema.parse(
         await computers.execute('send-message', input, hostId),

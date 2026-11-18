@@ -1255,6 +1255,7 @@ export class ComputerManager {
   async getSession(
     input: GetSessionInput,
     hostId = 'local',
+    { remember = true }: { remember?: boolean } = {},
   ): Promise<DesktopSession> {
     const entry = this.get(hostId);
     if (entry.computer.status !== 'connected') {
@@ -1271,8 +1272,10 @@ export class ComputerManager {
     if (response.type !== 'session')
       throw new Error('Unexpected host response.');
     this.apply(entry, { type: 'session-changed', session: response.session });
-    this.remember(entry, response.session);
-    this.scheduleCache();
+    if (remember) {
+      this.remember(entry, response.session);
+      this.scheduleCache();
+    }
     return { ...response.session, hostId };
   }
 
