@@ -106,6 +106,10 @@ Status text uses `text-success-foreground`, `text-info-foreground`, `text-warnin
 
 **Overlays.** Dialog and Sheet share the `--overlay` backdrop with a 2 px blur.
 
+**Live regions.** The conversation transcript is a `role="log"` (`aria-live="polite"`, `aria-relevant="additions"`); the streaming message carries `aria-busy` so tokens are not read one by one. A visually hidden `role="status"` announces approval requests and the finished reply (an excerpt), remounted per session so opening a session announces nothing. Errors use StatusMessage `error` (`role="alert"`).
+
+**Long lists.** `content-visibility-auto` skips layout and paint of off-screen items and remembers their size (`contain-intrinsic-block-size: auto 8rem`). Transcript messages use it except the one streaming. It applies paint containment, so do not use it on items whose content must overflow them.
+
 **State preview.** `data-preview-hover`, `data-preview-focus` and `data-preview-active` force the hover, focus and pressed looks. They exist for the catalog; do not use them in product UI.
 
 ## Components

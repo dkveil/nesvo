@@ -1,0 +1,173 @@
+import { memo, type ReactNode } from 'react';
+import { BookOpen } from 'lucide-react';
+import { statusLabels, type Provider, type Session } from '@/entities/session';
+import { cn } from '@/shared/lib/cn';
+import { Chip } from '@/shared/ui/chip';
+import { InlineNotice } from '@/shared/ui/inline-notice';
+import { Separator } from '@/shared/ui/separator';
+import { StatusMessage } from '@/shared/ui/status-message';
+import { ClampedPrompt } from './clamped-prompt';
+import { CopyMessageButton } from './copy-message-button';
+import { interruptionLabels } from './interruption-labels';
+import { isLongPrompt } from './long-prompt';
+import { MessageBody } from './message-body';
+
+type Message = Session['messages'][number];
+
+type MessageArticleProps = {
+  message: Message;
+  provider: Provider;
+  live: boolean;
+  showActivity: boolean;
+  activity: ReactNode;
+  showInterruption: boolean;
+  selectionChange: string | undefined;
+};
+
+function sameRenderedMessage(previous: Message, next: Message) {
+  return (
+    previous === next ||
+    (previous.id === next.id &&
+      previous.author === next.author &&
+      previous.origin === next.origin &&
+      previous.body === next.body &&
+      previous.state === next.state &&
+      previous.completedAt === next.completedAt &&
+      previous.costWarning === next.costWarning &&
+      previous.skillId === next.skillId &&
+      previous.skillHash === next.skillHash &&
+      previous.interruption?.reason === next.interruption?.reason &&
+      JSON.stringify(previous.skill) === JSON.stringify(next.skill))
+  );
+}
+
+function sameArticle(previous: MessageArticleProps, next: MessageArticleProps) {
+  return (
+    !previous.showActivity &&
+    !next.showActivity &&
+    previous.provider === next.provider &&
+    previous.live === next.live &&
+    previous.showInterruption === next.showInterruption &&
+    previous.selectionChange === next.selectionChange &&
+    sameRenderedMessage(previous.message, next.message)
+  );
+}
+
+export const MessageArticle = memo(function MessageArticle({
+  message,
+  provider,
+  live,
+  showActivity,
+  activity,
+  showInterruption,
+  selectionChange,
+}: MessageArticleProps) {
+  return (
+    <>
+      {selectionChange && <Separator label={selectionChange} />}
+      <article
+        id={`message-${message.id}`}
+        data-message-id={message.id}
+        aria-label={message.author === 'operator' ? 'You' : provider}
+        data-author={message.author}
+        aria-busy={live || undefined}
+        className={cn(
+          'group space-y-2 rounded-control',
+          message.author === 'operator' && 'flex flex-col items-end',
+          !live && 'content-visibility-auto',
+        )}
+      >
+        <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
+          {message.origin === 'imported' && (
+            <Chip interactive={false} size="sm">
+              Imported
+            </Chip>
+          )}
+          {message.author === 'operator' &&
+            (message.skill || message.skillId) && (
+              <Chip
+                interactive={false}
+                size="sm"
+                icon={<BookOpen aria-hidden="true" />}
+                aria-label={
+                  message.skill
+                    ? `Requested skill: ${message.skill.name}`
+                    : 'Unresolved skill request'
+                }
+                title={
+                  message.skill
+                    ? [
+                        `${message.skill.source} · ${message.skill.path}`,
+                        message.skill.origins?.join(', '),
+                        message.skill.delivery === 'instructions'
+                          ? 'Shared instructions · static snapshot for this message'
+                          : message.skill.delivery === 'native'
+                            ? 'Native skill'
+                            : '',
+                        message.skill.contentHash
+                          ? `SHA-256: ${message.skill.contentHash}`
+                          : message.skillHash
+                            ? `SHA-256: ${message.skillHash}`
+                            : '',
+                      ]
+                        .filter(Boolean)
+                        .join('\n')
+                    : 'A skill was requested, but its source was not resolved.'
+                }
+                className="max-w-[70%] bg-highlight"
+              >
+                <span>{message.skill?.name ?? 'Requested skill'}</span>
+                {message.skill?.delivery === 'instructions' && (
+                  <span>Shared instructions</span>
+                )}
+              </Chip>
+            )}
+          {message.author === 'agent' &&
+            message.state !== 'completed' &&
+            !showActivity && (
+              <Chip interactive={false} size="sm">
+                <span>{statusLabels[message.state]}</span>
+              </Chip>
+            )}
+        </div>
+        {message.costWarning && (
+          <InlineNotice className="bg-accent">
+            {message.costWarning}
+          </InlineNotice>
+        )}
+        {showActivity && activity}
+        {(message.body || !live) &&
+          (message.author === 'operator' ? (
+            isLongPrompt(message.body) ? (
+              <ClampedPrompt>
+                <MessageBody
+                  body={message.body}
+                  className="rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
+                />
+              </ClampedPrompt>
+            ) : (
+              <MessageBody
+                body={message.body || 'No response text.'}
+                className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
+              />
+            )
+          ) : (
+            <MessageBody
+              body={message.body || 'No response text.'}
+              className="w-full text-sm leading-7"
+            />
+          ))}
+        {message.author === 'agent' && !live && message.body && (
+          <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
+            <CopyMessageButton body={message.body} />
+          </div>
+        )}
+        {message.interruption && showInterruption && (
+          <StatusMessage tone="warning">
+            {interruptionLabels[message.interruption.reason]}
+          </StatusMessage>
+        )}
+      </article>
+    </>
+  );
+}, sameArticle);

@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDown,
-  BookOpen,
   FolderOpen,
   ListEnd,
   Monitor,
@@ -13,7 +12,6 @@ import type {
   DesktopApi,
   ReasoningEffort,
   RespondApprovalInput,
-  SessionInterruption,
   SessionMode,
 } from '@nesvo/contracts';
 import {
@@ -37,9 +35,7 @@ import {
   ComposerToolbar,
 } from '@/shared/ui/composer';
 import { IconButton } from '@/shared/ui/icon-button';
-import { InlineNotice } from '@/shared/ui/inline-notice';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import { SelectSkill, type SelectedSkill } from '@/features/select-skill';
@@ -54,20 +50,14 @@ import {
 } from '@/features/new-thread/reasoning-effort';
 import { entityKey } from '@/shared/lib/host-key';
 import { MessageBody } from './message-body';
-import { CopyMessageButton } from './copy-message-button';
-import { ClampedPrompt } from './clamped-prompt';
-import { isLongPrompt } from './long-prompt';
+import { interruptionLabels } from './interruption-labels';
+import { MessageArticle } from './message-article';
 
 const MESSAGE_MAX_LENGTH = 32000;
 const PASTE_NOTICE_MS = 5000;
 const MODE_NOTICE_MS = 4000;
 const NEAR_BOTTOM_PX = 96;
-
-const interruptionLabels: Record<SessionInterruption['reason'], string> = {
-  'host-shutdown': 'Interrupted when Nesvo closed',
-  'host-restart': 'Recovered after the host stopped unexpectedly',
-  'provider-disconnected': 'Agent connection ended unexpectedly',
-};
+const ANNOUNCED_REPLY_LENGTH = 280;
 
 export type ModelSelection = {
   model: string;
@@ -309,6 +299,26 @@ export function Conversation({
       .filter(message => message.author === 'operator')
       .map(message => [message.runId, message.createdAt]),
   );
+  const activityRunIds = useMemo(
+    () =>
+      new Set([
+        ...session.activityTruncatedRunIds,
+        ...session.activities.map(item => item.runId),
+      ]),
+    [session.activities, session.activityTruncatedRunIds],
+  );
+  const lastAgent = session.messages.findLast(
+    message => message.author === 'agent',
+  );
+  const latestApproval = session.pendingApprovals.at(-1);
+  const announcement =
+    running && latestApproval
+      ? `${session.provider} needs approval: ${latestApproval.title}`
+      : !running && lastAgent?.completedAt && lastAgent === lastMessage
+        ? lastAgent.state === 'completed'
+          ? `${session.provider} replied. ${lastAgent.body.slice(0, ANNOUNCED_REPLY_LENGTH)}`
+          : `${session.provider}: ${statusLabels[lastAgent.state]}`
+        : '';
   const firstAgents = new Map<string, string>();
   for (const message of session.messages)
     if (message.author === 'agent' && !firstAgents.has(message.runId))
@@ -698,143 +708,56 @@ export function Conversation({
       data-host-id={session.hostId}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
+      <p key={session.id} role="status" className="sr-only">
+        {announcement}
+      </p>
       <ScrollArea
         className={
           empty ? 'h-0 min-h-0 shrink-0 overflow-hidden' : 'min-h-0 flex-1'
         }
       >
         <div className="mx-auto w-full max-w-[calc(var(--chat-column-width)+2.5rem)] space-y-8 px-5 py-10">
-          {session.messages.map(message => {
-            const live =
-              message.author === 'agent' &&
-              message.runId === session.runId &&
-              running;
-            const showActivity =
-              message.origin !== 'imported' &&
-              firstAgents.get(message.runId) === message.id &&
-              (live ||
-                !!message.completedAt ||
-                session.activityTruncatedRunIds.includes(message.runId) ||
-                session.activities.some(item => item.runId === message.runId));
-            const selectionChange = selectionChanges.get(message.id);
-            return (
-              <Fragment key={message.id}>
-                {selectionChange && <Separator label={selectionChange} />}
-                <article
-                  id={`message-${message.id}`}
-                  data-message-id={message.id}
-                  aria-label={
-                    message.author === 'operator' ? 'You' : session.provider
-                  }
-                  data-author={message.author}
-                  className={cn(
-                    'group space-y-2 rounded-control',
-                    message.author === 'operator' && 'flex flex-col items-end',
-                  )}
-                >
-                  <div className="flex max-w-full items-center gap-2 text-xs empty:hidden">
-                    {message.origin === 'imported' && (
-                      <Chip interactive={false} size="sm">
-                        Imported
-                      </Chip>
-                    )}
-                    {message.author === 'operator' &&
-                      (message.skill || message.skillId) && (
-                        <Chip
-                          interactive={false}
-                          size="sm"
-                          icon={<BookOpen aria-hidden="true" />}
-                          aria-label={
-                            message.skill
-                              ? `Requested skill: ${message.skill.name}`
-                              : 'Unresolved skill request'
-                          }
-                          title={
-                            message.skill
-                              ? [
-                                  `${message.skill.source} · ${message.skill.path}`,
-                                  message.skill.origins?.join(', '),
-                                  message.skill.delivery === 'instructions'
-                                    ? 'Shared instructions · static snapshot for this message'
-                                    : message.skill.delivery === 'native'
-                                      ? 'Native skill'
-                                      : '',
-                                  message.skill.contentHash
-                                    ? `SHA-256: ${message.skill.contentHash}`
-                                    : message.skillHash
-                                      ? `SHA-256: ${message.skillHash}`
-                                      : '',
-                                ]
-                                  .filter(Boolean)
-                                  .join('\n')
-                              : 'A skill was requested, but its source was not resolved.'
-                          }
-                          className="max-w-[70%] bg-highlight"
-                        >
-                          <span>
-                            {message.skill?.name ?? 'Requested skill'}
-                          </span>
-                          {message.skill?.delivery === 'instructions' && (
-                            <span>Shared instructions</span>
-                          )}
-                        </Chip>
-                      )}
-                    {message.author === 'agent' &&
-                      message.state !== 'completed' &&
-                      !showActivity && (
-                        <Chip interactive={false} size="sm">
-                          <span>{statusLabels[message.state]}</span>
-                        </Chip>
-                      )}
-                  </div>
-                  {message.costWarning && (
-                    <InlineNotice className="bg-accent">
-                      {message.costWarning}
-                    </InlineNotice>
-                  )}
-                  {showActivity &&
+          <div
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+            aria-label="Messages"
+            className="space-y-8"
+          >
+            {session.messages.map(message => {
+              const live =
+                message.author === 'agent' &&
+                message.runId === session.runId &&
+                running;
+              const showActivity =
+                message.origin !== 'imported' &&
+                firstAgents.get(message.runId) === message.id &&
+                (live ||
+                  !!message.completedAt ||
+                  activityRunIds.has(message.runId));
+              return (
+                <MessageArticle
+                  key={message.id}
+                  message={message}
+                  provider={session.provider}
+                  live={live}
+                  showActivity={showActivity}
+                  activity={
+                    showActivity &&
                     activity(
                       message.runId,
                       runStarts.get(message.runId) ?? null,
                       message.completedAt,
                       live ? session.status : message.state,
                       live,
-                    )}
-                  {(message.body || !live) &&
-                    (message.author === 'operator' ? (
-                      isLongPrompt(message.body) ? (
-                        <ClampedPrompt>
-                          <MessageBody
-                            body={message.body}
-                            className="rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
-                          />
-                        </ClampedPrompt>
-                      ) : (
-                        <MessageBody
-                          body={message.body || 'No response text.'}
-                          className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-sm leading-6"
-                        />
-                      )
-                    ) : (
-                      <MessageBody
-                        body={message.body || 'No response text.'}
-                        className="w-full text-sm leading-7"
-                      />
-                    ))}
-                  {message.author === 'agent' && !live && message.body && (
-                    <div className="flex items-center opacity-0 transition-opacity duration-base ease-out group-hover:opacity-100 focus-within:opacity-100">
-                      <CopyMessageButton body={message.body} />
-                    </div>
-                  )}
-                  {message.interruption && message.runId !== session.runId && (
-                    <StatusMessage tone="warning">
-                      {interruptionLabels[message.interruption.reason]}
-                    </StatusMessage>
-                  )}
-                </article>
-              </Fragment>
-            );
-          })}
+                    )
+                  }
+                  showInterruption={message.runId !== session.runId}
+                  selectionChange={selectionChanges.get(message.id)}
+                />
+              );
+            })}
+          </div>
           {session.error &&
             session.status !== 'interrupted' &&
             session.status !== 'completed' && (

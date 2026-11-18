@@ -377,6 +377,11 @@
   }
 }
 
+@utility content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 8rem;
+}
+
 @keyframes progress-indeterminate {
   from {
     translate: -100% 0;
