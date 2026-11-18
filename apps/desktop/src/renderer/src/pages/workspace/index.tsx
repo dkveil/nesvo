@@ -244,6 +244,9 @@ import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuratio
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
 import { conversationActions } from '@/features/conversation-context/conversation-actions';
+import { ResumeSessionDialog } from '@/features/resume-session/resume-session-dialog';
+import { ResumeSessionsDialog } from '@/features/resume-session/resume-sessions-dialog';
+import { resumeCandidates } from '@/features/resume-session/resume-candidates';
 import { SessionPullRequest } from '@/features/session-pull-request';
 import { PullRequestCard } from '@/features/session-pull-request/pull-request-card';
 import {
@@ -871,6 +874,10 @@ export function Workspace() {
     !!store.computers
       .find(computer => computer.id === hostId)
       ?.capabilities.includes('session-fork');
+  const supportsResume = (hostId: string) =>
+    !!store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('session-resume');
   const supportsCompaction = (hostId: string) =>
     !!store.computers
       .find(computer => computer.id === hostId)
@@ -915,6 +922,12 @@ export function Workspace() {
       : null;
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [restartTarget, setRestartTarget] = useState<Session | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<{
+    session: Session;
+    messageId: string;
+  } | null>(null);
+  const [resumeError, setResumeError] = useState('');
+  const [bulkResumeOpen, setBulkResumeOpen] = useState(false);
   const [forkTarget, setForkTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
   const [compactTarget, setCompactTarget] = useState<Session | null>(null);
@@ -2605,6 +2618,61 @@ ${text}`
       setThreadActionPending(false);
     }
   };
+  const resumeSession = async (
+    target: Session,
+    messageId: string,
+    text: string,
+  ) => {
+    setThreadActionPending(true);
+    setResumeError('');
+    try {
+      const session = await desktopApi(target.hostId).resumeSession({
+        sessionId: target.id,
+        messageId,
+        revision: target.revision,
+        text,
+      });
+      store.merge([session]);
+      const key = entityKey(session);
+      setErrors(previous => ({ ...previous, [key]: '' }));
+      setResumeTarget(null);
+      select(key);
+      return true;
+    } catch (error) {
+      setResumeError(errorDetail(error));
+      return false;
+    } finally {
+      setThreadActionPending(false);
+    }
+  };
+  const resumeFromList = async (
+    target: Session,
+    messageId: string,
+    text: string,
+  ) => {
+    try {
+      const session = await desktopApi(target.hostId).resumeSession({
+        sessionId: target.id,
+        messageId,
+        revision: target.revision,
+        text,
+      });
+      store.merge([session]);
+      return null;
+    } catch (error) {
+      return errorDetail(error);
+    }
+  };
+  const bulkResumeCandidates = resumeCandidates({
+    sessions: store.sessions.filter(
+      session => !session.archivedAt && store.hostReady(session.hostId),
+    ),
+    supportsResume,
+  });
+  const openResume = (session: Session) => {
+    setResumeError('');
+    setResumeTarget({ session, messageId: crypto.randomUUID() });
+  };
   const compactSession = async (target: Session, instructions?: string) => {
     setThreadActionPending(true);
     setCompactError('');
@@ -2643,7 +2711,9 @@ ${text}`
           session,
           canCompact: supportsCompaction(session.hostId),
           canRestart: supportsSessionFork(session.hostId),
+          canResume: supportsResume(session.hostId),
           busy: threadActionBusy(session),
+          onResume: () => openResume(session),
           onCompact: () => void compactSession(session),
           onCompactWithInstructions: () => {
             setCompactError('');
@@ -3008,6 +3078,13 @@ ${text}`
     deleteAction,
     housekeeping,
     onCleanUp: cleanupAvailable ? openCleanup : undefined,
+    resumableCount: bulkResumeCandidates.filter(
+      candidate => !candidate.restartOnly,
+    ).length,
+    onResumeSessions: () => {
+      setNavigationOpen(false);
+      setBulkResumeOpen(true);
+    },
     loading: store.loading,
     currentHostId: creating ? threadSetup.hostId : selectedHostId,
     sessions: store.sessions,
@@ -3206,6 +3283,9 @@ ${text}`
       reviewPullRequest: reviewSessionPullRequest,
       searchHistory: () => openHistorySearch(),
       cleanUp: cleanupAvailable ? openCleanup : undefined,
+      resumeSessions: bulkResumeCandidates.length
+        ? () => setBulkResumeOpen(true)
+        : undefined,
       openInTerminal:
         !browsing && !creating && selected && canOpenInTerminal(selected)
           ? () => void openInTerminal(selected)
@@ -3313,6 +3393,30 @@ ${text}`
           onClose={() => setForkTarget(null)}
         />
       )}
+      {resumeTarget && (
+        <ResumeSessionDialog
+          key={`${entityKey(resumeTarget.session)}/${resumeTarget.messageId}`}
+          session={resumeTarget.session}
+          error={resumeError}
+          onResume={text =>
+            resumeSession(
+              store.sessions.find(
+                session =>
+                  entityKey(session) === entityKey(resumeTarget.session),
+              ) ?? resumeTarget.session,
+              resumeTarget.messageId,
+              text,
+            )
+          }
+          onRestart={() => {
+            const target = resumeTarget.session;
+            setResumeTarget(null);
+            setRestartError('');
+            setRestartTarget(target);
+          }}
+          onClose={() => setResumeTarget(null)}
+        />
+      )}
       <ConfirmDialog
         open={!!restartTarget}
         onOpenChange={open => {
@@ -3371,6 +3475,13 @@ ${text}`
               if (groupId) void housekeeping.moveSession(target, groupId, 0);
             });
         }}
+      />
+      <ResumeSessionsDialog
+        open={bulkResumeOpen}
+        onOpenChange={setBulkResumeOpen}
+        candidates={bulkResumeCandidates}
+        computers={store.computers}
+        resume={resumeFromList}
       />
       <SessionCleanup
         open={cleanupOpen}

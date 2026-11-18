@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   PanelLeft,
   Pin,
+  Play,
   RadioTower,
   Search,
   Settings,
@@ -114,6 +115,8 @@ type Props = {
   threadActions?: (session: Session) => RowAction[];
   deleteAction?: (session: Session) => RowAction | null;
   onCleanUp?: () => void;
+  resumableCount?: number;
+  onResumeSessions?: () => void;
 };
 
 const TREE_INDENT_PX = 12;
@@ -192,6 +195,8 @@ export function SessionSidebar({
   filterKeys,
   onFilterChange,
   onCleanUp,
+  resumableCount = 0,
+  onResumeSessions,
 }: Props) {
   const [search, setSearch] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -216,9 +221,15 @@ export function SessionSidebar({
     filter === 'all' ||
     !filterKeys ||
     filterKeys[filter].has(entityKey(session));
+  const groupNameOf = (session: Session) =>
+    session.groupId && organized(session.hostId)
+      ? (housekeeping
+          ?.groups(session.hostId)
+          .find(group => group.id === session.groupId)?.name ?? '')
+      : '';
   const matches = (session: Session) =>
     matchesStatus(session) &&
-    `${session.title} ${sessionProjectLabel(session)} ${computerOf(session)?.name ?? ''}`
+    `${session.title} ${sessionProjectLabel(session)} ${groupNameOf(session)} ${computerOf(session)?.name ?? ''}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
   const runOf = (session: Session) =>
@@ -663,6 +674,25 @@ export function SessionSidebar({
             })}
           />
         )}
+        {(filter === 'needs-me' || filter === 'failed') &&
+          resumableCount > 0 &&
+          onResumeSessions && (
+            <NavItem
+              tone="sidebar"
+              size="md"
+              icon={<Play />}
+              onClick={onResumeSessions}
+              trailing={
+                <CountBadge
+                  count={resumableCount}
+                  tone="muted"
+                  aria-label={`${resumableCount} sessions to resume`}
+                />
+              }
+            >
+              Resume sessions…
+            </NavItem>
+          )}
         {search.trim() && (
           <NavItem
             tone="sidebar"
@@ -854,6 +884,7 @@ export function SessionSidebar({
                           )}
                           housekeeping={housekeeping}
                           searching={narrowed}
+                          byTopic={filtering}
                           renaming={renaming}
                           onRenamingChange={setRenaming}
                           archivedOpen={archivedHosts.includes(computer.id)}

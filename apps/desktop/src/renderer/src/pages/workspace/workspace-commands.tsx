@@ -2,9 +2,9 @@ import type { Computer, SessionGroup } from '@nesvo/contracts';
 import {
   Archive,
   BookOpen,
-  Compass,
   CalendarClock,
   ChartNoAxesColumn,
+  Compass,
   FileCode2,
   FolderOpen,
   GitPullRequest,
@@ -13,6 +13,7 @@ import {
   Inbox,
   Keyboard,
   PanelLeft,
+  Play,
   Settings,
   SquarePen,
   SquareTerminal,
@@ -53,6 +54,7 @@ export type WorkspaceCommandActions = {
   reviewPullRequest: Action;
   searchHistory: () => void;
   cleanUp: Action;
+  resumeSessions: Action;
   openInTerminal: Action;
   nextNeedsMe: () => void;
   needsMeCount: number;
@@ -185,6 +187,13 @@ export function workspaceCommands(
       icon: <Archive />,
       keywords: 'archive inactive old stale housekeeping tidy',
       run: actions.cleanUp,
+    },
+    {
+      id: 'resume-sessions',
+      label: 'Resume sessions…',
+      icon: <Play />,
+      keywords: 'continue failed interrupted stopped retry bulk selected',
+      run: actions.resumeSessions,
     },
     {
       id: 'open-in-terminal',

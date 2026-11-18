@@ -74,7 +74,9 @@ const ERROR_EXCERPT_LENGTH = 400;
 
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 
-export const resumeContinuationText = (
+export const RESUME_CONTINUATION_LEAD = 'Continue from where you stopped.';
+
+export const resumeContinuationDetail = (
   session: Pick<Session, 'status' | 'error'>,
 ): string => {
   const error = oneLine(session.error ?? '')
@@ -82,11 +84,17 @@ export const resumeContinuationText = (
     .replace(/[.\s]+$/, '');
   if (session.status === 'failed')
     return error
-      ? `Continue from where you stopped. The last turn failed with: ${error}.`
-      : 'Continue from where you stopped. The last turn failed.';
+      ? `The last turn failed with: ${error}.`
+      : 'The last turn failed.';
   if (session.status === 'interrupted')
-    return 'Continue from where you stopped. The last turn was interrupted before it finished.';
+    return 'The last turn was interrupted before it finished.';
   if (session.status === 'stopped')
-    return 'Continue from where you stopped. The last turn was stopped before it finished.';
-  return 'Continue from where you stopped.';
+    return 'The last turn was stopped before it finished.';
+  return '';
 };
+
+export const resumeContinuationText = (
+  session: Pick<Session, 'status' | 'error'>,
+  lead = RESUME_CONTINUATION_LEAD,
+): string =>
+  [oneLine(lead), resumeContinuationDetail(session)].filter(Boolean).join(' ');

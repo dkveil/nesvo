@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { FoldVertical, MessageSquareText, RotateCcw } from 'lucide-react';
+import { FoldVertical, MessageSquareText, Play, RotateCcw } from 'lucide-react';
+import { resumableSessionStates } from '@nesvo/contracts';
 import type { Session } from '@/entities/session';
 
 export type ConversationAction = {
-  id: 'compact' | 'compact-with-instructions' | 'restart';
+  id: 'resume' | 'compact' | 'compact-with-instructions' | 'restart';
   label: string;
   icon: ReactNode;
   keywords: string;
@@ -15,7 +16,9 @@ type Params = {
   session: Session;
   canCompact: boolean;
   canRestart: boolean;
+  canResume: boolean;
   busy: boolean;
+  onResume: () => void;
   onCompact: () => void;
   onCompactWithInstructions: () => void;
   onRestart: () => void;
@@ -25,14 +28,31 @@ export function conversationActions({
   session,
   canCompact,
   canRestart,
+  canResume,
   busy,
+  onResume,
   onCompact,
   onCompactWithInstructions,
   onRestart,
 }: Params): ConversationAction[] {
   const compactDisabled =
     busy || !session.providerInitialized || !!session.pendingClaudeFork;
+  const resumable = (resumableSessionStates as readonly string[]).includes(
+    session.status,
+  );
   return [
+    ...(canResume && resumable
+      ? [
+          {
+            id: 'resume' as const,
+            label: 'Resume…',
+            icon: <Play />,
+            keywords: 'continue retry failed interrupted stopped same thread',
+            disabled: busy,
+            run: onResume,
+          },
+        ]
+      : []),
     ...(canCompact
       ? [
           {
