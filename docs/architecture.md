@@ -504,7 +504,7 @@ When a turn would need a hold that the provider cannot give in that mode, `on_un
 
 ### Inbox items and restart
 
-Items are stored in SQLite (`inbox_items`, schema version 25, with the default route in `inbox_settings`) and streamed as `inbox-item-changed` events. An item carries the rule, the session, the route, the presentation (rendered text, command, bounded diff file list, linked pull request, plan, report) and the decision. Decisions use `decide-inbox-item` and are idempotent: a decided item returns unchanged. Items are never approved automatically and nothing is replayed after a restart: a hold bound to a provider request becomes `interrupted` with "nothing was approved and the held action did not run", while a hold on a pull request action, a workflow step or a session queue stays pending and can still be decided; approving it then performs the held action once.
+Items are stored in SQLite (`inbox_items`, schema version 27, with the default route in `inbox_settings`) and streamed as `inbox-item-changed` events. An item carries the rule, the session, the route, the presentation (rendered text, command, bounded diff file list, linked pull request, plan, report) and the decision. Decisions use `decide-inbox-item` and are idempotent: a decided item returns unchanged. Items are never approved automatically and nothing is replayed after a restart: a hold bound to a provider request becomes `interrupted` with "nothing was approved and the held action did not run", while a hold on a pull request action, a workflow step or a session queue stays pending and can still be decided; approving it then performs the held action once.
 
 ### Describing a rule
 

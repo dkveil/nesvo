@@ -26003,6 +26003,7 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
       approvalEvents.result.events.map(event => [event.sessionId, event.type]),
       [
         [childE, 'approval-pending'],
+        [childE, 'decision-made'],
         [childE, 'finished'],
       ],
     );
