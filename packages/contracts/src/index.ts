@@ -402,6 +402,12 @@ import {
   type WorktreeRecipeRun,
   type WorktreeRecipeTrialRefInput,
 } from './worktree-recipes';
+import {
+  coordinatorPolicySchema,
+  decideSessionParentSchema,
+  type CoordinatorPolicy,
+  type DecideSessionParentInput,
+} from './session-control';
 
 export * from './sessions';
 export * from './session-history';
@@ -416,6 +422,7 @@ export * from './running-apps';
 export * from './default-session-folder';
 export * from './worktree-recipes';
 export * from './workflow-share';
+export * from './session-control';
 export * from './reasoning-effort';
 export * from './activities';
 export * from './reviews';
@@ -983,6 +990,20 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('read-session-control-policy'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-session-control-policy'),
+    input: coordinatorPolicySchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-session-parent'),
+    input: decideSessionParentSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('list-scheduled-jobs'),
     input: listScheduledJobsSchema,
   }),
@@ -1369,6 +1390,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('tracked-repositories'),
     id: z.uuid(),
     repositories: trackedRepositoryListSchema,
+  }),
+  z.strictObject({
+    type: z.literal('session-control-policy'),
+    id: z.uuid(),
+    policy: coordinatorPolicySchema,
   }),
   z.strictObject({
     type: z.literal('running-apps'),
@@ -2037,5 +2063,14 @@ export type DesktopApi = {
     input: DecideWorkerPlanInput,
     hostId?: HostId,
   ) => Promise<DesktopSession>;
+  decideSessionParent: (
+    input: DecideSessionParentInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
+  readSessionControlPolicy: (hostId?: HostId) => Promise<CoordinatorPolicy>;
+  saveSessionControlPolicy: (
+    policy: CoordinatorPolicy,
+    hostId?: HostId,
+  ) => Promise<CoordinatorPolicy>;
   subscribe: (listener: (event: WorkspaceEvent) => void) => () => void;
 };

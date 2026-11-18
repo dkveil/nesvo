@@ -104,6 +104,13 @@ export const approvalSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
 });
+export const sessionParentRequestSchema = z.strictObject({
+  id: z.uuid(),
+  parentId: z.uuid(),
+  parentTitle: z.string().max(100),
+  requestedAt: z.iso.datetime(),
+});
+export type SessionParentRequest = z.infer<typeof sessionParentRequestSchema>;
 export const sessionStateSchema = z.enum([
   'ready',
   'running',
@@ -434,6 +441,7 @@ export const sessionSchema = z.strictObject({
     .strictObject({ attachedAt: z.iso.datetime() })
     .nullable()
     .default(null),
+  parentRequest: sessionParentRequestSchema.nullable().default(null),
 });
 export const claudeStatusSchema = z.strictObject({
   status: z.enum([
@@ -498,6 +506,7 @@ export type FinishSessionWorktreeInput = z.infer<
   typeof finishSessionWorktreeSchema
 >;
 export type Session = z.infer<typeof sessionSchema>;
+export type SessionState = z.infer<typeof sessionStateSchema>;
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type ForkSessionInput = z.infer<typeof forkSessionSchema>;
