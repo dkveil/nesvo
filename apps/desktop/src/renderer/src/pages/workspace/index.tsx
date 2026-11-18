@@ -59,6 +59,7 @@ import {
 import {
   directoryLabel,
   errorDetail,
+  folderBlocker,
   providerModes,
   providerStatusLabel,
   sessionFilterKeys,
@@ -1088,10 +1089,20 @@ export function Workspace() {
   const selectedProviderState = selected
     ? sessionStatuses[selected.provider]
     : undefined;
-  const activeRun = store.sessions.find(
+  const activeRun = !selected
+    ? undefined
+    : selected.status === 'running' || selected.status === 'stopping'
+      ? selected
+      : folderBlocker(selected, store.sessions);
+  const folderBusy = !!activeRun || !!selected?.waitingFor;
+  const waitingSessionId = selected?.waitingFor
+    ? selected.waitingFor.sessionId
+    : activeRun?.id;
+  const blockingSession = store.sessions.find(
     session =>
-      session.hostId === selectedHostId &&
-      (session.status === 'running' || session.status === 'stopping'),
+      session.id === waitingSessionId &&
+      session.id !== selected?.id &&
+      session.hostId === selectedHostId,
   );
   const diffReview =
     !browsing && diffTarget
@@ -1552,7 +1563,7 @@ export function Workspace() {
   const send = async (typed?: { text: string; skill: SelectedSkill }) => {
     if (!selected || sendingRef.current || connection !== 'ready') return;
     if (
-      !activeRun &&
+      !folderBusy &&
       (selectedProviderState?.status?.status !== 'ready' ||
         selectedProviderState.loading ||
         selectedProviderState.error)
@@ -1591,7 +1602,7 @@ export function Workspace() {
           setSelectedSkills(previous => ({ ...previous, [sessionKey]: null }));
         }
       },
-      !!activeRun,
+      folderBusy,
       selection,
       mode,
       attachments,
@@ -1599,7 +1610,7 @@ export function Workspace() {
     );
   };
   const resend = async () => {
-    if (!selected || sendingRef.current || connection !== 'ready' || activeRun)
+    if (!selected || sendingRef.current || connection !== 'ready' || folderBusy)
       return;
     const last = selected.messages.findLast(
       message => message.author === 'operator',
@@ -1794,19 +1805,8 @@ export function Workspace() {
       });
     }
   };
-  const hostRun = store.sessions.find(
-    session =>
-      session.hostId === threadSetup.hostId &&
-      (session.status === 'running' || session.status === 'stopping'),
-  );
   const threadBusyReason =
-    store.loading || store.error
-      ? 'Session history is still loading.'
-      : hostRun && isAutomationSession(hostRun)
-        ? `${automationLabel(hostRun)} is running on this computer.`
-        : hostRun
-          ? 'Another session is working on this computer.'
-          : '';
+    store.loading || store.error ? 'Session history is still loading.' : '';
   const stop = async (target: Session | undefined = selected) => {
     if (
       !target?.runId ||
@@ -2188,12 +2188,10 @@ export function Workspace() {
     const offline = hostOffline(job.hostId);
     if (offline) return offline;
     const running = runningSessions.find(
-      session => session.hostId === job.hostId,
+      session =>
+        session.hostId === job.hostId && session.scheduledJobId === job.id,
     );
-    if (!running) return '';
-    return isAutomationSession(running)
-      ? `${automationLabel(running)} is running.`
-      : 'Another session is working on this computer.';
+    return running ? `${automationLabel(running)} is running.` : '';
   };
   const runAutomationNow = async (job: ScheduledJob) => {
     const key = entityKey(job);
@@ -3575,8 +3573,8 @@ ${text}`
                         'session-worktrees',
                       )
                     ? 'Update the host and reconnect to finish the worktree.'
-                    : activeRun || sending
-                      ? 'Wait for active work on this computer to finish.'
+                    : folderBusy || sending
+                      ? 'Wait for active work in this folder to finish.'
                       : ''
               }
               onFinished={(session, choice) => {
@@ -4285,7 +4283,7 @@ ${text}`
                 canSend={
                   !sending &&
                   !finishedWorktree &&
-                  !activeRun &&
+                  !folderBusy &&
                   connection === 'ready' &&
                   selectedProviderState?.status?.status === 'ready' &&
                   !selectedProviderState.loading &&
@@ -4307,13 +4305,37 @@ ${text}`
                   )
                 }
                 otherRunLabel={
-                  activeRun && isAutomationSession(activeRun)
-                    ? automationBusy(activeRun, selectedKey)
-                    : undefined
+                  blockingSession && isAutomationSession(blockingSession) ? (
+                    automationBusy(blockingSession, selectedKey)
+                  ) : (
+                    <>
+                      Waiting for{' '}
+                      {directoryLabel(
+                        selected.waitingFor?.directory ??
+                          blockingSession?.directory ??
+                          selected.directory,
+                      )}
+                      {blockingSession && (
+                        <>
+                          {' · '}
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="inline"
+                            onClick={() =>
+                              goToSession(entityKey(blockingSession))
+                            }
+                          >
+                            {blockingSession.title}
+                          </Button>
+                        </>
+                      )}
+                    </>
+                  )
                 }
                 otherRun={
-                  !!activeRun &&
-                  activeRun.id !== selected.id &&
+                  folderBusy &&
+                  activeRun?.id !== selected.id &&
                   selected.status !== 'running' &&
                   selected.status !== 'stopping'
                 }

@@ -3642,7 +3642,7 @@ try {
         }
         await delay(100);
       }
-      if (!/Another session is working/.test(notice))
+      if (!/Waiting for |Another session is using this folder/.test(notice))
         throw new Error(`The assistant did not accept "${text}". ${notice}`);
       await delay(500);
     }

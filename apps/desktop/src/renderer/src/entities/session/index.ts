@@ -10,6 +10,7 @@ export { ProviderGlyph } from './provider-glyph';
 export { effortLabel } from './effort-label';
 export { ModeIcon } from './mode-icon';
 export { sessionMarkdown, sessionMarkdownFileName } from './session-markdown';
+export { folderBlocker, foldersOverlap } from './folder-blocker';
 export {
   sessionFilterKeys,
   sessionFilterLabels,

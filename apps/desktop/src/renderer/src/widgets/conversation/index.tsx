@@ -698,7 +698,7 @@ export function Conversation({
                     {mcpChip}
                     <span role="status" className="min-w-0 truncate">
                       {otherRun
-                        ? (otherRunLabel ?? 'Another session is working')
+                        ? (otherRunLabel ?? 'Waiting for this folder')
                         : uploading
                           ? 'Attaching files…'
                           : running && draft.trim()
