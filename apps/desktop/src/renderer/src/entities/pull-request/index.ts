@@ -10,6 +10,11 @@ import {
 export { PullRequestStateIcon } from './state-icon';
 export { ChecksIcon } from './checks-icon';
 export { RelativeTime } from './relative-time';
+export {
+  primePullRequestDetails,
+  usePullRequestDetails,
+  type PullRequestDetails,
+} from './use-pull-request-details';
 
 export type PullRequestApi = Pick<
   DesktopApi,
@@ -48,6 +53,23 @@ export const visualStateLabels: Record<PullRequestVisualState, string> = {
   draft: 'Draft',
   merged: 'Merged',
   closed: 'Closed',
+};
+
+export const checksLabels: Record<PullRequestSummary['checks'], string> = {
+  none: 'No checks',
+  pending: 'Checks pending',
+  passing: 'Checks passing',
+  failing: 'Checks failing',
+};
+
+export const reviewDecisionLabels: Record<
+  PullRequestSummary['reviewDecision'],
+  string
+> = {
+  approved: 'Approved',
+  'changes-requested': 'Changes requested',
+  'review-required': 'Review required',
+  none: '',
 };
 
 export function visualState(

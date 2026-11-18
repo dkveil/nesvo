@@ -2,8 +2,11 @@ import { useState, type FormEvent } from 'react';
 import type { PullRequestReference } from '@nesvo/contracts';
 import { GitPullRequest, Search } from 'lucide-react';
 import {
+  checksLabels,
   parseReferenceInput,
   PullRequestStateIcon,
+  usePullRequestDetails,
+  visualState,
   visualStateLabels,
   type PullRequestApi,
 } from '@/entities/pull-request';
@@ -15,9 +18,10 @@ import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
 import { ListRow } from '@/shared/ui/list-row';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { StatusDot } from '@/shared/ui/status-dot';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
-import { useLinkedState } from './use-linked-state';
+import { checksDotTones } from './checks-dot-tones';
 
 const LINK_FIELD_ID = 'session-pull-request-link';
 
@@ -25,6 +29,7 @@ type SessionPullRequestProps = {
   session: Session;
   unavailableReason: string;
   api: PullRequestApi;
+  reviewing?: boolean;
   onOpen: (reference: PullRequestReference) => void;
   onLinked: (session: Session) => void;
 };
@@ -40,16 +45,18 @@ export function SessionPullRequest({
   session,
   unavailableReason,
   api,
+  reviewing = false,
   onOpen,
   onLinked,
 }: SessionPullRequestProps) {
   const linked = session.pullRequest;
-  const state = useLinkedState({
+  const { data } = usePullRequestDetails({
     hostId: session.hostId,
     reference: linked,
     api,
     enabled: !unavailableReason,
   });
+  const state = data ? visualState(data) : null;
   const [open, setOpen] = useState(false);
   const [find, setFind] = useState<FindState>({ status: 'idle' });
   const [text, setText] = useState('');
@@ -57,10 +64,23 @@ export function SessionPullRequest({
   const [error, setError] = useState('');
   if (linked)
     return (
-      <Hint label={linked.repository} side="bottom">
+      <Hint
+        label={
+          data ? `${linked.repository} · ${data.title}` : linked.repository
+        }
+        side="bottom"
+      >
         <Chip
           size="sm"
-          aria-label={`Open pull request #${linked.number}${state ? `, ${visualStateLabels[state]}` : ''}`}
+          selected={reviewing}
+          data-session-pull-request={`${linked.repository}#${linked.number}`}
+          aria-label={[
+            `Review pull request #${linked.number}`,
+            state && visualStateLabels[state],
+            data && data.checks !== 'none' && checksLabels[data.checks],
+          ]
+            .filter(Boolean)
+            .join(', ')}
           onClick={() => onOpen(linked)}
           icon={
             state ? (
@@ -72,6 +92,12 @@ export function SessionPullRequest({
           className="tabular-nums"
         >
           <span>#{linked.number}</span>
+          {state && (
+            <span className="text-2xs">{visualStateLabels[state]}</span>
+          )}
+          {data && data.checks !== 'none' && (
+            <StatusDot tone={checksDotTones[data.checks]} />
+          )}
         </Chip>
       </Hint>
     );
