@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, normalize } from 'node:path';
 import {
   activityLimits,
+  delegationActivityTitle,
   modelEffortsSchema,
   skillLimits,
   type CodexStatus,
@@ -1718,7 +1719,7 @@ export function startCodex(options: CodexRunOptions): {
           makeActivity({
             id,
             kind: 'tool',
-            title: 'Delegate workers',
+            title: delegationActivityTitle,
             status: 'running',
             detail: 'Waiting for operator decisions and worker results.',
           }),
@@ -1756,7 +1757,7 @@ export function startCodex(options: CodexRunOptions): {
             makeActivity({
               id,
               kind: 'tool',
-              title: 'Delegate workers',
+              title: delegationActivityTitle,
               status: success ? 'completed' : 'failed',
               startedAt: toolActivities.get(id)?.startedAt,
             }),

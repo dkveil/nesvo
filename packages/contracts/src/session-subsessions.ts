@@ -29,6 +29,8 @@ export type SubsessionOverview<T extends SubsessionSource> = {
   visible: boolean;
 };
 
+export const delegationActivityTitle = 'Delegate workers';
+
 const commandKinds = new Set(['command', 'tool']);
 
 export const isSessionActive = (session: Pick<Session, 'status'>): boolean =>
@@ -93,7 +95,8 @@ export const runningCommandCount = (session: SubsessionSource): number =>
         activity =>
           activity.runId === session.runId &&
           activity.status === 'running' &&
-          commandKinds.has(activity.kind),
+          commandKinds.has(activity.kind) &&
+          activity.title !== delegationActivityTitle,
       ).length
     : 0;
 
