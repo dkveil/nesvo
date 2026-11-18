@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { retentionDaysSchema, transcriptRetentionSchema } from './data-policy';
+export * from './data-policy';
 import {
   createProviderProfileSchema,
   providerProfileListSchema,
@@ -680,6 +682,16 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: compactSessionSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-session-groups') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('get-transcript-retention'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-transcript-retention'),
+    input: retentionDaysSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('purge-transcripts') }),
   z.strictObject({ id: z.uuid(), method: z.literal('backup-database') }),
   z.strictObject({
     id: z.uuid(),
@@ -1239,6 +1251,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-deletion'),
     id: z.uuid(),
     deletion: sessionDeletionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('transcript-retention'),
+    id: z.uuid(),
+    retention: transcriptRetentionSchema,
   }),
   z.strictObject({
     type: z.literal('database-backup'),

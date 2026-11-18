@@ -98,6 +98,160 @@ test('host diagnostics redact secret patterns and secret environment values', ()
   for (const value of secretValues) assert.ok(!result.stderr.includes(value));
 });
 
+test(
+  'retention purges old archived history and cache while preserving active sessions and pending deletes',
+  { timeout: 30000 },
+  async t => {
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-retention-')),
+    );
+    const commandLog = join(directory, 'commands.jsonl');
+    const project = join(directory, 'project');
+    const pidFile = join(directory, 'fixture-pids.json');
+    await mkdir(project);
+    const transcript = join(directory, 'provider-transcript.jsonl');
+    await writeFile(transcript, 'provider-owned transcript');
+    const open = () =>
+      launch(directory, pidFile, {
+        NESVO_TEST_MODE: '1',
+        NESVO_WORKFLOWS_HOME: join(directory, 'workflows'),
+        NESVO_TEST_COMMAND_LOG: commandLog,
+      });
+    let host = open();
+    t.after(async () => {
+      if (host.child.exitCode === null && host.child.signalCode === null) {
+        try {
+          await host.stop();
+        } catch {
+          host.child.kill();
+        }
+      }
+      await host.exited;
+      await rm(directory, { recursive: true, force: true });
+    });
+    assert.deepEqual(
+      (await host.request('get-transcript-retention')).retention,
+      { days: null, purgedSessions: 0 },
+    );
+    const create = async title => {
+      const response = await host.request('create-session', {
+        title,
+        model: 'sonnet',
+        directory: project,
+      });
+      assert.equal(response.type, 'session');
+      return response.session.id;
+    };
+    const archived = await create('Retention archived fixture');
+    const active = await create('Retention active fixture');
+    const deleted = await create('Retention undo fixture');
+    assert.equal(
+      (
+        await host.request('set-session-archived', {
+          sessionId: archived,
+          archived: true,
+        })
+      ).type,
+      'session',
+    );
+    assert.equal(
+      (await host.request('delete-session', { sessionId: deleted })).type,
+      'session-deletion',
+    );
+    await host.stop();
+
+    const database = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      const old = '2020-01-01T00:00:00.000Z';
+      const age = database.prepare(
+        "UPDATE sessions SET updated_at = ?, document = json_set(document, '$.updatedAt', ?) WHERE id = ?",
+      );
+      for (const id of [archived, active, deleted]) age.run(old, old, id);
+      database
+        .prepare(
+          "INSERT INTO transcript_files (path, provider, provider_session_id, size, modified_at, indexed_at) VALUES (?, 'Claude Code', ?, 10, 1000, ?)",
+        )
+        .run(transcript, randomUUID(), old);
+      database
+        .prepare('INSERT INTO transcript_entries (path, body) VALUES (?, ?)')
+        .run(transcript, 'cached transcript text');
+      const attachment = join(directory, 'attachments', 'sessions', archived);
+      await mkdir(attachment, { recursive: true });
+      await writeFile(join(attachment, 'attachment.txt'), 'private attachment');
+    } finally {
+      database.close();
+    }
+
+    host = open();
+    assert.equal(
+      (await host.request('purge-transcripts')).retention.purgedSessions,
+      0,
+    );
+    assert.equal(
+      (await host.request('set-transcript-retention', 30)).retention.days,
+      30,
+    );
+    assert.deepEqual((await host.request('purge-transcripts')).retention, {
+      days: 30,
+      purgedSessions: 1,
+    });
+    assert.deepEqual(
+      (await host.request('list-sessions')).sessions.map(session => session.id),
+      [active],
+    );
+    assert.equal(
+      (await host.request('restore-session', { sessionId: deleted })).type,
+      'session',
+    );
+    assert.equal(
+      (await host.request('restore-session', { sessionId: archived })).code,
+      'not-found',
+    );
+    assert.equal(
+      (await host.request('search-history', { query: 'archived fixture' }))
+        .search.results.length,
+      0,
+    );
+    assert.equal(
+      await readFile(transcript, 'utf8'),
+      'provider-owned transcript',
+    );
+    assert.ok(
+      !existsSync(join(directory, 'attachments', 'sessions', archived)),
+    );
+    await host.request('claude-status');
+    const commands = (await readFile(commandLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.ok(commands.length > 0);
+    assert.ok(commands.every(command => command.forbidden === false));
+    await host.stop();
+
+    const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
+    try {
+      assert.equal(
+        check.prepare('SELECT count(*) AS count FROM transcript_entries').get()
+          .count,
+        0,
+      );
+      assert.equal(
+        check
+          .prepare('SELECT document FROM sessions WHERE id = ?')
+          .get(archived).document,
+        'null',
+      );
+    } finally {
+      check.close();
+    }
+    host = open();
+    assert.equal(
+      (await host.request('get-transcript-retention')).retention.days,
+      30,
+    );
+  },
+);
+
 const fixturePath = fileURLToPath(
   new URL('./claude-fixture.mjs', import.meta.url),
 );

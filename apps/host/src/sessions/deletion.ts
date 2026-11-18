@@ -10,6 +10,7 @@ import {
   type Session,
   type SessionDeletion,
 } from '@nesvo/contracts';
+import { readRetentionDays, retentionCutoff } from './retention';
 import { SessionError, type SessionService } from './service';
 
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -41,6 +42,7 @@ const waitsForOperator = (session: Session) =>
 export class SessionDeletions {
   private timer?: ReturnType<typeof setTimeout>;
   private closed = false;
+  private retentionTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly database: DatabaseSync,
@@ -53,11 +55,76 @@ export class SessionDeletions {
 
   start(): void {
     this.purgeExpired();
+    this.runRetention();
+    this.retentionTimer = setInterval(
+      () => this.runRetention(),
+      60 * 60 * 1000,
+    ).unref();
   }
 
   close(): void {
     this.closed = true;
+    clearInterval(this.retentionTimer);
     clearTimeout(this.timer);
+  }
+
+  retention() {
+    return { days: readRetentionDays(this.database), purgedSessions: 0 };
+  }
+
+  setRetention(days: number | null) {
+    this.database
+      .prepare(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('transcript_retention_days', ?)",
+      )
+      .run(days?.toString() ?? '');
+    return this.retention();
+  }
+
+  private runRetention() {
+    void this.purgeRetained().catch(() =>
+      hostDiagnostic('Expired transcripts could not be purged.'),
+    );
+  }
+
+  async purgeRetained() {
+    const { days } = this.retention();
+    if (days === null) return { days, purgedSessions: 0 };
+    const cutoff = retentionCutoff(days, this.now());
+    const all = this.sessions.list();
+    const reviewSessions = new Set(
+      this.reviews
+        .list()
+        .filter(review => review.status === 'pending')
+        .map(review => review.sessionId),
+    );
+    const targets = new Map<string, string>();
+    for (const root of all) {
+      if (!isGroupableSession(root) || root.workflowRunId || !root.archivedAt)
+        continue;
+      const tree = [root, ...this.descendants(root, all)];
+      if (
+        tree.some(
+          item =>
+            item.updatedAt >= cutoff.toISOString() ||
+            item.queue.length > 0 ||
+            this.sessions.isRunning(item.id) ||
+            waitsForOperator(item) ||
+            reviewSessions.has(item.id),
+        )
+      )
+        continue;
+      for (const item of tree) targets.set(item.id, root.id);
+    }
+    this.database
+      .prepare('DELETE FROM transcript_files WHERE modified_at < ?')
+      .run(cutoff.getTime());
+    if (targets.size === 0) return { days, purgedSessions: 0 };
+    const ids = [...targets.keys()];
+    const deletion = this.purge(ids, targets);
+    this.emit({ type: 'sessions-removed', sessionIds: ids });
+    await deletion;
+    return { days, purgedSessions: ids.length };
   }
 
   delete(input: DeleteSessionInput): SessionDeletion {
@@ -151,11 +218,11 @@ export class SessionDeletions {
       )
       .all(this.now().toISOString())
       .map(row => String(row.sessionId));
-    if (expired.length) this.purge(expired);
+    if (expired.length) void this.purge(expired);
     this.arm();
   }
 
-  private purge(sessionIds: string[]): void {
+  private purge(sessionIds: string[], roots?: ReadonlyMap<string, string>) {
     const released = new Set(
       sessionIds.flatMap(sessionId =>
         this.attachmentIds('WHERE sessions.id = ?', sessionId),
@@ -166,18 +233,27 @@ export class SessionDeletions {
       const statements = [
         'DELETE FROM history_entries WHERE session_id = ?',
         'DELETE FROM reviews WHERE session_id = ?',
+        'DELETE FROM cost_turns WHERE session_id = ?',
+        'DELETE FROM session_quarantine WHERE session_id = ?',
         "UPDATE sessions SET document = 'null', create_request_id = NULL WHERE id = ?",
       ].map(sql => this.database.prepare(sql));
       const mark = this.database.prepare(
         'UPDATE session_tombstones SET purged_at = ? WHERE session_id = ?',
       );
+      if (roots) {
+        const insert = this.database.prepare(
+          'INSERT INTO session_tombstones (session_id, root_id, deleted_at, purge_after) VALUES (?, ?, ?, ?)',
+        );
+        for (const [id, root] of roots)
+          insert.run(id, root, purgedAt, purgedAt);
+      }
       for (const sessionId of sessionIds) {
         for (const statement of statements) statement.run(sessionId);
         mark.run(purgedAt, sessionId);
       }
     });
     for (const id of this.attachmentIds('')) released.delete(id);
-    void this.releaseFiles(sessionIds, released);
+    return this.releaseFiles(sessionIds, released);
   }
 
   private attachmentIds(filter: string, ...values: string[]): string[] {

@@ -1114,6 +1114,9 @@ export class ComputerManager {
       'set-session-terminal': 'session',
       'list-conversations': 'conversation-import-catalog',
       'adopt-conversation': 'session',
+      'get-transcript-retention': 'transcript-retention',
+      'set-transcript-retention': 'transcript-retention',
+      'purge-transcripts': 'transcript-retention',
       'backup-database': 'database-backup',
       'list-running-apps': 'running-apps',
       'read-default-session-folder': 'default-session-folder',
@@ -1149,6 +1152,8 @@ export class ComputerManager {
         return response.catalog;
       case 'mcp-servers':
         return response.list;
+      case 'transcript-retention':
+        return response.retention;
       case 'database-backup':
         return response.backup;
       case 'workspace-directory':

@@ -127,6 +127,8 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'set-session-pinned',
   'set-session-terminal',
   'set-session-archived',
+  'set-transcript-retention',
+  'purge-transcripts',
   'delete-session',
   'restore-session',
   'set-session-mcp',
@@ -1907,6 +1909,39 @@ export const serveHost = ({
               probes.pending.delete(pending);
             });
           probes.pending.add(pending);
+          continue;
+        }
+        if (
+          request.method === 'get-transcript-retention' ||
+          request.method === 'set-transcript-retention' ||
+          request.method === 'purge-transcripts'
+        ) {
+          const response = yield* Effect.promise(
+            async (): Promise<HostReply> => {
+              try {
+                const retention =
+                  request.method === 'purge-transcripts'
+                    ? await deletions.purgeRetained()
+                    : request.method === 'set-transcript-retention'
+                      ? deletions.setRetention(request.input)
+                      : deletions.retention();
+                return {
+                  type: 'transcript-retention',
+                  id: request.id,
+                  retention,
+                };
+              } catch {
+                return {
+                  type: 'error',
+                  id: request.id,
+                  code: 'unavailable',
+                  message:
+                    'The host could not update transcript retention. Try again.',
+                };
+              }
+            },
+          );
+          yield* Effect.tryPromise(() => send(response));
           continue;
         }
         const response = yield* Effect.sync((): HostReply => {

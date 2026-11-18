@@ -325,6 +325,8 @@ Restart requires confirmation for the current session revision. It clears the pr
 
 ## Settings, backups and export
 
+Transcript retention defaults to Keep forever. A saved number of days applies to archived session trees whose most recent changes are older than the cutoff. Running work, queued messages, pending decisions, workflow and automation sessions, unarchived history and sessions within the delete undo period are outside this sweep. The host checks at startup and hourly; Purge now applies the saved setting and reports how many sessions expired. Expiry permanently removes the eligible history, search entries, reviews, cost records and unused attachment copies. Old cached CLI transcript search entries also expire. The provider-owned transcripts themselves and existing backups remain available.
+
 Settings › Defaults stores the new-session provider, model, permission mode and worktree choice as a local view preference in `localStorage`; the folder row edits the selected computer's default session folder (see New thread) and falls back to the former local folder field for a host without the `default-session-folder` capability. They only pre-fill the new session form; each unset field keeps the last used value. Group defaults are applied on top when a session starts in a group, and existing sessions never change. The model and mode lists come from the selected computer's provider report. The worktree default applies only when the chosen folder supports a worktree.
 
 Settings › Notifications turns desktop notifications for approvals and finished runs on or off on this desktop and can send a test notification. Taskbar attention for approvals is unaffected.

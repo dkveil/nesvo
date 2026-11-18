@@ -1,3 +1,4 @@
+import { readRetentionDays, retentionCutoff } from './retention';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
@@ -310,6 +311,9 @@ export class TranscriptIndex {
     file: TranscriptFile,
     transcript: Transcript | undefined,
   ) {
+    const days = readRetentionDays(this.database);
+    if (days !== null && file.modifiedAt < retentionCutoff(days).getTime())
+      return;
     this.transaction(() => {
       this.database
         .prepare('DELETE FROM transcript_entries WHERE path = ?')

@@ -238,7 +238,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
     if (existing && version < DATABASE_VERSION)
       backupBeforeMigration(database, path, version);
     database.exec(
-      'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250;',
+      'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250; PRAGMA secure_delete = ON;',
     );
     database.exec('BEGIN IMMEDIATE');
     try {
