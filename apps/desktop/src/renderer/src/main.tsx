@@ -5,10 +5,12 @@ import { App } from './app';
 import { AppErrorBoundary } from './app-error-boundary';
 import './styles.css';
 
-document.documentElement.classList.add('dark');
-window.nesvo.onAppliedColorScheme(scheme =>
-  document.documentElement.classList.toggle('dark', scheme === 'dark'),
-);
+let colorSchemeApplied = false;
+window.nesvo.onAppliedColorScheme(scheme => {
+  colorSchemeApplied = true;
+  document.documentElement.classList.toggle('dark', scheme === 'dark');
+});
+if (!colorSchemeApplied) document.documentElement.classList.add('dark');
 if (navigator.userAgent.includes('Macintosh'))
   document.documentElement.dataset.platform = 'mac';
 const describeFailure = (value: unknown) =>
