@@ -1,4 +1,6 @@
 import {
+  findWorkflowShareFileSecrets,
+  workflowShareSecretLabels,
   workflowSharingLimits,
   type DefinitionIssue,
   type DefinitionKind,
@@ -23,12 +25,42 @@ import {
   readDefinitionFile,
   resolveWriteRoots,
 } from './definitions';
-import { maskProbeText, secretPatterns, detectedLabels } from './steps/sensitive-patterns';
+import {
+  detectedLabels,
+  maskProbeText,
+  secretPatterns,
+} from './steps/sensitive-patterns';
 import { saveDefinition, type ActiveRunLookup } from './writer';
 
 type ShareFile = { fileName: string; content: string };
 
 const SUGGESTION_ATTEMPTS = 50;
+
+const LINE_BREAK = /\r?\n/;
+
+function lineLabels(fileName: string, content: string) {
+  const labels = new Map<number, Set<string>>();
+  const add = (line: number, label: string) =>
+    labels.set(line, (labels.get(line) ?? new Set()).add(label));
+  content.split(LINE_BREAK).forEach((text, index) => {
+    for (const label of detectedLabels(text, secretPatterns))
+      add(index + 1, label);
+  });
+  for (const finding of findWorkflowShareFileSecrets({ fileName, content }))
+    add(finding.line, workflowShareSecretLabels[finding.kind]);
+  return labels;
+}
+
+function maskedExcerpt(line: string): string {
+  const masked = maskProbeText(line.trim()).slice(
+    0,
+    workflowSharingLimits.excerpt,
+  );
+  return findWorkflowShareFileSecrets({ fileName: 'excerpt', content: masked })
+    .length
+    ? '[masked]'
+    : masked;
+}
 
 export function scanShareFiles(files: readonly ShareFile[]): {
   findings: WorkflowShareFinding[];
@@ -36,22 +68,23 @@ export function scanShareFiles(files: readonly ShareFile[]): {
 } {
   const findings: WorkflowShareFinding[] = [];
   let count = 0;
-  for (const file of files)
-    file.content.split(/\r?\n/).forEach((line, index) => {
-      for (const label of detectedLabels(line, secretPatterns)) {
+  for (const file of files) {
+    const lines = file.content.split(LINE_BREAK);
+    const labels = [...lineLabels(file.fileName, file.content)].toSorted(
+      ([left], [right]) => left - right,
+    );
+    for (const [line, found] of labels)
+      for (const label of found) {
         count++;
         if (findings.length < workflowSharingLimits.findings)
           findings.push({
             fileName: file.fileName,
-            line: index + 1,
+            line,
             label,
-            excerpt: maskProbeText(line.trim()).slice(
-              0,
-              workflowSharingLimits.excerpt,
-            ),
+            excerpt: maskedExcerpt(lines[line - 1] ?? ''),
           });
       }
-    });
+  }
   return { findings, count };
 }
 
@@ -99,6 +132,10 @@ function issueAt(path: string, message: string): DefinitionIssue {
   return { severity: 'error', path, line: null, message };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function renameWorkflowDocument(
   content: string,
   from: string,
@@ -110,7 +147,7 @@ export function renameWorkflowDocument(
   );
   if (!frontmatter) return null;
   const pattern = new RegExp(
-    `^(name:[ \\t]*)(["']?)${from}\\2([ \\t]*)$`,
+    `^(name:[ \\t]*)(["']?)${escapeRegExp(from)}\\2([ \\t]*)$`,
     'm',
   );
   if (!pattern.test(frontmatter[2]!)) return null;
