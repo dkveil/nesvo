@@ -125,6 +125,8 @@ Deprecated aliases kept so existing callers compile: `default` = `lg` (36 px), `
 
 **Chip** — `shared/ui/chip.tsx`. Compact triggers in composers, filters and toolbars (`ComposerChip` re-exports it). Sizes `sm` (24) and `md` (28, default), optional `icon`, `selected`, `interactive={false}` for a static span. Wrap the label in a `<span>` so it truncates at 224 px.
 
+**AttachmentChip** — `shared/ui/attachment-chip.tsx`. An image thumbnail tile for attachments in the composer (`size="sm"`, 48 px) and in history (`md`, 80 px). `name` and `detail` (size, error) form the accessible name and the tooltip. `status` `ready | uploading | failed`: uploading dims the image under a Spinner, failed draws an error border. `onOpen` makes the thumbnail a button that opens the image (the composer and history open a Dialog lightbox); `onRemove` adds a 16 px round remove IconButton on the corner. Without `src` it shows a placeholder glyph. Not for file names without a preview (use Chip).
+
 **Input / Textarea** — `shared/ui/input.tsx`, `shared/ui/textarea.tsx`. Sizes `sm` `md` `lg`, `variant="ghost"` for inline titles and composer fields (no border, no ring; the container shows focus). Invalid uses `aria-invalid`, which draws an error border.
 
 **SearchField** — `shared/ui/search-field.tsx`. Variants `panel` (panel headers and toolbars), `sidebar`, `underline` (top of a picker or popover), `palette` (command palette, history search). `onClear` adds a clear button while there is a value; `shortcut` shows a key hint while empty. `icon` replaces the search glyph for lookup fields (a repository, a link) and `trailing` holds an inline action such as an xs ghost Open button. `PanelSearch` is the panel variant.

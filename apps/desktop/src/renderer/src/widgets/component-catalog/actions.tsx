@@ -15,6 +15,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AddTile } from '@/shared/ui/add-tile';
+import { AttachmentChip } from '@/shared/ui/attachment-chip';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -38,6 +39,10 @@ const VARIANTS = [
 const SIZES = ['xs', 'sm', 'md', 'lg'] as const;
 
 const ICON_SIZES = [16, 20, 24, 28, 32, 40] as const;
+
+const SAMPLE_IMAGE = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#27272a"/><rect x="8" y="10" width="64" height="8" rx="2" fill="#52525b"/><rect x="8" y="26" width="40" height="6" rx="2" fill="#3f3f46"/><rect x="8" y="38" width="52" height="6" rx="2" fill="#3f3f46"/><rect x="8" y="54" width="28" height="14" rx="3" fill="#fafafa"/></svg>',
+)}`;
 
 export function ActionsSection() {
   return (
@@ -271,6 +276,43 @@ export function ActionsSection() {
           <Chip size="sm" interactive={false} icon={<Bot />}>
             <span>Static chip</span>
           </Chip>
+        </SpecimenRow>
+      </Specimen>
+      <Specimen title="AttachmentChip" source="shared/ui/attachment-chip.tsx">
+        <SpecimenRow
+          label="sm · ready · uploading · failed · no preview"
+          className="gap-3 pt-2"
+        >
+          <AttachmentChip
+            name="screenshot.png"
+            detail="182 KB"
+            src={SAMPLE_IMAGE}
+            onOpen={() => undefined}
+            onRemove={() => undefined}
+          />
+          <AttachmentChip
+            name="uploading.png"
+            src={SAMPLE_IMAGE}
+            status="uploading"
+            onRemove={() => undefined}
+          />
+          <AttachmentChip
+            name="broken.png"
+            detail="Could not attach broken.png"
+            src={SAMPLE_IMAGE}
+            status="failed"
+            onRemove={() => undefined}
+          />
+          <AttachmentChip name="missing.png" detail="Preview unavailable" />
+        </SpecimenRow>
+        <SpecimenRow label="md (history)" className="gap-3">
+          <AttachmentChip
+            name="screenshot.png"
+            detail="182 KB"
+            size="md"
+            src={SAMPLE_IMAGE}
+            onOpen={() => undefined}
+          />
         </SpecimenRow>
       </Specimen>
       <Specimen title="AddTile" source="shared/ui/add-tile.tsx">
