@@ -24,6 +24,7 @@ import {
   ArrowLeft,
   BookOpen,
   FileCode2,
+  FolderCheck,
   FolderOpen,
   Gauge,
   FileDown,
@@ -86,7 +87,7 @@ import {
 } from '@/shared/ui/dialog';
 import { BranchChip } from '@/features/git-branch/branch-chip';
 import { useGitBranch } from '@/features/git-branch/use-git-branch';
-import { FinishWorktree } from '@/features/session-worktree/finish-worktree';
+import { FinishWorktreeDialog } from '@/features/session-worktree/finish-worktree';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ProjectChip } from '@/shared/ui/project-chip';
@@ -721,6 +722,7 @@ export function Workspace() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [restartTarget, setRestartTarget] = useState<Session | null>(null);
   const [restartError, setRestartError] = useState('');
+  const [finishingWorktree, setFinishingWorktree] = useState(false);
   const [threadActionPending, setThreadActionPending] = useState(false);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -2144,6 +2146,21 @@ ${text}`
     !browsing && !creating && selected
       ? [...threadActions(selected), exportAction(selected)]
       : [];
+  const finishWorktreeAvailable =
+    !browsing && !creating && !!selected?.worktree && !!window.nesvo;
+  const headerActions: RowAction[] = [
+    ...headerThreadActions,
+    ...(finishWorktreeAvailable
+      ? [
+          ...(headerThreadActions.length ? ['separator' as const] : []),
+          {
+            label: 'Finish worktree…',
+            icon: <FolderCheck />,
+            onSelect: () => setFinishingWorktree(true),
+          },
+        ]
+      : []),
+  ];
   const forkSource = !browsing && !creating ? selected?.forkOf : null;
   const sidebarProps = {
     threadActions,
@@ -2663,8 +2680,8 @@ ${text}`
                 {sessionStatusLabel(selected)}
               </span>
             )}
-          {headerWorktree && selected && window.nesvo && (
-            <FinishWorktree
+          {finishingWorktree && headerWorktree && selected && window.nesvo && (
+            <FinishWorktreeDialog
               key={selectedKey}
               sessionId={selected.id}
               worktree={headerWorktree}
@@ -2684,6 +2701,7 @@ ${text}`
                 store.merge([session]);
                 if (choice === 'pull-request') openPullRequestsNow(session);
               }}
+              onClose={() => setFinishingWorktree(false)}
             />
           )}
           <IconButton
@@ -2695,11 +2713,11 @@ ${text}`
           >
             <Plus />
           </IconButton>
-          {headerThreadActions.length > 0 && (
+          {headerActions.length > 0 && (
             <RowActionsMenu
               header
               label="Session actions"
-              actions={headerThreadActions}
+              actions={headerActions}
             />
           )}
           {cardRun ? (

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ellipsis, GitFork } from 'lucide-react';
 import type {
   DesktopApi,
   DesktopSession,
@@ -17,13 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/shared/ui/dropdown-menu';
-import { IconButton } from '@/shared/ui/icon-button';
 import { Label } from '@/shared/ui/label';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import { StatusMessage } from '@/shared/ui/status-message';
@@ -36,51 +28,30 @@ type Props = {
   api: Pick<DesktopApi, 'readSessionWorktree' | 'finishSessionWorktree'>;
   blockedReason: string;
   onFinished: (session: DesktopSession, choice: Choice) => void;
+  onClose: () => void;
 };
 
 const choices = [
   { value: 'keep', label: 'Keep' },
-  { value: 'pull-request', label: 'Open pull request' },
+  { value: 'pull-request', label: 'Pull request' },
   { value: 'remove', label: 'Remove' },
 ] satisfies { value: Choice; label: string }[];
 
 const choiceDetails: Record<Choice, string> = {
   keep: 'Finish the session and keep the local worktree.',
   'pull-request':
-    'Finish the session and open Pull requests with the branch selected. Publish the branch and create the pull request separately.',
+    'Finish the session and open Pull requests with this branch selected. Publishing the branch and creating the pull request stay separate steps.',
   remove: 'Permanently remove the worktree folder and keep the Git branch.',
 };
 
-export function FinishWorktree(props: Props) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild>
-          <IconButton size={32} label="Session actions">
-            <Ellipsis />
-          </IconButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => setOpen(true)}>
-            <GitFork />
-            Finish…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {open && <FinishDialog {...props} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-function FinishDialog({
+export function FinishWorktreeDialog({
   api,
   sessionId,
   worktree,
   blockedReason,
   onFinished,
   onClose,
-}: Props & { onClose: () => void }) {
+}: Props) {
   const [choice, setChoice] = useState<Choice>(
     worktree.state === 'active' ? 'keep' : 'pull-request',
   );
@@ -149,13 +120,15 @@ function FinishDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Finish worktree session</DialogTitle>
+          <DialogTitle>Finish worktree</DialogTitle>
           <DialogDescription className="break-all">
             {worktree.branch}
           </DialogDescription>
         </DialogHeader>
         <SegmentedControl
           label="Finish action"
+          size="md"
+          fullWidth
           value={choice}
           onChange={next => {
             setChoice(next);
@@ -195,12 +168,19 @@ function FinishDialog({
         )}
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={pending}>
+          <Button
+            size="lg"
+            variant="ghost"
+            onClick={onClose}
+            disabled={pending}
+          >
             Cancel
           </Button>
           <Button
+            size="lg"
             variant={choice === 'remove' ? 'destructive' : 'default'}
             disabled={disabled}
+            aria-busy={pending || undefined}
             onClick={() => void finish()}
           >
             {pending
@@ -209,7 +189,7 @@ function FinishDialog({
                 ? 'Remove worktree'
                 : choice === 'keep'
                   ? 'Finish and keep'
-                  : 'Open pull requests'}
+                  : 'Finish and open pull requests'}
           </Button>
         </DialogFooter>
       </DialogContent>
