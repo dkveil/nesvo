@@ -255,21 +255,36 @@ function RowSpecimens() {
           />
         </div>
       </StateCaption>
-      <StateCaption label="two-line · meta · visible actions">
-        <div className="w-full rounded-control border bg-card p-1">
+      <StateCaption label="info-panel · compact · visible open action">
+        <div className="w-full rounded-control border border-info-panel-border bg-info-panel p-1">
+          <ListRow
+            leading={<StatusDot tone="info" variant="spinner" size="md" />}
+            title="Sample worker"
+            trailing={<span>4m 12s</span>}
+            actionsPlacement="visible"
+            actions={
+              <IconButton size={24} label="Open sample worker">
+                <ChevronRight />
+              </IconButton>
+            }
+            onClick={() => undefined}
+          />
+        </div>
+      </StateCaption>
+      <StateCaption label="info-panel · two-line sm · actions on hover">
+        <div className="w-full rounded-control border border-info-panel-border bg-info-panel p-1">
           <ListRow
             density="two-line"
-            leading={<StatusDot tone="info" size="md" />}
+            size="sm"
+            leading={<StatusDot tone="warning" size="md" />}
             title="Sample worker"
             meta={
               <>
-                <span className="text-info-foreground">Working</span>
-                <span>4m 12s</span>
+                <span className="text-warning-foreground">Needs approval</span>
+                <span>12s</span>
               </>
             }
-            description="Sample model · sample/branch"
-            trailing={<ChevronRight className="size-3.5" />}
-            actionsPlacement="visible"
+            description="Sample model"
             actions={
               <IconButton size={24} tone="danger" label="Stop sample worker">
                 <Square className="fill-current" />
