@@ -9,6 +9,7 @@ import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -211,18 +212,10 @@ export function BudgetDialog({
           )}
           {error && <InlineNotice tone="error">{error}</InlineNotice>}
           <DialogFooter>
-            <Button
-              type="button"
-              size="md"
-              variant="ghost"
-              disabled={saving}
-              onClick={onClose}
-            >
-              Cancel
-            </Button>
+            <DialogCancel disabled={saving} onClick={onClose} />
             <Button
               type="submit"
-              size="md"
+              size="lg"
               variant={removing ? 'destructive' : 'default'}
               disabled={saving}
             >

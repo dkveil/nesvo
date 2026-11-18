@@ -15,6 +15,7 @@ import { Chip } from '@/shared/ui/chip';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
+  DialogCancel,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -358,9 +359,7 @@ export function OverlaysSection() {
               </DialogHeader>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button variant="ghost" size="lg">
-                    Cancel
-                  </Button>
+                  <DialogCancel />
                 </DialogClose>
                 <DialogClose asChild>
                   <Button variant="destructive" size="lg">
@@ -401,7 +400,7 @@ export function OverlaysSection() {
                 Body content.
               </div>
               <SheetFooter>
-                <Button variant="outline" size="md">
+                <Button variant="ghost" size="md">
                   Cancel
                 </Button>
                 <Button size="md">Save</Button>

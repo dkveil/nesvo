@@ -10,6 +10,7 @@ import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -168,14 +169,7 @@ export function FinishWorktreeDialog({
         )}
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
         <DialogFooter>
-          <Button
-            size="lg"
-            variant="ghost"
-            onClick={onClose}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
+          <DialogCancel onClick={onClose} disabled={pending} />
           <Button
             size="lg"
             variant={choice === 'remove' ? 'destructive' : 'default'}

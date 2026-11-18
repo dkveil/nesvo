@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -73,15 +74,9 @@ export function ConfirmDialog({
         </DialogHeader>
         {children}
         <DialogFooter>
-          <Button
-            size="lg"
-            type="button"
-            variant="ghost"
-            disabled={pending}
-            onClick={() => onOpenChange(false)}
-          >
+          <DialogCancel disabled={pending} onClick={() => onOpenChange(false)}>
             {cancelLabel}
-          </Button>
+          </DialogCancel>
           <Button
             size="lg"
             type="button"

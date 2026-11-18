@@ -10,6 +10,7 @@ import { modeLabel, providers, type Provider } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -214,15 +215,7 @@ export function GroupDefaultsDialog({ group, onOpenChange, onSave }: Props) {
           )}
         </div>
         <DialogFooter>
-          <Button
-            size="lg"
-            type="button"
-            variant="ghost"
-            disabled={saving}
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
+          <DialogCancel disabled={saving} onClick={() => onOpenChange(false)} />
           <Button
             size="lg"
             type="button"

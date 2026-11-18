@@ -5,6 +5,7 @@ import type { Session } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -78,18 +79,13 @@ export function CheckoutControl({
             <ActionFeedback state={state} />
           )}
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              size="md"
+            <DialogCancel
               disabled={locked}
               onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
+            />
             <Button
               type="button"
-              size="md"
+              size="lg"
               disabled={locked}
               onClick={() => void confirm()}
             >

@@ -10,6 +10,7 @@ import {
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -147,18 +148,10 @@ export function MergeControl({
             <ActionFeedback state={state} />
           )}
           <DialogFooter>
+            <DialogCancel disabled={locked} onClick={() => setPinned(null)} />
             <Button
               type="button"
-              variant="outline"
-              size="md"
-              disabled={locked}
-              onClick={() => setPinned(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="md"
+              size="lg"
               disabled={locked || !pinned}
               onClick={() => void confirm()}
             >

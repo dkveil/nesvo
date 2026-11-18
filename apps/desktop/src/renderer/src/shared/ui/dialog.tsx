@@ -118,12 +118,28 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close asChild>
-          <Button variant="outline" size="md">
-            Close
-          </Button>
+          <DialogCancel>Close</DialogCancel>
         </DialogPrimitive.Close>
       )}
     </div>
+  );
+}
+
+function DialogCancel({
+  children = 'Cancel',
+  type = 'button',
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, 'variant' | 'size'>) {
+  return (
+    <Button
+      data-slot="dialog-cancel"
+      type={type}
+      variant="ghost"
+      size="lg"
+      {...props}
+    >
+      {children}
+    </Button>
   );
 }
 
@@ -155,6 +171,7 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogCancel,
   DialogClose,
   DialogContent,
   DialogDescription,

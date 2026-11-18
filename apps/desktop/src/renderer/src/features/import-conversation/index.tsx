@@ -15,6 +15,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -329,9 +330,7 @@ function ConversationPicker({
         </>
       )}
       <DialogFooter>
-        <Button size="lg" variant="ghost" disabled={pending} onClick={onCancel}>
-          Cancel
-        </Button>
+        <DialogCancel disabled={pending} onClick={onCancel} />
         {available && (
           <Button
             size="lg"
