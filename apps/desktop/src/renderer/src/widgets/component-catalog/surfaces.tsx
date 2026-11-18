@@ -19,6 +19,8 @@ import {
   ComposerSend,
   ComposerToolbar,
 } from '@/shared/ui/composer';
+import { ComposerEditor } from '@/shared/ui/composer-editor';
+import { AttachmentToken } from '@/shared/ui/attachment-token';
 import { IconButton } from '@/shared/ui/icon-button';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 import {
@@ -42,6 +44,10 @@ import {
   StateCaption,
 } from './specimen';
 
+const SAMPLE_TOKEN_IMAGE = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#3b82f6"/></svg>',
+)}`;
+
 const SAMPLE_CODE = `export function greet(name: string) {
   return \`Hello, \${name}\`;
 }`;
@@ -49,6 +55,14 @@ const SAMPLE_CODE = `export function greet(name: string) {
 function Composers() {
   const [draft, setDraft] = useState('');
   const [comment, setComment] = useState('Sample review comment');
+  const [inlineDraft, setInlineDraft] = useState<{
+    value: string;
+    offsets: Record<string, number>;
+  }>({
+    value: 'Look at  here and compare it with .',
+    offsets: { image: 8, image2: 34 },
+  });
+  const [inlineTokens, setInlineTokens] = useState(['image', 'image2']);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <StateCaption label="default · empty (send idle)">
@@ -95,6 +109,40 @@ function Composers() {
                   <ComposerSend label="Comment" disabled={!comment.trim()} />
                 </>
               }
+            />
+          </Composer>
+        </form>
+      </StateCaption>
+      <StateCaption label="editor · inline image tokens">
+        <form className="w-full" onSubmit={event => event.preventDefault()}>
+          <Composer>
+            <ComposerEditor
+              aria-label="Sample message with images"
+              placeholder="Ask for a change"
+              value={inlineDraft.value}
+              tokens={inlineTokens.map(token => ({
+                id: token,
+                offset: inlineDraft.offsets[token] ?? 0,
+                content: (
+                  <AttachmentToken
+                    name={`${token}.png`}
+                    detail="13 KB"
+                    src={SAMPLE_TOKEN_IMAGE}
+                  />
+                ),
+              }))}
+              onChange={({ value, offsets, removed }) => {
+                setInlineTokens(previous =>
+                  previous.filter(token => !removed.includes(token)),
+                );
+                setInlineDraft(previous => ({
+                  value,
+                  offsets: { ...previous.offsets, ...offsets },
+                }));
+              }}
+            />
+            <ComposerToolbar
+              end={<ComposerSend disabled={!inlineDraft.value.trim()} />}
             />
           </Composer>
         </form>

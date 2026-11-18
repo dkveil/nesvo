@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AddTile } from '@/shared/ui/add-tile';
 import { AttachmentChip } from '@/shared/ui/attachment-chip';
+import { AttachmentToken } from '@/shared/ui/attachment-token';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -313,6 +314,34 @@ export function ActionsSection() {
             src={SAMPLE_IMAGE}
             onOpen={() => undefined}
           />
+        </SpecimenRow>
+      </Specimen>
+      <Specimen title="AttachmentToken" source="shared/ui/attachment-token.tsx">
+        <SpecimenRow
+          label="ready · uploading · failed · no preview"
+          className="gap-3"
+        >
+          <AttachmentToken name="image.png" detail="13 KB" src={SAMPLE_IMAGE} />
+          <AttachmentToken name="uploading.png" status="uploading" />
+          <AttachmentToken
+            name="broken.png"
+            detail="Not attached"
+            status="failed"
+          />
+          <AttachmentToken name="missing.png" detail="26 KB" />
+        </SpecimenRow>
+        <SpecimenRow label="in text · opens preview (history)">
+          <p className="text-sm leading-6">
+            Look at{' '}
+            <AttachmentToken
+              name="image.png"
+              detail="13 KB"
+              src={SAMPLE_IMAGE}
+              onOpen={() => undefined}
+              className="mx-0.5"
+            />{' '}
+            and compare it with the previous build.
+          </p>
         </SpecimenRow>
       </Specimen>
       <Specimen title="AddTile" source="shared/ui/add-tile.tsx">
