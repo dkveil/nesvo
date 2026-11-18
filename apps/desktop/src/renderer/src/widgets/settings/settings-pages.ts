@@ -7,6 +7,7 @@ import {
   Info,
   Keyboard,
   Monitor,
+  Network,
   Palette,
   ScanSearch,
   Settings2,
@@ -24,6 +25,7 @@ export type SettingsPage =
   | 'worktree-recipes'
   | 'notifications'
   | 'code-review'
+  | 'session-control'
   | 'computers'
   | 'phone'
   | 'repositories'
@@ -93,6 +95,14 @@ export const settingsPages: SettingsPageEntry[] = [
     group: '',
     keywords:
       'pull request reviewer agent profiles conventions rules findings github',
+  },
+  {
+    id: 'session-control',
+    label: 'Session control',
+    icon: Network,
+    group: '',
+    keywords:
+      'coordinator orchestrator agents child sessions tools policy plans worktrees modes',
   },
   {
     id: 'computers',

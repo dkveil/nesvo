@@ -39,6 +39,7 @@ const runKey = (run: Pick<DesktopWorkflowRun, 'id' | 'hostId'>) =>
   hostKey(run.id, run.hostId);
 
 const waitsForDecision = (session: Session) =>
+  !!session.parentRequest ||
   (session.status === 'running' && session.pendingApprovals.length > 0) ||
   session.delegations.some(
     delegation =>

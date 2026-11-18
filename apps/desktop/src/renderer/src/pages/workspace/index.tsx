@@ -14,6 +14,7 @@ import type {
   CreateSessionInput,
   SessionGroup,
   DecideDelegationInput,
+  DecideSessionParentInput,
   DecideWorkerPlanInput,
   DecideReviewInput,
   DesktopReview as Review,
@@ -181,6 +182,7 @@ import { ProviderUsage } from '@/widgets/provider-rail';
 import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
 import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { TrackedRepositoriesSettings } from '@/widgets/tracked-repositories-settings';
+import { SessionControlSettings } from '@/widgets/session-control-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -905,6 +907,9 @@ export function Workspace() {
     Record<string, boolean>
   >({});
   const delegationRequests = useRef(new Set<string>());
+  const [parentPending, setParentPending] = useState<Record<string, boolean>>(
+    {},
+  );
   const draftVersions = useRef<Record<string, number>>({});
   const sendAttempts = useRef<
     Record<
@@ -1959,6 +1964,30 @@ export function Workspace() {
     } finally {
       approvalRequests.current.delete(key);
       setApprovalPending(previous => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+  const decideSessionParent = async (
+    input: DecideSessionParentInput,
+    hostId = 'local',
+  ) => {
+    const sessionKey = hostKey(input.sessionId, hostId);
+    const key = `${sessionKey}/${input.requestId}`;
+    if (parentPending[key] || !store.hostReady(hostId)) return;
+    setParentPending(previous => ({ ...previous, [key]: true }));
+    setErrors(previous => ({ ...previous, [sessionKey]: '' }));
+    try {
+      store.merge([await desktopApi(hostId).decideSessionParent(input)]);
+    } catch (failure) {
+      setErrors(previous => ({
+        ...previous,
+        [sessionKey]: `Could not send the decision. ${errorDetail(failure)}`,
+      }));
+    } finally {
+      setParentPending(previous => {
         const next = { ...previous };
         delete next[key];
         return next;
@@ -4111,6 +4140,10 @@ ${text}`
               operationErrors={errors}
               approvalPending={approvalPending}
               delegationPending={delegationPending}
+              parentPending={parentPending}
+              onParent={(input, hostId) =>
+                void decideSessionParent(input, hostId)
+              }
               onApproval={(input, hostId) =>
                 void respondApproval(input, hostId)
               }
@@ -4928,6 +4961,15 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <TrackedRepositoriesSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
+            ) : page === 'session-control' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <SessionControlSettings
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   api={desktopApi(settingsHostId)}

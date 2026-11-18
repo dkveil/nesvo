@@ -20,7 +20,8 @@ export const foldersOverlap = (left: string, right: string) => {
 const isWorking = (session: Session) =>
   session.status === 'running' || session.status === 'stopping';
 
-const groupOf = (session: Session) => session.parentId ?? session.id;
+const groupOf = (session: Session) =>
+  session.role === 'worker' && session.parentId ? session.parentId : session.id;
 
 export const folderBlocker = (
   session: Session,

@@ -194,7 +194,8 @@ export function sessionStatusLabel(session: Session) {
 }
 
 export function sessionRoleLabel(session: Session) {
-  if (session.parentId) return 'Worker';
+  if (session.parentId)
+    return session.role === 'worker' ? 'Worker' : 'Child session';
   if (session.delegations.length > 0) return 'Orchestrator';
   return '';
 }

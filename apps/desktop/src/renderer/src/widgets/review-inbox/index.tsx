@@ -1,6 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from 'react';
 import type {
   DecideDelegationInput,
+  DecideSessionParentInput,
   RespondApprovalInput,
 } from '@nesvo/contracts';
 import { ArrowUpRight, Inbox } from 'lucide-react';
@@ -51,6 +52,8 @@ type Props = ReviewDecisionProps & {
   operationErrors: Record<string, string>;
   approvalPending: Record<string, boolean>;
   delegationPending: Record<string, boolean>;
+  parentPending: Record<string, boolean>;
+  onParent: (input: DecideSessionParentInput, hostId: string) => void;
   onApproval: (input: RespondApprovalInput, hostId: string) => void;
   onDelegation: (input: DecideDelegationInput, hostId: string) => void;
   onSession: (sessionId: string, targetId?: string) => void;
@@ -80,6 +83,13 @@ type ActionRow =
       type: 'delegation';
       session: Session;
       delegation: Session['delegations'][number];
+      at: string;
+      id: string;
+    }
+  | {
+      type: 'parent';
+      session: Session;
+      request: NonNullable<Session['parentRequest']>;
       at: string;
       id: string;
     };
@@ -269,6 +279,8 @@ export function ReviewInbox({
   operationErrors,
   approvalPending,
   delegationPending,
+  parentPending,
+  onParent,
   onApproval,
   onDelegation,
   onSession,
@@ -297,6 +309,16 @@ export function ReviewInbox({
       at: review.createdAt,
       id: entityKey(review),
     }));
+  if (filter !== 'history')
+    for (const session of sessions)
+      if (session.parentRequest)
+        rows.push({
+          type: 'parent',
+          session,
+          request: session.parentRequest,
+          at: session.parentRequest.requestedAt,
+          id: `${entityKey(session)}/${session.parentRequest.id}`,
+        });
   if (filter !== 'history')
     for (const session of sessions) {
       if (session.status !== 'running' || !session.runId) continue;
@@ -402,6 +424,7 @@ export function ReviewInbox({
             row =>
               row.type === 'approval' ||
               row.type === 'delegation' ||
+              row.type === 'parent' ||
               row.type === 'automation',
           ) && (
             <StatusMessage className="mb-3 px-2">
@@ -533,6 +556,57 @@ export function ReviewInbox({
               }
               const { session } = row;
               const operationError = operationErrors[entityKey(session)];
+              if (row.type === 'parent') {
+                const { request } = row;
+                const deciding = !!parentPending[row.id];
+                return (
+                  <ActionItem
+                    key={`parent/${row.id}`}
+                    aria-label={`Join coordinator: ${session.title}`}
+                    data-host-id={session.hostId}
+                    title={session.title}
+                    onOpen={() => onSession(entityKey(session))}
+                    location={location(session.hostId)}
+                    summary={
+                      <p className="line-clamp-2 text-ui [overflow-wrap:anywhere]">
+                        {request.parentTitle} asks to coordinate this session.
+                      </p>
+                    }
+                    meta={
+                      <>
+                        <span>Coordinator request</span>
+                        <time dateTime={request.requestedAt}>
+                          {reviewDate(request.requestedAt)}
+                        </time>
+                      </>
+                    }
+                  >
+                    <Decisions
+                      accept="Allow"
+                      decline="Decline"
+                      enabled={
+                        operationEnabled &&
+                        isOperationEnabled(session) &&
+                        !deciding
+                      }
+                      onDecide={decision =>
+                        onParent(
+                          {
+                            sessionId: session.id,
+                            requestId: request.id,
+                            decision,
+                          },
+                          session.hostId,
+                        )
+                      }
+                    />
+                    <OperationStatus
+                      deciding={deciding}
+                      error={operationError}
+                    />
+                  </ActionItem>
+                );
+              }
               if (row.type === 'approval') {
                 const { approval } = row;
                 const deciding = !!approvalPending[row.id];
