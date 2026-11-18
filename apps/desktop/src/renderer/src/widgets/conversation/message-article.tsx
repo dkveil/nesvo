@@ -1,8 +1,10 @@
 import { memo, type ReactNode } from 'react';
+import type { MessageAttachment } from '@nesvo/contracts';
 import { BookOpen } from 'lucide-react';
 import { statusLabels, type Provider, type Session } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
 import { MessageAttachments } from '@/features/attach-images/attachment-tray';
+import { InlineAttachment } from '@/features/attach-images/inline-attachment';
 import { Chip } from '@/shared/ui/chip';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Separator } from '@/shared/ui/separator';
@@ -14,6 +16,13 @@ import { isLongPrompt } from './long-prompt';
 import { MessageBody } from './message-body';
 
 type Message = Session['messages'][number];
+
+const renderInlineAttachment = (attachment: MessageAttachment) => (
+  <InlineAttachment attachment={attachment} />
+);
+
+const attachmentsKey = (message: Message) =>
+  message.attachments?.map(item => `${item.id}@${item.offset ?? ''}`).join();
 
 type MessageArticleProps = {
   message: Message;
@@ -40,8 +49,7 @@ function sameRenderedMessage(previous: Message, next: Message) {
       previous.costWarning === next.costWarning &&
       previous.skillId === next.skillId &&
       previous.skillHash === next.skillHash &&
-      previous.attachments?.map(item => item.id).join() ===
-        next.attachments?.map(item => item.id).join() &&
+      attachmentsKey(previous) === attachmentsKey(next) &&
       previous.interruption?.reason === next.interruption?.reason &&
       JSON.stringify(previous.skill) === JSON.stringify(next.skill))
   );
@@ -159,12 +167,16 @@ export const MessageArticle = memo(function MessageArticle({
               <ClampedPrompt>
                 <MessageBody
                   body={message.body}
+                  attachments={message.attachments}
+                  renderAttachment={renderInlineAttachment}
                   className="rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
                 />
               </ClampedPrompt>
             ) : (
               <MessageBody
                 body={message.body || 'No response text.'}
+                attachments={message.attachments}
+                renderAttachment={renderInlineAttachment}
                 className="max-w-[85%] rounded-composer bg-message-surface px-3.5 py-2 text-ui leading-relaxed"
               />
             )

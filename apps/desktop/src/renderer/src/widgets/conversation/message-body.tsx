@@ -1,11 +1,15 @@
 import {
+  createContext,
   isValidElement,
   memo,
+  useContext,
+  useMemo,
   useDeferredValue,
   useEffect,
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
 } from 'react';
 import Markdown, {
   type Components,
@@ -15,11 +19,23 @@ import Markdown, {
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy, WrapText } from 'lucide-react';
+import type { MessageAttachment } from '@nesvo/contracts';
 import { cn } from '@/shared/lib/cn';
 import { Checkbox } from '@/shared/ui/checkbox';
 import { IconButton } from '@/shared/ui/icon-button';
+import {
+  attachmentIndexOf,
+  hasPlacedAttachments,
+  withAttachmentMarkers,
+} from './attachment-markers';
 
 const HIGHLIGHT_LIMIT_CHARACTERS = 20_000;
+
+type InlineAttachmentRenderer = (index: number) => ReactNode;
+
+const InlineAttachmentContext = createContext<InlineAttachmentRenderer | null>(
+  null,
+);
 const COPIED_FEEDBACK_MS = 1_500;
 
 type HastNode = {
@@ -141,6 +157,10 @@ function CodeBlock({ children, node }: ComponentProps<'pre'> & ExtraProps) {
 }
 
 function MarkdownLink({ href, children }: ComponentProps<'a'> & ExtraProps) {
+  const renderAttachment = useContext(InlineAttachmentContext);
+  const attachmentIndex = attachmentIndexOf(href);
+  if (renderAttachment && attachmentIndex != null)
+    return renderAttachment(attachmentIndex);
   const url = externalUrl(href);
   if (!url) return <span>{children}</span>;
   return (
@@ -279,22 +299,43 @@ const components: Components = {
 export const MessageBody = memo(function MessageBody({
   body,
   className,
+  attachments,
+  renderAttachment,
 }: {
   body: string;
   className?: string;
+  attachments?: readonly MessageAttachment[];
+  renderAttachment?: (attachment: MessageAttachment) => ReactNode;
 }) {
   const deferredBody = useDeferredValue(body);
+  const inline = !!renderAttachment && hasPlacedAttachments(attachments);
+  const markdown =
+    inline && attachments
+      ? withAttachmentMarkers(deferredBody, attachments)
+      : deferredBody;
+  const renderIndex = useMemo<InlineAttachmentRenderer | null>(
+    () =>
+      inline && attachments && renderAttachment
+        ? index => {
+            const attachment = attachments[index];
+            return attachment ? renderAttachment(attachment) : null;
+          }
+        : null,
+    [inline, attachments, renderAttachment],
+  );
   return (
     <div
       className={cn('min-w-0 space-y-3 [overflow-wrap:anywhere]', className)}
     >
-      <Markdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={components}
-      >
-        {deferredBody}
-      </Markdown>
+      <InlineAttachmentContext.Provider value={renderIndex}>
+        <Markdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={components}
+        >
+          {markdown}
+        </Markdown>
+      </InlineAttachmentContext.Provider>
     </div>
   );
 });
