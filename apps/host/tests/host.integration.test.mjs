@@ -1126,6 +1126,8 @@ test(
         'database-backup',
         'claude-approvals',
         'message-attachments',
+        'terminal-handoff',
+        'transcript-search',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6126,6 +6128,8 @@ test(
       'database-backup',
       'claude-approvals',
       'message-attachments',
+      'terminal-handoff',
+      'transcript-search',
     ]);
     const id = randomUUID();
     const jobInput = {
