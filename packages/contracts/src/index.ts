@@ -373,6 +373,7 @@ export * from './session-history';
 export * from './attachments';
 export * from './session-groups';
 export * from './session-deletion';
+export * from './session-subsessions';
 export * from './pull-requests';
 export * from './code-review';
 export * from './tracked-repositories';
