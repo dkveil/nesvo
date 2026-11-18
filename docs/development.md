@@ -98,6 +98,8 @@ The header workflow status and the session card can be previewed in every run st
 The desktop stores its host database under Electron's userData directory, in host/nesvo.sqlite.
 On Windows this normally means %APPDATA%/Nesvo/host.
 NESVO_DATA_DIR overrides the desktop userData directory, or the standalone host data directory.
+The desktop writes rotating logs to Electron's logs directory: `main.log` for the main process, IPC failures and renderer error reports, and `host.log` for the local host's stdout and stderr. Each keeps five files of up to 5 MB (`main.log`, `main.1.log` … `main.4.log`). On Windows and Linux the directory is `logs` under userData (for example %APPDATA%/Nesvo/logs); on macOS it is ~/Library/Logs/Nesvo. With NESVO_DATA_DIR set, logs go to `logs` inside that directory. Settings › General › Open logs opens the folder. Development builds also mirror both logs to the terminal.
+Window bounds and the maximized state are kept in `window-state.json` under userData; a saved position that no longer overlaps a display falls back to a centred default size.
 Use different directories for standalone and desktop development. Never point test runs at your real data.
 Empty working-directory input creates a dedicated folder under the host's workspaces directory. Existing directories are resolved and validated without requiring Git. Providers retain their own resume transcripts in their configured locations; Nesvo stores separate provider session identifiers and conversation snapshots.
 
@@ -135,7 +137,8 @@ The site is served by Cloudflare Pages at https://nesvo.dev through the Cloudfla
 
 ## Troubleshooting
 
-If the initial screen reports no connection, retry once and inspect the terminal used to start development.
+If the initial screen reports no connection, retry once and inspect `host.log` and `main.log` (Settings › General › Open logs) or the terminal used to start development.
+If the local host stops, Nesvo restarts it after 1, 2, 5 and 15 seconds and re-reads its state; after the fourth failure the computer shows an error with Retry. A restarted host marks unfinished runs interrupted and nothing is resent.
 An incompatible database fails closed; do not delete it to hide the error.
 If Claude reports an account limit, wait for the reset reported by Claude and retry. Nesvo does not substitute a simulated response, change billing, or automatically retry. A turn is bounded to ten minutes, including a parent's wait for worker approval and results. Stop terminates only the owned process tree; failed cleanup is reported as failure.
 New Codex sessions can delegate without selecting a role. Access permissions remain independent and unchanged by delegation. Older sessions preserve their existing provider thread and recorded tool capability. Worker directories must already exist inside the parent directory; use separate non-overlapping directories when allowing writes. A supervised parent can delegate only read-only workers until isolated workspaces exist. One group runs at a time, and workers never launch before an individual operator decision.
