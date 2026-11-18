@@ -181,6 +181,9 @@ import {
   startWorkflowTaskSchema,
   stopWorkflowRunSchema,
   validateWorkflowDefinitionsSchema,
+  chooseDirectoryResultSchema,
+  onboardingOpenSchema,
+  reviewWorkingRulesSchema,
   MAX_RENDERER_ERROR_REPORT_BYTES,
   rendererErrorReportSchema,
   workflowShareSettingsSchema,
@@ -194,13 +197,13 @@ nativeTheme.themeSource = 'system';
 const TITLE_BAR_HEIGHT = 40;
 const appliedColorScheme = (): AppliedColorScheme =>
   nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-const windowColors = () =>
-  nativeTheme.shouldUseDarkColors
+const windowColors = (onboarding = false) =>
+  onboarding || nativeTheme.shouldUseDarkColors
     ? { background: '#000000', symbol: '#f8fafc' }
     : { background: '#fcfcfc', symbol: '#1f2937' };
-const titleBarOverlay = (): Electron.TitleBarOverlay => ({
+const titleBarOverlay = (onboarding = false): Electron.TitleBarOverlay => ({
   color: '#01000000',
-  symbolColor: windowColors().symbol,
+  symbolColor: windowColors(onboarding).symbol,
   height: TITLE_BAR_HEIGHT,
 });
 const titleBarOptions = (
@@ -211,7 +214,7 @@ const titleBarOptions = (
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 16, y: TITLE_BAR_HEIGHT / 2 - 7 },
       }
-    : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() };
+    : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay(true) };
 const workflowInputs = {
   'list-workflow-definitions': listWorkflowDefinitionsSchema,
   'validate-workflow-definitions': validateWorkflowDefinitionsSchema,
@@ -343,6 +346,12 @@ void app.whenReady().then(async () => {
     policy.enabled,
   );
   let window: BrowserWindow | null = null;
+  let onboardingOpen = false;
+  const applyWindowColors = (target: BrowserWindow) => {
+    target.setBackgroundColor(windowColors(onboardingOpen).background);
+    if (process.platform !== 'darwin')
+      target.setTitleBarOverlay(titleBarOverlay(onboardingOpen));
+  };
   let quitting = false;
   let erasing = false;
   let keepRunning = readKeepRunningInBackground(app.getPath('userData'));
@@ -376,6 +385,7 @@ void app.whenReady().then(async () => {
   const createWindow = () => {
     const userData = app.getPath('userData');
     const bounds = readWindowState(userData);
+    onboardingOpen = false;
     const next = new BrowserWindow({
       ...(bounds.x === undefined || bounds.y === undefined
         ? {}
@@ -386,7 +396,7 @@ void app.whenReady().then(async () => {
       minHeight: MIN_WINDOW_HEIGHT,
       title: 'Nesvo',
       icon: appIcon,
-      backgroundColor: windowColors().background,
+      backgroundColor: windowColors(true).background,
       show: !smokeTest,
       autoHideMenuBar: true,
       ...titleBarOptions(process.platform),
@@ -398,7 +408,8 @@ void app.whenReady().then(async () => {
         backgroundThrottling: !smokeTest,
         additionalArguments: [
           `--nesvo-color-scheme=${appliedColorScheme()}`,
-          ...(process.env.NESVO_TEST_MODE === '1'
+          ...(process.env.NESVO_TEST_MODE === '1' &&
+          process.env.NESVO_TEST_SHOW_ONBOARDING !== '1'
             ? ['--nesvo-onboarding=skip']
             : []),
         ],
@@ -463,10 +474,8 @@ void app.whenReady().then(async () => {
     next.on('show', () => indicators.refreshWindow());
     const applyColors = () => {
       if (next.isDestroyed()) return;
-      next.setBackgroundColor(windowColors().background);
+      applyWindowColors(next);
       next.webContents.send('nesvo:applied-color-scheme', appliedColorScheme());
-      if (process.platform !== 'darwin')
-        next.setTitleBarOverlay(titleBarOverlay());
     };
     nativeTheme.on('updated', applyColors);
     next.on('closed', () => {
@@ -747,6 +756,30 @@ void app.whenReady().then(async () => {
   handle('nesvo:dismiss-workflow-import', (event, importId: unknown) => {
     authorize(event);
     sharing.dismissImport(importId);
+  });
+  handle('nesvo:set-onboarding-open', (event, open: unknown) => {
+    authorize(event);
+    onboardingOpen = onboardingOpenSchema.parse(open);
+    if (window && !window.isDestroyed()) applyWindowColors(window);
+  });
+  handle('nesvo:choose-directory', async event => {
+    authorize(event);
+    if (!window || window.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(window, {
+      title: 'Choose a default session folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return chooseDirectoryResultSchema.parse(
+      result.canceled ? null : (result.filePaths[0] ?? null),
+    );
+  });
+  handle('nesvo:review-working-rules', (event, input: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'review-working-rules',
+      reviewWorkingRulesSchema.parse(input),
+      'local',
+    );
   });
   handle('nesvo:pick-import-folder', async event => {
     authorize(event);

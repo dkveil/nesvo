@@ -1240,6 +1240,7 @@ export class ComputerManager {
       'save-session-control-policy': 'session-control-policy',
       'decide-review': 'review',
       'discover-skills': 'skills',
+      'review-working-rules': 'working-rules-review',
       'list-claude-commands': 'claude-commands',
       'list-workspace-directory': 'workspace-directory',
       'search-workspace-files': 'workspace-search',
@@ -1301,6 +1302,8 @@ export class ComputerManager {
       case 'claude-status':
       case 'codex-status':
         return response.status;
+      case 'working-rules-review':
+        return response.review;
       case 'skills':
         return response.catalog;
       case 'mcp-servers':

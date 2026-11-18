@@ -13,6 +13,10 @@ import {
   codexStatusSchema,
   colorSchemeSchema,
   appliedColorSchemeSchema,
+  chooseDirectoryResultSchema,
+  onboardingOpenSchema,
+  reviewWorkingRulesSchema,
+  workingRulesReviewSchema,
   attentionSessionSchema,
   desktopAttentionSchema,
   keepRunningInBackgroundSchema,
@@ -553,6 +557,23 @@ const api: DesktopApi = {
   colorScheme: async () =>
     colorSchemeSchema.parse(await ipcRenderer.invoke('nesvo:color-scheme')),
   showsOnboardingOnLaunch: () => onboardingOnLaunch,
+  setOnboardingOpen: async open => {
+    await ipcRenderer.invoke(
+      'nesvo:set-onboarding-open',
+      onboardingOpenSchema.parse(open),
+    );
+  },
+  chooseDirectory: async () =>
+    chooseDirectoryResultSchema.parse(
+      await ipcRenderer.invoke('nesvo:choose-directory'),
+    ),
+  reviewWorkingRules: async input =>
+    workingRulesReviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:review-working-rules',
+        reviewWorkingRulesSchema.parse(input),
+      ),
+    ),
   setColorScheme: async scheme =>
     colorSchemeSchema.parse(
       await ipcRenderer.invoke(

@@ -1051,6 +1051,7 @@ async function verifyCodexToolPolicy(
   cwd: string,
   isolateTools: boolean,
   hooksOff = isolateTools,
+  shellOff = false,
 ): Promise<void> {
   const loaded = await peer.request('config/read', {
     includeLayers: false,
@@ -1068,7 +1069,8 @@ async function verifyCodexToolPolicy(
   const disabled = hooksOff ? isolatedFeatures : featuresWithoutHooks;
   if (
     !features ||
-    disabled.some(name => features[name] != null && features[name] !== false)
+    disabled.some(name => features[name] != null && features[name] !== false) ||
+    (shellOff && features.shell_tool !== false)
   )
     throw new Error('Codex could not isolate inherited features.');
 }
@@ -1470,6 +1472,7 @@ type CodexRunOptions = {
   outputSchema?: Record<string, unknown>;
   mcpTurn?: VerifyMcpTurn;
   instructionsOnly?: boolean;
+  summaryInstructions?: string;
   images?: readonly CodexImage[];
   compact?: boolean;
   experimentalApi?: boolean;
@@ -2308,7 +2311,11 @@ export function startCodex(options: CodexRunOptions): {
         !unattended && (await supportsMcpElicitation(peer));
       const isolateTools = unattended || (readOnly && !nativeMcpApproval);
       const hooksOff = isolateTools || readOnly;
-      const features = hooksOff ? isolatedFeatures : featuresWithoutHooks;
+      const features = options.summaryInstructions
+        ? [...isolatedFeatures, 'shell_tool']
+        : hooksOff
+          ? isolatedFeatures
+          : featuresWithoutHooks;
       const disabledServers = isolateTools ? Object.keys(configured) : null;
       const bootstrapExit = await peer.closeIdle();
       if (!bootstrapExit.confirmed)
@@ -2408,6 +2415,7 @@ export function startCodex(options: CodexRunOptions): {
         options.directory,
         Boolean(disabledServers),
         hooksOff,
+        !!options.summaryInstructions,
       );
       if (readOnly && !isolateTools) {
         const loaded = await peer.request('config/read', {
@@ -2493,6 +2501,12 @@ export function startCodex(options: CodexRunOptions): {
             ? { threadId: options.sessionId, excludeTurns: true }
             : {}),
           ...model,
+          ...(options.summaryInstructions
+            ? {
+                ephemeral: true,
+                developerInstructions: options.summaryInstructions,
+              }
+            : {}),
           ...(!options.resume &&
           !options.fork &&
           (options.onDelegate || options.controlTools?.length)
@@ -2576,6 +2590,7 @@ export function startCodex(options: CodexRunOptions): {
         !thread.id ||
         thread.id.length > 200 ||
         typeof response.model !== 'string' ||
+        (options.summaryInstructions && thread.path !== null) ||
         (options.resume && thread.id !== options.sessionId) ||
         (options.fork && thread.id === options.sessionId)
       )

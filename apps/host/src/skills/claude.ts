@@ -509,7 +509,12 @@ export async function inspectClaudeSkills(
     const ancestors: string[] = [];
     let cursor = cwd;
     let projectRoot = cwd;
-    for (let depth = 0; depth < maxAncestorDepth; depth++) {
+    const userHome = keyPath(homedir());
+    for (
+      let depth = 0;
+      depth < maxAncestorDepth && keyPath(cursor) !== userHome;
+      depth++
+    ) {
       check();
       ancestors.push(cursor);
       projectRoot = cursor;

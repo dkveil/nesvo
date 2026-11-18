@@ -17,7 +17,6 @@ import {
   type HostResponse,
   type Session,
   type SessionWindow,
-  type SkillCatalog,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
@@ -54,6 +53,8 @@ import {
   discoverSessionSkills,
 } from './skills/service';
 import { ProviderUsageService } from './providers/usage-service';
+import { DiscoveryQueue } from './process/discovery-queue';
+import { reviewWorkingRules } from './working-rules';
 import { WorkflowRunStore } from './workflows/store';
 import {
   DefinitionError,
@@ -984,9 +985,10 @@ export const serveHost = ({
       let conversationRequests = 0;
       let workspaceRequests = 0;
       let worktreeRequests = 0;
-      let skillRequests = 0;
+      const skillDiscovery = new DiscoveryQueue(probes.controller.signal);
       let commandRequests = 0;
-      let mcpRequests = 0;
+      const mcpDiscovery = new DiscoveryQueue(probes.controller.signal);
+      let reviewingRules = false;
       let definitionRequests = 0;
       let definitionWrites = 0;
       const closeUsageAndConsumers = async () => {
@@ -1591,15 +1593,13 @@ export const serveHost = ({
           const session =
             'sessionId' in input ? store.get(input.sessionId) : undefined;
           const missing = 'sessionId' in input && !session;
-          if (missing || mcpRequests >= 2) {
+          if (missing) {
             yield* Effect.tryPromise(() =>
               send({
                 type: 'error',
                 id: request.id,
-                code: missing ? 'not-found' : 'busy',
-                message: missing
-                  ? 'Session not found.'
-                  : 'MCP discovery is busy. Try again shortly.',
+                code: 'not-found',
+                message: 'Session not found.',
               }),
             );
             continue;
@@ -1641,21 +1641,22 @@ export const serveHost = ({
             );
             continue;
           }
-          mcpRequests++;
-          const discovery = sessions
-            .mcpServers(
-              target.provider,
-              target.directory,
-              probes.controller.signal,
-              target.profileId,
-              request.method === 'trust-repository-mcp'
-                ? request.input
-                : 'sessionId' in request.input && request.input.rawFor
-                  ? {
-                      sessionId: request.input.sessionId,
-                      rawFor: request.input.rawFor,
-                    }
-                  : undefined,
+          const discovery = mcpDiscovery
+            .run(() =>
+              sessions.mcpServers(
+                target.provider,
+                target.directory,
+                probes.controller.signal,
+                target.profileId,
+                request.method === 'trust-repository-mcp'
+                  ? request.input
+                  : 'sessionId' in request.input && request.input.rawFor
+                    ? {
+                        sessionId: request.input.sessionId,
+                        rawFor: request.input.rawFor,
+                      }
+                    : undefined,
+              ),
             )
             .then(list => send({ type: 'mcp-servers', id: request.id, list }))
             .catch(error =>
@@ -1672,10 +1673,7 @@ export const serveHost = ({
             )
             .catch(() => undefined);
           probes.pending.add(discovery);
-          void discovery.finally(() => {
-            mcpRequests--;
-            probes.pending.delete(discovery);
-          });
+          void discovery.finally(() => probes.pending.delete(discovery));
           continue;
         }
         if (request.method === 'fork-session') {
@@ -2153,82 +2151,116 @@ export const serveHost = ({
           });
           continue;
         }
+        if (request.method === 'review-working-rules') {
+          if (reviewingRules) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: 'A working rules review is already running.',
+              }),
+            );
+            continue;
+          }
+          reviewingRules = true;
+          const input = request.input;
+          const signal = probes.controller.signal;
+          const review = Promise.resolve()
+            .then(() =>
+              reviewWorkingRules(
+                input,
+                input.directory ? sessions.draftDirectory(input.directory) : '',
+                signal,
+              ),
+            )
+            .then(result =>
+              send({
+                type: 'working-rules-review',
+                id: request.id,
+                review: result,
+              }),
+            )
+            .catch(error =>
+              send({
+                type: 'error',
+                id: request.id,
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof Error
+                    ? error.message.slice(0, 800)
+                    : 'Working rules could not be reviewed.',
+              }),
+            )
+            .catch(() => undefined)
+            .finally(() => {
+              reviewingRules = false;
+              probes.pending.delete(review);
+            });
+          probes.pending.add(review);
+          continue;
+        }
         if (request.method === 'discover-skills') {
           const input = request.input;
           const session =
             'sessionId' in input ? store.get(input.sessionId) : undefined;
           const missing = 'sessionId' in input && !session;
-          if (missing || skillRequests >= 2) {
+          if (missing) {
             yield* Effect.tryPromise(() =>
               send({
                 type: 'error',
                 id: request.id,
-                code: missing ? 'not-found' : 'busy',
-                message: missing
-                  ? 'Session not found.'
-                  : 'Skill discovery is busy. Try again shortly.',
+                code: 'not-found',
+                message: 'Session not found.',
               }),
             );
             continue;
           }
-          let discovery: Promise<SkillCatalog>;
           const signal = probes.controller.signal;
-          if (session)
-            discovery = profiles
-              .directory(session.provider, session.profileId, signal)
-              .then(directory =>
-                discoverSessionSkills(session, signal, directory),
-              );
-          else if ('provider' in input) {
-            try {
-              const target = sessions.draftDirectory(input.directory);
-              discovery = profiles
-                .directory(input.provider, input.profileId, signal)
-                .then(directory =>
-                  discoverDirectorySkills(
-                    input.provider,
-                    target,
-                    signal,
-                    directory,
-                  ),
+          const inspection = skillDiscovery
+            .run(async () => {
+              if (session) {
+                const profile = await profiles.directory(
+                  session.provider,
+                  session.profileId,
+                  signal,
                 );
-            } catch (error) {
-              yield* Effect.tryPromise(() =>
-                send({
-                  type: 'error',
-                  id: request.id,
-                  code:
-                    error instanceof SessionError
-                      ? error.code
-                      : 'invalid-directory',
-                  message:
-                    error instanceof SessionError
-                      ? error.message
-                      : 'The folder cannot be accessed.',
-                }),
+                return discoverSessionSkills(session, signal, profile);
+              }
+              if (!('provider' in input))
+                throw new SessionError('not-found', 'Session not found.');
+              const target = sessions.draftDirectory(input.directory);
+              const profile = await profiles.directory(
+                input.provider,
+                input.profileId,
+                signal,
               );
-              continue;
-            }
-          } else continue;
-          skillRequests++;
-          const inspection = discovery
+              return discoverDirectorySkills(
+                input.provider,
+                target,
+                signal,
+                profile,
+              );
+            })
             .then(catalog => send({ type: 'skills', id: request.id, catalog }))
-            .catch(() =>
+            .catch(error =>
               send({
                 type: 'error',
                 id: request.id,
-                code: 'unavailable',
-                message: session
-                  ? 'Skills could not be checked. Verify the session directory and refresh.'
-                  : 'Skills could not be checked for this folder. Verify the folder and refresh.',
+                code:
+                  error instanceof SessionError ? error.code : 'unavailable',
+                message:
+                  error instanceof SessionError
+                    ? error.message
+                    : session
+                      ? 'Skills could not be checked. Verify the session directory and refresh.'
+                      : 'Skills could not be checked for this folder. Verify the folder and refresh.',
               }),
             )
             .catch(() => undefined);
           probes.pending.add(inspection);
-          void inspection.finally(() => {
-            skillRequests--;
-            probes.pending.delete(inspection);
-          });
+          void inspection.finally(() => probes.pending.delete(inspection));
           continue;
         }
         if (request.method === 'list-claude-commands') {

@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import {
+  chooseDirectoryResultSchema,
+  onboardingOpenSchema,
+  reviewWorkingRulesSchema,
+  workingRulesReviewSchema,
+  type ReviewWorkingRulesInput,
+  type WorkingRulesReview,
+} from './onboarding';
+export * from './onboarding';
+import {
   retentionDaysSchema,
   transcriptRetentionSchema,
   type TranscriptRetention,
@@ -661,6 +670,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('discover-skills'),
     input: discoverSkillsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('review-working-rules'),
+    input: reviewWorkingRulesSchema,
   }),
   z.strictObject({
     id: z.uuid(),
@@ -1381,6 +1395,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     catalog: skillCatalogSchema,
   }),
   z.strictObject({
+    type: z.literal('working-rules-review'),
+    id: z.uuid(),
+    review: workingRulesReviewSchema,
+  }),
+  z.strictObject({
     type: z.literal('claude-commands'),
     id: z.uuid(),
     list: claudeCommandListSchema,
@@ -1900,6 +1919,13 @@ export type DesktopApi = {
   sharing: WorkflowSharingApi;
   colorScheme: () => Promise<ColorScheme>;
   showsOnboardingOnLaunch: () => boolean;
+  setOnboardingOpen: (
+    open: z.input<typeof onboardingOpenSchema>,
+  ) => Promise<void>;
+  chooseDirectory: () => Promise<z.output<typeof chooseDirectoryResultSchema>>;
+  reviewWorkingRules: (
+    input: ReviewWorkingRulesInput,
+  ) => Promise<WorkingRulesReview>;
   setColorScheme: (scheme: ColorScheme) => Promise<ColorScheme>;
   onAppliedColorScheme: (
     listener: (scheme: AppliedColorScheme) => void,

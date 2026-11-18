@@ -89,6 +89,7 @@ const effectiveConfig = (config = {}) => {
     features: {
       ...isolatedConfig.features,
       hooks: !disabledFeatures.has('hooks') && disabledFeatures.size > 0,
+      shell_tool: !disabledFeatures.has('shell_tool'),
     },
   };
 };
@@ -752,6 +753,14 @@ if (args.length === 1 && args[0] === '--version') {
             sandbox: params.sandbox,
             approvalPolicy: params.approvalPolicy,
             args,
+            ...(params.ephemeral
+              ? {
+                  ephemeral: true,
+                  developerInstructions: params.developerInstructions,
+                  projectDocBytes: params.config.project_doc_max_bytes,
+                  shellFeature: params.config['features.shell_tool'],
+                }
+              : {}),
             mcpServers: params.config?.mcp_servers ?? null,
             inheritedServers: Object.entries(
               effectiveConfig(threadConfig).mcp_servers,
@@ -786,6 +795,7 @@ if (args.length === 1 && args[0] === '--version') {
         resumed,
         effort,
         projectDocBytes: params.config?.project_doc_max_bytes ?? null,
+        ephemeral: params.ephemeral === true,
       };
       if (process.env.NESVO_FIXTURE_THREAD_LOG)
         writeFileSync(
@@ -849,17 +859,22 @@ if (args.length === 1 && args[0] === '--version') {
             }) + '\n',
             { flag: 'a' },
           );
-        writeFileSync(
-          statePath(thread.id),
-          JSON.stringify({
-            turns: 0,
-            delegationEnabled: experimentalApi,
-            control: !!namespace,
-          }),
-        );
+        if (!thread.ephemeral)
+          writeFileSync(
+            statePath(thread.id),
+            JSON.stringify({
+              turns: 0,
+              delegationEnabled: experimentalApi,
+              control: !!namespace,
+            }),
+          );
       }
       response(id, {
-        thread: { id: thread.id, turns: [] },
+        thread: {
+          id: thread.id,
+          turns: [],
+          ...(params.ephemeral ? { path: null } : {}),
+        },
         model: 'fixture-codex',
         reasoningEffort: thread.effort,
         approvalPolicy: params.approvalPolicy,
@@ -951,9 +966,12 @@ if (args.length === 1 && args[0] === '--version') {
           path: selectedSkill.path,
         });
       }
-      const state = JSON.parse(readFileSync(statePath(thread.id), 'utf8'));
+      const state = thread.ephemeral
+        ? { turns: 0 }
+        : JSON.parse(readFileSync(statePath(thread.id), 'utf8'));
       state.turns += 1;
-      writeFileSync(statePath(thread.id), JSON.stringify(state));
+      if (!thread.ephemeral)
+        writeFileSync(statePath(thread.id), JSON.stringify(state));
       current = { id: randomUUID(), itemId: randomUUID(), completed: false };
       response(id, {
         turn: { id: current.id, status: 'inProgress', items: [], error: null },

@@ -135,10 +135,13 @@ const requiredFlags = [
   '--setting-sources',
   '--model',
 ];
-const isolatedToolArgs = [
+const isolatedMcpArgs = [
   '--strict-mcp-config',
   '--mcp-config',
   '{"mcpServers":{}}',
+];
+const isolatedToolArgs = [
+  ...isolatedMcpArgs,
   '--settings',
   '{"disableAllHooks":true}',
 ];
@@ -1143,6 +1146,7 @@ export function startClaude(options: {
   ephemeral?: boolean;
   instructionsOnly?: boolean;
   assistantPrompt?: string;
+  summaryInstructions?: string;
   mode: SessionMode;
   images?: readonly ClaudeImage[];
   readDirectories?: readonly string[];
@@ -1252,10 +1256,11 @@ export function startClaude(options: {
         options.mode === 'read-only' &&
         options.approvals === true &&
         inspection.supportsHostPrompts === true;
-      const tools = [
-        ...permission.tools,
-        ...(presentsPlan ? [EXIT_PLAN_TOOL] : []),
-      ].join(',');
+      const tools = options.summaryInstructions
+        ? ''
+        : [...permission.tools, ...(presentsPlan ? [EXIT_PLAN_TOOL] : [])].join(
+            ',',
+          );
       const assistantMode = ['dontAsk', 'default'].find(candidate =>
         inspection.permissionModes.includes(candidate),
       );
@@ -1295,12 +1300,14 @@ export function startClaude(options: {
           controlled ||
           presentsPlan ||
           !!options.browser);
-      const allowedTools = [
-        ...permission.allowed,
-        ...(options.browser && (!hostPrompts || presentsPlan)
-          ? unattendedBrowserTools
-          : []),
-      ].join(',');
+      const allowedTools = options.summaryInstructions
+        ? ''
+        : [
+            ...permission.allowed,
+            ...(options.browser && (!hostPrompts || presentsPlan)
+              ? unattendedBrowserTools
+              : []),
+          ].join(',');
       if (integrations && options.mcpTurn)
         runConfig = await writeClaudeRunConfig(
           options.mcpTurn.dataDirectory,
@@ -1329,15 +1336,16 @@ export function startClaude(options: {
             integrations?.projectSettings ? 'user,project,local' : 'user',
           ]
         : [
-            ...(askRules.length
+            ...(options.summaryInstructions || askRules.length
               ? [
-                  '--strict-mcp-config',
-                  '--mcp-config',
-                  '{"mcpServers":{}}',
+                  ...isolatedMcpArgs,
                   '--settings',
                   JSON.stringify({
                     disableAllHooks: true,
-                    permissions: { ask: askRules },
+                    ...(options.summaryInstructions
+                      ? { autoMemoryEnabled: false, claudeMdExcludes: ['**'] }
+                      : {}),
+                    ...(askRules.length ? { permissions: { ask: askRules } } : {}),
                   }),
                 ]
               : isolatedToolArgs),
@@ -1383,8 +1391,10 @@ export function startClaude(options: {
       if (options.effort) args.push('--effort', options.effort);
       if (options.browser) args.push('--chrome');
       if (options.ephemeral) args.push('--no-session-persistence');
-      if (options.assistantPrompt)
-        args.push('--append-system-prompt', options.assistantPrompt);
+      const systemInstructions =
+        options.summaryInstructions ?? options.assistantPrompt;
+      if (systemInstructions)
+        args.push('--append-system-prompt', systemInstructions);
       if (options.outputSchema)
         args.push('--json-schema', JSON.stringify(options.outputSchema));
       if (stopped) return { status: 'stopped', error: null };

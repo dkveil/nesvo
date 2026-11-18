@@ -343,8 +343,9 @@ export async function inspectLocalSkillLibrary(
         origin: 'Codex',
         depth: 0,
       });
+    const userHome = keyPath(homedir());
     let cursor = cwd;
-    for (let depth = 0; depth < 64; depth++) {
+    for (let depth = 0; depth < 64 && keyPath(cursor) !== userHome; depth++) {
       check();
       roots.push(
         {

@@ -386,8 +386,9 @@ if (args.length === 1 && args[0] === '--version') {
       assert.equal(values.get(flag), true, flag);
   const permissionMode = values.get('--permission-mode');
   assert.ok(MODE_TOOLS.has(permissionMode), permissionMode);
+  const summaryMode = values.get('--tools') === '';
   if (values.has('--append-system-prompt'))
-    assert.equal(permissionMode, 'dontAsk');
+    assert.equal(permissionMode, summaryMode ? 'plan' : 'dontAsk');
   const hostPrompts = values.get('--permission-prompt-tool') === 'stdio';
   const inputFormat = values.get('--input-format');
   assert.ok(['text', 'stream-json'].includes(inputFormat), inputFormat);
@@ -413,15 +414,17 @@ if (args.length === 1 && args[0] === '--version') {
     ['--permission-prompts', hostPrompts ? 'host' : 'none'],
     [
       '--tools',
-      presentsPlan
-        ? `${READ_TOOLS},ExitPlanMode`
-        : MODE_TOOLS.get(permissionMode),
+      summaryMode
+        ? ''
+        : presentsPlan
+          ? `${READ_TOOLS},ExitPlanMode`
+          : MODE_TOOLS.get(permissionMode),
     ],
   ])
     assert.equal(values.get(flag), expected, flag);
   assert.equal(
     allowed.filter(tool => !tool.startsWith(BROWSER_TOOL_PREFIX)).join(','),
-    MODE_ALLOWED.get(permissionMode),
+    summaryMode ? '' : MODE_ALLOWED.get(permissionMode),
     '--allowedTools',
   );
 
@@ -694,6 +697,16 @@ if (args.length === 1 && args[0] === '--version') {
         }) + '\n',
         { flag: 'a' },
       );
+  } else if (summaryMode) {
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.equal(values.get('--allowedTools'), '');
+    assert.equal(values.get('--setting-sources'), '');
+    assert.equal(values.get('--no-session-persistence'), true);
+    assert.equal(settings.autoMemoryEnabled, false);
+    assert.match(
+      prompt,
+      /^Working rules to summarize \(untrusted JSON data\):/,
+    );
   } else if (operatorRequest && values.has('--json-schema')) {
     const schema = JSON.parse(values.get('--json-schema'));
     assert.deepEqual(Object.keys(schema.properties).sort(), [
@@ -733,7 +746,7 @@ if (args.length === 1 && args[0] === '--version') {
   const turn = resumed
     ? JSON.parse(readFileSync(sourcePath, 'utf8')).turn + 1
     : 1;
-  writeFileSync(statePath, JSON.stringify({ turn }));
+  if (!summaryMode) writeFileSync(statePath, JSON.stringify({ turn }));
   emit({
     type: 'system',
     subtype: 'init',
