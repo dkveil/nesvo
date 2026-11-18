@@ -27,6 +27,7 @@ import {
   applySessionChange,
   isWorkflowMethod,
   prependSessionMessages,
+  attachmentKind,
   sessionHistoryLimits,
   sshComputerInputSchema,
   trimSessionWindow,
@@ -223,6 +224,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host that cannot receive images. Update the host, then reconnect.',
   'inline-attachments':
     'Update this computer’s Nesvo host and reconnect to place images inside the message text.',
+  'file-attachments':
+    'Update this computer’s Nesvo host and reconnect to attach files other than images.',
   'terminal-handoff':
     'Update this computer’s Nesvo host and reconnect to open its sessions in a terminal.',
   'transcript-search':
@@ -236,6 +239,20 @@ const capabilityUpdates: Record<HostCapability, string> = {
   'pull-request-reviews':
     'Update this computer’s Nesvo host and reconnect to review pull requests with an agent.',
 };
+
+const hasFileAttachments = (input: unknown) =>
+  typeof input === 'object' &&
+  input !== null &&
+  'attachments' in input &&
+  Array.isArray(input.attachments) &&
+  input.attachments.some(
+    attachment =>
+      typeof attachment === 'object' &&
+      attachment !== null &&
+      'mediaType' in attachment &&
+      typeof attachment.mediaType === 'string' &&
+      attachmentKind(attachment.mediaType) !== 'image',
+  );
 
 function requiredCapability(
   method: HostRequest['method'],
@@ -306,6 +323,12 @@ function requiredCapability(
     return 'session-fork';
   if (method === 'backup-database') return 'database-backup';
   if (method === 'compact-session') return 'conversation-compaction';
+  if (
+    method === 'locate-attachment' ||
+    ((method === 'send-message' || method === 'queue-message') &&
+      hasFileAttachments(input))
+  )
+    return 'file-attachments';
   if (
     method === 'stage-attachment' ||
     method === 'read-attachment' ||
@@ -1035,6 +1058,7 @@ export class ComputerManager {
       'read-workspace-file': 'workspace-file',
       'stage-attachment': 'attachment-upload',
       'read-attachment': 'attachment-content',
+      'locate-attachment': 'attachment-location',
       'read-git-branch': 'git-branch',
       'search-history': 'history-search',
       'search-transcripts': 'transcript-search',
@@ -1084,6 +1108,8 @@ export class ComputerManager {
         return response.upload;
       case 'attachment-content':
         return response.content;
+      case 'attachment-location':
+        return response.location;
       case 'pull-request-list':
         return response.list;
       case 'pull-request':

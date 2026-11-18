@@ -32,6 +32,7 @@ import {
 import { mobileAccess } from './mobile-access';
 import { launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
+import { openAttachmentFile } from './attachment-files';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import {
   createWorkflowDemo,
@@ -74,6 +75,8 @@ import {
   searchWorkspaceFilesSchema,
   readWorkspaceFileSchema,
   readAttachmentSchema,
+  openAttachmentSchema,
+  attachmentLocationSchema,
   stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
@@ -1054,6 +1057,21 @@ void app.whenReady().then(async () => {
         stageAttachmentSchema.parse(input),
         route(hostId),
       );
+    },
+  );
+  handle(
+    'nesvo:open-attachment',
+    async (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      const { action, ...target } = openAttachmentSchema.parse(input);
+      if (route(hostId) !== 'local')
+        throw new Error(
+          'Files attached on another computer stay on that computer.',
+        );
+      const location = attachmentLocationSchema.parse(
+        await computers.execute('locate-attachment', target, 'local'),
+      );
+      await openAttachmentFile(hostDirectory, location, action);
     },
   );
   handle(

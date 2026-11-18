@@ -51,6 +51,7 @@ import {
   attachmentContentSchema,
   attachmentUploadSchema,
   readAttachmentSchema,
+  openAttachmentSchema,
   stageAttachmentSchema,
   readGitBranchSchema,
   historySearchInputSchema,
@@ -1153,6 +1154,13 @@ const api: DesktopApi = {
         route(hostId),
       ),
     ),
+  openAttachment: async (input, hostId) => {
+    await ipcRenderer.invoke(
+      'nesvo:open-attachment',
+      openAttachmentSchema.parse(input),
+      route(hostId),
+    );
+  },
   readAttachment: async (input, hostId) =>
     attachmentContentSchema.parse(
       await ipcRenderer.invoke(

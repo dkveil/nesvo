@@ -77,6 +77,7 @@ export function desktopApi(hostId = 'local'): DesktopApi {
     readWorkspaceFile: input => api.readWorkspaceFile(input, hostId),
     stageAttachment: input => api.stageAttachment(input, hostId),
     readAttachment: input => api.readAttachment(input, hostId),
+    openAttachment: input => api.openAttachment(input, hostId),
     listPullRequests: input => api.listPullRequests(input, hostId),
     readPullRequest: input => api.readPullRequest(input, hostId),
     readPullRequestFiles: input => api.readPullRequestFiles(input, hostId),
