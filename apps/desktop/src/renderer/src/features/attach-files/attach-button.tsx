@@ -1,11 +1,11 @@
 import { useRef } from 'react';
-import { ImagePlus } from 'lucide-react';
-import { attachmentMediaTypes } from '@nesvo/contracts';
+import { Paperclip } from 'lucide-react';
+import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { IconButton } from '@/shared/ui/icon-button';
-import type { ImageSupport } from './image-support';
+import type { AttachmentSupport } from './attachment-support';
 
 type AttachButtonProps = {
-  support: ImageSupport;
+  support: AttachmentSupport;
   disabled?: boolean;
   onFiles: (files: File[]) => void;
 };
@@ -18,22 +18,20 @@ export function AttachButton({
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
-      <IconButton
-        label={
-          support.enabled
-            ? 'Attach images'
-            : `Images unavailable. ${support.reason}`
-        }
-        size={24}
-        disabled={disabled || !support.enabled}
-        onClick={() => input.current?.click()}
-      >
-        <ImagePlus />
-      </IconButton>
+      <DisabledHint reason={support.enabled ? '' : support.reason}>
+        <IconButton
+          label="Attach files"
+          size={24}
+          tooltip={support.enabled}
+          disabled={disabled || !support.enabled}
+          onClick={() => input.current?.click()}
+        >
+          <Paperclip />
+        </IconButton>
+      </DisabledHint>
       <input
         ref={input}
         type="file"
-        accept={attachmentMediaTypes.join(',')}
         multiple
         hidden
         tabIndex={-1}

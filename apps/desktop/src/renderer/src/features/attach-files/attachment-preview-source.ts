@@ -3,7 +3,8 @@ import type { DesktopApi, MessageAttachment } from '@nesvo/contracts';
 
 export type PreviewSource = {
   hostId: string;
-  api: Pick<DesktopApi, 'readAttachment'>;
+  sessionId: string;
+  api: Pick<DesktopApi, 'readAttachment' | 'openAttachment'>;
 };
 
 const MAX_CACHED_PREVIEWS = 60;

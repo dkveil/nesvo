@@ -8,10 +8,14 @@ type AttachmentPreviewProviderProps = PreviewSource & { children: ReactNode };
 
 export function AttachmentPreviewProvider({
   hostId,
+  sessionId,
   api,
   children,
 }: AttachmentPreviewProviderProps) {
-  const source = useMemo(() => ({ hostId, api }), [hostId, api]);
+  const source = useMemo(
+    () => ({ hostId, sessionId, api }),
+    [hostId, sessionId, api],
+  );
   return (
     <PreviewContext.Provider value={source}>{children}</PreviewContext.Provider>
   );

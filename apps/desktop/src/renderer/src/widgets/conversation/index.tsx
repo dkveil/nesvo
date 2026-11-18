@@ -44,16 +44,15 @@ import {
   resolveEffort,
 } from '@/features/new-thread/reasoning-effort';
 import { entityKey } from '@/shared/lib/host-key';
-import { AttachButton } from '@/features/attach-images/attach-button';
-import { AttachmentPreviewProvider } from '@/features/attach-images/attachment-preview';
-import { AttachmentTray } from '@/features/attach-images/attachment-tray';
-import { composerTokens } from '@/features/attach-images/composer-tokens';
-import type { ImageSupport } from '@/features/attach-images/image-support';
+import { AttachButton } from '@/features/attach-files/attach-button';
+import { AttachmentPreviewProvider } from '@/features/attach-files/attachment-preview';
+import { AttachmentTray } from '@/features/attach-files/attachment-tray';
+import { composerTokens } from '@/features/attach-files/composer-tokens';
+import type { AttachmentSupport } from '@/features/attach-files/attachment-support';
 import {
-  imageFiles,
   type AttachmentPlacement,
   type ComposerAttachment,
-} from '@/features/attach-images/use-composer-attachments';
+} from '@/features/attach-files/use-composer-attachments';
 import { MessageBody } from './message-body';
 import { interruptionLabels } from './interruption-labels';
 import { MessageArticle } from './message-article';
@@ -68,9 +67,13 @@ const EAGER_TAIL_MESSAGES = 8;
 export type ConversationAttachments = {
   items: ComposerAttachment[];
   notice: string;
-  support: ImageSupport;
-  api: Pick<DesktopApi, 'readAttachment'>;
-  onAdd: (files: File[], offset: number | null) => void;
+  support: AttachmentSupport;
+  api: Pick<DesktopApi, 'readAttachment' | 'openAttachment'>;
+  onAdd: (
+    files: File[],
+    offset: number | null,
+    support: AttachmentSupport,
+  ) => void;
   onPlace: (placement: AttachmentPlacement) => void;
   onRemove: (localId: string) => void;
   onNotice: (notice: string) => void;
@@ -252,15 +255,16 @@ export function Conversation({
   );
   const attachmentsReady = !uploading && !attachmentFailed;
   const canSubmit = (queueing ? canQueue : canSend) && attachmentsReady;
-  const addImages = (files: File[], offset?: number | null) => {
+  const addFiles = (files: File[], offset?: number | null) => {
     if (attachments.support.enabled)
       attachments.onAdd(
         files,
         offset ?? messageInput.current?.selection().start ?? draft.length,
+        attachments.support,
       );
     else
       attachments.onNotice(
-        `Images cannot be attached in this session. ${attachments.support.reason}`,
+        `Files cannot be attached in this session. ${attachments.support.reason}`,
       );
   };
   const groupRun =
@@ -488,15 +492,10 @@ export function Conversation({
             event.preventDefault();
             setDragging(false);
             const files = [...event.dataTransfer.files];
-            const images = imageFiles(files);
-            if (images.length)
-              addImages(
+            if (files.length)
+              addFiles(
                 files,
                 messageInput.current?.offsetAt(event.clientX, event.clientY),
-              );
-            else if (files.length)
-              attachments.onNotice(
-                'Only PNG, JPEG, WebP and GIF images can be attached.',
               );
           }}
           onSubmit={event => {
@@ -611,13 +610,13 @@ export function Conversation({
                 }}
                 onPaste={event => {
                   const pasted = event.clipboardData.getData('text');
-                  const images = imageFiles(event.clipboardData.files);
+                  const files = [...event.clipboardData.files];
                   const selection = messageInput.current?.selection() ?? {
                     start: draft.length,
                     end: draft.length,
                   };
-                  if (images.length) {
-                    addImages(images, selection.start);
+                  if (files.length) {
+                    addFiles(files, selection.start);
                     if (!pasted) {
                       event.preventDefault();
                       return;
@@ -653,7 +652,7 @@ export function Conversation({
                     <AttachButton
                       support={attachments.support}
                       disabled={!connected}
-                      onFiles={addImages}
+                      onFiles={addFiles}
                     />
                     <ModeSwitch
                       provider={session.provider}
@@ -670,7 +669,7 @@ export function Conversation({
                       {otherRun
                         ? (otherRunLabel ?? 'Another session is working')
                         : uploading
-                          ? 'Attaching images…'
+                          ? 'Attaching files…'
                           : running && draft.trim()
                             ? 'Will send when this turn ends'
                             : sending
@@ -759,7 +758,7 @@ export function Conversation({
           {(attachments.notice || attachmentFailed) && (
             <StatusMessage tone="warning" className="px-3">
               {attachments.notice ||
-                'Remove the images that could not be attached before sending.'}
+                'Remove the files that could not be attached before sending.'}
             </StatusMessage>
           )}
           {(limitReached || pasteTruncated) && (
@@ -845,7 +844,11 @@ export function Conversation({
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
   };
   return (
-    <AttachmentPreviewProvider hostId={session.hostId} api={attachments.api}>
+    <AttachmentPreviewProvider
+      hostId={session.hostId}
+      sessionId={session.id}
+      api={attachments.api}
+    >
       <section
         aria-label="Conversation"
         data-host-id={session.hostId}

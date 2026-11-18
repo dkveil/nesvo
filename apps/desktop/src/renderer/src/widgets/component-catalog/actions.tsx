@@ -3,7 +3,9 @@ import {
   Bot,
   ChevronDown,
   Copy,
+  ExternalLink,
   Folder,
+  FolderOpen,
   Inbox,
   ListEnd,
   ListPlus,
@@ -17,6 +19,7 @@ import {
 import { AddTile } from '@/shared/ui/add-tile';
 import { AttachmentChip } from '@/shared/ui/attachment-chip';
 import { AttachmentToken } from '@/shared/ui/attachment-token';
+import { DropdownMenuItem } from '@/shared/ui/dropdown-menu';
 import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { IconButton } from '@/shared/ui/icon-button';
@@ -44,6 +47,19 @@ const ICON_SIZES = [16, 20, 24, 28, 32, 40] as const;
 const SAMPLE_IMAGE = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#27272a"/><rect x="8" y="10" width="64" height="8" rx="2" fill="#52525b"/><rect x="8" y="26" width="40" height="6" rx="2" fill="#3f3f46"/><rect x="8" y="38" width="52" height="6" rx="2" fill="#3f3f46"/><rect x="8" y="54" width="28" height="14" rx="3" fill="#fafafa"/></svg>',
 )}`;
+
+const sampleFileMenu = (
+  <>
+    <DropdownMenuItem>
+      <ExternalLink />
+      Open
+    </DropdownMenuItem>
+    <DropdownMenuItem>
+      <FolderOpen />
+      Show in folder
+    </DropdownMenuItem>
+  </>
+);
 
 export function ActionsSection() {
   return (
@@ -315,6 +331,31 @@ export function ActionsSection() {
             onOpen={() => undefined}
           />
         </SpecimenRow>
+        <SpecimenRow
+          label="file · sm · uploading · failed · md with menu"
+          className="gap-3 pt-2"
+        >
+          <AttachmentChip
+            name="brief.pdf"
+            kind="file"
+            detail="1.2 MB"
+            onRemove={() => undefined}
+          />
+          <AttachmentChip name="archive.zip" kind="file" status="uploading" />
+          <AttachmentChip
+            name="notes.txt"
+            kind="file"
+            detail="Could not attach notes.txt"
+            status="failed"
+          />
+          <AttachmentChip
+            name="report.csv"
+            kind="file"
+            detail="48 KB"
+            size="md"
+            menu={sampleFileMenu}
+          />
+        </SpecimenRow>
       </Specimen>
       <Specimen title="AttachmentToken" source="shared/ui/attachment-token.tsx">
         <SpecimenRow
@@ -329,6 +370,20 @@ export function ActionsSection() {
             status="failed"
           />
           <AttachmentToken name="missing.png" detail="26 KB" />
+        </SpecimenRow>
+        <SpecimenRow
+          label="file · code · archive · with menu"
+          className="gap-3"
+        >
+          <AttachmentToken name="brief.pdf" kind="file" detail="1.2 MB" />
+          <AttachmentToken name="index.ts" kind="file" detail="4 KB" />
+          <AttachmentToken name="logs.zip" kind="file" detail="8.4 MB" />
+          <AttachmentToken
+            name="report.csv"
+            kind="file"
+            detail="48 KB"
+            menu={sampleFileMenu}
+          />
         </SpecimenRow>
         <SpecimenRow label="in text · opens preview (history)">
           <p className="text-sm leading-6">

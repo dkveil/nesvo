@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  attachmentByteLimit,
+  attachmentKind,
+  attachmentLimitMessage,
   attachmentLimits,
-  attachmentMediaTypes,
+  type AttachmentKind,
   type DesktopApi,
   type MessageAttachment,
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
-import { stageImage } from './stage-image';
+import type { AttachmentSupport } from './attachment-support';
+import { stageFile } from './stage-file';
 
 export type ComposerAttachment = {
   localId: string;
   name: string;
   size: number;
+  kind: AttachmentKind;
   previewUrl: string | null;
   status: 'uploading' | 'ready' | 'failed';
   error: string;
@@ -33,19 +38,23 @@ const EXTENSIONS: Record<string, string> = {
   'image/gif': 'gif',
 };
 
-const isAcceptedType = (type: string) =>
-  (attachmentMediaTypes as readonly string[]).includes(type);
-
 const fileName = (file: File) =>
-  file.name.trim() || `Pasted image.${EXTENSIONS[file.type] ?? 'png'}`;
+  file.name.trim() ||
+  (EXTENSIONS[file.type]
+    ? `Pasted image.${EXTENSIONS[file.type]}`
+    : 'Pasted file');
+
+const expectedKind = (file: File) =>
+  attachmentKind(
+    file.type === '' && file.name.toLowerCase().endsWith('.pdf')
+      ? 'application/pdf'
+      : file.type,
+  );
 
 export const formatBytes = (bytes: number) =>
   bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
     : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-
-export const imageFiles = (files: Iterable<File>) =>
-  [...files].filter(file => file.type.startsWith('image/'));
 
 export const useComposerAttachments = () => {
   const [items, setItems] = useState<AttachmentMap>({});
@@ -83,6 +92,7 @@ export const useComposerAttachments = () => {
     (
       key: string,
       api: Pick<DesktopApi, 'stageAttachment'>,
+      support: AttachmentSupport,
       files: File[],
       offset: number | null = null,
     ) => {
@@ -90,17 +100,21 @@ export const useComposerAttachments = () => {
       const problems: string[] = [];
       const accepted: File[] = [];
       for (const file of files) {
-        if (!isAcceptedType(file.type))
+        const kind = support[expectedKind(file)];
+        if (!kind.enabled)
+          problems.push(`${fileName(file)} cannot be attached. ${kind.reason}`);
+        else if (file.size === 0) problems.push(`${fileName(file)} is empty.`);
+        else if (file.size > attachmentByteLimit(expectedKind(file)))
           problems.push(
-            `${fileName(file)} is not a PNG, JPEG, WebP or GIF image.`,
+            `${fileName(file)} is too large. ${attachmentLimitMessage(expectedKind(file))}`,
           );
-        else if (file.size > attachmentLimits.bytes)
-          problems.push(`${fileName(file)} is larger than 5 MB.`);
         else if (
           current.length + accepted.length >=
           attachmentLimits.perMessage
         )
-          problems.push('Attach up to 5 images per message.');
+          problems.push(
+            `Attach up to ${attachmentLimits.perMessage} files per message.`,
+          );
         else accepted.push(file);
       }
       notify(key, [...new Set(problems)].join(' '));
@@ -110,7 +124,9 @@ export const useComposerAttachments = () => {
           localId: crypto.randomUUID(),
           name: fileName(file),
           size: file.size,
-          previewUrl: URL.createObjectURL(file),
+          kind: expectedKind(file),
+          previewUrl:
+            expectedKind(file) === 'image' ? URL.createObjectURL(file) : null,
           status: 'uploading' as const,
           error: '',
           attachment: null,
@@ -120,15 +136,25 @@ export const useComposerAttachments = () => {
       if (!added.length) return;
       change(key, list => [...list, ...added.map(entry => entry.item)]);
       for (const { file, item } of added)
-        stageImage(api, file, item.name).then(
-          attachment =>
+        stageFile(api, file, item.name).then(
+          attachment => {
+            const kind = attachmentKind(attachment.mediaType);
+            const allowed = support[kind];
             change(key, list =>
               list.map(entry =>
                 entry.localId === item.localId
-                  ? { ...entry, status: 'ready', attachment }
+                  ? allowed.enabled
+                    ? { ...entry, kind, status: 'ready', attachment }
+                    : {
+                        ...entry,
+                        kind,
+                        status: 'failed',
+                        error: `Could not attach ${item.name}. ${allowed.reason}`,
+                      }
                   : entry,
               ),
-            ),
+            );
+          },
           (failure: unknown) =>
             change(key, list =>
               list.map(entry =>
@@ -207,6 +233,7 @@ export const useComposerAttachments = () => {
             localId: crypto.randomUUID(),
             name: attachment.name,
             size: attachment.size,
+            kind: attachmentKind(attachment.mediaType),
             previewUrl: null,
             status: 'ready' as const,
             error: '',

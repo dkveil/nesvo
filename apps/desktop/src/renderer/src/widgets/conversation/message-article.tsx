@@ -1,14 +1,15 @@
 import { memo, type ReactNode } from 'react';
-import type { MessageAttachment } from '@nesvo/contracts';
+import { attachmentKind, type MessageAttachment } from '@nesvo/contracts';
 import { BookOpen } from 'lucide-react';
 import { statusLabels, type Provider, type Session } from '@/entities/session';
 import { cn } from '@/shared/lib/cn';
-import { MessageAttachments } from '@/features/attach-images/attachment-tray';
-import { InlineAttachment } from '@/features/attach-images/inline-attachment';
+import { MessageAttachments } from '@/features/attach-files/attachment-tray';
+import { InlineAttachment } from '@/features/attach-files/inline-attachment';
 import { Chip } from '@/shared/ui/chip';
 import { InlineNotice } from '@/shared/ui/inline-notice';
 import { Separator } from '@/shared/ui/separator';
 import { StatusMessage } from '@/shared/ui/status-message';
+import { isShownInText } from './attachment-markers';
 import { ClampedPrompt } from './clamped-prompt';
 import { CopyMessageButton } from './copy-message-button';
 import { interruptionLabels } from './interruption-labels';
@@ -82,6 +83,11 @@ export const MessageArticle = memo(function MessageArticle({
   threadStart,
   compacted,
 }: MessageArticleProps) {
+  const stripAttachments = (message.attachments ?? []).filter(
+    attachment =>
+      attachmentKind(attachment.mediaType) === 'image' ||
+      !isShownInText(message.body, attachment),
+  );
   return (
     <>
       {compacted && <Separator label="Conversation compacted" />}
@@ -158,8 +164,8 @@ export const MessageArticle = memo(function MessageArticle({
           </InlineNotice>
         )}
         {showActivity && activity}
-        {message.author === 'operator' && !!message.attachments?.length && (
-          <MessageAttachments attachments={message.attachments} />
+        {message.author === 'operator' && !!stripAttachments.length && (
+          <MessageAttachments attachments={stripAttachments} />
         )}
         {(message.body || !live) &&
           (message.author === 'operator' ? (

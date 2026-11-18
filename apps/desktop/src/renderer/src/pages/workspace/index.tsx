@@ -179,12 +179,12 @@ import { desktopApi, useSessions } from './use-sessions';
 import { supportsScheduledJobs, useScheduledJobs } from './use-scheduled-jobs';
 import { readDrafts, writeDrafts } from './draft-store';
 import { SessionWorkflowChip } from '@/features/session-workflow';
-import { imageSupport } from '@/features/attach-images/image-support';
-import { useComposerAttachments } from '@/features/attach-images/use-composer-attachments';
+import { attachmentSupport } from '@/features/attach-files/attachment-support';
+import { useComposerAttachments } from '@/features/attach-files/use-composer-attachments';
 import {
   placeInText,
   withoutPlacement,
-} from '@/features/attach-images/placement';
+} from '@/features/attach-files/placement';
 import { McpChip } from '@/features/session-mcp/mcp-chip';
 import { CompactInstructionsDialog } from '@/features/conversation-context/compact-instructions-dialog';
 import { ContextMeter } from '@/features/conversation-context/context-meter';
@@ -4072,7 +4072,7 @@ ${text}`
                 attachments={{
                   items: composerAttachments.items(selectedKey),
                   notice: composerAttachments.notice(selectedKey),
-                  support: imageSupport({
+                  support: attachmentSupport({
                     provider: selected.provider,
                     model:
                       modelSelections[selectedKey]?.model ?? selected.model,
@@ -4087,10 +4087,11 @@ ${text}`
                     capabilities: selectedComputer?.capabilities ?? [],
                   }),
                   api: desktopApi(selectedHostId),
-                  onAdd: (files, offset) =>
+                  onAdd: (files, offset, support) =>
                     composerAttachments.add(
                       selectedKey,
                       desktopApi(selectedHostId),
+                      support,
                       files,
                       offset,
                     ),

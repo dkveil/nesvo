@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { MessageAttachment } from '@nesvo/contracts';
+import { attachmentKind, type MessageAttachment } from '@nesvo/contracts';
 import { AttachmentChip } from '@/shared/ui/attachment-chip';
+import { useAttachmentFileActions } from './use-attachment-file-actions';
 import { useAttachmentPreview } from './use-attachment-preview';
 import { ImageLightbox } from './image-lightbox';
 import {
@@ -13,6 +14,7 @@ type OpenImage = { name: string; src: string; detail: string };
 type PreviewChipProps = {
   name: string;
   size: number;
+  kind: ComposerAttachment['kind'];
   attachment: MessageAttachment | null;
   localUrl: string | null;
   status: ComposerAttachment['status'];
@@ -22,7 +24,41 @@ type PreviewChipProps = {
   onRemove?: () => void;
 };
 
-function PreviewChip({
+function FileChip({
+  name,
+  size,
+  attachment,
+  status,
+  error,
+  chipSize,
+  onRemove,
+}: Omit<PreviewChipProps, 'kind' | 'localUrl' | 'onOpen'>) {
+  const actions = useAttachmentFileActions(onRemove ? null : attachment);
+  return (
+    <li>
+      <AttachmentChip
+        name={name}
+        kind="file"
+        status={status}
+        detail={error || formatBytes(size)}
+        size={chipSize}
+        menu={actions.menu}
+        onRemove={onRemove}
+      />
+      {actions.dialog}
+    </li>
+  );
+}
+
+function PreviewChip(props: PreviewChipProps) {
+  return props.kind === 'image' ? (
+    <ImageChip {...props} />
+  ) : (
+    <FileChip {...props} />
+  );
+}
+
+function ImageChip({
   name,
   size,
   attachment,
@@ -69,7 +105,7 @@ export function AttachmentTray({ items, onRemove }: AttachmentTrayProps) {
   return (
     <>
       <ul
-        aria-label="Attached images"
+        aria-label="Attached files"
         className="mb-2 flex min-w-0 flex-wrap gap-2 pt-1.5 pr-1.5"
       >
         {items.map(item => (
@@ -77,6 +113,7 @@ export function AttachmentTray({ items, onRemove }: AttachmentTrayProps) {
             key={item.localId}
             name={item.name}
             size={item.size}
+            kind={item.kind}
             attachment={item.attachment}
             localUrl={item.previewUrl}
             status={item.status}
@@ -101,7 +138,7 @@ export function MessageAttachments({ attachments }: MessageAttachmentsProps) {
   return (
     <>
       <ul
-        aria-label={`${attachments.length} attached ${attachments.length === 1 ? 'image' : 'images'}`}
+        aria-label={`${attachments.length} attached ${attachments.length === 1 ? 'file' : 'files'}`}
         className="flex max-w-[85%] flex-wrap justify-end gap-2"
       >
         {attachments.map(attachment => (
@@ -109,6 +146,7 @@ export function MessageAttachments({ attachments }: MessageAttachmentsProps) {
             key={attachment.id}
             name={attachment.name}
             size={attachment.size}
+            kind={attachmentKind(attachment.mediaType)}
             attachment={attachment}
             localUrl={null}
             status="ready"

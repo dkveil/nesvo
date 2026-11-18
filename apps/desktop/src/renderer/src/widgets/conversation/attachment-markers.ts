@@ -21,6 +21,10 @@ export const attachmentIndexOf = (href: string | undefined) => {
   return Number.isInteger(index) ? index : null;
 };
 
+export const isShownInText = (body: string, attachment: MessageAttachment) =>
+  attachment.offset != null &&
+  !insideCode(body, Math.min(attachment.offset, body.length));
+
 export const hasPlacedAttachments = (
   attachments: readonly MessageAttachment[] | undefined,
 ) => !!attachments?.some(attachment => attachment.offset != null);

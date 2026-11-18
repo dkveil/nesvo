@@ -15,16 +15,19 @@ const toBase64 = (bytes: Uint8Array) => {
   return btoa(binary);
 };
 
-export const stageImage = async (
+export const stageFile = async (
   api: Pick<DesktopApi, 'stageAttachment'>,
   file: Blob,
   name: string,
 ): Promise<MessageAttachment> => {
-  const bytes = new Uint8Array(await file.arrayBuffer());
   const uploadId = crypto.randomUUID();
   for (let offset = 0; ;) {
-    const chunk = bytes.subarray(offset, offset + attachmentLimits.chunkBytes);
-    const final = offset + chunk.length >= bytes.length;
+    const chunk = new Uint8Array(
+      await file
+        .slice(offset, offset + attachmentLimits.chunkBytes)
+        .arrayBuffer(),
+    );
+    const final = offset + chunk.length >= file.size;
     const upload = await api.stageAttachment({
       uploadId,
       name,
@@ -35,7 +38,7 @@ export const stageImage = async (
     offset += chunk.length;
     if (!final) continue;
     if (!upload.attachment)
-      throw new Error('The computer did not confirm the image.');
+      throw new Error('The computer did not confirm the file.');
     return upload.attachment;
   }
 };
