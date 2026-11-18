@@ -174,7 +174,9 @@ function alive(pid) {
 test(
   'daemon retains work and decision identity across reconnecting Unix clients',
   {
-    skip: process.platform !== 'linux',
+    skip:
+      process.platform !== 'linux' &&
+      'The daemon scenario requires Linux service and process-group semantics.',
     timeout: 120_000,
   },
   async t => {

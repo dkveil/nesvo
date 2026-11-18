@@ -17,6 +17,8 @@ const directory = await realpath(
 const env = {
   ...process.env,
   NESVO_DATA_DIR: directory,
+  NESVO_TEST_MODE: '1',
+  NESVO_WORKFLOWS_HOME: join(directory, 'workflows-home'),
   NESVO_SMOKE_TEST: '1',
   NESVO_CLAUDE_EXECUTABLE: resolve('apps/host/tests/claude-fixture.mjs'),
   NESVO_CODEX_EXECUTABLE: resolve('apps/host/tests/codex-fixture.mjs'),
@@ -25,6 +27,7 @@ const env = {
   NESVO_TEST_SKILLS_HOME: join(directory, 'skills'),
 };
 delete env.ELECTRON_RUN_AS_NODE;
+delete env.NESVO_WORK_LAPTOP_MODE;
 delete env.NESVO_TEST_PID_FILE;
 
 let child;

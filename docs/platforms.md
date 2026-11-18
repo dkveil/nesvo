@@ -1,5 +1,20 @@
 # Platform verification
 
+## macOS on master
+
+The native workflow runs the host suite, the unpackaged desktop smoke and the unpacked macOS package smoke on every push to master. The Linux daemon scenario has an explicit Linux-only skip because it exercises Linux runtime ownership and process semantics. The macOS desktop and package scenarios run without an operating-system skip.
+
+Earlier native macOS runner evidence is recorded below. Evidence for the new per-push workflow is pending the first push to master that includes this change. The owner’s interactive macOS scenarios and acceptance on a managed laptop are separate evidence.
+
+## Owner checklist for signed releases
+
+D75 publishes unsigned builds. Each item below needs a separate owner decision and release evidence.
+
+- [ ] Authorize Developer ID distribution, obtain the Developer ID Application identity and provision signing access and hardened-runtime entitlements for release CI. Verify the signatures on the application and bundled executables for both Mac architectures.
+- [ ] Authorize notarization, provision the notarization credential in release CI, submit the disk images, staple the tickets and verify a download on a clean Mac with Gatekeeper.
+- [ ] Decide whether to enable signed updates. Define who controls the signing keys and update channel, and verify that the updater rejects invalid signatures before distribution.
+- [ ] Install the release on a managed laptop and record the endpoint monitoring result separately from native runner evidence.
+
 ## R5-G Automations scenario evidence
 
 The principal desktop scenario and the Linux daemon case were extended for Automations on the Linux VPS used for development (Xvfb, Electron with its embedded Node, provider fixtures, isolated profile). They check Run now with an accepted result, a restart with two missed occurrences recorded as one skipped run, a provider limit shown as unavailable with its reset time, a refused second instance, and an unattended daemon run that a later client receives once. See [testing.md](testing.md) for the exact assertions. These are fixture runs: they do not show successful real model output, subscription access or behavior on Windows and macOS.
