@@ -22,6 +22,8 @@ export const codeReviewLimits = {
   error: 2000,
 } as const;
 
+export const AGENT_REVIEW_BRANCH_PREFIX = 'nesvo/review-';
+
 export const reviewSeveritySchema = z.enum([
   'info',
   'minor',

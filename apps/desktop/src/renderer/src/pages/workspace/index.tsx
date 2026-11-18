@@ -22,7 +22,10 @@ import type {
   SessionMode,
   StartWorkflowTaskInput,
 } from '@nesvo/contracts';
-import { isGroupableSession } from '@nesvo/contracts';
+import {
+  AGENT_REVIEW_BRANCH_PREFIX,
+  isGroupableSession,
+} from '@nesvo/contracts';
 import {
   Archive,
   ArchiveRestore,
@@ -147,6 +150,7 @@ import {
 } from '@/widgets/session-card';
 import { ProviderUsage } from '@/widgets/provider-rail';
 import { ProviderProfileSettings } from '@/widgets/provider-rail/provider-profile-settings';
+import { CodeReviewSettings } from '@/widgets/code-review-settings';
 import { useProfileStatus } from '@/features/provider-profiles/use-profile-status';
 import { Chip } from '@/shared/ui/chip';
 import { Hint } from '@/shared/ui/tooltip';
@@ -227,6 +231,10 @@ const WorkspaceFiles = lazy(() => import('@/widgets/workspace-files'));
 const SessionSkills = lazy(() => import('@/widgets/session-skills'));
 
 const PullRequestPanel = lazy(() => import('@/widgets/pull-request'));
+
+const isAgentReviewSession = (session: Session) =>
+  !!session.pullRequest &&
+  !!session.worktree?.branch.startsWith(AGENT_REVIEW_BRANCH_PREFIX);
 
 const DRAFT_LIMIT_CHARACTERS = 32_000;
 
@@ -2201,6 +2209,18 @@ export function Workspace() {
     : [];
   const checkoutSession =
     selected && linkedSessions.includes(selected) ? selected : null;
+  const agentReviewBlockedReason = (hostId: string) =>
+    store.computers
+      .find(computer => computer.id === hostId)
+      ?.capabilities.includes('pull-request-reviews')
+      ? ''
+      : 'Update this computer’s Nesvo host and reconnect to review pull requests with an agent.';
+  const reviewDirectory =
+    linkedSessions.find(session => session.worktree)?.worktree
+      ?.projectDirectory ??
+    (selected && selected.hostId === pullRequestTarget?.hostId
+      ? (selected.worktree?.projectDirectory ?? selected.directory)
+      : '');
   const threadTarget = checkoutSession ?? linkedSessions[0] ?? selected ?? null;
   const sendToSession = (text: string) => {
     if (!threadTarget) return;
@@ -3725,6 +3745,7 @@ ${text}`
                 apiFor={pullRequestApi}
                 openTarget={panel === 'pull-request' ? pullRequestTarget : null}
                 onOpen={openPullRequest}
+                onOpenCodeReviewSettings={() => setSettingsPage('code-review')}
               />
             </div>
           ) : costsView ? (
@@ -3770,6 +3791,8 @@ ${text}`
                     item.hostId === review.hostId,
                 );
                 const name = session && jobOf(session)?.name;
+                if (session && isAgentReviewSession(session))
+                  return `Agent review · #${session.pullRequest?.number}`;
                 return session && isAutomationSession(session)
                   ? name
                     ? `Automation · ${name}`
@@ -4256,6 +4279,14 @@ ${text}`
               target={pullRequestTarget}
               api={desktopApi(pullRequestTarget.hostId)}
               blockedReason={pullRequestBlockedReason(pullRequestTarget.hostId)}
+              reviewBlockedReason={agentReviewBlockedReason(
+                pullRequestTarget.hostId,
+              )}
+              reviewDirectory={reviewDirectory}
+              onOpenSession={sessionId =>
+                select(hostKey(sessionId, pullRequestTarget.hostId))
+              }
+              onOpenCodeReviewSettings={() => setSettingsPage('code-review')}
               linkedSession={checkoutSession}
               sendTargetTitle={threadTarget?.title ?? ''}
               onSendToSession={sendToSession}
@@ -4319,6 +4350,7 @@ ${text}`
             void store.refreshProvider(provider, hostId)
           }
           onManageComputers={() => setSettingsPage('computers')}
+          reviewApi={desktopApi}
           onSave={(hostId, input, expectedRevision) =>
             window.nesvo.scheduledJobs.save(hostId, input, expectedRevision)
           }
@@ -4375,6 +4407,15 @@ ${text}`
               </div>
             ) : page === 'notifications' ? (
               <NotificationsSettings />
+            ) : page === 'code-review' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <CodeReviewSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  api={desktopApi(settingsHostId)}
+                />
+              </div>
             ) : page === 'data' ? (
               <DataSettings api={desktopApi()} computers={store.computers} />
             ) : page === 'about' ? (

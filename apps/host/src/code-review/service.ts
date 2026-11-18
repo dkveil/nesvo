@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  AGENT_REVIEW_BRANCH_PREFIX,
   agentReviewOutputJsonSchema,
   codeReviewLimits,
   type CodeReviewSettings,
@@ -514,7 +515,7 @@ export class CodeReviews {
           directory: draft.directory,
           isolation: {
             kind: 'worktree',
-            branch: `nesvo/review-${draft.reference.number}-${draft.id.slice(0, 8)}`,
+            branch: `${AGENT_REVIEW_BRANCH_PREFIX}${draft.reference.number}-${draft.id.slice(0, 8)}`,
           },
           ...(profile.effort ? { effort: profile.effort } : {}),
         },
