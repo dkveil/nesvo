@@ -4467,6 +4467,10 @@ ${text}`
                 draft={drafts[selectedKey] ?? ''}
                 selectedSkill={selectedSkills[selectedKey] ?? null}
                 skillApi={desktopApi(selectedHostId)}
+                nativeCommands={
+                  selected.provider === 'Claude Code' &&
+                  !!selectedComputer?.capabilities.includes('claude-commands')
+                }
                 connected={store.hostReady(selectedHostId)}
                 onSkillChange={skill => changeSkill(selectedKey, skill)}
                 sending={sending}

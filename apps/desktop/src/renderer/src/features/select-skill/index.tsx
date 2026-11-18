@@ -6,12 +6,14 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import type {
-  DesktopApi,
-  DiscoverSkillsInput,
-  SkillCatalog,
-  SkillEntry,
-  SkillReference,
+import {
+  claudeCommandRefusal,
+  type ClaudeCommandList,
+  type DesktopApi,
+  type DiscoverSkillsInput,
+  type SkillCatalog,
+  type SkillEntry,
+  type SkillReference,
 } from '@nesvo/contracts';
 import { RefreshCw } from 'lucide-react';
 import { errorDetail, type Provider } from '@/entities/session';
@@ -24,7 +26,11 @@ import { SearchField } from '@/shared/ui/search-field';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 import {
-  rankSkills,
+  findNativeCommand,
+  menuEntries,
+  type MenuEntry,
+} from './command-entries';
+import {
   resolveTypedSkill,
   skillCommand,
   slashQueryOf,
@@ -65,9 +71,12 @@ type Controls = {
 
 type Props = {
   scope: SkillScope;
-  api: Pick<DesktopApi, 'discoverSkills'>;
+  api: Pick<DesktopApi, 'discoverSkills'> &
+    Partial<Pick<DesktopApi, 'listClaudeCommands'>>;
   draft: string;
   enabled?: boolean;
+  nativeCommands?: boolean;
+  onCommand?: (name: string) => void;
   onSelect: (skill: SelectedSkill) => void;
   onFocusMessage: () => void;
   children: (controls: Controls) => ReactNode;
@@ -107,6 +116,8 @@ export function SelectSkill({
   api,
   draft,
   enabled = true,
+  nativeCommands = false,
+  onCommand,
   onSelect,
   onFocusMessage,
   children,
@@ -124,6 +135,11 @@ export function SelectSkill({
     catalog?: SkillCatalog;
     error?: string;
   }>({ key: '' });
+  const [commandState, setCommandState] = useState<{
+    key: string;
+    list?: ClaudeCommandList;
+    error?: string;
+  }>({ key: '' });
   const filter = useRef<HTMLInputElement>(null);
   const slashQuery = slashQueryOf(draft);
   const slash = slashQuery !== undefined;
@@ -132,14 +148,61 @@ export function SelectSkill({
   const current = state.key === scopeKey ? state : { key: scopeKey };
   const { catalog, error } = current;
   const loading = !catalog && !error;
-  const skills = catalog ? rankSkills(catalog.skills, query) : [];
-  const selectable = skills.filter(skill => !unavailableReason(skill, catalog));
+  const sessionId =
+    'sessionId' in scope.input ? scope.input.sessionId : undefined;
+  const listCommands = api.listClaudeCommands;
+  const commandsEnabled =
+    nativeCommands && scope.provider === 'Claude Code' && !!sessionId;
+  const commandsCurrent =
+    commandState.key === scopeKey ? commandState : { key: scopeKey };
+  const commandList =
+    commandsCurrent.list?.status === 'ready' ? commandsCurrent.list : undefined;
+  const commandIssue =
+    commandsCurrent.error ??
+    (commandsCurrent.list?.status === 'unavailable'
+      ? (commandsCurrent.list.detail ??
+        'Claude Code did not list its commands.')
+      : null);
+  const entries = catalog
+    ? menuEntries(
+        catalog,
+        commandsEnabled ? commandList?.commands : undefined,
+        query,
+      )
+    : [];
+  const isSelectable = (entry: MenuEntry) =>
+    entry.kind === 'command' || !unavailableReason(entry.skill, catalog);
+  const selectable = entries.filter(isSelectable);
   const active =
-    selectable.find(skill => skill.id === activeId) ?? selectable[0];
+    selectable.find(entry => entry.id === activeId) ?? selectable[0];
   const activeOptionId = active
     ? listboxOptionId(listId, active.id)
     : undefined;
   const fetchCatalog = () => requestCatalog(api, scope);
+  const fetchCommands = async () => {
+    if (!commandsEnabled || !listCommands || !sessionId) return undefined;
+    if (commandsCurrent.list) return commandsCurrent.list;
+    const list = await listCommands({ sessionId }, scope.hostId);
+    setCommandState({ key: scopeKey, list });
+    return list;
+  };
+  useEffect(() => {
+    if (!open || !commandsEnabled || !listCommands || !sessionId) return;
+    const { hostId } = JSON.parse(scopeKey) as SkillScope;
+    let live = true;
+    listCommands({ sessionId }, hostId).then(
+      list => {
+        if (live) setCommandState({ key: scopeKey, list });
+      },
+      failure => {
+        if (live)
+          setCommandState({ key: scopeKey, error: errorDetail(failure) });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [listCommands, open, commandsEnabled, sessionId, scopeKey, refresh]);
   useEffect(() => {
     if (!open) return;
     let live = true;
@@ -160,12 +223,29 @@ export function SelectSkill({
     setDismissedDraft(draft);
     setManualQuery(null);
   };
-  const choose = (skill: SkillEntry) => {
+  const chooseSkill = (skill: SkillEntry) => {
     if (unavailableReason(skill, catalog) || !skill.path) return;
     close();
     setTypedError('');
     onSelect(toSelected(skill));
     requestAnimationFrame(onFocusMessage);
+  };
+  const choose = (entry: MenuEntry) => {
+    if (entry.kind === 'skill') return chooseSkill(entry.skill);
+    close();
+    setTypedError('');
+    onCommand?.(entry.command.name);
+    requestAnimationFrame(onFocusMessage);
+  };
+  const nativeCommand = async (command: string) => {
+    if (!commandsEnabled) return null;
+    const refusal = claudeCommandRefusal(command);
+    if (refusal) return { status: 'refused' as const, message: refusal };
+    const list = await fetchCommands();
+    if (list?.status !== 'ready') return null;
+    return findNativeCommand(list.commands, command)
+      ? { status: 'native' as const, message: '' }
+      : null;
   };
   const resolveTyped = async (text: string): Promise<TypedSubmission> => {
     const typed = typedCommandOf(text);
@@ -177,7 +257,17 @@ export function SelectSkill({
         typed.text,
       );
       if (resolved.status === 'error') {
-        setTypedError(resolved.message);
+        const native = await nativeCommand(typed.command).catch(() => null);
+        if (native?.status === 'native') {
+          setTypedError('');
+          return { status: 'none' };
+        }
+        setTypedError(
+          native?.message ||
+            (commandsEnabled
+              ? `No available skill or Claude Code command is named /${typed.command}. Choose one from the list, or remove the leading slash to send plain text.`
+              : resolved.message),
+        );
         return { status: 'error' };
       }
       if (!resolved.text) {
@@ -217,7 +307,7 @@ export function SelectSkill({
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!selectable.length) return;
-      const index = selectable.findIndex(skill => skill.id === active?.id);
+      const index = selectable.findIndex(entry => entry.id === active?.id);
       const offset = event.key === 'ArrowDown' ? 1 : -1;
       const next =
         selectable[(index + offset + selectable.length) % selectable.length];
@@ -236,6 +326,7 @@ export function SelectSkill({
   };
   const reload = () => {
     setState({ key: '' });
+    setCommandState({ key: '' });
     setRefresh(value => value + 1);
   };
   return (
@@ -305,7 +396,9 @@ export function SelectSkill({
               variant="underline"
               containerClassName="flex-1 border-b-0"
               aria-label="Filter skills"
-              placeholder="Find a skill"
+              placeholder={
+                commandsEnabled ? 'Find a skill or command' : 'Find a skill'
+              }
               value={manualQuery ?? ''}
               onChange={event => setManualQuery(event.target.value)}
               onClear={() => setManualQuery('')}
@@ -343,7 +436,20 @@ export function SelectSkill({
           <Listbox
             id={listId}
             label="Skills"
-            options={skills.map(skill => {
+            options={entries.map(entry => {
+              if (entry.kind === 'command')
+                return {
+                  value: entry.id,
+                  label: `/${entry.command.name}`,
+                  ariaLabel: entry.command.name,
+                  description:
+                    entry.command.description || 'Claude Code command.',
+                  trailing: [entry.command.argumentHint, 'Command']
+                    .filter(Boolean)
+                    .join(' · '),
+                  disabled: false,
+                };
+              const { skill } = entry;
               const reason = unavailableReason(skill, catalog);
               return {
                 value: skill.id,
@@ -366,16 +472,24 @@ export function SelectSkill({
               if (next) setActiveId(next);
             }}
             onSelect={id => {
-              const skill = skills.find(item => item.id === id);
-              if (skill) choose(skill);
+              const entry = entries.find(item => item.id === id);
+              if (entry && isSelectable(entry)) choose(entry);
             }}
             emptyText={
               query
-                ? `No skill matches /${query}.`
+                ? `No ${commandsEnabled ? 'skill or command' : 'skill'} matches /${query}.`
                 : 'No skills are available here.'
             }
             className="min-h-0 flex-1"
           />
+        )}
+        {commandsEnabled && commandIssue && (
+          <StatusMessage
+            tone="warning"
+            className="shrink-0 border-t px-3 py-1.5"
+          >
+            {`Claude Code commands are unavailable. ${commandIssue}`}
+          </StatusMessage>
         )}
         {catalog && (catalog.truncated || catalog.issues.length > 0) && (
           <Hint label={catalog.issues.map(issue => issue.message).join(' · ')}>

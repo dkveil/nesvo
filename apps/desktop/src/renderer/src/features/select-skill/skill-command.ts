@@ -20,7 +20,7 @@ export const skillCommand = (skill: Pick<SkillEntry, 'name'>) =>
     .replace(/[^\w.:-]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'skill';
 
-const commandAliases = (skill: SkillEntry) => {
+export const commandAliases = (skill: SkillEntry) => {
   const folder = skill.path?.split(/[\\/]/).at(-2)?.toLowerCase();
   return [skillCommand(skill), skill.name.toLowerCase(), folder].filter(
     Boolean,
@@ -48,7 +48,7 @@ export const unavailableReason = (skill: SkillEntry, catalog?: SkillCatalog) =>
                   ? 'Manual invocation is disabled'
                   : '';
 
-const commandScore = (value: string, query: string): number | null =>
+export const commandScore = (value: string, query: string): number | null =>
   value === query
     ? 0
     : value.startsWith(query)
@@ -59,7 +59,10 @@ const commandScore = (value: string, query: string): number | null =>
           ? 3
           : null;
 
-const skillQueryScore = (skill: SkillEntry, query: string): number | null => {
+export const skillQueryScore = (
+  skill: SkillEntry,
+  query: string,
+): number | null => {
   if (!query) return 0;
   const commandScores = commandAliases(skill)
     .map(alias => commandScore(alias ?? '', query))

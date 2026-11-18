@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GitFork, ListChecks } from 'lucide-react';
+import { GitFork, Globe, ListChecks } from 'lucide-react';
 import { sessionIsolationSchema } from '@nesvo/contracts';
 import type {
   Computer,
@@ -132,6 +132,7 @@ export function NewThread({
   const [importOpen, setImportOpen] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState('');
   const [planFirst, setPlanFirst] = useState(false);
+  const [browser, setBrowser] = useState(false);
   const piped = !!workflow?.workflowName;
   const input = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
@@ -184,6 +185,16 @@ export function NewThread({
     readNewSessionDefaults().profileIds[defaultProfileKey(hostId, provider)] ??
     null;
   const providerState = statuses[setup.provider];
+  const browserAvailable =
+    !piped && !!computer?.capabilities.includes('session-browser');
+  const browserReason =
+    setup.provider === 'Claude Code' &&
+    providerState.status &&
+    'browser' in providerState.status &&
+    providerState.status.browser.status === 'unsupported'
+      ? providerState.status.browser.reason
+      : null;
+  const useBrowser = browserAvailable && browser && !browserReason;
   const providerReady =
     providerState.status?.status === 'ready' &&
     !providerState.loading &&
@@ -331,6 +342,7 @@ export function NewThread({
             ? { isolation: isolation.data }
             : {}),
           ...(usePlanFirst ? { planFirst: true } : {}),
+          ...(useBrowser ? { browser: true } : {}),
         },
         message,
         chosen,
@@ -602,6 +614,27 @@ export function NewThread({
                       onClick={() => setPlanFirst(!planFirst)}
                     >
                       <span>Plan first</span>
+                    </Chip>
+                  </Hint>
+                )}
+                {browserAvailable && (
+                  <Hint
+                    label={
+                      browserReason ??
+                      (setup.provider === 'Codex'
+                        ? 'Uses a browser MCP server from the Codex configuration'
+                        : 'Lets the session open pages in your browser')
+                    }
+                  >
+                    <Chip
+                      type="button"
+                      icon={<Globe aria-hidden="true" />}
+                      selected={useBrowser}
+                      aria-pressed={useBrowser}
+                      disabled={pending || !!browserReason}
+                      onClick={() => setBrowser(!useBrowser)}
+                    >
+                      <span>Browser</span>
                     </Chip>
                   </Hint>
                 )}

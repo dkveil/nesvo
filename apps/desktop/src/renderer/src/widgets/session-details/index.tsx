@@ -11,6 +11,8 @@ import {
 import { formatCost } from '@/shared/lib/format-cost';
 import { useNow } from '@/shared/lib/use-now';
 import type { ReactNode } from 'react';
+import { Globe } from 'lucide-react';
+import { Chip } from '@/shared/ui/chip';
 import { KeyValueList } from '@/shared/ui/key-value-list';
 
 type Props = { session: Session; children?: ReactNode };
@@ -49,6 +51,17 @@ export function SessionDetails({ session, children }: Props) {
     <div className="space-y-6 p-5">
       <section aria-label="Session details" className="space-y-4">
         <h2 className="text-xs font-medium">Session</h2>
+        {session.browser && (
+          <Chip
+            interactive={false}
+            size="sm"
+            icon={<Globe aria-hidden="true" />}
+            className="border"
+            title="This session can open pages in the browser"
+          >
+            <span>Browser</span>
+          </Chip>
+        )}
         <KeyValueList
           density="comfortable"
           entries={[

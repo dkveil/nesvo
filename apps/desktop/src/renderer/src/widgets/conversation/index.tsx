@@ -119,7 +119,9 @@ type Props = {
   draft: string;
   selectedSkill: SelectedSkill | null;
   connected: boolean;
-  skillApi: Pick<DesktopApi, 'discoverSkills'>;
+  skillApi: Pick<DesktopApi, 'discoverSkills'> &
+    Partial<Pick<DesktopApi, 'listClaudeCommands'>>;
+  nativeCommands?: boolean;
   onSkillChange: (skill: SelectedSkill | null) => void;
   sending: boolean;
   canSend: boolean;
@@ -175,6 +177,7 @@ export function Conversation({
   selectedSkill,
   connected,
   skillApi,
+  nativeCommands = false,
   onSkillChange,
   sending,
   canSend,
@@ -494,6 +497,25 @@ export function Conversation({
       }}
       api={skillApi}
       enabled={connected}
+      nativeCommands={nativeCommands}
+      onCommand={name => {
+        const next = /^\/[^\s]*\s?/.test(draft)
+          ? draft.replace(/^\/[^\s]*\s?/, `/${name} `)
+          : `/${name} ${draft}`;
+        const added = next.length - draft.length;
+        onDraft(next);
+        shiftCodeComments(sessionKey, -added);
+        attachments.onPlace({
+          offsets: Object.fromEntries(
+            attachments.items.flatMap(item =>
+              item.offset == null
+                ? []
+                : [[item.localId, Math.max(0, item.offset + added)]],
+            ),
+          ),
+          removed: [],
+        });
+      }}
       draft={draft}
       onSelect={skill => {
         onSkillChange(skill);
