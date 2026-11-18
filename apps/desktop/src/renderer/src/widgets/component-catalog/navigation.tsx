@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { DiffStat, FileGlyph } from '@/entities/file-change';
 import { StatusIcon } from '@/entities/status';
-import { StatusDot } from '@/shared/ui/status-dot';
 import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Disclosure, NativeDisclosure } from '@/shared/ui/disclosure';
