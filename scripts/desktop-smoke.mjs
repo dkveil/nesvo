@@ -2385,6 +2385,7 @@ try {
   const closedHostPid = hostPid;
   await Promise.all([...providerPids, hostPid].map(waitDead));
   hostPid = undefined;
+  const usageTraceOffset = (await readUsageTrace()).length;
   const fixtureState = async () => {
     const paths = (await readdir(env.NESVO_CODEX_FIXTURE_STATE_DIR)).map(name =>
       join(env.NESVO_CODEX_FIXTURE_STATE_DIR, name),
@@ -2457,10 +2458,11 @@ try {
       'unavailable',
     );
   }
-  const restartedUsageProbes = (await readUsageTrace()).slice(
-    initialUsageProbes.length,
+  const restartedUsageProbes = (await readUsageTrace()).slice(usageTraceOffset);
+  assert.deepEqual(
+    restartedUsageProbes.map(trace => trace.provider).sort(),
+    initialUsageProbes.map(trace => trace.provider).sort(),
   );
-  assert.ok(restartedUsageProbes.length > 0);
   for (const trace of restartedUsageProbes) {
     providerPids.add(trace.pid);
     await waitDead(trace.pid);
