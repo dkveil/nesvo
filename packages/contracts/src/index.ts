@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  adoptConversationSchema,
+  conversationImportCatalogSchema,
+  type AdoptConversationInput,
+  type ConversationImportCatalog,
+} from './conversation-import';
+import {
   costBudgetListSchema,
   costBudgetSchema,
   costReportSchema,
@@ -223,6 +229,7 @@ export * from './activities';
 export * from './reviews';
 export * from './workspace';
 export * from './history-search';
+export * from './conversation-import';
 export * from './skills';
 export * from './mcp';
 export * from './mcp-selection';
@@ -314,6 +321,12 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     id: z.uuid(),
     method: z.literal('search-history'),
     input: historySearchInputSchema,
+  }),
+  z.strictObject({ id: z.uuid(), method: z.literal('list-conversations') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('adopt-conversation'),
+    input: adoptConversationSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-reviews') }),
   z.strictObject({
@@ -699,6 +712,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     search: historySearchPageSchema,
   }),
   z.strictObject({
+    type: z.literal('conversation-import-catalog'),
+    id: z.uuid(),
+    catalog: conversationImportCatalogSchema,
+  }),
+  z.strictObject({
     type: z.literal('git-branch'),
     id: z.uuid(),
     branch: gitBranchSchema,
@@ -1024,6 +1042,11 @@ export type DesktopApi = {
     input: HistorySearchInput,
     hostId?: HostId,
   ) => Promise<HistorySearchPage>;
+  listConversations: (hostId?: HostId) => Promise<ConversationImportCatalog>;
+  adoptConversation: (
+    input: AdoptConversationInput,
+    hostId?: HostId,
+  ) => Promise<DesktopSession>;
   listMcpServers: (
     input: ListMcpServersInput,
     hostId?: HostId,

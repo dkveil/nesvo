@@ -239,7 +239,7 @@ export const sessionMessageSchema = z.strictObject({
   interruption: sessionInterruptionSchema.nullable().optional(),
   usage: turnUsageSchema.nullable().default(null),
   costWarning: z.string().max(2000).optional(),
-  origin: z.literal('workflow').nullable().default(null),
+  origin: z.enum(['workflow', 'imported']).nullable().default(null),
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.nullable().default(null),

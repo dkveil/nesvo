@@ -20,6 +20,7 @@ import { inspectClaude } from './providers/claude';
 import { inspectCodex } from './providers/codex';
 import { SessionService, SessionError } from './sessions/service';
 import { SessionStore } from './sessions/store';
+import { ConversationImport } from './sessions/conversation-import';
 import { HistorySearch } from './sessions/history-search';
 import { SessionGroupStore } from './sessions/group-store';
 import { SessionHousekeeping } from './sessions/housekeeping';
@@ -77,6 +78,7 @@ const OPERATOR_ACTIVITY_METHODS = new Set<HostRequest['method']>([
   'act-on-pull-request',
   'link-session-pull-request',
   'create-session',
+  'adopt-conversation',
   'send-message',
   'queue-message',
   'assign-session-workflow',
@@ -386,6 +388,12 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
       );
       observeAssistant = session => assistant.observe(session);
       let evidenceRequests = 0;
+      const conversationImport = new ConversationImport(
+        store,
+        sessions,
+        probes.controller.signal,
+      );
+      let conversationRequests = 0;
       let workspaceRequests = 0;
       let skillRequests = 0;
       let mcpRequests = 0;
@@ -540,6 +548,56 @@ export const serveHost = ({ directory, incoming, send }: HostTransport) =>
             .catch(() => undefined);
           probes.pending.add(change);
           void change.finally(() => probes.pending.delete(change));
+          continue;
+        }
+        if (
+          request.method === 'list-conversations' ||
+          request.method === 'adopt-conversation'
+        ) {
+          if (conversationRequests >= 2) {
+            yield* Effect.tryPromise(() =>
+              send({
+                type: 'error',
+                id: request.id,
+                code: 'busy',
+                message: 'Conversation import is busy. Try again shortly.',
+              }),
+            );
+            continue;
+          }
+          conversationRequests++;
+          const operation = async (): Promise<HostResponse> =>
+            request.method === 'list-conversations'
+              ? {
+                  type: 'conversation-import-catalog',
+                  id: request.id,
+                  catalog: await conversationImport.list(),
+                }
+              : {
+                  type: 'session',
+                  id: request.id,
+                  session: await conversationImport.adopt(request.input),
+                };
+          const pending = operation()
+            .then(send)
+            .catch(error => {
+              const known =
+                error instanceof SessionError || error instanceof FolderError;
+              return send({
+                type: 'error',
+                id: request.id,
+                code: known ? error.code : 'unavailable',
+                message: known
+                  ? error.message
+                  : 'Conversation import could not be completed. Try again.',
+              });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              conversationRequests--;
+              probes.pending.delete(pending);
+            });
+          probes.pending.add(pending);
           continue;
         }
         if (request.method === 'list-mcp-servers') {

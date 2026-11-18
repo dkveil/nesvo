@@ -674,6 +674,7 @@ test(
         'session-groups',
         'costs',
         'mcp-servers',
+        'conversation-import',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -5222,6 +5223,7 @@ test(
       'session-groups',
       'costs',
       'mcp-servers',
+      'conversation-import',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -17916,3 +17918,285 @@ test(
     });
   },
 );
+
+test('imports existing Claude Code and Codex conversations into read-only resumable sessions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nesvo-conversation-import-'));
+  const pidFile = join(directory, 'fixture.pid');
+  const launchLog = join(directory, 'launch.jsonl');
+  const cwd = await realpath(directory);
+  const timestamp = '2026-11-17T15:00:00.000Z';
+  const claudeId = randomUUID();
+  const codexId = randomUUID();
+  const missingId = randomUUID();
+  const claudeFolder = join(directory, 'claude-config', 'projects', 'fixture');
+  const codexFolder = join(
+    directory,
+    'codex-config',
+    'sessions',
+    '2026',
+    '11',
+    '17',
+  );
+  const claudeFile = join(claudeFolder, claudeId + '.jsonl');
+  const codexFile = join(
+    codexFolder,
+    'rollout-2026-11-17T15-00-00-' + codexId + '.jsonl',
+  );
+  const claudeMessage = (sessionId, role, content, extra = {}) => ({
+    type: role,
+    sessionId,
+    cwd,
+    timestamp,
+    message: { role, content },
+    ...extra,
+  });
+  const codexRow = (type, payload) => ({ timestamp, type, payload });
+  const jsonl = rows => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
+  const claudeText = jsonl([
+    claudeMessage(claudeId, 'user', 'Original Claude prompt'),
+    claudeMessage(claudeId, 'user', [
+      { type: 'tool_result', content: 'private-tool-marker' },
+    ]),
+    claudeMessage(claudeId, 'assistant', [
+      { type: 'thinking', thinking: 'private-tool-marker' },
+    ]),
+    claudeMessage(claudeId, 'user', 'private-tool-marker', { isMeta: true }),
+    ...Array.from({ length: 50 }, (_, index) =>
+      claudeMessage(claudeId, 'user', 'Earlier prompt ' + index),
+    ),
+    claudeMessage(claudeId, 'assistant', [
+      { type: 'text', text: 'Claude response' },
+    ]),
+    {
+      type: 'custom-title',
+      sessionId: claudeId,
+      customTitle: '  Existing Claude task  ',
+    },
+  ]);
+  const codexText = jsonl([
+    codexRow('session_meta', {
+      id: codexId,
+      cwd,
+      base_instructions: 'private-tool-marker',
+    }),
+    codexRow('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: '<environment_context>private-tool-marker</environment_context>',
+        },
+      ],
+    }),
+    codexRow('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: 'Existing Codex task API_KEY=secret-marker',
+        },
+      ],
+    }),
+    codexRow('response_item', {
+      type: 'function_call_output',
+      output: 'private-tool-marker',
+    }),
+    codexRow('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'Codex response' }],
+    }),
+  ]);
+  const environment = { NESVO_FIXTURE_LAUNCH_LOG: launchLog };
+  let host;
+  try {
+    await mkdir(claudeFolder, { recursive: true });
+    await mkdir(codexFolder, { recursive: true });
+    await writeFile(claudeFile, claudeText);
+    await writeFile(codexFile, codexText);
+    await writeFile(join(claudeFolder, randomUUID() + '.jsonl'), '{invalid');
+    await writeFile(
+      join(claudeFolder, randomUUID() + '.jsonl'),
+      Buffer.alloc(8 * 1024 * 1024 + 1),
+    );
+    await writeFile(
+      join(claudeFolder, missingId + '.jsonl'),
+      jsonl([
+        claudeMessage(missingId, 'user', 'Missing folder', {
+          cwd: join(cwd, 'missing'),
+        }),
+      ]),
+    );
+    const codexState = pidFile + '.state';
+    await mkdir(codexState);
+    await writeFile(
+      join(codexState, '.nesvo-codex-fixture-' + codexId + '.json'),
+      JSON.stringify({ turns: 1, delegationEnabled: false }),
+    );
+    await writeFile(
+      join(cwd, '.nesvo-fixture-' + claudeId + '.json'),
+      JSON.stringify({ turn: 1 }),
+    );
+
+    host = launch(directory, pidFile, environment);
+    const health = (await host.request('health')).health;
+    assert.ok(health.capabilities.includes('conversation-import'));
+    const native = (
+      await host.request('create-session', {
+        title: 'Created by Nesvo',
+        provider: 'Claude Code',
+        model: 'default',
+        directory: cwd,
+      })
+    ).session;
+    await writeFile(
+      join(claudeFolder, native.providerSessionId + '.jsonl'),
+      jsonl([
+        claudeMessage(
+          native.providerSessionId,
+          'user',
+          'Nesvo-created conversation',
+        ),
+      ]),
+    );
+
+    const listed = await host.request('list-conversations');
+    assert.equal(listed.type, 'conversation-import-catalog');
+    assert.equal(listed.catalog.skippedFiles, 2);
+    assert.equal(listed.catalog.truncated, true);
+    assert.equal(listed.catalog.conversations.length, 3);
+    assert.doesNotMatch(
+      JSON.stringify(listed),
+      /private-tool-marker|secret-marker|Nesvo-created conversation/,
+    );
+    const claude = listed.catalog.conversations.find(
+      item => item.providerSessionId === claudeId,
+    );
+    assert.equal(claude.title, 'Existing Claude task');
+    assert.equal(claude.preview, 'Original Claude prompt');
+    assert.equal(claude.directory, cwd);
+    assert.equal(claude.messageCount, 52);
+    assert.equal(claude.adopted, false);
+    const codex = listed.catalog.conversations.find(
+      item => item.providerSessionId === codexId,
+    );
+    assert.equal(codex.title, 'Existing Codex task API_KEY=[redacted]');
+    assert.equal(codex.messageCount, 2);
+    const missing = await host.request('adopt-conversation', {
+      provider: 'Claude Code',
+      providerSessionId: missingId,
+      requestId: randomUUID(),
+    });
+    assert.equal(missing.code, 'invalid-directory');
+    const inputs = [claude, codex].map(({ provider, providerSessionId }) => ({
+      provider,
+      providerSessionId,
+      requestId: randomUUID(),
+    }));
+    const sessions = [];
+    for (const input of inputs) {
+      const adopted = await host.request('adopt-conversation', input);
+      assert.equal(adopted.type, 'session', JSON.stringify(adopted));
+      const session = adopted.session;
+      sessions.push(session);
+      assert.equal(session.mode, 'read-only');
+      assert.equal(session.providerSessionId, input.providerSessionId);
+      assert.equal(session.providerInitialized, true);
+      assert.equal(session.delegationEnabled, false);
+      assert.ok(
+        session.messages.every(message => message.origin === 'imported'),
+      );
+      assert.doesNotMatch(
+        JSON.stringify(session),
+        /private-tool-marker|secret-marker/,
+      );
+      const retry = await host.request('adopt-conversation', input);
+      assert.deepEqual(retry.session, session);
+      const duplicate = await host.request('adopt-conversation', {
+        ...input,
+        requestId: randomUUID(),
+      });
+      assert.match(duplicate.message, /already been adopted/);
+    }
+    assert.equal(sessions[0].messages.length, 48);
+    assert.equal(sessions[0].messages.at(-1).body, 'Claude response');
+    assert.deepEqual(
+      sessions[1].messages.map(item => item.body),
+      ['Existing Codex task API_KEY=[redacted]', 'Codex response'],
+    );
+    await assert.rejects(readFile(launchLog), { code: 'ENOENT' });
+    assert.equal(await readFile(claudeFile, 'utf8'), claudeText);
+    assert.equal(await readFile(codexFile, 'utf8'), codexText);
+
+    await host.stop();
+    host = launch(directory, pidFile, environment);
+    const restored = await host.request('list-sessions');
+    assert.equal(restored.sessions.length, 3);
+    const refreshed = await host.request('list-conversations');
+    assert.equal(
+      refreshed.catalog.conversations.filter(item => item.adopted).length,
+      2,
+    );
+    for (const [index, session] of sessions.entries()) {
+      assert.deepEqual(
+        restored.sessions.find(item => item.id === session.id),
+        session,
+      );
+      assert.deepEqual(
+        (await host.request('adopt-conversation', inputs[index])).session,
+        session,
+      );
+      const next = await host.request('send-message', {
+        sessionId: session.id,
+        messageId: randomUUID(),
+        text: 'Continue the fixture conversation.',
+      });
+      assert.equal(next.type, 'session', JSON.stringify(next));
+      const completed = await host.event(
+        item =>
+          item.id === session.id &&
+          item.runId === next.session.runId &&
+          item.status !== 'running',
+      );
+      assert.equal(completed.status, 'completed', completed.error);
+      assert.equal(completed.providerSessionId, session.providerSessionId);
+      assert.match(completed.messages.at(-1).body, /fixture resumed reply/i);
+    }
+    const launches = (await readFile(launchLog, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.equal(launches.length, 2);
+    const [claudeLaunch, codexLaunch] = launches;
+    assert.equal(
+      claudeLaunch.args[claudeLaunch.args.indexOf('--resume') + 1],
+      claudeId,
+    );
+    assert.equal(
+      claudeLaunch.args[claudeLaunch.args.indexOf('--permission-mode') + 1],
+      'plan',
+    );
+    assert.ok(codexLaunch.args.includes('app-server'));
+    assert.equal(codexLaunch.sandbox, 'read-only');
+    assert.equal(codexLaunch.approvalPolicy, 'never');
+    assert.equal(
+      JSON.parse(
+        await readFile(
+          join(codexState, '.nesvo-codex-fixture-' + codexId + '.json'),
+          'utf8',
+        ),
+      ).turns,
+      2,
+    );
+    await host.stop();
+    host = undefined;
+  } finally {
+    if (host) {
+      host.child.stdin.end();
+      await bounded(host.exited, 'Import test host did not exit');
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});

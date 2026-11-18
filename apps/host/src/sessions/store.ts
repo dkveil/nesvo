@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import {
   sessionSchema,
+  providerSchema,
   type CreateSessionInput,
   type ScheduledJobSessionOrigin,
   type Session,
@@ -18,6 +19,12 @@ export type WorkflowSessionOrigin = {
 
 export type SessionOrigin =
   | { kind: 'operator' }
+  | {
+      kind: 'import';
+      sessionId: string;
+      providerSessionId: string;
+      messages: Session['messages'];
+    }
   | { kind: 'workflow-assistant' }
   | ScheduledJobSessionOrigin
   | WorkflowSessionOrigin;
@@ -44,6 +51,7 @@ const originLinks = (
         workflowStepId: null,
         delegationEnabled: input.provider === 'Codex',
       };
+    case 'import':
     case 'workflow-assistant':
       return {
         scheduledJobId: null,
@@ -94,6 +102,23 @@ export class SessionStore {
       .map(toSession);
   }
 
+  providerConversations(): {
+    provider: Session['provider'];
+    providerSessionId: string;
+    adopted: boolean;
+  }[] {
+    return this.database
+      .prepare(
+        "SELECT json_extract(document, '$.provider') AS provider, json_extract(document, '$.providerSessionId') AS providerSessionId, json_extract(document, '$.messages[0].origin') = 'imported' AS adopted FROM sessions WHERE providerSessionId IS NOT NULL",
+      )
+      .all()
+      .map(row => ({
+        provider: providerSchema.parse(row.provider),
+        providerSessionId: String(row.providerSessionId),
+        adopted: row.adopted === 1,
+      }));
+  }
+
   get(id: string): Session | undefined {
     const row = this.database
       .prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE id = ?`)
@@ -112,10 +137,15 @@ export class SessionStore {
       ...input,
       mcp,
       effort: input.effort ?? null,
-      id: randomUUID(),
+      id: origin.kind === 'import' ? origin.sessionId : randomUUID(),
       role: 'standalone',
-      providerSessionId: input.provider === 'Claude Code' ? randomUUID() : null,
-      providerInitialized: false,
+      providerSessionId:
+        origin.kind === 'import'
+          ? origin.providerSessionId
+          : input.provider === 'Claude Code'
+            ? randomUUID()
+            : null,
+      providerInitialized: origin.kind === 'import',
       pendingApprovals: [],
       actualModel: null,
       directory,
@@ -129,7 +159,7 @@ export class SessionStore {
       revision: 0,
       createdAt: now,
       updatedAt: now,
-      messages: [],
+      messages: origin.kind === 'import' ? origin.messages : [],
       queue: [],
       parentId: null,
       parentRunId: null,

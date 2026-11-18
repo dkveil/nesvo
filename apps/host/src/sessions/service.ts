@@ -712,6 +712,18 @@ export class SessionService {
     ];
   }
 
+  adoptConversation(
+    input: CreateSessionInput,
+    directory: string,
+    origin: Extract<SessionOrigin, { kind: 'import' }>,
+  ): Session {
+    if (this.closing)
+      throw new SessionError('unavailable', 'The host is shutting down.');
+    const session = this.store.create(input, directory, origin);
+    this.emitSession(session);
+    return session;
+  }
+
   create(
     input: CreateSessionInput,
     options: {

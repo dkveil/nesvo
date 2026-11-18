@@ -32,6 +32,7 @@ export const hostCapabilitySchema = z.enum([
   'session-groups',
   'costs',
   'mcp-servers',
+  'conversation-import',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 
