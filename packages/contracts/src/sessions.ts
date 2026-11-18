@@ -89,10 +89,14 @@ export const delegationSchema = workerProposalSchema.safeExtend({
 });
 export const approvalSchema = z.strictObject({
   id: z.string().min(1).max(200),
-  kind: z.enum(['command', 'file-change']),
+  kind: z.enum(['command', 'file-change', 'tool']),
   title: z.string().min(1).max(500),
   detail: z.string().max(100_000),
   directory: z.string().max(4096).nullable(),
+  fingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export const sessionStateSchema = z.enum([
   'ready',
@@ -226,6 +230,11 @@ export const respondApprovalSchema = z.strictObject({
   runId: z.uuid(),
   requestId: z.string().min(1).max(200),
   decision: z.enum(['accept', 'decline']),
+  fingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  message: z.string().trim().min(1).max(2000).optional(),
 });
 export const decideDelegationSchema = z.strictObject({
   sessionId: z.uuid(),

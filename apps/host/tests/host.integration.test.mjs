@@ -1067,6 +1067,7 @@ test(
         'conversation-import',
         'scheduled-job-change-triggers',
         'database-backup',
+        'claude-approvals',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6064,6 +6065,7 @@ test(
       'conversation-import',
       'scheduled-job-change-triggers',
       'database-backup',
+      'claude-approvals',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -16712,7 +16714,9 @@ test(
       .map(line => JSON.parse(line));
     const args = launches.at(-1).args;
     assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits');
-    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'none');
+    assert.equal(args[args.indexOf('--permission-prompts') + 1], 'host');
+    assert.equal(args[args.indexOf('--permission-prompt-tool') + 1], 'stdio');
+    assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
     const tools = args[args.indexOf('--tools') + 1].split(',');
     assert.ok(tools.includes('Edit'));
     assert.equal(tools.includes('Bash'), false);
@@ -19190,4 +19194,190 @@ test('imports existing Claude Code and Codex conversations into read-only resuma
     }
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('Claude Code asks the operator once through the host prompt channel', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-claude-approvals-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const open = () =>
+    launch(directory, pidFile, {
+      NESVO_TEST_CLAUDE_APPROVAL_TIMEOUT_MS: '3000',
+    });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const create = async mode => {
+    const created = await host.request('create-session', {
+      title: `Claude ${mode}`,
+      provider: 'Claude Code',
+      model: 'sonnet',
+      mode,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    return created.session.id;
+  };
+  const sessionId = await create('accept-edits');
+  const send = async (text, id = sessionId) => {
+    const response = await host.request('send-message', {
+      sessionId: id,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    return response.session;
+  };
+  const ask = async text => {
+    const run = await send(text);
+    const pending = await host.event(
+      session =>
+        session.id === sessionId &&
+        session.runId === run.runId &&
+        session.pendingApprovals.length === 1,
+    );
+    assert.equal(pending.status, 'running');
+    assert.equal(pending.activity, 'Waiting for your decision…');
+    return { run, pending, approval: pending.pendingApprovals[0] };
+  };
+  const finished = run =>
+    host.event(
+      session =>
+        session.id === run.id &&
+        session.runId === run.runId &&
+        !['running', 'stopping'].includes(session.status),
+    );
+  const respond = (asked, decision, overrides = {}) =>
+    host.request('respond-approval', {
+      sessionId,
+      runId: asked.run.runId,
+      requestId: asked.approval.id,
+      decision,
+      fingerprint: asked.approval.fingerprint,
+      ...overrides,
+    });
+  const decisions = async () =>
+    (await readFile(pidFile + '.decisions', 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  const target = asked =>
+    join(
+      project,
+      `.nesvo-fixture-approved-${asked.pending.providerSessionId}.txt`,
+    );
+
+  const write = await ask('fixture:ask-write');
+  assert.equal(write.approval.kind, 'file-change');
+  assert.equal(write.approval.title, 'Write file');
+  assert.equal(write.approval.directory, project);
+  assert.match(write.approval.fingerprint, /^[a-f0-9]{64}$/);
+  assert.match(write.approval.detail, /Fixture asks before acting/);
+  assert.match(write.approval.detail, /approved$/);
+  await assert.rejects(readFile(target(write)), { code: 'ENOENT' });
+  for (const overrides of [
+    { runId: randomUUID() },
+    { requestId: 'stale-request' },
+    { fingerprint: 'a'.repeat(64) },
+    { fingerprint: undefined },
+    { message: 'Not with an allow.' },
+  ])
+    assert.equal(
+      (await respond(write, 'accept', overrides)).code,
+      'invalid-request',
+    );
+  assert.equal((await respond(write, 'accept')).type, 'session');
+  const allowed = await finished(write.run);
+  assert.equal(allowed.status, 'completed', allowed.error);
+  assert.equal(agent(allowed).body, 'Fixture action allowed.');
+  assert.deepEqual(allowed.pendingApprovals, []);
+  assert.equal(await readFile(target(write), 'utf8'), 'approved');
+  await rm(target(write));
+  assert.equal((await respond(write, 'accept')).code, 'invalid-request');
+
+  const mcp = await ask('fixture:ask-mcp');
+  assert.equal(mcp.approval.kind, 'tool');
+  assert.equal(mcp.approval.title, 'Use MCP tool fixture / lookup');
+  assert.equal(
+    (await respond(mcp, 'decline', { message: 'Use the cached status.' })).type,
+    'session',
+  );
+  const denied = await finished(mcp.run);
+  assert.equal(denied.status, 'completed', denied.error);
+  assert.equal(
+    agent(denied).body,
+    'Fixture action denied: The operator denied this action. Their message: Use the cached status.',
+  );
+  assert.equal(
+    denied.activities.find(item => item.title === 'Use MCP tool')?.status,
+    'failed',
+  );
+
+  const cancelled = await ask('fixture:ask-cancel');
+  const withdrawn = await finished(cancelled.run);
+  assert.equal(withdrawn.status, 'completed', withdrawn.error);
+  assert.deepEqual(withdrawn.pendingApprovals, []);
+  assert.equal((await respond(cancelled, 'accept')).code, 'invalid-request');
+
+  const unanswered = await ask('fixture:ask-write');
+  const timedOut = await finished(unanswered.run);
+  assert.equal(timedOut.status, 'completed', timedOut.error);
+  assert.match(agent(timedOut).body, /Nobody answered this permission request/);
+  assert.deepEqual(timedOut.pendingApprovals, []);
+  await assert.rejects(readFile(target(unanswered)), { code: 'ENOENT' });
+  assert.deepEqual(
+    (await decisions()).map(entry => entry.decision.behavior),
+    ['allow', 'deny', 'deny'],
+  );
+
+  const stopping = await ask('fixture:ask-write');
+  const stopPid = JSON.parse(await readFile(pidFile + '.ask', 'utf8')).pid;
+  assert.equal(
+    (
+      await host.request('stop-run', {
+        sessionId,
+        runId: stopping.run.runId,
+      })
+    ).type,
+    'session',
+  );
+  const stopped = await finished(stopping.run);
+  assert.equal(stopped.status, 'stopped');
+  assert.deepEqual(stopped.pendingApprovals, []);
+  assert.equal(alive(stopPid), false);
+  assert.equal((await respond(stopping, 'accept')).code, 'invalid-request');
+
+  const restarting = await ask('fixture:ask-write');
+  await host.stop();
+  host = open();
+  const reopened = (await host.request('list-sessions')).sessions.find(
+    session => session.id === sessionId,
+  );
+  assert.equal(reopened.status, 'interrupted');
+  assert.equal(reopened.runId, restarting.run.runId);
+  assert.deepEqual(reopened.pendingApprovals, []);
+  assert.equal((await respond(restarting, 'accept')).code, 'invalid-request');
+  await delay(300);
+  await assert.rejects(readFile(target(restarting)), { code: 'ENOENT' });
+  assert.equal((await decisions()).length, 3, 'No decision was replayed');
+
+  const planId = await create('read-only');
+  const refused = await finished(await send('fixture:ask-write', planId));
+  assert.equal(refused.status, 'completed', refused.error);
+  assert.equal(agent(refused).body, 'Fixture action refused without asking.');
+  assert.equal(
+    refused.activities.find(item => item.title === 'Write file')?.status,
+    'failed',
+  );
+  assert.equal(
+    host.observed.some(
+      session => session.id === planId && session.pendingApprovals.length,
+    ),
+    false,
+  );
 });

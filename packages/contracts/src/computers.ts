@@ -38,6 +38,7 @@ export const hostCapabilitySchema = z.enum([
   'conversation-import',
   'scheduled-job-change-triggers',
   'database-backup',
+  'claude-approvals',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

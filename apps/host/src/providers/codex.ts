@@ -1259,7 +1259,11 @@ type CodexRunOptions = {
 export function startCodex(options: CodexRunOptions): {
   done: Promise<CodexResult>;
   stop: () => Promise<void>;
-  respondApproval: (requestId: string, decision: 'accept' | 'decline') => void;
+  respondApproval: (
+    requestId: string,
+    decision: 'accept' | 'decline',
+    message?: string,
+  ) => void;
 } {
   let stopped = false;
   let finished = false;

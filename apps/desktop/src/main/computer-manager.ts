@@ -197,6 +197,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'This computer runs an older Nesvo host without session groups. Update the host, then reconnect.',
   'mcp-servers':
     'This computer runs an older Nesvo host without MCP servers and hooks. Update the host, then reconnect.',
+  'claude-approvals':
+    'This computer runs an older Nesvo host that cannot answer Claude Code approvals. Update the host, then reconnect.',
 };
 
 function requiredCapability(
@@ -259,6 +261,14 @@ function requiredCapability(
     input.effort
   )
     return 'reasoning-effort';
+  if (
+    method === 'respond-approval' &&
+    typeof input === 'object' &&
+    input !== null &&
+    (('fingerprint' in input && input.fingerprint) ||
+      ('message' in input && input.message))
+  )
+    return 'claude-approvals';
   return null;
 }
 

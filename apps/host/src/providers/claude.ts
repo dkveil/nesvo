@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import {
   activityLimits,
+  type Approval,
   type ClaudeStatus,
   type ProviderUsage,
   type SessionMode,
@@ -24,6 +25,12 @@ import {
   wait,
 } from '../process/terminate-tree';
 import { makeActivity, type ProviderActivity } from './activity';
+import {
+  claudeApprovalTimeoutMs,
+  claudeControlError,
+  claudePermissionAnswer,
+  parseClaudePermissionRequest,
+} from './claude-approvals';
 import { claudeUsageResult } from './claude-usage';
 import { claudeTurnUsage } from './turn-usage';
 
@@ -31,7 +38,9 @@ export type ClaudeEvent =
   | { type: 'init'; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'activity'; text: string }
-  | { type: 'tool-activity'; activity: ProviderActivity };
+  | { type: 'tool-activity'; activity: ProviderActivity }
+  | { type: 'approval'; approval: Approval }
+  | { type: 'approval-resolved'; id: string };
 
 export type ClaudeResult = {
   status: 'completed' | 'stopped' | 'failed' | 'interrupted';
@@ -136,12 +145,11 @@ function safeMessage(value: string): string {
     .slice(0, 800);
 }
 
-function permissionChoices(help: string): string[] {
-  const flag = '--permission-mode';
+function permissionChoices(help: string, flag = '--permission-mode'): string[] {
   const start = help.indexOf(flag);
   if (start < 0) return [];
   const rest = help.slice(start + flag.length);
-  const end = rest.search(/\n\s*-/);
+  const end = rest.search(/\n {0,4}-/);
   const segment = end < 0 ? rest : rest.slice(0, end);
   const choices = /\(choices:([^)]*)\)/.exec(segment)?.[1] ?? '';
   return [...choices.matchAll(/"([^"]+)"/g)].map(match => match[1]!);
@@ -170,6 +178,13 @@ function toolResultText(content: unknown): string {
     )
     .filter(Boolean)
     .join('\n');
+}
+
+function approvalTimeout(): number {
+  const configured = Number(process.env.NESVO_TEST_CLAUDE_APPROVAL_TIMEOUT_MS);
+  return Number.isInteger(configured) && configured >= 100
+    ? Math.min(configured, claudeApprovalTimeoutMs)
+    : claudeApprovalTimeoutMs;
 }
 
 function isClaudeMode(mode: SessionMode): mode is ClaudeMode {
@@ -356,6 +371,7 @@ async function inspect(cancelled: () => boolean): Promise<{
   executable: Executable | null;
   permissionModes: string[];
   supportsFork?: boolean;
+  supportsHostPrompts?: boolean;
 }> {
   let version: string | null = null;
   let permissionModes: string[] = [];
@@ -465,6 +481,9 @@ async function inspect(cancelled: () => boolean): Promise<{
       status: ready,
       permissionModes,
       supportsFork: /(?:^|\s)--fork-session(?:\s|$)/.test(help.stdout),
+      supportsHostPrompts:
+        help.stdout.includes('--permission-prompt-tool') &&
+        permissionChoices(help.stdout, '--permission-prompts').includes('host'),
     };
   } catch (error) {
     return {
@@ -714,11 +733,22 @@ export function startClaude(options: {
     servers: Readonly<Record<string, Record<string, unknown>>>;
     hooks: boolean;
   };
+  approvals?: boolean;
   onEvent: (event: ClaudeEvent) => void;
-}): { done: Promise<ClaudeResult>; stop: () => Promise<void> } {
+}): {
+  done: Promise<ClaudeResult>;
+  stop: () => Promise<void>;
+  respondApproval: (
+    requestId: string,
+    decision: 'accept' | 'decline',
+    message?: string,
+  ) => void;
+} {
   let stopped = false;
   let owned: OwnedProcess | null = null;
   let mcpConfig: ClaudeMcpConfig | null = null;
+  let respond: ReturnType<typeof startClaude>['respondApproval'] | null = null;
+  let releaseApprovals: (() => void) | null = null;
   const done = (async (): Promise<ClaudeResult> => {
     let failure: string | null = null;
     try {
@@ -765,12 +795,18 @@ export function startClaude(options: {
         options.assistantPrompt && options.mode === 'read-only' && assistantMode
           ? assistantMode
           : permission.cli;
+      const hostPrompts =
+        options.approvals === true &&
+        options.mode !== 'read-only' &&
+        !options.assistantPrompt &&
+        !options.outputSchema &&
+        inspection.supportsHostPrompts === true;
       mcpConfig = await writeClaudeMcpConfig(options.mcp?.servers ?? {});
       if (stopped) return { status: 'stopped', error: null };
       const args = [
         '--print',
         '--input-format',
-        'text',
+        hostPrompts ? 'stream-json' : 'text',
         '--output-format',
         'stream-json',
         '--verbose',
@@ -778,7 +814,9 @@ export function startClaude(options: {
         '--permission-mode',
         permissionMode,
         '--permission-prompts',
-        'none',
+        ...(hostPrompts
+          ? ['host', '--permission-prompt-tool', 'stdio']
+          : ['none']),
         '--tools',
         tools,
         '--allowedTools',
@@ -841,6 +879,120 @@ export function startClaude(options: {
         } catch {
           fail('Claude event delivery failed.');
         }
+      };
+      const approvals = new Map<
+        string,
+        {
+          input: Record<string, unknown>;
+          timer: ReturnType<typeof setTimeout>;
+        }
+      >();
+      const writeFrame = (frame: Record<string, unknown>) => {
+        if (!running.child.stdin.writable)
+          throw new Error('Claude Code closed its input.');
+        running.child.stdin.write(JSON.stringify(frame) + '\n');
+      };
+      const settleApproval = (id: string) => {
+        const pending = approvals.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        approvals.delete(id);
+        emit({ type: 'approval-resolved', id });
+      };
+      const answerApproval = (
+        id: string,
+        answer: Parameters<typeof claudePermissionAnswer>[1],
+      ) => {
+        writeFrame(claudePermissionAnswer(id, answer));
+        settleApproval(id);
+      };
+      const deny = (id: string, message: string) => {
+        try {
+          writeFrame(claudePermissionAnswer(id, { behavior: 'deny', message }));
+        } catch {
+          fail('Claude permission answer could not be delivered.');
+        }
+      };
+      releaseApprovals = () => {
+        for (const pending of approvals.values()) clearTimeout(pending.timer);
+        approvals.clear();
+      };
+      respond = (id, decision, message) => {
+        const pending = approvals.get(id);
+        if (stopped || failure || !pending)
+          throw new Error(
+            'Claude approval is no longer pending for this turn.',
+          );
+        try {
+          answerApproval(
+            id,
+            decision === 'accept'
+              ? { behavior: 'allow', input: pending.input }
+              : {
+                  behavior: 'deny',
+                  message: message
+                    ? `The operator denied this action. Their message: ${message}`
+                    : 'The operator denied this action.',
+                },
+          );
+        } catch (error) {
+          fail('Claude permission answer could not be delivered.');
+          throw error;
+        }
+      };
+      const permissionRequest = (value: RecordValue) => {
+        if (!hostPrompts) return;
+        const request = object(value.request);
+        if (request?.subtype !== 'can_use_tool') {
+          if (typeof value.request_id === 'string')
+            try {
+              writeFrame(
+                claudeControlError(
+                  value.request_id,
+                  'Nesvo does not support this request.',
+                ),
+              );
+            } catch {
+              fail('Claude control answer could not be delivered.');
+            }
+          return;
+        }
+        const parsed = parseClaudePermissionRequest(value, options.directory);
+        if (parsed.status === 'invalid') {
+          if (parsed.requestId)
+            deny(
+              parsed.requestId,
+              'Nesvo could not read this permission request, so it was denied.',
+            );
+          else fail('Claude returned an invalid permission request.');
+          return;
+        }
+        if (parsed.status === 'unreviewable') {
+          deny(
+            parsed.requestId,
+            'This request is too large to review in Nesvo, so it was denied.',
+          );
+          return;
+        }
+        const { request: ask } = parsed;
+        if (approvals.has(ask.requestId)) {
+          fail('Claude repeated a permission request.');
+          return;
+        }
+        const timer = setTimeout(() => {
+          if (!approvals.has(ask.requestId)) return;
+          try {
+            answerApproval(ask.requestId, {
+              behavior: 'deny',
+              message:
+                'Nobody answered this permission request in time, so it was denied.',
+            });
+          } catch {
+            fail('Claude permission answer could not be delivered.');
+          }
+        }, approvalTimeout());
+        approvals.set(ask.requestId, { input: ask.input, timer });
+        emit({ type: 'approval', approval: ask.approval });
       };
       const publish = () => {
         const text = [...messages.values()]
@@ -1008,6 +1160,13 @@ export function startClaude(options: {
           fail('Claude returned an invalid streaming message.');
           return;
         }
+        if (value.type === 'control_request') return permissionRequest(value);
+        if (value.type === 'control_cancel_request') {
+          if (typeof value.request_id === 'string')
+            settleApproval(value.request_id);
+          return;
+        }
+        if (value.type === 'control_response') return;
         if (value.parent_tool_use_id) return;
         if (value.type === 'system' && value.subtype === 'init') {
           if (
@@ -1137,6 +1296,10 @@ export function startClaude(options: {
           }
         } else if (value.type === 'result') {
           resultSeen = true;
+          if (hostPrompts) {
+            for (const id of [...approvals.keys()]) settleApproval(id);
+            running.child.stdin.end();
+          }
           usage = claudeTurnUsage(value);
           successful = value.is_error === false && value.subtype === 'success';
           if (options.outputSchema && 'structured_output' in value)
@@ -1228,7 +1391,22 @@ export function startClaude(options: {
         () => fail('Claude turn timed out after ten minutes.'),
         runTimeoutMs,
       );
-      running.child.stdin.end(options.prompt);
+      if (hostPrompts) {
+        try {
+          writeFrame({
+            type: 'control_request',
+            request_id: randomUUID(),
+            request: { subtype: 'initialize', hooks: {}, sdkMcpServers: [] },
+          });
+          writeFrame({
+            type: 'user',
+            message: { role: 'user', content: options.prompt },
+            parent_tool_use_id: null,
+          });
+        } catch {
+          fail('Claude Code did not accept the prompt.');
+        }
+      } else running.child.stdin.end(options.prompt);
       let exit: ProcessExit;
       try {
         exit = await Promise.race([
@@ -1240,6 +1418,7 @@ export function startClaude(options: {
         if (line) consume(line);
       } finally {
         clearTimeout(timer);
+        releaseApprovals();
         await running.stop();
       }
       const reported = {
@@ -1306,8 +1485,14 @@ export function startClaude(options: {
     done,
     stop: async () => {
       stopped = true;
+      releaseApprovals?.();
       await owned?.stop();
       await done;
+    },
+    respondApproval: (requestId, decision, message) => {
+      if (!respond)
+        throw new Error('Claude approval is no longer pending for this turn.');
+      respond(requestId, decision, message);
     },
   };
 }

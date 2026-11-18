@@ -197,6 +197,12 @@ function resolveTurnSelection(
   return { model, effort, mode };
 }
 
+function asksForApproval(session: Session): boolean {
+  return session.provider === 'Codex'
+    ? session.mode === 'supervised'
+    : session.mode === 'accept-edits' || session.mode === 'auto';
+}
+
 function holdQueue(session: Session): void {
   session.queue = session.queue.map(item => ({ ...item, held: true }));
 }
@@ -1811,15 +1817,36 @@ export class SessionService {
       active.finalizing ||
       active.session.runId !== input.runId ||
       active.session.status !== 'running' ||
-      active.session.mode !== 'supervised' ||
-      !('respondApproval' in active.handle) ||
-      !active.session.pendingApprovals.some(
-        approval => approval.id === input.requestId,
-      )
+      !asksForApproval(active.session) ||
+      !('respondApproval' in active.handle)
     )
       throw new SessionError(
         'invalid-request',
         'This approval request is no longer active in this session.',
+      );
+    const approval = active.session.pendingApprovals.find(
+      item => item.id === input.requestId,
+    );
+    if (!approval)
+      throw new SessionError(
+        'invalid-request',
+        'This approval request is no longer active in this session.',
+      );
+    if (approval.fingerprint !== input.fingerprint)
+      throw new SessionError(
+        'invalid-request',
+        input.fingerprint
+          ? 'This decision does not match the requested operation.'
+          : 'Update this app to answer this request.',
+      );
+    if (
+      input.message &&
+      (input.decision !== 'decline' ||
+        active.session.provider !== 'Claude Code')
+    )
+      throw new SessionError(
+        'invalid-request',
+        'A message can only accompany a Claude Code denial.',
       );
     const pending = active.session.pendingApprovals;
     active.session.pendingApprovals = pending.filter(
@@ -1832,7 +1859,11 @@ export class SessionService {
       throw error;
     }
     try {
-      active.handle.respondApproval(input.requestId, input.decision);
+      active.handle.respondApproval(
+        input.requestId,
+        input.decision,
+        input.message,
+      );
     } catch {
       void active.handle.stop().catch(() => undefined);
       throw new SessionError(
@@ -2232,6 +2263,7 @@ export class SessionService {
                     }
                   : {}),
                 mode: readOnly ? 'read-only' : session.mode,
+                approvals: !readOnly && !ephemeral,
                 sessionId: session.providerSessionId!,
                 forkFrom: session.pendingClaudeFork ?? undefined,
               });
@@ -2241,10 +2273,10 @@ export class SessionService {
         controller.abort();
         await provider?.stop();
       },
-      respondApproval: (id, decision) => {
+      respondApproval: (id, decision, message) => {
         if (!provider || !('respondApproval' in provider))
           throw new Error('Provider is not awaiting approval');
-        provider.respondApproval(id, decision);
+        provider.respondApproval(id, decision, message);
       },
     };
     const active: ActiveRun = {
@@ -2711,7 +2743,7 @@ export class SessionService {
       return;
     } else if (event.type === 'approval') {
       if (session.status !== 'running') return;
-      if (session.provider !== 'Codex' || session.mode !== 'supervised')
+      if (!asksForApproval(session))
         throw new Error('Unexpected provider approval');
       if (
         session.pendingApprovals.some(
