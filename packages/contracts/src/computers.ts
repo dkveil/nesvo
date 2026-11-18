@@ -66,6 +66,7 @@ export const hostCapabilitySchema = z.enum([
   'session-resume',
   'merged-worktree-cleanup',
   'automation-rituals',
+  'lessons',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

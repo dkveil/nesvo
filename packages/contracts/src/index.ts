@@ -423,6 +423,16 @@ import {
   type DecideSessionParentInput,
   type DecideSessionPlanInput,
 } from './session-control';
+import {
+  decideLessonSchema,
+  lessonOverviewSchema,
+  lessonSettingsSchema,
+  proposeLessonsSchema,
+  type DecideLessonInput,
+  type LessonOverview,
+  type LessonSettings,
+  type ProposeLessonsInput,
+} from './lessons';
 import { resumeSessionSchema, type ResumeSessionInput } from './session-resume';
 import {
   finishMergedWorktreeSchema,
@@ -476,6 +486,7 @@ export * from './diagnostics';
 export * from './workflows';
 export * from './session-resume';
 export * from './merged-worktree-cleanup';
+export * from './lessons';
 
 export const desktopEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -1059,6 +1070,25 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('read-lessons'),
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('save-lesson-settings'),
+    input: lessonSettingsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('propose-lessons'),
+    input: proposeLessonsSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('decide-lesson'),
+    input: decideLessonSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('answer-session-question'),
     input: answerSessionQuestionSchema,
   }),
@@ -1480,6 +1510,11 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('session-control-policy'),
     id: z.uuid(),
     policy: coordinatorPolicySchema,
+  }),
+  z.strictObject({
+    type: z.literal('lessons'),
+    id: z.uuid(),
+    overview: lessonOverviewSchema,
   }),
   z.strictObject({
     type: z.literal('running-apps'),
@@ -2192,5 +2227,18 @@ export type DesktopApi = {
     policy: CoordinatorPolicy,
     hostId?: HostId,
   ) => Promise<CoordinatorPolicy>;
+  readLessons: (hostId?: HostId) => Promise<LessonOverview>;
+  saveLessonSettings: (
+    settings: LessonSettings,
+    hostId?: HostId,
+  ) => Promise<LessonOverview>;
+  proposeLessons: (
+    input: ProposeLessonsInput,
+    hostId?: HostId,
+  ) => Promise<LessonOverview>;
+  decideLesson: (
+    input: DecideLessonInput,
+    hostId?: HostId,
+  ) => Promise<LessonOverview>;
   subscribe: (listener: (event: WorkspaceEvent) => void) => () => void;
 };

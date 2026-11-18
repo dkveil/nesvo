@@ -123,6 +123,9 @@ import {
   deleteReviewerProfileSchema,
   saveReviewConventionSchema,
   deleteReviewConventionSchema,
+  lessonSettingsSchema,
+  proposeLessonsSchema,
+  decideLessonSchema,
   startPullRequestReviewSchema,
   listPullRequestReviewsSchema,
   updateReviewFindingSchema,
@@ -1025,6 +1028,27 @@ void app.whenReady().then(async () => {
       );
     },
   );
+  handle('nesvo:read-lessons', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('read-lessons', undefined, route(hostId));
+  });
+  const lessonCommands = {
+    'save-lesson-settings': lessonSettingsSchema,
+    'propose-lessons': proposeLessonsSchema,
+    'decide-lesson': decideLessonSchema,
+  } as const;
+  for (const method of Object.keys(
+    lessonCommands,
+  ) as (keyof typeof lessonCommands)[]) {
+    handle(`nesvo:${method}`, (event, input: unknown, hostId: unknown) => {
+      authorize(event);
+      return computers.execute(
+        method,
+        lessonCommands[method].parse(input),
+        route(hostId),
+      );
+    });
+  }
   handle('nesvo:read-session-control-policy', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute(

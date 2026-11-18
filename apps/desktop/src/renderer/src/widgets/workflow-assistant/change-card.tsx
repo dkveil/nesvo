@@ -6,6 +6,7 @@ import type {
 } from '@nesvo/contracts';
 import {
   CalendarClock,
+  Lightbulb,
   Terminal,
   Undo2,
   Workflow,
@@ -21,12 +22,14 @@ const kindIcons: Record<AssistantChange['kind'], LucideIcon> = {
   step: Terminal,
   workflow: Workflow,
   automation: CalendarClock,
+  lesson: Lightbulb,
 };
 
 const kindLabels: Record<AssistantChange['kind'], string> = {
   step: 'step',
   workflow: 'workflow',
   automation: 'automation',
+  lesson: 'lesson',
 };
 
 const opLabels: Record<AssistantChange['op'], string> = {

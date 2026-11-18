@@ -86,6 +86,10 @@ import {
   deleteReviewerProfileSchema,
   saveReviewConventionSchema,
   deleteReviewConventionSchema,
+  lessonOverviewSchema,
+  lessonSettingsSchema,
+  proposeLessonsSchema,
+  decideLessonSchema,
   startPullRequestReviewSchema,
   listPullRequestReviewsSchema,
   updateReviewFindingSchema,
@@ -1206,6 +1210,34 @@ const api: DesktopApi = {
       await ipcRenderer.invoke(
         'nesvo:answer-session-question',
         answerSessionQuestionSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  readLessons: async hostId =>
+    lessonOverviewSchema.parse(
+      await ipcRenderer.invoke('nesvo:read-lessons', route(hostId)),
+    ),
+  saveLessonSettings: async (settings, hostId) =>
+    lessonOverviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:save-lesson-settings',
+        lessonSettingsSchema.parse(settings),
+        route(hostId),
+      ),
+    ),
+  proposeLessons: async (input, hostId) =>
+    lessonOverviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:propose-lessons',
+        proposeLessonsSchema.parse(input),
+        route(hostId),
+      ),
+    ),
+  decideLesson: async (input, hostId) =>
+    lessonOverviewSchema.parse(
+      await ipcRenderer.invoke(
+        'nesvo:decide-lesson',
+        decideLessonSchema.parse(input),
         route(hostId),
       ),
     ),

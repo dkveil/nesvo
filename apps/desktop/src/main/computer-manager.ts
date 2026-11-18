@@ -200,6 +200,13 @@ const sessionDeletionResponses = {
   'restore-session': 'session',
 } as const;
 
+const lessonResponses = {
+  'read-lessons': 'lessons',
+  'save-lesson-settings': 'lessons',
+  'propose-lessons': 'lessons',
+  'decide-lesson': 'lessons',
+} as const;
+
 const costResponses = {
   'read-costs': 'costs',
   'list-cost-budgets': 'cost-budgets',
@@ -295,6 +302,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to finish worktrees after their pull request is merged.',
   'automation-rituals':
     'Update this computer’s Nesvo host and reconnect to use automation worktrees, browser workflows or CI triggers.',
+  lessons:
+    'Update this computer’s Nesvo host and reconnect to learn lessons from its incidents.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -321,6 +330,7 @@ function requiredCapability(
   )
     return 'provider-profiles';
   if (Object.hasOwn(costResponses, method)) return 'costs';
+  if (Object.hasOwn(lessonResponses, method)) return 'lessons';
   if (Object.hasOwn(trackedRepositoryResponses, method))
     return 'tracked-repositories';
   if (Object.hasOwn(worktreeRecipeResponses, method)) return 'worktree-recipes';
@@ -1242,6 +1252,7 @@ export class ComputerManager {
       ...worktreeRecipeResponses,
       ...codeReviewResponses,
       ...costResponses,
+      ...lessonResponses,
     }[method];
     if (response.type !== expected)
       throw new Error('Unexpected host response.');
@@ -1311,6 +1322,8 @@ export class ComputerManager {
         return response.run;
       case 'session-control-policy':
         return response.policy;
+      case 'lessons':
+        return response.overview;
       case 'tracked-repository-suggestions':
         return response.suggestions;
       case 'tracked-pull-request-lists':

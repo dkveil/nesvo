@@ -29,6 +29,7 @@ export const assistantChangeKindSchema = z.enum([
   'workflow',
   'step',
   'automation',
+  'lesson',
 ]);
 export const assistantChangeOpSchema = z.enum(['create', 'update', 'delete']);
 export const assistantChangeStatusSchema = z.enum(['applied', 'undone']);
@@ -46,7 +47,7 @@ export const assistantChangeTargetSchema = z.discriminatedUnion('type', [
     root: definitionScopeSchema,
     path: z
       .string()
-      .regex(/^(?:steps|workflows)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/)
+      .regex(/^(?:steps|workflows|lessons)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/)
       .max(assistantChangeLimits.relativePath),
     name: stepNameSchema,
   }),
@@ -118,7 +119,7 @@ export const assistantChangeSchema = z
     before: assistantChangeVersionSchema.nullable(),
     after: assistantChangeVersionSchema.nullable(),
     summary: summarySchema,
-    createdBy: z.literal('assistant'),
+    createdBy: z.enum(['assistant', 'owner']),
     at: z.iso.datetime(),
     status: assistantChangeStatusSchema,
     undoneAt: z.iso.datetime().nullable(),
