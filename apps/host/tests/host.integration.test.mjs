@@ -22785,6 +22785,16 @@ test('Claude matches and revokes scoped allow rules through the live prompt chan
   assert.equal(removed.allowPattern.pattern, 'Edit(./sample.txt)');
   assert.equal((await respond(run, removed, 'decline')).type, 'session');
   await finish(run);
+
+  await writeFile(
+    join(project, 'package.json'),
+    JSON.stringify({ scripts: { test: 'node ../outside.js' } }),
+  );
+  run = await send(first, safe);
+  const changedScript = await approval(run);
+  assert.equal(changedScript.allowPattern, undefined);
+  assert.equal((await respond(run, changedScript, 'decline')).type, 'session');
+  await finish(run);
 });
 
 test('Full access requires the host switch and a confirmation for each session', async t => {

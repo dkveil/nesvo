@@ -15,6 +15,11 @@ const filesystemTool =
 const filesystemPackage =
   /^@modelcontextprotocol\/server-filesystem@\d+\.\d+\.\d+$/;
 
+const windowsDevice =
+  /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(?:\.|$)/i;
+const externalScriptPath =
+  /(?:^|[\s='"])(?:[A-Za-z]:[\\/]|[\\/]|~[\\/])|(?:^|[\\/\s='"])\.\.(?:[\\/]|$)|[a-z]+:\/\//i;
+
 export function insideDirectory(directory: string, target: string): boolean {
   const path = relative(directory, target);
   return (
@@ -43,8 +48,8 @@ function localPath(directory: string, path: unknown): string | null {
             segment.toLowerCase(),
           ) ||
           (process.platform === 'win32' &&
-            /[ .]$/.test(segment) &&
-            segment !== '.'),
+            (windowsDevice.test(segment) ||
+              (/[ .]$/.test(segment) && segment !== '.'))),
       )
   )
     return null;
@@ -95,6 +100,7 @@ export function claudeAllowCandidate(
       ];
       if (
         typeof script !== 'string' ||
+        externalScriptPath.test(script) ||
         /[;&|><`\r\n]|\$\(|\b(?:curl|wget|ssh|scp|sudo|rm|del|remove-item|invoke-webrequest)\b|\bgit\s+push\b/i.test(
           script,
         )
@@ -133,6 +139,7 @@ export function claudeAllowCandidate(
     (type !== undefined && type !== 'stdio') ||
     !Array.isArray(args) ||
     typeof command !== 'string' ||
+    /^[/\\]{2}/.test(command) ||
     !/^npx(?:\.cmd|\.exe)?$/i.test(basename(command)) ||
     args[0] !== '-y' ||
     typeof args[1] !== 'string' ||
