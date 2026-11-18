@@ -4,11 +4,15 @@ import type {
   HistorySearchPage,
   HistorySearchResult,
   HostId,
+  TranscriptSearchPage,
+  TranscriptSearchResult,
 } from '@nesvo/contracts';
 import { directoryLabel, ProviderGlyph } from '@/entities/session';
 import { formatRelativeTime } from '@/shared/lib/relative-time';
 import { useNow } from '@/shared/lib/use-now';
+import { Checkbox } from '@/shared/ui/checkbox';
 import { Dialog, DialogContent, DialogTitle } from '@/shared/ui/dialog';
+import { Label } from '@/shared/ui/label';
 import { Listbox } from '@/shared/ui/listbox';
 import { listboxOptionId } from '@/shared/ui/listbox-option-id';
 import { SearchField } from '@/shared/ui/search-field';
@@ -19,14 +23,75 @@ type Props = {
   initialQuery: string;
   onClose: () => void;
   onOpenResult: (hostId: HostId, result: HistorySearchResult) => void;
+  onOpenTranscript: (hostId: HostId, result: TranscriptSearchResult) => void;
   returnFocus: HTMLElement | null;
 };
 
-type HostResults = { page: HistorySearchPage | null };
+type HostResults = {
+  page: HistorySearchPage | null;
+  transcripts?: TranscriptSearchPage | null;
+};
+
+type ResultRow = {
+  key: string;
+  hostId: HostId;
+  group: string;
+  title: string;
+  provider: HistorySearchResult['provider'];
+  snippet: HistorySearchResult['snippet'];
+  directory: string;
+  at: string;
+  open: () => void;
+};
+
+const TRANSCRIPT_SCOPE_KEY = 'nesvo.history-search.transcripts';
 
 const canSearch = (computer: Computer) =>
   computer.status === 'connected' &&
   computer.capabilities.includes('history-search');
+
+const canSearchTranscripts = (computer: Computer) =>
+  computer.status === 'connected' &&
+  computer.capabilities.includes('transcript-search');
+
+function readTranscriptScope() {
+  try {
+    return window.localStorage.getItem(TRANSCRIPT_SCOPE_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
+
+function saveTranscriptScope(enabled: boolean) {
+  try {
+    window.localStorage.setItem(TRANSCRIPT_SCOPE_KEY, enabled ? 'on' : 'off');
+  } catch {
+    return;
+  }
+}
+
+function hostStatus(
+  computer: Computer,
+  results: HostResults | undefined,
+  includeTranscripts: boolean,
+) {
+  if (computer.status !== 'connected') return 'offline, not searched';
+  if (!canSearch(computer)) return 'not searched, host update required';
+  const notes = [
+    results?.page === null && 'search failed',
+    results?.page?.truncated && 'partial results',
+  ];
+  if (includeTranscripts)
+    notes.push(
+      !canSearchTranscripts(computer)
+        ? 'CLI transcripts need a host update'
+        : results?.transcripts === null
+          ? 'CLI transcript search failed'
+          : results?.transcripts?.truncated &&
+            'CLI transcripts partially indexed',
+    );
+  return notes.filter(Boolean).join(', ');
+}
 
 function groupResults(results: HistorySearchResult[]) {
   const groups = new Map<string, HistorySearchResult[]>();
@@ -56,6 +121,11 @@ function HighlightedSnippet({ text, ranges }: HistorySearchResult['snippet']) {
 
 const RESULTS_ID = 'history-results';
 
+const transcriptKey = (computer: Computer, result: TranscriptSearchResult) =>
+  ['transcript-result', computer.id, result.provider, result.providerSessionId]
+    .join('-')
+    .replaceAll(' ', '-');
+
 const resultKey = (computer: Computer, result: HistorySearchResult) =>
   `history-result-${computer.id}-${result.sessionId}-${result.messageId ?? 'title'}`;
 
@@ -64,9 +134,12 @@ export function HistorySearchDialog({
   initialQuery,
   onClose,
   onOpenResult,
+  onOpenTranscript,
   returnFocus,
 }: Props) {
   const [query, setQuery] = useState(initialQuery);
+  const [includeTranscripts, setIncludeTranscripts] =
+    useState(readTranscriptScope);
   const [activeKey, setActiveKey] = useState('');
   const [search, setSearch] = useState<{
     key: string;
@@ -76,6 +149,7 @@ export function HistorySearchDialog({
   const eligible = useMemo(() => computers.filter(canSearch), [computers]);
   const requestKey = JSON.stringify([
     term,
+    includeTranscripts,
     eligible.map(computer => [computer.id, computer.instanceId]),
   ]);
   const now = useNow(60_000);
@@ -85,47 +159,88 @@ export function HistorySearchDialog({
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       for (const computer of eligible) {
-        const complete = (page: HistorySearchPage | null) => {
+        const complete = (results: Partial<HostResults>) => {
           if (controller.signal.aborted) return;
-          setSearch(previous => ({
-            key: requestKey,
-            hosts: {
-              ...(previous.key === requestKey ? previous.hosts : {}),
-              [computer.id]: { page },
-            },
-          }));
+          setSearch(previous => {
+            const hosts = previous.key === requestKey ? previous.hosts : {};
+            return {
+              key: requestKey,
+              hosts: {
+                ...hosts,
+                [computer.id]: {
+                  page: null,
+                  ...hosts[computer.id],
+                  ...results,
+                },
+              },
+            };
+          });
         };
-        void window.nesvo
-          .searchHistory({ query: term }, computer.id)
-          .then(complete, () => complete(null));
+        void window.nesvo.searchHistory({ query: term }, computer.id).then(
+          page => complete({ page }),
+          () => complete({ page: null }),
+        );
+        if (includeTranscripts && canSearchTranscripts(computer))
+          void window.nesvo
+            .searchTranscripts({ query: term }, computer.id)
+            .then(
+              transcripts => complete({ transcripts }),
+              () => complete({ transcripts: null }),
+            );
       }
     }, 200);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [eligible, requestKey, term]);
+  }, [eligible, includeTranscripts, requestKey, term]);
 
   const hosts = search.key === requestKey ? search.hosts : {};
-  const groups = eligible.map(computer => ({
-    computer,
-    groups: groupResults(hosts[computer.id]?.page?.results ?? []),
-  }));
-  const rows = groups.flatMap(({ computer, groups }) =>
-    groups.flat().map(result => ({
-      key: resultKey(computer, result),
-      hostId: computer.id,
-      computerName: computer.name,
-      result,
-    })),
+  const historyRows = eligible.flatMap(computer =>
+    groupResults(hosts[computer.id]?.page?.results ?? [])
+      .flat()
+      .map((result): ResultRow => ({
+        key: resultKey(computer, result),
+        hostId: computer.id,
+        group: computer.name,
+        title: result.title,
+        provider: result.provider,
+        snippet: result.snippet,
+        directory: result.directory,
+        at: result.createdAt,
+        open: () => onOpenResult(computer.id, result),
+      })),
   );
+  const transcriptRows = includeTranscripts
+    ? eligible.flatMap(computer =>
+        (hosts[computer.id]?.transcripts?.results ?? []).map(
+          (result): ResultRow => ({
+            key: transcriptKey(computer, result),
+            hostId: computer.id,
+            group: computer.name + ' · CLI transcripts',
+            title: result.title,
+            provider: result.provider,
+            snippet: result.snippet,
+            directory: result.directory,
+            at: result.lastActivityAt,
+            open: () => onOpenTranscript(computer.id, result),
+          }),
+        ),
+      )
+    : [];
+  const rows = [...historyRows, ...transcriptRows];
   const active = rows.findIndex(row => row.key === activeKey);
   const current = rows[Math.max(active, 0)];
-  const pending = !!term && eligible.some(computer => !hosts[computer.id]);
-  const open = (key: string) => {
-    const row = rows.find(item => item.key === key);
-    if (row) onOpenResult(row.hostId, row.result);
-  };
+  const pending =
+    !!term &&
+    eligible.some(
+      computer =>
+        !hosts[computer.id] ||
+        (includeTranscripts &&
+          canSearchTranscripts(computer) &&
+          hosts[computer.id]?.transcripts === undefined),
+    );
+  const open = (key: string) => rows.find(item => item.key === key)?.open();
 
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
@@ -165,7 +280,7 @@ export function HistorySearchDialog({
             if (event.nativeEvent.isComposing || !current) return;
             if (event.key === 'Enter') {
               event.preventDefault();
-              onOpenResult(current.hostId, current.result);
+              current.open();
             }
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault();
@@ -177,21 +292,35 @@ export function HistorySearchDialog({
             }
           }}
         />
+        <div className="flex items-center border-b px-3.5 py-2">
+          <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={includeTranscripts}
+              onCheckedChange={value => {
+                const enabled = value === true;
+                setIncludeTranscripts(enabled);
+                saveTranscriptScope(enabled);
+                setActiveKey('');
+              }}
+            />
+            Include CLI transcripts not yet imported
+          </Label>
+        </div>
         {rows.length > 0 && (
           <Listbox
             id={RESULTS_ID}
             label="History matches"
             options={rows.map(row => ({
               value: row.key,
-              label: row.result.title,
-              group: row.computerName,
-              icon: <ProviderGlyph provider={row.result.provider} />,
-              description: <HighlightedSnippet {...row.result.snippet} />,
+              label: row.title,
+              group: row.group,
+              icon: <ProviderGlyph provider={row.provider} />,
+              description: <HighlightedSnippet {...row.snippet} />,
               trailing: (
                 <>
-                  {directoryLabel(row.result.directory)} ·{' '}
-                  <time dateTime={row.result.createdAt}>
-                    {formatRelativeTime(row.result.createdAt, now)}
+                  {directoryLabel(row.directory)} ·{' '}
+                  <time dateTime={row.at}>
+                    {formatRelativeTime(row.at, now)}
                   </time>
                 </>
               ),
@@ -207,7 +336,11 @@ export function HistorySearchDialog({
         {term && (
           <div className="space-y-1 px-3.5 py-2.5 empty:hidden">
             {pending && (
-              <StatusMessage tone="loading">Searching history…</StatusMessage>
+              <StatusMessage tone="loading">
+                {includeTranscripts
+                  ? 'Searching history and CLI transcripts…'
+                  : 'Searching history…'}
+              </StatusMessage>
             )}
             {!pending &&
               !rows.length &&
@@ -215,16 +348,11 @@ export function HistorySearchDialog({
                 <StatusMessage>No matches.</StatusMessage>
               )}
             {computers.map(computer => {
-              const status =
-                computer.status !== 'connected'
-                  ? 'offline, not searched'
-                  : !canSearch(computer)
-                    ? 'not searched, host update required'
-                    : hosts[computer.id]?.page === null
-                      ? 'search failed'
-                      : hosts[computer.id]?.page?.truncated
-                        ? 'partial results'
-                        : '';
+              const status = hostStatus(
+                computer,
+                hosts[computer.id],
+                includeTranscripts,
+              );
               return status ? (
                 <StatusMessage key={computer.id} tone="warning">
                   {computer.name} · {status}

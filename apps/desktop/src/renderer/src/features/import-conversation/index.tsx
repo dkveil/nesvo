@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import type {
   Computer,
+  ConversationIdentity,
   ConversationImportCatalog,
   DesktopApi,
   DesktopSession,
@@ -31,16 +32,16 @@ import { SkeletonList } from '@/shared/ui/skeleton';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { Hint } from '@/shared/ui/tooltip';
 
-type Conversation = ConversationImportCatalog['conversations'][number];
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   computer: Computer | undefined;
   api: Pick<DesktopApi, 'listConversations' | 'adoptConversation'>;
   onAdopted: (session: DesktopSession) => void;
+  initialSelection?: ConversationIdentity;
 };
 
-const conversationKey = (conversation: Conversation) =>
+const conversationKey = (conversation: ConversationIdentity) =>
   [conversation.provider, conversation.providerSessionId].join(':');
 
 const folderName = (directory: string) =>
@@ -64,6 +65,7 @@ export function ImportConversation({
   computer,
   api,
   onAdopted,
+  initialSelection,
 }: Props) {
   const [pending, setPending] = useState(false);
   const requests = useRef(new Map<string, string>());
@@ -86,6 +88,7 @@ export function ImportConversation({
           pending={pending}
           setPending={setPending}
           requestIdFor={requestIdFor}
+          initialSelection={initialSelection}
           onCancel={() => onOpenChange(false)}
           onAdopted={session => {
             onOpenChange(false);
@@ -103,9 +106,10 @@ function ConversationPicker({
   pending,
   setPending,
   requestIdFor,
+  initialSelection,
   onCancel,
   onAdopted,
-}: Pick<Props, 'computer' | 'api' | 'onAdopted'> & {
+}: Pick<Props, 'computer' | 'api' | 'onAdopted' | 'initialSelection'> & {
   onCancel: () => void;
   pending: boolean;
   setPending: (pending: boolean) => void;
@@ -113,7 +117,8 @@ function ConversationPicker({
 }) {
   const [query, setQuery] = useState('');
   const [provider, setProvider] = useState<Provider | 'all'>('all');
-  const [selectedKey, setSelectedKey] = useState('');
+  const initialKey = initialSelection ? conversationKey(initialSelection) : '';
+  const [selectedKey, setSelectedKey] = useState(initialKey);
   const [catalog, setCatalog] = useState<ConversationImportCatalog | null>(
     null,
   );
@@ -128,29 +133,39 @@ function ConversationPicker({
   useEffect(() => {
     if (!available) return;
     let current = true;
-    void api.listConversations().then(
-      result => {
-        if (!current) return;
-        setListError('');
-        setCatalog(result);
-      },
-      error => {
-        if (current) setListError(errorDetail(error));
-      },
-    );
+    void api
+      .listConversations(
+        initialSelection ? { include: initialSelection } : undefined,
+      )
+      .then(
+        result => {
+          if (!current) return;
+          setListError('');
+          setCatalog(result);
+        },
+        error => {
+          if (current) setListError(errorDetail(error));
+        },
+      );
     return () => {
       current = false;
     };
-  }, [api, attempt, available]);
+  }, [api, attempt, available, initialSelection]);
 
   const term = query.trim().toLowerCase();
-  const matches = (catalog?.conversations ?? []).filter(
-    conversation =>
-      (provider === 'all' || conversation.provider === provider) &&
-      [conversation.title, conversation.directory].some(value =>
-        value.toLowerCase().includes(term),
-      ),
-  );
+  const matches = (catalog?.conversations ?? [])
+    .filter(
+      conversation =>
+        (provider === 'all' || conversation.provider === provider) &&
+        [conversation.title, conversation.directory].some(value =>
+          value.toLowerCase().includes(term),
+        ),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(conversationKey(right) === initialKey) -
+        Number(conversationKey(left) === initialKey),
+    );
   const selected = matches.find(
     conversation => conversationKey(conversation) === selectedKey,
   );

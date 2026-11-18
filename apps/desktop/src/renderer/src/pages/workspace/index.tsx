@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import type {
+  ConversationIdentity,
   CreateSessionInput,
   SessionGroup,
   DecideDelegationInput,
@@ -73,6 +74,7 @@ import {
 } from '@/features/edit-automation';
 import { ManageComputers } from '@/features/manage-computers';
 import { HistorySearchDialog } from '@/features/search-history';
+import { ImportConversation } from '@/features/import-conversation';
 import { CommandPalette, type PaletteMode } from '@/features/command-palette';
 import { shortcutKeys } from '@/shared/lib/keyboard-shortcuts';
 import { MobileAccess } from '@/features/mobile-access';
@@ -261,6 +263,10 @@ export function Workspace() {
     command: string;
   } | null>(null);
   const [terminalCommandError, setTerminalCommandError] = useState('');
+  const [transcriptImport, setTranscriptImport] = useState<{
+    hostId: string;
+    conversation: ConversationIdentity;
+  } | null>(null);
   const [historySearch, setHistorySearch] = useState<{
     query: string;
     returnFocus: HTMLElement | null;
@@ -2646,6 +2652,35 @@ ${text}`
               selectNow(hostKey(result.sessionId, hostId));
               if (result.messageId) setMessageTarget({ id: result.messageId });
             });
+          }}
+          onOpenTranscript={(hostId, { provider, providerSessionId }) => {
+            setHistorySearch(null);
+            setTranscriptImport({
+              hostId,
+              conversation: { provider, providerSessionId },
+            });
+          }}
+        />
+      )}
+      {transcriptImport && (
+        <ImportConversation
+          key={[
+            transcriptImport.hostId,
+            transcriptImport.conversation.provider,
+            transcriptImport.conversation.providerSessionId,
+          ].join(':')}
+          open
+          onOpenChange={open => {
+            if (!open) setTranscriptImport(null);
+          }}
+          computer={store.computers.find(
+            computer => computer.id === transcriptImport.hostId,
+          )}
+          api={desktopApi(transcriptImport.hostId)}
+          initialSelection={transcriptImport.conversation}
+          onAdopted={session => {
+            store.merge([session]);
+            guardEditor(() => select(entityKey(session)));
           }}
         />
       )}
