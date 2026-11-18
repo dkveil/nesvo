@@ -17,6 +17,7 @@ import { useReviewProfiles } from '@/features/edit-automation';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { Field } from '@/shared/ui/field';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 import {
   Dialog,
   DialogContent,
@@ -90,15 +91,8 @@ function RoutineRow({
         <div className="space-y-0.5 pl-6">
           <p>{summary}</p>
           <StatusMessage
-            tone={
-              added
-                ? 'success'
-                : pending
-                  ? 'loading'
-                  : outcome?.status === 'error'
-                    ? 'error'
-                    : 'info'
-            }
+            icon={false}
+            tone={outcome?.status === 'error' ? 'error' : 'info'}
           >
             {outcome?.message || state}
           </StatusMessage>
@@ -106,7 +100,11 @@ function RoutineRow({
       }
     >
       {action && !added && !pending && (
-        <Button variant="outline" onClick={action.run}>
+        <Button
+          variant="outline"
+          onClick={action.run}
+          aria-label={action.label === 'Add' ? `Add ${title}` : undefined}
+        >
           {action.label}
         </Button>
       )}
@@ -133,6 +131,9 @@ export function RoutinesStep({
   >(null);
   const [confirming, setConfirming] = useState(false);
   const [target, setTarget] = useState(defaultFolder ?? '');
+  const [choosingFolder, setChoosingFolder] = useState(false);
+  const [folderError, setFolderError] = useState('');
+  const writingWorkflow = outcomes.workflow?.status === 'pending';
   const reviewsSupported =
     capable('pull-request-reviews') && capable('tracked-repositories');
   const profiles = useReviewProfiles(api, hostId, reviewsSupported);
@@ -192,7 +193,19 @@ export function RoutinesStep({
             `“${definition.name}” was refused.`,
         );
     }
-    return 'Added · Ready to assign';
+    return 'Added to project';
+  };
+  const chooseWorkflowFolder = async () => {
+    setChoosingFolder(true);
+    setFolderError('');
+    try {
+      const directory = await api.chooseDirectory();
+      if (directory) setTarget(directory);
+    } catch (failure) {
+      setFolderError(errorDetail(failure));
+    } finally {
+      setChoosingFolder(false);
+    }
   };
   const computerAction = { label: 'Open Computers', run: onChooseComputer };
   const folderAction = {
@@ -258,19 +271,19 @@ export function RoutinesStep({
     ? computerAction
     : !capable('workflows')
       ? null
-      : !defaultFolder
-        ? folderAction
-        : {
-            label: 'Add…',
-            run: () => {
-              setTarget(defaultFolder);
-              setConfirming(true);
-            },
-          };
+      : {
+          label: 'Add',
+          run: () => {
+            setFolderError('');
+            setTarget(defaultFolder ?? '');
+            setConfirming(true);
+            if (!defaultFolder) void chooseWorkflowFolder();
+          },
+        };
 
   return (
     <div className="space-y-3">
-      <div className="divide-y rounded-surface border bg-card">
+      <div className="divide-y">
         <RoutineRow
           title="Morning summary"
           icon={Sunrise}
@@ -300,9 +313,9 @@ export function RoutinesStep({
           icon={Workflow}
           summary="Run lint, inspect the diff, request review and wait for CI."
           state={
-            workflowAction?.label === 'Add…'
-              ? 'Unassigned when added'
-              : 'Needs a project folder on a host with workflows'
+            workflowAction?.label === 'Add'
+              ? 'Added to a project you choose'
+              : 'Connect to a host that supports workflows'
           }
           outcome={outcomes.workflow}
           action={workflowAction}
@@ -319,7 +332,10 @@ export function RoutinesStep({
             if (!open) setPrerequisite(null);
           }}
         >
-          <DialogContent className="max-h-[80dvh] overflow-y-auto">
+          <DialogContent
+            surface="panel"
+            className="max-h-[80dvh] overflow-y-auto"
+          >
             <DialogHeader>
               <DialogTitle>
                 {prerequisite === 'reviewer'
@@ -342,31 +358,52 @@ export function RoutinesStep({
         open={confirming}
         onOpenChange={setConfirming}
         tone="default"
+        surface="panel"
         title="Add the pre-push gates workflow?"
         description="Save one editable workflow and its four steps to .agents/workflows in the selected project."
         confirmLabel="Write files"
-        pendingLabel="Writing…"
-        onConfirm={() =>
-          target && run('workflow', 'Pre-push gates', addWorkflow)
-        }
+        confirmDisabled={!target || choosingFolder}
+        pendingLabel="Writing files…"
+        onConfirm={() => run('workflow', 'Pre-push gates', addWorkflow)}
       >
-        <Field id="onboarding-workflow-folder" label="Project folder" as="span">
+        <Field
+          id="onboarding-workflow-folder"
+          className="min-w-0"
+          label="Project folder"
+          as="span"
+          hint={
+            writingWorkflow
+              ? 'Wait for the workflow files to finish saving.'
+              : choosingFolder
+                ? 'Finish choosing a folder to continue.'
+                : !target
+                  ? 'Choose a project folder to enable Write files.'
+                  : undefined
+          }
+          messages={
+            folderError || outcomes.workflow?.status === 'error'
+              ? [
+                  {
+                    severity: 'error',
+                    message: folderError || outcomes.workflow?.message || '',
+                  },
+                ]
+              : []
+          }
+        >
           <div className="flex items-center justify-between gap-2">
-            <p className="min-w-0 break-all text-ui">{target}</p>
+            {target && (
+              <MiddleTruncatedText value={target} className="text-ui" />
+            )}
             <Button
               variant="outline"
-              onClick={() => {
-                void api.chooseDirectory().then(
-                  directory => {
-                    if (directory) setTarget(directory);
-                  },
-                  failure =>
-                    record('workflow', {
-                      status: 'error',
-                      message: errorDetail(failure),
-                    }),
-                );
-              }}
+              disabled={choosingFolder || writingWorkflow}
+              aria-describedby={
+                choosingFolder || writingWorkflow
+                  ? 'onboarding-workflow-folder-hint'
+                  : undefined
+              }
+              onClick={() => void chooseWorkflowFolder()}
             >
               Choose folder
             </Button>

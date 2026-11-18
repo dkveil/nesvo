@@ -59,14 +59,14 @@ export function WorkingRules({
   return (
     <section
       aria-label="Bring your working rules"
-      className="space-y-3 rounded-surface border bg-card p-4"
+      className="space-y-3 border-t px-3 pt-3"
     >
       <div className="flex items-center gap-2">
         <BookOpenCheck
           aria-hidden="true"
           className="size-4 text-muted-foreground"
         />
-        <h2 className="text-title font-medium">Bring your working rules</h2>
+        <h2 className="text-ui font-medium">Bring your working rules</h2>
       </div>
       <p className="text-xs leading-5 text-muted-foreground">
         Get a read-only summary of your user and project instruction files from
@@ -81,7 +81,11 @@ export function WorkingRules({
             }
             disabled={pending}
           >
-            <SelectTrigger aria-label="Agent for working rules" size="sm">
+            <SelectTrigger
+              aria-label="Agent for working rules"
+              aria-describedby={pending ? 'working-rules-wait' : undefined}
+              size="sm"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -93,30 +97,38 @@ export function WorkingRules({
             </SelectContent>
           </Select>
         )}
-        {provider ? (
+        {provider && model ? (
           <Button
             variant="outline"
-            disabled={pending || !model}
+            disabled={pending}
+            aria-describedby={pending ? 'working-rules-wait' : undefined}
             onClick={() => void summarize()}
           >
             {pending ? 'Summarizing…' : 'Summarize my rules'}
           </Button>
         ) : (
           <Button variant="outline" onClick={onSetupAgents}>
-            Choose an agent
+            Set up agents
           </Button>
         )}
         {pending && (
-          <StatusMessage tone="loading">Waiting for the agent…</StatusMessage>
+          <StatusMessage id="working-rules-wait" tone="loading">
+            Wait for the summary to finish to run another review.
+          </StatusMessage>
         )}
       </div>
+      {provider && !model && (
+        <StatusMessage tone="info">
+          Check for an available model in Coding agents.
+        </StatusMessage>
+      )}
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       {review && (
         <div
           role="log"
           aria-label="Working rules summary"
           tabIndex={0}
-          className="max-h-36 space-y-2 overflow-y-auto rounded-control border bg-background p-3 focus-ring"
+          className="max-h-36 space-y-2 overflow-y-auto border-t pt-3 focus-ring"
         >
           <p className="whitespace-pre-wrap text-ui [overflow-wrap:anywhere]">
             {review.summary}
@@ -133,10 +145,9 @@ export function WorkingRules({
           )}
         </div>
       )}
-      <p className="text-xs leading-5 text-muted-foreground">
-        The planned lessons feature will keep rules in files shared across
-        providers, learn from your corrections and show how often each rule
-        fails so you can improve autonomous runs.
+      <p className="text-2xs text-muted-foreground">
+        Nesvo keeps rules and lessons as files for every provider, learns from
+        your corrections and shows which rules keep failing.
       </p>
     </section>
   );

@@ -232,7 +232,9 @@ Hovering the dot or, after a short delay, the row, or focusing the row from the 
 
 **CodeBlock** — `shared/ui/code-block.tsx`. Monospace block with an optional file `label`, copy button and `wrap`.
 
-**Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, muted `description` lines under the title (a string clamps to two lines; a node renders its own lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions.
+**Disclosure / NativeDisclosure** — `shared/ui/disclosure.tsx`. A 28 px row with a rotating chevron, optional `icon`, `meta`, muted `description` lines under the title (a string clamps to two lines; a node renders its own lines) and collapsible content; controlled or uncontrolled. `triggerLabel` names the trigger when the visible title is not enough. `triggerTone="muted"` uses the helper text scale for secondary details. NativeDisclosure renders the same row with `<details>` and `<summary>`: use it when the content must stay in the document while collapsed (find in page, deep links that open a section) or when callers rely on the `open` attribute, such as activity rows and saved result versions.
+
+**MiddleTruncatedText** — `shared/ui/middle-truncated-text.tsx`. Displays long paths with both ends visible and exposes the complete value on hover.
 
 **AddTile** — `shared/ui/add-tile.tsx`. A dashed tile that starts something new in an empty space: a dashed icon square (`icon`, default Plus), a `text-ui` title and an optional `text-2xs` description. Size it from the caller (the graph editor's empty canvas gives it the step node size). Not for regular commands (use Button) or list rows.
 

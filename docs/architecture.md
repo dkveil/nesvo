@@ -46,7 +46,7 @@ The desktop reads the folder for every connected computer with the capability af
 
 ### Getting started
 
-The app selects the full-window guide (`widgets/onboarding`) before mounting the workspace. Skip and either finish action store `nesvo.onboarding.v1` in `localStorage`. Getting started in the command palette and Settings › About open the same guide. The renderer uses dark tokens and Geist while the guide is active. Electron updates the window background and caption symbols without changing the saved appearance. Test mode skips first launch unless `NESVO_TEST_SHOW_ONBOARDING=1` is also set.
+The app selects the full-window guide (`widgets/onboarding`) before mounting the workspace. Skip and either finish action store `nesvo.onboarding.v1` in `localStorage`. Getting started in the command palette and Settings › About open the same guide. Its four setup steps share a fixed top inset below the progress bar. Welcome and Finish are centered. The renderer uses dark tokens and Geist while the guide is active. Electron updates the window background and caption symbols without changing the saved appearance. Test mode skips first launch unless `NESVO_TEST_SHOW_ONBOARDING=1` is also set.
 
 The guide reads computer events and Local provider status without loading session history. Computers reuses the SSH add and connection form from Settings. The authorized `chooseDirectory` IPC opens only a native directory picker and validates the returned path with the shared contract. The host validates the selected default. Remote default folders use the validated absolute path field, since the existing file explorer requires a session.
 

@@ -3,6 +3,8 @@ import { ChevronRight } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { Collapsible } from 'radix-ui';
 
+type DisclosureTone = 'default' | 'muted';
+
 type DisclosureRowProps = {
   title: ReactNode;
   meta?: ReactNode;
@@ -13,6 +15,7 @@ type DisclosureRowProps = {
 type DisclosureProps = Omit<ComponentProps<typeof Collapsible.Root>, 'title'> &
   DisclosureRowProps & {
     triggerLabel?: string;
+    triggerTone?: DisclosureTone;
     contentClassName?: string;
   };
 
@@ -25,11 +28,14 @@ type NativeDisclosureProps = Omit<
     defaultOpen?: boolean;
     onOpenChange?: (open: boolean) => void;
     triggerLabel?: string;
+    triggerTone?: DisclosureTone;
     contentClassName?: string;
   };
 
 const triggerClass =
   'group/disclosure focus-ring flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-control px-2 text-left text-ui text-foreground transition-colors duration-fast not-data-disabled:hover:bg-accent data-disabled:cursor-not-allowed data-disabled:opacity-50';
+
+const mutedTriggerClass = 'text-xs leading-5 font-normal text-muted-foreground';
 
 const contentClass =
   'overflow-hidden pt-1 pb-1 pl-7 text-xs text-muted-foreground';
@@ -88,6 +94,7 @@ export function Disclosure({
   icon,
   description,
   triggerLabel,
+  triggerTone = 'default',
   className,
   contentClassName,
   children,
@@ -99,7 +106,13 @@ export function Disclosure({
       className={cn('min-w-0', className)}
       {...props}
     >
-      <Collapsible.Trigger aria-label={triggerLabel} className={triggerClass}>
+      <Collapsible.Trigger
+        aria-label={triggerLabel}
+        className={cn(
+          triggerClass,
+          triggerTone === 'muted' && mutedTriggerClass,
+        )}
+      >
         <DisclosureRow
           title={title}
           meta={meta}
@@ -120,6 +133,7 @@ export function NativeDisclosure({
   icon,
   description,
   triggerLabel,
+  triggerTone = 'default',
   open,
   defaultOpen = false,
   onOpenChange,
@@ -148,6 +162,7 @@ export function NativeDisclosure({
         data-state={expanded ? 'open' : 'closed'}
         className={cn(
           triggerClass,
+          triggerTone === 'muted' && mutedTriggerClass,
           'cursor-default list-none [&::-webkit-details-marker]:hidden',
         )}
       >

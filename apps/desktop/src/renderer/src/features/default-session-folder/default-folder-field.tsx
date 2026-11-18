@@ -5,6 +5,7 @@ import { errorDetail } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 
 type Props = {
   id: string;
@@ -49,32 +50,43 @@ export function DefaultFolderField({
       setPending(false);
     }
   };
+  const blocker = pending
+    ? 'Finish choosing or saving the folder to use these controls.'
+    : !supported
+      ? 'Update the host to set a default session folder.'
+      : '';
   if (chooseDirectory)
     return (
       <div className={className}>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
-            <p className="text-ui">{label}</p>
-            <p
-              className="truncate text-xs text-muted-foreground"
-              title={value ?? undefined}
-            >
-              {value ?? 'Use an isolated folder by default'}
-            </p>
+            <p className="text-xs font-medium">{label}</p>
+            {value ? (
+              <MiddleTruncatedText
+                value={value}
+                className="text-xs leading-5 text-muted-foreground"
+              />
+            ) : (
+              <p className="text-xs leading-5 text-muted-foreground">
+                Use an isolated folder by default
+              </p>
+            )}
           </div>
           <div className="flex shrink-0 gap-1.5">
             <Button
               variant="outline"
-              disabled={!supported || pending}
+              disabled={!!blocker}
+              aria-describedby={blocker ? `${id}-hint` : undefined}
               onClick={() => void save(chooseDirectory, true)}
             >
-              <FolderOpen />
+              <FolderOpen className="size-4" />
               {pending ? 'Checking…' : 'Choose folder'}
             </Button>
             {value && (
               <Button
                 variant="ghost"
-                disabled={!supported || pending}
+                disabled={!!blocker}
+                aria-describedby={blocker ? `${id}-hint` : undefined}
                 onClick={() => void save(async () => null)}
               >
                 Clear
@@ -82,6 +94,11 @@ export function DefaultFolderField({
             )}
           </div>
         </div>
+        {blocker && (
+          <p id={`${id}-hint`} className="text-2xs text-muted-foreground">
+            {blocker}
+          </p>
+        )}
         {error && <StatusMessage tone="error">{error}</StatusMessage>}
       </div>
     );
@@ -90,11 +107,7 @@ export function DefaultFolderField({
       id={id}
       label={label}
       className={className}
-      hint={
-        supported
-          ? `New sessions on ${computerName} start here when you give no location. Checked on ${computerName}.`
-          : `Connect ${computerName} with an up-to-date host to set a default folder.`
-      }
+      hint={blocker || 'Enter or change the path to save a default folder.'}
       messages={error ? [{ severity: 'error', message: error }] : []}
     >
       <form
@@ -124,7 +137,8 @@ export function DefaultFolderField({
           type="submit"
           size="sm"
           variant="outline"
-          disabled={!supported || pending || !changed}
+          disabled={!!blocker || !changed}
+          aria-describedby={`${id}-hint`}
         >
           {pending ? 'Checking…' : 'Save'}
         </Button>
@@ -133,7 +147,8 @@ export function DefaultFolderField({
             type="button"
             size="sm"
             variant="ghost"
-            disabled={!supported || pending}
+            disabled={!!blocker}
+            aria-describedby={blocker ? `${id}-hint` : undefined}
             onClick={() => void save(async () => null)}
           >
             Clear

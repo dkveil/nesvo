@@ -26,7 +26,7 @@ The first desktop launch opens the full-window guide. The workspace opens when y
 1. **Welcome** introduces local and remote agents, the configurable Inbox, workflows and daily routines.
 2. **Coding agents** checks Claude Code and Codex on Local and shows any install or sign-in commands you need.
 3. **Computers** lets you pick the Local default session folder in the native directory dialog and add an SSH computer in the guide. Enter remote paths on the computer they belong to. Each host validates its own folder.
-4. **Your setup** shows the configured MCP servers and discovered skills. Choose **Summarize my rules** to send excerpts from your user and project instruction files to the selected agent for a read-only summary. Saving lessons, learning from corrections and per-rule metrics are planned.
+4. **Your setup** shows the configured MCP servers and discovered skills. Choose **Summarize my rules** to send excerpts from your user and project instruction files to the selected agent for a read-only summary. Nesvo keeps lessons as shared files, learns from corrections and shows which rules keep failing. The summary stays in the guide.
 5. **Starter routines** offers an editable morning summary, pull request review and pre-push gates workflow. Automations are added paused. The workflow is saved to the confirmed project's `.agents/workflows` and runs only after you choose to use it.
 6. **Finish** summarizes the setup and lets you open the new session form or the workspace.
 

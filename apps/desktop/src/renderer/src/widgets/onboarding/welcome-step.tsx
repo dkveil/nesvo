@@ -21,30 +21,29 @@ const points = [
 
 export function WelcomeStep() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <header className="space-y-4 text-center">
         <BrandWordmark className="mx-auto h-8" />
-        <h1
-          id="onboarding-title"
-          className="text-display-lg font-semibold tracking-tight"
-        >
+        <h1 id="onboarding-title" className="text-base font-semibold">
           vibe with full control
         </h1>
-        <p className="mx-auto max-w-lg text-sm text-muted-foreground">
+        <p className="mx-auto max-w-lg text-ui leading-relaxed text-muted-foreground">
           Work with Claude Code and Codex side by side in one app, on this
           computer and your own servers.
         </p>
       </header>
-      <ul className="mx-auto max-w-lg divide-y border-y">
+      <ul className="mx-auto max-w-lg divide-y">
         {points.map(({ icon: Icon, title, detail }) => (
-          <li key={title} className="flex items-center gap-4 px-3 py-3">
+          <li key={title} className="flex items-start gap-2 px-3 py-3">
             <Icon
               aria-hidden="true"
-              className="size-4 shrink-0 text-muted-foreground"
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
             />
             <div>
               <p className="text-ui font-medium">{title}</p>
-              <p className="text-xs text-muted-foreground">{detail}</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {detail}
+              </p>
             </div>
           </li>
         ))}

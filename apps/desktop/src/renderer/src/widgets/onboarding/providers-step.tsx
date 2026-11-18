@@ -25,7 +25,7 @@ export function ProvidersStep({ statuses, computerName, onCheckAgain }: Props) {
   );
   return (
     <div className="space-y-3">
-      <ul className="divide-y rounded-surface border bg-card">
+      <ul className="divide-y">
         {providers.map(provider => {
           const state = statuses[provider];
           const summary = providerSummary(provider, state);
@@ -64,19 +64,25 @@ export function ProvidersStep({ statuses, computerName, onCheckAgain }: Props) {
         })}
       </ul>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs leading-5 text-muted-foreground">
-          {missing
-            ? `Run the commands in a terminal on ${computerName}, then check again. One provider is enough to start.`
-            : `Nesvo uses the providers installed on ${computerName} with their existing sign-in.`}
+        <p
+          id="onboarding-provider-check"
+          className="text-xs leading-5 text-muted-foreground"
+        >
+          {checking
+            ? 'Wait for the current check to finish.'
+            : missing
+              ? `Run the commands in a terminal on ${computerName}, then check again. One provider is enough to start.`
+              : `Nesvo uses the providers installed on ${computerName} with their existing sign-in.`}
         </p>
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           disabled={checking}
           aria-busy={checking || undefined}
+          aria-describedby={checking ? 'onboarding-provider-check' : undefined}
           onClick={onCheckAgain}
         >
-          <RefreshCw />
+          <RefreshCw className="size-4" />
           {checking ? 'Checking…' : 'Check again'}
         </Button>
       </div>

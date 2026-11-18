@@ -5,10 +5,8 @@ import {
   providerUsable,
   type ProviderStates,
 } from '@/entities/session';
-import { Button } from '@/shared/ui/button';
 import { Disclosure } from '@/shared/ui/disclosure';
 import { WorkingRules } from './working-rules';
-import { Badge } from '@/shared/ui/badge';
 import { StatusMessage } from '@/shared/ui/status-message';
 import {
   useProviderSetup,
@@ -31,12 +29,16 @@ const SHOWN_SERVERS = 4;
 function ProviderReport({ report }: { report: ProviderSetupReport }) {
   const servers = report.servers?.servers ?? [];
   const repository = report.servers?.repository;
+  const serverNames = servers
+    .slice(0, SHOWN_SERVERS)
+    .map(server => `${server.name} (${server.scope})`)
+    .join(', ');
   const skills = report.skills?.skills ?? [];
   return (
     <li
       aria-label={report.provider}
       data-onboarding-setup={report.provider}
-      className="min-w-0 space-y-2 rounded-surface border bg-card px-4 py-3"
+      className="min-w-0 space-y-1.5 px-3 py-3"
     >
       <div className="flex items-center gap-2">
         <ProviderGlyph
@@ -54,39 +56,14 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
       </div>
       {report.servers && (
         <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
+          <p
+            className="truncate text-xs leading-5 text-muted-foreground"
+            title={serverNames || undefined}
+          >
             {servers.length
-              ? `MCP servers (${servers.length})`
+              ? `MCP servers (${servers.length}) · ${serverNames}${servers.length > SHOWN_SERVERS ? ` · +${servers.length - SHOWN_SERVERS} more` : ''}`
               : 'No MCP servers configured'}
           </p>
-          {servers.length > 0 && (
-            <ul className="flex flex-wrap gap-1" aria-label="MCP servers">
-              {servers.slice(0, SHOWN_SERVERS).map(server => (
-                <li key={server.key}>
-                  <Badge
-                    tone="neutral"
-                    appearance="outline"
-                    className="max-w-full"
-                  >
-                    <span className="max-w-32 truncate" title={server.name}>
-                      {server.name}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {' '}
-                      · {server.scope}
-                    </span>
-                  </Badge>
-                </li>
-              ))}
-              {servers.length > SHOWN_SERVERS && (
-                <li>
-                  <Badge tone="neutral" appearance="outline">
-                    +{servers.length - SHOWN_SERVERS} more
-                  </Badge>
-                </li>
-              )}
-            </ul>
-          )}
           {repository && repository.definitions.length > 0 && (
             <p className="text-xs text-muted-foreground">
               {repository.definitions.length} repository{' '}
@@ -131,7 +108,8 @@ function ProviderReport({ report }: { report: ProviderSetupReport }) {
               ? 'Skill discovery details'
               : 'Why the catalog is incomplete'
           }
-          className="-mx-1"
+          triggerTone="muted"
+          className="-mx-2"
           contentClassName="max-h-24 overflow-y-auto break-words"
         >
           {report.skills.issues[0]?.message}
@@ -155,16 +133,11 @@ export function SetupStep({
   return (
     <div className="space-y-3">
       {!ready.length ? (
-        <div className="flex items-center justify-between gap-3 rounded-surface border bg-card p-3">
-          <p className="text-xs text-muted-foreground">
-            Connect Claude Code or Codex to discover MCP servers and skills.
-          </p>
-          <Button variant="outline" onClick={onSetupAgents}>
-            Set up agents
-          </Button>
-        </div>
+        <StatusMessage tone="info">
+          Set up Claude Code or Codex to discover MCP servers and skills.
+        </StatusMessage>
       ) : reports ? (
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="divide-y">
           {reports.map(report => (
             <ProviderReport key={report.provider} report={report} />
           ))}

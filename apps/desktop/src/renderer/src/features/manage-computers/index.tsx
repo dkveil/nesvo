@@ -93,6 +93,10 @@ export function ManageComputers({
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Computer | null>(null);
   const [pending, setPending] = useState('');
+  const waitingForConnection = computers.some(
+    computer =>
+      computer.status === 'connecting' || computer.status === 'syncing',
+  );
   useEffect(() => {
     onBusyChange?.(!!pending);
   }, [pending, onBusyChange]);
@@ -190,12 +194,12 @@ export function ManageComputers({
             restricted === false &&
             !adding && (
               <Button
-                variant="ghost"
-                size="xs"
+                variant={chooseLocalDirectory ? 'outline' : 'ghost'}
+                size={chooseLocalDirectory ? 'sm' : 'xs'}
                 disabled={!!pending}
                 onClick={() => setAdding(true)}
               >
-                <Plus />
+                <Plus className={chooseLocalDirectory ? 'size-4' : undefined} />
                 {chooseLocalDirectory ? 'Add a computer' : 'Add computer'}
               </Button>
             )
@@ -208,11 +212,11 @@ export function ManageComputers({
               aria-label={`Computer: ${computer.name}`}
               className="space-y-2 px-3 py-3"
             >
-              <div className="flex items-start gap-3">
+              <div className="flex items-start gap-2">
                 {computer.kind === 'local' ? (
-                  <Monitor className="mt-1 size-4 text-muted-foreground" />
+                  <Monitor className="mt-0.5 size-4 text-muted-foreground" />
                 ) : (
-                  <Server className="mt-1 size-4 text-muted-foreground" />
+                  <Server className="mt-0.5 size-4 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1 space-y-0.5">
                   <p className="truncate text-ui font-medium">
@@ -293,12 +297,13 @@ export function ManageComputers({
                   chooseDirectory={
                     computer.kind === 'local' ? chooseLocalDirectory : undefined
                   }
-                  className="ml-7"
+                  className="ml-6"
                 />
               )}
               {(computer.error || computer.lastSyncedAt || computer.ssh) && (
                 <Disclosure
                   title="Connection details"
+                  triggerTone={chooseLocalDirectory ? 'muted' : 'default'}
                   className="ml-5"
                   contentClassName="space-y-2 pt-1 pb-0 leading-5"
                 >
@@ -323,8 +328,10 @@ export function ManageComputers({
           ))}
         </SettingsSection>
         {!adding && (
-          <p className="px-3 text-xs text-muted-foreground">
-            Sessions, files and provider accounts stay on their computer.
+          <p className="px-3 text-xs leading-5 text-muted-foreground">
+            {pending || waitingForConnection
+              ? 'Wait for the current computer action to finish.'
+              : 'Sessions, files and provider accounts stay on their computer.'}
           </p>
         )}
       </div>
@@ -336,6 +343,7 @@ export function ManageComputers({
         }}
         title={`Remove ${removing?.name ?? 'computer'}?`}
         description="Nesvo forgets this computer and its offline snapshot. Work on the computer keeps running and its sessions stay there; add it again to reconnect."
+        surface={chooseLocalDirectory ? 'panel' : undefined}
         confirmLabel="Remove computer"
         pendingLabel="Removing…"
         onConfirm={() =>
@@ -343,7 +351,9 @@ export function ManageComputers({
         }
       />
       {adding && (
-        <SettingsSection title="Add SSH computer">
+        <SettingsSection
+          title="Add SSH computer"
+        >
           <form className="space-y-3 p-3" onSubmit={submit}>
             <div className="grid gap-3 sm:grid-cols-2">
               {field('name', 'Computer name', 'My VPS', true)}
@@ -370,6 +380,7 @@ export function ManageComputers({
             )}
             <Disclosure
               title="Advanced SSH options"
+              triggerTone={chooseLocalDirectory ? 'muted' : 'default'}
               className="-mx-2"
               contentClassName="grid gap-3 px-2 pt-2 text-foreground sm:grid-cols-3"
             >
@@ -386,9 +397,9 @@ export function ManageComputers({
               )}
             </Disclosure>
             <p className="text-xs leading-5 text-muted-foreground">
-              Requires an installed, running Linux host and Node, from the path
-              above or the remote PATH. Credentials and local files are not
-              uploaded.
+              {pending
+                ? 'Wait for the connection attempt to finish to edit this form.'
+                : 'Enter the host entry and runtime paths on a Linux server with Node installed.'}
             </p>
             <div className="flex justify-end gap-2">
               <Button

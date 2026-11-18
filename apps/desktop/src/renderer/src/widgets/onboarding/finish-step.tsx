@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   Bot,
-  Check,
   FolderOpen,
   Monitor,
   SquarePen,
@@ -15,6 +14,7 @@ import {
   type ProviderStates,
 } from '@/entities/session';
 import { Button } from '@/shared/ui/button';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
 
 type Props = {
   computers: Computer[];
@@ -61,6 +61,7 @@ export function FinishStep({
       icon: FolderOpen,
       label: 'Local default folder',
       value: folder ?? 'Isolated folder',
+      path: folder,
     },
     {
       icon: Workflow,
@@ -71,44 +72,41 @@ export function FinishStep({
   return (
     <div className="space-y-6 text-center">
       <header className="space-y-3">
-        <span
-          className="mx-auto flex size-11 items-center justify-center rounded-full border bg-card"
-          aria-hidden="true"
-        >
-          <Check className="size-5 text-success-foreground" />
-        </span>
         <h1
           id="onboarding-title"
           className="text-display-lg font-semibold tracking-tight"
         >
           You’re ready to start
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Here’s what’s set up on this desktop.
-        </p>
       </header>
-      <dl className="mx-auto max-w-lg divide-y overflow-hidden rounded-surface border bg-card text-left">
-        {summary.map(({ icon: Icon, label, value }) => (
+      <dl className="mx-auto max-w-lg divide-y text-left">
+        {summary.map(({ icon: Icon, label, value, path }) => (
           <div
             key={label}
-            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-4 py-3"
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.65fr)] items-center gap-4 px-3 py-3"
           >
             <dt className="flex items-center gap-2 text-xs text-muted-foreground">
               <Icon aria-hidden="true" className="size-4 shrink-0" />
               {label}
             </dt>
-            <dd className="truncate text-right text-ui" title={value}>
-              {value}
+            <dd className="min-w-0 text-right text-ui">
+              {path ? (
+                <MiddleTruncatedText value={path} className="justify-end" />
+              ) : (
+                <p className="truncate" title={value}>
+                  {value}
+                </p>
+              )}
             </dd>
           </div>
         ))}
       </dl>
       <div className="flex flex-wrap justify-center gap-2">
-        <Button size="lg" onClick={() => onStartSession(ready ?? null)}>
+        <Button size="md" onClick={() => onStartSession(ready ?? null)}>
           <SquarePen />
           Start your first session
         </Button>
-        <Button variant="outline" size="lg" onClick={onClose}>
+        <Button variant="outline" size="md" onClick={onClose}>
           <ArrowRight />
           Open workspace
         </Button>

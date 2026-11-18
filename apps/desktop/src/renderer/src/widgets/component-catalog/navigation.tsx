@@ -17,6 +17,8 @@ import { StatusIcon } from '@/entities/status';
 import { CountBadge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Disclosure, NativeDisclosure } from '@/shared/ui/disclosure';
+import { MiddleTruncatedText } from '@/shared/ui/middle-truncated-text';
+import { SettingsRow, SettingsSection } from '@/shared/ui/settings-section';
 import { IconButton } from '@/shared/ui/icon-button';
 import { ListRow } from '@/shared/ui/list-row';
 import { NavItem, NavList } from '@/shared/ui/nav-list';
@@ -455,12 +457,23 @@ export function NavigationSection() {
               onClick={() => undefined}
             />
           </div>
-          <div className="space-y-1 rounded-control border bg-card p-1">
+          <div className="space-y-2">
+            <SettingsSection title="Flat settings section" surface="flat">
+              <SettingsRow
+                title="Project folder"
+                description={
+                  <MiddleTruncatedText
+                    className="max-w-48"
+                    value="C:/Users/example/development/projects/nesvo/workspaces"
+                  />
+                }
+              />
+            </SettingsSection>
             <Disclosure title="Sample details" meta="3" defaultOpen>
               The disclosure body uses muted 12px text and indents under the
               chevron.
             </Disclosure>
-            <Disclosure title="Collapsed disclosure" meta="12">
+            <Disclosure title="Muted disclosure" triggerTone="muted" meta="12">
               Hidden sample content.
             </Disclosure>
             <NativeDisclosure
