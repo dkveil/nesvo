@@ -1131,6 +1131,7 @@ test(
         'terminal-handoff',
         'transcript-search',
         'session-delete',
+        'conversation-compaction',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -6134,6 +6135,7 @@ test(
       'terminal-handoff',
       'transcript-search',
       'session-delete',
+      'conversation-compaction',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -20459,4 +20461,183 @@ test('CLI transcript search indexes unadopted transcripts within its bounds', as
     }
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('conversation compaction and provider context usage persist for both providers', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-compaction-')),
+  );
+  const pidFile = join(directory, 'pids.json');
+  const project = join(directory, 'project');
+  const compactLog = join(directory, 'compactions.jsonl');
+  await mkdir(project);
+  const open = () =>
+    launch(directory, pidFile, { NESVO_FIXTURE_COMPACT_LOG: compactLog });
+  let host = open();
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const turn = async (sessionId, text) => {
+    const response = await host.request('send-message', {
+      sessionId,
+      messageId: randomUUID(),
+      text,
+    });
+    assert.equal(response.type, 'session', JSON.stringify(response));
+    const session = await host.event(
+      item =>
+        item.id === sessionId &&
+        item.runId === response.session.runId &&
+        !['running', 'stopping'].includes(item.status),
+    );
+    assert.equal(session.status, 'completed', session.error);
+    return session;
+  };
+  const compact = (session, instructions) =>
+    host.request('compact-session', {
+      sessionId: session.id,
+      revision: session.revision,
+      ...(instructions ? { instructions } : {}),
+    });
+  const settled = (session, count) =>
+    host.event(
+      item =>
+        item.id === session.id &&
+        !['running', 'stopping'].includes(item.status) &&
+        (item.compactions.length === count || item.status === 'failed'),
+    );
+  const cases = [];
+  for (const [provider, model, compacted] of [
+    ['Claude Code', 'sonnet', 12000],
+    ['Codex', 'fixture-codex', 9000],
+  ]) {
+    const created = await host.request('create-session', {
+      title: provider,
+      provider,
+      model,
+      directory: project,
+    });
+    assert.equal(created.type, 'session', JSON.stringify(created));
+    assert.equal(created.session.context, null);
+    assert.equal(
+      (await compact(created.session)).code,
+      'invalid-request',
+      'Nothing to compact before the first turn',
+    );
+    const filled = await turn(created.session.id, 'fixture:context');
+    assert.deepEqual(
+      { ...filled.context, reportedAt: undefined },
+      { usedTokens: 164500, windowTokens: 200000, reportedAt: undefined },
+    );
+    assert.ok(Date.parse(filled.context.reportedAt));
+    assert.equal(
+      (await compact({ ...filled, revision: filled.revision - 1 })).code,
+      'invalid-request',
+    );
+    if (provider === 'Codex')
+      assert.equal(
+        (await compact(filled, 'Keep the plan')).code,
+        'invalid-request',
+      );
+    const instructions =
+      provider === 'Claude Code' ? 'Keep the API decisions' : undefined;
+    const started = await compact(filled, instructions);
+    assert.equal(started.type, 'session', JSON.stringify(started));
+    assert.equal(started.session.status, 'running');
+    assert.notEqual(started.session.runId, filled.runId);
+    assert.equal((await compact(started.session)).code, 'busy');
+    const done = await settled(filled, 1);
+    assert.equal(done.status, 'completed', done.error);
+    assert.equal(done.runId, filled.runId);
+    assert.equal(done.providerSessionId, filled.providerSessionId);
+    assert.deepEqual(done.messages, filled.messages);
+    assert.equal(done.compactions.length, 1);
+    assert.equal(done.compactions[0].index, filled.messages.length);
+    assert.equal(done.compactions[0].instructions, !!instructions);
+    assert.equal(done.context.usedTokens, compacted);
+    assert.equal(done.context.windowTokens, 200000);
+    const continued = await turn(done.id, 'fixture:continue');
+    assert.equal(continued.providerSessionId, filled.providerSessionId);
+    assert.deepEqual(continued.compactions, done.compactions);
+    cases.push(continued);
+  }
+  const log = (await readFile(compactLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(JSON.parse);
+  assert.deepEqual(
+    log.map(entry => entry.provider),
+    ['Claude Code', 'Codex'],
+  );
+  assert.equal(log[0].prompt, '/compact Keep the API decisions');
+  assert.equal(log[0].inputFormat, 'stream-json');
+  assert.equal(log[0].resumed, true);
+  assert.equal(log[0].sessionId, cases[0].providerSessionId);
+  assert.equal(log[1].threadId, cases[1].providerSessionId);
+  assert.equal(log[1].supervised, false);
+
+  const failing = await compact(cases[0], 'fixture:compact-fail');
+  assert.equal(failing.type, 'session', JSON.stringify(failing));
+  const failed = await settled(cases[0], 2);
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.error, /not compacted/);
+  assert.equal(failed.compactions.length, 1);
+
+  await host.stop();
+  host = open();
+  const restored = (await host.request('list-sessions')).sessions;
+  const reopened = restored.find(session => session.id === cases[1].id);
+  assert.deepEqual(reopened.compactions, cases[1].compactions);
+  assert.deepEqual(reopened.context, cases[1].context);
+  const reset = await host.request('restart-session', {
+    sessionId: reopened.id,
+    revision: reopened.revision,
+  });
+  assert.equal(reset.type, 'session', JSON.stringify(reset));
+  assert.equal(reset.session.context, null);
+  assert.deepEqual(reset.session.compactions, cases[1].compactions);
+});
+
+test('an older Codex without thread compaction fails the action visibly', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-compaction-unsupported-')),
+  );
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const host = launch(directory, join(directory, 'pids.json'), {
+    NESVO_CODEX_FIXTURE_NO_COMPACT: '1',
+  });
+  t.after(async () => {
+    if (host.child.exitCode === null) await host.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const created = await host.request('create-session', {
+    title: 'Codex',
+    provider: 'Codex',
+    model: 'fixture-codex',
+    directory: project,
+  });
+  const sent = await host.request('send-message', {
+    sessionId: created.session.id,
+    messageId: randomUUID(),
+    text: 'fixture:continue',
+  });
+  const ready = await host.event(
+    item =>
+      item.id === created.session.id &&
+      item.runId === sent.session.runId &&
+      item.status === 'completed',
+  );
+  const started = await host.request('compact-session', {
+    sessionId: ready.id,
+    revision: ready.revision,
+  });
+  assert.equal(started.type, 'session', JSON.stringify(started));
+  const failed = await host.event(
+    item => item.id === ready.id && item.status === 'failed',
+  );
+  assert.match(failed.error, /cannot compact the conversation/);
+  assert.deepEqual(failed.compactions, []);
+  assert.equal(failed.runId, ready.runId);
 });

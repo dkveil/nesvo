@@ -61,6 +61,8 @@ const readUserContent = content => {
   if (typeof content === 'string') return content;
   assert.equal(content[0].type, 'text');
   const images = content.slice(1);
+  if (content.length === 1 && content[0].text.startsWith('/compact'))
+    return content[0].text;
   assert.ok(images.length > 0, 'Content blocks are used only for images');
   for (const image of images) {
     assert.equal(image.type, 'image');
@@ -648,7 +650,83 @@ if (args.length === 1 && args[0] === '--version') {
     ],
     outputs: { checked: 'sample.txt' },
   };
-  if (command === 'fixture:verdict-pass') {
+  const fixtureModel = `fixture-${values.get('--model') ?? 'default'}`;
+  const contextWindow = { [fixtureModel]: { contextWindow: 200000 } };
+  if (prompt.startsWith('/compact')) {
+    if (process.env.NESVO_FIXTURE_COMPACT_LOG)
+      writeFileSync(
+        process.env.NESVO_FIXTURE_COMPACT_LOG,
+        JSON.stringify({
+          provider: 'Claude Code',
+          sessionId,
+          resumed,
+          inputFormat,
+          prompt,
+        }) + '\n',
+        { flag: 'a' },
+      );
+    emit({
+      type: 'system',
+      subtype: 'status',
+      status: 'compacting',
+      session_id: sessionId,
+    });
+    await setTimeout(Number(process.env.NESVO_FIXTURE_COMPACT_DELAY_MS ?? 0));
+    const failing = prompt.includes('fixture:compact-fail');
+    if (!failing)
+      emit({
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: sessionId,
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 164500,
+          post_tokens: 12000,
+        },
+      });
+    emit({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<local-command-stdout>Compacted </local-command-stdout>',
+      },
+    });
+    emit({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      num_turns: 0,
+      result: '',
+      session_id: sessionId,
+      usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0,
+        iterations: [],
+      },
+      modelUsage: contextWindow,
+    });
+  } else if (command === 'fixture:context') {
+    start('Fixture context reply.');
+    finish('Fixture context reply.', false, {
+      usage: {
+        input_tokens: 2,
+        cache_creation_input_tokens: 4000,
+        cache_read_input_tokens: 162000,
+        output_tokens: 498,
+        iterations: [
+          {
+            input_tokens: 2,
+            cache_creation_input_tokens: 4000,
+            cache_read_input_tokens: 160000,
+            output_tokens: 498,
+          },
+        ],
+      },
+      modelUsage: contextWindow,
+    });
+  } else if (command === 'fixture:verdict-pass') {
     verdict('Verdict recorded.', passVerdict);
   } else if (command === 'fixture:verdict-fail-no-evidence') {
     verdict('Verdict recorded.', {

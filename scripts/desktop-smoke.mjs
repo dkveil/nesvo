@@ -678,6 +678,7 @@ try {
     'terminal-handoff',
     'transcript-search',
     'session-delete',
+    'conversation-compaction',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

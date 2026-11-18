@@ -967,6 +967,12 @@ if (args.length === 1 && args[0] === '--version') {
         delta('Codex fixture disconnected.');
         await new Promise(resolve => process.stdout.write('', resolve));
         process.exit(73);
+      } else if (command === 'fixture:context') {
+        tokenUsage(
+          { inputTokens: 164000, outputTokens: 500, totalTokens: 164500 },
+          { inputTokens: 170000, outputTokens: 900, totalTokens: 170900 },
+        );
+        complete('Codex fixture context reply.');
       } else if (command === 'fixture:stream') {
         const read = commandItem('read', {
           command: 'read sample.txt',
@@ -1074,6 +1080,45 @@ if (args.length === 1 && args[0] === '--version') {
           `Codex fixture ${thread.resumed ? 'resumed' : 'initial'} reply.`,
         );
       }
+    } else if (method === 'thread/compact/start') {
+      assert.equal(params.threadId, thread.id);
+      assert.deepEqual(Object.keys(params), ['threadId']);
+      assert.ok(thread.resumed, 'Compaction resumes the recorded thread');
+      if (process.env.NESVO_FIXTURE_COMPACT_LOG)
+        writeFileSync(
+          process.env.NESVO_FIXTURE_COMPACT_LOG,
+          JSON.stringify({
+            provider: 'Codex',
+            threadId: thread.id,
+            supervised: thread.supervised,
+          }) + '\n',
+          { flag: 'a' },
+        );
+      if (process.env.NESVO_CODEX_FIXTURE_NO_COMPACT) {
+        emit({ id, error: { code: -32601, message: 'Method not found' } });
+        return;
+      }
+      response(id, {});
+      current = { id: randomUUID(), itemId: randomUUID(), completed: false };
+      notify('turn/started', {
+        threadId: thread.id,
+        turn: { id: current.id, status: 'inProgress', items: [], error: null },
+      });
+      const compaction = { id: randomUUID(), type: 'contextCompaction' };
+      notify('item/started', scoped({ item: compaction }));
+      tokenUsage({ totalTokens: 9000 }, { totalTokens: 170900 });
+      notify('item/completed', scoped({ item: compaction }));
+      current.completed = true;
+      notify('turn/completed', {
+        threadId: thread.id,
+        turn: {
+          id: current.id,
+          status: 'completed',
+          items: [],
+          error: null,
+          durationMs: 900,
+        },
+      });
     } else if (method === 'turn/interrupt') {
       assert.equal(params.threadId, thread.id);
       assert.equal(params.turnId, current.id);
