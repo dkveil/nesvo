@@ -336,6 +336,7 @@ function requiredCapability(
     method === 'decide-session-parent'
   )
     return 'session-control';
+  if (
     method === 'prepare-workflow-share' ||
     method === 'import-workflow-bundle'
   )
