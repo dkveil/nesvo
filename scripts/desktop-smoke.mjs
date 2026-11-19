@@ -234,9 +234,13 @@ try {
     exact: true,
   });
   await settings.getByRole('button', { name: 'Data', exact: true }).click();
-  await settings
-    .getByText('On · Enforced by policy', { exact: true })
-    .waitFor();
+  await settings.getByText('Enforced by policy', { exact: true }).waitFor();
+  const policySwitch = settings.getByRole('switch', {
+    name: 'Work laptop mode',
+    exact: true,
+  });
+  assert.equal(await policySwitch.getAttribute('aria-checked'), 'true');
+  assert.equal(await policySwitch.isDisabled(), true);
   const backup = await policyPage.evaluate(() => window.nesvo.backupDatabase());
   const attachment = join(policyHost, 'attachments', 'fixture.txt');
   await mkdir(join(policyHost, 'attachments'), { recursive: true });
@@ -357,6 +361,21 @@ try {
     name: 'Getting started',
     exact: true,
   });
+  const chooseTestDirectory = async (scope, directory) => {
+    await application.evaluate(({ dialog }, folder) => {
+      const original = dialog.showOpenDialog;
+      dialog.showOpenDialog = async (...args) => {
+        dialog.showOpenDialog = original;
+        if (!args.at(-1).properties.includes('openDirectory'))
+          throw new Error('Expected a native directory picker.');
+        return { canceled: false, filePaths: [folder] };
+      };
+    }, directory);
+    await scope
+      .getByRole('button', { name: 'Choose folder…', exact: true })
+      .click();
+    await scope.getByTitle(directory, { exact: true }).waitFor();
+  };
   await guide
     .getByRole('heading', { name: 'vibe with full control', exact: true })
     .waitFor();
@@ -372,19 +391,7 @@ try {
   await guide.getByRole('button', { name: 'Continue', exact: true }).click();
   const defaultFolder = join(directory, 'onboarding-project');
   await mkdir(defaultFolder);
-  await application.evaluate(({ dialog }, folder) => {
-    const original = dialog.showOpenDialog;
-    dialog.showOpenDialog = async (...args) => {
-      dialog.showOpenDialog = original;
-      if (!args.at(-1).properties.includes('openDirectory'))
-        throw new Error('Expected a native directory picker.');
-      return { canceled: false, filePaths: [folder] };
-    };
-  }, defaultFolder);
-  await guide
-    .getByRole('button', { name: 'Choose folder…', exact: true })
-    .click();
-  await guide.getByTitle(defaultFolder, { exact: true }).waitFor();
+  await chooseTestDirectory(guide, defaultFolder);
   assert.equal(
     await page.evaluate(() => window.nesvo.readDefaultSessionFolder('local')),
     defaultFolder,
@@ -977,9 +984,7 @@ try {
   );
   const accountLabel = initialUsage.panel.getByLabel('Label', { exact: true });
   await accountLabel.fill('Work account');
-  await initialUsage.panel
-    .getByLabel('Configuration directory', { exact: true })
-    .fill(profileDirectory);
+  await chooseTestDirectory(initialUsage.panel, profileDirectory);
   await initialUsage.panel
     .getByRole('button', { name: 'Add account', exact: true })
     .click();
