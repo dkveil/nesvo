@@ -9,6 +9,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import type { ZodIssue } from 'zod';
 import { document } from '../skills/portable';
 import {
   DefinitionError,
@@ -76,6 +77,61 @@ const fieldLine = (yaml: string | null, field: string): number | null => {
   return index < 0 ? null : index + 2;
 };
 
+function fieldIssue(
+  problem: ZodIssue,
+  field: string,
+  raw: unknown,
+): Pick<InboxRuleIssue, 'message' | 'choices'> {
+  if (problem.code === 'custom') return { message: problem.message };
+  const index = problem.path[1];
+  const value =
+    Array.isArray(raw) && typeof index === 'number' ? raw[index] : raw;
+  if (value === undefined) return { message: `Enter a value for “${field}”.` };
+  switch (problem.code) {
+    case 'invalid_value':
+      return {
+        message:
+          typeof value === 'string' && value
+            ? `Unknown ${field} “${value.slice(0, 48)}”.`
+            : `Choose a valid value for “${field}”.`,
+        choices: problem.values.map(String),
+      };
+    case 'invalid_format':
+      return { message: 'Use lowercase letters, digits and inner hyphens.' };
+    case 'invalid_type': {
+      const expected = {
+        boolean: 'Use true or false.',
+        array: 'Enter a list of values.',
+        number: 'Enter a number.',
+      };
+      return {
+        message:
+          expected[problem.expected as keyof typeof expected] ?? 'Enter text.',
+      };
+    }
+    case 'too_small':
+      if (problem.origin === 'array')
+        return { message: `Enter at least ${problem.minimum} items.` };
+      return {
+        message:
+          problem.origin === 'string'
+            ? 'Enter a value.'
+            : 'Enter an amount greater than zero.',
+      };
+    case 'too_big': {
+      const unit =
+        problem.origin === 'array'
+          ? ' items'
+          : problem.origin === 'string'
+            ? ' characters'
+            : '';
+      return { message: `Use at most ${problem.maximum}${unit}.` };
+    }
+    default:
+      return { message: 'Check this field’s value.' };
+  }
+}
+
 export const hashText = (text: string) =>
   createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 
@@ -99,51 +155,73 @@ export const parseRuleText = (
   let split: ReturnType<typeof document>;
   try {
     split = document(text, subject);
-  } catch (error) {
+  } catch {
     return {
       rule: null,
       name: expectedName ?? '',
       issues: [
-        issue(path, error instanceof Error ? error.message : String(error), 1),
+        issue(
+          path,
+          'Check YAML indentation and punctuation between the --- lines.',
+          1,
+        ),
       ],
     };
   }
   const { fields, body, yaml } = split;
   const name = typeof fields.name === 'string' ? fields.name : '';
   if (yaml === null)
-    issues.push(
-      issue(path, 'The rule needs YAML frontmatter between --- lines.', 1),
-    );
+    return {
+      rule: null,
+      name: name || expectedName || '',
+      issues: [issue(path, 'Put your rule settings between two --- lines.', 1)],
+    };
   for (const field of Object.keys(fields))
     if (!knownFields.includes(field))
-      issues.push(
-        issue(path, `Unknown field "${field}"`, fieldLine(yaml, field)),
-      );
+      issues.push({
+        ...issue(
+          path,
+          `Remove the unknown field “${field.slice(0, 64)}”.`,
+          fieldLine(yaml, field),
+        ),
+        field: field.slice(0, 64),
+      });
   const parsed = inboxRuleFieldsSchema.safeParse({
     ...Object.fromEntries(
       Object.entries(fields).filter(([field]) => knownFields.includes(field)),
     ),
     body: body.trim(),
   });
+  const reported = new Set<string>();
   if (!parsed.success)
-    for (const problem of parsed.error.issues.slice(0, 20)) {
-      const field = String(problem.path[0] ?? '');
-      issues.push(
-        issue(
-          path,
-          field ? `${field}: ${problem.message}` : problem.message,
-          field && field !== 'body' ? fieldLine(yaml, field) : null,
-        ),
+    for (const problem of parsed.error.issues) {
+      const field = String(problem.path[0] ?? 'rule');
+      if (reported.has(field) || reported.size >= 20) continue;
+      reported.add(field);
+      const { message, choices } = fieldIssue(
+        problem,
+        field,
+        field === 'body' ? body.trim() : fields[field],
       );
+      issues.push({
+        ...issue(
+          path,
+          message,
+          field === 'body' ? null : fieldLine(yaml, field),
+        ),
+        field,
+        ...(choices?.length ? { choices } : {}),
+      });
     }
-  if (expectedName && name && name !== expectedName)
-    issues.push(
-      issue(
+  if (expectedName && name && name !== expectedName && !reported.has('name'))
+    issues.push({
+      ...issue(
         path,
-        `The name "${name}" must match the file name "${expectedName}.md".`,
+        `Use “${expectedName}” to match the file name.`,
         fieldLine(yaml, 'name'),
       ),
-    );
+      field: 'name',
+    });
   const failed = issues.some(item => item.severity === 'error');
   return {
     rule: failed || !parsed.success ? null : parsed.data,
@@ -214,7 +292,10 @@ const currentHash = async (path: string, signal: AbortSignal) => {
   try {
     return (await readDefinitionFile(path, signal)).contentHash;
   } catch (error) {
-    if (error instanceof DefinitionError && /does not exist/.test(error.message))
+    if (
+      error instanceof DefinitionError &&
+      /does not exist/.test(error.message)
+    )
       return null;
     try {
       await lstat(path);

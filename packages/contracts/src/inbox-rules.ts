@@ -198,6 +198,8 @@ export const inboxRuleIssueSchema = z.strictObject({
   severity: z.enum(['error', 'warning']),
   path: z.string().max(inboxRuleLimits.path),
   line: z.number().int().positive().nullable(),
+  field: z.string().max(64).optional(),
+  choices: z.array(z.string().max(64)).max(32).optional(),
   message: z.string().min(1).max(inboxRuleLimits.issueMessage),
 });
 export type InboxRuleIssue = z.infer<typeof inboxRuleIssueSchema>;

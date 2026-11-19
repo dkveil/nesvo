@@ -29513,6 +29513,34 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     invalid.validation.issues.some(issue => /lowercase/.test(issue.message)),
   );
 
+  const invalidChoices = await host.request('validate-inbox-rule', {
+    text: '---\nname: valid-rule\ntrigger: command\npattern: git push*\naction: pushh\nroute: elsewhere\n---\n',
+  });
+  assert.deepEqual(
+    invalidChoices.validation.issues.map(
+      ({ field, line, message, choices }) => ({
+        field,
+        line,
+        message,
+        choices,
+      }),
+    ),
+    [
+      {
+        field: 'action',
+        line: 5,
+        message: 'Unknown action “pushh”.',
+        choices: ['hold', 'notify', 'ask', 'route'],
+      },
+      {
+        field: 'route',
+        line: 6,
+        message: 'Unknown route “elsewhere”.',
+        choices: ['inbox', 'parent', 'both'],
+      },
+    ],
+  );
+
   await saveInboxRule(host, pushRule());
   const catalog = await saveInboxRule(
     host,

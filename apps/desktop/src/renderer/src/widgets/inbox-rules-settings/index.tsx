@@ -1,3 +1,5 @@
+import { NativeDisclosure } from '@/shared/ui/disclosure';
+import { PathInput } from '@/shared/ui/path-input';
 import { useEffect, useRef, useState } from 'react';
 import {
   inboxRulePresets,
@@ -15,7 +17,6 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import { InlineNotice } from '@/shared/ui/inline-notice';
-import { Input } from '@/shared/ui/input';
 import { Field } from '@/shared/ui/field';
 import type { ProviderStates } from '@/entities/session';
 import { ModelPicker } from '@/features/new-thread/model-picker';
@@ -53,6 +54,7 @@ type InboxRulesSettingsProps = {
 };
 
 type Draft = {
+  proposed?: boolean;
   scope: InboxRuleScope;
   text: string;
   expectedHash: string | null;
@@ -81,18 +83,58 @@ const unavailableReason = (computer: Computer | undefined) => {
   return '';
 };
 
-function IssueList({ issues }: { issues: InboxRuleIssue[] }) {
+function IssueList({
+  issues,
+  onSelectLine,
+}: {
+  issues: InboxRuleIssue[];
+  onSelectLine?: (line: number) => void;
+}) {
   if (!issues.length) return null;
   return (
-    <ul className="space-y-0.5" aria-label="Rule issues">
+    <ul className="divide-y" aria-label="Rule issues">
       {issues.map((issue, index) => (
-        <li key={`${issue.message}-${index}`}>
+        <li key={index} className="space-y-1 py-1.5">
+          {(issue.field || issue.line) && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {issue.field && (
+                <code className="text-foreground">{issue.field}</code>
+              )}
+              {issue.line &&
+                (onSelectLine ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => onSelectLine(issue.line!)}
+                  >
+                    Line {issue.line}
+                  </Button>
+                ) : (
+                  <span>Line {issue.line}</span>
+                ))}
+            </div>
+          )}
           <StatusMessage
             tone={issue.severity === 'error' ? 'error' : 'warning'}
           >
-            {issue.line ? `Line ${issue.line}: ` : ''}
-            {issue.message}
+            {issue.message.replace(
+              /^(?:\w+: )?Invalid (?:option|input):[\s\S]+$/,
+              'Check this field’s value.',
+            )}
           </StatusMessage>
+          {!!issue.choices?.length && (
+            <NativeDisclosure title="Allowed values" triggerTone="muted">
+              <ul className="flex flex-wrap gap-1.5">
+                {issue.choices.map(value => (
+                  <li key={value}>
+                    <Badge>
+                      <code>{value}</code>
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </NativeDisclosure>
+          )}
         </li>
       ))}
     </ul>
@@ -108,6 +150,17 @@ export function InboxRulesSettings({
 }: InboxRulesSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
+  const ruleEditor = useRef<HTMLTextAreaElement>(null);
+  const selectRuleLine = (line: number) => {
+    const editor = ruleEditor.current;
+    if (!editor) return;
+    const lines = editor.value.split('\n');
+    const start = lines
+      .slice(0, line - 1)
+      .reduce((offset, text) => offset + text.length + 1, 0);
+    editor.focus();
+    editor.setSelectionRange(start, start + (lines[line - 1]?.length ?? 0));
+  };
   const [folder, setFolder] = useState(defaultFolder ?? '');
   const [catalog, setCatalog] = useState<InboxRuleCatalog | null>(null);
   const [error, setError] = useState('');
@@ -221,7 +274,12 @@ export function InboxRulesSettings({
         },
         hostId,
       );
-      setDraft({ scope: 'global', text: proposal.text, expectedHash: null });
+      setDraft({
+        scope: 'global',
+        text: proposal.text,
+        proposed: true,
+        expectedHash: null,
+      });
       setIssues(proposal.issues);
       setValid(!!proposal.rule);
     } catch (failure) {
@@ -293,7 +351,7 @@ export function InboxRulesSettings({
             label="Project folder"
             className="flex-1"
           >
-            <Input
+            <PathInput
               id="inbox-rules-folder"
               value={folder}
               placeholder="Folder whose project rules to show"
@@ -336,21 +394,24 @@ export function InboxRulesSettings({
                 </span>
               }
               description={
-                <span className="block space-y-1">
-                  <span className="block">{ruleSummary(entry)}</span>
+                <div className="space-y-1">
+                  <p>{ruleSummary(entry)}</p>
                   {entry.enforcement
                     .filter(item => item.status === 'unsupported')
                     .map(item => (
-                      <span
+                      <NativeDisclosure
                         key={`${item.provider}-${item.modes.join()}`}
-                        className={statusTone.unsupported}
+                        title={item.provider + ' · limited enforcement'}
+                        triggerTone="muted"
+                        className="-mx-2"
                       >
-                        {item.provider} ({item.modes.join(', ')}):{' '}
-                        {item.detail}{' '}
-                      </span>
+                        <p className={statusTone.unsupported}>
+                          {item.modes.join(', ')}. {item.detail}
+                        </p>
+                      </NativeDisclosure>
                     ))}
                   <IssueList issues={entry.issues} />
-                </span>
+                </div>
               }
             >
               <div className="flex items-center gap-1.5">
@@ -392,7 +453,7 @@ export function InboxRulesSettings({
                 </Button>
                 <Button
                   size="xs"
-                  variant="destructive"
+                  variant="ghost"
                   onClick={() => setRemoving(entry)}
                 >
                   Delete
@@ -403,7 +464,7 @@ export function InboxRulesSettings({
         )}
       </SettingsSection>
       {draft && (
-        <SettingsSection title="Rule file">
+        <SettingsSection title={draft.proposed ? 'Proposed rule' : 'Rule file'}>
           <div className="space-y-2 p-3">
             <Field id="inbox-rule-scope" label="Save to" layout="inline">
               <Select
@@ -426,16 +487,21 @@ export function InboxRulesSettings({
             </Field>
             <Textarea
               resize="none"
+              ref={ruleEditor}
               aria-label="Rule file"
               size="md"
               spellCheck={false}
-              className="min-h-64 font-mono text-xs"
+              className="field-sizing-content min-h-28 font-mono text-xs"
+              aria-invalid={issues.some(issue => issue.severity === 'error')}
+              aria-describedby={issues.length ? 'draft-rule-issues' : undefined}
               value={draft.text}
               onChange={event =>
                 setDraft({ ...draft, text: event.target.value })
               }
             />
-            <IssueList issues={issues} />
+            <div id="draft-rule-issues">
+              <IssueList issues={issues} onSelectLine={selectRuleLine} />
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setDraft(null)}>
                 Cancel
