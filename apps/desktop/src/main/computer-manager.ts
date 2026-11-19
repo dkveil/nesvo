@@ -2,6 +2,7 @@ import { workLaptopRestriction } from '@nesvo/contracts';
 import { randomUUID } from 'node:crypto';
 import {
   type Computer,
+  type CoordinatorWakeState,
   type DesktopEvent,
   type DesktopScheduledJob,
   type DesktopScheduledJobRun,
@@ -85,6 +86,7 @@ type Entry = {
   sessions: Map<string, SessionWindow>;
   recent: Map<string, SessionWindow>;
   reviews: Map<string, Review>;
+  coordinatorWake: Map<string, CoordinatorWakeState>;
   scheduledJobRevisions: Map<string, number>;
   workflowRunRevisions: Map<string, number>;
   workflowStepRevisions: Map<string, number>;
@@ -125,6 +127,7 @@ const newEntry = (computer: Computer): Entry => ({
   sessions: new Map(),
   recent: new Map(),
   reviews: new Map(),
+  coordinatorWake: new Map(),
   scheduledJobRevisions: new Map(),
   workflowRunRevisions: new Map(),
   workflowStepRevisions: new Map(),
@@ -745,6 +748,9 @@ export class ComputerManager {
         entry.reviews = new Map(
           cache.reviews.map(review => [review.id, review]),
         );
+        for (const state of cache.coordinatorWake ?? [])
+          if (state.sessionId && entry.sessions.has(state.sessionId))
+            entry.coordinatorWake.set(state.sessionId, state);
         entry.computer.lastSyncedAt = cache.lastSyncedAt;
       }
     } catch {
@@ -1292,6 +1298,19 @@ export class ComputerManager {
   }
 
   async execute(method: ExecutableMethod, input: unknown, hostId = 'local') {
+    if (
+      method === 'read-coordinator-wake' &&
+      input &&
+      typeof input === 'object' &&
+      'sessionId' in input &&
+      typeof input.sessionId === 'string'
+    ) {
+      const entry = this.get(hostId);
+      if (entry.computer.status !== 'connected') {
+        const state = entry.coordinatorWake.get(input.sessionId);
+        if (state) return state;
+      }
+    }
     const { entry, response } = await this.dispatch(method, input, hostId);
     const expected = {
       health: 'health',
@@ -1549,6 +1568,17 @@ export class ComputerManager {
       case 'worker-worktree':
         return response.result;
       case 'coordinator-wake':
+        if (entry.computer.kind === 'ssh' && response.state.sessionId) {
+          const id = response.state.sessionId;
+          if (
+            entry.sessions.has(id) &&
+            JSON.stringify(entry.coordinatorWake.get(id)) !==
+              JSON.stringify(response.state)
+          ) {
+            entry.coordinatorWake.set(id, response.state);
+            this.scheduleCache();
+          }
+        }
         return response.state;
       case 'child-steering':
       case 'coordinator-delivery':
@@ -1829,6 +1859,12 @@ export class ComputerManager {
     for (const [id, window] of entry.recent)
       if (entry.sessions.get(id)?.revision !== window.revision)
         entry.recent.delete(id);
+    for (const id of entry.coordinatorWake.keys())
+      if (
+        entry.computer.instanceId !== health.instanceId ||
+        !entry.sessions.has(id)
+      )
+        entry.coordinatorWake.delete(id);
     entry.reviews = new Map(reviews.reviews.map(review => [review.id, review]));
     entry.scheduledJobRevisions = new Map();
     entry.workflowRunRevisions = new Map();
@@ -1929,7 +1965,8 @@ export class ComputerManager {
     }
     if (
       event.type === 'inbox-item-changed' ||
-      event.type === 'configuration-changed'
+      event.type === 'configuration-changed' ||
+      event.type === 'coordinator-wake-changed'
     ) {
       if (publish) this.publish({ ...event, hostId });
       return;
@@ -1945,6 +1982,7 @@ export class ComputerManager {
     if (event.type === 'sessions-removed') {
       const removed = new Set(event.sessionIds);
       const known = event.sessionIds.filter(id => entry.sessions.delete(id));
+      for (const id of removed) entry.coordinatorWake.delete(id);
       for (const [id, review] of entry.reviews)
         if (removed.has(review.sessionId)) entry.reviews.delete(id);
       if (publish && known.length)
@@ -2151,6 +2189,7 @@ export class ComputerManager {
         sessions: [...entry.sessions.values()],
         recent: [...entry.recent.values()],
         reviews: [...entry.reviews.values()],
+        coordinatorWake: [...entry.coordinatorWake.values()],
       });
     }
     while (
@@ -2158,6 +2197,11 @@ export class ComputerManager {
       computers.some(computer => computer.recent.length > 0)
     )
       for (const computer of computers) computer.recent.shift();
+    while (
+      Buffer.byteLength(JSON.stringify(value)) > OFFLINE_CACHE_BYTES &&
+      computers.some(computer => computer.coordinatorWake?.length)
+    )
+      for (const computer of computers) computer.coordinatorWake?.shift();
     return this.store.write('computer-cache.json', value, OFFLINE_CACHE_BYTES);
   }
 }

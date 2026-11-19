@@ -33,6 +33,8 @@ const entityKey = (event: DesktopEvent, sequence: number) => {
       return `workflow-step:${event.step.id}`;
     case 'session-groups-changed':
       return 'session-groups';
+    case 'coordinator-wake-changed':
+      return 'coordinator-wake';
     case 'pull-request-review-changed':
       return `pull-request-review:${event.draft.id}`;
     default:

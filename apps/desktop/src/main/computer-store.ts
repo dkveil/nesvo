@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
+  coordinatorWakeStateSchema,
   reviewSchema,
   sessionSchema,
   sessionWindowSchema,
@@ -40,6 +41,7 @@ const cachedComputerSchema = z.strictObject({
   sessions: z.array(sessionWindowSchema),
   recent: z.array(sessionWindowSchema).max(32),
   reviews: z.array(reviewSchema),
+  coordinatorWake: z.array(coordinatorWakeStateSchema).optional(),
 });
 const legacyCachedComputerSchema = z
   .strictObject({
@@ -53,6 +55,7 @@ const legacyCachedComputerSchema = z
     ...cache,
     sessions: cache.sessions.map(session => toSessionWindow(session)),
     recent: [],
+    coordinatorWake: [],
   }));
 export const computerCacheSchema = z.union([
   z.strictObject({
