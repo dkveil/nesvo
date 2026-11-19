@@ -47,6 +47,7 @@ import {
 } from './inspector';
 import { WorkflowMemory } from './workflow-memory';
 import { InspectorGateRules } from './inspector/gate-rules';
+import { GateTrust } from '@/features/workflow-gate-decision/gate-trust';
 import type { EditorState } from './use-editor-state';
 
 type Props = {
@@ -135,6 +136,20 @@ export function InspectorPanel({
       workflow={document.name}
     />
   );
+  const gateTrust = node?.step.type === 'human' &&
+    !isDraftStep(node.step) &&
+    document.name && (
+      <div className="px-3 pt-3">
+        <GateTrust
+          key={`${document.name}/${node.id}`}
+          hostId={hostId}
+          directory={directory}
+          workflow={document.name}
+          gate={node.id}
+          onSession={onSession}
+        />
+      </div>
+    );
   return (
     <SidePanel
       kind="inspector"
@@ -172,6 +187,7 @@ export function InspectorPanel({
         {node && showResult && overlay && runStep && (
           <PanelBody>
             {gateRules}
+            {gateTrust}
             <div className="space-y-3 p-3">
               {overlay.run.lane && (
                 <p className="text-ui text-muted-foreground">
@@ -207,7 +223,7 @@ export function InspectorPanel({
             key={isDraftStep(node.step) ? 'draft-step' : node.id}
             step={stepDraftOf(node.step)}
             mode="edit"
-            beforeFields={gateRules}
+            beforeFields={gateRules || gateTrust}
             renamable={isDraftStep(node.step)}
             usedBy={usedBy(state.catalog, node.id, document.name)}
             hostId={hostId}

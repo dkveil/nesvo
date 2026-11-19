@@ -7,6 +7,13 @@ import {
 } from './autonomy';
 import { checkCandidateSchema } from './checks';
 import {
+  gateTrustAskSchema,
+  gateTrustDecisionSchema,
+  gateTrustReadSchema,
+  gateTrustSaveSchema,
+  gateTrustViewSchema,
+} from './gate-trust';
+import {
   ruleEntryBodySchema,
   ruleEntryDescriptionSchema,
   ruleEntryIdSchema,
@@ -124,6 +131,7 @@ export type GateRuleGeneration = z.infer<typeof gateRuleGenerationSchema>;
 export const gateRuleOverviewSchema = z.strictObject({
   decisionMemory: z.boolean().optional(),
   autonomy: autonomyStatisticsSchema.optional(),
+  trust: gateTrustViewSchema.optional(),
   enabled: z.boolean(),
   proposals: z.array(gateRuleProposalSchema).max(gateRuleLimits.pending),
   generation: gateRuleGenerationSchema.nullable(),
@@ -131,6 +139,10 @@ export const gateRuleOverviewSchema = z.strictObject({
 export type GateRuleOverview = z.infer<typeof gateRuleOverviewSchema>;
 
 export const gateRulesInputSchema = z.discriminatedUnion('action', [
+  gateTrustReadSchema,
+  gateTrustAskSchema,
+  gateTrustSaveSchema,
+  gateTrustDecisionSchema,
   z.strictObject({ action: z.literal('read'), runId: z.uuid().optional() }),
   z.strictObject({
     action: z.literal('autonomy-read'),

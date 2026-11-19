@@ -984,6 +984,8 @@ export const serveHost = ({
               if (!step.reviewId || !step.reviewVersion) return;
               const review = reviewStore.get(step.reviewId);
               if (!review) return;
+              if (gateRules.current?.trustedBranch(run, step, review) === false)
+                return;
               const signal = AbortSignal.any([
                 probes.controller.signal,
                 AbortSignal.timeout(30_000),
@@ -1011,6 +1013,8 @@ export const serveHost = ({
                 return (
                   !signal.aborted &&
                   (level === null || level === 4) &&
+                  gateRules.current?.trustedBranch(run, step, review) !==
+                    false &&
                   allowed()
                 );
               };

@@ -68,6 +68,7 @@ import {
 } from './assistant-storage';
 import { ChangeCard, RefusalCard } from './change-card';
 import { GateAutonomy } from '@/features/workflow-gate-decision/gate-autonomy';
+import { GateTrust } from '@/features/workflow-gate-decision/gate-trust';
 import { ProposalCard, type ProposalDecision } from './proposal-card';
 import {
   useAssistant,
@@ -599,13 +600,24 @@ export default function WorkflowAssistantDock({
       ) : (
         <PanelBody ref={list} className="overscroll-contain p-3">
           {context.humanGate && context.workflowName && (
-            <GateAutonomy
+            <div
               key={`${context.workflowName}/${context.humanGate}`}
-              hostId={hostId}
-              directory={directory}
-              workflow={context.workflowName}
-              gate={context.humanGate}
-            />
+              className="space-y-3"
+            >
+              <GateTrust
+                hostId={hostId}
+                directory={directory}
+                workflow={context.workflowName}
+                gate={context.humanGate}
+                assistant
+              />
+              <GateAutonomy
+                hostId={hostId}
+                directory={directory}
+                workflow={context.workflowName}
+                gate={context.humanGate}
+              />
+            </div>
           )}
           {assistant.entries.length === 0 && assistant.pending === null ? (
             <div className="flex h-full flex-col items-center justify-center gap-2">

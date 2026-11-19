@@ -360,7 +360,7 @@ export async function smokePortableCheck({
       .getByRole('button', { name: 'Fit graph', exact: true })
       .click();
     await screenshots('d83-2-conditional-route');
-    if (['3', '4', '5', '6'].includes(process.env.NESVO_D90_STAGE)) {
+    if (['3', '4', '5', '6', '7'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
         .getByRole('button', { name: 'Close graph editor', exact: true })
         .click();
@@ -413,7 +413,7 @@ export async function smokePortableCheck({
         .click();
       await screenshots('d83-3-light-lane');
     }
-    if (['4', '5', '6'].includes(process.env.NESVO_D90_STAGE)) {
+    if (['4', '5', '6', '7'].includes(process.env.NESVO_D90_STAGE)) {
       await editor
         .getByRole('button', { name: 'Close graph editor', exact: true })
         .click();
@@ -425,7 +425,7 @@ export async function smokePortableCheck({
       await write(
         home,
         'workflows/typed-smoke.md',
-        `---\nname: typed-smoke\nsteps: [choose-gate]\n${['5', '6'].includes(process.env.NESVO_D90_STAGE) ? 'decision_memory: review\n' : ''}---\n`,
+        `---\nname: typed-smoke\nsteps: [choose-gate]\n${['5', '6', '7'].includes(process.env.NESVO_D90_STAGE) ? 'decision_memory: review\n' : ''}---\n`,
       );
       const specPath = '.agents/tasks/typed-smoke.md';
       await write(
@@ -477,7 +477,7 @@ export async function smokePortableCheck({
       const confirmed = await settled(task.id);
       assert.equal(confirmed.run.status, 'passed');
       assert.equal(confirmed.steps[0].decision.answer.option, 'manual');
-      if (['5', '6'].includes(process.env.NESVO_D90_STAGE)) {
+      if (['5', '6', '7'].includes(process.env.NESVO_D90_STAGE)) {
         const proposal = await page.evaluate(async runId => {
           const overview = await window.nesvo.gateRules(
             { action: 'read', runId },
@@ -513,7 +513,7 @@ export async function smokePortableCheck({
           .waitFor();
         await memory.getByRole('button', { name: 'Open source run' }).waitFor();
         await screenshots('d90-decision-memory');
-        if (process.env.NESVO_D90_STAGE === '6') {
+        if (['6', '7'].includes(process.env.NESVO_D90_STAGE)) {
           await memory
             .getByRole('combobox', { name: 'Filter by step' })
             .click();
@@ -528,12 +528,57 @@ export async function smokePortableCheck({
           await autonomy
             .getByRole('button', { name: 'Save thresholds', exact: true })
             .click();
+          await autonomy
+            .getByRole('button', { name: 'Review level change', exact: true })
+            .click();
           await autonomy.getByText(/Proposed level 1/).waitFor();
           await screenshots('d90-autonomy');
           await autonomy
             .getByRole('button', { name: 'Accept level 1', exact: true })
             .click();
           await autonomy.getByText(/Level 1/).waitFor();
+          if (process.env.NESVO_D90_STAGE === '7') {
+            const trust = memory.getByRole('region', { name: 'Gate trust' });
+            await trust
+              .getByLabel('Why is this gate human?')
+              .fill('The reviewer must confirm the approval path.');
+            await trust
+              .getByRole('button', { name: 'Save trust record' })
+              .click();
+            await trust
+              .getByRole('button', { name: 'Show 1 decision case' })
+              .click();
+            await trust
+              .getByText('Still needed me (1)', { exact: true })
+              .waitFor();
+            await screenshots('d90-trust-cases');
+            await editor.locator('[data-editor-node="choose-gate"]').click();
+            await editor
+              .getByRole('complementary', { name: 'Inspector' })
+              .getByLabel('Why is this gate human?')
+              .waitFor();
+            await editor
+              .getByRole('button', { name: 'Open assistant' })
+              .click();
+            const assistant = page.locator('[data-assistant-dock]');
+            await assistant
+              .getByRole('button', {
+                name: 'What would I need to make this gate more autonomous?',
+              })
+              .click();
+            await assistant
+              .getByText(
+                '0 past cases in the trusted branch, 1 in the human branch.',
+              )
+              .waitFor();
+            await screenshots('d90-trust-assistant');
+            await assistant
+              .getByRole('button', { name: 'Dismiss', exact: true })
+              .click();
+            await assistant
+              .getByText(/dismissed suggestion will stay hidden/)
+              .waitFor();
+          }
         }
       }
     }

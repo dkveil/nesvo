@@ -6,6 +6,7 @@ import type {
 } from '@nesvo/contracts';
 import { errorDetail } from '@/entities/session';
 import { GateAutonomy } from '@/features/workflow-gate-decision/gate-autonomy';
+import { GateTrust } from '@/features/workflow-gate-decision/gate-trust';
 import { GateRuleUndo } from '@/features/gate-rules/gate-rule-undo';
 import { RuleUsage } from '@/features/gate-rules/rule-usage';
 import { hostKey } from '@/shared/lib/host-key';
@@ -130,13 +131,21 @@ export function WorkflowMemory({
         catalog?.workflows
           .find(item => item.name === name)
           ?.steps.some(item => item.name === step && item.type === 'human') && (
-          <GateAutonomy
-            key={step}
-            hostId={hostId}
-            directory={directory}
-            workflow={name}
-            gate={step}
-          />
+          <div key={step} className="space-y-3">
+            <GateTrust
+              hostId={hostId}
+              directory={directory}
+              workflow={name}
+              gate={step}
+              onSession={onSession}
+            />
+            <GateAutonomy
+              hostId={hostId}
+              directory={directory}
+              workflow={name}
+              gate={step}
+            />
+          </div>
         )}
       {error && <StatusMessage tone="error">{error}</StatusMessage>}
       {catalog && !entries.length && (

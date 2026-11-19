@@ -21,6 +21,10 @@ export const autonomySettingsSchema = z.strictObject({
   level: autonomyLevelSchema,
   minimum: z.number().int().min(1).max(100),
   windowDays: z.number().int().min(1).max(365),
+  dismissedEvidence: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   override: z
     .strictObject({
       stepId: z.uuid(),
@@ -36,6 +40,10 @@ export const autonomyStatisticsSchema = z.strictObject({
   agreements: z.number().int().nonnegative(),
   overrides: z.number().int().nonnegative(),
   proposal: autonomyLevelSchema.nullable(),
+  evidence: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   considerNarrowing: z.boolean(),
 });
 export type AutonomyStatistics = z.infer<typeof autonomyStatisticsSchema>;
@@ -48,6 +56,10 @@ export const autonomySettingsInputSchema = z.strictObject({
   minimum: autonomySettingsSchema.shape.minimum,
   windowDays: autonomySettingsSchema.shape.windowDays,
   confirmed: z.literal(true),
+  dismissProposal: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export type AutonomySettingsInput = z.infer<typeof autonomySettingsInputSchema>;
 

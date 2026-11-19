@@ -4,6 +4,7 @@ export * from './lanes';
 export * from './human-decisions';
 export * from './gate-policy';
 export * from './autonomy';
+export * from './gate-trust';
 export * from './results';
 export * from './runs';
 export * from './metrics';

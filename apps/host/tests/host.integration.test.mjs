@@ -15660,6 +15660,7 @@ const loadWorkflowTaskModules = async directory => {
   const source = fileURLToPath(new URL('../src/', import.meta.url));
   const outdir = join(directory, 'workflow-task-modules');
   const entries = [
+    'workflows/gate-trust.ts',
     'workflows/runner.ts',
     'workflows/store.ts',
     'workflows/tasks.ts',
@@ -16679,6 +16680,122 @@ test(
         assert.equal(stats.observations, 1);
         assert.equal(stats.agreements, 1);
         assert.equal(stats.proposal, 2);
+        const dismiss = await host.request('gate-rules', {
+          action: 'autonomy-set',
+          input: {
+            target,
+            revision: stats.settings.revision,
+            level: 1,
+            minimum: 1,
+            windowDays: 30,
+            confirmed: true,
+            dismissProposal: stats.evidence,
+          },
+        });
+        assert.equal(dismiss.overview.autonomy.proposal, null);
+        assert.equal((await readAutonomy()).overview.autonomy.proposal, null);
+        const trust = (action, fields = {}) =>
+          host.request('gate-rules', { action, target, ...fields });
+        const initialTrust = (await trust('trust-read')).overview.trust;
+        assert.equal(initialTrust.record.revision, 0);
+        assert.equal(initialTrust.record.split, null);
+        assert.equal(initialTrust.cases.length, 2);
+        assert.ok(initialTrust.cases.every(item => !item.safe));
+        const wrote = (
+          await trust('trust-save', {
+            revision: 0,
+            reasons: 'The owner must choose the reviewer.',
+            humanRequired: true,
+          })
+        ).overview.trust;
+        assert.equal(wrote.record.humanRequired, true);
+        assert.equal(wrote.record.revision, 1);
+        assert.equal(
+          (
+            await trust('trust-save', {
+              revision: 0,
+              reasons: '',
+              humanRequired: false,
+            })
+          ).code,
+          'invalid-request',
+        );
+        const asked = (await trust('trust-ask')).overview.trust;
+        assert.equal(asked.proposal.trusted, 0);
+        assert.equal(asked.proposal.human, 2);
+        const receipt = {
+          revision: 1,
+          definition: asked.definition,
+          evidence: asked.proposal.evidence,
+        };
+        assert.equal(
+          (await trust('trust-decide', { ...receipt, decision: 'accept' }))
+            .code,
+          'invalid-request',
+        );
+        assert.equal(
+          (await trust('trust-decide', { ...receipt, decision: 'dismiss' }))
+            .overview.trust.proposal,
+          undefined,
+        );
+        assert.equal(
+          (await trust('trust-ask')).overview.trust.proposal,
+          undefined,
+        );
+        const [first, second] = initialTrust.cases;
+        const safe = {
+          ...first,
+          safe: true,
+          risk: 'low',
+          lane: 'light',
+          files: 1,
+          lines: 10,
+          paths: ['src/view.ts'],
+          checks: ['verify'],
+        };
+        const critical = {
+          ...safe,
+          stepId: second.stepId,
+          safe: false,
+          paths: ['src/auth/token.ts'],
+        };
+        const suggestedSplit = taskModules.trustProposal(
+          [safe, critical],
+          taskModules.emptyGateTrust,
+        );
+        assert.deepEqual(suggestedSplit.condition.protectedPaths, [
+          'src/auth/token.ts',
+        ]);
+        assert.equal(suggestedSplit.trusted, 1);
+        assert.equal(suggestedSplit.human, 1);
+        assert.equal(
+          taskModules.trustProposal(
+            [safe, { ...critical, paths: safe.paths }],
+            taskModules.emptyGateTrust,
+          ).condition,
+          null,
+        );
+        const editedSplit = taskModules.trustProposal(
+          [safe, critical],
+          taskModules.emptyGateTrust,
+          {
+            when: 'lane == "light"',
+            maximumFiles: 1,
+            maximumLines: 10,
+            passedChecks: ['verify'],
+            protectedPaths: ['src/auth'],
+          },
+        );
+        assert.ok(editedSplit.condition);
+        assert.equal(editedSplit.trusted, 1);
+        assert.equal(editedSplit.human, 1);
+        assert.equal(
+          taskModules.matchesTrust(editedSplit.condition, {
+            ...safe,
+            checks: [],
+          }),
+          false,
+        );
       },
     );
 

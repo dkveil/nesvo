@@ -35,6 +35,7 @@ export function GateAutonomy({
   const [minimum, setMinimum] = useState('');
   const [windowDays, setWindowDays] = useState('');
   const [busy, setBusy] = useState(false);
+  const [requested, setRequested] = useState(false);
   const [failure, setFailure] = useState('');
   useEffect(() => {
     let active = true;
@@ -61,7 +62,7 @@ export function GateAutonomy({
     return failure ? (
       <StatusMessage tone="error">{failure}</StatusMessage>
     ) : null;
-  const apply = async (level: AutonomyLevel) => {
+  const apply = async (level: AutonomyLevel, dismissProposal?: string) => {
     setBusy(true);
     setFailure('');
     try {
@@ -75,11 +76,16 @@ export function GateAutonomy({
             minimum: Number(minimum),
             windowDays: Number(windowDays),
             confirmed: true,
+            dismissProposal,
           },
         },
         hostId,
       );
-      if (result.autonomy) setView(result.autonomy);
+      if (result.autonomy) {
+        setView(result.autonomy);
+        if (dismissProposal || level !== view.settings.level)
+          setRequested(false);
+      }
     } catch (error) {
       setFailure(errorDetail(error));
     } finally {
@@ -112,12 +118,12 @@ export function GateAutonomy({
         {' · '}
         {overrides} overrides
       </p>
-      {view.proposal !== null && (
+      {requested && view.proposal !== null && (
         <p className="text-ui">
           Proposed level {view.proposal} · {levels[view.proposal]}
         </p>
       )}
-      {view.considerNarrowing && (
+      {requested && view.considerNarrowing && (
         <p className="text-xs text-muted-foreground">
           This gate reviews many files. Consider focusing on the paths the
           recommendation is uncertain about.
@@ -151,7 +157,12 @@ export function GateAutonomy({
         </Field>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {upgrade.success && (
+        {upgrade.success && !requested && (
+          <Button size="xs" variant="ghost" onClick={() => setRequested(true)}>
+            Review level change
+          </Button>
+        )}
+        {upgrade.success && requested && (
           <Button
             size="xs"
             variant="secondary"
@@ -159,6 +170,16 @@ export function GateAutonomy({
             onClick={() => void apply(upgrade.data)}
           >
             Accept level {upgrade.data}
+          </Button>
+        )}
+        {requested && view.proposal !== null && view.evidence && (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy || !valid}
+            onClick={() => void apply(settings.level, view.evidence)}
+          >
+            Dismiss level suggestion
           </Button>
         )}
         {lower.success && (

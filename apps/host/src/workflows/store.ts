@@ -157,6 +157,25 @@ export class WorkflowRunStore {
     };
   }
 
+  recentGateRuns(
+    projectRoot: string,
+    workflow: string,
+    gate: string,
+  ): WorkflowRun[] {
+    const comparison = process.platform === 'win32' ? 'COLLATE NOCASE' : '';
+    return this.database
+      .prepare(
+        `SELECT run.document FROM workflow_runs AS run
+        WHERE run.project_root = ? ${comparison} AND run.workflow_name = ?
+          AND EXISTS (SELECT 1 FROM workflow_steps AS step
+            WHERE step.run_id = run.id AND step.name = ? AND step.type = 'human'
+              AND json_type(step.document, '$.decision') = 'object')
+        ORDER BY run.updated_at DESC, run.id DESC LIMIT 50`,
+      )
+      .all(projectRoot, workflow, gate)
+      .map(toRun);
+  }
+
   activeRunForDirectory(projectRoot: string): WorkflowRun | undefined {
     const row = this.database
       .prepare(

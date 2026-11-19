@@ -70,12 +70,24 @@ export function autonomyStatistics(
         )
       : agreements >= settings.minimum && comparisons.length === agreements;
   const next = autonomyLevelSchema.safeParse(settings.level + 1);
+  const evidence = createHash('sha256')
+    .update(
+      JSON.stringify(decisions.map(step => step.decision?.decisionId).sort()),
+    )
+    .digest('hex');
   return {
     settings,
     overrides,
     agreements,
     observations: comparisons.length,
-    proposal: matching && !overrides && next.success ? next.data : null,
+    proposal:
+      matching &&
+      !overrides &&
+      next.success &&
+      evidence !== settings.dismissedEvidence
+        ? next.data
+        : null,
+    evidence,
     considerNarrowing: decisions.some(
       step => (step.decisionForm?.files?.length ?? 0) >= 12,
     ),

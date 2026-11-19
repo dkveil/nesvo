@@ -382,7 +382,13 @@ An accepted precedent lives in `decisions/` under the workflow's Project or Glob
 
 Select a human step and open the workflow assistant to review its autonomy. Level 0 asks for a decision. Level 1 adds a read-only recommendation with applicable precedents. Level 2 can focus a file selection on the uncertain paths, with the complete changed files list available. Level 3 shows the agreement between valid recommendations and owner decisions. Level 4 requires an enabled hash-bound owner policy and can accept an eligible terminal saved result.
 
-The assistant proposes a one-level increase from the agreed decisions in the configured window. Accept each increase explicitly. If you override a policy approval, the current bound result is rejected, the previous decision remains in its audit record, and the gate drops one level with your reason.
+Open **Review level change** to see whether the agreed decisions in the configured window support the next level. Accept each increase explicitly. A dismissal hides that suggestion until the decision evidence changes. If you override a policy approval, the current bound result is rejected, the previous decision remains in its audit record, and the gate drops one level with your reason.
+
+### Gate trust
+
+Read and edit **Why is this gate human?** in its step inspector or under **Lessons & decisions** filtered to that step. Record the reason a person is needed, such as critical paths, missing tests or a two-person rule. Select **Always require a person** to enforce a continuing human requirement. When memory is enabled, expand the past cases to see which appeared suitable for automation, which still needed a person, and the recorded lane, phase, diff and test evidence behind the comparison. Each case links to its source run when one is available.
+
+With the gate selected, open the workflow assistant and choose **What would I need to make this gate more autonomous?** The assistant answers from recorded cases. When a split separates the cases, the proposal shows a `when` lane condition, diff limits, required passing steps and protected paths. Preview edits to see how many past cases each branch would take, then accept or dismiss. The accepted split routes the existing gate between policy review and a person. Policy activation and all execution safeguards still apply. Unknown factors, unsatisfied conditions and changed definitions go to the person. A dismissed suggestion stays hidden until the decision evidence changes.
 
 ### Routing decisions to the orchestrator
 

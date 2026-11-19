@@ -18,6 +18,8 @@ import {
   type GateRuleOverview,
   type GateRuleProposal,
   type GateRulesInput,
+  type GateTrustRequest,
+  type GateTrustView,
   type Review,
   type RuleEntry,
   type ResolvedDecisionPrecedent,
@@ -52,6 +54,15 @@ import {
   safeProposal,
   type GateRuleSource,
 } from './gate-rule-proposal';
+import {
+  emptyGateTrust,
+  gateTrustDefinition,
+  gateTrustKey,
+  matchesTrust,
+  trustCase,
+  trustFactors,
+  trustProposal,
+} from './gate-trust';
 import type { GateRuleStore } from './gate-rule-store';
 import {
   editableConditionalRoute,
@@ -87,7 +98,10 @@ type Ports = {
     input: OverrideGatePolicyInput,
     demote: (run: WorkflowRun, step: WorkflowStepRecord, at: string) => void,
   ) => Promise<WorkflowRun>;
-  runs: Pick<WorkflowRunStore, 'getRun' | 'stepsForRun' | 'listRuns'>;
+  runs: Pick<
+    WorkflowRunStore,
+    'getRun' | 'stepsForRun' | 'listRuns' | 'recentGateRuns'
+  >;
   changes: Pick<
     AssistantChanges,
     'applyRuleEntry' | 'applyProjectProfile' | 'apply'
@@ -221,6 +235,30 @@ export class GateRuleService {
       : null;
   }
 
+  trustedBranch(run: WorkflowRun, gate: WorkflowStepRecord, review: Review) {
+    const definition = run.workflow.steps[gate.index];
+    if (!definition) return false;
+    const record = this.ports.store.trust(
+      gateTrustKey(run.projectRoot, run.workflow, definition),
+    );
+    if (!record) return true;
+    if (record.humanRequired || !record.split) return false;
+    return (
+      record.split.definition ===
+        gateTrustDefinition(run.workflow, definition) &&
+      matchesTrust(
+        record.split.condition,
+        trustFactors(
+          run,
+          gate,
+          this.ports.runs.stepsForRun(run.id),
+          review,
+          new Date().toISOString(),
+        ),
+      )
+    );
+  }
+
   private async autonomyTarget(target: AutonomyTarget) {
     const signal = this.controller.signal;
     const roots = await resolveWriteRoots(target.directory, signal);
@@ -243,12 +281,37 @@ export class GateRuleService {
     const selected = await this.autonomyTarget(target);
     const { runs, store } = this.ports;
     let { settings } = selected;
+    const matching = runs
+      .recentGateRuns(selected.root, target.workflow, target.gate)
+      .flatMap(run =>
+        runs.stepsForRun(run.id).filter(step => {
+          if (
+            step.type !== 'human' ||
+            step.name !== target.gate ||
+            !step.decision
+          )
+            return false;
+          const definition = run.workflow.steps[step.index];
+          return (
+            definition &&
+            autonomyKey(run.projectRoot, run.workflow, definition) ===
+              selected.key
+          );
+        }),
+      );
     if (update) {
       if (
         settings.revision !== update.revision ||
         update.level > settings.level + 1
       )
         throw invalid('Refresh the gate and accept each level separately.');
+      if (
+        update.dismissProposal &&
+        (update.level !== settings.level ||
+          update.dismissProposal !==
+            autonomyStatistics(settings, matching).evidence)
+      )
+        throw invalid('The evidence for this level change has changed.');
       if (
         update.level === 4 &&
         (!selected.step.delegate ||
@@ -273,28 +336,114 @@ export class GateRuleService {
         level: update.level,
         minimum: update.minimum,
         windowDays: update.windowDays,
+        ...(update.dismissProposal
+          ? { dismissedEvidence: update.dismissProposal }
+          : {}),
       };
       store.setAutonomy(selected.key, settings);
     }
-    const matching = (runs.listRuns(null, 50)?.runs ?? []).flatMap(run =>
-      runs.stepsForRun(run.id).filter(step => {
-        if (
-          step.type !== 'human' ||
-          step.name !== target.gate ||
-          !step.decision
-        )
-          return false;
-        const definition = run.workflow.steps[step.index];
-        return (
-          definition &&
-          autonomyKey(run.projectRoot, run.workflow, definition) ===
-            selected.key
-        );
-      }),
-    );
     return {
       ...this.overview(),
       autonomy: autonomyStatistics(settings, matching),
+    };
+  }
+
+  private async trustView(input: GateTrustRequest): Promise<GateRuleOverview> {
+    const { root, workflow, step } = await this.autonomyTarget(input.target);
+    const { store, runs, review } = this.ports;
+    const key = gateTrustKey(root, workflow, step);
+    const definition = gateTrustDefinition(workflow, step);
+    let record = store.trust(key) ?? emptyGateTrust;
+    const memoryEnabled = Boolean(
+      workflow.decision_memory || store.decisionMemory(),
+    );
+    const cases = memoryEnabled
+      ? runs
+          .recentGateRuns(root, workflow.name, step.name)
+          .flatMap(run => {
+            const attempts = runs.stepsForRun(run.id);
+            return attempts.flatMap(gate => {
+              const pinned = run.workflow.steps[gate.index];
+              if (
+                !pinned ||
+                gate.type !== 'human' ||
+                gateTrustKey(run.projectRoot, run.workflow, pinned) !== key
+              )
+                return [];
+              const item = trustCase(
+                run,
+                gate,
+                attempts,
+                gate.reviewId ? review(gate.reviewId) : undefined,
+              );
+              return item ? [item] : [];
+            });
+          })
+          .sort((left, right) => right.at.localeCompare(left.at))
+          .slice(0, 50)
+      : [];
+    let proposal: GateTrustView['proposal'];
+    if ('revision' in input && record.revision !== input.revision)
+      throw invalid(
+        'The gate trust record changed. Refresh and review it again.',
+      );
+    if (input.action === 'trust-save') {
+      record = {
+        ...record,
+        revision: record.revision + 1,
+        reasons: input.reasons,
+        humanRequired: input.humanRequired,
+        split: input.clearSplit || input.humanRequired ? null : record.split,
+      };
+      store.setTrust(key, record);
+    }
+    if (input.action === 'trust-ask' || input.action === 'trust-decide') {
+      proposal = trustProposal(
+        cases,
+        record,
+        input.action === 'trust-decide' ? input.condition : undefined,
+      );
+      if (input.action === 'trust-decide') {
+        if (
+          input.definition !== definition ||
+          input.evidence !== proposal.evidence ||
+          record.dismissed === proposal.evidence
+        )
+          throw invalid('The proposal evidence changed or was dismissed.');
+        if (input.decision === 'accept' && !proposal.condition)
+          throw invalid(
+            'This split needs evidence that separates the trusted and human cases.',
+          );
+        if (input.decision !== 'preview') {
+          record = {
+            ...record,
+            revision: record.revision + 1,
+            ...(input.decision === 'dismiss'
+              ? { dismissed: proposal.evidence }
+              : {
+                  split: {
+                    definition,
+                    evidence: proposal.evidence,
+                    condition: proposal.condition!,
+                  },
+                }),
+          };
+          store.setTrust(key, record);
+          proposal = undefined;
+        }
+      }
+      if (record.dismissed === proposal?.evidence) proposal = undefined;
+    }
+    return {
+      ...this.overview(),
+      trust: {
+        definition,
+        record,
+        cases,
+        memoryEnabled,
+        current: record.split?.definition === definition,
+        proposal,
+      },
     };
   }
 
@@ -323,6 +472,13 @@ export class GateRuleService {
     if (input.action === 'read') return this.overview(input.runId);
     const previous = this.decisions;
     const next = previous.then(async () => {
+      if (
+        input.action === 'trust-read' ||
+        input.action === 'trust-ask' ||
+        input.action === 'trust-save' ||
+        input.action === 'trust-decide'
+      )
+        return this.trustView(input);
       if (input.action === 'autonomy-read')
         return this.autonomyView(input.target);
       if (input.action === 'autonomy-set')

@@ -7,6 +7,8 @@ import {
   gateRuleGenerationSchema,
   autonomySettingsSchema,
   type AutonomySettings,
+  gateTrustRecordSchema,
+  type GateTrustRecord,
   gateRuleLimits,
   gateRuleProposalSchema,
   type DecideGateRuleInput,
@@ -80,6 +82,19 @@ export class GateRuleStore {
 
   setAutonomy(key: string, settings: AutonomySettings): void {
     this.metadata(key, JSON.stringify(autonomySettingsSchema.parse(settings)));
+  }
+
+  trust(key: string): GateTrustRecord | null {
+    const row = this.database
+      .prepare('SELECT value FROM metadata WHERE key = ?')
+      .get(key);
+    return row
+      ? gateTrustRecordSchema.parse(JSON.parse(String(row.value)))
+      : null;
+  }
+
+  setTrust(key: string, record: GateTrustRecord): void {
+    this.metadata(key, JSON.stringify(gateTrustRecordSchema.parse(record)));
   }
 
   decisionMemory(): boolean {
