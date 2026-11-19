@@ -27,7 +27,8 @@ import { smokeManagerImport } from './manager-import-smoke.mjs';
 import { smokePortableCheck } from './portable-check-smoke.mjs';
 import { EXPIRED_SHARE_ID, startShareServer } from './share-server-fixture.mjs';
 
-if (process.env.NESVO_D83_DEMO_ONLY !== '1') {
+const setupStage = process.env.NESVO_D89_SMOKE_STAGE;
+if (!setupStage && process.env.NESVO_D83_DEMO_ONLY !== '1') {
   await smokeManagerImport();
   await import('./d87-desktop-smoke.mjs');
 }
@@ -117,10 +118,13 @@ const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const launchArgs = [resolve('apps/desktop')];
 const configurationScreenshots = process.env.NESVO_D85_SCREENSHOTS;
+const setupScreenshots = process.env.NESVO_D89_SCREENSHOTS;
 const inboxOutcomeScreenshots = process.env.NESVO_INBOX_OUTCOME_SCREENSHOT_DIR;
 const d88Screenshots = process.env.NESVO_D88_SCREENSHOTS;
 const d83CdpPort = process.env.NESVO_D83_CDP_PORT;
-if (configurationScreenshots)
+if (setupStage)
+  launchArgs.push('--remote-debugging-port=0', '--force-device-scale-factor=1');
+else if (configurationScreenshots)
   launchArgs.push(
     '--remote-debugging-port=9250',
     '--force-device-scale-factor=1',
@@ -145,6 +149,99 @@ const launchApplication = (overrides = {}) =>
     timeout: 30000,
   });
 let smokeFailure;
+async function setupShot(app, page, name) {
+  if (!setupScreenshots) return;
+  await mkdir(setupScreenshots, { recursive: true });
+  for (const size of [
+    [1280, 800],
+    [1920, 1080],
+  ]) {
+    await app.evaluate(
+      ({ BrowserWindow }, [width, height]) =>
+        BrowserWindow.getAllWindows()[0].setContentSize(width, height),
+      size,
+    );
+    await page.waitForFunction(
+      ([width, height]) => innerWidth === width && innerHeight === height,
+      size,
+    );
+    const capture = () =>
+      app.evaluate(async ({ BrowserWindow }) =>
+        (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
+          .toPNG()
+          .toString('base64'),
+      );
+    await capture();
+    await delay(350);
+    const screenshot = Buffer.from(await capture(), 'base64');
+    assert.deepEqual(
+      [screenshot.readUInt32BE(16), screenshot.readUInt32BE(20)],
+      size,
+    );
+    await writeFile(
+      join(setupScreenshots, `${name}-${size.join('x')}.png`),
+      screenshot,
+    );
+  }
+}
+
+async function smokeSetupProfile() {
+  const file = join(directory, 'profile.yaml');
+  const shared = join(directory, 'shared.yaml');
+  const machine = join(directory, 'machine.yaml');
+  const machineDocument = 'version: 1\n';
+  await writeFile(
+    shared,
+    'version: 1\ninbox:\n  defaultRoute: parent\nrecipes:\n  - id: prepare\n    name: Prepare checkout\n    repository: git.example.test/org/project\n    setup:\n      - executable: prepare\n        argv: []\n',
+  );
+  await writeFile(machine, machineDocument);
+  await writeFile(
+    file,
+    'version: 1\ninclude:\n  shared: shared.yaml\n  machine: machine.yaml\n',
+  );
+  application = await launchApplication({ NESVO_PROFILE_PATH: file });
+  const page = await application.firstWindow();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+  await page.getByRole('button', { name: 'Your setup', exact: true }).click();
+  await page.getByText('Profile ready to review').waitFor();
+  await page.getByText('Inbox → Parent session').waitFor();
+  await setupShot(application, page, 'stage-a-profile-review');
+  await page.getByRole('button', { name: 'Review sources' }).click();
+  await page.getByText('Awaiting review on this computer').waitFor();
+  await setupShot(application, page, 'stage-a-profile-sources');
+  await page.getByRole('button', { name: 'Close profile sources' }).click();
+  await page.getByRole('button', { name: 'Load profile' }).click();
+  await page.getByText('Active profile', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Inbox rules', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit profile setting' }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit profile setting' });
+  await editor.getByRole('combobox', { name: 'Default Inbox route' }).click();
+  await page.getByRole('option', { name: 'Inbox and parent session' }).click();
+  await setupShot(application, page, 'stage-a-managed-routing');
+  await editor.getByRole('button', { name: 'Save profile setting' }).click();
+  await editor.waitFor({ state: 'hidden' });
+  assert.match(await readFile(machine, 'utf8'), /defaultRoute: both/);
+  await page.getByRole('button', { name: 'Open Change history' }).click();
+  const route = page.getByRole('article', {
+    name: 'Configuration change Profile Inbox route',
+  });
+  await route
+    .getByRole('button', { name: 'Review diff for Profile Inbox route' })
+    .click();
+  await route.getByRole('button', { name: 'Undo', exact: true }).click();
+  await route.getByText('Undone', { exact: true }).waitFor();
+  assert.equal(await readFile(machine, 'utf8'), machineDocument);
+  console.log(
+    JSON.stringify({
+      result: 'passed',
+      scenario: 'setup profile',
+      stage: setupStage,
+      platform: process.platform,
+    }),
+  );
+}
+
 async function configurationShot(app, page, name, ready) {
   if (!configurationScreenshots) return;
   await mkdir(configurationScreenshots, { recursive: true });
@@ -1037,6 +1134,7 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 async function smokeDesktop() {
+  if (setupStage) return smokeSetupProfile();
   if (process.env.NESVO_D85_SMOKE_ONLY === '1') {
     application = await launchApplication();
     const page = await application.firstWindow();

@@ -2479,6 +2479,168 @@ test('configuration groups, budgets and paused automations retain durable state'
   }
 });
 
+test('setup profiles validate and apply offline, own routing, and reconcile included edits', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-setup-profile-')),
+  );
+  const directory = join(root, 'host');
+  const entry = join(root, 'profile.yaml');
+  const shared = join(root, 'shared.yaml');
+  const machine = join(root, 'machine.yaml');
+  const outside = join(root, 'portable.yaml');
+  const configuration =
+    'version: 1\ninclude:\n  shared: shared.yaml\n  machine: machine.yaml\n';
+  const sharedDocument =
+    'version: 1\ninbox:\n  defaultRoute: parent\nrecipes:\n  - id: setup\n    name: Prepare checkout\n    repository: git.example.test/org/project\n    setup:\n      - executable: prepare\n        argv: []\n        environment:\n          - name: AUTH\n            from: {kind: env, name: NESVO_FIXTURE_AUTH}\n';
+  const machineDocument = 'version: 1\n';
+  const cli = async (operation, file = entry, args = []) => {
+    const result = await promisify(execFile)(
+      process.execPath,
+      [
+        'apps/host/dist/cli.js',
+        'profile',
+        operation,
+        file,
+        '--data-dir',
+        directory,
+        '--json',
+        ...args,
+      ],
+      {
+        env: {
+          ...process.env,
+          NESVO_TEST_MODE: '1',
+          NESVO_PROFILE_PATH: entry,
+        },
+        windowsHide: true,
+      },
+    ).catch(error => ({ stdout: error.stdout, code: error.code }));
+    return { code: result.code ?? 0, document: JSON.parse(result.stdout) };
+  };
+  let host;
+  try {
+    await writeFile(entry, 'version: 1\nversion: 1\n');
+    assert.equal((await cli('validate')).document.status, 'invalid');
+    await writeFile(entry, 'version: 1\ninclude: {shared: ../outside.yaml}\n');
+    assert.equal((await cli('validate')).document.status, 'invalid');
+    await writeFile(entry, 'version: 1\ninclude: {shared: profile.yaml}\n');
+    assert.equal((await cli('validate')).document.status, 'invalid');
+    await writeFile(
+      entry,
+      'version: 1\ninbox: &settings {defaultRoute: both}\n',
+    );
+    assert.equal((await cli('validate')).document.status, 'invalid');
+    await writeFile(entry, 'version: 2\n');
+    assert.equal((await cli('validate')).document.status, 'unsupported');
+    await writeFile(entry, configuration);
+    await writeFile(shared, sharedDocument);
+    await writeFile(machine, machineDocument);
+    const preview = (await cli('diff')).document;
+    assert.equal(preview.routing.effective, 'inbox');
+    assert.equal(preview.routing.desired, 'parent');
+    assert.equal(preview.runtimeChecks[0].key, 'recipes/setup');
+    assert.deepEqual((await readdir(root)).sort(), [
+      'machine.yaml',
+      'profile.yaml',
+      'shared.yaml',
+    ]);
+    await writeFile(machine, 'version: 1\n# host edit\n');
+    const stale = await cli('apply', entry, [
+      '--expect',
+      preview.revision,
+      '--effective-revision',
+      '0',
+    ]);
+    assert.equal(stale.document.code, 'conflict');
+    await writeFile(machine, machineDocument);
+    const applied = (await cli('apply')).document;
+    assert.equal(applied.receipt.status, 'applied');
+    assert.equal(applied.review.routing.effective, 'parent');
+    host = launch(directory, join(root, 'pids.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_PROFILE_PATH: entry,
+    });
+    const inspect = () => host.request('setup-profile', { action: 'inspect' });
+    const loaded = (await inspect()).result.review;
+    assert.equal(loaded.status, 'current');
+    assert.equal(loaded.routing.writesTo, machine);
+    assert.equal((await cli('diff')).document.code, 'busy');
+    assert.equal((await host.request('list-sessions')).sessions.length, 0);
+    assert.equal(
+      (await host.request('save-inbox-settings', { defaultRoute: 'both' }))
+        .type,
+      'error',
+    );
+    const edit = {
+      action: 'edit-routing',
+      file: entry,
+      instanceId: loaded.instanceId,
+      revision: loaded.revision,
+      effectiveRevision: loaded.effectiveRevision,
+      route: 'both',
+      layer: 'machine',
+      actionId: randomUUID(),
+    };
+    const saved = (await host.request('setup-profile', edit)).result;
+    assert.equal(saved.receipt?.status, 'applied', JSON.stringify(saved));
+    assert.equal(saved.review.routing.effective, 'both');
+    assert.match(await readFile(machine, 'utf8'), /defaultRoute: both/);
+    assert.equal(await readFile(shared, 'utf8'), sharedDocument);
+    const undo = (
+      await host.request('undo-config-change', {
+        id: saved.receipt.id,
+        revision: saved.receipt.revision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(undo.receipt?.status, 'undone', JSON.stringify(undo));
+    assert.equal(await readFile(machine, 'utf8'), machineDocument);
+    assert.equal(
+      (await host.request('read-inbox-settings')).settings.defaultRoute,
+      'parent',
+    );
+    await writeFile(machine, 'version: 1\ninbox: {defaultRoute: both}\n');
+    assert.equal(
+      (await host.request('setup-profile', { ...edit, actionId: randomUUID() }))
+        .result.code,
+      'conflict',
+    );
+    for (let attempt = 0; attempt < 25; attempt++) {
+      if (
+        (await host.request('read-inbox-settings')).settings.defaultRoute ===
+        'both'
+      )
+        break;
+      await delay(120);
+    }
+    assert.equal(
+      (await host.request('read-inbox-settings')).settings.defaultRoute,
+      'both',
+    );
+    const history = (
+      await host.request('list-config-changes', { area: 'setup-profile' })
+    ).result.page.changes;
+    assert.equal(history[0].source.kind, 'system');
+    assert.equal(history[0].status, 'applied');
+    await writeFile(machine, 'version: 2\n');
+    assert.equal((await inspect()).result.review.status, 'unsupported');
+    assert.equal(
+      (await host.request('read-inbox-settings')).settings.defaultRoute,
+      'both',
+    );
+    await host.stop();
+    host = undefined;
+    assert.equal((await cli('export', outside)).code, 0);
+    const portable = await readFile(outside, 'utf8');
+    assert.match(portable, /defaultRoute: both/);
+    assert.doesNotMatch(portable, /AUTH|Prepare checkout|pending/);
+    assert.equal((await cli('export', outside)).code, 1);
+  } finally {
+    await host?.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('configuration permission proposals require exact owner confirmation and honor managed policy', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-config-authority-')),
