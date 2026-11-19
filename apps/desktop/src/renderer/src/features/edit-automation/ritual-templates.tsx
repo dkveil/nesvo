@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Field } from '@/shared/ui/field';
 import {
   Select,
@@ -49,6 +50,7 @@ const templates = [
 ] as const satisfies readonly Partial<AutomationValues>[];
 
 export function RitualTemplates({ editor }: { editor: AutomationEditorState }) {
+  const [selected, setSelected] = useState('');
   if (
     !editor.supportsRituals ||
     editor.editing ||
@@ -63,11 +65,12 @@ export function RitualTemplates({ editor }: { editor: AutomationEditorState }) {
       hint="Templates start paused."
     >
       <Select
-        value=""
+        value={selected}
         disabled={editor.pending}
         onValueChange={name => {
           const template = templates.find(item => item.name === name);
           if (!template) return;
+          setSelected(name);
           editor.change({
             checkEnabled: false,
             redCi: false,
@@ -83,10 +86,33 @@ export function RitualTemplates({ editor }: { editor: AutomationEditorState }) {
         <SelectTrigger id="ritual-template" size="md" className="w-full">
           <SelectValue placeholder="Choose a template" />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent position="popper" side="bottom" align="start">
           {templates.map(item => (
-            <SelectItem key={item.name} value={item.name}>
-              {item.name}
+            <SelectItem
+              key={item.name}
+              value={item.name}
+              textValue={item.name}
+              aria-label={item.name}
+            >
+              <span className="flex items-baseline gap-2">
+                <span>{item.name}</span>
+                <span
+                  aria-hidden="true"
+                  className="text-2xs text-muted-foreground"
+                >
+                  {item.time} ·{' '}
+                  {'scheduleKind' in item
+                    ? item.scheduleKind === 'daily'
+                      ? 'Daily'
+                      : 'Weekly'
+                    : 'Weekdays'}
+                  {'browser' in item
+                    ? ' · Browser'
+                    : 'writable' in item
+                      ? ' · Worktree'
+                      : ''}
+                </span>
+              </span>
             </SelectItem>
           ))}
         </SelectContent>

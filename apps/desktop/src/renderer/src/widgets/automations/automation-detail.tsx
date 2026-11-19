@@ -137,7 +137,7 @@ export function AutomationDetail({
       <section
         aria-label={`Automation: ${job.name}`}
         data-automation-id={job.id}
-        className="mx-auto w-full max-w-4xl space-y-6 px-5 py-6 lg:px-8"
+        className="mx-auto w-full max-w-5xl space-y-5 px-5 py-4 xl:ml-5"
       >
         <header className="space-y-3 px-2">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -307,7 +307,7 @@ export function AutomationDetail({
             </div>
           )}
           {runs.length > 0 ? (
-            <ol className="space-y-px">
+            <ol className="divide-y divide-border/55">
               {runs.map(run => {
                 const review = reviewOf(run);
                 const at = run.startedAt ?? run.scheduledFor ?? run.finishedAt;
@@ -320,7 +320,7 @@ export function AutomationDetail({
                   >
                     <ListRow
                       title={
-                        <span className="flex min-w-0 items-center gap-2.5 text-xs">
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-ui">
                           <RunStatus run={run} />
                           <span className="text-muted-foreground">
                             {run.trigger === 'manual' ? 'Run now' : 'Scheduled'}
@@ -341,7 +341,7 @@ export function AutomationDetail({
                           {review && (
                             <span
                               className={cn(
-                                'text-muted-foreground',
+                                'text-xs font-medium text-muted-foreground',
                                 review.status === 'pending' &&
                                   'text-warning-foreground',
                               )}
@@ -351,7 +351,8 @@ export function AutomationDetail({
                           )}
                         </span>
                       }
-                      trailing={
+                      actionsPlacement="visible"
+                      actions={
                         <span className="flex items-center gap-1">
                           {isActiveRun(run) &&
                             run.sessionId &&
@@ -383,9 +384,19 @@ export function AutomationDetail({
                         </span>
                       }
                     />
-                    {run.detail && (
-                      <StatusMessage tone="error" className="px-3">
-                        {run.detail}
+                    {(run.detail ||
+                      run.status === 'interrupted' ||
+                      run.status === 'failed') && (
+                      <StatusMessage
+                        tone={
+                          run.status === 'interrupted' ? 'warning' : 'error'
+                        }
+                        className="px-3 pb-2"
+                      >
+                        {run.detail ||
+                          (run.status === 'interrupted'
+                            ? 'The run ended before it reported a result. Open the session to check its last activity.'
+                            : 'The run did not complete. Open the session to see what failed.')}
                       </StatusMessage>
                     )}
                     {run.report && (

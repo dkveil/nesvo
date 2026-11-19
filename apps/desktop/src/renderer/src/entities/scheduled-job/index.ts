@@ -1,3 +1,4 @@
+import { formatDateTime } from '@/shared/lib/format-date';
 import {
   describeSchedule,
   previewOccurrences,
@@ -179,13 +180,7 @@ export const formatOccurrence = (date: Date, timeZone: string) =>
     .format(date)
     .replace(',', '');
 
-export const formatRunTime = (iso: string) =>
-  new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
+export const formatRunTime = formatDateTime;
 
 export const formatDuration = (run: ScheduledJobRun, now: number) => {
   if (!run.startedAt) return '';

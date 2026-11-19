@@ -40,11 +40,11 @@ function EditorGroup({
   children: ReactNode;
 }) {
   return (
-    <section aria-label={title} className="space-y-3">
+    <section aria-label={title} className="space-y-1.5">
       <SectionLabel as="h3" className="px-0">
         {title}
       </SectionLabel>
-      <div className="space-y-4">{children}</div>
+      <div className="space-y-2.5">{children}</div>
     </section>
   );
 }
@@ -63,9 +63,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
         data-automation-editor=""
         showCloseButton={!editor.pending}
         surface="panel"
-        className="flex h-[min(90vh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+        className="flex h-[min(calc(100dvh-2rem),52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
       >
-        <DialogHeader className="border-b border-info-panel-divider px-6 py-4">
+        <DialogHeader className="border-b border-info-panel-divider px-5 py-2.5">
           <DialogTitle>{automationEditorTitle(editor.editing)}</DialogTitle>
           <DialogDescription>
             {automationEditorDescription(editor.values)}
@@ -81,19 +81,21 @@ export function AutomationEditor(props: AutomationEditorProps) {
           }}
         >
           <ScrollArea className="min-h-0 flex-1">
-            <div className="grid gap-x-10 gap-y-6 px-6 py-5 md:grid-cols-2">
-              <div className="min-w-0 space-y-6">
+            <div className="px-5 pt-2.5">
+              <RitualTemplates editor={editor} />
+            </div>
+            <div className="grid gap-x-6 gap-y-3 px-5 py-3 md:grid-cols-2">
+              <div className="min-w-0 space-y-3">
                 <EditorGroup title="Task">
-                  <RitualTemplates editor={editor} />
                   <AutomationNameField editor={editor} />
-                  <AutomationTaskFields editor={editor} />
                 </EditorGroup>
                 <EditorGroup title="Computer and model">
                   <AutomationLocationField editor={editor} />
                   <AutomationModelField editor={editor} />
                 </EditorGroup>
+                <AutomationTaskFields editor={editor} />
               </div>
-              <div className="min-w-0 space-y-6">
+              <div className="min-w-0 space-y-3">
                 <EditorGroup title="Schedule">
                   <AutomationScheduleField editor={editor} />
                 </EditorGroup>

@@ -66,8 +66,15 @@ export type AutomationField =
 
 export type AutomationErrors = Partial<Record<AutomationField, string>>;
 
-export const REVIEW_CHECK_COMMAND =
-  '["gh", "pr", "list", "--state", "open", "--json", "number,headRefOid"]';
+export const REVIEW_CHECK_COMMAND = [
+  'gh',
+  'pr',
+  'list',
+  '--state',
+  'open',
+  '--json',
+  'number,headRefOid',
+].join('\n');
 
 export const SKILL_PROMPT_MESSAGE =
   'Choose a skill from the list or remove the slash query.';
@@ -141,7 +148,7 @@ export const automationValues = (job: ScheduledJob): AutomationValues => ({
   active: job.active,
   workflow: job.workflow,
   checkEnabled: !!job.changeTrigger,
-  checkCommand: job.changeTrigger ? JSON.stringify(job.changeTrigger.argv) : '',
+  checkCommand: job.changeTrigger ? job.changeTrigger.argv.join('\n') : '',
   dailyRunCap: String(
     job.redCi?.dailyRunCap ??
       job.changeTrigger?.dailyRunCap ??
@@ -166,11 +173,15 @@ const wholeNumber = (value: string) =>
   /^\d+$/.test(value.trim()) ? Number(value.trim()) : Number.NaN;
 
 const checkArguments = (value: string): unknown => {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
+  if (value.trimStart().startsWith('[')) {
+    try {
+      const argv: unknown = JSON.parse(value);
+      if (Array.isArray(argv)) return argv;
+    } catch {
+      return null;
+    }
   }
+  return value.trimEnd().split(/\r?\n/);
 };
 
 export const scheduleOf = (
@@ -254,7 +265,7 @@ export const validateAutomation = (
       ).success
     )
       errors.checkCommand =
-        'Enter a JSON array with an executable and up to 31 arguments.';
+        'Enter the executable and up to 31 arguments, one per line.';
   }
   if (values.checkEnabled || values.redCi) {
     const cap = wholeNumber(values.dailyRunCap);

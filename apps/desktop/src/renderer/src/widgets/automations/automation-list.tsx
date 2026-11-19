@@ -60,7 +60,7 @@ export function AutomationList({
     <ScrollArea className="min-h-0 min-w-0 flex-1">
       <section
         aria-label="Automations"
-        className="mx-auto w-full max-w-4xl px-5 py-6 lg:px-8"
+        className="mx-auto w-full max-w-5xl px-5 py-4 xl:ml-5"
       >
         <div className="mb-3 flex items-center justify-between gap-3 px-2">
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -93,7 +93,7 @@ export function AutomationList({
           />
         )}
         {jobs.length > 0 ? (
-          <ul className="space-y-px">
+          <ul className="divide-y divide-border/55">
             {jobs.map(job => {
               const key = entityKey(job);
               const run = latestRun(job);
@@ -117,10 +117,15 @@ export function AutomationList({
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="truncate">{job.name}</span>
                         {added && <AddedByAssistantBadge />}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {job.active && job.nextRunAt
+                            ? `Next ${formatUntil(job.nextRunAt, now)}`
+                            : 'Paused'}
+                        </span>
                       </span>
                     }
                     description={
-                      <span className="flex min-w-0 items-center gap-2.5">
+                      <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
                         <ScheduleChip job={job} />
                         <ComputerChip computer={computer} />
                         <FolderChip directory={job.directory} />
@@ -129,11 +134,6 @@ export function AutomationList({
                     }
                     trailing={
                       <span className="flex flex-col items-end gap-0.5">
-                        <span>
-                          {job.active && job.nextRunAt
-                            ? `Next ${formatUntil(job.nextRunAt, now)}`
-                            : 'Paused'}
-                        </span>
                         {run ? (
                           <RunStatus run={run} className="max-w-56" />
                         ) : (

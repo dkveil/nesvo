@@ -7,6 +7,7 @@ import { ModelPicker } from '@/features/new-thread/model-picker';
 import { Badge } from '@/shared/ui/badge';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
+import { Textarea } from '@/shared/ui/textarea';
 import { Switch } from '@/shared/ui/switch';
 import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
 import { errorMessages, messagesId } from './field-messages';
@@ -399,14 +400,15 @@ export function AutomationTriggerFields({ editor }: SectionProps) {
         <Field
           id="automation-check-command"
           label="Check command"
-          hint="The program and its arguments as a JSON array. Runs in the selected folder."
+          hint="Enter the program on the first line and each argument on its own line. Runs in the selected folder."
           messages={errorMessages(visible('checkCommand'))}
         >
-          <Input
-            size="md"
+          <Textarea
+            resize="none"
+            rows={3}
             id="automation-check-command"
             data-field="checkCommand"
-            placeholder='["git", "rev-parse", "HEAD"]'
+            placeholder={'git\nrev-parse\nHEAD'}
             value={values.checkCommand}
             spellCheck={false}
             aria-invalid={!!visible('checkCommand')}
