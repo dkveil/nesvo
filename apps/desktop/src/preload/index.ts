@@ -5,6 +5,19 @@ import {
 } from '@nesvo/contracts';
 import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
 import {
+  configurationDecisionSchema,
+  configurationDevicesSchema,
+  configurationEnrollmentSchema,
+  configurationEnrollSchema,
+  configurationHistoryInputSchema,
+  configurationInboxLookupResultSchema,
+  configurationInboxLookupSchema,
+  configurationInboxSendResultSchema,
+  configurationInboxSendSchema,
+  configurationResultSchema,
+  configurationUndoSchema,
+} from '@nesvo/contracts';
+import {
   aboutInfoSchema,
   databaseBackupSchema,
   saveTextFileSchema,
@@ -571,6 +584,74 @@ const workflows: DesktopApi['workflows'] = {
     ),
 };
 const api: DesktopApi = {
+  configuration: {
+    lookup: async (input, hostId) =>
+      configurationInboxLookupResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:lookup-inbox-assistant',
+          configurationInboxLookupSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    send: async (input, hostId) =>
+      configurationInboxSendResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:send-inbox-assistant',
+          configurationInboxSendSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    history: async (input, hostId) =>
+      configurationResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-config-changes',
+          configurationHistoryInputSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    decide: async (input, hostId) =>
+      configurationResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:decide-config-proposal',
+          configurationDecisionSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    undo: async (input, hostId) =>
+      configurationResultSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:undo-config-change',
+          configurationUndoSchema.parse(input),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    devices: async hostId =>
+      configurationDevicesSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:list-config-devices',
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+    enroll: async (input, hostId) => {
+      const value = await ipcRenderer.invoke(
+        'nesvo:enroll-config-device',
+        configurationEnrollSchema.parse(input),
+        hostIdSchema.parse(hostId),
+      );
+      const parsed = configurationEnrollmentSchema.safeParse(value);
+      return parsed.success
+        ? parsed.data
+        : configurationResultSchema.parse(value);
+    },
+    revoke: async (id, hostId) =>
+      configurationDevicesSchema.parse(
+        await ipcRenderer.invoke(
+          'nesvo:revoke-config-device',
+          externalInboxDeviceIdSchema.parse({ deviceId: id }),
+          hostIdSchema.parse(hostId),
+        ),
+      ),
+  },
   scheduledJobs,
   workflows,
   sharing,

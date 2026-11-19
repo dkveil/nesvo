@@ -42,6 +42,14 @@ import { launchMcpTerminal, launchTerminal } from './session-terminal';
 import { aboutInfo, openLicenses, saveTextFile, showBackup } from './app-files';
 import { openAttachmentFile } from './attachment-files';
 import { inboxCliInstallation } from './external-inbox-cli';
+import {
+  configurationDecisionSchema,
+  configurationEnrollSchema,
+  configurationHistoryInputSchema,
+  configurationInboxLookupSchema,
+  configurationInboxSendSchema,
+  configurationUndoSchema,
+} from '@nesvo/contracts';
 import { readColorScheme, saveColorScheme } from './appearance-store';
 import { findImportLink, SHARE_PROTOCOL } from './share-link';
 import { createWorkflowSharing } from './workflow-sharing';
@@ -1174,6 +1182,37 @@ void app.whenReady().then(async () => {
     },
   );
   const inboxRuleCalls = [
+    [
+      'nesvo:lookup-inbox-assistant',
+      'lookup-inbox-assistant',
+      configurationInboxLookupSchema,
+    ],
+    [
+      'nesvo:send-inbox-assistant',
+      'send-inbox-assistant',
+      configurationInboxSendSchema,
+    ],
+    [
+      'nesvo:list-config-changes',
+      'list-config-changes',
+      configurationHistoryInputSchema,
+    ],
+    [
+      'nesvo:decide-config-proposal',
+      'decide-config-proposal',
+      configurationDecisionSchema,
+    ],
+    ['nesvo:undo-config-change', 'undo-config-change', configurationUndoSchema],
+    [
+      'nesvo:enroll-config-device',
+      'enroll-config-device',
+      configurationEnrollSchema,
+    ],
+    [
+      'nesvo:revoke-config-device',
+      'revoke-config-device',
+      externalInboxDeviceIdSchema,
+    ],
     ['nesvo:list-inbox-rules', 'list-inbox-rules', listInboxRulesSchema],
     [
       'nesvo:validate-inbox-rule',
@@ -1209,6 +1248,10 @@ void app.whenReady().then(async () => {
   handle('nesvo:list-inbox-items', (event, hostId: unknown) => {
     authorize(event);
     return computers.execute('list-inbox-items', undefined, route(hostId));
+  });
+  handle('nesvo:list-config-devices', (event, hostId: unknown) => {
+    authorize(event);
+    return computers.execute('list-config-devices', undefined, route(hostId));
   });
   handle('nesvo:list-external-inbox-devices', (event, hostId: unknown) => {
     authorize(event);

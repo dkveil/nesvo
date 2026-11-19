@@ -1753,7 +1753,10 @@ export class ComputerManager {
       if (publish) this.publish({ ...event, hostId });
       return;
     }
-    if (event.type === 'inbox-item-changed') {
+    if (
+      event.type === 'inbox-item-changed' ||
+      event.type === 'configuration-changed'
+    ) {
       if (publish) this.publish({ ...event, hostId });
       return;
     }

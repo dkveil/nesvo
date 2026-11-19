@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -18,6 +18,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import { chromium, _electron as electron } from 'playwright';
 import { createProfileDirectory } from '../apps/host/tests/provider-profile-directory.mjs';
 import { smokeGateRuleFlow } from './gate-rule-flow-smoke.mjs';
@@ -103,8 +104,15 @@ const fullSessions = target =>
 const byId = values =>
   values.toSorted((left, right) => left.id.localeCompare(right.id));
 const launchArgs = [resolve('apps/desktop')];
+const configurationScreenshots = process.env.NESVO_D85_SCREENSHOTS;
 const inboxOutcomeScreenshots = process.env.NESVO_INBOX_OUTCOME_SCREENSHOT_DIR;
-if (inboxOutcomeScreenshots) launchArgs.push('--remote-debugging-port=9244');
+if (configurationScreenshots)
+  launchArgs.push(
+    '--remote-debugging-port=9250',
+    '--force-device-scale-factor=1',
+  );
+else if (inboxOutcomeScreenshots)
+  launchArgs.push('--remote-debugging-port=9244');
 const launchApplication = (overrides = {}) =>
   electron.launch({
     executablePath,
@@ -113,6 +121,114 @@ const launchApplication = (overrides = {}) =>
     timeout: 30000,
   });
 let smokeFailure;
+async function configurationShot(app, page, name) {
+  if (!configurationScreenshots) return;
+  await mkdir(configurationScreenshots, { recursive: true });
+  const original = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].getContentSize(),
+  );
+  for (const size of [
+    [1280, 800],
+    [1920, 1080],
+  ]) {
+    await app.evaluate(
+      ({ BrowserWindow }, [width, height]) =>
+        BrowserWindow.getAllWindows()[0].setContentSize(width, height),
+      size,
+    );
+    await page.waitForFunction(
+      ([width, height]) => innerWidth === width && innerHeight === height,
+      size,
+    );
+    const image = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
+        .toPNG()
+        .toString('base64'),
+    );
+    await writeFile(
+      join(configurationScreenshots, `${name}-${size.join('x')}.png`),
+      Buffer.from(image, 'base64'),
+    );
+  }
+  await app.evaluate(
+    ({ BrowserWindow }, [width, height]) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(width, height),
+    original,
+  );
+}
+
+async function smokeConfigurationInbox(app, page) {
+  const device = await page.evaluate(() =>
+    window.nesvo.enrollExternalInboxDevice({ name: 'Fixture Sender' }, 'local'),
+  );
+  const cliEnv = {
+    ...env,
+    NESVO_INBOX_TOKEN: device.token,
+    NESVO_INBOX_CONFIG: '',
+    NESVO_INBOX_SSH: '',
+  };
+  const post = await promisify(execFile)(
+    process.execPath,
+    [
+      'apps/host/dist/cli.js',
+      'inbox',
+      'post',
+      '--title',
+      'Release check',
+      '--body',
+      'The test release has passed its checks.',
+      '--actions',
+      'Review,Decline',
+      '--json',
+    ],
+    { env: cliEnv, windowsHide: true },
+  );
+  const item = JSON.parse(post.stdout);
+  await page.getByRole('button', { name: /^Inbox/ }).click();
+  const source = page.getByRole('article', {
+    name: 'External Inbox item: Release check',
+  });
+  const row = page.locator('[data-inbox-row]').filter({ has: source });
+  await row.getByRole('button', { name: 'Inbox item actions' }).click();
+  await page
+    .getByRole('menuitem', { name: 'Change how this reaches me' })
+    .click();
+  const drawer = page.locator(
+    '[data-slot="side-panel"][aria-label="Inbox assistant"]',
+  );
+  await drawer.getByText('Why this is here').waitFor();
+  const input = drawer.getByRole('textbox', {
+    name: 'Message to Inbox assistant',
+  });
+  await input.fill('Keep future external items in the Inbox.');
+  await drawer.getByRole('button', { name: 'Send to Inbox assistant' }).click();
+  const proposal = drawer.getByRole('article', {
+    name: 'Configuration change external-inbox-fixture',
+  });
+  await proposal
+    .getByRole('button', { name: 'Review diff for external-inbox-fixture' })
+    .click();
+  await configurationShot(app, page, 'stage-1-inbox-assistant');
+  await proposal.getByRole('button', { name: 'Accept', exact: true }).click();
+  await proposal.getByRole('button', { name: 'Undo', exact: true }).click();
+  await proposal.getByText('Undone', { exact: true }).waitFor();
+  await drawer.getByRole('button', { name: 'Close Inbox assistant' }).click();
+  const unchanged = await promisify(execFile)(
+    process.execPath,
+    ['apps/host/dist/cli.js', 'inbox', 'status', item.id, '--json'],
+    { env: cliEnv, windowsHide: true },
+  );
+  assert.equal(JSON.parse(unchanged.stdout).status, 'pending');
+  await promisify(execFile)(
+    process.execPath,
+    ['apps/host/dist/cli.js', 'inbox', 'cancel', item.id],
+    { env: cliEnv, windowsHide: true },
+  );
+  await page.evaluate(
+    id => window.nesvo.revokeExternalInboxDevice({ deviceId: id }, 'local'),
+    device.device.id,
+  );
+}
 const providerPids = new Set();
 const alive = pid => {
   try {
@@ -1129,7 +1245,9 @@ try {
     'mcp-auth',
     'group-cost-budgets',
     'manager-import',
+    'configuration',
   ]);
+  await smokeConfigurationInbox(application, page);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(
     'save',

@@ -13,7 +13,10 @@ export * from './configuration-inbox';
 import {
   configurationInboxContextSchema,
   configurationInboxLookupSchema,
+  configurationInboxLookupResultSchema,
   configurationInboxSendSchema,
+  configurationInboxSendResultSchema,
+  type ConfigurationInboxLookup,
 } from './configuration-inbox';
 import {
   configurationChangeSchema,
@@ -27,6 +30,11 @@ import {
   configurationResultSchema,
   configurationTargetSchema,
   configurationUndoSchema,
+  type ConfigurationHistoryInput,
+  type ConfigurationResult,
+  type ConfigurationDevice,
+  type ConfigurationEnroll,
+  type ConfigurationEnrollment,
 } from './configuration';
 import {
   claudeAutonomyInputSchema,
@@ -2184,6 +2192,34 @@ export type WorkflowsApi = {
   ) => Promise<AssistantChangeHistory>;
 };
 export type DesktopApi = {
+  configuration: {
+    lookup: (
+      input: ConfigurationInboxLookup,
+      hostId: HostId,
+    ) => Promise<z.infer<typeof configurationInboxLookupResultSchema>>;
+    send: (
+      input: z.input<typeof configurationInboxSendSchema>,
+      hostId: HostId,
+    ) => Promise<z.infer<typeof configurationInboxSendResultSchema>>;
+    history: (
+      input: ConfigurationHistoryInput,
+      hostId: HostId,
+    ) => Promise<ConfigurationResult>;
+    decide: (
+      input: z.input<typeof configurationDecisionSchema>,
+      hostId: HostId,
+    ) => Promise<ConfigurationResult>;
+    undo: (
+      input: z.input<typeof configurationUndoSchema>,
+      hostId: HostId,
+    ) => Promise<ConfigurationResult>;
+    devices: (hostId: HostId) => Promise<ConfigurationDevice[]>;
+    enroll: (
+      input: ConfigurationEnroll,
+      hostId: HostId,
+    ) => Promise<ConfigurationEnrollment | ConfigurationResult>;
+    revoke: (id: string, hostId: HostId) => Promise<ConfigurationDevice[]>;
+  };
   scheduledJobs: ScheduledJobsApi;
   workflows: WorkflowsApi;
   sharing: WorkflowSharingApi;

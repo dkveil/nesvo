@@ -24,6 +24,7 @@ import {
 } from './workflows';
 
 import { inboxItemSchema } from './inbox-rules';
+import { configurationChangeSchema } from './configuration';
 
 export const hostIdSchema = z.union([z.literal('local'), z.uuid()]);
 export type HostId = z.infer<typeof hostIdSchema>;
@@ -244,6 +245,11 @@ export type DesktopWorkflowRunDetail = z.infer<
 >;
 
 export const workspaceEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('configuration-changed'),
+    hostId: hostIdSchema,
+    change: configurationChangeSchema,
+  }),
   z.strictObject({
     type: z.literal('session-changed'),
     session: desktopSessionSchema,

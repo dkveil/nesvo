@@ -854,7 +854,7 @@ export class InboxRules {
     const warning = needPrompts.find(rule => rule.on_unsupported === 'warn');
     const route = (trigger: InboxRuleTrigger) => {
       const match = rules.find(({ rule }) => rule.trigger === trigger && rule.action === 'route');
-      return match ? this.routeFor(match.rule, session) : undefined;
+      return match ? this.resolveRoute(match, session).route : undefined;
     };
     return {
       decisionRoute: route('decision-needed'),

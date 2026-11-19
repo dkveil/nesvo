@@ -9,6 +9,7 @@ const sessionSubject = z.enum([
   'parent',
   'plan',
   'question',
+  'turn-question',
   'report',
   'coordinator-wait',
 ]);
@@ -46,6 +47,13 @@ export const configurationInboxContextSchema = z.strictObject({
     })
     .nullable(),
   routing: inboxRoutingReceiptSchema.nullable(),
+});
+export const configurationInboxLookupResultSchema = z.strictObject({
+  context: configurationInboxContextSchema,
+  sessionId: z.uuid().nullable(),
+});
+export const configurationInboxSendResultSchema = z.strictObject({
+  sessionId: z.uuid(),
 });
 export const configurationInboxOutputSchema = z.strictObject({
   reply: z.string().max(4000),

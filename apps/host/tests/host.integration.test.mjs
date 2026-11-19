@@ -854,7 +854,17 @@ test(
     const catalog = await rpc('tools/list', {}, 2);
     assert.deepEqual(
       catalog.tools.map(tool => tool.name),
-      ['inbox_post', 'inbox_status', 'inbox_cancel'],
+      [
+        'inbox_post',
+        'inbox_status',
+        'inbox_cancel',
+        'config_capabilities',
+        'config_list',
+        'config_get',
+        'config_propose',
+        'config_apply',
+        'config_status',
+      ],
     );
     const posted = await rpc(
       'tools/call',

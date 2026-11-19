@@ -240,6 +240,9 @@ export const configurationEnrollSchema = z
 export const configurationDeviceSchema = externalInboxDeviceSchema.extend({
   grants: configurationEnrollSchema.shape.grants,
 });
+export const configurationDevicesSchema = z
+  .array(configurationDeviceSchema)
+  .max(20);
 export const configurationEnrollmentSchema = z.strictObject({
   device: configurationDeviceSchema,
   token: externalInboxTokenSchema,

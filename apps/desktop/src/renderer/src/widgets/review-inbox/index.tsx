@@ -16,7 +16,18 @@ import {
   type RespondApprovalInput,
   type StageQuestionRecord,
 } from '@nesvo/contracts';
-import { ArrowUpRight, Inbox } from 'lucide-react';
+import { ArrowUpRight, Ellipsis, Inbox, MessageSquareText } from 'lucide-react';
+import type { ConfigurationInboxSubject, HostId } from '@nesvo/contracts';
+import { ConfigurationChangeRow } from '@/features/configuration/change-row';
+import { useConfigurationChanges } from '@/features/configuration/use-configuration-changes';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
+import { IconButton } from '@/shared/ui/icon-button';
+import { InboxAssistant } from './inbox-assistant';
 import {
   compactPreview,
   reviewDate,
@@ -185,6 +196,58 @@ type ActionRow =
       at: string;
       id: string;
     };
+
+type AssistantSelection = {
+  hostId: HostId;
+  subject: ConfigurationInboxSubject | null;
+};
+
+function assistantSubject(row: ActionRow): AssistantSelection | null {
+  switch (row.type) {
+    case 'rule':
+      return {
+        hostId: row.item.hostId,
+        subject: { kind: 'rule', id: row.item.id },
+      };
+    case 'review':
+      return {
+        hostId: row.review.hostId,
+        subject: { kind: 'review', id: row.review.id },
+      };
+    case 'automation':
+      return {
+        hostId: row.job.hostId,
+        subject: { kind: 'automation', id: row.job.id },
+      };
+    case 'gate-rule-proposal':
+      return {
+        hostId: row.hostId,
+        subject: { kind: 'gate-rule-proposal', id: row.row.id },
+      };
+    default: {
+      const id =
+        row.type === 'approval'
+          ? row.approval.id
+          : row.type === 'delegation'
+            ? row.delegation.id
+            : row.type === 'plan'
+              ? row.plan.id
+              : row.type === 'parent'
+                ? row.request.id
+                : row.type === 'question'
+                  ? row.record.id
+                  : row.type === 'turn-question'
+                    ? row.question.messageId
+                    : row.session.coordinatorWait?.runId;
+      return id
+        ? {
+            hostId: row.session.hostId,
+            subject: { kind: row.type, id, sessionId: row.session.id },
+          }
+        : null;
+    }
+  }
+}
 
 function FullText({ text, children }: { text: string; children: ReactNode }) {
   return (
@@ -644,13 +707,30 @@ export function ReviewInbox({
     (left, right) =>
       right.at.localeCompare(left.at) || left.id.localeCompare(right.id),
   );
+  const [assistant, setAssistant] = useState<AssistantSelection | null>(null);
+  const changes = useConfigurationChanges(computers);
+  const shownChanges = changes.filter(
+    change =>
+      filter === 'all' ||
+      (filter === 'pending'
+        ? change.status === 'pending'
+        : change.status !== 'pending'),
+  );
+  const activeComputer = computers.find(
+    computer => computer.id === assistant?.hostId,
+  );
+  const defaultComputer = computers.find(
+    computer =>
+      computer.status === 'connected' &&
+      computer.capabilities.includes('configuration'),
+  );
   const location = (hostId: string) => {
     const online = isOperationEnabled({ hostId });
     if (hostId === 'local' && computers.length <= 1 && online) return '';
     const name = computers.find(item => item.id === hostId)?.name ?? hostId;
     return online ? name : `${name} · Offline snapshot`;
   };
-  return (
+  const inbox = (
     <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:h-full [&_[data-slot=scroll-area-viewport]]:scroll-pt-12">
       <section
         aria-label="Inbox"
@@ -658,9 +738,20 @@ export function ReviewInbox({
       >
         <div className="sticky top-0 z-10 mb-1 flex items-center justify-between gap-3 border-b bg-background px-2 py-2">
           <span className="text-xs text-muted-foreground tabular-nums">
-            {decisionCount > 0 &&
-              `${decisionCount} ${filter === 'history' ? 'past decisions' : filter === 'all' ? 'items' : 'pending'}`}
+            {decisionCount + shownChanges.length > 0 &&
+              `${decisionCount + shownChanges.length} ${filter === 'history' ? 'past decisions' : filter === 'all' ? 'items' : 'pending'}`}
           </span>
+          {defaultComputer && (
+            <IconButton
+              className="ml-auto"
+              label="Open Inbox assistant"
+              onClick={() =>
+                setAssistant({ hostId: defaultComputer.id, subject: null })
+              }
+            >
+              <MessageSquareText />
+            </IconButton>
+          )}
           <SegmentedControl<Filter>
             label="Inbox view"
             value={filter}
@@ -716,9 +807,51 @@ export function ReviewInbox({
               Reconnect to respond to pending requests.
             </StatusMessage>
           )}
+        {shownChanges.map(change => (
+          <ConfigurationChangeRow
+            key={change.id}
+            change={change}
+            computer={location(change.hostId) || 'Local'}
+            online={isOperationEnabled(change)}
+            onOpenSession={id => onSession(hostKey(id, change.hostId))}
+          />
+        ))}
         {rows.length > 0 ? (
           <div className="divide-y divide-border/55">
             {rows.map(row => {
+              const wrap = (content: ReactNode) => {
+                const selection = assistantSubject(row);
+                const supports = computers.some(
+                  computer =>
+                    computer.id === selection?.hostId &&
+                    computer.capabilities.includes('configuration'),
+                );
+                return (
+                  <div
+                    key={row.id}
+                    data-inbox-row=""
+                    className="flex min-w-0 items-center"
+                  >
+                    <div className="min-w-0 flex-1">{content}</div>
+                    {selection && supports && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <IconButton label="Inbox item actions">
+                            <Ellipsis />
+                          </IconButton>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={() => setAssistant(selection)}
+                          >
+                            Change how this reaches me
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                );
+              };
               if (row.type === 'gate-rule-proposal') {
                 const title =
                   sessions.find(
@@ -770,7 +903,7 @@ export function ReviewInbox({
                       </div>
                     </ActionItem>
                   );
-                return (
+                return wrap(
                   <GateRuleRow
                     key={row.id}
                     row={row.row}
@@ -782,12 +915,12 @@ export function ReviewInbox({
                       setUndoError('');
                       setGateFeedback({ row: saved, hostId });
                     }}
-                  />
+                  />,
                 );
               }
               if (row.type === 'coordinator-wait') {
                 const { session } = row;
-                return (
+                return wrap(
                   <ListRow
                     key={row.id}
                     title={session.title}
@@ -801,12 +934,12 @@ export function ReviewInbox({
                       />
                     }
                     actionsPlacement="visible"
-                  />
+                  />,
                 );
               }
               if (row.type === 'turn-question') {
                 const { session, question } = row;
-                return (
+                return wrap(
                   <ActionItem
                     key={row.id}
                     aria-label={`Question for you: ${session.title}`}
@@ -841,7 +974,7 @@ export function ReviewInbox({
                         onReply(session, question.runId, text, messageId)
                       }
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'workflow-gate') {
@@ -901,7 +1034,7 @@ export function ReviewInbox({
                 );
                 const reviewError =
                   decisionProps.decisionErrors[entityKey(review)];
-                return (
+                return wrap(
                   <ActionItem
                     key={`review/${row.id}`}
                     aria-label={`Review result: ${review.title}, version ${review.version}`}
@@ -985,7 +1118,7 @@ export function ReviewInbox({
                         </StatusMessage>
                       )
                     )}
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'rule') {
@@ -996,7 +1129,7 @@ export function ReviewInbox({
                     session.id === item.sessionId &&
                     session.hostId === item.hostId,
                 );
-                return (
+                return wrap(
                   <ActionItem
                     key={`rule/${row.id}`}
                     aria-label={
@@ -1084,14 +1217,14 @@ export function ReviewInbox({
                       error={ruleErrors[key]}
                       onDecide={decision => onRuleDecision(item, decision)}
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'automation') {
                 const { job, at } = row;
                 const key = entityKey(job);
                 const deciding = !!automationPending[key];
-                return (
+                return wrap(
                   <ActionItem
                     key={`automation/${row.id}`}
                     aria-label={`Automation start: ${job.name}`}
@@ -1127,7 +1260,7 @@ export function ReviewInbox({
                       deciding={deciding}
                       error={automationErrors[key]}
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               const { session } = row;
@@ -1142,7 +1275,7 @@ export function ReviewInbox({
               const from = parentTitle ? ` · for ${parentTitle}` : '';
               if (row.type === 'plan') {
                 const { plan } = row;
-                return (
+                return wrap(
                   <ActionItem
                     key={`plan/${row.id}`}
                     data-inbox-kind="decision-needed"
@@ -1187,12 +1320,12 @@ export function ReviewInbox({
                     }
                   >
                     <PlanDecision session={session} actions={stages} compact />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'question') {
                 const { record } = row;
-                return (
+                return wrap(
                   <ActionItem
                     key={`question/${row.id}`}
                     why={
@@ -1244,13 +1377,13 @@ export function ReviewInbox({
                       actions={stages}
                       compact
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'parent') {
                 const { request } = row;
                 const deciding = !!parentPending[row.id];
-                return (
+                return wrap(
                   <ActionItem
                     key={`parent/${row.id}`}
                     why="Asks to join a coordinator"
@@ -1296,7 +1429,7 @@ export function ReviewInbox({
                       deciding={deciding}
                       error={operationError}
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               if (row.type === 'approval') {
@@ -1304,7 +1437,7 @@ export function ReviewInbox({
                 const deciding = !!approvalPending[row.id];
                 const enabled =
                   operationEnabled && isOperationEnabled(session) && !deciding;
-                return (
+                return wrap(
                   <ActionItem
                     key={`approval/${row.id}`}
                     data-inbox-kind="decision-needed"
@@ -1366,14 +1499,14 @@ export function ReviewInbox({
                       deciding={deciding}
                       error={operationError}
                     />
-                  </ActionItem>
+                  </ActionItem>,
                 );
               }
               const { delegation } = row;
               const deciding = !!delegationPending[row.id];
               const enabled =
                 operationEnabled && isOperationEnabled(session) && !deciding;
-              return (
+              return wrap(
                 <ActionItem
                   key={`delegation/${row.id}`}
                   why={`Wants to start a worker: ${delegation.title}`}
@@ -1422,11 +1555,12 @@ export function ReviewInbox({
                     }}
                   />
                   <OperationStatus deciding={deciding} error={operationError} />
-                </ActionItem>
+                </ActionItem>,
               );
             })}
           </div>
         ) : (
+          !shownChanges.length &&
           !loading &&
           !error && (
             <EmptyState
@@ -1447,5 +1581,26 @@ export function ReviewInbox({
         )}
       </section>
     </ScrollArea>
+  );
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1">
+      {inbox}
+      {assistant && activeComputer && (
+        <InboxAssistant
+          key={
+            assistant.hostId +
+            '/' +
+            (assistant.subject?.kind ?? '') +
+            '/' +
+            (assistant.subject?.id ?? '')
+          }
+          computer={activeComputer}
+          subject={assistant.subject}
+          changes={changes}
+          close={() => setAssistant(null)}
+          openSession={id => onSession(hostKey(id, assistant.hostId))}
+        />
+      )}
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 import {
   configurationInboxOutputSchema,
+  pendingTurnQuestion,
   type ConfigurationInboxContext,
   type ConfigurationInboxLookup,
   type ConfigurationInboxSend,
@@ -27,6 +28,7 @@ type FindOther = (
   subject: Exclude<ConfigurationInboxSubject, { sessionId: string }>,
 ) => { sessionId: string | null; explanation: string } | null;
 const sources = {
+  'turn-question': 'The provider asked a question to continue its turn. Session routing affects future questions.',
   approval:
     'The provider requested approval under this session’s mode. Session routing and provider permissions affect future requests.',
   delegation:
@@ -61,6 +63,8 @@ function matchSession(
       return session.delegations.some(item => item.id === subject.id);
     case 'parent':
       return session.parentRequest?.id === subject.id;
+    case 'turn-question':
+      return pendingTurnQuestion(session)?.messageId === subject.id;
     case 'plan':
       return session.plan?.id === subject.id;
     case 'question':
@@ -83,8 +87,7 @@ const subjectKey = (subject: ConfigurationInboxSubject | null) =>
     : 'global';
 
 function routeDraft(rule: InboxRule) {
-  const { route: _route, ...fields } = rule;
-  return JSON.stringify(fields);
+  return JSON.stringify({ ...rule, route: undefined });
 }
 
 export class ConfigurationInboxAssistant {
