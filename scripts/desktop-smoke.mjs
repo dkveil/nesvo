@@ -2639,8 +2639,9 @@ async function smokeDesktop() {
   await page.waitForFunction(
     async () => (await window.nesvo.codexStatus()).status === 'ready',
   );
-  const claudeModes = (await page.evaluate(() => window.nesvo.claudeStatus()))
-    .modes;
+  const claudeModes = (
+    await page.evaluate(() => window.nesvo.claudeStatus())
+  ).modes.filter(mode => mode !== 'full-access');
   await newThread
     .getByRole('button', { name: 'Permissions', exact: true })
     .click();
