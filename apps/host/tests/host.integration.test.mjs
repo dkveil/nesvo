@@ -4669,6 +4669,7 @@ test(
         'default-session-folder',
         'worktree-recipes',
         'session-control',
+        'coordinator-orchestration',
         'workflow-sharing',
         'workflow-child-sessions',
         'session-stages',
@@ -5721,7 +5722,7 @@ test(
     const migrated = new DatabaseSync(path);
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
-      36,
+      37,
     );
     migrated.close();
     const reopened = open();
@@ -8115,7 +8116,7 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'nesvo-schema-'));
     const path = join(directory, 'nesvo.sqlite');
     const database = new DatabaseSync(path);
-    database.exec('PRAGMA user_version = 37');
+    database.exec('PRAGMA user_version = 38');
     database.close();
     const backup = 'nesvo.sqlite.v14.bak';
     await writeFile(join(directory, backup), 'backup');
@@ -8132,7 +8133,7 @@ test(
     );
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 38);
       assert.match(host.error(), /A newer Nesvo is needed/);
       assert.doesNotMatch(host.error(), /nesvo\.sqlite|backup/);
       assert.equal(await readFile(join(directory, backup), 'utf8'), 'backup');
@@ -10311,6 +10312,7 @@ test(
       'default-session-folder',
       'worktree-recipes',
       'session-control',
+      'coordinator-orchestration',
       'workflow-sharing',
       'workflow-child-sessions',
       'session-stages',
@@ -11211,7 +11213,7 @@ test(
         try {
           assert.equal(
             upgraded.prepare('PRAGMA user_version').get().user_version,
-            36,
+            37,
           );
           for (const [table, column] of [
             ['scheduled_jobs', 'workflow'],
@@ -11298,7 +11300,7 @@ test(
       const newerPath = join(directory, 'newer');
       await mkdir(newerPath);
       const newer = new DatabaseSync(join(newerPath, 'nesvo.sqlite'));
-      newer.exec('PRAGMA user_version = 37');
+      newer.exec('PRAGMA user_version = 38');
       newer.close();
       const host = launch(newerPath, join(newerPath, 'pids.json'));
       assert.equal(
@@ -11310,7 +11312,7 @@ test(
       try {
         assert.equal(
           check.prepare('PRAGMA user_version').get().user_version,
-          37,
+          38,
         );
       } finally {
         check.close();
@@ -14351,7 +14353,7 @@ test(
       assert.equal(session.messages[0].origin, 'workflow');
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        36,
+        37,
       );
       const indexes = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -14402,7 +14404,7 @@ test(
     try {
       assert.equal(
         upgraded.prepare('PRAGMA user_version').get().user_version,
-        36,
+        37,
       );
       assert.ok(tables(upgraded).includes('assistant_changes'));
       assert.equal(
@@ -23967,7 +23969,7 @@ test('History search backfills and tracks the host session documents', async () 
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 250');
     assert.equal(
       database.prepare('PRAGMA user_version').get().user_version,
-      36,
+      37,
     );
     database
       .prepare(
@@ -24330,7 +24332,7 @@ test(
     await host.stop();
     const check = new DatabaseSync(path);
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
       check.exec(
         'DROP TABLE session_control_events; DROP TABLE session_control_children; DROP TABLE session_control_actions; DROP TABLE session_control_policy; PRAGMA user_version = 22',
       );
@@ -24345,7 +24347,7 @@ test(
     try {
       assert.equal(
         migrated.prepare('PRAGMA user_version').get().user_version,
-        36,
+        37,
       );
       assert.deepEqual(
         migrated
@@ -24525,7 +24527,7 @@ test(
 
     const check = new DatabaseSync(join(directory, 'nesvo.sqlite'));
     try {
-      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 36);
+      assert.equal(check.prepare('PRAGMA user_version').get().user_version, 37);
       const tombstone = check
         .prepare(
           'SELECT purged_at FROM session_tombstones WHERE session_id = ?',
@@ -29966,7 +29968,7 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     ]);
     assert.equal(replayed[0].result.sessionId, childA);
     assert.equal(replayed[0].result.actionId, created[0].result.actionId);
-    assert.deepEqual(replayed[1].result, accepted.result);
+    assert.equal(replayed[1].result.code, 'invalid');
     assert.ok(
       replayed[2].result.events.some(
         event =>
@@ -30029,6 +30031,103 @@ test('a Claude coordinator creates, steers and waits for child sessions through 
     await rm(directory, { recursive: true, force: true });
     await rm(elsewhere, { recursive: true, force: true });
   }
+});
+
+test('D87 wakes an idle coordinator once with exact direct child runs and the recorded thread', async t => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-d87-wake-')),
+  );
+  const host = launch(directory, join(directory, 'fixture.pid'));
+  t.after(async () => {
+    await host.stop();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await host.request('save-session-control-policy', { enabled: true });
+  const parent = (
+    await host.request('create-session', {
+      title: 'Coordinator',
+      provider: 'Codex',
+      model: 'fixture-codex',
+      directory,
+    })
+  ).session;
+
+  const created = await controlTurn(host, parent.id, [
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'First',
+        provider: 'Claude Code',
+        model: 'default',
+        prompt: 'fixture:say First done',
+      },
+    },
+    {
+      tool: 'session_create',
+      arguments: {
+        title: 'Second',
+        provider: 'Claude Code',
+        model: 'default',
+        prompt: 'fixture:say Second done',
+      },
+    },
+  ]);
+  assert.ok(
+    created.every(item => item.success),
+    JSON.stringify(created),
+  );
+  const settledParent = (
+    await host.request('get-session', { sessionId: parent.id })
+  ).session;
+  const firstRunId = settledParent.messages[0].runId;
+  const children = await Promise.all(
+    created.map(item => finishedChild(host, item.result.sessionId)),
+  );
+  const delivery = await host.event(
+    item =>
+      item.id === parent.id &&
+      item.runId !== firstRunId &&
+      item.status === 'completed',
+  );
+  assert.equal(delivery.providerSessionId, settledParent.providerSessionId);
+  assert.equal(delivery.mode, settledParent.mode);
+  const wakes = delivery.messages.filter(
+    message => message.origin === 'coordinator-wake',
+  );
+  assert.equal(wakes.length, 1);
+  for (const child of children) {
+    assert.ok(wakes[0].body.includes(child.id));
+    assert.ok(wakes[0].body.includes(child.runId));
+  }
+  const { state } = await host.request('read-coordinator-wake', {
+    sessionId: parent.id,
+  });
+  assert.equal(state.pending, 0);
+  assert.equal(state.directChildren, 2);
+  assert.equal(state.effective, true);
+
+  const action = {
+    sessionId: parent.id,
+    enabled: false,
+    expectedRevision: state.revision,
+    actionId: randomUUID(),
+  };
+  const disabled = await host.request('set-coordinator-wake', action);
+  assert.equal(disabled.state.effective, false);
+  assert.deepEqual(
+    (await host.request('set-coordinator-wake', action)).state,
+    disabled.state,
+  );
+  assert.equal(
+    (
+      await host.request('set-coordinator-wake', {
+        ...action,
+        actionId: randomUUID(),
+        enabled: true,
+      })
+    ).type,
+    'error',
+  );
 });
 
 test('a new Codex coordinator gets Nesvo tools at thread start and keeps them on resume', async () => {

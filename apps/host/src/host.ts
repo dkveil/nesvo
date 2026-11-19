@@ -434,6 +434,7 @@ export const serveHost = ({
       let observeAssistant: (session: Session) => void = () => {};
       const control: { current?: SessionControl } = {};
       const controlStore = new SessionControlStore(database);
+      const inboxStore = new InboxItemStore(database);
       const mcpPolicy = new McpPolicy(database);
       const customWorktrees = new CustomWorktreeProviders(
         database,
@@ -507,6 +508,7 @@ export const serveHost = ({
       ) => {
         emit(message);
         if (session) {
+          control.current?.wake.signal();
           observeAssistant(session);
           control.current?.observe(session);
         }
@@ -527,6 +529,11 @@ export const serveHost = ({
               {
                 autonomy: claudeAutonomy,
                 control: {
+                  captureTerminal: session =>
+                    control.current?.captureTerminal(session),
+                  captureQuestion: (session, record) =>
+                    control.current?.captureQuestion(session, record),
+                  stopped: sessionId => control.current?.stopped(sessionId),
                   available: session =>
                     control.current?.bridge().available(session) ?? false,
                   call: (caller, call, signal) =>
@@ -638,8 +645,20 @@ export const serveHost = ({
         store: controlStore,
         sessions,
         signal: probes.controller.signal,
+        route: session => inbox.current?.sessionRoute(session) ?? 'inbox',
+        gate: (sessionId, runId) => inboxStore.deliveryGate(sessionId, runId),
       });
       control.current = sessionControl;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          sessions.onFolderReleased(() => sessionControl.wake.signal()),
+        ),
+        release =>
+          Effect.sync(() => {
+            release();
+            sessionControl.wake.close();
+          }),
+      );
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           sessions.onRunFinished(finished =>
@@ -678,7 +697,7 @@ export const serveHost = ({
       const inboxRules = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const service = new InboxRules({
-            store: new InboxItemStore(database),
+            store: inboxStore,
             sessions: {
               snapshot: id => sessions.snapshot(id),
               list: () => sessions.list(),
@@ -688,7 +707,10 @@ export const serveHost = ({
               queueOwnerMessage: (id, text) => {
                 sessions.queueOwnerMessage(id, text);
               },
-              releaseInboxHold: id => sessions.releaseInboxHold(id),
+              releaseInboxHold: id => {
+                sessions.releaseInboxHold(id);
+                sessionControl.wake.signal();
+              },
               holdQueue: id => sessions.holdQueueFor(id),
             },
             repositoryStatus: (provider, folder, signal) =>
@@ -4336,6 +4358,24 @@ export const serveHost = ({
               );
               return { type: 'session', id: request.id, session: decided };
             }
+            if (
+              request.method === 'read-coordinator-wake' ||
+              request.method === 'set-coordinator-wake'
+            )
+              return {
+                type: 'coordinator-wake',
+                id: request.id,
+                state:
+                  request.method === 'read-coordinator-wake'
+                    ? sessionControl.wake.state(request.input.sessionId)
+                    : sessionControl.wake.set(request.input),
+              };
+            if (request.method === 'continue-coordinator-delivery')
+              return {
+                type: 'coordinator-delivery',
+                id: request.id,
+                receipt: sessionControl.wake.continue(request.input),
+              };
             if (request.method === 'read-session-control-policy')
               return {
                 type: 'session-control-policy',

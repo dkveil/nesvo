@@ -13,6 +13,7 @@ import {
   sessionControlTools,
   stageTools,
   type CoordinatorPolicy,
+  type DecisionRoute,
   type ContinueCoordinatorInput,
   type ContinueWorkerInput,
   type DecideSessionParentInput,
@@ -42,6 +43,7 @@ import {
   QUESTION_RECORDED_MESSAGE,
 } from '../sessions/stages';
 import type { SessionControlStore } from './store';
+import { CoordinatorWake } from './wake';
 import { WorkspaceIsolationError } from '../workspace/isolation';
 import type {
   SessionControlBridge,
@@ -54,6 +56,8 @@ type SessionControlParams = {
   store: SessionControlStore;
   sessions: SessionService;
   signal: AbortSignal;
+  route: (session: Session) => DecisionRoute;
+  gate: (sessionId: string, runId: string) => 'hold' | 'declined' | null;
 };
 
 type Handler<T extends SessionControlToolName> = (context: {
@@ -174,10 +178,23 @@ const allowedModes = (policy: CoordinatorPolicy) =>
 export class SessionControl {
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly inFlight = new Map<string, Promise<SessionControlReply>>();
+  readonly wake: CoordinatorWake;
+  private readonly inFlightInputs = new Map<string, string>();
   private readonly creating = new Map<string, number>();
   private readonly seenApprovals = new Set<string>();
 
-  constructor(private readonly params: SessionControlParams) {}
+  constructor(private readonly params: SessionControlParams) {
+    this.wake = new CoordinatorWake({
+      ...params,
+      eligible: session => {
+        const policy = this.policy();
+        return (
+          this.eligible(session, policy) ||
+          (isCoordinatorCandidate(session) && session.delegationEnabled)
+        );
+      },
+    });
+  }
 
   bridge(): SessionControlBridge {
     return {
@@ -206,7 +223,9 @@ export class SessionControl {
   }
 
   savePolicy(policy: CoordinatorPolicy): CoordinatorPolicy {
-    return this.params.store.savePolicy(policy);
+    const saved = this.params.store.savePolicy(policy);
+    this.wake.signal();
+    return saved;
   }
 
   async call(
@@ -222,13 +241,68 @@ export class SessionControl {
     const tool = call.tool as SessionControlToolName | StageToolName;
     if (!isStageToolName(tool) && !sessionControlTools[tool].mutation)
       return this.execute(caller, tool, call.input, '', signal);
+    const coordinator = this.params.sessions.liveControlCaller(caller);
+    if (signal.aborted || !coordinator)
+      return refusal(
+        'unsupported',
+        'This tool needs the original running turn.',
+      );
+    const policy = this.policy();
+    if (
+      isStageToolName(tool)
+        ? !hasStageTools(coordinator)
+        : !this.eligible(coordinator, policy) &&
+          !(
+            tool === 'session_delegate' &&
+            isCoordinatorCandidate(coordinator) &&
+            coordinator.delegationEnabled
+          )
+    )
+      return refusal(
+        policy.enabled ? 'forbidden-by-policy' : 'disabled',
+        'This turn is outside the session control policy.',
+      );
+    const schema = isStageToolName(tool)
+      ? stageTools[tool].input
+      : sessionControlTools[tool].input;
+    const normalized = schema.safeParse(call.input);
+    if (!normalized.success)
+      return refusal(
+        'invalid',
+        normalized.error.issues[0]?.message ?? 'Invalid tool input.',
+      );
+    if (
+      'sessionId' in normalized.data &&
+      typeof normalized.data.sessionId === 'string' &&
+      tool !== 'session_set_parent' &&
+      this.params.sessions.snapshot(normalized.data.sessionId)?.parentId !==
+        coordinator.id
+    )
+      return refusal(
+        'not-in-subtree',
+        'This session is not one of your child sessions.',
+      );
+    const inputHash = createHash('sha256')
+      .update(JSON.stringify(normalized.data))
+      .digest('hex');
     const actionId = createHash('sha256')
       .update(`${caller.sessionId}\n${call.callId}`)
       .digest('hex');
     const stored = this.params.store.action(actionId);
-    if (stored) return JSON.parse(stored.result) as SessionControlReply;
+    const conflict = () =>
+      refusal(
+        'invalid',
+        'This invocation ID is already bound to another tool or input.',
+      );
+    if (stored)
+      return stored.tool === tool && stored.inputHash === inputHash
+        ? (JSON.parse(stored.result) as SessionControlReply)
+        : conflict();
     const running = this.inFlight.get(actionId);
-    if (running) return running;
+    const bound = tool + ':' + inputHash;
+    if (running)
+      return this.inFlightInputs.get(actionId) === bound ? running : conflict();
+    this.inFlightInputs.set(actionId, bound);
     const execution = (
       isStageToolName(tool)
         ? Promise.resolve(this.executeStage(caller, tool, call.input, actionId))
@@ -246,10 +320,14 @@ export class SessionControl {
           caller.sessionId,
           tool,
           JSON.stringify(recorded),
+          inputHash,
         );
         return recorded;
       })
-      .finally(() => this.inFlight.delete(actionId));
+      .finally(() => {
+        this.inFlight.delete(actionId);
+        this.inFlightInputs.delete(actionId);
+      });
     this.inFlight.set(actionId, execution);
     return execution;
   }
@@ -277,6 +355,18 @@ export class SessionControl {
   }
 
   continue(input: ContinueCoordinatorInput): Session {
+    const wake = this.wake.state(input.sessionId);
+    if (wake.batchId) {
+      this.wake.continue(
+        {
+          sessionId: input.sessionId,
+          batchId: wake.batchId,
+          messageId: input.messageId,
+        },
+        input.waitRunId,
+      );
+      return this.params.sessions.snapshot(input.sessionId)!;
+    }
     const wait = this.params.sessions.snapshot(
       input.sessionId,
     )?.coordinatorWait;
@@ -343,34 +433,107 @@ export class SessionControl {
     return session;
   }
 
-  runFinished(finished: RunFinished): void {
-    const record = this.params.store.child(finished.sessionId);
-    if (!record) return;
-    const child = this.params.sessions.snapshot(finished.sessionId);
-    if (!child || child.parentId !== record.parentId) return;
+  private capture(
+    child: Session,
+    type: 'finished' | 'failed' | 'plan-ready' | 'question',
+    decisionRecordId?: string,
+  ) {
     if (
-      child.plan?.status === 'plan-ready' &&
-      child.plan.runId === finished.runId
-    ) {
-      this.record(record.parentId, {
-        sessionId: child.id,
-        runId: finished.runId,
-        type: 'plan-ready',
-        status: finished.status,
-        summary: `${child.title} returned a plan. Read it with session_output and decide with session_decide.`,
-      });
+      !child.parentId ||
+      !child.runId ||
+      child.workflowRunId ||
+      child.scheduledJobId
+    )
       return;
+    const parent = this.params.sessions.snapshot(child.parentId);
+    if (!parent) return;
+    const summary =
+      type === 'question'
+        ? 'A child asked a question.'
+        : type === 'plan-ready'
+          ? 'A child returned a plan.'
+          : type === 'finished'
+            ? 'A child finished its turn.'
+            : 'A child run failed.';
+    this.params.store.appendEvent(
+      {
+        parentId: parent.id,
+        sessionId: child.id,
+        runId: child.runId,
+        type,
+        status: child.status,
+        summary,
+        decisionRecordId,
+      },
+      {
+        key: [parent.id, child.id, child.runId, type, decisionRecordId].join(
+          ':',
+        ),
+        enabled: this.wake.enabled(parent),
+        now: Date.now(),
+      },
+    );
+  }
+
+  captureQuestion(child: Session, record: SessionStageRecord) {
+    if (record.kind === 'question' && record.status === 'pending')
+      this.capture(child, 'question', record.id);
+  }
+
+  captureTerminal(child: Session) {
+    if (child.status !== 'completed' && child.status !== 'failed') return;
+    const question = pendingStageQuestion(child);
+    if (child.status === 'completed' && question?.runId === child.runId) return;
+    if (
+      child.status === 'completed' &&
+      child.plan?.status === 'plan-ready' &&
+      child.plan.runId === child.runId
+    )
+      this.capture(child, 'plan-ready', child.plan.id);
+    else {
+      const proposal =
+        child.parentId &&
+        this.params.sessions
+          .snapshot(child.parentId)
+          ?.delegations.find(
+            item =>
+              item.childSessionId === child.id &&
+              item.childRunId === child.runId &&
+              item.status === 'planning',
+          );
+      if (child.status === 'completed' && proposal)
+        this.capture(child, 'plan-ready', proposal.id);
+      else
+        this.capture(
+          child,
+          child.status === 'completed' ? 'finished' : 'failed',
+        );
     }
-    const completed = finished.status === 'completed';
-    this.record(record.parentId, {
-      sessionId: child.id,
-      runId: finished.runId,
-      type: completed ? 'finished' : 'failed',
-      status: finished.status,
-      summary: completed
-        ? `${child.title} finished its turn.`
-        : `${child.title} ended as ${finished.status}${child.error ? `: ${child.error}` : '.'}`,
-    });
+  }
+
+  runFinished(finished: RunFinished): void {
+    this.params.store.clearSeen(finished.runId);
+    const child = this.params.sessions.snapshot(finished.sessionId);
+    if (!child) return;
+    if (child.parentId)
+      for (const wake of this.waiters.get(child.parentId) ?? []) wake();
+    if (
+      child.status !== 'completed' &&
+      child.messages.some(
+        message =>
+          message.runId === finished.runId &&
+          message.origin === 'coordinator-wake',
+      )
+    )
+      this.params.store.pauseFuture(
+        child.id,
+        child.status === 'stopped' ? 'stopped' : 'failed',
+      );
+    this.wake.signal();
+  }
+
+  stopped(sessionId: string) {
+    this.params.store.pauseFuture(sessionId, 'stopped');
   }
 
   stageRecorded(session: Session, records: readonly SessionStageRecord[]) {
@@ -378,6 +541,10 @@ export class SessionControl {
     if (!record || !session.parentId || record.parentId !== session.parentId)
       return;
     for (const entry of records) {
+      if (entry.kind === 'question') {
+        for (const wake of this.waiters.get(record.parentId) ?? []) wake();
+        continue;
+      }
       const event = this.stageEvent(session, entry);
       if (event) this.record(record.parentId, event);
     }
@@ -700,6 +867,9 @@ export class SessionControl {
       queued: child.queue.length,
       lastActivityAt: child.updatedAt,
       pullRequest: child.pullRequest,
+      runId: child.runId,
+      ...(child.plan?.status === 'plan-ready' ? { planId: child.plan.id } : {}),
+      ...(open ? { questionId: open.id } : {}),
       report: latestStageReport(child)?.report ?? null,
       question: open?.question ?? null,
     };
@@ -776,6 +946,26 @@ export class SessionControl {
       signal.addEventListener('abort', done, { once: true });
       this.params.signal.addEventListener('abort', done, { once: true });
     });
+  }
+
+  private staleDecision(
+    coordinator: Session,
+    input: { expectedRunId?: string; decisionRecordId?: string },
+    runId: string | null,
+    recordId: string | undefined,
+  ): boolean {
+    const wake = coordinator.messages.some(
+      message =>
+        message.runId === coordinator.runId &&
+        message.origin === 'coordinator-wake',
+    );
+    return (
+      (wake || !!input.expectedRunId || !!input.decisionRecordId) &&
+      (!recordId ||
+        !runId ||
+        input.decisionRecordId !== recordId ||
+        input.expectedRunId !== runId)
+    );
   }
 
   private readonly handlers: {
@@ -1056,6 +1246,16 @@ export class SessionControl {
           'The coordinator policy does not allow deciding plans. The owner decides them.',
         );
       const plan = child.plan;
+      if (child.role === 'worker')
+        return refusal(
+          'human-only',
+          'The operator decides a task-bound worker plan.',
+        );
+      if (this.staleDecision(coordinator, input, child.runId, plan?.id))
+        return refusal(
+          'stale-decision',
+          'Read the current plan and run before deciding.',
+        );
       if (!plan || plan.status !== 'plan-ready')
         return refusal(
           'invalid',
@@ -1240,12 +1440,25 @@ export class SessionControl {
         const deadline = Date.now() + input.timeoutSeconds * 1000;
         for (;;) {
           const page = this.params.store.events(coordinator.id, input.cursor);
-          if (page.events.length)
+          if (page.events.length) {
+            if (
+              !this.params.sessions.liveControlCaller({
+                sessionId: coordinator.id,
+                runId: coordinator.runId!,
+              })
+            )
+              return refusal('unsupported', 'The original turn ended.');
+            this.params.store.touchSeen(
+              coordinator.id,
+              coordinator.runId!,
+              page.events.map(event => event.seq),
+            );
             return success({
               events: page.events,
               cursor: page.events.at(-1)!.seq,
               more: page.more,
             });
+          }
           const remaining = deadline - Date.now();
           if (remaining <= 0 || signal.aborted || this.params.signal.aborted)
             return success({
@@ -1263,9 +1476,26 @@ export class SessionControl {
           );
       }
     },
+    events_ack: ({ coordinator, input }) => {
+      const receipt = this.params.store.transaction(() =>
+        this.params.store.acknowledge(
+          coordinator.id,
+          coordinator.runId!,
+          input.events,
+        ),
+      );
+      return receipt
+        ? success(receipt)
+        : refusal('invalid', 'Only acknowledge events returned to this turn.');
+    },
     session_answer: ({ coordinator, input, actionId }) => {
       const child = this.steerableChild(coordinator, input.sessionId);
       const question = pendingStageQuestion(child);
+      if (this.staleDecision(coordinator, input, child.runId, question?.id))
+        return refusal(
+          'stale-decision',
+          'Read the current question and run before answering.',
+        );
       if (!question)
         return refusal(
           'invalid',

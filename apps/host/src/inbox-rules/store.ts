@@ -167,6 +167,16 @@ export class InboxItemStore {
       .filter((value): value is StoredInboxItem => value !== null);
   }
 
+  deliveryGate(sessionId: string, runId: string): 'hold' | 'declined' | null {
+    const states = this.database.prepare(`
+      SELECT status FROM inbox_items
+      WHERE session_id = ? AND json_extract(binding, '$.kind') = 'session'
+        AND json_extract(binding, '$.runId') = ? AND json_extract(document, '$.action') = 'hold'
+    `).all(sessionId, runId);
+    if (states.some(row => row.status === 'declined')) return 'declined';
+    return states.some(row => row.status === 'pending') ? 'hold' : null;
+  }
+
   pending(): StoredInboxItem[] {
     return this.database
       .prepare(

@@ -31,7 +31,7 @@ export type SessionInboxHooks = {
     approval: Approval,
     subject: ProviderToolSubject | null,
   ) => string | null;
-  holdsAfterRun: (session: Session) => boolean;
+  holdsAfterRun: (session: Session) => boolean | Promise<boolean>;
   heldReason: (sessionId: string) => string | null;
 };
 

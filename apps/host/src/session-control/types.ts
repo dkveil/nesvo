@@ -1,5 +1,6 @@
 import type {
   Session,
+  SessionStageRecord,
   sessionControlToolDefinitions,
   stageToolDefinitions,
 } from '@nesvo/contracts';
@@ -29,6 +30,9 @@ export type SessionControlTurn = {
 };
 
 export type SessionControlBridge = {
+  stopped?: (sessionId: string) => void;
+  captureTerminal?: (session: Session) => void;
+  captureQuestion?: (session: Session, record: SessionStageRecord) => void;
   available: (session: Session) => boolean;
   call: (
     caller: SessionControlCaller,

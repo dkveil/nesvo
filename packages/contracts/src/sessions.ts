@@ -554,7 +554,10 @@ export const sessionMessageSchema = z.strictObject({
   usage: turnUsageSchema.nullable().default(null),
   costWarning: z.string().max(2000).optional(),
   usageWarning: z.string().max(1000).optional(),
-  origin: z.enum(['workflow', 'imported']).nullable().default(null),
+  origin: z
+    .enum(['workflow', 'imported', 'coordinator-wake'])
+    .nullable()
+    .default(null),
   model: z.string().nullable().default(null),
   effort: reasoningEffortSchema.nullable().default(null),
   mode: sessionModeSchema.nullable().default(null),
@@ -599,6 +602,7 @@ export const sessionSchema = z.strictObject({
     )
     .max(200)
     .optional(),
+  orchestrationTools: z.boolean().optional(),
   coordinatorWait: z
     .strictObject({
       runId: z.uuid(),

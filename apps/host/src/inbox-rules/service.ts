@@ -956,7 +956,7 @@ export class InboxRules {
     return `Waiting for the owner's decision ${where} (Inbox rule ${item.rule.name})…`;
   }
 
-  holdsAfterRun(session: Session): boolean {
+  async holdsAfterRun(session: Session): Promise<boolean> {
     const turn = this.turns.get(session.id);
     if (!turn || !session.runId || turn.runId !== session.runId) return false;
     const runId = session.runId;
@@ -1005,8 +1005,8 @@ export class InboxRules {
       ({ rule }) => rule.trigger === 'files-changed',
     );
     if (fileRules.length && finished)
-      void this.filesChanged(session, runId, fileRules);
-    return held;
+      await this.filesChanged(session, runId, fileRules);
+    return held || !!this.heldReason(session.id);
   }
 
   private async filesChanged(

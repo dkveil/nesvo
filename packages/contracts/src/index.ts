@@ -566,6 +566,11 @@ import {
   coordinatorPolicySchema,
   decideSessionParentSchema,
   workerWorktreeInputSchema,
+  coordinatorWakeTargetSchema,
+  coordinatorWakeStateSchema,
+  setCoordinatorWakeSchema,
+  continueCoordinatorDeliverySchema,
+  coordinatorDeliveryReceiptSchema,
   continueCoordinatorSchema,
   continueWorkerSchema,
   type ContinueWorkerInput,
@@ -1447,6 +1452,21 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     id: z.uuid(),
+    method: z.literal('read-coordinator-wake'),
+    input: coordinatorWakeTargetSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('set-coordinator-wake'),
+    input: setCoordinatorWakeSchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('continue-coordinator-delivery'),
+    input: continueCoordinatorDeliverySchema,
+  }),
+  z.strictObject({
+    id: z.uuid(),
     method: z.literal('read-session-control-policy'),
   }),
   z.strictObject({
@@ -1962,6 +1982,16 @@ export const hostResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('worker-worktree'),
     id: z.uuid(),
     result: workerWorktreeResultSchema,
+  }),
+  z.strictObject({
+    type: z.literal('coordinator-wake'),
+    id: z.uuid(),
+    state: coordinatorWakeStateSchema,
+  }),
+  z.strictObject({
+    type: z.literal('coordinator-delivery'),
+    id: z.uuid(),
+    receipt: coordinatorDeliveryReceiptSchema,
   }),
   z.strictObject({
     type: z.literal('session-control-policy'),
