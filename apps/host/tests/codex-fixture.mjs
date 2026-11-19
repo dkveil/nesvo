@@ -792,6 +792,18 @@ if (args.length === 1 && args[0] === '--version') {
     } else if (
       ['thread/start', 'thread/resume', 'thread/fork'].includes(method)
     ) {
+      const granularApproval = !!params.approvalPolicy?.granular;
+      if (granularApproval && !experimentalApi) {
+        emit({
+          id,
+          error: {
+            code: -32602,
+            message:
+              'askForApproval.granular requires experimentalApi capability',
+          },
+        });
+        return;
+      }
       threadConfig = params.config ?? {};
       assert.ok(isAbsolute(params.cwd));
       assert.ok(
@@ -901,8 +913,9 @@ if (args.length === 1 && args[0] === '--version') {
         );
         assert.equal(
           experimentalApi,
-          JSON.parse(readFileSync(statePath(thread.id), 'utf8'))
-            .delegationEnabled,
+          granularApproval ||
+            JSON.parse(readFileSync(statePath(thread.id), 'utf8'))
+              .delegationEnabled,
         );
       } else {
         const tools = params.dynamicTools ?? [];
@@ -937,7 +950,8 @@ if (args.length === 1 && args[0] === '--version') {
             statePath(thread.id),
             JSON.stringify({
               turns: 0,
-              delegationEnabled: experimentalApi,
+              delegationEnabled:
+                tools.length > 0 || (experimentalApi && !granularApproval),
               control: !!namespace,
             }),
           );

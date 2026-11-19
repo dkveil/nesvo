@@ -271,7 +271,10 @@ test(
         JSON.stringify({ turns: 1, delegationEnabled: false }),
       );
       await host.stop();
-      host = launch(directory, pidFile, environment);
+      host = launch(directory, pidFile, {
+        ...environment,
+        NESVO_CODEX_FIXTURE_MCP_APPROVAL: '1',
+      });
       const continued = await host.request('send-message', {
         sessionId: codex.id,
         messageId: randomUUID(),
@@ -282,9 +285,11 @@ test(
         item =>
           item.id === codex.id &&
           item.runId === continued.session.runId &&
-          item.status === 'completed',
+          ['completed', 'failed'].includes(item.status),
       );
+      assert.equal(completed.status, 'completed', completed.error);
       assert.equal(completed.providerSessionId, deck.nativeId);
+      assert.equal(completed.mode, 'read-only');
       assert.match(completed.messages.at(-1).body, /fixture resumed reply/i);
       fixture.db.exec(`
         UPDATE orchestration_v2_projection_threads SET updated_at = '2026-11-16T08:00:00.000Z' WHERE thread_id = 'removed-worktree';

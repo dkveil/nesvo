@@ -2325,6 +2325,7 @@ export function startCodex(options: CodexRunOptions): {
       const nativeMcpApproval =
         !unattended && (await supportsMcpElicitation(peer));
       const isolateTools = unattended || (readOnly && !nativeMcpApproval);
+      const mcpOnlyApprovals = readOnly && !isolateTools;
       const hooksOff = isolateTools || readOnly;
       const features = options.summaryInstructions
         ? [...isolatedFeatures, 'shell_tool']
@@ -2362,7 +2363,7 @@ export function startCodex(options: CodexRunOptions): {
           ]),
         ),
       };
-      if (readOnly && !isolateTools) {
+      if (mcpOnlyApprovals) {
         for (const [name, config] of Object.entries(activeServers(expected))) {
           const definition = object(config)!;
           const tools = object(definition.tools) ?? {};
@@ -2421,7 +2422,10 @@ export function startCodex(options: CodexRunOptions): {
         processOverrides,
         features,
       );
-      await initialize(peer, options.experimentalApi === true);
+      await initialize(
+        peer,
+        options.experimentalApi === true || mcpOnlyApprovals,
+      );
       await verifyCodexToolPolicy(
         peer,
         options.directory,
@@ -2429,7 +2433,7 @@ export function startCodex(options: CodexRunOptions): {
         hooksOff,
         !!options.summaryInstructions,
       );
-      if (readOnly && !isolateTools) {
+      if (mcpOnlyApprovals) {
         const loaded = await peer.request('config/read', {
           includeLayers: false,
           cwd: options.directory,
@@ -2480,9 +2484,9 @@ export function startCodex(options: CodexRunOptions): {
       const approvalPolicy = fullAccess
         ? 'never'
         : readOnly
-          ? isolateTools
-            ? 'never'
-            : mcpOnlyApprovalPolicy
+          ? mcpOnlyApprovals
+            ? mcpOnlyApprovalPolicy
+            : 'never'
           : 'untrusted';
       const sandboxPolicy =
         options.mode === 'read-only'
