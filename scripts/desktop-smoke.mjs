@@ -220,6 +220,9 @@ async function smokeSetupProfile() {
   await setupShot(application, page, 'stage-a-profile-sources');
   await page.getByRole('button', { name: 'Close profile sources' }).click();
   await page.getByRole('button', { name: 'Load profile' }).click();
+  await page
+    .getByRole('button', { name: 'Apply profile', exact: true })
+    .click();
   await page.getByText('Active profile', { exact: true }).waitFor();
   if (setupStage === 'D') {
     await page
@@ -316,6 +319,16 @@ async function smokeSetupProfile() {
     );
     return;
   }
+  await page
+    .getByRole('button', { name: 'Edit profile values', exact: true })
+    .click();
+  const fragment = page.getByRole('dialog', { name: 'Edit profile values' });
+  assert.equal(
+    await fragment.getByRole('textbox', { name: 'Profile YAML' }).inputValue(),
+    machineDocument,
+  );
+  await setupShot(application, page, 'stage-a-profile-fragment');
+  await fragment.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Inbox rules', exact: true }).click();
   await page.getByRole('button', { name: 'Edit profile setting' }).click();
   const editor = page.getByRole('dialog', { name: 'Edit profile setting' });
@@ -390,6 +403,18 @@ async function smokeSetupDetection() {
   await guide
     .getByText('Claude Code user configuration', { exact: true })
     .waitFor();
+  await guide
+    .getByRole('switch', { name: 'Use Claude Code user configuration' })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Review choices', exact: true })
+    .click();
+  await guide
+    .getByText('Use · Awaiting local verification', { exact: true })
+    .waitFor();
+  await guide
+    .getByRole('button', { name: 'Apply choices', exact: true })
+    .click();
   await setupShot(application, page, 'stage-b-guide-without-profile');
   await writeFile(file, 'version: 1\ninbox:\n  defaultRoute: both\n');
   await guide.getByRole('button', { name: 'Refresh', exact: true }).click();
@@ -404,6 +429,9 @@ async function smokeSetupDetection() {
   await guide
     .getByRole('button', { name: 'Load profile', exact: true })
     .click();
+  await guide
+    .getByRole('button', { name: 'Apply profile', exact: true })
+    .click();
   await guide.getByText('Active profile', { exact: true }).waitFor();
   await guide
     .getByRole('button', { name: 'Sessions to import', exact: true })
@@ -413,16 +441,40 @@ async function smokeSetupDetection() {
     (await page.evaluate(() => window.nesvo.listSessions())).length,
     0,
   );
-  await guide.getByRole('button', { name: 'Finish setup later' }).click();
+  await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+  await guide
+    .getByRole('button', { name: 'Skip this step', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Skip this step', exact: true })
+    .click();
+  await guide
+    .getByRole('heading', { name: 'This is how Nesvo will work', exact: true })
+    .waitFor();
+  await setupShot(application, page, 'stage-b-setup-summary');
+  await guide
+    .getByRole('button', { name: 'Save as profile', exact: true })
+    .click();
+  const saveProfile = page.getByRole('dialog', { name: 'Save as profile' });
+  await saveProfile.getByText('Local approvals', { exact: true }).waitFor();
+  await saveProfile.evaluate(node =>
+    Promise.allSettled(
+      node.getAnimations().map(animation => animation.finished),
+    ),
+  );
+  await setupShot(application, page, 'stage-b-save-as-profile');
+  await saveProfile
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await guide
+    .getByRole('button', { name: 'Open workspace', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Your setup', exact: true }).click();
   await page.getByText('Active profile', { exact: true }).waitFor();
   await page
     .getByText('Claude Code user configuration', { exact: true })
     .waitFor();
-  await page
-    .getByRole('button', { name: 'Mark reviewed', exact: true })
-    .click();
   await page.getByRole('button', { name: 'Show current setup' }).waitFor();
   await writeFile(
     fixtureConfig,
@@ -463,6 +515,48 @@ async function smokeSetupDetection() {
       result: 'passed',
       scenario: 'passive setup detection',
       stage: setupStage,
+      platform: process.platform,
+    }),
+  );
+}
+
+async function smokeOlderSetupHost() {
+  application = await launchApplication();
+  const page = await application.firstWindow();
+  hostPid = JSON.parse(await readFile(pidFile, 'utf8')).host;
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Your setup', exact: true }).click();
+  await page
+    .getByText(/Update the Nesvo host on Local to view its setup/)
+    .waitFor();
+  await page
+    .getByText(/Update this computer’s Nesvo host to detect setup/)
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Verify tools', exact: true })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Load profile', exact: true })
+      .count(),
+    0,
+  );
+  const response = await page.evaluate(async () => {
+    try {
+      return await window.nesvo.setupProfile({ action: 'inspect' }, 'local');
+    } catch {
+      return { ok: false };
+    }
+  });
+  assert.equal(response.ok, false);
+  await setupShot(application, page, 'older-host-setup-unavailable');
+  console.log(
+    JSON.stringify({
+      scenario: 'older host capability gate',
+      result: 'passed',
       platform: process.platform,
     }),
   );
@@ -1360,6 +1454,7 @@ const waitDead = async pid => {
   providerPids.delete(pid);
 };
 async function smokeDesktop() {
+  if (setupStage === 'older') return smokeOlderSetupHost();
   if (setupStage === 'B') return smokeSetupDetection();
   if (setupStage) return smokeSetupProfile();
   if (process.env.NESVO_D85_SMOKE_ONLY === '1') {
@@ -2651,7 +2746,10 @@ async function smokeDesktop() {
     'coordinator-orchestration',
     'portable-checks',
     'setup-profile-v1',
+    'setup-profile-values-v1',
     'setup-detection-v1',
+    'setup-diagnostics-v1',
+    'setup-choices-v1',
     'setup-assistant-v1',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);

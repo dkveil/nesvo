@@ -2666,6 +2666,228 @@ test('setup profiles validate and apply offline, own routing, and reconcile incl
   }
 });
 
+test('a profile restricts session control and undo restores the manual policy', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-policy-')),
+  );
+  const file = join(root, 'profile.yaml');
+  await writeFile(
+    file,
+    'version: 1\nsessionControl:\n  maxSessions: 2\n  maxDepth: 1\n  workers: read-only\n',
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+  });
+  const readPolicy = async () =>
+    (await host.request('read-session-control-policy')).policy;
+  try {
+    const original = { ...(await readPolicy()), groupSize: 6, nested: true };
+    await host.request('save-session-control-policy', original);
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    const applied = (
+      await host.request('setup-profile', {
+        action: 'apply',
+        file,
+        instanceId: review.instanceId,
+        revision: review.revision,
+        effectiveRevision: review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(applied.receipt?.status, 'applied');
+    const restricted = await readPolicy();
+    assert.equal(restricted.groupSize, 2);
+    assert.equal(restricted.nested, false);
+    assert.deepEqual(restricted.childModes, ['read-only']);
+    const refused = await host.request('save-session-control-policy', {
+      ...restricted,
+      groupSize: 8,
+    });
+    assert.equal(refused.type, 'error');
+    assert.equal((await readPolicy()).groupSize, 2);
+    const undo = (
+      await host.request('undo-config-change', {
+        id: applied.receipt.id,
+        revision: applied.receipt.revision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(undo.receipt?.status, 'undone');
+    assert.deepEqual(await readPolicy(), original);
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('setup profiles expose ordinary Inbox rules, templates and paused desired automation', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-profile-values-')),
+  );
+  const file = join(root, 'profile.yaml');
+  const copy = join(root, 'copy.yaml');
+  await mkdir(join(root, 'data'));
+  await writeFile(join(root, 'data', 'usage-control.json'), '{}');
+  await writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      inbox: {
+        rules: [
+          {
+            id: 'profile-route',
+            scope: { kind: 'global' },
+            order: 3,
+            definition: {
+              name: 'profile-route',
+              trigger: 'external',
+              action: 'route',
+              route: 'both',
+            },
+          },
+        ],
+      },
+      branches: [
+        {
+          id: 'team',
+          name: 'Team branches',
+          scope: { kind: 'computer' },
+          template: 'feature/<TICKET>-<slug>',
+        },
+      ],
+      limits: [
+        {
+          id: 'codex-warning',
+          provider: 'Codex',
+          window: 'codex:primary',
+          threshold: 20,
+          effect: 'warn',
+        },
+      ],
+      automations: [
+        {
+          id: 'morning',
+          name: 'Morning',
+          timeZone: 'UTC',
+          schedule: '08:00',
+          directory: root,
+          task: { kind: 'ritual', name: 'morning-summary' },
+          desired: 'active',
+        },
+      ],
+    }),
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_PROFILE_PATH: file,
+    NESVO_WORKFLOWS_HOME: join(root, 'workflows'),
+  });
+  try {
+    const { review } = (
+      await host.request('setup-profile', { action: 'inspect' })
+    ).result;
+    assert.equal(
+      review.changes.find(item => item.key === 'branches/team').after,
+      'feature/<TICKET>-<slug>',
+    );
+    const applied = (
+      await host.request('setup-profile', {
+        action: 'apply',
+        file,
+        instanceId: review.instanceId,
+        revision: review.revision,
+        effectiveRevision: review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(applied.ok, true);
+    const inbox = await host.request('list-inbox-rules', {});
+    const rule = inbox.catalog.rules.find(
+      item => item.name === 'profile-route',
+    );
+    assert.equal(rule?.fromProfile, true);
+    assert.equal(rule?.rule.route, 'both');
+    const usage = (await host.request('provider-usage', { provider: 'Codex' }))
+      .usage;
+    assert.match(usage.detail, /profile warning threshold of 20%/);
+    assert.equal(
+      (
+        await host.request('set-inbox-rule-enabled', {
+          scope: 'global',
+          name: rule.name,
+          expectedHash: rule.contentHash,
+          enabled: false,
+        })
+      ).type,
+      'error',
+    );
+    assert.equal(
+      applied.review.declarations.find(
+        item => item.key === 'automations/morning',
+      ).state,
+      'pending',
+    );
+    assert.equal(
+      (await host.request('list-scheduled-jobs', {})).list.scheduledJobs.length,
+      0,
+    );
+    const exported = (
+      await host.request('setup-profile', {
+        action: 'save-as',
+        file: copy,
+        instanceId: review.instanceId,
+        effectiveRevision: applied.review.effectiveRevision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(exported.ok, true);
+    assert.equal(exported.review.activePath, file);
+    assert.match(await readFile(copy, 'utf8'), /feature\/<TICKET>-<slug>/);
+    assert.match(await readFile(copy, 'utf8'), /kind: ritual/);
+    const loaded = (
+      await host.request('setup-profile', {
+        action: 'inspect-fragment',
+        layer: 'entry',
+        instanceId: review.instanceId,
+        revision: applied.review.revision,
+      })
+    ).result;
+    assert.equal(loaded.fragment.path, file);
+    const changedText = loaded.fragment.text.replace(
+      'feature/<TICKET>-<slug>',
+      'fix/<id>',
+    );
+    const updated = (
+      await host.request('setup-profile', {
+        action: 'edit-fragment',
+        layer: 'entry',
+        instanceId: review.instanceId,
+        revision: loaded.review.revision,
+        effectiveRevision: loaded.review.effectiveRevision,
+        text: changedText,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(updated.receipt?.status, 'applied', JSON.stringify(updated));
+    assert.equal(await readFile(file, 'utf8'), changedText);
+    const undo = (
+      await host.request('undo-config-change', {
+        id: updated.receipt.id,
+        revision: updated.receipt.revision,
+        actionId: randomUUID(),
+      })
+    ).result;
+    assert.equal(undo.receipt?.status, 'undone');
+    assert.equal(await readFile(file, 'utf8'), loaded.fragment.text);
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('setup detection reports bounded passive evidence and keeps changed hooks withheld', async () => {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'nesvo-setup-detection-')),
@@ -2748,6 +2970,64 @@ test('setup detection reports bounded passive evidence and keeps changed hooks w
     );
     assert.equal((await host.request('list-sessions')).sessions.length, 0);
     assert.equal(await readFile(commandLog, 'utf8').catch(() => ''), '');
+  } finally {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('setup tool diagnostics require a fresh one-use batch for fixed argv', async () => {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'nesvo-diagnostic-')),
+  );
+  const host = launch(join(root, 'data'), join(root, 'pids.json'), {
+    NESVO_TEST_MODE: '1',
+    NESVO_ISOLATED_PROFILE: '1',
+    NESVO_CLAUDE_EXECUTABLE: process.execPath,
+    NESVO_CODEX_EXECUTABLE: process.execPath,
+  });
+  try {
+    const { instanceId } = (await host.request('health')).health;
+    const check = async (action, input = {}) =>
+      (
+        await host.request('setup-detection', {
+          action,
+          instanceId,
+          ...input,
+        })
+      ).result;
+    const first = await check('diagnostic-preview');
+    assert.equal(first.ok, true);
+    assert.equal(first.diagnostics.tools.length, 2);
+    assert.ok(
+      first.diagnostics.tools.every(tool => tool.argument === '--version'),
+    );
+    assert.ok(
+      first.scan.findings.every(
+        finding => !finding.description.includes('CLI version'),
+      ),
+    );
+    const second = await check('diagnostic-preview');
+    assert.equal(
+      (await check('verify-diagnostics', { digest: first.diagnostics.digest }))
+        .code,
+      'conflict',
+    );
+    const verified = await check('verify-diagnostics', {
+      digest: second.diagnostics.digest,
+    });
+    assert.equal(verified.ok, true);
+    assert.equal(
+      verified.scan.findings.filter(finding =>
+        finding.description.includes('CLI version'),
+      ).length,
+      2,
+    );
+    assert.equal(
+      (await check('verify-diagnostics', { digest: second.diagnostics.digest }))
+        .code,
+      'conflict',
+    );
   } finally {
     await host.stop();
     await rm(root, { recursive: true, force: true });
@@ -5464,7 +5744,10 @@ test(
         'coordinator-orchestration',
         'portable-checks',
         'setup-profile-v1',
+        'setup-profile-values-v1',
         'setup-detection-v1',
+        'setup-diagnostics-v1',
+        'setup-choices-v1',
         'setup-assistant-v1',
       ],
     });
@@ -11134,7 +11417,10 @@ test(
       'coordinator-orchestration',
       'portable-checks',
       'setup-profile-v1',
+      'setup-profile-values-v1',
       'setup-detection-v1',
+      'setup-diagnostics-v1',
+      'setup-choices-v1',
       'setup-assistant-v1',
     ]);
     const id = randomUUID();
@@ -34610,7 +34896,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-19), [
+  assert.deepEqual(capabilities.slice(-22), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -34628,7 +34914,10 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'coordinator-orchestration',
     'portable-checks',
     'setup-profile-v1',
+    'setup-profile-values-v1',
     'setup-detection-v1',
+    'setup-diagnostics-v1',
+    'setup-choices-v1',
     'setup-assistant-v1',
   ]);
 
