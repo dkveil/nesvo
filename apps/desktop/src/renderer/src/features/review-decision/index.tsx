@@ -54,10 +54,8 @@ export function ReviewDecision({
   return (
     <div className={compact ? 'contents' : 'space-y-2'}>
       <div
-        className={cn(
-          'flex flex-wrap items-center gap-1.5',
-          compact && 'col-start-2 row-start-1 self-center',
-        )}
+        data-inbox-actions={compact ? '' : undefined}
+        className="flex flex-wrap items-center gap-2"
       >
         <Button
           type="button"

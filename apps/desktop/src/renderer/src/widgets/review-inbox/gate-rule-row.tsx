@@ -14,7 +14,7 @@ import { Button } from '@/shared/ui/button';
 import { NativeDisclosure } from '@/shared/ui/disclosure';
 import { Field } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { ListRow } from '@/shared/ui/list-row';
+import { DecisionRow } from '@/entities/review/decision-row';
 import {
   Select,
   SelectContent,
@@ -84,83 +84,92 @@ export function GateRuleRow({
 
   return (
     <article aria-label="Gate rule proposal" data-host-id={hostId}>
-      <ListRow density="block" columns="minmax(0, 1fr) auto">
-        <div className="min-w-0 space-y-0.5">
-          <p className="text-xs font-medium text-foreground/80">
-            Gate rule proposal
-          </p>
-          <Button
-            variant="link"
-            size="inline"
-            className="max-w-full text-foreground"
-            onClick={() =>
-              onSession(hostKey(row.taskSessionId ?? row.sessionId, hostId))
-            }
-          >
-            <span className="truncate">{title}</span>
-            <ArrowUpRight className="size-3 text-muted-foreground" />
-          </Button>
-          {location && (
-            <p className="text-2xs text-muted-foreground">{location}</p>
-          )}
-          <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
-            <span>
-              Proposes a gate rule for {proposal.steps.join(', ')} ·{' '}
-              {row.workflow}
-            </span>
-            <Badge size="xs">
-              {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}
-            </Badge>
-            <span>{row.scope === 'project' ? 'Project' : 'Global'}</span>
-            <time dateTime={row.createdAt}>
-              {formatDateTime(row.createdAt)}
-            </time>
-          </div>
-          {row.current && (
-            <p className="text-xs text-muted-foreground line-through [overflow-wrap:anywhere]">
-              {row.current.rule}
-            </p>
-          )}
-          <p className="text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {proposal.body.rule}
-          </p>
-          <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            From your {row.decisionKind === 'fix' ? 'Fix' : 'Reject'} comment: “
-            {proposal.quote}”
-          </p>
-          {proposal.kind === 'check' && (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p className="font-mono [overflow-wrap:anywhere]">
-                {proposal.body.check}
-              </p>
-              <p>Apply the check in your project when ready.</p>
-              {/\b(?:curl|wget|gh\s+pr|git\s+push|rm\s+-rf)\b/i.test(
-                proposal.body.check,
-              ) && (
-                <StatusMessage tone="warning">
-                  Review this suggestion for network access or changes before
-                  using it.
-                </StatusMessage>
-              )}
-              <Button variant="link" size="inline" onClick={() => void copy()}>
-                Copy suggestion
-              </Button>
-            </div>
-          )}
-          <NativeDisclosure title="Proposal details">
-            <p className="mb-1 [overflow-wrap:anywhere]">
-              {proposal.justification}
+      <DecisionRow
+        heading={
+          <>
+            <p className="font-medium text-muted-foreground">
+              Gate rule proposal
             </p>
             <Button
               variant="link"
               size="inline"
-              onClick={() => onSession(hostKey(row.sessionId, hostId))}
+              className="min-w-0 max-w-full text-ui text-foreground"
+              onClick={() =>
+                onSession(hostKey(row.taskSessionId ?? row.sessionId, hostId))
+              }
             >
-              Open proposal session
+              <span className="truncate">{title}</span>
+              <ArrowUpRight className="size-3 text-muted-foreground" />
             </Button>
-          </NativeDisclosure>
-        </div>
-        <div className="flex flex-wrap justify-end gap-1 self-start">
+            {location && <p className="text-muted-foreground">{location}</p>}
+          </>
+        }
+        details={
+          <>
+            <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+              <span>
+                Proposes a gate rule for {proposal.steps.join(', ')} ·{' '}
+                {row.workflow}
+              </span>
+              <Badge size="xs">
+                {proposal.kind === 'check' ? 'Check suggestion' : 'Instruction'}
+              </Badge>
+              <span>{row.scope === 'project' ? 'Project' : 'Global'}</span>
+              <time dateTime={row.createdAt}>
+                {formatDateTime(row.createdAt)}
+              </time>
+            </div>
+            {row.current && (
+              <p className="text-xs text-muted-foreground line-through [overflow-wrap:anywhere]">
+                {row.current.rule}
+              </p>
+            )}
+            <p className="text-ui whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {proposal.body.rule}
+            </p>
+            <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+              From your {row.decisionKind === 'fix' ? 'Fix' : 'Reject'} comment:
+              “{proposal.quote}”
+            </p>
+            {proposal.kind === 'check' && (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p className="font-mono [overflow-wrap:anywhere]">
+                  {proposal.body.check}
+                </p>
+                <p>Apply the check in your project when ready.</p>
+                {/\b(?:curl|wget|gh\s+pr|git\s+push|rm\s+-rf)\b/i.test(
+                  proposal.body.check,
+                ) && (
+                  <StatusMessage tone="warning">
+                    Review this suggestion for network access or changes before
+                    using it.
+                  </StatusMessage>
+                )}
+                <Button
+                  variant="link"
+                  size="inline"
+                  onClick={() => void copy()}
+                >
+                  Copy suggestion
+                </Button>
+              </div>
+            )}
+            <NativeDisclosure title="Proposal details">
+              <p className="mb-1 [overflow-wrap:anywhere]">
+                {proposal.justification}
+              </p>
+              <Button
+                variant="link"
+                size="inline"
+                onClick={() => onSession(hostKey(row.sessionId, hostId))}
+              >
+                Open proposal session
+              </Button>
+            </NativeDisclosure>
+          </>
+        }
+      >
+        <div data-inbox-actions className="flex-wrap">
           {row.status === 'pending' && (
             <Button
               size="sm"
@@ -202,7 +211,7 @@ export function GateRuleRow({
             onCancel={() => setEditing(false)}
           />
         )}
-      </ListRow>
+      </DecisionRow>
     </article>
   );
 }

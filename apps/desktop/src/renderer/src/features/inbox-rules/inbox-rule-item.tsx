@@ -150,6 +150,7 @@ type DecisionsProps = {
   enabled: boolean;
   deciding: boolean;
   error?: string;
+  compact?: boolean;
   via?: InboxItemDecision['via'];
   onDecide: (decision: InboxItemDecision) => void;
 };
@@ -159,6 +160,7 @@ export function InboxRuleDecisions({
   enabled,
   deciding,
   error,
+  compact = false,
   via = 'desktop',
   onDecide,
 }: DecisionsProps) {
@@ -167,39 +169,47 @@ export function InboxRuleDecisions({
   const external = item.binding === 'external';
   const disabled = !enabled || deciding;
   const withNote = note.trim() ? { note: note.trim() } : {};
+  const commentField = external && (
+    <Textarea
+      aria-label="Operator comment"
+      placeholder="Optional comment"
+      resize="none"
+      rows={2}
+      className="min-h-0 w-full"
+      maxLength={inboxRuleLimits.note}
+      value={note}
+      disabled={disabled}
+      onChange={event => setNote(event.target.value)}
+    />
+  );
   return (
     <div
       className={cn(
-        'col-start-2 row-start-1 flex flex-col items-end gap-1.5 self-center',
-        external ? 'w-[min(38vw,22rem)]' : 'max-w-56',
+        compact
+          ? 'contents'
+          : 'col-start-2 row-start-1 flex flex-col items-end gap-1.5 self-center',
+        !compact && (external ? 'w-[min(38vw,22rem)]' : 'max-w-56'),
       )}
     >
-      <div className="flex flex-wrap items-center justify-end gap-1.5">
+      <div
+        data-inbox-actions={compact ? '' : undefined}
+        className={cn(
+          'flex items-center justify-end gap-2',
+          (item.action !== 'hold' || !compact) && 'flex-wrap',
+        )}
+      >
         {item.action === 'hold' && (
           <Input
             aria-label={`Note for ${item.rule?.name}`}
             placeholder="Optional note"
-            className="w-32"
+            className="w-32 shrink-0"
             maxLength={inboxRuleLimits.note}
             value={note}
             disabled={disabled}
             onChange={event => setNote(event.target.value)}
           />
         )}
-        {external && (
-          <Textarea
-            aria-label="Operator comment"
-            placeholder="Optional comment"
-            resize="none"
-            rows={2}
-            className="w-full min-h-0"
-
-            maxLength={inboxRuleLimits.note}
-            value={note}
-            disabled={disabled}
-            onChange={event => setNote(event.target.value)}
-          />
-        )}
+        {!compact && commentField}
         {item.action === 'hold' && (
           <>
             <Button
@@ -252,10 +262,27 @@ export function InboxRuleDecisions({
           </Button>
         )}
       </div>
-      {deciding && (
-        <StatusMessage tone="loading">Sending decision…</StatusMessage>
+      {compact && external && (
+        <div className="col-start-2 row-start-2 w-[min(34vw,22rem)]">
+          {commentField}
+        </div>
       )}
-      {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      {deciding && (
+        <StatusMessage
+          tone="loading"
+          className={compact ? 'col-span-full' : undefined}
+        >
+          Sending decision…
+        </StatusMessage>
+      )}
+      {error && (
+        <StatusMessage
+          tone="error"
+          className={compact ? 'col-span-full' : undefined}
+        >
+          {error}
+        </StatusMessage>
+      )}
     </div>
   );
 }

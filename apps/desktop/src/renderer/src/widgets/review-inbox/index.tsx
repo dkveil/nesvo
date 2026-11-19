@@ -38,6 +38,7 @@ import {
 import { Button } from '@/shared/ui/button';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { ListRow } from '@/shared/ui/list-row';
+import { DecisionRow } from '@/entities/review/decision-row';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
 import type { WorkflowRun, WorkflowStepRecord } from '@/entities/workflow';
@@ -179,8 +180,6 @@ type ActionRow =
       id: string;
     };
 
-const ROW_COLUMNS = 'minmax(0,1fr) auto';
-
 function FullText({ text, children }: { text: string; children: ReactNode }) {
   return (
     <Tooltip>
@@ -217,11 +216,11 @@ function ActionItem({
 }: ActionItemProps) {
   return (
     <article {...props}>
-      <ListRow density="block" columns={ROW_COLUMNS}>
-        <div className="min-w-0 space-y-0.5">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <DecisionRow
+        heading={
+          <>
             {typeLabel && (
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className="font-medium text-muted-foreground">
                 {typeLabel}
               </span>
             )}
@@ -229,7 +228,7 @@ function ActionItem({
               <Button
                 variant="link"
                 size="inline"
-                className="max-w-full justify-start text-ui text-foreground"
+                className="min-w-0 max-w-full justify-start text-ui text-foreground"
                 aria-label={openLabel}
                 onClick={onOpen}
               >
@@ -242,24 +241,29 @@ function ActionItem({
               </p>
             )}
             {location && (
-              <span className="text-xs text-muted-foreground">{location}</span>
+              <span className="text-muted-foreground">{location}</span>
             )}
-          </div>
-          {why && (
-            <p
-              className="line-clamp-1 text-2xs font-medium text-muted-foreground"
-              title={why}
-            >
-              {why}
-            </p>
-          )}
-          {summary}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
-            {meta}
-          </div>
-        </div>
+          </>
+        }
+        details={
+          <>
+            {why && (
+              <p
+                className="line-clamp-1 text-2xs font-medium text-muted-foreground"
+                title={why}
+              >
+                {why}
+              </p>
+            )}
+            {summary}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+              {meta}
+            </div>
+          </>
+        }
+      >
         {children}
-      </ListRow>
+      </DecisionRow>
     </article>
   );
 }
@@ -286,7 +290,7 @@ function Decisions({
   onDecide: (decision: 'accept' | 'decline') => void;
 }) {
   return (
-    <div className="col-start-2 row-start-1 flex flex-wrap items-center gap-1.5 self-center">
+    <div data-inbox-actions className="flex-wrap">
       <Button
         type="button"
         variant="secondary"
@@ -732,7 +736,7 @@ export function ReviewInbox({
                         </StatusMessage>
                       }
                     >
-                      <div className="col-start-2 row-start-1 self-center">
+                      <div data-inbox-actions>
                         {gateFeedback.row.changeId && !gateFeedback.undone && (
                           <Button
                             variant="ghost"
@@ -1056,6 +1060,7 @@ export function ReviewInbox({
                     }
                   >
                     <InboxRuleDecisions
+                      compact
                       item={item}
                       enabled={isOperationEnabled(item)}
                       deciding={!!rulePending[key]}

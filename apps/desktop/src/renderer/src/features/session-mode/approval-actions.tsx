@@ -121,9 +121,12 @@ export function ApprovalActions({
   ]);
 
   return (
-    <div className="min-w-0 space-y-1.5">
+    <div className={compact ? 'contents' : 'min-w-0 space-y-1.5'}>
       {!editor && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div
+          data-inbox-actions={compact ? '' : undefined}
+          className="flex flex-wrap items-center gap-2"
+        >
           <Button
             type="button"
             variant={compact ? 'secondary' : 'default'}
@@ -166,13 +169,21 @@ export function ApprovalActions({
         </div>
       )}
       {approval.allowRuleReason && (
-        <p className="text-2xs text-muted-foreground">
+        <p
+          className={
+            compact
+              ? 'col-span-full text-2xs text-muted-foreground'
+              : 'text-2xs text-muted-foreground'
+          }
+        >
           Always allow unavailable. {approval.allowRuleReason}
         </p>
       )}
       {scope && (
         <form
-          className="space-y-1.5"
+          className={
+            compact ? 'col-span-full max-w-2xl space-y-1.5' : 'space-y-1.5'
+          }
           onSubmit={event => {
             event.preventDefault();
             if (enabled && validation?.error === null)
@@ -233,7 +244,9 @@ export function ApprovalActions({
       )}
       {editor === 'deny' && (
         <form
-          className="space-y-2"
+          className={
+            compact ? 'col-span-full max-w-2xl space-y-2' : 'space-y-2'
+          }
           onSubmit={event => {
             event.preventDefault();
             if (enabled)

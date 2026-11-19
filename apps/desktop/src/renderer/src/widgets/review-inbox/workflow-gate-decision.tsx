@@ -51,7 +51,7 @@ export function WorkflowGateDecision({
   };
   return (
     <>
-      <div className="col-start-2 row-start-1 flex flex-wrap justify-end gap-1.5">
+      <div data-inbox-actions className="flex-wrap">
         <Button
           variant="secondary"
           disabled={!enabled || busy}
