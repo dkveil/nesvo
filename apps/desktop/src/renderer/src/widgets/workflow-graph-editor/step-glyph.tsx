@@ -20,6 +20,7 @@ const glyphs: Record<StepType, LucideIcon> = {
   'wait-ci': Clock,
   until: Repeat,
   probe: ScanSearch,
+  check: ScanSearch,
   session: Bot,
   'fan-out': GitFork,
 };

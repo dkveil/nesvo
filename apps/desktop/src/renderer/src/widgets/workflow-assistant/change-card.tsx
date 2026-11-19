@@ -24,6 +24,7 @@ const kindIcons: Record<AssistantChange['kind'], LucideIcon> = {
   automation: CalendarClock,
   lesson: Lightbulb,
   'gate-rule': Lightbulb,
+  'project-profile': Terminal,
 };
 
 const kindLabels: Record<AssistantChange['kind'], string> = {
@@ -32,6 +33,7 @@ const kindLabels: Record<AssistantChange['kind'], string> = {
   automation: 'automation',
   lesson: 'lesson',
   'gate-rule': 'gate rule',
+  'project-profile': 'Project profile',
 };
 
 const opLabels: Record<AssistantChange['op'], string> = {

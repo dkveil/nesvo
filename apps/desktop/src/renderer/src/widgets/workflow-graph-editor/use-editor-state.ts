@@ -394,6 +394,7 @@ export function useEditorState({
     setPendingDraft({
       ...draft,
       type: options.type ?? draft.type,
+      intent: options.type === 'check' ? 'tests' : undefined,
       phase: options.phase ?? draft.phase,
       skill: null,
     });

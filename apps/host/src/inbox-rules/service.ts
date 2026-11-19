@@ -3,6 +3,7 @@ import {
   decideInboxItemSchema,
   externalInboxLimits,
   inboxRuleLimits,
+  inboxRuleFieldsSchema,
   isGatingTrigger,
   matchesCommandPattern,
   matchesNameFilter,
@@ -45,6 +46,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { z } from 'zod';
 import type {
   StepExecution,
@@ -1162,7 +1164,7 @@ export class InboxRules {
     };
   }
 
-  private async beforeWorkflowStep(
+  async beforeWorkflowStep(
     execution: StepExecution,
   ): Promise<StepOutcome | null> {
     const { run, step, signal } = execution;
@@ -1196,6 +1198,7 @@ export class InboxRules {
         ({ item, binding }) =>
           binding.kind === 'workflow-step' &&
           binding.runId === run.id &&
+          !binding.invocation &&
           binding.stepName === step.name &&
           (binding.attempt === step.attempt || item.status === 'pending'),
       );
@@ -1237,6 +1240,73 @@ export class InboxRules {
       });
     }
     return { kind: 'interrupted' };
+  }
+
+  async beforeCheckCommand(
+    execution: StepExecution,
+    invocation: { command: string; id: string; folder: string; proposal?: string },
+  ): Promise<string | null> {
+    const { run, step, signal } = execution;
+    const session = (run.sessionId ? this.ports.sessions.snapshot(run.sessionId) : undefined) ?? null;
+    const rules = session ? await this.rulesFor(session, signal) : await this.globalRules(signal);
+    const matches = rules.filter(({ rule }) => rule.trigger === 'command' &&
+      ruleCommandPatterns(rule).some(pattern => matchesCommandPattern(pattern, invocation.command)));
+    const approval = matches.find(entry => entry.rule.action === 'hold');
+    const text = invocation.proposal
+      ? 'Folder: ' + invocation.folder + '\n' + invocation.proposal + '\nApproval saves this test command in .agents/project.md.'
+      : 'Folder: ' + invocation.folder;
+    const record = (entry: ApplicableRule, key: string) => {
+      const dedupe = ['check', step.id, invocation.id, key].join(':');
+      return this.ports.store.findByDedupe(dedupe)?.item ?? this.create(entry, session, {
+        trigger: 'command',
+        subject: invocation.proposal ? 'Approve Project test command' : invocation.command,
+        command: invocation.command,
+        decisionText: text,
+        binding: { kind: 'workflow-step', runId: run.id, stepName: step.name, attempt: step.attempt, invocation: invocation.id },
+        values: { command: invocation.command, step: step.name, phase: step.phase, workflow: run.workflow.name },
+        dedupe,
+      });
+    };
+    for (const entry of matches.filter(({ rule }) => rule.action === 'notify'))
+      record(entry, entry.scope + ':' + entry.rule.name);
+    if (!approval && !invocation.proposal) return null;
+    const fallback = inboxRuleFieldsSchema.parse({
+      name: 'project-check-command',
+      trigger: 'command',
+      pattern: '*',
+      action: 'hold',
+      ...(matches.find(entry => entry.rule.route)?.rule.route
+        ? { route: matches.find(entry => entry.rule.route)!.rule.route }
+        : {}),
+    });
+    const entry: ApplicableRule = approval ?? { scope: 'project', rule: fallback };
+    const item = record(entry, (invocation.proposal ? 'proposal:' : 'hold:') + entry.scope + ':' + entry.rule.name);
+    if (!item) return 'The host could not record this command approval.';
+    try {
+      while (!signal.aborted) {
+        const current = this.ports.store.get(item.id)?.item;
+        if (current?.status === 'approved') return null;
+        if (current?.status !== 'pending') return 'The Project check command was declined or is no longer available.';
+        await delay(WORKFLOW_HOLD_POLL_MS, undefined, { signal });
+      }
+    } catch {
+      signal.throwIfAborted();
+      throw new Error('The command approval could not be read.');
+    } finally {
+      const current = this.ports.store.get(item.id)?.item;
+      if (signal.aborted && current?.status === 'pending' && current.binding !== 'external') {
+        const next: RuleInboxItem = {
+          ...current,
+          status: 'interrupted',
+          outcome: 'The check stopped before this command could be approved.',
+          decidedAt: new Date().toISOString(),
+        };
+        if (this.ports.store.update(next, 'pending'))
+          this.ports.emit({ type: 'inbox-item-changed', item: next });
+      }
+    }
+    signal.throwIfAborted();
+    return 'The check command approval expired.';
   }
 
   private async sweepCi() {
@@ -1300,7 +1370,9 @@ export class InboxRules {
       plan: input.plan ?? '',
       ...input.values,
     };
-    const show = rule.show;
+    const show = input.decisionText
+      ? [...new Set<InboxRule['show'][number]>([...rule.show, 'command'])]
+      : rule.show;
     const item: RuleInboxItem = {
       id: randomUUID(),
       rule: { name: rule.name, scope: entry.scope, description: rule.description },
@@ -1316,7 +1388,7 @@ export class InboxRules {
       status: 'pending',
       options: rule.action === 'ask' ? (rule.options ?? []) : [],
       presentation: {
-        text: render(rule.body || rule.description || rule.name, values),
+        text: input.decisionText ? [render(rule.body, values), input.decisionText].filter(Boolean).join('\n').slice(0, 8000) : render(rule.body || rule.description || rule.name, values),
         show,
         command: show.includes('command') ? (input.command ?? null) : null,
         diff: null,
@@ -1621,6 +1693,7 @@ type CreateInput = {
   dedupe?: string;
   values?: Record<string, string>;
   command?: string | null;
+  decisionText?: string;
   pullRequest?: PullRequestReference | null;
   plan?: string | null;
   report?: StageReport | null;

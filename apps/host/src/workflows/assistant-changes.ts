@@ -39,6 +39,7 @@ import type {
   SaveRuleEntryFileInput,
   WriteOptions,
 } from './writer';
+import { writeProjectProfile } from './writer';
 
 export type ChangeContext = {
   conversationId: string;
@@ -250,6 +251,31 @@ export class AssistantChanges {
     );
   }
 
+  applyProjectProfile(
+    context: ChangeContext & { mappingRoot: string },
+    document: string,
+    expectedHash: string | null,
+    signal: AbortSignal,
+  ): Promise<AssistantChange | null> {
+    return this.serial(context.conversationId, async () => {
+      let previous: string | null = null;
+      const written = await writeProjectProfile(context.directory, document, expectedHash, signal, {
+        onPrevious: file => { previous = file?.text ?? null; },
+      });
+      if (written.type !== 'written') return null;
+      return this.record(context, {
+        kind: 'project-profile',
+        op: expectedHash ? 'update' : 'create',
+        target: { type: 'definition', root: 'project', path: 'project.md', name: 'project' },
+        before: expectedHash ? { type: 'hash', hash: expectedHash } : null,
+        after: { type: 'hash', hash: hashOf(document) },
+        previous,
+        root: written.root,
+        summary: 'Save the approved Project test command.',
+      }, 'owner');
+    });
+  }
+
   latest(conversationId: string): AssistantChange | null {
     return (
       this.ports.store
@@ -427,7 +453,7 @@ export class AssistantChanges {
   }
 
   private record(
-    context: ChangeContext,
+    context: ChangeContext & { mappingRoot?: string },
     applied: Applied,
     createdBy: AssistantChange['createdBy'] = 'assistant',
   ): AssistantChange {
@@ -438,6 +464,7 @@ export class AssistantChanges {
       changeId: randomUUID(),
       sequence: this.ports.store.nextSequence(context.conversationId),
       directory: context.directory,
+      ...(context.mappingRoot ? { mappingRoot: context.mappingRoot } : {}),
       ...fields,
       summary: summaryText(fields.summary) || 'Assistant change.',
       createdBy,
@@ -688,6 +715,8 @@ export class AssistantChanges {
     const outcome =
       change.target.type === 'automation'
         ? this.undoAutomation(change, change.target.automationId, previous)
+        : change.kind === 'project-profile'
+          ? await this.undoProjectProfile(change, previous, root)
         : isRuleEntryKind(change.kind)
           ? await this.undoRuleEntry(
               change.kind,
@@ -707,6 +736,17 @@ export class AssistantChanges {
     if (undone.kind !== 'lesson')
       this.ports.emit({ type: 'workflow-assistant-change', change: undone });
     return { status: 'undone', change: undone };
+  }
+
+  private async undoProjectProfile(change: AssistantChange, previous: string | null, root: string | null): Promise<AssistantUndoResult | null> {
+    const path = '.agents/project.md';
+    if (!root || change.after?.type !== 'hash')
+      return { status: 'refused', changeId: change.changeId, issues: [issueAt(path, 'The original Project profile could not be verified.')] };
+    const result = await writeProjectProfile(change.directory, previous, change.after.hash, AbortSignal.timeout(8000), { expectedRoot: root });
+    if (result.type === 'written') return null;
+    if (result.type === 'conflict')
+      return { status: 'conflict', changeId: change.changeId, current: result.currentHash ? { type: 'hash', hash: result.currentHash } : null, message: 'The Project profile changed. Undo would overwrite newer content.' };
+    return { status: 'refused', changeId: change.changeId, issues: result.issues };
   }
 
   private async undoDefinition(

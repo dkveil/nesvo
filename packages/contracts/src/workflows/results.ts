@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkEvidenceSchema } from './checks';
 import { ruleEntryCitationSchema } from '../rule-entries';
 import { providerSchema } from '../sessions';
 import { workflowChildQueueSchema } from './children';
@@ -79,6 +80,7 @@ export const stepResultSchema = z
       stepResultLimits.outputValue,
     ),
     items: workflowChildQueueSchema.optional(),
+    check: checkEvidenceSchema.optional(),
     startedAt: z.iso.datetime(),
     finishedAt: z.iso.datetime(),
     durationMs: z.number().int().nonnegative(),

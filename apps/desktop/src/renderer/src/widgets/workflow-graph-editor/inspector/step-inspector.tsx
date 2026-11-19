@@ -3,6 +3,7 @@ import {
   workflowDefinitionLimits,
   stepTypeSchema,
   probeKindSchema,
+  checkIntentSchema,
   providerSchema,
   isChildWorkflowStep,
   type StepPhase,
@@ -183,7 +184,10 @@ export function StepInspectorForm({
     placeholder: bodyPlaceholders[step.type],
     'aria-invalid': hasError(bodyNotes) || undefined,
     'aria-describedby': describedBy(fieldId('body'), bodyNotes),
-    className: 'max-h-72 min-h-24 font-mono text-xs leading-5',
+    className: cn(
+      'max-h-72 min-h-24 font-mono text-xs leading-5',
+      step.type === 'check' && 'resize-none',
+    ),
   };
   return (
     <form
@@ -345,6 +349,80 @@ export function StepInspectorForm({
               onChange={event => update({ skill: event.target.value || null })}
             />
           </Field>
+        )}
+        {step.type === 'check' && (
+          <>
+            <Field
+              id={fieldId('intent')}
+              label="Intent"
+              messages={notesOf('intent')}
+            >
+              <Select
+                value={step.intent ?? 'tests'}
+                onValueChange={value =>
+                  update({ intent: checkIntentSchema.parse(value) })
+                }
+              >
+                <SelectTrigger id={fieldId('intent')} size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem value="tests">Tests</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field
+              id={fieldId('preferred') + '-typescript'}
+              label="TypeScript script"
+              messages={notesOf('preferred')}
+            >
+              <Input
+                id={fieldId('preferred') + '-typescript'}
+                size="sm"
+                value={step.preferred?.typescript?.script ?? ''}
+                placeholder="test"
+                maxLength={120}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={event => {
+                  const script = event.target.value;
+                  update({
+                    preferred: {
+                      ...step.preferred,
+                      typescript: script
+                        ? { runner: 'package-script', script }
+                        : undefined,
+                    },
+                  });
+                }}
+              />
+            </Field>
+            <Field
+              id={fieldId('preferred') + '-kotlin'}
+              label="Kotlin Gradle task"
+            >
+              <Input
+                id={fieldId('preferred') + '-kotlin'}
+                size="sm"
+                value={step.preferred?.kotlin?.task ?? ''}
+                placeholder="test"
+                maxLength={120}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={event => {
+                  const task = event.target.value;
+                  update({
+                    preferred: {
+                      ...step.preferred,
+                      kotlin: task
+                        ? { runner: 'gradle-wrapper', task }
+                        : undefined,
+                    },
+                  });
+                }}
+              />
+            </Field>
+          </>
         )}
         {step.type === 'probe' && (
           <Field

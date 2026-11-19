@@ -94,6 +94,7 @@ export type PhaseFrame = {
 
 export const stepTypeLabels: Record<StepType, string> = {
   command: 'Command',
+  check: 'Check',
   agent: 'Agent',
   human: 'Human',
   action: 'Action',
@@ -106,6 +107,7 @@ export const stepTypeLabels: Record<StepType, string> = {
 
 export const stepTypeOrder: StepType[] = [
   'command',
+  'check',
   'agent',
   'human',
   'action',
@@ -233,6 +235,8 @@ export const stepDefinitionOf = (
   condition: step.condition,
   max_iterations: step.max_iterations,
   probe: step.probe,
+  intent: step.intent,
+  preferred: step.preferred,
   session: step.session,
   items: step.items,
   policy: step.policy,
@@ -557,6 +561,9 @@ export const stepFileText = (step: StepDefinition): string => {
   if (step.condition) lines.push(`condition: ${yamlText(step.condition)}`);
   if (step.max_iterations) lines.push(`max_iterations: ${step.max_iterations}`);
   if (step.probe) lines.push(`probe: ${step.probe}`);
+  if (step.intent) lines.push(`intent: ${step.intent}`);
+  if (step.preferred)
+    lines.push(`preferred: ${JSON.stringify(step.preferred)}`);
   if (step.on_fail !== 'stop') lines.push(`on_fail: ${step.on_fail}`);
   if (step.effect !== 'local') lines.push(`effect: ${step.effect}`);
   if (step.needs.length) lines.push(`needs: [${step.needs.join(', ')}]`);

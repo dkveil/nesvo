@@ -796,7 +796,18 @@ if (args.length === 1 && args[0] === '--version') {
     /^\[begin operator-request ([0-9a-f]+)\]\n([\s\S]*?)\n\[end operator-request \1\]$/m.exec(
       prompt,
     );
-  if (verdictMode) {
+  const checkResolution = prompt.startsWith(
+    'Select a test check for this workflow step.',
+  );
+  if (checkResolution) {
+    assert.equal(values.get('--permission-mode'), 'plan');
+    assert.equal(values.get('--no-session-persistence'), true);
+    assert.equal(values.get('--setting-sources'), '');
+    assert.deepEqual(
+      Object.keys(JSON.parse(values.get('--json-schema')).properties).sort(),
+      ['candidateId', 'proposal', 'rationale'],
+    );
+  } else if (verdictMode) {
     assert.ok(values.has('--json-schema'), 'Verdicts need --json-schema');
     const schema = JSON.parse(values.get('--json-schema'));
     assert.equal(schema.type, 'object');
@@ -1097,6 +1108,24 @@ if (args.length === 1 && args[0] === '--version') {
       },
     });
   };
+  if (checkResolution) {
+    const { candidates } = JSON.parse(prompt.split('\n').at(-1));
+    const proposal =
+      existsSync(join(process.cwd(), 'verify.mjs')) && candidates.length === 0
+        ? {
+            command: 'node verify.mjs',
+            sourceFile: 'verify.mjs',
+            location: 'test entry point',
+          }
+        : null;
+    verdict('Select the Project test check.', {
+      candidateId: candidates[0]?.id ?? null,
+      proposal,
+      rationale:
+        'Selected the first intended test suite in the project inventory.',
+    });
+    process.exit(0);
+  }
   const passVerdict = {
     status: 'pass',
     summary: 'Fixture verified the change against the quoted spec.',

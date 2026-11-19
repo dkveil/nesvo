@@ -26,6 +26,8 @@ export const stepFields = [
   'condition',
   'max_iterations',
   'probe',
+  'intent',
+  'preferred',
   'on_fail',
   'needs',
   'effect',
@@ -62,6 +64,7 @@ export const joinDuration = (amount: string, unit: DurationUnit) =>
 
 export const bodyLabels: Record<StepType, string> = {
   command: 'Command',
+  check: 'Acceptance criteria',
   action: 'Command',
   agent: 'Instructions',
   human: 'Description',
@@ -74,6 +77,7 @@ export const bodyLabels: Record<StepType, string> = {
 
 export const bodyPlaceholders: Record<StepType, string> = {
   command: 'bun run check',
+  check: 'Which tests should run and what makes the check pass?',
   action: 'gh release create "$VERSION"',
   agent: 'What the agent checks and how it reports the verdict.',
   human: 'What the reviewer looks at before deciding.',
@@ -94,6 +98,8 @@ export const withType = (step: StepDraft, type: StepType): StepDraft => ({
   ...step,
   type,
   probe: type === 'probe' ? step.probe : undefined,
+  intent: type === 'check' ? (step.intent ?? 'tests') : undefined,
+  preferred: type === 'check' ? step.preferred : undefined,
   repeat: type === 'until' ? (step.repeat ?? []) : undefined,
   condition: type === 'until' ? (step.condition ?? '') : undefined,
   max_iterations: type === 'until' ? (step.max_iterations ?? 3) : undefined,
@@ -162,6 +168,8 @@ export const stepNotes = (step: StepDraft): NotesByField => ({
       condition: step.condition,
       max_iterations: step.max_iterations,
       probe: step.probe,
+      intent: step.intent,
+      preferred: step.preferred,
       session: step.session,
       items: step.items,
       policy: step.policy,

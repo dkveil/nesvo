@@ -2295,6 +2295,7 @@ async function smokeDesktop() {
     'external-session-messages',
     'session-message-watchers',
     'coordinator-orchestration',
+    'portable-checks',
   ]);
   assert.deepEqual(await scheduledJobCall('list', 'local'), []);
   const savedScheduledJob = await scheduledJobCall(

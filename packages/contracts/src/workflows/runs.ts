@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkProjectProfileSchema } from './checks';
 import { promptSkillSchema } from '../skills';
 import { ruleEntryCitationSchema } from '../rule-entries';
 import { providerSchema } from '../sessions';
@@ -89,6 +90,8 @@ export const workflowRunSchema = z.strictObject({
   id: idSchema,
   revision: revisionSchema,
   workflow: resolvedWorkflowSchema,
+  semanticsVersion: z.literal(1).optional(),
+  projectProfile: checkProjectProfileSchema.optional(),
   specPath: z.string().min(1).max(workflowLimits.directory),
   specHash: definitionHashSchema,
   specTitle: z.string().min(1).max(workflowDefinitionLimits.specTitle),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkIntentSchema, checkPreferencesSchema } from './checks';
 import { promptSkillSchema, type PromptSkill } from '../skills';
 import { decisionRouteSchema } from '../decision-route';
 import {
@@ -65,6 +66,7 @@ export const parseDurationMs = (value: string): number | null => {
 
 export const stepTypeSchema = z.enum([
   'command',
+  'check',
   'agent',
   'human',
   'action',
@@ -136,6 +138,8 @@ const stepDefinitionShape = {
   timeout: durationSchema.default('15m'),
   pr: prExpressionSchema.optional(),
   probe: probeKindSchema.optional(),
+  intent: checkIntentSchema.optional(),
+  preferred: checkPreferencesSchema.optional(),
   session: workflowChildSessionSchema.optional(),
   items: workflowItemSourceSchema.optional(),
   policy: workflowChildPolicySchema.optional(),
@@ -191,6 +195,8 @@ type StepRuleSubject = {
   retries: number;
   pr?: string;
   probe?: z.infer<typeof probeKindSchema>;
+  intent?: z.infer<typeof checkIntentSchema>;
+  preferred?: z.infer<typeof checkPreferencesSchema>;
   session?: z.infer<typeof workflowChildSessionSchema>;
   items?: z.infer<typeof workflowItemSourceSchema>;
   policy?: z.infer<typeof workflowChildPolicySchema>;
@@ -208,6 +214,21 @@ type StepRuleSubject = {
 const enforceStepRules = (value: StepRuleSubject, context: z.RefinementCtx) => {
   const child = isChildWorkflowStep(value.type);
   const fanOut = value.type === 'fan-out';
+  if ((value.type === 'check') !== (value.intent !== undefined))
+    context.addIssue({
+      code: 'custom',
+      path: ['intent'],
+      message:
+        value.type === 'check'
+          ? 'Choose a check intent.'
+          : 'Intent belongs to a Check step.',
+    });
+  if (value.preferred && value.type !== 'check')
+    context.addIssue({
+      code: 'custom',
+      path: ['preferred'],
+      message: 'Preferences belong to a Check step.',
+    });
   for (const [field, required] of [
     ['session', child],
     ['items', fanOut],

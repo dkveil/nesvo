@@ -378,6 +378,12 @@ export type StoredAssistantChange = {
 export class AssistantChangeStore {
   constructor(private readonly database: DatabaseSync) {}
 
+  projectMappingApproved(root: string, hash: string): boolean {
+    return Boolean(this.database.prepare(
+      "SELECT 1 FROM assistant_changes WHERE status = 'applied' AND json_extract(document, '$.kind') = 'project-profile' AND json_extract(document, '$.mappingRoot') = ? AND json_extract(document, '$.after.hash') = ? LIMIT 1",
+    ).get(root, hash));
+  }
+
   nextSequence(conversationId: string): number {
     const row = this.database
       .prepare(

@@ -35,6 +35,7 @@ import {
   type LoadedSpec,
 } from './definitions';
 import { filterResultText, type EvidenceStore } from './evidence';
+import { emptyProjectProfile, projectChecks } from './project-checks';
 import type { WorkflowRunStore } from './store';
 
 export const NO_AUTHOR_ATTENTION = 'No author session on this host';
@@ -172,6 +173,7 @@ export type RunnerPorts = {
   emit: (event: DesktopEvent) => void;
   evidence: StepEvidence & Partial<Pick<EvidenceStore, 'stopOrphans'>>;
   stepExecutors: Partial<Record<StepType, StepExecutor>>;
+  projectMappingApproved?: (root: string, hash: string) => boolean;
   author?: AuthorPort;
   stopChildren?: (runId: string) => void;
   createManualSession?: (run: WorkflowRun) => string;
@@ -240,7 +242,7 @@ const SESSION_STEP_STATES: readonly WorkflowStepState[] = [
   'running',
   'awaiting-human',
 ];
-const SERIAL_STEP_TYPES: readonly StepType[] = ['agent', 'human'];
+const SERIAL_STEP_TYPES: readonly StepType[] = ['agent', 'check', 'human'];
 const PARALLEL_STEP_LIMIT = 4;
 const PHASE_RANK = {
   plan: 0,
@@ -319,7 +321,7 @@ const failureAttention = (step: WorkflowStepRecord) =>
 const needsPlanningTurn = (workflow: ResolvedWorkflow) =>
   workflow.steps.some(
     step =>
-      step.phase === 'plan' && (step.type === 'agent' || step.type === 'human'),
+      step.phase === 'plan' && (step.type === 'agent' || step.type === 'check' || step.type === 'human'),
   );
 
 const afterImplementation = (run: WorkflowRun): Move => {
@@ -474,6 +476,7 @@ const isSerial = (step: WorkflowStepRecord) =>
 
 const EXCLUSIVE_STEP_TYPES = {
   command: [],
+  check: [],
   action: ['human'],
   agent: [],
   human: ['action'],
@@ -655,6 +658,7 @@ export class WorkflowRunner {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly browserSteps: boolean;
   private readonly ruleMetrics: RunnerPorts['ruleMetrics'];
+  private readonly projectMappingApproved: RunnerPorts['projectMappingApproved'];
   private readonly passes = new Map<string, PassState>();
   private readonly active = new Map<string, ActiveStep>();
   private readonly retryTimers = new Map<
@@ -679,6 +683,7 @@ export class WorkflowRunner {
     this.environment = ports.environment ?? process.env;
     this.browserSteps = ports.browserSteps === true;
     this.ruleMetrics = ports.ruleMetrics;
+    this.projectMappingApproved = ports.projectMappingApproved;
   }
 
   async startManualRun(
@@ -738,7 +743,7 @@ export class WorkflowRunner {
       finishedAt: null,
     };
     const needsSession = workflow.steps.some(
-      step => step.phase === phase && isChildWorkflowStep(step.type),
+      step => step.phase === phase && (isChildWorkflowStep(step.type) || step.type === 'check'),
     );
     if (needsSession) run.manual = true;
     if (!this.store.insertRun(run))
@@ -772,11 +777,11 @@ export class WorkflowRunner {
       return current.done;
     }
     const state: PassState = { again: true, done: Promise.resolve() };
-    state.done = Promise.resolve().then(() => {
+    state.done = Promise.resolve().then(async () => {
       try {
         while (state.again && !this.closed) {
           state.again = false;
-          this.pass(runId);
+          await this.pass(runId);
         }
       } finally {
         this.passes.delete(runId);
@@ -951,7 +956,7 @@ export class WorkflowRunner {
       ]);
   }
 
-  private pass(runId: string): void {
+  private async pass(runId: string): Promise<void> {
     const limit = workflowLimits.stepsPerRun * 4 + 8;
     for (let iteration = 0; iteration < limit; iteration++) {
       const run = this.store.getRun(runId);
@@ -960,6 +965,12 @@ export class WorkflowRunner {
       if (timer) clearTimeout(timer);
       this.retryTimers.delete(runId);
       if (TERMINAL_STATUSES.includes(run.status)) this.abortSteps(runId);
+      else if (run.status !== 'needs-attention' && !run.projectProfile && run.workflow.steps.some(step => step.type === 'check')) {
+        const profile = await projectChecks.read(run.directory, run.workflow.steps, this.environment, AbortSignal.timeout(8000), hash => this.projectMappingApproved?.(run.projectRoot, hash) === true)
+          .then(scan => scan.profile, emptyProjectProfile);
+        if (this.closed || !this.writeRun(run, { semanticsVersion: 1, projectProfile: profile })) return;
+        continue;
+      }
       const steps = this.store.stepsForRun(runId);
       if (this.observeRecoveringChildren(run, steps)) return;
       if (
@@ -1560,7 +1571,7 @@ export class WorkflowRunner {
     changes: Partial<
       Pick<
         WorkflowRun,
-        'status' | 'attention' | 'finishedAt' | 'currentStepIndex'
+        'status' | 'attention' | 'finishedAt' | 'currentStepIndex' | 'semanticsVersion' | 'projectProfile'
       >
     >,
   ): boolean {

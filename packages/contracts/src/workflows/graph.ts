@@ -102,7 +102,7 @@ export const graphMessages = {
   layoutStep: (step: string) =>
     `Layout names step "${printable(step, 64)}", which is not in this workflow`,
   noGate: (workflow: string) =>
-    `Workflow "${workflow}" has no gate; add a command, agent or human step`,
+    `Workflow "${workflow}" has no gate; add a command, check, agent or human step`,
   externalStep: (step: string) =>
     `Step "${step}" has an external effect and a path reaches it without a human step`,
   externalLooking: (step: string) =>

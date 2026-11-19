@@ -1,4 +1,5 @@
 export * from './definitions';
+export * from './checks';
 export * from './results';
 export * from './runs';
 export * from './metrics';

@@ -31,6 +31,7 @@ export const assistantChangeKindSchema = z.enum([
   'automation',
   'lesson',
   'gate-rule',
+  'project-profile',
 ]);
 export const assistantChangeOpSchema = z.enum(['create', 'update', 'delete']);
 export const assistantChangeStatusSchema = z.enum(['applied', 'undone']);
@@ -49,7 +50,7 @@ export const assistantChangeTargetSchema = z.discriminatedUnion('type', [
     path: z
       .string()
       .regex(
-        /^(?:steps|workflows|lessons|gate-rules)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/,
+        /^(?:(?:steps|workflows|lessons|gate-rules)\/[a-z0-9]+(?:-[a-z0-9]+)*\.md|project\.md)$/,
       )
       .max(assistantChangeLimits.relativePath),
     name: stepNameSchema,
@@ -85,6 +86,17 @@ const enforceChangeRules = (
       message:
         'Automations target an automation; steps and workflows target a definition file.',
     });
+  if (
+    value.target.type === 'definition' &&
+    ((value.target.path === 'project.md') !==
+      (value.kind === 'project-profile') ||
+      (value.kind === 'project-profile' && value.target.root !== 'project'))
+  )
+    context.addIssue({
+      code: 'custom',
+      path: ['target'],
+      message: 'A Project profile targets .agents/project.md.',
+    });
   const versionType = automation ? 'revision' : 'hash';
   for (const key of ['before', 'after'] as const) {
     const version = value[key];
@@ -116,6 +128,11 @@ export const assistantChangeSchema = z
     changeId: z.uuid(),
     sequence: z.number().int().positive(),
     directory: z.string().min(1).max(workflowDefinitionLimits.path),
+    mappingRoot: z
+      .string()
+      .min(1)
+      .max(workflowDefinitionLimits.path)
+      .optional(),
     kind: assistantChangeKindSchema,
     op: assistantChangeOpSchema,
     target: assistantChangeTargetSchema,

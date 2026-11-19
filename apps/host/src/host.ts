@@ -125,7 +125,11 @@ import { createWaitCiExecutor } from './workflows/steps/wait-ci';
 import { WorkflowRunError, WorkflowRunner } from './workflows/runner';
 import { WorkflowGates } from './workflows/gates';
 import { actionExecutor } from './workflows/steps/action';
-import { createAgentExecutor } from './workflows/steps/agent';
+import {
+  createAgentExecutor,
+  type AgentStepPorts,
+} from './workflows/steps/agent';
+import { createCheckExecutor } from './workflows/steps/check';
 import { commandExecutor } from './workflows/steps/command';
 import { createHumanExecutor } from './workflows/steps/human';
 import {
@@ -877,6 +881,7 @@ export const serveHost = ({
         workflowRunStore.getStep(id),
       );
       const snapshots = new SpecSnapshots(directory);
+      const assistantChangeStore = new AssistantChangeStore(database);
       const workflows = yield* Effect.acquireRelease(
         Effect.sync(() => {
           const children = new ChildRuns({
@@ -904,11 +909,47 @@ export const serveHost = ({
           const childExecutor = createChildExecutor(children, provider =>
             usage.read({ provider }),
           );
+          const agentPorts: AgentStepPorts = {
+            sessions,
+            usage,
+            spec: async (run, signal) => {
+              const snapshot = snapshots.read(run.id);
+              if (snapshot !== null) return snapshot;
+              const loaded = await loadSpec(
+                run.specPath,
+                run.directory,
+                signal,
+              );
+              return loaded.source.contentHash === run.specHash
+                ? loaded.spec.body
+                : null;
+            },
+            browser: (provider, directory, signal) =>
+              sessions.browserUnavailable(
+                { provider, directory, profileId: null },
+                { unattended: true },
+                signal,
+              ),
+            lessons: (run, step, paths, budget) =>
+              lessons.current?.verifierLessons(
+                {
+                  directories: [run.directory, run.projectRoot],
+                  provider: run.gateProvider === 'Codex' ? 'codex' : 'claude',
+                  role: 'workflow-agent',
+                  workflow: run.workflow.name,
+                  step,
+                  paths,
+                },
+                budget,
+              ) ?? null,
+          };
           const runner = new WorkflowRunner({
             store: workflowRunStore,
             emit,
             evidence,
             ruleMetrics,
+            projectMappingApproved: (root, hash) =>
+              assistantChangeStore.projectMappingApproved(root, hash),
             stopChildren: id => children.stopChildren(id),
             createManualSession: run =>
               sessions.create(
@@ -937,41 +978,23 @@ export const serveHost = ({
                   latest: sessionId => reviewStore.latest(sessionId),
                 }),
               ),
-              agent: gated(
-                createAgentExecutor({
-                  sessions,
-                  usage,
-                  spec: async (run, signal) => {
-                    const snapshot = snapshots.read(run.id);
-                    if (snapshot !== null) return snapshot;
-                    const loaded = await loadSpec(
-                      run.specPath,
-                      run.directory,
-                      signal,
-                    );
-                    return loaded.source.contentHash === run.specHash
-                      ? loaded.spec.body
-                      : null;
-                  },
-                  browser: (provider, directory, signal) =>
-                    sessions.browserUnavailable(
-                      { provider, directory, profileId: null },
-                      { unattended: true },
+              agent: gated(createAgentExecutor(agentPorts)),
+              check: gated(
+                createCheckExecutor({
+                  ...agentPorts,
+                  guard: inboxRules,
+                  mode: id => sessions.snapshot(id)?.mode,
+                  folder: (directory, access, id, signal) =>
+                    sessions.claimWorkflowCheck(directory, access, id, signal),
+                  mappingApproved: (root, hash) =>
+                    assistantChangeStore.projectMappingApproved(root, hash),
+                  save: (context, document, expected, signal) =>
+                    assistantChanges.applyProjectProfile(
+                      context,
+                      document,
+                      expected,
                       signal,
                     ),
-                  lessons: (run, step, paths, budget) =>
-                    lessons.current?.verifierLessons(
-                      {
-                        directories: [run.directory, run.projectRoot],
-                        provider:
-                          run.gateProvider === 'Codex' ? 'codex' : 'claude',
-                        role: 'workflow-agent',
-                        workflow: run.workflow.name,
-                        step,
-                        paths,
-                      },
-                      budget,
-                    ) ?? null,
                 }),
               ),
               session: gated(childExecutor),
@@ -1108,7 +1131,6 @@ export const serveHost = ({
               ),
           )
           .map(run => run.id);
-      const assistantChangeStore = new AssistantChangeStore(database);
       const configuration: ConfigurationChanges = new ConfigurationChanges(
         new ConfigurationChangeStore(database),
         change => emit({ type: 'configuration-changed', change }),
@@ -1458,7 +1480,7 @@ export const serveHost = ({
         findProjectRoot,
         probes.controller.signal,
       );
-      const assistantChanges = new AssistantChanges({
+      const assistantChanges: AssistantChanges = new AssistantChanges({
         store: assistantChangeStore,
         configuration,
         definitions: {

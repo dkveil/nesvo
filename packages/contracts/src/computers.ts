@@ -93,6 +93,7 @@ export const hostCapabilitySchema = z.enum([
   'external-session-messages',
   'session-message-watchers',
   'coordinator-orchestration',
+  'portable-checks',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

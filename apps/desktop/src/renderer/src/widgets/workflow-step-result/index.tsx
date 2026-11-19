@@ -40,6 +40,7 @@ import {
 } from '@/shared/ui/select';
 import { StatusMessage } from '@/shared/ui/status-message';
 import { ChildQueue } from './child-queue';
+import { CheckObservation } from './check-observation';
 
 export type InboxTarget = {
   hostId: string;
@@ -220,7 +221,11 @@ export function StepResult({
             stepTypeLabels[definition.type],
             phaseLabels[definition.phase],
             definition.skill ? `Skill ${definition.skill}` : '',
-            definition.on_fail === 'fix' ? 'Sends failures back for a fix' : '',
+            definition.on_fail === 'fix'
+              ? definition.type === 'check'
+                ? 'Needs attention on failure'
+                : 'Sends failures back for a fix'
+              : '',
           ]
             .filter(Boolean)
             .join(' · ')}
@@ -248,6 +253,18 @@ export function StepResult({
         <p className="leading-5 text-muted-foreground [overflow-wrap:anywhere]">
           Skipped: {record.skip.reason}
         </p>
+      ) : result?.check ? (
+        <>
+          {(!result.check.invocations.length ||
+            result.summary.startsWith('Timed out')) && (
+            <p className="leading-5">{result.summary}</p>
+          )}
+          <CheckObservation
+            check={result.check}
+            profile={run.projectProfile}
+            hostId={run.hostId}
+          />
+        </>
       ) : result ? (
         <p className="leading-5 whitespace-pre-wrap [overflow-wrap:anywhere]">
           {result.summary || 'No summary was reported.'}

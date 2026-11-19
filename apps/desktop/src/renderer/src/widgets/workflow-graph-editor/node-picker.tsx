@@ -54,6 +54,13 @@ const categories: Category[] = [
     description: 'A command that passes or fails',
   },
   {
+    type: 'check',
+    label: 'Checks',
+    icon: Terminal,
+    newLabel: 'New portable check',
+    description: 'Selects and verifies a test suite from the project',
+  },
+  {
     type: 'agent',
     label: 'Agents',
     icon: Bot,

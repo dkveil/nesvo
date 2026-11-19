@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 37;
+const currentDatabaseVersion = 38;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(
@@ -104,6 +104,7 @@ test(
       inspection.type,
       'session-message-watchers',
       'coordinator-orchestration',
+      'portable-checks',
       JSON.stringify(inspection),
     );
     await call({
@@ -1587,6 +1588,321 @@ test(
       fixture.db.close();
       await rm(directory, { recursive: true, force: true });
     }
+  },
+);
+
+test(
+  'portable checks pin static inventories, adapt setup, preserve suite failures and save approved mappings',
+  { timeout: 120_000 },
+  async t => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'nesvo-portable-checks-')),
+    );
+    const home = join(root, 'global');
+    const data = join(root, 'data');
+    const write = async (folder, file, content) => {
+      const path = join(folder, file);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, content);
+      return path;
+    };
+    const authorSpec =
+      '---\nworkflow: portable\n---\nCheck the project tests.\n';
+    await write(
+      home,
+      'steps/verify-tests.md',
+      [
+        '---',
+        'name: verify-tests',
+        'type: check',
+        'phase: pre-done',
+        'intent: tests',
+        'preferred: { typescript: { runner: package-script, script: test }, kotlin: { runner: gradle-wrapper, task: test } }',
+        'timeout: 30s',
+        'on_fail: fix',
+        '---',
+        'Run the project tests and record proof of execution.',
+        '',
+      ].join('\n'),
+    );
+    await write(
+      home,
+      'workflows/portable.md',
+      '---\nname: portable\nsteps: [verify-tests]\n---\n',
+    );
+    const host = launch(data, join(root, 'pid.json'), {
+      NESVO_TEST_MODE: '1',
+      NESVO_WORKFLOWS_HOME: home,
+      NODE_TEST_CONTEXT: undefined,
+    });
+    t.after(async () => {
+      if (host.child.exitCode === null) host.child.stdin.end();
+      await bounded(
+        host.exited,
+        'Portable check host did not stop',
+        7000,
+      ).catch(() => host.child.kill());
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    });
+    assert.ok(
+      (await host.request('health')).health.capabilities.includes(
+        'portable-checks',
+      ),
+    );
+
+    const wait = async (callback, label) => {
+      const deadline = Date.now() + 35000;
+      let value;
+      do {
+        value = await callback();
+        if (value) return value;
+        await delay(50);
+      } while (Date.now() < deadline);
+      assert.fail(
+        label +
+          '\n' +
+          host.error() +
+          '\n' +
+          JSON.stringify(host.timeline.slice(-4)),
+      );
+    };
+    const run = async folder => {
+      await write(folder, 'task.md', authorSpec);
+      const started = await host.request('run-workflow-steps', {
+        directory: folder,
+        specPath: 'task.md',
+      });
+      assert.equal(started.type, 'workflow-run', JSON.stringify(started));
+      return started.run.id;
+    };
+    const settled = id =>
+      wait(
+        async () => {
+          const response = await host.request('get-workflow-run', {
+            runId: id,
+          });
+          assert.equal(
+            response.type,
+            'workflow-run-detail',
+            JSON.stringify(response),
+          );
+          return !['pending', 'checking'].includes(response.detail.run.status)
+            ? response.detail
+            : null;
+        },
+        'Run ' + id + ' did not settle',
+      );
+    const check = detail => detail.steps[0]?.result?.check;
+    const project = join(root, 'typescript');
+    const suite = error =>
+      [
+        "import { test } from 'node:test';",
+        "import assert from 'node:assert/strict';",
+        'const sum = (a: number, b: number): number => a + b;',
+        "test('sum', () => assert.equal(sum(2, 2), " + (error ? 5 : 4) + '));',
+      ].join('\n');
+    const scripts = testScript =>
+      JSON.stringify({
+        name: 'portable-typescript',
+        packageManager: 'npm@11',
+        type: 'module',
+        scripts: {
+          ...(testScript ? { test: 'node --test sample.test.ts' } : {}),
+          'test:ci': 'node --test sample.test.ts',
+        },
+      });
+    await write(project, 'package.json', scripts(false));
+    await write(project, 'sample.test.ts', suite(false));
+    await write(
+      root,
+      'inbox-rules/test-command.md',
+      [
+        '---',
+        'name: test-command',
+        'trigger: command',
+        'pattern: "npm run test:ci"',
+        'action: hold',
+        '---',
+      ].join('\n'),
+    );
+    const adaptedId = await run(project);
+    const alternateHold = await wait(
+      () =>
+        host.timeline.find(
+          event =>
+            event.type === 'inbox-item-changed' &&
+            event.item.presentation.command === 'npm run test:ci',
+        )?.item,
+      'The actual alternate command did not reach the Inbox hold',
+    );
+    assert.equal(alternateHold.status, 'pending');
+    assert.equal(
+      (await host.request('get-workflow-run', { runId: adaptedId })).detail
+        .steps[0].state,
+      'running',
+    );
+    assert.equal(
+      (
+        await host.request('decide-inbox-item', {
+          itemId: alternateHold.id,
+          decision: 'approve',
+        })
+      ).item.status,
+      'approved',
+    );
+    const adapted = await settled(adaptedId);
+    assert.equal(
+      adapted.run.status,
+      'passed',
+      JSON.stringify(
+        adapted.run.status === 'passed'
+          ? adapted.steps
+          : await host.request('read-workflow-evidence', {
+              runId: adapted.run.id,
+              stepId: adapted.steps[0].id,
+              path: adapted.steps[0].result.evidence[0].path,
+            }),
+      ),
+    );
+    assert.equal(adapted.run.projectProfile.stack, 'typescript');
+    assert.equal(adapted.run.semanticsVersion, 1);
+    assert.equal(check(adapted).invocations[0].outcome, 'setup-mismatch');
+    assert.match(check(adapted).invocations[1].substitution, /absent/);
+    assert.equal(check(adapted).invocations[1].command, 'npm run test:ci');
+    assert.match(check(adapted).invocations[1].proof, /reported 1 test\b/);
+
+    await write(project, 'package.json', scripts(true));
+    await write(project, 'sample.test.ts', suite(true));
+    const failed = await settled(await run(project));
+    assert.equal(failed.run.status, 'needs-attention');
+    assert.notEqual(
+      failed.run.projectProfile.hash,
+      adapted.run.projectProfile.hash,
+    );
+    assert.deepEqual(
+      check(failed).invocations.map(invocation => invocation.outcome),
+      ['failed'],
+    );
+    assert.match(check(failed).invocations[0].proof, /reported 1 test\b/);
+
+    const kotlin = join(root, 'kotlin');
+    await write(
+      kotlin,
+      '.agents/project.md',
+      '---\nstack: kotlin\nmodule: app\nchecks: { tests: { runner: gradle-wrapper, task: ":app:test" } }\n---\n',
+    );
+    await write(kotlin, 'settings.gradle.kts', 'include(":app")\n');
+    await write(
+      kotlin,
+      'app/build.gradle.kts',
+      'plugins { kotlin("jvm") version "2.2.0" }\n',
+    );
+    await write(
+      kotlin,
+      'gradle-fixture.cjs',
+      [
+        "const fs = require('node:fs');",
+        "if (!process.argv.includes(':app:test')) process.exit(1);",
+        "fs.mkdirSync('app/build/test-results/test', {recursive: true});",
+        'fs.writeFileSync(\'app/build/test-results/test/TEST-fixture.xml\', \'<testsuite tests="1" skipped="0"/>\');',
+      ].join('\n'),
+    );
+    const windows = process.platform === 'win32';
+    const wrapper = await write(
+      kotlin,
+      windows ? 'gradlew.bat' : 'gradlew',
+      windows
+        ? '@echo off\r\nnode gradle-fixture.cjs %*\r\n'
+        : '#!/bin/sh\nexec node gradle-fixture.cjs "$@"\n',
+    );
+    if (!windows) await chmod(wrapper, 0o755);
+    const gradle = await settled(await run(kotlin));
+    assert.equal(gradle.run.status, 'passed', JSON.stringify(gradle.steps));
+    assert.equal(gradle.run.projectProfile.directory, 'app');
+    assert.match(check(gradle).invocations[0].proof, /fresh test report/);
+    await rm(wrapper);
+    const unavailable = await settled(await run(kotlin));
+    assert.equal(unavailable.steps[0].state, 'blocked');
+    assert.equal(check(unavailable).invocations[0].outcome, 'setup-mismatch');
+    assert.notEqual(
+      unavailable.run.projectProfile.hash,
+      gradle.run.projectProfile.hash,
+    );
+
+    const universal = join(root, 'universal');
+    await write(
+      universal,
+      '.github/workflows/verify.yml',
+      'jobs:\n  tests:\n    steps:\n      - name: Verify\n        run: node --test portable.test.mjs\n',
+    );
+    await write(
+      universal,
+      'portable.test.mjs',
+      "import { test } from 'node:test';\ntest('works', () => {});\n",
+    );
+    const discovered = await settled(await run(universal));
+    assert.equal(discovered.run.projectProfile.stack, 'unknown');
+    assert.equal(
+      discovered.run.status,
+      'passed',
+      JSON.stringify(discovered.steps),
+    );
+    assert.equal(check(discovered).proposed.source.location, 'tests / Verify');
+
+    const novel = join(root, 'novel');
+    const source = await write(
+      novel,
+      'verify.mjs',
+      [
+        "import { test } from 'node:test';",
+        "import { writeFileSync } from 'node:fs';",
+        "test('works', () => writeFileSync('ran.txt', 'executed'));",
+      ].join('\n'),
+    );
+    const first = await run(novel);
+    const approval = await wait(
+      () =>
+        host.timeline.find(
+          event =>
+            event.type === 'inbox-item-changed' &&
+            event.item.subject === 'Approve Project test command',
+        )?.item,
+      'No portable check approval appeared',
+    );
+    assert.equal(approval.status, 'pending');
+    assert.equal(approval.presentation.command, 'node verify.mjs');
+    assert.match(approval.presentation.text, /Source: verify\.mjs/);
+    assert.equal(existsSync(join(novel, 'ran.txt')), false);
+    const decision = await host.request('decide-inbox-item', {
+      itemId: approval.id,
+      decision: 'approve',
+    });
+    assert.equal(decision.item.status, 'approved');
+    const approved = await settled(first);
+    assert.equal(approved.run.status, 'passed', JSON.stringify(approved.steps));
+    assert.equal(await readFile(join(novel, 'ran.txt'), 'utf8'), 'executed');
+    const mapping = check(approved).mapping;
+    assert.ok(mapping);
+    assert.match(
+      await readFile(join(novel, '.agents/project.md'), 'utf8'),
+      /node verify\.mjs/,
+    );
+    const reused = await settled(await run(novel));
+    assert.equal(reused.run.status, 'passed', JSON.stringify(reused.steps));
+    assert.equal(check(reused).proposed.source.file, '.agents/project.md');
+    assert.equal(check(reused).mapping, undefined);
+    assert.equal(
+      (await host.request('workflow-assistant-undo', mapping)).result.status,
+      'undone',
+    );
+    assert.equal(existsSync(join(novel, '.agents/project.md')), false);
+    assert.equal(existsSync(source), true);
+    await host.stop();
   },
 );
 
@@ -4702,6 +5018,7 @@ test(
         'external-session-messages',
         'session-message-watchers',
         'coordinator-orchestration',
+        'portable-checks',
       ],
     });
     assert.equal(status.type, 'claude-status');
@@ -5728,7 +6045,6 @@ test(
     assert.equal(
       migrated.prepare('PRAGMA user_version').get().user_version,
       currentDatabaseVersion,
-      37,
     );
     migrated.close();
     const reopened = open();
@@ -10363,6 +10679,7 @@ test(
       'external-session-messages',
       'session-message-watchers',
       'coordinator-orchestration',
+      'portable-checks',
     ]);
     const id = randomUUID();
     const jobInput = {
@@ -33301,7 +33618,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     capabilities.slice(inboxRuleCapability, inboxRuleCapability + 2),
     ['inbox-rules', 'decision-routing'],
   );
-  assert.deepEqual(capabilities.slice(-15), [
+  assert.deepEqual(capabilities.slice(-16), [
     'external-inbox',
     'claude-autonomy',
     'coordinator-workers',
@@ -33317,6 +33634,7 @@ test('Inbox rules hold matching commands in Claude Auto and Codex, notify, refus
     'external-session-messages',
     'session-message-watchers',
     'coordinator-orchestration',
+    'portable-checks',
   ]);
 
   const invalid = await host.request('validate-inbox-rule', {

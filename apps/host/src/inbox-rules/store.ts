@@ -19,6 +19,7 @@ export const inboxBindingSchema = z.discriminatedUnion('kind', [
     kind: z.literal('workflow-step'),
     runId: z.uuid(),
     stepName: z.string().max(200),
+    invocation: z.string().length(64).optional(),
     attempt: z.number().int().nonnegative(),
   }),
   z.strictObject({

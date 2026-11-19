@@ -26,6 +26,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { text } from '../skills/portable';
+import { parseProjectOverride, projectProfilePath } from './project-checks';
 import {
   capIssues,
   checkDocument,
@@ -800,6 +801,52 @@ const entryConflict = (
   path,
   currentHash: current.file?.contentHash ?? null,
 });
+
+export async function writeProjectProfile(
+  directory: string,
+  document: string | null,
+  expectedHash: string | null,
+  signal: AbortSignal,
+  options: WriteOptions = {},
+): Promise<RuleEntryFileWriteResult> {
+  const path = join(directory, projectProfilePath);
+  const folder = dirname(path);
+  return exclusive(pathKey(path), async () => {
+    const refuse = (message: string) => ({ type: 'refused' as const, issues: [issueAt(path, message)] });
+    const canonical = await realpath(directory);
+    if (pathKey(canonical) !== pathKey(directory) ||
+      (options.expectedRoot && pathKey(canonical) !== pathKey(options.expectedRoot)))
+      return refuse('The Project checkout changed location.');
+    if (document !== null) {
+      const issues = checkFileText(document, path);
+      if (issues.length) return { type: 'refused', issues };
+      try { parseProjectOverride(document); }
+      catch { return refuse('The Project profile is invalid.'); }
+      await mkdir(folder, { recursive: true });
+    }
+    try {
+      if (pathKey(await realpath(folder)) !== pathKey(folder))
+        return refuse('The Project profile folder must be inside the checkout.');
+    } catch (error) {
+      if (missing(error)) return entryConflict(path, { file: null });
+      throw error;
+    }
+    const current = await readCurrent(path, signal);
+    if (isRefusal(current)) return { type: 'refused', issues: current.issues };
+    if ((current.file?.contentHash ?? null) !== expectedHash)
+      return entryConflict(path, current);
+    options.onPrevious?.(current.file, canonical);
+    signal.throwIfAborted();
+    if (document === null) {
+      if (current.file) await unlink(path);
+    } else {
+      const published = await publishFile(document, expectedHash, { path, root: directory, folder, projectRoot: directory }, signal);
+      if (published !== 'written')
+        return isRefusal(published) ? { type: 'refused', issues: published.issues } : entryConflict(path, published);
+    }
+    return { type: 'written', path, root: canonical };
+  });
+}
 
 export async function saveRuleEntryFile(
   input: SaveRuleEntryFileInput,

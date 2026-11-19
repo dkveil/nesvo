@@ -160,7 +160,7 @@ function hasErrors(issues: DefinitionIssue[]): boolean {
 function describeCatalog(catalog: DefinitionCatalog): string {
   const lines = [
     ...catalog.steps.map(
-      step => `step ${step.name} ${step.source.scope} ${step.source.contentHash}`,
+      step => `step ${step.name} ${step.source.scope} ${step.source.contentHash}${step.type === 'check' ? ` check:${step.intent}` : ''}`,
     ),
     ...catalog.workflows.map(
       workflow =>

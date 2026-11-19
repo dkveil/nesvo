@@ -346,6 +346,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update this computer’s Nesvo host and reconnect to manage session message watchers.',
   'coordinator-orchestration':
     'Update the host on this computer to use coordinator updates, child feedback and history.',
+  'portable-checks':
+    "Update this computer's Nesvo host and reconnect to use portable checks.",
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -1111,7 +1113,18 @@ export class ComputerManager {
       !entry.computer.capabilities.includes('provider-profiles')
     )
       throw new Error(capabilityUpdates['provider-profiles']);
-    const capability = requires ?? requiredCapability(method, input);
+    const checkDefinition =
+      method === 'save-workflow-definition' &&
+      input &&
+      typeof input === 'object' &&
+      'document' in input &&
+      typeof input.document === 'string' &&
+      /^\s*type:\s*['"]?check['"]?\s*(?:#.*)?$/m.test(
+        input.document.split(/^---\s*$/m)[1] ?? '',
+      );
+    const capability = checkDefinition
+      ? 'portable-checks'
+      : (requires ?? requiredCapability(method, input));
     if (capability && !entry.computer.capabilities.includes(capability))
       throw new Error(capabilityUpdates[capability]);
     const generation = entry.generation;
