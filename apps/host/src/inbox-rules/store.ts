@@ -1,6 +1,7 @@
 import { inboxItemSchema, type InboxItem } from '@nesvo/contracts';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { managedSetupRoute } from '../setup-profile-service';
 
 const KEPT_DECIDED_ITEMS = 300;
 
@@ -80,6 +81,9 @@ const parse = (row: Record<string, unknown>): StoredInboxItem | null => {
 };
 
 export class InboxItemStore {
+  profileRoute() {
+    return managedSetupRoute(this.database);
+  }
   constructor(private readonly database: DatabaseSync) {}
 
   insert(stored: StoredInboxItem, dedupe: string | null): boolean {

@@ -191,6 +191,7 @@ import {
   setSessionMcpSchema,
   hostIdSchema,
   sshComputerInputSchema,
+  setupProfileInputSchema,
   providerUsageInputSchema,
   readCostsSchema,
   createCostBudgetSchema,
@@ -919,6 +920,14 @@ void app.whenReady().then(async () => {
     return computers.removeComputer(hostIdSchema.parse(hostId));
   });
   const route = (hostId: unknown) => hostIdSchema.parse(hostId ?? 'local');
+  handle('nesvo:setup-profile', (event, input: unknown, hostId: unknown) => {
+    authorize(event);
+    return computers.execute(
+      'setup-profile',
+      setupProfileInputSchema.parse(input),
+      route(hostId),
+    );
+  });
   handle(
     'nesvo:complete-configuration-review',
     (event, input: unknown, hostId: unknown) => {

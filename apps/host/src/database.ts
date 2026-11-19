@@ -16,8 +16,9 @@ import { installSessionControlTables } from './session-control/store';
 import { installGateRuleTables } from './workflows/gate-rule-store';
 import { installLessonTables } from './lessons/store';
 import { installConfigurationTables } from './workflows/assistant-change-store';
+import { installSetupProfile } from './setup-profile-service';
 
-const DATABASE_VERSION = 41;
+const DATABASE_VERSION = 42;
 class NewerDatabaseError extends Error {}
 class DatabaseIntegrityError extends Error {}
 const BACKUP_LIMIT = 3;
@@ -432,6 +433,7 @@ export const openDatabaseSync = (directory: string): DatabaseSync => {
                   OR json_extract(document, '$.workflowStepId') IS NOT NULL)
             )`);
       installConfigurationTables(database);
+      installSetupProfile(database);
       database.exec(
         'CREATE TABLE IF NOT EXISTS mcp_repository_trust (provider TEXT NOT NULL, repository TEXT NOT NULL, fingerprint TEXT NOT NULL, definitions TEXT NOT NULL CHECK (json_valid(definitions)), trusted INTEGER NOT NULL CHECK (trusted IN (0, 1)), PRIMARY KEY (provider, repository))',
       );

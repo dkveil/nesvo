@@ -358,8 +358,12 @@ export class ConfigurationChangeStore {
       .get(id);
   }
 
-  completeIntent(intent: ConfigurationIntent): ConfigurationReceipt {
+  completeIntent(
+    intent: ConfigurationIntent,
+    settle?: () => void,
+  ): ConfigurationReceipt {
     return this.transaction(() => {
+      settle?.();
       const receipt = this.settle(intent.action, intent.record);
       this.database
         .prepare('DELETE FROM configuration_intents WHERE change_id = ?')

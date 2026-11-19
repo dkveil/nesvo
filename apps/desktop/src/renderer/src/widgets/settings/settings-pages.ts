@@ -41,6 +41,7 @@ export type SettingsPage =
   | 'computers'
   | 'devices'
   | 'change-history'
+  | 'your-setup'
   | 'phone'
   | 'repositories'
   | 'sharing'
@@ -165,6 +166,14 @@ export const settingsPages: SettingsPageEntry[] = [
     icon: Monitor,
     group: 'Connections',
     keywords: 'ssh remote vps host machine add connect',
+  },
+  {
+    id: 'your-setup',
+    label: 'Your setup',
+    icon: ScanSearch,
+    group: '',
+    keywords: 'profile yaml detection configuration sources review',
+    wide: true,
   },
   {
     id: 'change-history',

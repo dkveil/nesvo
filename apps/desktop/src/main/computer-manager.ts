@@ -348,6 +348,8 @@ const capabilityUpdates: Record<HostCapability, string> = {
     'Update the host on this computer to use coordinator updates, child feedback and history.',
   'portable-checks':
     "Update this computer's Nesvo host and reconnect to use portable checks.",
+  'setup-profile-v1':
+    'Update this computer’s Nesvo host and reconnect to use Your setup.',
 };
 
 const hasFileAttachments = (input: unknown) =>
@@ -376,6 +378,7 @@ function requiredCapability(
   if (Object.hasOwn(costResponses, method)) return 'costs';
   if (Object.hasOwn(lessonResponses, method)) return 'lessons';
   if (method === 'gate-rules') return 'gate-rules';
+  if (method === 'setup-profile') return 'setup-profile-v1';
   if (
     method === 'read-config-target' ||
     method === 'inspect-config-draft' ||
@@ -1328,6 +1331,7 @@ export class ComputerManager {
     const expected = {
       health: 'health',
       configuration: 'configuration-result',
+      'setup-profile': 'setup-profile',
       'desktop-configuration-profile': 'desktop-configuration-profile',
       'lookup-inbox-assistant': 'inbox-assistant-context',
       'send-inbox-assistant': 'inbox-assistant-turn',
@@ -1512,6 +1516,8 @@ export class ComputerManager {
       case 'running-apps':
         return response.list;
       case 'configuration-result':
+        return response.result;
+      case 'setup-profile':
         return response.result;
       case 'desktop-configuration-profile':
         return response.profile;

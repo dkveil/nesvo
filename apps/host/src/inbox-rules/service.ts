@@ -217,14 +217,20 @@ export class InboxRules {
   }
 
   settings(): InboxSettings {
-    const stored = this.ports.store.setting(DEFAULT_ROUTE_KEY);
+    const stored = this.ports.store.profileRoute() ?? this.ports.store.setting(DEFAULT_ROUTE_KEY);
     return {
       defaultRoute:
         stored === 'parent' || stored === 'both' ? stored : 'inbox',
     };
   }
 
+  profileManagedRouting() {
+    return this.ports.store.profileRoute() !== null;
+  }
+
   saveSettings(settings: InboxSettings): InboxSettings {
+    if (this.ports.store.profileRoute())
+      throw new ConfigurationRefusal('review-required', 'This setting is managed by the profile. Edit it in Your setup.');
     this.ports.store.saveSetting(DEFAULT_ROUTE_KEY, settings.defaultRoute);
     return this.settings();
   }
@@ -253,6 +259,8 @@ export class InboxRules {
         return {
           read,
           prepare: (mutation, before) => {
+            if (this.ports.store.profileRoute())
+              throw new ConfigurationRefusal('review-required', 'This setting is managed by the profile. Edit it in Your setup.');
             if (
               before.version.type !== 'revision' ||
               mutation.draft?.kind !== 'route'
@@ -597,6 +605,7 @@ export class InboxRules {
       rules: [...global, ...project].map(entry),
       issues: issues.slice(0, inboxRuleLimits.issues),
       defaultRoute: this.settings().defaultRoute,
+      profileManagedRouting: this.profileManagedRouting(),
     };
   }
 

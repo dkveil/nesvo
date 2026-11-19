@@ -48,6 +48,7 @@ export function startHost(directory: string, workLaptopMode: boolean) {
       env: {
         ...process.env,
         NESVO_DATA_DIR: directory,
+        ...(process.env.NESVO_DATA_DIR ? { NESVO_ISOLATED_PROFILE: '1' } : {}),
         NESVO_WORK_LAPTOP_MODE: workLaptopMode ? '1' : '0',
       },
       stdio: 'pipe',

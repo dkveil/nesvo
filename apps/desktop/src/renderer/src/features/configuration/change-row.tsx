@@ -102,7 +102,9 @@ export function ConfigurationChangeRow({
       ? source.name
       : source.kind === 'assistant'
         ? 'Inbox assistant'
-        : 'Owner';
+        : source.kind === 'system'
+          ? 'Profile file changed'
+          : 'Owner';
   const openEditor = async () => {
     setError('');
     try {

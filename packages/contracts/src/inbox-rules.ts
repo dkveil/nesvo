@@ -251,6 +251,7 @@ export const inboxRuleCatalogSchema = z.strictObject({
   rules: z.array(inboxRuleEntrySchema).max(inboxRuleLimits.rules * 2),
   issues: z.array(inboxRuleIssueSchema).max(inboxRuleLimits.issues),
   defaultRoute: decisionRouteSchema,
+  profileManagedRouting: z.boolean().optional(),
 });
 export type InboxRuleCatalog = z.infer<typeof inboxRuleCatalogSchema>;
 

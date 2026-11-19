@@ -45,6 +45,7 @@ export type ConfigurationSlot<Effect> = {
     to: ConfigurationSnapshot,
   ) => Promise<void>;
   write: (intent: ConfigurationIntent, authorize: () => void) => Effect;
+  settle?: (intent: ConfigurationIntent) => void;
 };
 
 export type ConfigurationWriter =
@@ -210,6 +211,7 @@ function same(left: unknown, right: unknown): boolean {
 function principalId(source: ConfigurationSource): string {
   if (source.kind === 'device') return `device:${source.deviceId}`;
   if (source.kind === 'assistant') return `assistant:${source.sessionId}`;
+  if (source.kind === 'system') return `system:${source.source}`;
   return 'owner';
 }
 
@@ -422,7 +424,12 @@ export class ConfigurationChanges {
           change: this.store.get(duplicate.id)?.change ?? null,
         };
       const writer = this.writer(request.target);
-      if (verb === 'apply' && writer.kind === 'file')
+      if (
+        verb === 'apply' &&
+        writer.kind === 'file' &&
+        (request.target.area !== 'setup-profile-file' ||
+          principal.source.kind !== 'owner')
+      )
         throw new ConfigurationRefusal(
           'review-required',
           'Review this file change in Nesvo.',
@@ -878,7 +885,9 @@ export class ConfigurationChanges {
           verb === 'apply'
             ? source.kind === 'device'
               ? 'device'
-              : 'owner'
+              : source.kind === 'system'
+                ? 'system'
+                : 'owner'
             : null,
       },
     };
@@ -938,7 +947,16 @@ export class ConfigurationChanges {
             } catch {
               return { intent, receipt: null };
             }
-            return { intent, receipt: this.store.completeIntent(intent) };
+            try {
+              return {
+                intent,
+                receipt: this.store.completeIntent(intent, () =>
+                  slot.settle?.(intent),
+                ),
+              };
+            } catch {
+              return { intent, receipt: null };
+            }
           });
     if (!result.receipt) return this.reconcile(result.intent);
     this.publish(result.intent.record.change);
@@ -949,6 +967,7 @@ export class ConfigurationChanges {
     const target = intent.record.change.target;
     const writer = this.writers.get(target.area);
     let status: ConfigurationChange['status'] = 'inspection-required';
+    let receipt: ConfigurationReceipt | undefined;
     if (writer?.kind === 'file') {
       try {
         status = await writer.locked(
@@ -958,8 +977,12 @@ export class ConfigurationChanges {
             if (
               current.identity === intent.to.identity &&
               same(current.version, intent.to.version)
-            )
+            ) {
+              receipt = this.store.completeIntent(intent, () =>
+                slot.settle?.(intent),
+              );
               return intent.record.change.status;
+            }
             if (
               current.identity === intent.from.identity &&
               same(current.version, intent.from.version)
@@ -985,7 +1008,7 @@ export class ConfigurationChanges {
               updatedAt: now(),
             },
           };
-    const receipt = this.store.completeIntent({ ...intent, record: settled });
+    receipt ??= this.store.completeIntent({ ...intent, record: settled });
     this.publish(settled.change);
     return { receipt, change: settled.change };
   }

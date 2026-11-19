@@ -17,6 +17,7 @@ import {
 } from './external-inbox-client';
 import { serveInboxMcp } from './external-inbox-mcp';
 import { configurationUsage, runConfigurationCli } from './configuration-cli';
+import { profileUsage, runSetupProfileCli } from './setup-profile-cli';
 
 const usage = `Usage:
   nesvo inbox post --title <text> [--body <text> | --body-file <path>]
@@ -30,6 +31,7 @@ const usage = `Usage:
 
 Inbox commands accept --computer <id> and --json.
 ${configurationUsage}
+${profileUsage}
 `;
 
 const options = {
@@ -72,6 +74,7 @@ async function main(args: string[]) {
     return 0;
   }
   if (args[0] === 'config') return runConfigurationCli(args.slice(1));
+  if (args[0] === 'profile') return runSetupProfileCli(args.slice(1));
   let id: string | undefined;
   try {
     const {

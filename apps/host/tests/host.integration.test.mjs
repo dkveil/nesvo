@@ -31,7 +31,7 @@ import {
   t3ImportFixture,
 } from './manager-import-fixture.mjs';
 
-const currentDatabaseVersion = 41;
+const currentDatabaseVersion = 42;
 const newerDatabaseVersion = currentDatabaseVersion + 1;
 
 test(

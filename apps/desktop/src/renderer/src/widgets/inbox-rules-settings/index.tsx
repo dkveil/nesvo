@@ -54,6 +54,7 @@ type InboxRulesSettingsProps = {
   statuses: ProviderStates;
   onRefreshProvider: (provider: Provider) => void;
   api: InboxRulesApi;
+  onEditProfile?: () => void;
 };
 
 type Draft = {
@@ -150,6 +151,7 @@ export function InboxRulesSettings({
   statuses,
   onRefreshProvider,
   api,
+  onEditProfile,
 }: InboxRulesSettingsProps) {
   const unavailable = unavailableReason(computer);
   const hostId = computer?.id ?? 'local';
@@ -308,32 +310,50 @@ export function InboxRulesSettings({
       <SettingsSection title="Routing">
         <SettingsRow
           title="Decisions of child sessions"
-          description="Fallback when a rule, workflow or group sets no route."
+          description={
+            catalog?.profileManagedRouting
+              ? 'From profile'
+              : 'Fallback when a rule, workflow or group sets no route.'
+          }
         >
-          <Select
-            value={catalog?.defaultRoute ?? 'inbox'}
-            disabled={!catalog || busy}
-            onValueChange={value =>
-              void run(async () => {
-                await api.saveInboxSettings(
-                  { defaultRoute: value as DecisionRoute },
-                  hostId,
-                );
-                return api.listInboxRules({ directory }, hostId);
-              })
-            }
-          >
-            <SelectTrigger aria-label="Default decision route" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(routeLabels) as DecisionRoute[]).map(route => (
-                <SelectItem key={route} value={route}>
-                  {routeLabels[route]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {catalog?.profileManagedRouting ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onEditProfile}
+              disabled={!onEditProfile}
+            >
+              Edit profile setting
+            </Button>
+          ) : (
+            <Select
+              value={catalog?.defaultRoute ?? 'inbox'}
+              disabled={!catalog || busy}
+              onValueChange={value =>
+                void run(async () => {
+                  await api.saveInboxSettings(
+                    { defaultRoute: value as DecisionRoute },
+                    hostId,
+                  );
+                  return api.listInboxRules({ directory }, hostId);
+                })
+              }
+            >
+              <SelectTrigger
+                aria-label="Default decision route"
+                className="w-48"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(routeLabels) as DecisionRoute[]).map(route => (
+                  <SelectItem key={route} value={route}>
+                    {routeLabels[route]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </SettingsRow>
       </SettingsSection>
       <SettingsSection

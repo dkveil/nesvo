@@ -52,6 +52,11 @@ import type {
   DesktopConfigurationOwnerResult,
 } from './configuration-owner-flow';
 export * from './configuration-owner-flow';
+export * from './setup-profile';
+import {
+  setupProfileInputSchema,
+  setupProfileReviewSchema,
+} from './setup-profile';
 import {
   configurationInboxContextSchema,
   configurationInboxLookupSchema,
@@ -72,6 +77,8 @@ import {
   configurationOwnerFlowFinishSchema,
   configurationOwnerFlowStartSchema,
   configurationRequestSchema,
+  configurationReceiptSchema,
+  configurationErrorSchema,
   configurationResultSchema,
   configurationProfileInputSchema,
   configurationProfileSchema,
@@ -782,6 +789,11 @@ export const hostRequestSchema = z.discriminatedUnion('method', [
     input: configurationRequestSchema,
   }),
   z.strictObject({ id: z.uuid(), method: z.literal('list-config-devices') }),
+  z.strictObject({
+    id: z.uuid(),
+    method: z.literal('setup-profile'),
+    input: setupProfileInputSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     method: z.literal('start-config-owner-flow'),
@@ -1720,7 +1732,22 @@ export const hostConnectionSchema = z.discriminatedUnion('type', [
 export type HostConnect = z.infer<typeof hostConnectSchema>;
 export type HostConnection = z.infer<typeof hostConnectionSchema>;
 
+export const setupProfileResultSchema = z.union([
+  configurationErrorSchema,
+  z.strictObject({
+    ok: z.literal(true),
+    review: setupProfileReviewSchema,
+    receipt: configurationReceiptSchema.optional(),
+  }),
+]);
+export type SetupProfileResult = z.output<typeof setupProfileResultSchema>;
+
 export const hostResponseSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('setup-profile'),
+    id: z.uuid(),
+    result: setupProfileResultSchema,
+  }),
   z.strictObject({
     id: z.uuid(),
     type: z.literal('desktop-configuration-profile'),
@@ -2403,6 +2430,10 @@ export type WorkflowsApi = {
   ) => Promise<AssistantChangeHistory>;
 };
 export type DesktopApi = {
+  setupProfile: (
+    input: z.input<typeof setupProfileInputSchema>,
+    hostId: HostId,
+  ) => Promise<SetupProfileResult>;
   configuration: {
     completeReview: (
       input: DesktopConfigurationOwnerInput,

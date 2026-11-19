@@ -33,6 +33,8 @@ export const configurationAreaSchema = z.enum([
   'defaults',
   'appearance',
   'authority',
+  'setup-profile',
+  'setup-profile-file',
   ...configurationFileAreas,
   ...configurationRecordAreas,
 ]);
@@ -97,6 +99,14 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
       'notifications',
       'keep-running',
     ]),
+  }),
+  z.strictObject({
+    area: z.literal('setup-profile'),
+    key: z.literal('selection'),
+  }),
+  z.strictObject({
+    area: z.literal('setup-profile-file'),
+    key: z.enum(['routing', 'shared-routing']),
   }),
   z.strictObject({
     area: z.literal('defaults'),
@@ -172,6 +182,10 @@ export const configurationValueSchema = z.discriminatedUnion('kind', [
     document: z.string().min(1).max(configurationLimits.document),
   }),
   z.strictObject({ kind: z.literal('route'), value: decisionRouteSchema }),
+  z.strictObject({
+    kind: z.literal('setup-profile'),
+    value: z.strictObject({ path: path.nullable(), digest: hash.nullable() }),
+  }),
   z.strictObject({ kind: z.literal('enabled'), value: z.boolean() }),
   z.strictObject({ kind: z.literal('folder'), value: path.nullable() }),
   z.strictObject({
@@ -206,13 +220,16 @@ export const configurationMutationSchema = z
           ? target.area === 'lessons' || target.area === 'gate-rules'
             ? 'entry'
             : 'markdown'
-          : target.area === 'appearance'
-            ? 'color-scheme'
-            : target.area === 'defaults'
-              ? target.key
-              : target.key === 'inbox-routing'
-                ? 'route'
-                : 'enabled';
+          : target.area === 'setup-profile'
+            ? target.area
+            : target.area === 'appearance'
+              ? 'color-scheme'
+              : target.area === 'defaults'
+                ? target.key
+                : target.key === 'inbox-routing' ||
+                    target.area === 'setup-profile-file'
+                  ? 'route'
+                  : 'enabled';
     if (input.draft && input.draft.kind !== kind)
       issue('draft', 'The value does not match the target.');
     if (
@@ -230,12 +247,19 @@ export const configurationMutationSchema = z
       issue('operation', 'This setting supports updates.');
     if (
       input.baseVersion.type !== 'absent' &&
-      input.baseVersion.type !== ('scope' in target ? 'hash' : 'revision')
+      input.baseVersion.type !==
+        ('scope' in target || target.area === 'setup-profile-file'
+          ? 'hash'
+          : 'revision')
     )
       issue('baseVersion', 'The version does not match the target.');
   });
 
 export const configurationSourceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('system'),
+    source: z.literal('setup-profile'),
+  }),
   z.strictObject({ kind: z.literal('owner') }),
   z.strictObject({ kind: z.literal('assistant'), sessionId: z.uuid() }),
   z.strictObject({
@@ -369,7 +393,7 @@ export const configurationChangeSchema = z.strictObject({
   diff: configurationDiffSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-  decidedBy: z.enum(['owner', 'device']).nullable(),
+  decidedBy: z.enum(['owner', 'device', 'system']).nullable(),
 });
 
 export const configurationReceiptSchema = configurationChangeSchema.pick({

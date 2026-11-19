@@ -295,6 +295,7 @@ import {
 } from '@/features/session-mcp/mcp-repository-notice';
 import { PanelBody } from '@/shared/ui/panel';
 import { useMcpConfiguration } from '@/features/session-mcp/use-mcp-configuration';
+import { SetupProfileSettings } from '@/widgets/settings/setup-profile-settings';
 import {
   AuthoritySettingsContext,
   type SettingsAuthorityReview,
@@ -917,6 +918,7 @@ export function Workspace({
   }
   const [accountSettingsHostId, setAccountSettingsHostId] = useState<string>();
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const [editProfileRouting, setEditProfileRouting] = useState(false);
   const [authoritySettings, setAuthoritySettings] =
     useState<SettingsAuthorityReview | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>(readDrafts);
@@ -6311,12 +6313,14 @@ ${text}`
           page={settingsPage}
           onPageChange={page => {
             setAuthoritySettings(null);
+            setEditProfileRouting(false);
             setSettingsPage(page);
           }}
           fallbackFocus={navigationToggle}
           onOpenChange={open => {
             if (!open) {
               setAuthoritySettings(null);
+              setEditProfileRouting(false);
               setSettingsPage(null);
             }
           }}
@@ -6492,6 +6496,19 @@ ${text}`
                   api={desktopApi(settingsHostId)}
                 />
               </div>
+            ) : page === 'your-setup' ? (
+              <div className="space-y-4">
+                {settingsComputerSelect}
+                <SetupProfileSettings
+                  key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
+                  computer={settingsComputer}
+                  initialEdit={editProfileRouting}
+                  openHistory={() => {
+                    setEditProfileRouting(false);
+                    setSettingsPage('change-history');
+                  }}
+                />
+              </div>
             ) : page === 'change-history' ? (
               <div className="space-y-4">
                 {settingsComputerSelect}
@@ -6536,6 +6553,10 @@ ${text}`
               <div className="space-y-4">
                 {settingsComputerSelect}
                 <InboxRulesSettings
+                  onEditProfile={() => {
+                    setEditProfileRouting(true);
+                    setSettingsPage('your-setup');
+                  }}
                   key={`${settingsHostId}:${settingsComputer?.instanceId ?? ''}`}
                   computer={settingsComputer}
                   statuses={store.providerStates(settingsHostId)}

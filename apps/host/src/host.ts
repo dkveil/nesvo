@@ -19,6 +19,7 @@ import {
   type HostResponse,
   type Session,
   type SessionWindow,
+  type SetupProfileResult,
 } from '@nesvo/contracts';
 import { Effect } from 'effect';
 import { backupDatabaseNow, openDatabase, ownDataDirectory } from './database';
@@ -98,6 +99,8 @@ import {
 } from './configuration-devices';
 import { ConfigurationInboxAssistant } from './inbox-rules/configuration-assistant';
 import { DesktopConfigurationProfile } from './desktop-configuration-profile';
+import { SetupProfileService } from './setup-profile-service';
+import { SetupProfileFileError } from './setup-profile-file';
 import {
   authorityConfiguration,
   supportsModeProposal,
@@ -1250,6 +1253,11 @@ export const serveHost = ({
           configurationDevices.canPropose(source.deviceId, target),
         workLaptopMode,
       );
+      const setupProfile = new SetupProfileService(
+        directory,
+        database,
+        configuration,
+      );
       const profile = desktopProfile
         ? new DesktopConfigurationProfile(database)
         : null;
@@ -1527,6 +1535,17 @@ export const serveHost = ({
             : ['session-mode', 'claude-allow-rule', 'devices'],
         );
       yield* Effect.promise(() => configuration.recover());
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const timer = setInterval(() => {
+            if (probes.controller.signal.aborted || workLaptopMode) return;
+            void setupProfile.refresh().catch(() => undefined);
+          }, 2000);
+          timer.unref();
+          return timer;
+        }),
+        timer => Effect.sync(() => clearInterval(timer)),
+      );
       yield* Effect.acquireRelease(
         Effect.promise(() => configurationDevices.listen().catch(() => null)),
         close =>
@@ -2115,6 +2134,45 @@ export const serveHost = ({
           probes.pending.add(pending);
           continue;
         }
+        if (request.method === 'setup-profile') {
+          const { id, input } = request;
+          const operation = async (): Promise<SetupProfileResult> => {
+            if (input.action === 'inspect')
+              return { ok: true, review: setupProfile.inspect(input.file) };
+            if (workLaptopMode)
+              throw new ConfigurationRefusal(
+                'unsupported',
+                'Profile changes are unavailable in Work laptop mode.',
+              );
+            const result = await (input.action === 'edit-routing'
+              ? setupProfile.editRouting(input)
+              : setupProfile.apply(input));
+            return {
+              ok: true,
+              review: setupProfile.inspect(input.file),
+              receipt: result.receipt,
+            };
+          };
+          const pending = operation()
+            .catch((error: unknown): SetupProfileResult => {
+              if (error instanceof SetupProfileFileError)
+                return {
+                  ok: false,
+                  code: 'conflict',
+                  message: error.message,
+                  issues: error.issues.map(issue => ({
+                    field: issue.field,
+                    message: issue.reason,
+                  })),
+                };
+              return configurationFailure(error);
+            })
+            .then(result => send({ type: 'setup-profile', id, result }))
+            .catch(() => undefined)
+            .finally(() => probes.pending.delete(pending));
+          probes.pending.add(pending);
+          continue;
+        }
         if (
           request.method === 'read-config-target' ||
           request.method === 'inspect-config-draft' ||
@@ -2290,6 +2348,14 @@ export const serveHost = ({
                   settings: inboxRules.settings(),
                 };
               case 'save-inbox-settings':
+                if (inboxRules.profileManagedRouting())
+                  return {
+                    type: 'error',
+                    id,
+                    code: 'invalid-request',
+                    message:
+                      'This setting is managed by the profile. Edit it in Your setup.',
+                  };
                 return {
                   type: 'inbox-settings',
                   id,

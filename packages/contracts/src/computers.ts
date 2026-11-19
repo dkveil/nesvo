@@ -94,6 +94,7 @@ export const hostCapabilitySchema = z.enum([
   'session-message-watchers',
   'coordinator-orchestration',
   'portable-checks',
+  'setup-profile-v1',
 ]);
 export type HostCapability = z.infer<typeof hostCapabilitySchema>;
 

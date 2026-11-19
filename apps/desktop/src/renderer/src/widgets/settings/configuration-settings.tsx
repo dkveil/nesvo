@@ -55,6 +55,8 @@ const areas: Record<ConfigurationArea, string> = {
   budgets: 'Budgets',
   automations: 'Automations',
   authority: 'Permissions',
+  'setup-profile': 'Setup profile',
+  'setup-profile-file': 'Profile file',
 };
 const isOnline = (computer?: Computer) =>
   computer?.status === 'connected' &&
@@ -304,7 +306,10 @@ export function ConfigurationDevicesSettings({
   const hostId = computer?.id;
   const online = isOnline(computer);
   const available = configurationAreaSchema.options.filter(
-    area => area !== 'appearance' || computer?.kind === 'local',
+    area =>
+      area !== 'setup-profile' &&
+      area !== 'setup-profile-file' &&
+      (area !== 'appearance' || computer?.kind === 'local'),
   );
   useEffect(() => {
     if (!hostId || !online) return;
