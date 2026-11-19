@@ -70,6 +70,7 @@ export function SetupProfileSettings({
   const [file, setFile] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [releaseReviewRequested, setReleaseReviewRequested] = useState(false);
   const [details, setDetails] = useState(false);
   const [skip, setSkip] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -125,6 +126,8 @@ export function SetupProfileSettings({
       if (input.action === 'save-as') setSaving(false);
       if (input.action === 'apply') setDetails(false);
       if (input.action === 'edit-fragment') setFragment(undefined);
+      if (input.action === 'review-repository-denials')
+        setReleaseReviewRequested(true);
     } catch (issue) {
       setError(errorDetail(issue));
     } finally {
@@ -232,6 +235,37 @@ export function SetupProfileSettings({
                     description={issue.reason}
                   />
                 ))}
+                {Boolean(review.heldRepositoryDenials?.length) && (
+                  <SettingsRow
+                    title="Retained repository denials"
+                    description={
+                      releaseReviewRequested
+                        ? 'Awaiting confirmation in the Inbox.'
+                        : `${review.heldRepositoryDenials?.length} removed rules still restrict trust on this computer.`
+                    }
+                  >
+                    {review.status === 'current' && review.revision && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy || releaseReviewRequested}
+                        onClick={() => {
+                          if (!review.revision) return;
+                          void request({
+                            action: 'review-repository-denials',
+                            file: review.path,
+                            instanceId: review.instanceId,
+                            revision: review.revision,
+                            effectiveRevision: review.effectiveRevision,
+                            actionId: crypto.randomUUID(),
+                          });
+                        }}
+                      >
+                        Review release
+                      </Button>
+                    )}
+                  </SettingsRow>
+                )}
                 {(ready || review.routing.managed) && (
                   <SettingsRow
                     title="Default Inbox route"

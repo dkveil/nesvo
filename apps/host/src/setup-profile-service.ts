@@ -14,6 +14,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import {
+  configurationHash,
   configurationText,
   ConfigurationRefusal,
   type ConfigurationChanges,
@@ -46,6 +47,10 @@ const target = {
   area: 'setup-profile',
   key: 'selection',
 } as const satisfies ConfigurationTarget;
+const releaseDenialTarget = {
+  area: 'setup-profile',
+  key: 'release-repository-denials',
+} as const satisfies ConfigurationTarget;
 const routeSchema = inboxSettingsSchema.shape.defaultRoute;
 type Routing = SetupProfileReview['routing']['effective'];
 type SessionLimits = Pick<
@@ -57,18 +62,23 @@ type Selection = {
   managed: boolean;
   sessionLimits?: SessionLimits;
   retiredInboxRules?: SetupInboxRule[];
+  heldRepositoryDenials?: string[];
 };
 type RouteEditorState = {
   path: string;
   text: string;
   selection?: Pick<
     Selection,
-    'managed' | 'sessionLimits' | 'retiredInboxRules'
+    'managed' | 'sessionLimits' | 'retiredInboxRules' | 'heldRepositoryDenials'
   >;
 };
 
 const allowOnlyProfile = (verb: string, requested: ConfigurationTarget) => {
-  if (verb !== 'apply' || requested.area !== 'setup-profile')
+  if (
+    verb !== 'apply' ||
+    requested.area !== 'setup-profile' ||
+    requested.key !== target.key
+  )
     throw new ConfigurationRefusal(
       'unauthorized',
       'This action only applies a verified profile.',
@@ -81,6 +91,20 @@ const desktop: ConfigurationPrincipal = {
 const drift: ConfigurationPrincipal = {
   source: { kind: 'system', source: 'setup-profile' },
   authorize: allowOnlyProfile,
+};
+const reviewDenialRelease: ConfigurationPrincipal = {
+  source: { kind: 'owner' },
+  authorize: (verb, requested) => {
+    if (
+      verb !== 'propose' ||
+      requested.area !== releaseDenialTarget.area ||
+      requested.key !== releaseDenialTarget.key
+    )
+      throw new ConfigurationRefusal(
+        'unauthorized',
+        'This action only reviews retired repository denials.',
+      );
+  },
 };
 
 export function installSetupProfile(database: DatabaseSync) {
@@ -143,6 +167,51 @@ function activeProfileSelection(database: DatabaseSync): Selection | null {
 
 export function activeSetupProfile(database: DatabaseSync) {
   return activeProfileSelection(database)?.profile;
+}
+
+function declaredRepositoryDenials(profile?: LoadedSetupProfile) {
+  return new Set(
+    profile?.desired?.repositoryTrust?.flatMap(item =>
+      !('disabled' in item) && item.effect === 'deny' ? [item.pattern] : [],
+    ),
+  );
+}
+
+function effectiveRepositoryDenials(selection: Selection | null) {
+  return new Set([
+    ...declaredRepositoryDenials(selection?.profile),
+    ...(selection?.heldRepositoryDenials ?? []),
+  ]);
+}
+
+export function setupRepositoryDenials(database: DatabaseSync) {
+  return effectiveRepositoryDenials(activeProfileSelection(database));
+}
+
+function retainRepositoryDenials(
+  previous: Selection | null,
+  loaded: LoadedSetupProfile,
+) {
+  const declared = declaredRepositoryDenials(loaded);
+  const held = [...effectiveRepositoryDenials(previous)].filter(
+    pattern => !declared.has(pattern),
+  );
+  if (held.length > 256)
+    throw new ConfigurationRefusal(
+      'review-required',
+      'Review the retained repository denials before changing the profile.',
+    );
+  return held;
+}
+
+function releasesRepositoryDenial(
+  previous: Selection | null,
+  next: Selection | null,
+) {
+  const remaining = effectiveRepositoryDenials(next);
+  return [...effectiveRepositoryDenials(previous)].some(
+    pattern => !remaining.has(pattern),
+  );
 }
 
 export function managedSessionLimits(database: DatabaseSync): SessionLimits {
@@ -300,6 +369,9 @@ function selectionText(selection: Selection | null) {
     ...Object.entries(sessionLimits ?? {}).map(
       ([key, value]) => `Session control · ${key} · ${value}`,
     ),
+    ...[...effectiveRepositoryDenials(selection)]
+      .sort()
+      .map(pattern => 'Repository denied · ' + pattern),
     ...profile.declarations
       .filter(item => item.state === 'pending' || item.state === 'masked')
       .map(
@@ -379,6 +451,7 @@ export class SetupProfileService {
       path,
       activePath,
       effectiveRevision: current.revision,
+      heldRepositoryDenials: current.selection?.heldRepositoryDenials,
       routing: {
         desired: null,
         effective: route,
@@ -438,7 +511,10 @@ export class SetupProfileService {
   }
 
   async apply(
-    input: Extract<SetupProfileInput, { action: 'apply' }>,
+    input: Extract<
+      SetupProfileInput,
+      { action: 'apply' | 'review-repository-denials' }
+    >,
     principal = desktop,
   ) {
     if (!this.changes || !this.database)
@@ -451,16 +527,21 @@ export class SetupProfileService {
         'conflict',
         'The computer identity changed. Preview the profile again.',
       );
-    const result = await this.changes.submit(principal, 'apply', {
-      actionId: input.actionId,
-      target,
-      operation: 'update',
-      baseVersion: { type: 'revision', revision: input.effectiveRevision },
-      draft: {
-        kind: 'setup-profile',
-        value: { path: resolve(input.file), digest: input.revision },
+    const release = input.action === 'review-repository-denials';
+    const result = await this.changes.submit(
+      release ? reviewDenialRelease : principal,
+      release ? 'propose' : 'apply',
+      {
+        actionId: input.actionId,
+        target: release ? releaseDenialTarget : target,
+        operation: 'update',
+        baseVersion: { type: 'revision', revision: input.effectiveRevision },
+        draft: {
+          kind: 'setup-profile',
+          value: { path: resolve(input.file), digest: input.revision },
+        },
       },
-    });
+    );
     if (result.receipt.status === 'applied') await this.recoverPendingReviews();
     return result;
   }
@@ -619,18 +700,37 @@ export class SetupProfileService {
   }
 
   private writer(): ConfigurationWriter {
-    const snapshot = (): ConfigurationSnapshot => {
+    const valueForSelection = (
+      selection: Selection | null,
+      includeHeldDenials: boolean,
+    ): ConfigurationValue => {
+      const held = selection?.heldRepositoryDenials ?? [];
+      return {
+        kind: 'setup-profile',
+        value: {
+          path: selection?.profile.path ?? null,
+          digest: selection?.profile.revision ?? null,
+          ...(includeHeldDenials && held.length
+            ? {
+                heldDenialsDigest: configurationHash(
+                  JSON.stringify(held.toSorted()),
+                ),
+              }
+            : {}),
+        },
+      };
+    };
+    const snapshot = (release: boolean): ConfigurationSnapshot => {
       const current = this.current();
       const { selection } = current;
       const path = selection?.profile.path ?? null;
-      const digest = selection?.profile.revision ?? null;
       const source = path ? this.inspect(path) : null;
       return {
         identity: current.instanceId ?? 'uninitialized',
         label: 'Setup profile',
         dependencies: source?.revision ?? source?.status ?? '',
         version: { type: 'revision', revision: current.revision },
-        value: { kind: 'setup-profile', value: { path, digest } },
+        value: valueForSelection(selection, release),
         document: selectionText(selection),
         state: JSON.stringify(selection),
       };
@@ -643,8 +743,14 @@ export class SetupProfileService {
             'unsupported',
             'Choose the supported profile target.',
           );
+        const release = requested.key === releaseDenialTarget.key;
         return {
-          read: snapshot,
+          read: () => {
+            const current = snapshot(release);
+            return release
+              ? { ...current, label: 'Release retired repository denials' }
+              : current;
+          },
           prepare: ({ draft }, before, restore) => {
             if (
               before.version.type !== 'revision' ||
@@ -669,6 +775,17 @@ export class SetupProfileService {
                 'conflict',
                 'The profile or an include changed. Preview it again.',
               );
+            if (
+              release &&
+              !restore &&
+              (!previous?.heldRepositoryDenials?.length ||
+                previous.profile.path !== path ||
+                previous.profile.revision !== digest)
+            )
+              throw new ConfigurationRefusal(
+                'conflict',
+                'Load the current profile before reviewing its retired repository denials.',
+              );
             const oldSelection: Selection | null = restore?.state
               ? JSON.parse(restore.state)
               : null;
@@ -687,13 +804,20 @@ export class SetupProfileService {
                   retiredInboxRules: restore
                     ? oldSelection?.retiredInboxRules
                     : retainInboxRuleOwnership(previous, loaded),
+                  heldRepositoryDenials: restore
+                    ? oldSelection?.heldRepositoryDenials
+                    : release
+                      ? undefined
+                      : retainRepositoryDenials(previous, loaded),
                 }
               : null;
             return {
-              classification: 'direct',
+              classification: releasesRepositoryDenial(previous, selection)
+                ? 'authority'
+                : 'direct',
               after: {
                 ...before,
-                value: draft,
+                value: valueForSelection(selection, release),
                 dependencies: digest ?? '',
                 version: {
                   type: 'revision',
@@ -808,6 +932,8 @@ export class SetupProfileService {
                   managed: current.selection.managed,
                   sessionLimits: current.selection.sessionLimits,
                   retiredInboxRules: current.selection.retiredInboxRules,
+                  heldRepositoryDenials:
+                    current.selection.heldRepositoryDenials,
                 },
               }
             : {}),
@@ -884,6 +1010,10 @@ export class SetupProfileService {
                   current.selection,
                   preview,
                 ),
+                heldRepositoryDenials: retainRepositoryDenials(
+                  current.selection,
+                  preview,
+                ),
               };
             if (
               draft.kind === 'route' &&
@@ -894,7 +1024,16 @@ export class SetupProfileService {
                 'A higher-priority profile layer overrides this setting.',
               );
             return {
-              classification: recipeId ? 'review' : 'direct',
+              classification:
+                replacement.selection &&
+                releasesRepositoryDenial(current.selection, {
+                  profile: preview,
+                  ...replacement.selection,
+                })
+                  ? 'authority'
+                  : recipeId
+                    ? 'review'
+                    : 'direct',
               after: {
                 ...before,
                 value: draft,
@@ -944,6 +1083,9 @@ export class SetupProfileService {
               retiredInboxRules: replacement?.selection
                 ? replacement.selection.retiredInboxRules
                 : current.selection?.retiredInboxRules,
+              heldRepositoryDenials: replacement?.selection
+                ? replacement.selection.heldRepositoryDenials
+                : current.selection?.heldRepositoryDenials,
             });
           },
         });

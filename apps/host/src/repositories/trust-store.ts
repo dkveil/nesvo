@@ -13,7 +13,7 @@ import {
 import { directoryKey } from '../mcp/scoped-config';
 import { SessionError } from '../sessions/session-error';
 import { SetupNativeBindings } from '../setup-native-bindings';
-import { activeSetupProfile } from '../setup-profile-service';
+import { setupRepositoryDenials } from '../setup-profile-service';
 import type { SetupReviewInspection } from '../setup-profile-review-queue';
 import type { LoadedSetupProfile } from '../setup-profile-file';
 import { configurationHash } from '../workflows/configuration-changes';
@@ -458,15 +458,8 @@ export class RepositoryTrustStore {
   }
 
   private profileDenies(remote: string) {
-    const decisions = activeSetupProfile(this.database)?.desired
-      ?.repositoryTrust;
-    return (
-      decisions?.some(
-        item =>
-          !('disabled' in item) &&
-          item.effect === 'deny' &&
-          matchesRepositoryPattern(item.pattern, remote),
-      ) ?? false
+    return [...setupRepositoryDenials(this.database)].some(pattern =>
+      matchesRepositoryPattern(pattern, remote),
     );
   }
 

@@ -343,6 +343,7 @@ export const setupProfileReviewSchema = z.strictObject({
     )
     .max(3),
   declarations: z.array(setupProfileDeclarationSchema).max(500),
+  heldRepositoryDenials: z.array(repositoryPatternSchema).max(256).optional(),
   changes: z
     .array(
       z.strictObject({
@@ -386,6 +387,14 @@ export const setupProfileFragmentSchema = z.strictObject({
 });
 export type SetupProfileFragment = z.output<typeof setupProfileFragmentSchema>;
 
+const profileApplyFields = {
+  file: setupProfilePathSchema,
+  instanceId: z.uuid().nullable(),
+  revision: setupProfileDigestSchema,
+  effectiveRevision: z.number().int().nonnegative(),
+  actionId: z.uuid(),
+};
+
 export const setupProfileInputSchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('inspect'),
@@ -408,11 +417,11 @@ export const setupProfileInputSchema = z.discriminatedUnion('action', [
   }),
   z.strictObject({
     action: z.literal('apply'),
-    file: setupProfilePathSchema,
-    instanceId: z.uuid().nullable(),
-    revision: setupProfileDigestSchema,
-    effectiveRevision: z.number().int().nonnegative(),
-    actionId: z.uuid(),
+    ...profileApplyFields,
+  }),
+  z.strictObject({
+    action: z.literal('review-repository-denials'),
+    ...profileApplyFields,
   }),
   z.strictObject({
     action: z.literal('edit-routing'),

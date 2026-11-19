@@ -104,7 +104,7 @@ export const configurationTargetSchema = z.discriminatedUnion('area', [
   }),
   z.strictObject({
     area: z.literal('setup-profile'),
-    key: z.literal('selection'),
+    key: z.enum(['selection', 'release-repository-denials']),
   }),
   z.strictObject({
     area: z.literal('setup-profile-file'),
@@ -198,7 +198,11 @@ export const configurationValueSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({
     kind: z.literal('setup-profile'),
-    value: z.strictObject({ path: path.nullable(), digest: hash.nullable() }),
+    value: z.strictObject({
+      path: path.nullable(),
+      digest: hash.nullable(),
+      heldDenialsDigest: hash.optional(),
+    }),
   }),
   z.strictObject({
     kind: z.literal('setup-review'),

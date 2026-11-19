@@ -2740,6 +2740,9 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
   });
   const document = {
     version: 1,
+    repositoryTrust: [
+      { id: 'team', pattern: 'example.test/team/*', effect: 'allow' },
+    ],
     inbox: {
       rules: [
         rule(
@@ -2799,11 +2802,25 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
     assert.ok(
       before.issues.some(issue => /identity trust/.test(issue.message)),
     );
-    const { settings } = await host.request('repository-trust-settings', {
-      action: 'add-pattern',
-      pattern: 'example.test/team/*',
+    const { page } = (
+      await host.request('list-config-changes', { area: 'setup-review' })
+    ).result;
+    const trust = page.changes.find(
+      item => item.target.id === 'repositoryTrust/team',
+    );
+    assert.ok(trust?.setupVerified, JSON.stringify(trust));
+    const approved = await host.request('decide-config-proposal', {
+      id: trust.id,
+      revision: trust.revision,
       actionId: randomUUID(),
+      decision: 'accept',
+      confirmAuthority: true,
     });
+    assert.equal(
+      approved.result.receipt?.status,
+      'applied',
+      JSON.stringify(approved),
+    );
     const source = (await catalog(project)).rules.find(
       entry => entry.name === 'project-route',
     );
@@ -2821,6 +2838,62 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
       text: source.text,
     });
     assert.equal(manual.type, 'error');
+    document.repositoryTrust.push({
+      id: 'denied',
+      pattern: 'example.test/team/app',
+      effect: 'deny',
+    });
+    await writeFile(file, JSON.stringify(document));
+    await apply();
+    assert.deepEqual(
+      (await catalog(project)).rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    document.repositoryTrust.pop();
+    await writeFile(file, JSON.stringify(document));
+    let reviewed;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      reviewed = (await host.request('setup-profile', { action: 'inspect' }))
+        .result.review;
+      if (reviewed.status === 'current') break;
+      await delay(100);
+    }
+    assert.equal(reviewed.status, 'current');
+    assert.deepEqual(reviewed.heldRepositoryDenials, ['example.test/team/app']);
+    assert.deepEqual(
+      (await catalog(project)).rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    const review = await host.request('setup-profile', {
+      action: 'review-repository-denials',
+      file,
+      instanceId: reviewed.instanceId,
+      revision: reviewed.revision,
+      effectiveRevision: reviewed.effectiveRevision,
+      actionId: randomUUID(),
+    });
+    const release = review.result.receipt;
+    assert.equal(release?.status, 'pending', JSON.stringify(review));
+    const accept = confirmAuthority =>
+      host.request('decide-config-proposal', {
+        id: release.id,
+        revision: release.revision,
+        actionId: randomUUID(),
+        decision: 'accept',
+        confirmAuthority,
+      });
+    assert.equal((await accept(false)).result.code, 'review-required');
+    assert.deepEqual(
+      (await catalog(project)).rules.map(entry => entry.name),
+      ['shared-route'],
+    );
+    assert.equal((await accept(true)).result.receipt?.status, 'applied');
+    assert.equal(
+      (await catalog(project)).rules.some(
+        entry => entry.name === 'project-route',
+      ),
+      true,
+    );
     document.inbox.rules.shift();
     await writeFile(file, JSON.stringify(document));
     await apply();
@@ -2838,16 +2911,6 @@ test('profile Inbox rules use verified repository scopes and retire transferred 
         })
       ).type,
       'error',
-    );
-    assert.equal(
-      (
-        await host.request('repository-trust-settings', {
-          action: 'revoke',
-          actionId: randomUUID(),
-          ruleId: settings.rules[0].id,
-        })
-      ).type,
-      'repository-trust-settings',
     );
   } finally {
     await host.stop();
