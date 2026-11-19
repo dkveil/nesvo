@@ -264,11 +264,10 @@ try {
   await capture('child-transcript');
   await page.keyboard.press('Escape');
   await drawer.waitFor({ state: 'hidden' });
-  assert.ok(
-    await page
-      .getByRole('button', { name: 'Inspect Draft review', exact: true })
-      .first()
-      .evaluate(element => element === document.activeElement),
+  await page.waitForFunction(
+    () =>
+      document.activeElement?.getAttribute('aria-label') ===
+      'Inspect Draft review',
   );
 
   const firstReview = (await api('listReviews')).find(
