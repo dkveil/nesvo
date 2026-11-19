@@ -418,7 +418,13 @@ export function useEditorState({
         message: `Step "${pendingDraft.name}" is already in this workflow.`,
         field: 'name',
       });
-    else if (catalog.steps.some(step => step.name === pendingDraft.name))
+    else if (
+      catalog.steps.some(
+        step =>
+          step.name === pendingDraft.name &&
+          (pendingDraft.scope === 'global' || step.source.scope === 'project'),
+      )
+    )
       problems.push({
         severity: 'error',
         path: '',

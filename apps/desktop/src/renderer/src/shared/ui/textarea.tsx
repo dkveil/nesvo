@@ -19,7 +19,7 @@ function Textarea({
       data-slot="textarea"
       data-size={size}
       className={cn(
-        'flex field-sizing-content w-full text-foreground transition-[color,background-color,border-color] duration-fast outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+        'flex field-sizing-content w-full text-foreground transition-[color,background-color,border-color] duration-fast outline-none disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'default' && [
           'focus-ring min-h-16 rounded-control border border-input bg-transparent shadow-xs dark:bg-input/30',
           'aria-invalid:border-error-foreground',

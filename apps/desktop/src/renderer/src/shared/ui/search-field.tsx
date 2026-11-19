@@ -54,7 +54,7 @@ export function SearchField({
         type="search"
         value={value}
         className={cn(
-          'min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 [&::-webkit-search-cancel-button]:hidden',
+          'min-w-0 flex-1 bg-transparent text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50 [&::-webkit-search-cancel-button]:hidden',
           variant === 'palette' ? 'text-sm' : 'text-ui',
           className,
         )}

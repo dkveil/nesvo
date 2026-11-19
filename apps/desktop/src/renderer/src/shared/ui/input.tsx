@@ -21,7 +21,7 @@ function Input({
       data-slot="input"
       data-size={size}
       className={cn(
-        'w-full min-w-0 text-foreground transition-[color,background-color,border-color] duration-fast outline-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+        'w-full min-w-0 text-foreground transition-[color,background-color,border-color] duration-fast outline-none selection:bg-primary selection:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50',
         'file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-xs file:font-medium file:text-foreground',
         variant === 'default' && [
           'focus-ring rounded-control border border-input bg-transparent shadow-xs dark:bg-input/30',

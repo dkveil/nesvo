@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { ComponentType } from 'react';
 import type {
   Computer,
@@ -34,6 +35,7 @@ export type StepInspectorProps = {
   step: StepDraft;
   mode: InspectorMode;
   renamable?: boolean;
+  beforeFields?: ReactNode;
   usedBy: string[];
   hostId: string;
   directory: string;

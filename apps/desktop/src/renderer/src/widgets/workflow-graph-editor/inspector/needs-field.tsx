@@ -5,13 +5,13 @@ import { Button } from '@/shared/ui/button';
 import { Chip } from '@/shared/ui/chip';
 import { IconButton } from '@/shared/ui/icon-button';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { Switch } from '@/shared/ui/switch';
 import { describedBy, notesId, type FieldNote } from './field-notes';
 import { Field, FieldMessages } from '@/shared/ui/field';
 
 type Props = {
   id: string;
+  fieldClassName: string;
   needs: string[];
   notes: FieldNote[];
   onChange: (needs: string[]) => void;
@@ -41,8 +41,15 @@ const draftNotes = (need: string, needs: string[]): FieldNote[] => {
   return [];
 };
 
-export function NeedsField({ id, needs, notes, onChange }: Props) {
+export function NeedsField({
+  id,
+  fieldClassName,
+  needs,
+  notes,
+  onChange,
+}: Props) {
   const [name, setName] = useState('');
+  const [touched, setTouched] = useState(false);
   const inputId = `${id}-env`;
   const need = `${ENV_PREFIX}${name.trim()}`;
   const pending = draftNotes(need, needs);
@@ -50,28 +57,41 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
   const browser = needs.includes(BROWSER_NEED);
   const canAdd = !!name.trim() && pending.length === 0;
   const add = () => {
-    if (!canAdd) return;
+    if (!canAdd) {
+      setTouched(true);
+      return;
+    }
     onChange([...needs, need]);
     setName('');
+    setTouched(false);
   };
   return (
     <fieldset className="space-y-1.5" aria-describedby={describedBy(id, notes)}>
       <legend className="text-2xs leading-none font-medium text-muted-foreground">
         Needs
       </legend>
-      <Field id={`${id}-browser`} label="Browser" layout="switch">
-        <Switch
-          id={`${id}-browser`}
-          checked={browser}
-          disabled={!browser && needs.length >= workflowDefinitionLimits.needs}
-          onCheckedChange={checked =>
-            onChange(
-              checked
-                ? [...needs, BROWSER_NEED]
-                : needs.filter(item => item !== BROWSER_NEED),
-            )
-          }
-        />
+      <Field
+        id={`${id}-browser`}
+        label="Browser"
+        layout="inline"
+        className={fieldClassName}
+      >
+        <div className="flex min-h-7 items-center">
+          <Switch
+            id={`${id}-browser`}
+            checked={browser}
+            disabled={
+              !browser && needs.length >= workflowDefinitionLimits.needs
+            }
+            onCheckedChange={checked =>
+              onChange(
+                checked
+                  ? [...needs, BROWSER_NEED]
+                  : needs.filter(item => item !== BROWSER_NEED),
+              )
+            }
+          />
+        </div>
       </Field>
       {variables.length > 0 && (
         <ul aria-label="Environment variables" className="flex flex-wrap gap-1">
@@ -97,49 +117,57 @@ export function NeedsField({ id, needs, notes, onChange }: Props) {
           ))}
         </ul>
       )}
-      <div className="flex items-center gap-1.5">
-        <Label htmlFor={inputId} className="sr-only">
-          Environment variable
-        </Label>
-        <div className="focus-ring-within flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-control border border-input shadow-xs has-aria-invalid:border-error-foreground dark:bg-input/30">
-          <span
-            aria-hidden="true"
-            className="pl-2 font-mono text-ui text-muted-foreground"
+      <Field
+        id={inputId}
+        label="Environment"
+        layout="inline"
+        className={fieldClassName}
+        messages={touched ? pending : []}
+      >
+        <div className="flex items-center gap-1.5">
+          <div className="focus-ring-within flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-control border border-input shadow-xs has-aria-invalid:border-error-foreground dark:bg-input/30">
+            <span
+              aria-hidden="true"
+              className="pl-2 font-mono text-ui text-muted-foreground"
+            >
+              {ENV_PREFIX}
+            </span>
+            <Input
+              variant="ghost"
+              id={inputId}
+              aria-label="Environment variable"
+              value={name}
+              placeholder="NAME"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={ENV_NAME_LENGTH}
+              aria-invalid={(touched && pending.length > 0) || undefined}
+              aria-describedby={
+                touched && pending.length
+                  ? notesId(inputId)
+                  : describedBy(id, notes)
+              }
+              onChange={event => setName(event.target.value)}
+              onBlur={() => setTouched(true)}
+              onKeyDown={event => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing)
+                  return;
+                event.preventDefault();
+                add();
+              }}
+              className="pr-2 font-mono"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!canAdd}
+            onClick={add}
           >
-            {ENV_PREFIX}
-          </span>
-          <Input
-            variant="ghost"
-            id={inputId}
-            value={name}
-            placeholder="NAME"
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={ENV_NAME_LENGTH}
-            aria-invalid={pending.length > 0 || undefined}
-            aria-describedby={
-              pending.length ? notesId(inputId) : describedBy(id, notes)
-            }
-            onChange={event => setName(event.target.value)}
-            onKeyDown={event => {
-              if (event.key !== 'Enter' || event.nativeEvent.isComposing)
-                return;
-              event.preventDefault();
-              add();
-            }}
-            className="pr-2 font-mono"
-          />
+            Add
+          </Button>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!canAdd}
-          onClick={add}
-        >
-          Add
-        </Button>
-      </div>
-      <FieldMessages id={notesId(inputId)} messages={pending} />
+      </Field>
       <FieldMessages id={notesId(id)} messages={notes} />
     </fieldset>
   );

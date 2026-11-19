@@ -446,6 +446,12 @@
 }
 
 @layer base {
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+
   * {
     @apply border-border outline-ring/50;
     scrollbar-width: thin;

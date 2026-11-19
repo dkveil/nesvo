@@ -3,7 +3,6 @@ import {
   GitBranch,
   Play,
   SquarePen,
-  X,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -27,8 +26,8 @@ import {
   type NodeIssue,
 } from '@/entities/workflow-graph';
 import type { ProviderStates } from '@/entities/session';
-import { IconButton } from '@/shared/ui/icon-button';
-import { PanelHeader } from '@/shared/ui/panel';
+import { PanelBody } from '@/shared/ui/panel';
+import { SidePanel, SidePanelHeader } from '@/shared/ui/side-panel';
 import { StepResult, type InboxTarget } from '@/widgets/workflow-step-result';
 import {
   EdgeInspector,
@@ -113,30 +112,38 @@ export function InspectorPanel({
           ? { icon: GitBranch, title: 'Connection', meta: edge.id }
           : selection.kind === 'start'
             ? { icon: Zap, title: 'Start' }
-            : { icon: FileText, title: 'Workflow' };
+            : { icon: FileText, title: 'Workflow settings' };
   const workflowIssues = state.issues.filter(issue => issue.steps.length === 0);
+  const gateRules = node?.step.type === 'agent' && (
+    <InspectorGateRules
+      key={node.id}
+      initial={state.catalog.gateRules ?? []}
+      directory={directory}
+      hostId={hostId}
+      step={node.id}
+      workflow={document.name}
+    />
+  );
   return (
-    <aside
+    <SidePanel
+      kind="inspector"
+      resizeLabel="Resize workflow inspector"
+      role="complementary"
       aria-label="Inspector"
       data-editor-inspector={selection.kind}
-      className="flex w-76 shrink-0 flex-col border-l bg-popover xl:w-80"
     >
-      <PanelHeader
+      <SidePanelHeader
+        titleBar={false}
         className="[&>span]:text-ui"
         icon={header.icon}
         title={header.title}
         meta={header.meta}
-      >
-        <IconButton
-          label="Close inspector"
-          onClick={() => state.select({ kind: 'none' })}
-        >
-          <X />
-        </IconButton>
-      </PanelHeader>
+        closeLabel="Close inspector"
+        onClose={() => state.select({ kind: 'none' })}
+      />
       <div
         key={showResult ? 'last-run' : selection.kind}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        className="flex min-h-0 flex-1 flex-col"
       >
         {selection.kind === 'draft' && state.pendingDraft && (
           <StepInspector
@@ -151,43 +158,37 @@ export function InspectorPanel({
             onDelete={state.cancelDraft}
           />
         )}
-        {node?.step.type === 'agent' && (
-          <InspectorGateRules
-            key={node.id}
-            initial={state.catalog.gateRules ?? []}
-            directory={directory}
-            hostId={hostId}
-            step={node.id}
-            workflow={document.name}
-          />
-        )}
         {node && showResult && overlay && runStep && (
-          <div className="space-y-3 px-3 py-3">
-            <div className="flex items-center gap-2 text-ui">
-              <StepStateIcon state={runStep.state} className="size-4" />
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {node.id}
-              </span>
-              <span className="shrink-0 text-ui text-muted-foreground">
-                {phaseLabels[node.step.phase]}
-                {runStep.attempts > 1 ? ` · attempt ${runStep.attempts}` : ''}
-              </span>
+          <PanelBody>
+            {gateRules}
+            <div className="space-y-3 p-3">
+              <div className="flex items-center gap-2 text-ui">
+                <StepStateIcon state={runStep.state} className="size-4" />
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {node.id}
+                </span>
+                <span className="shrink-0 text-ui text-muted-foreground">
+                  {phaseLabels[node.step.phase]}
+                  {runStep.attempts > 1 ? ` · attempt ${runStep.attempts}` : ''}
+                </span>
+              </div>
+              <StepResult
+                run={overlay.run}
+                steps={overlay.steps}
+                index={runStep.index}
+                api={api}
+                onInbox={onInbox}
+                onSession={onSession}
+              />
             </div>
-            <StepResult
-              run={overlay.run}
-              steps={overlay.steps}
-              index={runStep.index}
-              api={api}
-              onInbox={onInbox}
-              onSession={onSession}
-            />
-          </div>
+          </PanelBody>
         )}
         {node && !showResult && (
           <StepInspector
             key={isDraftStep(node.step) ? 'draft-step' : node.id}
             step={stepDraftOf(node.step)}
             mode="edit"
+            beforeFields={gateRules}
             renamable={isDraftStep(node.step)}
             usedBy={usedBy(state.catalog, node.id, document.name)}
             hostId={hostId}
@@ -215,30 +216,34 @@ export function InspectorPanel({
           />
         )}
         {selection.kind === 'start' && (
-          <StartInspector
-            hostId={hostId}
-            directory={directory}
-            workflowName={document.name}
-            specs={specs}
-            automations={automations}
-            computers={computers}
-            statuses={statuses}
-            onSaveAutomation={onSaveAutomation}
-            onRefresh={onRefreshAutomations}
-          />
+          <PanelBody>
+            <StartInspector
+              hostId={hostId}
+              directory={directory}
+              workflowName={document.name}
+              specs={specs}
+              automations={automations}
+              computers={computers}
+              statuses={statuses}
+              onSaveAutomation={onSaveAutomation}
+              onRefresh={onRefreshAutomations}
+            />
+          </PanelBody>
         )}
         {selection.kind === 'workflow' && (
-          <WorkflowInspector
-            name={document.name}
-            description={document.description}
-            body={document.body}
-            scope={document.scope}
-            mode={document.hash ? 'edit' : 'create'}
-            issues={toInspectorIssues(workflowIssues)}
-            onChange={state.setWorkflowFields}
-          />
+          <PanelBody>
+            <WorkflowInspector
+              name={document.name}
+              description={document.description}
+              body={document.body}
+              scope={document.scope}
+              mode={document.hash ? 'edit' : 'create'}
+              issues={toInspectorIssues(workflowIssues)}
+              onChange={state.setWorkflowFields}
+            />
+          </PanelBody>
         )}
       </div>
-    </aside>
+    </SidePanel>
   );
 }

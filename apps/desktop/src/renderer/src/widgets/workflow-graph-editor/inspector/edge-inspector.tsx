@@ -3,7 +3,8 @@ import { formatEdge, graphMessages } from '@nesvo/contracts';
 import { ArrowRight } from 'lucide-react';
 import { edgeWhenLabels } from '@/entities/workflow-graph';
 import { Button } from '@/shared/ui/button';
-import { Toolbar } from '@/shared/ui/panel';
+import { PanelBody } from '@/shared/ui/panel';
+import { SidePanelFooter } from '@/shared/ui/side-panel';
 import { notesId } from './field-notes';
 import { Field } from '@/shared/ui/field';
 import {
@@ -64,7 +65,7 @@ export function EdgeInspectorForm({
       aria-label={`Connection ${edge.from} to ${edge.to}`}
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-3">
+      <PanelBody className="space-y-3 p-3">
         <p className="flex min-w-0 items-center gap-1.5 font-mono text-xs">
           <span className="min-w-0 truncate">{edge.from}</span>
           <ArrowRight
@@ -96,12 +97,8 @@ export function EdgeInspectorForm({
             onChange={onChange}
           />
         </Field>
-      </div>
-      <Toolbar
-        label="Connection actions"
-        bordered={false}
-        className="h-10 border-t px-3"
-      >
+      </PanelBody>
+      <SidePanelFooter label="Connection actions">
         <Button
           type="button"
           variant="ghost"
@@ -111,7 +108,7 @@ export function EdgeInspectorForm({
         >
           Remove connection
         </Button>
-      </Toolbar>
+      </SidePanelFooter>
     </div>
   );
 }

@@ -288,7 +288,7 @@ export default function WorkflowGraphEditor({
           banner={state.banner}
           open={issuesOpen}
         />
-        <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-x-clip">
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
               <EditorCanvas

@@ -10,7 +10,6 @@ import {
 import { cn } from '@/shared/lib/cn';
 import { phaseLabels, phaseOrder } from '@/entities/workflow';
 import type { StepDraft } from '@/entities/workflow-graph';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import {
@@ -30,9 +29,9 @@ import {
 } from './field-notes';
 import { DisabledHint } from '@/shared/ui/disabled-hint';
 import { Field, FieldMessages } from '@/shared/ui/field';
-import { Toolbar, ToolbarSpacer } from '@/shared/ui/panel';
+import { PanelBody, ToolbarSpacer } from '@/shared/ui/panel';
+import { SidePanelFooter } from '@/shared/ui/side-panel';
 import { SegmentedControl } from '@/shared/ui/segmented-control';
-import { Hint } from '@/shared/ui/tooltip';
 import type { StepInspectorProps } from './index';
 import { NeedsField } from './needs-field';
 import { PromptTextarea } from '@/features/select-skill/prompt-textarea';
@@ -56,7 +55,8 @@ import {
   type DurationUnit,
 } from './step-form';
 
-const scopeLabels = { global: 'Global', project: 'Project' } as const;
+const scopeHint =
+  'Global steps are available in every project; a project step with the same name replaces it there.';
 
 const usageText = (count: number) =>
   `Used by ${count} other ${count === 1 ? 'workflow' : 'workflows'}; the step file changes for all of them`;
@@ -102,6 +102,7 @@ export function StepInspectorForm({
   step,
   mode,
   renamable = false,
+  beforeFields,
   usedBy,
   hostId,
   directory,
@@ -119,6 +120,9 @@ export function StepInspectorForm({
     setOrigin({ baseline, phase: step.phase });
     setPendingPhase(null);
   }
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const [submitted, setSubmitted] = useState(false);
+  const creating = mode === 'create';
   const [catalogProvider, setCatalogProvider] = useState<Provider | null>(null);
   const prompts = step.type === 'agent' || isChildWorkflowStep(step.type);
   const provider =
@@ -147,7 +151,10 @@ export function StepInspectorForm({
       },
     ];
   const notes = mergeNotes(client, issues, stepFields);
-  const notesOf = (field: string): FieldNote[] => notes[field] ?? [];
+  const notesOf = (field: string, touchField = field): FieldNote[] =>
+    !creating || submitted || touched.has(touchField)
+      ? (notes[field] ?? [])
+      : [];
   const blocked = Object.keys(client).length > 0;
   const update = (patch: Partial<StepDraft>) => onChange({ ...step, ...patch });
   const human = step.type === 'human';
@@ -166,12 +173,13 @@ export function StepInspectorForm({
     }
   };
   const formNotes = notesOf('form');
-  const bodyNotes = [...notesOf('body'), ...notesOf('prompt_skill')];
+  const bodyNotes = [...notesOf('body'), ...notesOf('prompt_skill', 'body')];
   const bodyProps = {
     size: 'sm' as const,
     id: fieldId('body'),
     value: step.body,
     rows: 6,
+    resize: 'none' as const,
     spellCheck: step.type === 'agent' || human,
     maxLength: workflowDefinitionLimits.body,
     placeholder: bodyPlaceholders[step.type],
@@ -183,27 +191,67 @@ export function StepInspectorForm({
     <form
       aria-label={`Step ${step.name || 'draft'}`}
       className="flex h-full min-h-0 flex-col"
+      onBlur={event => {
+        if (!creating) return;
+        const id =
+          event.target.closest<HTMLElement>('[data-field]')?.dataset.field;
+        if (!id?.startsWith(fieldId(''))) return;
+        const field = id.slice(fieldId('').length);
+        setTouched(previous =>
+          previous.has(field) ? previous : new Set([...previous, field]),
+        );
+      }}
       onSubmit={event => {
         event.preventDefault();
+        setSubmitted(true);
         if (!blocked && !pendingPhase) onSave();
       }}
     >
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        <div className="flex items-center gap-1.5">
-          <Badge appearance="outline">{scopeLabels[step.scope]}</Badge>
-          {mode === 'create' && <Badge>New step</Badge>}
-          {shared && (
-            <Hint label={usedBy.join(', ')}>
-              <span className="min-w-0 truncate text-2xs text-muted-foreground">
-                Also in {usedBy.length}{' '}
-                {usedBy.length === 1 ? 'workflow' : 'workflows'}
-              </span>
-            </Hint>
-          )}
+      <PanelBody className="space-y-3 overscroll-contain p-3">
+        {beforeFields && <div className="-mx-3 -mt-3">{beforeFields}</div>}
+        <div className="space-y-1">
+          <Field
+            id={fieldId('scope')}
+            label="Saved in"
+            layout="inline"
+            className={inlineFieldClass}
+          >
+            <Select
+              value={step.scope}
+              disabled={!creating}
+              onValueChange={scope =>
+                update({ scope: scope === 'project' ? 'project' : 'global' })
+              }
+            >
+              <SelectTrigger
+                id={fieldId('scope')}
+                className="w-full"
+                aria-describedby={fieldId('scope-hint')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value="global">Global</SelectItem>
+                <SelectItem value="project">This project</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <p
+            id={fieldId('scope-hint')}
+            className="text-2xs leading-4 text-muted-foreground"
+          >
+            {creating
+              ? scopeHint
+              : shared
+                ? usageText(usedBy.length) + '.'
+                : null}
+          </p>
         </div>
         <Field
           id={fieldId('name')}
           label="Name"
+          layout="inline"
+          className={inlineFieldClass}
           messages={notesOf('name')}
           hint={
             mode === 'edit' && !renamable
@@ -245,6 +293,7 @@ export function StepInspectorForm({
             <SelectTrigger
               id={fieldId('type')}
               size="sm"
+              className="w-full"
               aria-invalid={hasError(notesOf('type')) || undefined}
               aria-describedby={describedBy(fieldId('type'), notesOf('type'))}
             >
@@ -477,10 +526,12 @@ export function StepInspectorForm({
           label={bodyLabels[step.type]}
           messages={bodyNotes}
           aside={
-            <span className="text-2xs text-muted-foreground tabular-nums">
-              {step.body.length.toLocaleString()}/
-              {workflowDefinitionLimits.body.toLocaleString()}
-            </span>
+            step.body.length >= workflowDefinitionLimits.body * 0.9 && (
+              <span className="text-2xs text-muted-foreground tabular-nums">
+                {step.body.length.toLocaleString()}/
+                {workflowDefinitionLimits.body.toLocaleString()}
+              </span>
+            )
           }
         >
           {prompts ? (
@@ -507,13 +558,14 @@ export function StepInspectorForm({
             />
           )}
         </Field>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2">
           <Field
             id={fieldId('timeout')}
             label="Timeout"
             hint="Between 1 second and 4 hours."
             messages={notesOf('timeout')}
-            className="col-span-2"
+            layout="inline"
+            className={inlineFieldClass}
           >
             <div className="flex gap-1.5">
               <Input
@@ -534,7 +586,7 @@ export function StepInspectorForm({
                     timeout: joinDuration(event.target.value, duration.unit),
                   })
                 }
-                className="w-24 tabular-nums"
+                className="w-16 flex-none tabular-nums"
               />
               <Select
                 value={duration.unit}
@@ -550,7 +602,7 @@ export function StepInspectorForm({
                 <SelectTrigger
                   aria-label="Timeout unit"
                   size="sm"
-                  className="flex-1"
+                  className="min-w-0 flex-1"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -567,6 +619,8 @@ export function StepInspectorForm({
           <Field
             id={fieldId('retries')}
             label="Retries"
+            layout="inline"
+            className={inlineFieldClass}
             messages={notesOf('retries')}
           >
             <Select
@@ -603,6 +657,8 @@ export function StepInspectorForm({
           <Field
             id={fieldId('on_fail')}
             label="On failure"
+            layout="inline"
+            className={cn(inlineFieldClass, '[&>div:first-child>span]:text-ui')}
             as="span"
             messages={notesOf('on_fail')}
           >
@@ -662,7 +718,7 @@ export function StepInspectorForm({
             </>
           )}
           {human && (
-            <p className="col-span-2 text-2xs leading-4 text-muted-foreground">
+            <p className="text-2xs leading-4 text-muted-foreground">
               Human steps do not retry; the reviewer accepts, rejects or asks
               for a fix.
             </p>
@@ -670,6 +726,7 @@ export function StepInspectorForm({
         </div>
         <NeedsField
           id={fieldId('needs')}
+          fieldClassName={inlineFieldClass}
           needs={step.needs}
           notes={notesOf('needs')}
           onChange={needs => update({ needs })}
@@ -678,10 +735,11 @@ export function StepInspectorForm({
           id={fieldId('effect')}
           label="External effect"
           layout="switch"
+          className={cn(inlineFieldClass, '[&>div:nth-child(2)]:justify-start')}
           hint={
             declaresEffect(step.type)
-              ? 'Reaches beyond this computer, such as a deploy or a message. Put a human step before it.'
-              : 'Only command and action steps declare an external effect.'
+              ? 'Add a human step before deploying or posting.'
+              : 'Available for commands and actions.'
           }
           messages={notesOf('effect')}
         >
@@ -706,12 +764,8 @@ export function StepInspectorForm({
             <FieldMessages id={fieldId('form-notes')} messages={formNotes} />
           </div>
         )}
-      </div>
-      <Toolbar
-        label="Step actions"
-        bordered={false}
-        className="h-10 border-t px-3"
-      >
+      </PanelBody>
+      <SidePanelFooter label="Step actions">
         {onDelete && (
           <Button
             type="button"
@@ -726,18 +780,22 @@ export function StepInspectorForm({
         <ToolbarSpacer />
         <DisabledHint
           reason={
-            blocked
+            blocked && !creating
               ? 'Fix the marked fields to save.'
               : pendingPhase
                 ? 'Confirm or keep the phase first.'
                 : ''
           }
         >
-          <Button type="submit" size="xs" disabled={blocked || !!pendingPhase}>
+          <Button
+            type="submit"
+            size="xs"
+            disabled={(!creating && blocked) || !!pendingPhase}
+          >
             {mode === 'create' ? 'Create step' : 'Save step'}
           </Button>
         </DisabledHint>
-      </Toolbar>
+      </SidePanelFooter>
     </form>
   );
 }
